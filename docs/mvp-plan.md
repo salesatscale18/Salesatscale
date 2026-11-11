@@ -198,7 +198,7 @@ A seller cannot contact real buyers until all of these pass:
 
 ## 8. Next steps
 
-1. **Visual guidebook (design system):** colors, type, components, status language, RTL rules. Align before designing screens.
+1. **Visual guidebook (design system):** colors, type, components, status language, RTL rules. Align before designing screens. First version: https://claude.ai/artifact/JqDhGuh7uQXqV1er6vwQgu (private until shared).
 2. **First screens:** lead card with timeline, deal state and takeover; seller overview; playbook in the setup wizard.
 3. **Second batch:** order form and payment page (mobile), knowledge wizard, agent versions and test lab.
 4. **Remaining screens:** catalog, quotes and orders, meetings, settings, platform admin.
