@@ -199,7 +199,8 @@ A seller cannot contact real buyers until all of these pass:
 ## 8. Next steps
 
 1. **Visual guidebook (design system):** colors, type, components, status language, RTL rules. Align before designing screens. First version: https://claude.ai/artifact/JqDhGuh7uQXqV1er6vwQgu (private until shared).
-2. **First screens:** lead card with timeline, deal state and takeover; seller overview; playbook in the setup wizard.
+   Palette chosen: **Trust Blue**. Blue for main actions and links, violet for the AI agent, warm rose for people on the seller's team, green only for won outcomes.
+2. **First screens:** lead card with timeline, deal state and takeover; seller overview; playbook in the setup wizard. Draft: https://claude.ai/artifact/Q4qUgGrnwScxyysAd1iHdM (private until shared).
 3. **Second batch:** order form and payment page (mobile), knowledge wizard, agent versions and test lab.
 4. **Remaining screens:** catalog, quotes and orders, meetings, settings, platform admin.
 5. **Technical architecture document:** data model (tenant, lead, consent, conversation, message, deal state, quote, order form, order, payment attempt, agent version), channel adapter interface, payment provider interface, tool contracts.
