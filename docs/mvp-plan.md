@@ -166,7 +166,7 @@ This replaces the earlier idea that the agent judges buyer agreement. The agent 
 
 ### Buyer-facing — MVP
 
-13. **Order form and payment page** (mobile-first, English and Hebrew RTL): seller identity, items, totals, terms, signature, payment, and states for expired link, price changed, payment pending and paid.
+13. **Order form and payment page** (mobile-first, English and Hebrew RTL): seller identity, items, totals, terms, signature, payment, and states for expired link, price changed, payment pending and paid. Branded with the seller's logo and color (logo, pay button); Sales at Scale appears only as a small "Secured by Sales at Scale" line.
 14. **Meeting booking page** (if not done fully inside WhatsApp).
 
 ### Platform admin — MVP
