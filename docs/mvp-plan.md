@@ -201,8 +201,8 @@ A seller cannot contact real buyers until all of these pass:
 1. **Visual guidebook (design system):** colors, type, components, status language, RTL rules. Align before designing screens. First version: https://claude.ai/artifact/JqDhGuh7uQXqV1er6vwQgu (private until shared).
    Palette chosen: **Trust Blue**. Blue for main actions and links, violet for the AI agent, warm rose for people on the seller's team, green only for won outcomes.
 2. **First screens:** lead card with timeline, deal state and takeover; seller overview; playbook in the setup wizard. Draft: https://claude.ai/artifact/Q4qUgGrnwScxyysAd1iHdM (private until shared).
-3. **Second batch:** order form and payment page (mobile), knowledge wizard, agent versions and test lab.
-4. **Remaining screens:** catalog, quotes and orders, meetings, settings, platform admin.
+3. **All MVP screens drafted** on the same canvas, each with a note below it explaining its functions: seller workspace (8 screens), agent setup wizard (8 steps plus versions and test lab), buyer pages (order form, payment, confirmation, updated offer in Hebrew, meeting booking) and platform admin (activity, accounts, operations and usage).
+4. **Review round:** collect feedback on the canvas, then finalise the screens.
 5. **Technical architecture document:** data model (tenant, lead, consent, conversation, message, deal state, quote, order form, order, payment attempt, agent version), channel adapter interface, payment provider interface, tool contracts.
 6. **Build:** start with one end-to-end path using a small catalog and test payments, then add the wizard and test lab.
 7. **Phase 2:** voice channel, audio sources, more roles, external lead API and CRM, more languages.
