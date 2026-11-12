@@ -390,7 +390,14 @@ Update the row in the same push that finishes the step.
 | P4.6 | done | determined-hopper | P4 push | 2026-11-12 | Versions and test lab: publish, one-step rollback, test chat by version and language, trace per reply (input, result, Refused/Failed, tokens), deal-state panel. Scenario picker deferred |
 | P4.7 | done | determined-hopper | P4 push | 2026-11-12 | Playbook editor (draft) + minimal Knowledge (approved facts with source) |
 | P4.8 | done | determined-hopper | P4 push | 2026-11-12 | Lead card deal state with provenance; "Set and verify" → Verified, audited, event on the timeline; agent never overwrites Verified. Chat column on real leads arrives with the channel (P6) |
-| P5.1–P5.8 | todo | | | | M5 → Milestone A |
+| P5.1 | done | determined-hopper | P5 push | 2026-11-12 | Migration `0006_orders`: order_form_settings, legal_sections (write-once versions per language), order_forms (token hash, immutable snapshot, superseded link), signatures (write-once, SHA-256 document hash, IP, user agent, legal versions), orders, payment_attempts, provider_events (dedupe key) |
+| P5.2 | done | determined-hopper | P5 push | 2026-11-12 | Setup 6 · Order form: legal sections per language with versions, sample text to start, buyer fields, payment methods, bank details, link validity, brand color, live EN/HE mobile preview |
+| P5.3 | done | determined-hopper | P5 push | 2026-11-12 | `createOrderForm` + agent tool `send_order_form` (refuses before-order-form fields missing, awaiting approval, expired, unpriced, opted out, no legal text in the language); HMAC link tokens; new link or new quote version → old link shows "Offer updated" with the new one. Seller can send from Quotes and orders |
+| P5.4 | done | determined-hopper | P5 push | 2026-11-12 | Buyer pages `/f/[token]`: review, business details, terms with versions, sign; Offer updated, Expired, Price changed (accept → new version and link), test-payment strip, EN/HE switch with RTL, seller branding, "Secured by Sales at Scale" |
+| P5.5 | done | determined-hopper | P5 push | 2026-11-12 | Payment provider: fake provider with HMAC-signed events (`/api/payments/fake`), `handleProviderEvent` is the only path to Paid (signature, dedupe, amount, currency, account, order checked); price re-check before payment; recurring consent; "Simulate successful / declined payment" per UX. Agent tool `check_payment` |
+| P5.6 | done | determined-hopper | P5 push | 2026-11-12 | Bank transfer: buyer chooses it → Bank transfer expected; seller "Mark payment received" (only bank-transfer orders, audited) |
+| P5.7 | done (partial) | determined-hopper | P5 push | 2026-11-12 | Signed document page `/f/[token]/document` from the write-once snapshot + signature + SHA-256 fingerprint; "Print or save as PDF" via the browser. A stored PDF file comes later |
+| P5.8 | done (stub) | determined-hopper | P5 push | 2026-11-12 | Confirmations: system message in the buyer's conversation (EN/HE) and timeline events; seller email is a log stub until D8 |
 | P6.1–P6.8 | todo | | | | M6; needs D2, D6 → Milestone B |
 | P7.1–P7.5 | todo | | | | M7 |
 | P8.1–P8.7 | todo | | | | M8 |

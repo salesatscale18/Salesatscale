@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
 import { approveQuote, cancelQuote } from "@/lib/quotes/service";
+import { createOrderForm, markBankTransferReceived } from "@/lib/orders/service";
 
 export async function approveQuoteAction(form: FormData) {
   const a = await requireAccount(String(form.get("slug") ?? ""));
@@ -27,4 +28,20 @@ export async function cancelQuoteAction(form: FormData) {
   await cancelQuote(appDb, a.account.id, { userId: a.user.id, actingAs: a.actingAs }, quoteId);
   revalidatePath(`/app/${a.account.slug}/orders`);
   redirect(`/app/${a.account.slug}/orders?quote=${quoteId}`);
+}
+
+export async function sendOrderFormAction(form: FormData) {
+  const a = await requireAccount(String(form.get("slug") ?? ""));
+  const quoteId = String(form.get("quoteId") ?? "");
+  const r = await createOrderForm(appDb, a.account.id, { kind: "human", userId: a.user.id, actingAs: a.actingAs }, quoteId, { language: String(form.get("language") ?? "") || undefined });
+  revalidatePath(`/app/${a.account.slug}/orders`);
+  redirect(`/app/${a.account.slug}/orders?quote=${quoteId}${r.ok ? "&sent=1" : "&send=" + r.reason}`);
+}
+
+export async function markBankPaidAction(form: FormData) {
+  const a = await requireAccount(String(form.get("slug") ?? ""));
+  const quoteId = String(form.get("quoteId") ?? "");
+  const r = await markBankTransferReceived(appDb, { userId: a.user.id, actingAs: a.actingAs }, a.account.id, String(form.get("orderId") ?? ""));
+  revalidatePath(`/app/${a.account.slug}/orders`);
+  redirect(`/app/${a.account.slug}/orders?quote=${quoteId}${r.ok ? "&marked=1" : ""}`);
 }

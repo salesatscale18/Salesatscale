@@ -204,6 +204,39 @@ describe("agent turns (scripted model)", () => {
     expect(r).toMatchObject({ status: "replied", text: "still looking", calls: 8 });
   });
 
+  it("sends the order form only when the deal is ready for it; checks payment", async () => {
+    const { saveLegalSection } = await import("@/lib/orders/settings");
+    await saveLegalSection(db, acc, me.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "Terms" });
+    const c = await newConv();
+    const llm = new ScriptedLlm([
+      step(use("u", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null })),
+      step(use("q", "create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1 })),
+      (req: LlmRequest) => {
+        const quote = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content).quote as string;
+        return { content: [use("s1", "send_order_form", { quote: quote.split(" ")[0] })] };
+      },
+      (req: LlmRequest) => {
+        const res = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
+        expect(res).toMatchObject({ refused: true, rule: "Before-order-form fields missing", missing: ["Decision maker"] });
+        return { content: [use("u2", "update_deal_state", { updates: [{ key: "decision_maker", value: "Owner", provenance: "buyer" }], next_step: null, objection: null })] };
+      },
+      step(use("s2", "send_order_form", { quote: "Q-1003" })),
+      (req: LlmRequest) => {
+        const res = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
+        return { content: [use("p", "check_payment", {}), say(res.link ? "Here is your order form." : `no link: ${JSON.stringify(res)}`)] };
+      },
+      step(say("Here is your order form.")),
+    ]);
+    const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "Send me the form, I'm the owner" });
+    expect(r.status === "replied" && r.text).toBe("Here is your order form.");
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
+    expect(calls.map((x) => [x.name, x.outcome])).toEqual([
+      ["update_deal_state", "ok"], ["create_quote", "ok"], ["send_order_form", "refused"], ["update_deal_state", "ok"], ["send_order_form", "ok"], ["check_payment", "ok"],
+    ]);
+    expect(calls[4].result).toMatchObject({ link: expect.stringMatching(/\/f\//) });
+    expect(calls[5].result).toMatchObject({ signed: false, order_form: "sent" });
+  });
+
   it("keeps accounts apart", async () => {
     const c = await newConv();
     expect((await runBuyerTurn(db, new ScriptedLlm([]), { accountId: other, conversationId: c.conversationId, text: "hi" })).status).toBe("not_found");

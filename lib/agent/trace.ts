@@ -14,6 +14,8 @@ export const TRACE_LABEL: Record<string, string> = {
   update_deal_state: "deal_state.update",
   create_quote: "quote.create",
   hand_off_to_human: "handoff.request",
+  send_order_form: "order_form.send",
+  check_payment: "payment.check",
 };
 
 export type TraceLine = { label: string; sent: string; got: string; missing: string[] };
@@ -51,6 +53,14 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
       got = result.quote
         ? `${str(result.quote)}: ${str(result.due_on_signing)} due on signing${result.monthly ? ` + ${str(result.monthly)}` : ""}${result.status === "awaiting_seller_approval" ? " (awaiting your approval)" : ""}`
         : "";
+      break;
+    case "send_order_form":
+      sent = str(input.quote);
+      got = result.link ? `Link sent, valid until ${str(result.valid_until)}` : "";
+      break;
+    case "check_payment":
+      sent = "Checked the order";
+      got = result.signed ? `Signed; payment ${str(result.payment).replace(/_/g, " ")}` : `Not signed (order form ${str(result.order_form)})`;
       break;
     case "hand_off_to_human":
       sent = str(input.reason) || "Asked for a person";

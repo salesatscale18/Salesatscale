@@ -374,3 +374,17 @@ export async function signatureFor(db: Db, formId: string) {
   const [s] = await db.select().from(signatures).where(eq(signatures.orderFormId, formId));
   return s ?? null;
 }
+
+/** Latest order-form status and payment per quote, for the Quotes list. */
+export async function docStatusByQuote(db: Db, accountId: string, quoteIds: string[]) {
+  const out = new Map<string, { form: OrderForm["status"] | null; payment: (typeof orders.$inferSelect)["paymentStatus"] | null }>();
+  if (!quoteIds.length) return out;
+  const forms = await db.select().from(orderForms).where(and(eq(orderForms.accountId, accountId), inArray(orderForms.quoteId, quoteIds))).orderBy(desc(orderForms.createdAt));
+  const ords = await db.select().from(orders).where(and(eq(orders.accountId, accountId), inArray(orders.quoteId, quoteIds))).orderBy(desc(orders.createdAt));
+  for (const id of quoteIds) {
+    const f = forms.find((x) => x.quoteId === id);
+    const o = ords.find((x) => x.quoteId === id);
+    out.set(id, { form: f ? (f.status !== "signed" && f.expiresAt.getTime() <= Date.now() ? "link_expired" : f.status) : null, payment: o?.paymentStatus ?? null });
+  }
+  return out;
+}

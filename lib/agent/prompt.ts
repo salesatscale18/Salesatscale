@@ -11,7 +11,7 @@ export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; cur
   const fields = p.fields.map((f) => `- ${f.key}: ${f.label} (${f.stage.replace(/_/g, " ")})${f.hint ? ` - ${f.hint}` : ""}`).join("\n") || "- (none)";
   const objections = p.objections.map((o) => `- "${o.objection}" -> ${o.answer}`).join("\n") || "- (none yet)";
   const outcomes = [
-    p.outcomes.orderForm ? "a quote followed by the seller's order form (sent by a later version of you)" : null,
+    p.outcomes.orderForm ? "a quote followed by the seller's order form (send_order_form), which the buyer signs and pays" : null,
     p.outcomes.meeting ? "a meeting with the seller's sales team" : null,
   ].filter(Boolean).join(", or ");
   return `You are ${p.agentName}, the automated sales agent for ${seller.tradeName}, talking with a business buyer on a messaging channel. You are an automated agent; say so if asked, and never pretend to be a person.

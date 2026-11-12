@@ -4,15 +4,16 @@
  * ({ ok: false, refused: true, rule, missing }) the agent reads and acts on.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leadEvents, leads, type Playbook } from "@/db/schema";
+import { conversations, leadEvents, leads, orderForms, orders, quotes, type Playbook } from "@/db/schema";
 import { checkFit } from "@/lib/catalog/fit";
 import { approvalReasonText, pricingErrorText } from "@/lib/catalog/pricing";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
 import { createQuote } from "@/lib/quotes/service";
+import { createOrderForm } from "@/lib/orders/service";
 import type { ToolDef } from "./llm";
 import { missingFields } from "./playbook";
 import { applyAgentUpdates, getDealState, listFacts, rankFacts } from "./service";
@@ -89,6 +90,18 @@ export const TOOL_DEFS: ToolDef[] = [
       required: ["lines", "discount_percent", "sites"],
       additionalProperties: false,
     },
+  },
+  {
+    name: "send_order_form",
+    description: "Send the buyer the personal link to the seller's order form for a ready quote, to review, sign and pay. Refused with the missing fields if the deal is not ready for the order form, or if the quote waits for the seller's approval.",
+    strict: true,
+    input_schema: { type: "object", properties: { quote: { type: "string", description: 'Quote number, e.g. "Q-1001".' } }, required: ["quote"], additionalProperties: false },
+  },
+  {
+    name: "check_payment",
+    description: "Check whether the buyer signed the order form and paid. Use when the buyer says they paid or asks about their order.",
+    strict: true,
+    input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   {
     name: "hand_off_to_human",
@@ -224,9 +237,41 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         approval_reasons: v.approvalReasons.map(approvalReasonText),
         message: awaiting
           ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them."
-          : "Share the totals. The order form link will be sent by the team for now.",
+          : "Share the totals. When the buyer is ready, send the order form with send_order_form.",
       },
     };
+  }
+
+  if (name === "send_order_form") {
+    if (!ctx.playbook.outcomes.orderForm) return refuse("Order form is not offered by this seller", { message: "Offer a meeting or hand off instead." });
+    const deal = await getDealState(ctx.db, ctx.accountId, ctx.leadId);
+    const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_order_form");
+    if (missing.length) return refuse("Before-order-form fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these first." });
+    const number = Number(String(args.quote ?? "").replace(/^\s*Q-?/i, "").replace(/\s*v\d+$/i, ""));
+    const [q] = Number.isInteger(number)
+      ? await ctx.db.select().from(quotes).where(and(eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), eq(quotes.number, number)))
+      : [];
+    if (!q) return refuse("Quote not found for this buyer", { message: "Create a quote first with create_quote." });
+    const [conv] = await ctx.db.select().from(conversations).where(eq(conversations.id, ctx.conversationId));
+    const r = await createOrderForm(ctx.db, ctx.accountId, { kind: "agent" }, q.id, { language: conv?.language });
+    if (!r.ok) {
+      const rule = {
+        quote_not_found: "Quote not found for this buyer", quote_not_ready: "Quote waits for the seller's approval or was cancelled",
+        quote_expired: "Quote expired", price_missing: "Quote has items still to be priced", lead_opted_out: "Lead opted out",
+        no_legal: "The seller has not set up the order form in this language",
+      }[r.reason];
+      return refuse(rule, { message: r.reason === "quote_expired" ? "Create a new quote version with current prices." : "Tell the buyer the team will send the order form shortly, and hand off if needed." });
+    }
+    return { outcome: "ok", result: { ok: true, link: r.url, valid_until: r.form.expiresAt.toISOString().slice(0, 10), message: "Send this link to the buyer with one short sentence. Do not ask for card details in the chat." } };
+  }
+
+  if (name === "check_payment") {
+    const [o] = await ctx.db.select().from(orders).where(and(eq(orders.accountId, ctx.accountId), eq(orders.leadId, ctx.leadId))).orderBy(desc(orders.createdAt)).limit(1);
+    if (!o) {
+      const [f] = await ctx.db.select().from(orderForms).where(and(eq(orderForms.accountId, ctx.accountId), eq(orderForms.leadId, ctx.leadId))).orderBy(desc(orderForms.createdAt)).limit(1);
+      return { outcome: "ok", result: { ok: true, signed: false, order_form: f ? f.status : "not sent" } };
+    }
+    return { outcome: "ok", result: { ok: true, signed: true, payment: o.paymentStatus, message: o.paymentStatus === "paid" ? "Thank the buyer; the order is confirmed." : "Payment is not confirmed yet. Never say it is paid until the status is paid." } };
   }
 
   if (name === "hand_off_to_human") {

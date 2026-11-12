@@ -298,19 +298,20 @@ export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quo
     .from(quotes)
     .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
     .innerJoin(leads, eq(leads.id, quotes.leadId))
-    .where(and(eq(quotes.accountId, accountId), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : [])))
+    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : [])))
     .orderBy(desc(quotes.createdAt))
     .limit(200);
   return rows;
 }
 
 export async function countAwaitingApproval(db: Db, accountId: string) {
-  const [{ n }] = await db.select({ n: count() }).from(quotes).where(and(eq(quotes.accountId, accountId), eq(quotes.status, "awaiting_approval")));
+  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
+    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), eq(quotes.status, "awaiting_approval")));
   return n;
 }
 
 export async function countQuotes(db: Db, accountId: string) {
-  const [{ n }] = await db.select({ n: count() }).from(quotes).where(eq(quotes.accountId, accountId));
+  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false)));
   return n;
 }
 

@@ -30,6 +30,12 @@ const EVENT_ICON: Record<string, IconName> = {
   "quote.cancelled": "file-x",
   "handoff.requested": "user",
   "deal.verified": "shield-check",
+  "order_form.sent": "send",
+  "order_form.opened": "eye",
+  "order_form.signed": "pen",
+  "payment.bank_transfer": "clock",
+  "payment.failed": "x-circle",
+  "order.paid": "credit-card",
 };
 
 /** Lead card (canvas: Main, LeadEmpty). Conversation, deal state and quotes arrive in P4–P6. */
@@ -63,7 +69,7 @@ export default async function LeadCardPage({
     icon: EVENT_ICON[event.type] ?? "cog",
     title: t(`lead.event.${event.type}` as MessageKey),
     detail:
-      event.type.startsWith("quote.")
+      event.type.startsWith("quote.") || event.type.startsWith("order_form.")
         ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${displayName(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
