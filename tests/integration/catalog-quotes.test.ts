@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
+import { and, eq } from "drizzle-orm";
 import { catalogVersions, leadEvents, quoteLines, quotes, sellerAccounts, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
@@ -107,6 +107,15 @@ describe("catalog and quotes", () => {
     expect(a.ok && a.quote.status).toBe("draft");
     expect(a.ok && a.version.approvedByUserId).toBe(admin.id);
     expect(await approveQuote(db, accA, actor(), r.quote.id, {}, now)).toEqual({ ok: false, reason: "quote_closed" });
+  });
+
+  it("a person's quote over the discount limit is approved by them, with the reasons on the timeline", async () => {
+    const r = await createQuote(db, accA, human(), leadA, { lines: [{ sku: "GW-10", qty: 1 }], discountBp: 5000 }, now);
+    expect(r.ok && r.quote.status).toBe("draft");
+    expect(r.ok && r.version.approvedByUserId).toBe(admin.id);
+    const evs = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, leadA), eq(leadEvents.type, "quote.approved")));
+    const mine = evs.find((e) => (e.data as { quoteId?: string }).quoteId === (r.ok ? r.quote.id : ""));
+    expect((mine?.data as { reasons: string[] }).reasons[0]).toMatch(/50/);
   });
 
   it("a missing price needs a person's price; approving with it makes an approved v2", async () => {

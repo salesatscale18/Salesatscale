@@ -593,5 +593,9 @@
   "catalog.tiers.err_duplicate": "Quantity {qty} is used twice.",
   "catalog.tiers.err_custom": "From {qty} is custom pricing ({custom}+). Lower the quantity or raise the custom-pricing threshold.",
   "catalog.tiers.err_price": "Enter a price.",
-  "catalog.tiers.err_lower": "Must be lower than the tier before."
+  "catalog.tiers.err_lower": "Must be lower than the tier before.",
+  "lab.trace_sent": "In",
+  "lab.trace_got": "Out",
+  "lab.trace_missing": "missing",
+  "lab.show_raw": "Show raw"
 }

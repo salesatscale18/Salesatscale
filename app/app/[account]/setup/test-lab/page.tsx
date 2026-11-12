@@ -8,6 +8,7 @@ import { llmConfigured } from "@/lib/agent/llm";
 import { conversationMessages, getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { exactTime, relativeTime } from "@/lib/format";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
+import { describeCall } from "@/lib/agent/trace";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
 
@@ -22,7 +23,8 @@ const json = (v: unknown) => JSON.stringify(v, null, 2);
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const { account, user } = await requireAccount(slug);
+  const isAdmin = user.role === "super_admin";
   const base = `/app/${account.slug}`;
   const lab = `${base}/setup/test-lab`;
   const versions = await listVersions(appDb, account.id);
@@ -68,32 +70,36 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("lab.chat_empty")}</p> : null}
                 {thread.map(({ message: m, calls }) => {
                   const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
-                  const trace: TraceItem[] = calls.map((c) => ({ kind: c.name === "lookup_knowledge" ? "knowledge" : "tool", label: c.outcome === "ok" ? c.name : `${c.name} · ${c.outcome}` }));
+                  const trace: TraceItem[] = [];
                   const usage = m.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number } | null;
                   return (
                     <Fragment key={m.id}>
+                      {calls.length ? (
+                        <ol className="sas-stack-2" aria-label={t("lab.trace")} style={{ margin: 0, paddingInlineStart: 0, listStyle: "none", alignSelf: "flex-end", maxWidth: "78%", width: "100%" }}>
+                          {calls.map((c) => {
+                            const d = describeCall(c.name, c.input, c.result, c.outcome);
+                            return (
+                              <li key={c.id} className="sas-stack-2" style={{ background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 12px" }}>
+                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                                  <strong className="sas-num sas-small">{c.sequence}. {d.label}</strong>
+                                  {c.outcome === "refused" || c.outcome === "failed" ? <StatusPill object="tool_call" state={c.outcome} /> : null}
+                                </div>
+                                {d.sent ? <span className="sas-small">{t("lab.trace_sent")}: {d.sent}</span> : null}
+                                {d.got ? <span className="sas-small">{t("lab.trace_got")}: {d.got}{d.missing.length ? ` — ${t("lab.trace_missing")}: ${d.missing.join(", ")}` : ""}</span> : null}
+                                <details>
+                                  <summary className="sas-small">{t("lab.show_raw")}</summary>
+                                  <pre className="sas-code" dir="ltr">{json({ input: c.input, result: c.result })}</pre>
+                                </details>
+                              </li>
+                            );
+                          })}
+                        </ol>
+                      ) : null}
                       <ChatMessage actor={actor} who={t(`lab.who.${actor}` as MessageKey)} time={exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
                         {m.body}
                       </ChatMessage>
-                      {calls.length || usage ? (
-                        <details className="sas-msg sas-msg--agent" style={{ maxWidth: "100%", width: "100%" }}>
-                          <summary className="sas-small">{t("lab.trace")}{usage?.inputTokens !== undefined ? ` · ${t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}` : ""}</summary>
-                          <ol className="sas-stack-2" style={{ margin: 0, paddingInlineStart: 20, textAlign: "start" }}>
-                            {calls.map((c) => (
-                              <li key={c.id} className="sas-stack-2">
-                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                  <strong className="sas-num">{c.name}</strong>
-                                  {c.outcome === "refused" || c.outcome === "failed" ? <StatusPill object="tool_call" state={c.outcome} /> : null}
-                                  {c.rule ? <span className="sas-small">{c.rule}</span> : null}
-                                </div>
-                                <span className="sas-small">{t("lab.input")}</span>
-                                <pre className="sas-code" dir="ltr">{json(c.input)}</pre>
-                                <span className="sas-small">{t("lab.result")}</span>
-                                <pre className="sas-code" dir="ltr">{json(c.result)}</pre>
-                              </li>
-                            ))}
-                          </ol>
-                        </details>
+                      {isAdmin && usage?.inputTokens !== undefined ? (
+                        <span className="sas-small sas-num" style={{ alignSelf: "flex-end" }}>{t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}</span>
                       ) : null}
                     </Fragment>
                   );

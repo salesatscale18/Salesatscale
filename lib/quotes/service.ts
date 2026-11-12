@@ -12,7 +12,7 @@ import {
   type ApprovalReason, type Quote, type QuoteStatus, type QuoteVersion,
 } from "@/db/schema";
 import { writeAudit } from "@/lib/accounts/audit";
-import { priceQuote, type PricingError, type QuoteRequestLine } from "@/lib/catalog/pricing";
+import { approvalReasonText, priceQuote, type PricingError, type QuoteRequestLine } from "@/lib/catalog/pricing";
 import { checkFit } from "@/lib/catalog/fit";
 import { publishedCatalog } from "@/lib/catalog/service";
 
@@ -144,6 +144,9 @@ export async function createQuote(db: Db, accountId: string, actor: QuoteActor, 
           accountId, leadId, type: "quote.created", actor: actor.kind, actorUserId: actor.kind === "human" ? actor.userId : null,
           data: { quoteId, number, version: 1, oneTimeTotalMinor: v.oneTimeTotalMinor, recurringTotalMinor: v.recurringTotalMinor, currency: v.currency, status },
         }),
+        ...(approvedBy && v.approvalReasons.length
+          ? [q.insert(leadEvents).values({ accountId, leadId, type: "quote.approved", actor: "human", actorUserId: approvedBy, data: { quoteId, number, version: 1, reasons: v.approvalReasons.map(approvalReasonText) } })]
+          : []),
         q.update(leads).set({ lastActivityAt: now }).where(eq(leads.id, leadId)),
       ]);
       const [quote] = await db.select().from(quotes).where(eq(quotes.id, quoteId));
@@ -210,6 +213,9 @@ export async function createQuoteVersion(
         accountId, leadId: q.leadId, type: "quote.versioned", actor: actor.kind, actorUserId: actor.kind === "human" ? actor.userId : null,
         data: { quoteId: q.id, number: q.number, version: next, note: v.changeNote, status },
       }),
+      ...(approvedBy && v.approvalReasons.length
+        ? [tx.insert(leadEvents).values({ accountId, leadId: q.leadId, type: "quote.approved", actor: "human", actorUserId: approvedBy, data: { quoteId: q.id, number: q.number, version: next, reasons: v.approvalReasons.map(approvalReasonText) } })]
+        : []),
       tx.update(leads).set({ lastActivityAt: now }).where(eq(leads.id, q.leadId)),
     ]);
   } catch (e) {
@@ -256,7 +262,7 @@ export async function approveQuote(
   await atomic(db, (tx) => [
     tx.update(quoteVersions).set({ approvedByUserId: actor.userId, approvedAt: now }).where(eq(quoteVersions.id, current.id)),
     tx.update(quotes).set({ status: "draft" }).where(and(eq(quotes.id, q.id), eq(quotes.status, "awaiting_approval"))),
-    tx.insert(leadEvents).values({ accountId, leadId: q.leadId, type: "quote.approved", actor: "human", actorUserId: actor.userId, data: { quoteId: q.id, number: q.number, version: current.version } }),
+    tx.insert(leadEvents).values({ accountId, leadId: q.leadId, type: "quote.approved", actor: "human", actorUserId: actor.userId, data: { quoteId: q.id, number: q.number, version: current.version, reasons: current.approvalReasons.map(approvalReasonText) } }),
   ]);
   await writeAudit(db, actor, { accountId, action: "quote.approved", targetType: "quote", targetId: q.id, details: { version: current.version } });
   const quote = (await quoteOf(db, accountId, q.id))!;

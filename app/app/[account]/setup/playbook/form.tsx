@@ -17,8 +17,9 @@ export function PlaybookForm({ slug, p }: { slug: string; p: Playbook }) {
     return (
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor={`pb-${name}`}>{t(label)}</label>
+        {opts.rows && opts.hint ? <span className="sas-hint" id={`pb-${name}-hint`}>{t(opts.hint)}</span> : null}
         {opts.rows ? <textarea className="sas-textarea" rows={opts.rows} {...common} /> : <input className={opts.num ? "sas-input sas-num" : "sas-input"} inputMode={opts.num ? "decimal" : undefined} {...common} />}
-        {opts.hint ? <span className="sas-hint" id={`pb-${name}-hint`}>{t(opts.hint)}</span> : null}
+        {!opts.rows && opts.hint ? <span className="sas-hint" id={`pb-${name}-hint`}>{t(opts.hint)}</span> : null}
         {e[name] ? <span className="sas-error" id={`pb-${name}-error`}>{e[name]}</span> : null}
       </div>
     );

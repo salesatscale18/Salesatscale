@@ -152,7 +152,10 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               <div><Button type="submit" variant="primary" size="sm">{t("orders.detail.approve")}</Button></div>
             </form>
           ) : approver && cur.version.approvedAt ? (
-            <span className="sas-small">{t("orders.detail.approved", { who: approver, when: relativeTime(cur.version.approvedAt, now) })}</span>
+            <span className="sas-small">
+              {t("orders.detail.approved", { who: approver, when: relativeTime(cur.version.approvedAt, now) })}
+              {cur.version.approvalReasons.length ? `: ${cur.version.approvalReasons.map(approvalReasonText).join("; ")}` : ""}
+            </span>
           ) : null}
 
           <section className="sas-stack-2" aria-labelledby="ver-h">

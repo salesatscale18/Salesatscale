@@ -65,3 +65,15 @@ describe("prompt", () => {
     expect(ctx).toContain("price (handled)");
   });
 });
+
+describe("trace lines", async () => {
+  const { describeCall } = await import("@/lib/agent/trace");
+  it("explains calls in plain words", () => {
+    expect(describeCall("create_quote", { lines: [{ sku: "GW-10", qty: 1 }] }, { refused: true, rule: "Before-quote fields missing", missing: ["Business type"] }, "refused"))
+      .toEqual({ label: "quote.create", sent: "1 × GW-10", got: "Before-quote fields missing", missing: ["Business type"] });
+    expect(describeCall("create_quote", { lines: [{ sku: "SNS-200", qty: 6 }], discount_percent: 15 }, { quote: "Q-1001 v1", due_on_signing: "₪100.00", monthly: null, status: "awaiting_seller_approval" }, "ok").got)
+      .toBe("Q-1001 v1: ₪100.00 due on signing (awaiting your approval)");
+    expect(describeCall("lookup_knowledge", { query: "warranty" }, { facts: [{ topic: "Warranty", source: "Sheet" }] }, "ok").got).toBe("Warranty (Sheet)");
+    expect(describeCall("update_deal_state", { updates: [{ key: "sites", value: "1" }] }, { saved: [], kept_verified: ["sites"] }, "ok").got).toBe("Saved 0; kept verified: sites");
+  });
+});
