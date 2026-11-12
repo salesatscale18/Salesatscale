@@ -713,3 +713,212 @@ export type Conversation = typeof conversations.$inferSelect;
 export type Message = typeof messages.$inferSelect;
 export type ToolCall = typeof toolCalls.$inferSelect;
 export type DealState = typeof dealStates.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Order form, signature and payment (implementation plan P5, migration 0006)
+// ---------------------------------------------------------------------------
+
+/** Buyer fields a seller can ask for on the order form. Company name and signatory name are always on. */
+export const ORDER_FORM_FIELDS = ["company_name", "company_id", "billing_address", "delivery_address", "signatory_role", "po_number", "invoice_email"] as const;
+export type OrderFormField = (typeof ORDER_FORM_FIELDS)[number];
+
+/** Per-account order form settings (canvas: Setup 6 · Order form). */
+export const orderFormSettings = pgTable("order_form_settings", {
+  accountId: uuid("account_id")
+    .primaryKey()
+    .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+  fields: jsonb("fields").$type<OrderFormField[]>().notNull(),
+  card: boolean("card").notNull().default(true),
+  bankTransfer: boolean("bank_transfer").notNull().default(true),
+  /** Shown on the bank-transfer step. */
+  bankDetails: text("bank_details"),
+  linkValidDays: integer("link_valid_days").notNull().default(7),
+  /** Seller brand color for buyer pages (logo tile, pay button). */
+  brandColor: text("brand_color").notNull().default("#0f6b5a"),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+/**
+ * Legal text, versioned per section and language. Rows are never edited: a
+ * change inserts the next version. A signature records the versions agreed to.
+ */
+export const legalSections = pgTable(
+  "legal_sections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    /** Stable key, e.g. "sales_terms". */
+    sectionKey: text("section_key").notNull(),
+    title: text("title").notNull(),
+    language: text("language").notNull(),
+    version: integer("version").notNull(),
+    body: text("body").notNull(),
+    /** False when the seller removed the section (as a new version). */
+    active: boolean("active").notNull().default(true),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [uniqueIndex("legal_sections_version_uq").on(t.accountId, t.sectionKey, t.language, t.version)],
+);
+
+export const orderFormStatus = pgEnum("order_form_status", ["sent", "opened", "signed", "link_expired"]);
+
+export type OrderSnapshot = {
+  seller: { tradeName: string; legalName: string | null; brandColor: string };
+  quote: { number: number; version: number; catalogVersion: number };
+  currency: string;
+  pricesIncludeTax: boolean;
+  lines: { sku: string; name: string; qty: number; unitPriceMinor: number; lineTotalMinor: number; recurring: boolean }[];
+  oneTime: { subtotalMinor: number; discountMinor: number; taxMinor: number; totalMinor: number };
+  recurring: { subtotalMinor: number; discountMinor: number; taxMinor: number; totalMinor: number };
+  validUntil: string;
+  legal: { key: string; title: string; version: number; body: string }[];
+  fields: OrderFormField[];
+  prefill: Partial<Record<OrderFormField | "signatory_name", string>>;
+  paymentMethods: { card: boolean; bankTransfer: boolean };
+  bankDetails: string | null;
+};
+
+/**
+ * A personal order-form link for one quote version. The token is shown once
+ * and stored only as a hash. The snapshot is written at creation and never changed.
+ */
+export const orderForms = pgTable(
+  "order_forms",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    quoteId: uuid("quote_id")
+      .notNull()
+      .references(() => quotes.id, { onDelete: "cascade" }),
+    quoteVersionId: uuid("quote_version_id")
+      .notNull()
+      .references(() => quoteVersions.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    language: text("language").notNull(),
+    status: orderFormStatus("status").notNull().default("sent"),
+    snapshot: jsonb("snapshot").$type<OrderSnapshot>().notNull(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    /** Set when a newer offer replaced this one ("Offer updated"). */
+    supersededById: uuid("superseded_by_id"),
+    openedAt: timestamp("opened_at", { withTimezone: true }),
+    signedAt: timestamp("signed_at", { withTimezone: true }),
+    createdBy: text("created_by").notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("order_forms_quote_idx").on(t.accountId, t.quoteId)],
+);
+
+/** Checkbox plus typed name (mvp-plan open question 4: enough for the pilot). Write-once. */
+export const signatures = pgTable("signatures", {
+  id: uuid("id").primaryKey(),
+  accountId: uuid("account_id")
+    .notNull()
+    .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+  orderFormId: uuid("order_form_id")
+    .notNull()
+    .unique()
+    .references(() => orderForms.id, { onDelete: "cascade" }),
+  fullName: text("full_name").notNull(),
+  role: text("role"),
+  buyerFields: jsonb("buyer_fields").$type<Record<string, string>>().notNull(),
+  agreed: boolean("agreed").notNull(),
+  legalVersions: jsonb("legal_versions").$type<{ key: string; version: number }[]>().notNull(),
+  /** sha256 of the snapshot plus what the buyer entered: proves what was signed. */
+  documentHash: text("document_hash").notNull(),
+  ip: text("ip"),
+  userAgent: text("user_agent"),
+  signedAt: timestamp("signed_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const paymentStatus = pgEnum("payment_status", ["not_started", "pending", "paid", "failed", "refunded", "bank_transfer_expected"]);
+
+/** A signed order. Paid only when a verified provider event matches it (or a person confirms a bank transfer). */
+export const orders = pgTable(
+  "orders",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    quoteId: uuid("quote_id")
+      .notNull()
+      .references(() => quotes.id, { onDelete: "cascade" }),
+    orderFormId: uuid("order_form_id")
+      .notNull()
+      .unique()
+      .references(() => orderForms.id, { onDelete: "cascade" }),
+    number: integer("number").notNull(),
+    paymentStatus: paymentStatus("payment_status").notNull().default("not_started"),
+    paymentMethod: text("payment_method"),
+    currency: text("currency").notNull(),
+    amountDueMinor: integer("amount_due_minor").notNull(),
+    recurringMinor: integer("recurring_minor").notNull(),
+    recurringConsent: boolean("recurring_consent").notNull().default(false),
+    paidAt: timestamp("paid_at", { withTimezone: true }),
+    markedPaidByUserId: uuid("marked_paid_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex("orders_number_uq").on(t.accountId, t.number)],
+);
+
+export const paymentAttemptStatus = pgEnum("payment_attempt_status", ["pending", "succeeded", "failed"]);
+
+export const paymentAttempts = pgTable("payment_attempts", {
+  id: uuid("id").primaryKey(),
+  accountId: uuid("account_id")
+    .notNull()
+    .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+  orderId: uuid("order_id")
+    .notNull()
+    .references(() => orders.id, { onDelete: "cascade" }),
+  provider: text("provider").notNull(),
+  providerRef: text("provider_ref").notNull().unique(),
+  amountMinor: integer("amount_minor").notNull(),
+  currency: text("currency").notNull(),
+  status: paymentAttemptStatus("status").notNull().default("pending"),
+  failureReason: text("failure_reason"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp("updated_at", { withTimezone: true })
+    .notNull()
+    .defaultNow()
+    .$onUpdate(() => new Date()),
+});
+
+/** Every inbound provider event, verified or not. The dedupe key makes processing happen once. */
+export const providerEvents = pgTable("provider_events", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  provider: text("provider").notNull(),
+  dedupeKey: text("dedupe_key").notNull(),
+  signatureValid: boolean("signature_valid").notNull(),
+  raw: jsonb("raw").$type<Record<string, unknown>>().notNull(),
+  /** What processing concluded: "paid", "failed", "rejected: amount mismatch", "duplicate", ... */
+  result: text("result").notNull(),
+  accountId: uuid("account_id").references(() => sellerAccounts.id, { onDelete: "cascade" }),
+  receivedAt: timestamp("received_at", { withTimezone: true }).notNull().defaultNow(),
+}, (t) => [uniqueIndex("provider_events_dedupe_uq").on(t.provider, t.dedupeKey)]);
+
+export type OrderFormSettings = typeof orderFormSettings.$inferSelect;
+export type LegalSection = typeof legalSections.$inferSelect;
+export type OrderForm = typeof orderForms.$inferSelect;
+export type Signature = typeof signatures.$inferSelect;
+export type Order = typeof orders.$inferSelect;
+export type PaymentAttempt = typeof paymentAttempts.$inferSelect;
