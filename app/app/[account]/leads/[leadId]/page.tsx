@@ -9,6 +9,8 @@ import { maskPhone } from "@/lib/leads/rules";
 import { exactTime, relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
+import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
+import { formatMoney } from "@/lib/domain/money";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -17,6 +19,10 @@ const EVENT_ICON: Record<string, IconName> = {
   "lead.updated": "file-text",
   "consent.recorded": "shield-check",
   "lead.opted_out": "x-circle",
+  "quote.created": "file-text",
+  "quote.versioned": "file-text",
+  "quote.approved": "check-circle",
+  "quote.cancelled": "archive",
 };
 
 /** Lead card (canvas: Main, LeadEmpty). Conversation, deal state and quotes arrive in P4–P6. */
@@ -34,7 +40,11 @@ export default async function LeadCardPage({
   const row = await getLead(appDb, account.id, leadId);
   if (!row) notFound();
   const { lead, owner, creator } = row;
-  const [events, consent] = await Promise.all([listLeadEvents(appDb, account.id, lead.id), latestConsent(appDb, account.id, lead.id)]);
+  const [events, consent, leadQuotes] = await Promise.all([
+    listLeadEvents(appDb, account.id, lead.id),
+    latestConsent(appDb, account.id, lead.id),
+    quotesForLead(appDb, account.id, lead.id),
+  ]);
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
 
@@ -44,7 +54,9 @@ export default async function LeadCardPage({
     icon: EVENT_ICON[event.type] ?? "cog",
     title: t(`lead.event.${event.type}` as MessageKey),
     detail:
-      event.type === "consent.recorded"
+      event.type.startsWith("quote.")
+        ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${displayName(user)}` : event.actor === "agent" ? " · Agent" : ""}`
+        : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : user
           ? displayName(user)
@@ -87,6 +99,25 @@ export default async function LeadCardPage({
               <strong>{t("lead.card.no_messages")}</strong>
               <span className="sas-small">{chatNote}</span>
             </div>
+            <section aria-labelledby="lq-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
+              <div className="sas-page-head" style={{ padding: "16px 16px 4px" }}>
+                <h2 id="lq-h" className="sas-label" style={{ margin: 0 }}>{t("lead.card.quotes")}</h2>
+                {lead.status !== "opted_out" ? <a className={`${buttonClass("secondary", "sm")} sas-page-head__actions`} href={`/app/${account.slug}/leads/${lead.id}/quote`}><Icon name="file-text" />{t("lead.card.create_quote")}</a> : null}
+              </div>
+              {leadQuotes.length === 0 ? <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("lead.card.no_quotes")}</p> : (
+                <ul className="sas-list">
+                  {leadQuotes.map(({ quote, version }) => (
+                    <li key={quote.id}>
+                      <a className="sas-list__row" href={`/app/${account.slug}/orders?quote=${quote.id}`}>
+                        <span className="sas-num">Q-{quote.number} v{quote.currentVersion}</span>
+                        <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : `${formatMoney(version.oneTimeTotalMinor, version.currency)}${version.recurringTotalMinor ? ` + ${formatMoney(version.recurringTotalMinor, version.currency, { period: "month" })}` : ""}`}</span>
+                        <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now)} />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
             <div>
               <h2 className="sas-group-label">{t("lead.card.timeline")}</h2>
               <Timeline label={t("lead.card.timeline")} items={timeline} />

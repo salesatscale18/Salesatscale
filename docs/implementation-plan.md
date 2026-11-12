@@ -347,8 +347,9 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 | D8 | Email for notifications, confirmations and invite links | P1.4 / P5.8 / P7.5 | A transactional email API (e.g. Resend). |
 | D9 | Preview database | Before the pilot seller's real data (P8/P10) | **Decided (user, 2026-11-12): deferred.** We push straight to live while there is no real data. Add a separate Neon branch for Preview before the first real seller data, so Preview builds of unfinished code can't touch it. |
 | D10 | `npm test` added to the pre-push rule | P0.2 | **Approved by the user (2026-11-12).** CI runs it on every push; Lead to add it to `CLAUDE.md` with a `[RULE]` post. |
+| D13 | Release cadence | Now | **Decided (user, 2026-11-12): fast-track.** Push to `main` as soon as lint + test + build pass; sessions verify deploys via the Vercel connector; the user runs UAT at milestones. |
 | D11 | Workspace URL shape | P0.5 | `/app/[account-slug]/…` for sellers; platform admin stays under `/sadmin`. Done in P1. |
-| D12 | Database transactions | Before P3 (quotes) | The Neon HTTP driver has no interactive transactions. Recommendation: switch `db/index.ts` to the Neon WebSocket driver (`drizzle-orm/neon-serverless`) before commercial writes (quotes, orders, payments) need atomic multi-row updates. |
+| D12 | Database transactions | Before P3 (quotes) | **Done (P3):** kept neon-http; multi-row writes go through `db/atomic.ts` (`db.batch()` = one transaction on Neon, `db.transaction()` on PGlite), with app-generated IDs. |
 
 ## 9. Progress tracker
 
@@ -375,7 +376,11 @@ Update the row in the same push that finishes the step.
 | P2.5 | done | determined-hopper | this push | 2026-11-12 | `POST /api/leads/[account]` with per-account hashed keys (Settings), `docs/lead-intake.md`. Rate limiting in P10.1 |
 | P2.6 | done | determined-hopper | this push | 2026-11-12 | Lead card shell: header with masked phone, empty conversation, timeline, consent record, opt-out (audited) |
 | P2.7 | done | determined-hopper | next push | 2026-11-12 | UX follow-up (canvas ImportCsv, LeadIntake): migration `0003_leads_intake` (lead email, key last-4, `lead_intake_deliveries`), opted-out people rejected on every intake path, whole-file consent, duplicate-in-file check, problem/fix per rejected row with download, template, Recent deliveries, Copy buttons. "Send a test lead" not built (it would create a real lead) |
-| P3.1–P3.5 | todo | | | | M3 |
+| P3.1 | done | determined-hopper | P3 push | 2026-11-12 | Migration `0004_catalog_quotes` (plan's M3): versioned catalog (one draft + one published), items with tiers and custom-pricing quantity, fit rules as data, quotes / versions / lines, `seller_accounts.max_discount_bp`. `db/atomic.ts` for all-or-nothing writes (D12, no driver change) |
+| P3.2 | done | determined-hopper | P3 push | 2026-11-12 | `lib/catalog/pricing.ts`: integer-only engine (tiers, discount cap, VAT incl./excl., approval reasons); quotes service with idempotency keys, numbering, versions, approval, cancel |
+| P3.3 | done | determined-hopper | P3 push | 2026-11-12 | `lib/catalog/fit.ts`: requires (per site), max per, advice |
+| P3.4 | done | determined-hopper | P3 push | 2026-11-12 | Catalog setup screen: products, item editor, fit rules, VAT, draft → publish / discard. Spreadsheet import comes with Sources (P8) |
+| P3.5 | done | determined-hopper | P3 push | 2026-11-12 | Quotes and orders (quote side): tabs, approval with custom prices, versions, cancel; quote editor from the lead card with live server-side preview |
 | P4.1–P4.8 | todo | | | | M4; P4.2 needs D1 |
 | P5.1–P5.8 | todo | | | | M5 → Milestone A |
 | P6.1–P6.8 | todo | | | | M6; needs D2, D6 → Milestone B |

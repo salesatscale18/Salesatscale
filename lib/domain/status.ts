@@ -29,6 +29,8 @@ export const STATUS = {
     expires_today: { tone: "warning", icon: "clock" },
     expired: { tone: "neutral", icon: "calendar-x" },
     replaced: { tone: "neutral", icon: "file-text" },
+    // Pending UX: not in the design system's quote row yet.
+    cancelled: { tone: "neutral", icon: "archive" },
   },
   order_form: {
     sent: { tone: "neutral", icon: "send" },
@@ -59,6 +61,16 @@ export const STATUS = {
   tool_call: {
     refused: { tone: "warning", icon: "shield-alert" },
     failed: { tone: "danger", icon: "x-circle" },
+  },
+  // Pending UX: catalog rows are not in the design system table yet.
+  catalog_version: {
+    live: { tone: "success", icon: "check-circle" },
+    draft: { tone: "neutral", icon: "file-text" },
+  },
+  catalog_item: {
+    active: { tone: "success", icon: "check-circle" },
+    inactive: { tone: "neutral", icon: "pause" },
+    price_missing: { tone: "warning", icon: "alert-triangle" },
   },
   intake_result: {
     created: { tone: "success", icon: "plus" },

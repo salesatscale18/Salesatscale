@@ -50,6 +50,8 @@ export const sellerAccounts = pgTable(
     monthlySpendCapMinor: integer("monthly_spend_cap_minor").notNull(),
     dailyConversationLimit: integer("daily_conversation_limit"),
     retentionMonths: integer("retention_months").notNull().default(24),
+    /** Largest discount the agent may give without approval, in basis points (playbook limit, P4 edits it). */
+    maxDiscountBp: integer("max_discount_bp").notNull().default(0),
     notes: text("notes"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
@@ -297,3 +299,211 @@ export type LeadEvent = typeof leadEvents.$inferSelect;
 export type LeadIntakeKey = typeof leadIntakeKeys.$inferSelect;
 export type LeadIntakeDelivery = typeof leadIntakeDeliveries.$inferSelect;
 export type IntakeResult = (typeof intakeResult.enumValues)[number];
+
+// ---------------------------------------------------------------------------
+// Catalog and quotes (implementation plan P3, migration M4)
+// ---------------------------------------------------------------------------
+
+export const catalogVersionStatus = pgEnum("catalog_version_status", ["draft", "published", "archived"]);
+export const chargeType = pgEnum("charge_type", ["one_time", "recurring"]);
+
+/**
+ * A version of a seller's catalog. One draft and one published version at a
+ * time; publishing archives the previous one. Quotes keep the version they were
+ * priced from, so prices never change under an existing quote.
+ */
+export const catalogVersions = pgTable(
+  "catalog_versions",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    status: catalogVersionStatus("status").notNull().default("draft"),
+    /** True when listed prices already include tax (VAT). */
+    pricesIncludeTax: boolean("prices_include_tax").notNull().default(true),
+    /** Tax rate in basis points, e.g. 1800 = 18%. */
+    taxRateBp: integer("tax_rate_bp").notNull().default(0),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedByUserId: uuid("published_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("catalog_versions_account_version_uq").on(t.accountId, t.version),
+    uniqueIndex("catalog_versions_one_draft_uq").on(t.accountId).where(sql`${t.status} = 'draft'`),
+    uniqueIndex("catalog_versions_one_published_uq").on(t.accountId).where(sql`${t.status} = 'published'`),
+  ],
+);
+
+export type VolumeTier = { minQty: number; priceMinor: number };
+
+export const catalogItems = pgTable(
+  "catalog_items",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    catalogVersionId: uuid("catalog_version_id")
+      .notNull()
+      .references(() => catalogVersions.id, { onDelete: "cascade" }),
+    sku: text("sku").notNull(),
+    name: text("name").notNull(),
+    description: text("description"),
+    chargeType: chargeType("charge_type").notNull(),
+    /** "month" for recurring lines; null for one-time. */
+    period: text("period"),
+    /** What one unit is: "sensor", "site", "gateway"… */
+    unit: text("unit").notNull(),
+    /** Null = price missing; such items always need custom pricing. */
+    priceMinor: integer("price_minor"),
+    volumeTiers: jsonb("volume_tiers").$type<VolumeTier[]>().notNull().default([]),
+    /** From this quantity the seller prices the line by hand. */
+    customPricingFromQty: integer("custom_pricing_from_qty"),
+    active: boolean("active").notNull().default(true),
+    availabilityNote: text("availability_note"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("catalog_items_version_sku_uq").on(t.catalogVersionId, t.sku),
+    index("catalog_items_account_idx").on(t.accountId),
+  ],
+);
+
+/**
+ * Fit rules the agent's fit check uses. `rule` is data, never category-specific
+ * code: see lib/catalog/fit.ts for the kinds.
+ */
+export const fitRules = pgTable(
+  "fit_rules",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    catalogVersionId: uuid("catalog_version_id")
+      .notNull()
+      .references(() => catalogVersions.id, { onDelete: "cascade" }),
+    rule: jsonb("rule").$type<Record<string, unknown>>().notNull(),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("fit_rules_version_idx").on(t.catalogVersionId)],
+);
+
+export const quoteStatus = pgEnum("quote_status", ["draft", "awaiting_approval", "sent", "replaced", "cancelled"]);
+
+export const quotes = pgTable(
+  "quotes",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    /** Shown as Q-<number>; unique per account. */
+    number: integer("number").notNull(),
+    status: quoteStatus("status").notNull().default("draft"),
+    currentVersion: integer("current_version").notNull().default(1),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("quotes_account_number_uq").on(t.accountId, t.number),
+    index("quotes_account_status_idx").on(t.accountId, t.status),
+    index("quotes_lead_idx").on(t.leadId),
+  ],
+);
+
+export type ApprovalReason =
+  | { kind: "price_missing"; sku: string }
+  | { kind: "custom_pricing_qty"; sku: string; qty: number; from: number }
+  | { kind: "discount_over_limit"; requestedBp: number; limitBp: number };
+
+/** One priced version of a quote. Versions are immutable once created. */
+export const quoteVersions = pgTable(
+  "quote_versions",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    quoteId: uuid("quote_id")
+      .notNull()
+      .references(() => quotes.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    catalogVersionId: uuid("catalog_version_id")
+      .notNull()
+      .references(() => catalogVersions.id),
+    currency: text("currency").notNull(),
+    discountBp: integer("discount_bp").notNull().default(0),
+    pricesIncludeTax: boolean("prices_include_tax").notNull(),
+    taxRateBp: integer("tax_rate_bp").notNull(),
+    oneTimeSubtotalMinor: integer("one_time_subtotal_minor").notNull(),
+    oneTimeDiscountMinor: integer("one_time_discount_minor").notNull(),
+    oneTimeTaxMinor: integer("one_time_tax_minor").notNull(),
+    oneTimeTotalMinor: integer("one_time_total_minor").notNull(),
+    recurringSubtotalMinor: integer("recurring_subtotal_minor").notNull(),
+    recurringDiscountMinor: integer("recurring_discount_minor").notNull(),
+    recurringTaxMinor: integer("recurring_tax_minor").notNull(),
+    recurringTotalMinor: integer("recurring_total_minor").notNull(),
+    /** Period of the recurring total ("month"); null when there are no recurring lines. */
+    recurringPeriod: text("recurring_period"),
+    approvalReasons: jsonb("approval_reasons").$type<ApprovalReason[]>().notNull().default([]),
+    approvedByUserId: uuid("approved_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    approvedAt: timestamp("approved_at", { withTimezone: true }),
+    validUntil: timestamp("valid_until", { withTimezone: true }).notNull(),
+    /** What changed from the previous version, in plain words. */
+    changeNote: text("change_note"),
+    /** "agent" | "human" | "system" */
+    createdByActor: text("created_by_actor").notNull(),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** Same key twice → the same version (tool retries, double clicks). */
+    idempotencyKey: text("idempotency_key"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("quote_versions_quote_version_uq").on(t.quoteId, t.version),
+    uniqueIndex("quote_versions_account_idem_uq").on(t.accountId, t.idempotencyKey).where(sql`${t.idempotencyKey} is not null`),
+  ],
+);
+
+export const quoteLines = pgTable(
+  "quote_lines",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    quoteVersionId: uuid("quote_version_id")
+      .notNull()
+      .references(() => quoteVersions.id, { onDelete: "cascade" }),
+    catalogItemId: uuid("catalog_item_id").references(() => catalogItems.id, { onDelete: "set null" }),
+    sku: text("sku").notNull(),
+    name: text("name").notNull(),
+    chargeType: chargeType("charge_type").notNull(),
+    period: text("period"),
+    unit: text("unit").notNull(),
+    qty: integer("qty").notNull(),
+    /** Null until a person prices a custom line. */
+    unitPriceMinor: integer("unit_price_minor"),
+    /** "list" | "tier" | "custom" */
+    priceSource: text("price_source").notNull(),
+    lineTotalMinor: integer("line_total_minor"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => [index("quote_lines_version_idx").on(t.quoteVersionId)],
+);
+
+export type CatalogVersion = typeof catalogVersions.$inferSelect;
+export type CatalogItem = typeof catalogItems.$inferSelect;
+export type FitRuleRow = typeof fitRules.$inferSelect;
+export type Quote = typeof quotes.$inferSelect;
+export type QuoteVersion = typeof quoteVersions.$inferSelect;
+export type QuoteLine = typeof quoteLines.$inferSelect;
+export type QuoteStatus = (typeof quoteStatus.enumValues)[number];

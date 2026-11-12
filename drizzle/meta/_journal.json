@@ -29,6 +29,13 @@
       "when": 1794495000004,
       "tag": "0003_leads_intake",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1794496629213,
+      "tag": "0004_catalog_quotes",
+      "breakpoints": true
     }
   ]
 }
