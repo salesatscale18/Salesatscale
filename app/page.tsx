@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { AuthBar } from "./auth-bar";
 import { ContactForm } from "./contact-form";
 import { Year } from "./year";
@@ -249,6 +250,7 @@ export default function Home() {
             <a href="#services">Services</a>
             <a href="#process">How it works</a>
             <a href="#contact">Contact</a>
+            <Link href="/terms">Terms &amp; Conditions</Link>
           </nav>
         </div>
       </footer>
