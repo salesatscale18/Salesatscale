@@ -325,5 +325,17 @@
   "settings.intake.sends": "What your form sends",
   "settings.intake.sends_body": "A POST with the key in the Authorization header and this JSON body:",
   "settings.intake.required": "Required: full_name, phone, consent (source and text). The same source_id or phone updates the existing lead. Leads who opted out are never re-added.",
-  "settings.intake.docs": "Full field reference and responses: docs/lead-intake.md"
+  "settings.intake.docs": "Full field reference and responses: docs/lead-intake.md",
+  "settings.sample.title": "Check a sample",
+  "settings.sample.body": "Paste the JSON your form will send. We check it the same way as a real delivery. Nothing is saved.",
+  "settings.sample.label": "Sample JSON",
+  "settings.sample.check": "Check",
+  "settings.sample.created": "Would be created",
+  "settings.sample.updated": "Would update {name}",
+  "settings.sample.rejected": "Would be rejected: {reason}",
+  "settings.sample.not_json": "Would be rejected: the body is not a JSON object.",
+  "settings.sample.nothing_saved": "Nothing was saved.",
+  "import.consent_from_rows": "Consent taken from each row (consent_source and consent_text columns).",
+  "import.consent_required_hint": "This file has no consent columns, so tick the box and say how everyone agreed.",
+  "import.choose_file_first": "Choose a file to see how consent will be read."
 }

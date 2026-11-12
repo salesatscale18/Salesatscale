@@ -138,6 +138,28 @@ export async function upsertLead(
   return { ok: true, lead, created: false };
 }
 
+export type PreviewResult =
+  | { result: "created" }
+  | { result: "updated"; leadId: string; leadName: string }
+  | { result: "rejected"; reason: string };
+
+/**
+ * What upsertLead would do with this input, without writing anything
+ * ("Check a sample" in Settings). Mirrors upsertLead's decisions.
+ */
+export async function previewLead(db: Db, accountId: string, input: LeadInput): Promise<PreviewResult> {
+  const existing = await findExisting(db, accountId, input);
+  if (!existing) return input.consent ? { result: "created" } : { result: "rejected", reason: refusalText({ ok: false, reason: "consent_required" }).problem };
+  if (existing.status === "opted_out") {
+    return { result: "rejected", reason: refusalText({ ok: false, reason: "opted_out", optedOutAt: existing.optedOutAt }).problem };
+  }
+  if (existing.phone !== input.phone) {
+    const [clash] = await db.select({ id: leads.id }).from(leads).where(and(eq(leads.accountId, accountId), eq(leads.phone, input.phone)));
+    if (clash) return { result: "rejected", reason: refusalText({ ok: false, reason: "phone_conflict" }).problem };
+  }
+  return { result: "updated", leadId: existing.id, leadName: existing.fullName };
+}
+
 // ---------------------------------------------------------------------------
 // Lists and views
 // ---------------------------------------------------------------------------

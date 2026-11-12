@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { sellerAccounts } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
-import { bearerKey, parseLead } from "@/lib/leads/rules";
+import { bearerKey, parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
 import { recordDelivery, refusalText, resolveIntakeKey, upsertLead } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
 
@@ -36,38 +36,18 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
     await log("rejected", "Body over 32 KB", null);
     return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
   }
-  let body: Record<string, unknown>;
-  try {
-    const parsed: unknown = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
-    body = parsed as Record<string, unknown>;
-  } catch {
+  const body = parseJsonObject(text);
+  if (!body) {
     await log("rejected", "Body is not a JSON object", null);
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
   const name = body.full_name ?? body.name;
-
-  const consent = (body.consent && typeof body.consent === "object" ? body.consent : {}) as Record<string, unknown>;
   const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const lead = parseLead(
-    {
-      fullName: name,
-      company: body.business ?? body.company,
-      email: body.email,
-      phone: body.phone,
-      language: body.language,
-      sourceLabel: body.source ?? "Website form",
-      sourceRef: body.source_id,
-      consent: consent.given ?? (consent.source ? "yes" : undefined),
-      consentSource: consent.source,
-      consentWording: consent.text ?? consent.wording,
-      consentCapturedAt: consent.at ?? consent.captured_at,
-      consentIp: consent.ip ?? forwardedFor,
-      consentPageUrl: consent.page_url,
-    },
-    account.market,
-    { language: (account.languages[0] ?? "en") as Locale, now: new Date(), requireConsentText: true },
-  );
+  const lead = parseLead(rawFromIntakeBody(body, forwardedFor), account.market, {
+    language: (account.languages[0] ?? "en") as Locale,
+    now: new Date(),
+    requireConsentText: true,
+  });
   if (!lead.ok) {
     await log("rejected", Object.values(lead.errors)[0] ?? "Invalid lead", name);
     return NextResponse.json({ error: "invalid_lead", fields: lead.errors }, { status: 422 });

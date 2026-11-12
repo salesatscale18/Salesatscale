@@ -247,3 +247,33 @@ export function bearerKey(authorization: string | null, apiKeyHeader: string | n
   const m = authorization?.match(/^Bearer\s+(\S+)$/i);
   return m?.[1] ?? apiKeyHeader?.trim() ?? null;
 }
+
+/** Maps an intake API JSON body (docs/lead-intake.md) to a RawLead. Shared by the endpoint and "Check a sample". */
+export function rawFromIntakeBody(body: Record<string, unknown>, callerIp?: string | null): RawLead {
+  const consent = (body.consent && typeof body.consent === "object" ? body.consent : {}) as Record<string, unknown>;
+  return {
+    fullName: body.full_name ?? body.name,
+    company: body.business ?? body.company,
+    email: body.email,
+    phone: body.phone,
+    language: body.language,
+    sourceLabel: body.source ?? "Website form",
+    sourceRef: body.source_id,
+    consent: consent.given ?? (consent.source ? "yes" : undefined),
+    consentSource: consent.source,
+    consentWording: consent.text ?? consent.wording,
+    consentCapturedAt: consent.at ?? consent.captured_at,
+    consentIp: consent.ip ?? callerIp ?? undefined,
+    consentPageUrl: consent.page_url,
+  };
+}
+
+/** Parses a JSON object body, or returns null. */
+export function parseJsonObject(text: string): Record<string, unknown> | null {
+  try {
+    const v: unknown = JSON.parse(text);
+    return v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}

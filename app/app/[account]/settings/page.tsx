@@ -7,6 +7,7 @@ import { relativeTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { revokeIntakeKeyAction } from "./actions";
 import { IntakeKeyForm } from "./key-form";
+import { SampleCheck } from "./sample-check";
 
 async function baseUrl() {
   const configured = process.env.APP_URL?.replace(/\/+$/, "");
@@ -119,6 +120,7 @@ export default async function SettingsPage({ params }: { params: Promise<{ accou
           <span className="sas-small">{t("settings.intake.sends_body")}</span>
           <pre className="sas-code">{EXAMPLE}</pre>
           <span className="sas-small">{t("settings.intake.required")}</span>
+          <SampleCheck slug={account.slug} example={EXAMPLE} />
           <span className="sas-hint">{t("settings.intake.docs")}</span>
         </aside>
       </div>

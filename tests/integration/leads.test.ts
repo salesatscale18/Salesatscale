@@ -5,7 +5,7 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { parseLead, type LeadInput } from "@/lib/leads/rules";
 import {
-  countLeadsByView, createIntakeKey, getLead, importLeadsCsv, latestConsent, listLeadEvents, listLeads, optOutLead,
+  countLeadsByView, createIntakeKey, previewLead, getLead, importLeadsCsv, latestConsent, listLeadEvents, listLeads, optOutLead,
   resolveIntakeKey, revokeIntakeKey, upsertLead,
 } from "@/lib/leads/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -157,6 +157,17 @@ describe("leads", () => {
     expect(await revokeIntakeKey(db, actor, accA, row.id)).toBeNull(); // other account can't revoke it
     expect(await revokeIntakeKey(db, actor, accB, row.id)).not.toBeNull();
     expect(await resolveIntakeKey(db, key)).toBeNull();
+  });
+
+  it("previews what an intake would do without writing anything", async () => {
+    const before = (await db.select().from(leads)).length;
+    const events = (await db.select().from(leadEvents)).length;
+    expect(await previewLead(db, accA, lead({ phone: "0520001111" }))).toEqual({ result: "created" });
+    expect((await previewLead(db, accA, lead({ phone: "0520001111", consent: "no", consentSource: "" }))).result).toBe("rejected");
+    expect(await previewLead(db, accA, lead({ phone: "0523334444" }))).toMatchObject({ result: "updated", leadName: "Omer Katz" });
+    expect(await previewLead(db, accA, lead())).toMatchObject({ result: "rejected", reason: expect.stringMatching(/^Opted out/) });
+    expect((await db.select().from(leads)).length).toBe(before);
+    expect((await db.select().from(leadEvents)).length).toBe(events);
   });
 
   it("stores consent and events only under the lead's account", async () => {

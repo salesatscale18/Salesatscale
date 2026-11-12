@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useMemo } from "react";
+import { useActionState, useMemo, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
@@ -12,8 +12,22 @@ function csvEscape(v: string | number) {
 }
 
 /** CSV import (canvas: ImportCsv): upload with optional whole-file consent, then the result state. */
+/** Header names that carry per-row consent (same aliases as lib/leads/rules CSV_COLUMNS). */
+const ROW_CONSENT_HEADERS = new Set(["consent_source", "consent source", "how they agreed"]);
+
+async function fileHasConsentColumns(file: File): Promise<boolean> {
+  const head = await file.slice(0, 4096).text();
+  const firstLine = head.replace(/^\uFEFF/, "").split(/\r?\n/)[0] ?? "";
+  return firstLine.split(",").some((h) => ROW_CONSENT_HEADERS.has(h.trim().replace(/^"|"$/g, "").toLowerCase()));
+}
+
 export function ImportForm({ slug, who }: { slug: string; who: string }) {
   const [state, action, pending] = useActionState<ImportState, FormData>(importLeadsAction, { status: "idle" });
+  // null = no file chosen yet; true/false = whether the file has per-row consent columns.
+  const [rowConsent, setRowConsent] = useState<boolean | null>(null);
+  const [fileConsentTicked, setFileConsentTicked] = useState(false);
+  const [statement, setStatement] = useState("");
+  const canImport = rowConsent === true || (rowConsent === false && fileConsentTicked && statement.trim().length > 0);
 
   const rejectedHref = useMemo(() => {
     if (state.status !== "done" || state.result.rejected.length === 0) return null;
@@ -102,20 +116,45 @@ export function ImportForm({ slug, who }: { slug: string; who: string }) {
       <input type="hidden" name="slug" value={slug} />
       {state.status === "bad_file" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("import.bad_file")}</span></div> : null}
       {state.status === "missing_file_consent" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("import.file_consent_missing")}</span></div> : null}
+      <fieldset className="sas-fieldset" style={{ gridTemplateColumns: "1fr", padding: 12 }} aria-describedby="consent-state">
+        <legend>{t("import.consent_cols")}</legend>
+        {rowConsent === null ? <span className="sas-small" id="consent-state">{t("import.choose_file_first")}</span> : null}
+        {rowConsent === true ? (
+          <span className="sas-small" id="consent-state" style={{ display: "flex", gap: 6, alignItems: "center", color: "var(--ink)" }}>
+            <Icon name="shield-check" />{t("import.consent_from_rows")}
+          </span>
+        ) : null}
+        {rowConsent === false ? (
+          <>
+            <span className="sas-small" id="consent-state">{t("import.consent_required_hint")}</span>
+            <label className="sas-check">
+              <input type="checkbox" name="fileConsent" value="yes" checked={fileConsentTicked} onChange={(e) => setFileConsentTicked(e.target.checked)} required />
+              {t("import.file_consent")}
+            </label>
+            <div className="sas-input-group">
+              <label className="sas-input-label" htmlFor="fileConsentSource">{t("import.file_consent_source")}<span className="sas-req" aria-hidden="true">*</span></label>
+              <input className="sas-input" id="fileConsentSource" name="fileConsentSource" value={statement} onChange={(e) => setStatement(e.target.value)} placeholder="Signed contact sheet at HoReCa Expo, 10 Nov" required />
+            </div>
+          </>
+        ) : null}
+      </fieldset>
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor="file">{t("import.file")}</label>
-        <input id="file" name="file" type="file" accept=".csv,text/csv" required aria-describedby="file-hint" />
+        <input
+          id="file"
+          name="file"
+          type="file"
+          accept=".csv,text/csv"
+          required
+          aria-describedby="file-hint"
+          onChange={async (e) => {
+            const f = e.target.files?.[0];
+            setRowConsent(f ? await fileHasConsentColumns(f) : null);
+          }}
+        />
         <span className="sas-hint" id="file-hint">{t("import.file_hint")}</span>
       </div>
-      <fieldset className="sas-fieldset" style={{ gridTemplateColumns: "1fr", padding: 12 }}>
-        <legend>{t("import.consent_cols")}</legend>
-        <label className="sas-check"><input type="checkbox" name="fileConsent" value="yes" />{t("import.file_consent")}</label>
-        <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="fileConsentSource">{t("import.file_consent_source")}</label>
-          <input className="sas-input" id="fileConsentSource" name="fileConsentSource" placeholder="Signed contact sheet at HoReCa Expo, 10 Nov" />
-        </div>
-      </fieldset>
-      <div><button type="submit" className={buttonClass("primary")} disabled={pending}><Icon name="upload" />{t("import.submit")}</button></div>
+      <div><button type="submit" className={buttonClass("primary")} disabled={pending || !canImport} aria-disabled={pending || !canImport}><Icon name="upload" />{t("import.submit")}</button></div>
     </form>
   );
 }
