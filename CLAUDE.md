@@ -28,3 +28,13 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
 - Work on a branch and open a PR to `main`; never push to `main` directly.
 - `npm run build` must pass before opening a PR.
 - Never commit secrets; keep `.env.example` updated when adding env vars.
+
+## Team coordination (parallel sessions)
+- Several sessions work in parallel. The shared channel is GitHub issue #2
+  (https://github.com/salesatscale18/Salesatscale/issues/2); the protocol is
+  `docs/TEAM.md`. Read both at the start of every session.
+- Post `[START]` / `[CLAIM]` / `[QUEUE]` / `[BLOCKED]` / `[DONE]` comments there.
+- Claim shared areas before editing them; only one migration (`db/schema.ts` +
+  `drizzle/`) may be in flight at a time.
+- Only the Lead session merges to `main`, one PR at a time, via the release
+  queue in the channel.
