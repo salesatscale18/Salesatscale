@@ -27,14 +27,14 @@ export const STATUS = {
     awaiting_approval: { tone: "warning", icon: "alert-triangle" },
     sent: { tone: "neutral", icon: "send" },
     expires_today: { tone: "warning", icon: "clock" },
-    expired: { tone: "neutral", icon: "clock" },
+    expired: { tone: "neutral", icon: "calendar-x" },
     replaced: { tone: "neutral", icon: "file-text" },
   },
   order_form: {
     sent: { tone: "neutral", icon: "send" },
     opened: { tone: "neutral", icon: "eye" },
     signed: { tone: "success", icon: "pen" },
-    link_expired: { tone: "neutral", icon: "clock" },
+    link_expired: { tone: "neutral", icon: "calendar-x" },
   },
   payment: {
     not_started: { tone: "neutral", icon: "credit-card" },
@@ -48,7 +48,7 @@ export const STATUS = {
     draft: { tone: "neutral", icon: "file-text" },
     testing: { tone: "warning", icon: "flask-conical" },
     live: { tone: "success", icon: "sparkles" },
-    retired: { tone: "neutral", icon: "pause" },
+    retired: { tone: "neutral", icon: "archive" },
   },
   channel: {
     connected: { tone: "success", icon: "message-circle" },

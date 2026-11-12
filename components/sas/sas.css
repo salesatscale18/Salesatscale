@@ -11,7 +11,7 @@
   --line: #dde1e8; --line-strong: #7d8697;
   --ink: #0f1420; --ink-muted: #566073;
   --primary: #2357d0; --on-primary: #ffffff;
-  /* Not in tokens.json yet: active nav item fill, taken from the SideNav artboard. */
+  /* Selected nav item, table row or option card. Confirmed by the UX session; not in tokens.json yet. */
   --primary-soft: #e8effc;
   --agent: #6a43c7; --agent-soft: #efeafc; --on-agent: #ffffff;
   --human: #a8327a; --human-soft: #fbe8f3;
@@ -33,7 +33,7 @@
     --surface: #0b0d12; --surface-raised: #151922; --surface-sunken: #10131a;
     --line: #262c38; --line-strong: #5b6577;
     --ink: #e8ebf1; --ink-muted: #9aa3b2;
-    --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #17233f;
+    --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #16233d;
     --agent: #b49af7; --agent-soft: #241c3c; --on-agent: #0b0d12;
     --human: #f08cc4; --human-soft: #3a1630;
     --success: #5fd47a; --success-soft: #12291a;
@@ -47,7 +47,7 @@
   --surface: #0b0d12; --surface-raised: #151922; --surface-sunken: #10131a;
   --line: #262c38; --line-strong: #5b6577;
   --ink: #e8ebf1; --ink-muted: #9aa3b2;
-  --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #17233f;
+  --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #16233d;
   --agent: #b49af7; --agent-soft: #241c3c; --on-agent: #0b0d12;
   --human: #f08cc4; --human-soft: #3a1630;
   --success: #5fd47a; --success-soft: #12291a;
