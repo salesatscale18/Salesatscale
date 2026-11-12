@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { Avatar, Button, StatusPill, buttonClass } from "@/components/sas/primitives";
+import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { Timeline, type TimelineItem } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -8,7 +8,7 @@ import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
 import { maskPhone } from "@/lib/leads/rules";
 import { exactTime, relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
-import { optOutLeadAction } from "../actions";
+import { OptOutButton } from "./opt-out";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -97,6 +97,7 @@ export default async function LeadCardPage({
             <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("lead.card.learn_pending")}</p>
             <div className="sas-lead__consent">
               <Icon name="shield-check" />
+              <div className="sas-stack-2" style={{ flex: 1 }}>
               <span>
                 {consent
                   ? t("lead.card.consent", {
@@ -106,15 +107,9 @@ export default async function LeadCardPage({
                     })
                   : t("lead.card.consent_none")}
               </span>
+              {lead.status !== "opted_out" ? <OptOutButton slug={account.slug} leadId={lead.id} /> : null}
+              </div>
             </div>
-            {lead.status !== "opted_out" ? (
-              <form action={optOutLeadAction} className="sas-stack-2" style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
-                <input type="hidden" name="slug" value={account.slug} />
-                <input type="hidden" name="leadId" value={lead.id} />
-                <Button type="submit" variant="danger" size="sm" icon="x-circle">{t("lead.card.opt_out")}</Button>
-                <span className="sas-hint">{t("lead.card.opt_out_hint")}</span>
-              </form>
-            ) : null}
           </aside>
         </div>
       </section>

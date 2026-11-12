@@ -72,7 +72,8 @@ export function AddLeadForm({ slug, languages, closeHref }: { slug: string; lang
         <fieldset style={{ border: 0, padding: 0, margin: 0 }} className="sas-stack-2">
           <legend className="sas-input-label">{t("lead.form.after")}</legend>
           <label className="sas-check"><input type="radio" name="after" value="agent" defaultChecked={v("after", "agent") === "agent"} />{t("lead.form.after_agent")}</label>
-          <label className="sas-check"><input type="radio" name="after" value="me" defaultChecked={v("after") === "me"} />{t("lead.form.after_me")}</label>
+          <label className="sas-check"><input type="radio" name="after" value="me" defaultChecked={v("after") === "me"} aria-describedby="after-me-hint" />{t("lead.form.after_me")}</label>
+          <span className="sas-hint" id="after-me-hint" style={{ paddingInlineStart: 24 }}>{t("lead.form.after_me_hint")}</span>
         </fieldset>
         <div style={{ display: "flex", gap: 8 }}>
           <button type="submit" className={buttonClass("primary")} disabled={pending}>{t("lead.form.save")}</button>

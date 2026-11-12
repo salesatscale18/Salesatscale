@@ -227,7 +227,7 @@
   "lead.form.consent_hint": "Required. The agent never contacts a lead without a consent record.",
   "lead.form.after": "After saving",
   "lead.form.after_agent": "The agent contacts them once your account is live",
-  "lead.form.after_me": "Save only, I'll contact them",
+  "lead.form.after_me": "I'll contact them myself",
   "lead.form.save": "Save lead",
   "lead.form.cancel": "Cancel",
   "lead.form.errors": "Fix the highlighted fields and try again.",
@@ -245,7 +245,6 @@
   "lead.card.consent_none": "No consent record. This lead can't be contacted.",
   "lead.card.timeline": "Timeline",
   "lead.card.opt_out": "Mark as opted out",
-  "lead.card.opt_out_hint": "Use this when the person asks not to be contacted. It can't be undone here.",
   "lead.card.existing": "A lead with this phone number already existed, so it was updated.",
   "lead.event.lead.created": "Lead added",
   "lead.event.lead.updated": "Lead details updated",
@@ -282,5 +281,7 @@
   "settings.intake.last_used": "last used {when}",
   "settings.intake.never_used": "never used",
   "settings.intake.new_key": "Copy this key now. For security it is shown only once.",
-  "settings.intake.docs": "Field reference: docs/lead-intake.md in the repository."
+  "settings.intake.docs": "Field reference: docs/lead-intake.md in the repository.",
+  "lead.form.after_me_hint": "You become the owner. The agent won't message them.",
+  "lead.card.opt_out_confirm": "They won't be contacted again on any channel. To undo, you'll need new consent from them."
 }
