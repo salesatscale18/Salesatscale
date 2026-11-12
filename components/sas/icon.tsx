@@ -5,8 +5,8 @@
 import {
   Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleSlash, CircleX, Clock, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
-  MessageSquare, Package, Pause, Pen, Rocket, Send, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
-  User, UserPlus, type LucideIcon,
+  MessageSquare, Package, Pause, Pen, Rocket, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
+  User, UserPlus, Wrench, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -38,11 +38,13 @@ const ICONS = {
   pen: Pen,
   rocket: Rocket,
   send: Send,
+  "shield-alert": ShieldAlert,
   "shield-check": ShieldCheck,
   sliders: SlidersHorizontal,
   sparkles: Sparkles,
   user: User,
   "user-plus": UserPlus,
+  wrench: Wrench,
   "x-circle": CircleX,
 } satisfies Record<string, LucideIcon>;
 

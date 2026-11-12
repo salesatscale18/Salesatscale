@@ -176,5 +176,7 @@
   "invite_link.footnote": "Invites will be emailed automatically once email is set up.",
   "invite_link.renew": "Create new link",
   "admin.accounts.invite_name": "Name",
-  "admin.accounts.invite_email": "Email"
+  "admin.accounts.invite_email": "Email",
+  "status.tool_call.refused": "Refused",
+  "status.tool_call.failed": "Failed"
 }

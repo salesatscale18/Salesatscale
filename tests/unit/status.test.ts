@@ -12,8 +12,8 @@ const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   order_form: [["Sent", "neutral"], ["Opened", "neutral"], ["Signed", "success"], ["Link expired", "neutral"]],
   payment: [["Not started", "neutral"], ["Pending", "warning"], ["Paid", "success"], ["Failed", "danger"], ["Refunded", "neutral"], ["Bank transfer expected", "warning"]],
   agent_version: [["Draft", "neutral"], ["Testing", "warning"], ["Live", "success"], ["Retired", "neutral"]],
-  // From the AdminAccounts artboard (to be added to the design system table).
   account: [["Setting up", "warning"], ["Live", "success"], ["Paused", "neutral"]],
+  tool_call: [["Refused", "warning"], ["Failed", "danger"]],
   channel: [["Connected", "success"], ["Template pending", "warning"], ["Template rejected", "danger"], ["Disconnected", "danger"]],
 };
 

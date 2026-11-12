@@ -50,11 +50,15 @@ export const STATUS = {
     live: { tone: "success", icon: "sparkles" },
     retired: { tone: "neutral", icon: "archive" },
   },
-  // Account row: decided by the UX session (2026-11-12), to be added to the design system table.
   account: {
     setting_up: { tone: "warning", icon: "list-checks" },
     live: { tone: "success", icon: "check-circle" },
     paused: { tone: "neutral", icon: "pause" },
+  },
+  // Trace only (lead card and test lab): a refusal is the rules working, never an error.
+  tool_call: {
+    refused: { tone: "warning", icon: "shield-alert" },
+    failed: { tone: "danger", icon: "x-circle" },
   },
   channel: {
     connected: { tone: "success", icon: "message-circle" },

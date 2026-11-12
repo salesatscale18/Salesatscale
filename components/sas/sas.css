@@ -180,7 +180,7 @@
 .sas-banner--test { background: var(--warning-soft); color: var(--ink); border-block: 1px dashed var(--warning); }
 .sas-banner--test .sas-ico { color: var(--warning); }
 .sas-banner--paused { background: var(--warning-soft); color: var(--ink); border-block: 1px solid var(--warning); }
-.sas-banner--paused .sas-ico { color: var(--warning); }
+.sas-banner--paused .sas-ico, .sas-banner--paused strong { color: var(--warning); }
 
 /* App shell: 232px side navigation + content */
 .sas-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }

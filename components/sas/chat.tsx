@@ -38,7 +38,7 @@ export function ChatMessage({
       {trace && trace.length > 0 ? (
         <div className="sas-msg__trace">
           {trace.map((item, i) => (
-            <Chip key={i} icon={(item.kind === "tool" ? "sliders" : "book-open") satisfies IconName}>
+            <Chip key={i} icon={(item.kind === "tool" ? "wrench" : "book-open") satisfies IconName}>
               {item.label}
             </Chip>
           ))}
