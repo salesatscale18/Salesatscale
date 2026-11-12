@@ -40,6 +40,21 @@ export function parseTiers(text: string, currency: string): VolumeTier[] | null 
   return tiers.sort((a, b) => a.minQty - b.minQty);
 }
 
+/**
+ * Tier rules (canvas: Catalog · Price tiers editor). Each tier's price is lower
+ * than the one before (the base price first), and every tier starts below the
+ * custom-pricing quantity. Duplicates are rejected by parseTiers.
+ */
+export function tierProblem(priceMinor: number | null, tiers: VolumeTier[], customFrom: number | null): string | null {
+  let prev = priceMinor;
+  for (const tier of [...tiers].sort((a, b) => a.minQty - b.minQty)) {
+    if (prev !== null && tier.priceMinor >= prev) return `The price from ${tier.minQty} must be lower than the tier before.`;
+    if (customFrom !== null && tier.minQty >= customFrom) return `The tier from ${tier.minQty} starts at or above custom pricing (${customFrom}+).`;
+    prev = tier.priceMinor;
+  }
+  return null;
+}
+
 export function parseCatalogItem(raw: Record<string, unknown>, currency: string): { ok: true; value: CatalogItemInput } | { ok: false; errors: CatalogItemErrors } {
   const errors: CatalogItemErrors = {};
   const sku = s(raw.sku).toUpperCase();
@@ -56,13 +71,17 @@ export function parseCatalogItem(raw: Record<string, unknown>, currency: string)
     if (priceMinor === null) errors.price = "Enter the price as a number, or leave it empty if it is priced by hand.";
   }
   const tiers = parseTiers(s(raw.tiers), currency);
-  if (tiers === null) errors.tiers = 'One tier per line, like "10: 550" (from 10 units, 550 each).';
+  if (tiers === null) errors.tiers = "Each tier needs a quantity of 2 or more, used once, and a price.";
   else if (tiers.length > 0 && priceMinor === null) errors.tiers = "Set a list price before adding volume tiers.";
   const fromText = s(raw.customPricingFromQty);
   let customPricingFromQty: number | null = null;
   if (fromText) {
     customPricingFromQty = /^\d+$/.test(fromText) ? Number(fromText) : NaN;
     if (!Number.isSafeInteger(customPricingFromQty) || customPricingFromQty < 1) errors.customPricingFromQty = "Enter a whole number, or leave it empty.";
+  }
+  if (!errors.tiers && !errors.customPricingFromQty && tiers) {
+    const problem = tierProblem(priceMinor, tiers, customPricingFromQty);
+    if (problem) errors.tiers = problem;
   }
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {

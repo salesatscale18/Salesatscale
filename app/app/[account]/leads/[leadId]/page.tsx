@@ -14,6 +14,9 @@ import { OptOutButton } from "./opt-out";
 import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
 import { formatMoney } from "@/lib/domain/money";
 
+const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
+  `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const EVENT_ICON: Record<string, IconName> = {
@@ -24,7 +27,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "quote.created": "file-text",
   "quote.versioned": "file-text",
   "quote.approved": "check-circle",
-  "quote.cancelled": "archive",
+  "quote.cancelled": "file-x",
   "handoff.requested": "user",
   "deal.verified": "shield-check",
 };
@@ -112,13 +115,25 @@ export default async function LeadCardPage({
               </div>
               {leadQuotes.length === 0 ? <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("lead.card.no_quotes")}</p> : (
                 <ul className="sas-list">
-                  {leadQuotes.map(({ quote, version }) => (
+                  {leadQuotes.map(({ quote, version, older }) => (
                     <li key={quote.id}>
                       <a className="sas-list__row" href={`/app/${account.slug}/orders?quote=${quote.id}`}>
                         <span className="sas-num">Q-{quote.number} v{quote.currentVersion}</span>
-                        <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : `${formatMoney(version.oneTimeTotalMinor, version.currency)}${version.recurringTotalMinor ? ` + ${formatMoney(version.recurringTotalMinor, version.currency, { period: "month" })}` : ""}`}</span>
+                        <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : quoteTotals(version)}</span>
                         <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now)} />
                       </a>
+                      {older.length ? (
+                        <details style={{ padding: "0 16px 8px" }}>
+                          <summary className="sas-small">{older.length === 1 ? t("lead.card.show_version", { version: older[0].version }) : t("lead.card.show_versions", { count: older.length })}</summary>
+                          <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: "8px 0 0" }}>
+                            {older.map((v) => (
+                              <li key={v.id} className="sas-small sas-num" style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                                <span>v{v.version}</span><span>{quoteTotals(v)}</span>{v.changeNote ? <span>· {v.changeNote}</span> : null}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      ) : null}
                     </li>
                   ))}
                 </ul>

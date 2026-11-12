@@ -5,7 +5,8 @@ import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { getLead } from "@/lib/leads/service";
-import { getQuote } from "@/lib/quotes/service";
+import { getQuote, QUOTE_VALID_DAYS } from "@/lib/quotes/service";
+import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
 import { QuoteEditor } from "./editor";
 
@@ -30,7 +31,13 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
     <main className="sas-shell__content">
       <header className="sas-stack-2">
         <nav aria-label="Breadcrumb" className="sas-small"><a href={`/app/${account.slug}/leads/${leadId}`}>{row.lead.fullName}</a> / {from ? `Q-${from.quote.number}` : t("quote.editor.create")}</nav>
-        <h1 className="sas-title">{from ? t("quote.editor.title_version", { number: from.quote.number }) : t("quote.editor.title_new", { name: row.lead.fullName })}</h1>
+        <h1 className="sas-title">{from ? t("quote.editor.title_version", { number: from.quote.number, version: from.quote.currentVersion + 1 }) : t("quote.editor.title_new", { name: row.lead.fullName })}</h1>
+        {current ? (
+          <span className="sas-small">
+            {t("quote.editor.replaces", { version: current.version.version, total: formatMoney(current.version.oneTimeTotalMinor, account.currency) })}
+            {current.version.recurringTotalMinor ? ` + ${formatMoney(current.version.recurringTotalMinor, account.currency, { period: "month" })}` : ""}
+          </span>
+        ) : null}
         {catalog ? <span className="sas-small">{t("quote.editor.intro", { version: catalog.version.version })}</span> : null}
       </header>
       {!catalog ? (
@@ -44,13 +51,13 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
           slug={account.slug}
           leadId={leadId}
           fromQuote={from?.quote.id}
-          nextVersion={from ? from.quote.currentVersion + 1 : undefined}
           currency={account.currency}
           maxDiscountPct={account.maxDiscountBp / 100}
           items={catalog.items.filter((i) => i.active).map((i) => ({ sku: i.sku, name: i.name, unit: i.unit, recurring: i.chargeType === "recurring", priceMinor: i.priceMinor, availability: i.availabilityNote }))}
           initialQty={initialQty}
           initialDiscount={current && current.version.discountBp ? String(current.version.discountBp / 100) : ""}
           idem={randomUUID()}
+          validDays={QUOTE_VALID_DAYS}
         />
       )}
     </main>

@@ -62,6 +62,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.published", { version: one(sp.published) })}</span></div> : null}
       {one(sp.publish) === "no_active_items" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.publish_empty")}</span></div> : null}
+      {one(sp.publish) === "invalid_tiers" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.publish_tiers", { skus: one(sp.skus) })}</span></div> : null}
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.edit.saved")}</span></div> : null}
 
       <div className="sas-split">
@@ -104,7 +105,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
               <ul className="sas-list" style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-md)" }}>
                 {state.rules.map((r) => (
                   <li key={r.id} className="sas-list__row">
-                    <Icon name={r.rule.kind === "advice" ? "book-open" : "check"} />
+                    <Icon name={r.rule.kind === "advice" ? "info" : "check"} />
                     <span className="sas-list__main">{describeFitRule(r.rule)}</span>
                     <form action={removeRuleAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="ruleId" value={r.id} /><Button type="submit" size="sm" variant="ghost">{t("catalog.rules.remove")}</Button></form>
                   </li>

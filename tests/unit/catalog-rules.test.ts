@@ -29,3 +29,15 @@ describe("tiers and tax", () => {
   });
   it.each([["18", 1800], ["17.5", 1750], ["0", 0], ["100", null], ["-1", null], ["x", null]])("tax %s → %s", (t, bp) => expect(parseTaxRate(t)).toBe(bp));
 });
+
+describe("tier rules", () => {
+  it("each tier is cheaper than the one before and below custom pricing", async () => {
+    const { tierProblem, parseCatalogItem } = await import("@/lib/catalog/rules");
+    expect(tierProblem(59000, [{ minQty: 10, priceMinor: 55000 }, { minQty: 20, priceMinor: 52000 }], 50)).toBeNull();
+    expect(tierProblem(59000, [{ minQty: 10, priceMinor: 59000 }], null)).toMatch(/lower than the tier before/);
+    expect(tierProblem(59000, [{ minQty: 20, priceMinor: 52000 }, { minQty: 10, priceMinor: 50000 }], null)).toMatch(/from 20/);
+    expect(tierProblem(59000, [{ minQty: 50, priceMinor: 50000 }], 50)).toMatch(/custom pricing \(50\+\)/);
+    const r = parseCatalogItem({ sku: "A", name: "A", unit: "unit", price: "590", tiers: "10: 600" }, "ILS");
+    expect(!r.ok && r.errors.tiers).toMatch(/lower/);
+  });
+});

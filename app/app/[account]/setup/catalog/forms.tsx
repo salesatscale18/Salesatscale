@@ -4,6 +4,7 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
+import { PriceTiers } from "./tiers";
 import { addRuleAction, saveItemAction, type ItemFormState, type RuleFormState } from "./actions";
 
 export type ItemDefaults = {
@@ -50,32 +51,13 @@ export function ItemForm({ slug, d, currency }: { slug: string; d: ItemDefaults;
         <input className="sas-input" id="ci-name" name="name" defaultValue={d.name} {...invalid("name")} />
         {err("name")}
       </div>
-      <div className="sas-grid-2" style={{ gap: 12 }}>
-        <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="ci-price">{t("catalog.edit.price")} ({currency})</label>
-          <input className="sas-input sas-num" id="ci-price" name="price" inputMode="decimal" defaultValue={d.price} aria-describedby="ci-price-hint" {...invalid("price")} />
-          <span className="sas-hint" id="ci-price-hint">{t("catalog.edit.price_hint")}</span>
-          {err("price")}
-        </div>
-        <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="ci-unit">{t("catalog.edit.unit")}</label>
-          <input className="sas-input" id="ci-unit" name="unit" defaultValue={d.unit} aria-describedby="ci-unit-hint" {...invalid("unit")} />
-          <span className="sas-hint" id="ci-unit-hint">{t("catalog.edit.unit_hint")}</span>
-          {err("unit")}
-        </div>
-      </div>
       <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-tiers">{t("catalog.edit.tiers")}</label>
-        <textarea className="sas-textarea sas-num" id="ci-tiers" name="tiers" rows={2} defaultValue={d.tiers} aria-describedby="ci-tiers-hint" {...invalid("tiers")} />
-        <span className="sas-hint" id="ci-tiers-hint">{t("catalog.edit.tiers_hint")}</span>
-        {err("tiers")}
+        <label className="sas-input-label" htmlFor="ci-unit">{t("catalog.edit.unit")}</label>
+        <input className="sas-input" id="ci-unit" name="unit" defaultValue={d.unit} aria-describedby="ci-unit-hint" {...invalid("unit")} />
+        <span className="sas-hint" id="ci-unit-hint">{t("catalog.edit.unit_hint")}</span>
+        {err("unit")}
       </div>
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-from">{t("catalog.edit.custom_from")}</label>
-        <input className="sas-input sas-num" id="ci-from" name="customPricingFromQty" inputMode="numeric" defaultValue={d.customPricingFromQty} aria-describedby="ci-from-hint" {...invalid("customPricingFromQty")} />
-        <span className="sas-hint" id="ci-from-hint">{t("catalog.edit.custom_from_hint")}</span>
-        {err("customPricingFromQty")}
-      </div>
+      <PriceTiers currency={currency} price={d.price} tiers={d.tiers} customFrom={d.customPricingFromQty} errors={e} />
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor="ci-av">{t("catalog.edit.availability")}</label>
         <input className="sas-input" id="ci-av" name="availabilityNote" defaultValue={d.availabilityNote} placeholder="In stock · ships in 3 days" />

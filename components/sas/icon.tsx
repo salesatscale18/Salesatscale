@@ -4,7 +4,7 @@
  */
 import {
   Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
-  CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
+  CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
   Trophy, Upload, User, UserPlus, Wrench, X, type LucideIcon,
 } from "lucide-react";
@@ -55,6 +55,8 @@ const ICONS = {
   wrench: Wrench,
   "x-circle": CircleX,
   x: X,
+  "file-x": FileX,
+  info: Info,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

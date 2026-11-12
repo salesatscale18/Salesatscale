@@ -12,7 +12,7 @@ const rules: FitRule[] = [
 describe("checkFit", () => {
   it("passes a complete two-site quote and returns the advice", () => {
     const r = checkFit(rules, [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], 2);
-    expect(r).toEqual({ ok: true, problems: [], notes: ["Freezers below −25°C need SNS-210 instead.", "No Wi-Fi on site: use GW-10C."] });
+    expect(r).toEqual({ ok: true, problems: [], fixes: [], notes: ["Freezers below −25°C need SNS-210 instead.", "No Wi-Fi on site: use GW-10C."] });
   });
 
   it("explains missing gateways, too few per site and too many sensors per gateway", () => {
@@ -25,6 +25,12 @@ describe("checkFit", () => {
     expect(checkFit(rules, [{ sku: "SNS-200", qty: 31 }, { sku: "GW-10C", qty: 1 }]).problems).toEqual([
       "Up to 30 × SNS-200 per GW-10 or GW-10C: 31 quoted for 1.",
     ]);
+  });
+
+  it("offers a one-click fix for each problem", () => {
+    expect(checkFit(rules, [{ sku: "SNS-200", qty: 3 }], 2).fixes).toEqual([{ sku: "GW-10", add: 2 }, { sku: "GW-10", add: 1 }]);
+    expect(checkFit(rules, [{ sku: "SNS-200", qty: 3 }, { sku: "GW-10C", qty: 1 }], 3).fixes).toEqual([{ sku: "GW-10", add: 2 }]);
+    expect(checkFit(rules, [{ sku: "SNS-200", qty: 61 }, { sku: "GW-10C", qty: 1 }]).fixes).toEqual([{ sku: "GW-10", add: 2 }]);
   });
 
   it("ignores per-site rules when the site count is unknown, and rules for SKUs not quoted", () => {

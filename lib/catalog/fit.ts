@@ -14,7 +14,10 @@ export type FitRule =
   | { kind: "advice"; text: string; sku?: string };
 
 export type FitLine = { sku: string; qty: number };
-export type FitResult = { ok: boolean; problems: string[]; notes: string[] };
+/** A one-click fix for a problem: add this many of a product. */
+export type FitFix = { sku: string; add: number };
+/** `fixes[i]` is the fix for `problems[i]` (null when there is none). */
+export type FitResult = { ok: boolean; problems: string[]; notes: string[]; fixes: (FitFix | null)[] };
 
 const SKU = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
 
@@ -54,6 +57,8 @@ export function checkFit(rules: FitRule[], lines: FitLine[], sites?: number): Fi
   const total = (skus: string[]) => skus.reduce((a, s) => a + (qty.get(s) ?? 0), 0);
   const problems: string[] = [];
   const notes: string[] = [];
+  const fixes: (FitFix | null)[] = [];
+  const problem = (text: string, fix: FitFix | null) => { problems.push(text); fixes.push(fix && fix.add > 0 ? fix : null); };
   for (const r of rules) {
     if (r.kind === "advice") {
       if (!r.sku || qty.has(r.sku)) notes.push(r.text);
@@ -62,16 +67,17 @@ export function checkFit(rules: FitRule[], lines: FitLine[], sites?: number): Fi
     if (!qty.has(r.sku)) continue;
     if (r.kind === "requires") {
       const have = total(r.oneOf);
-      if (have === 0) problems.push(`${r.sku} needs ${list(r.oneOf)}.`);
+      if (have === 0) problem(`${r.sku} needs ${list(r.oneOf)}.`, { sku: r.oneOf[0], add: r.perSite && sites ? sites : 1 });
       else if (r.perSite && sites !== undefined && have < sites) {
-        problems.push(`${r.sku} needs one ${list(r.oneOf)} per site: ${sites} sites, ${have} quoted.`);
+        problem(`${r.sku} needs one ${list(r.oneOf)} per site: ${sites} sites, ${have} quoted.`, { sku: r.oneOf[0], add: sites - have });
       }
     } else {
       const per = total(r.perOneOf);
       const have = qty.get(r.sku)!;
-      if (per === 0) problems.push(`${r.sku} needs ${list(r.perOneOf)}.`);
-      else if (have > r.max * per) problems.push(`Up to ${r.max} × ${r.sku} per ${list(r.perOneOf)}: ${have} quoted for ${per}.`);
+      const needed = Math.ceil(have / r.max);
+      if (per === 0) problem(`${r.sku} needs ${list(r.perOneOf)}.`, { sku: r.perOneOf[0], add: needed });
+      else if (have > r.max * per) problem(`Up to ${r.max} × ${r.sku} per ${list(r.perOneOf)}: ${have} quoted for ${per}.`, { sku: r.perOneOf[0], add: needed - per });
     }
   }
-  return { ok: problems.length === 0, problems, notes };
+  return { ok: problems.length === 0, problems, notes, fixes };
 }

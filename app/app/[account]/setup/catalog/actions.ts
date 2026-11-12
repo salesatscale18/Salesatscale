@@ -93,7 +93,7 @@ export async function publishAction(form: FormData) {
   const a = await access(form);
   const r = await publishDraft(appDb, actorOf(a), a.account.id);
   revalidatePath(path(a.account.slug));
-  redirect(r.ok ? `${path(a.account.slug)}?published=${r.version}` : `${path(a.account.slug)}?publish=${r.reason}`);
+  redirect(r.ok ? `${path(a.account.slug)}?published=${r.version}` : `${path(a.account.slug)}?publish=${r.reason}${r.skus ? `&skus=${encodeURIComponent(r.skus.join(","))}` : ""}`);
 }
 
 export async function discardAction(form: FormData) {

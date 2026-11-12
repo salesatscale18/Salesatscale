@@ -20,7 +20,7 @@ export type QuotePreview =
       recurring: { subtotal: number; discount: number; tax: number; total: number };
       pricesIncludeTax: boolean;
       approval: string[];
-      fitProblems: string[];
+      fitProblems: { text: string; fix: { sku: string; add: number; name: string } | null }[];
       notes: string[];
       complete: boolean;
     };
@@ -61,7 +61,11 @@ export async function previewQuoteAction(form: FormData): Promise<QuotePreview> 
     recurring: tot(r.recurring),
     pricesIncludeTax: catalog.version.pricesIncludeTax,
     approval: r.approvalReasons.map(approvalReasonText),
-    fitProblems: fit.problems,
+    fitProblems: fit.problems.map((text, i) => {
+      const f = fit.fixes[i];
+      const item = f ? catalog.items.find((x) => x.sku === f.sku && x.active) : undefined;
+      return { text, fix: f && item ? { ...f, name: item.name } : null };
+    }),
     notes: fit.notes,
     complete: r.complete,
   };
@@ -74,6 +78,7 @@ export async function saveQuoteAction(_prev: SaveQuoteState, form: FormData): Pr
   const leadId = String(form.get("leadId") ?? "");
   const fromQuote = String(form.get("fromQuote") ?? "");
   const input = { ...readForm(form), idempotencyKey: String(form.get("idem") ?? "") || undefined, changeNote: String(form.get("note") ?? "").trim() || undefined };
+  if (fromQuote && !input.changeNote) return { status: "error", messages: [t("quote.editor.note_required")] };
   const actor = { kind: "human" as const, userId: a.user.id, actingAs: a.actingAs };
   const r = fromQuote
     ? await createQuoteVersion(appDb, a.account.id, actor, fromQuote, input)

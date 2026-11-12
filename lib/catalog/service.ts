@@ -3,6 +3,7 @@
  * published version per account; publishing archives the old one. Every
  * function is scoped by account id.
  */
+import { tierProblem } from "./rules";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -178,7 +179,7 @@ export async function saveDraftSettings(db: Db, accountId: string, settings: { p
   await db.update(catalogVersions).set(settings).where(and(eq(catalogVersions.id, draft.id), eq(catalogVersions.accountId, accountId)));
 }
 
-export type PublishResult = { ok: true; version: number } | { ok: false; reason: "no_draft" | "no_active_items" };
+export type PublishResult = { ok: true; version: number } | { ok: false; reason: "no_draft" | "no_active_items" | "invalid_tiers"; skus?: string[] };
 
 /** Publishes the draft: the old published version is archived in the same transaction. */
 export async function publishDraft(db: Db, actor: Actor, accountId: string, now = new Date()): Promise<PublishResult> {
@@ -186,6 +187,8 @@ export async function publishDraft(db: Db, actor: Actor, accountId: string, now 
   if (!draft) return { ok: false, reason: "no_draft" };
   const items = await itemsOf(db, accountId, draft.id);
   if (!items.some((i) => i.active)) return { ok: false, reason: "no_active_items" };
+  const bad = items.filter((i) => tierProblem(i.priceMinor, i.volumeTiers, i.customPricingFromQty)).map((i) => i.sku);
+  if (bad.length) return { ok: false, reason: "invalid_tiers", skus: bad };
   await atomic(db, (q) => [
     q.update(catalogVersions).set({ status: "archived" }).where(and(eq(catalogVersions.accountId, accountId), eq(catalogVersions.status, "published"))),
     q.update(catalogVersions)

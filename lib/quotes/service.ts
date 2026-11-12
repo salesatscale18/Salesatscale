@@ -323,11 +323,22 @@ export async function getQuote(db: Db, accountId: string, quoteId: string) {
   };
 }
 
+/** A lead's quotes, newest first: the current version plus older versions (newest first) for "Show v1". */
 export async function quotesForLead(db: Db, accountId: string, leadId: string) {
-  return db
+  const rows = await db
     .select({ quote: quotes, version: quoteVersions })
     .from(quotes)
-    .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
+    .innerJoin(quoteVersions, eq(quoteVersions.quoteId, quotes.id))
     .where(and(eq(quotes.accountId, accountId), eq(quotes.leadId, leadId)))
-    .orderBy(desc(quotes.createdAt));
+    .orderBy(desc(quotes.createdAt), desc(quoteVersions.version));
+  const out: { quote: typeof quotes.$inferSelect; version: typeof quoteVersions.$inferSelect; older: (typeof quoteVersions.$inferSelect)[] }[] = [];
+  for (const r of rows) {
+    const cur = out.find((o) => o.quote.id === r.quote.id);
+    if (!cur) out.push({ quote: r.quote, version: r.version, older: [] });
+    else cur.older.push(r.version);
+  }
+  return out.map((o) => {
+    const current = [o.version, ...o.older].find((v) => v.version === o.quote.currentVersion) ?? o.version;
+    return { quote: o.quote, version: current, older: [o.version, ...o.older].filter((v) => v.version !== current.version) };
+  });
 }
