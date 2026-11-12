@@ -134,6 +134,15 @@ This replaces the earlier idea that the agent judges buyer agreement. The agent 
 - The seller admin sets weekly availability in the platform. The agent offers free slots, the buyer picks one, and both sides receive a confirmation with a calendar invite. Google Calendar sync comes later.
 - Takeover requests, custom-pricing quotes, meetings and failed payments notify the seller admin by email or WhatsApp, so nothing waits unseen in the platform.
 
+### 3.12 Technical baseline already on `main`
+
+Agreed with the parallel sessions through the team channel (issue #2, `docs/TEAM.md`, `CLAUDE.md`):
+
+- Stack: Next.js 16 (App Router), TypeScript, Clerk for sign-in, Drizzle ORM on Neon Postgres, deployed on Vercel.
+- Platform admin = the existing `super_admin` role (set only from `SUPER_ADMIN_EMAILS`), working under `/sadmin`. All authorization checks run on the server.
+- Seller admin is scoped to one seller account, so it does not fit the current global `user_role` enum. Proposal for when the data model is built: a `seller_accounts` table and an `account_members` table (account, user, role), with `seller_admin` as the only MVP role. Every seller-side query filters by the account. This is a schema change, so it must be claimed in the team channel (one migration in flight at a time).
+- Workflow: direct pushes to `main` through the release queue, after `npm run lint` and `npm run build` pass.
+
 ## 4. End-to-end MVP flow
 
 1. A lead arrives (form, webhook, CSV or manual entry) with a consent record. The system checks phone, duplicates, consent and contact hours.
