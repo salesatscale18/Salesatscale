@@ -151,6 +151,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           </section>
           <section className="b-sec b-noprint">
             <a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a>
+            <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: s.seller.tradeName })}</span>
             <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.questions")}</span>
           </section>
         </>
@@ -161,14 +162,14 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     const tries = failed ? await attemptCount(appDb, order.id) : 0;
     return shell(tr("buyer.step_pay"), (
       <>
-        {failed ? (
-          <div className="b-note b-note--danger" role="alert" style={{ margin: "20px 20px 0" }}>
+        <section className="b-sec">
+          <div className="b-note b-note--ok" style={{ padding: "10px 12px", alignItems: "center" }}><Check color="var(--brand)" />{failed ? tr("buyer.order_saved") : tr("buyer.signed_by", { name: sig?.fullName ?? "", time: sig ? time(sig.signedAt) : "" })}</div>
+          {failed ? (
+          <div className="b-note b-note--danger" role="alert" style={{ margin: 0 }}>
             <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 22, height: 22, flex: "none", fill: "none", stroke: "var(--danger)", strokeWidth: 2.2 }}><circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" /></svg>
             <span style={{ display: "flex", flexDirection: "column", gap: 4 }}><b>{tr("buyer.failed_title")}</b><span style={{ fontSize: 14 }}>{tr("buyer.failed_body")}</span><span className="b-mut">{tr("buyer.attempt", { count: tries })} · {tr("buyer.reason", { reason: failed.failureReason ?? "" })}</span></span>
           </div>
         ) : null}
-        <section className="b-sec">
-          <div className="b-note b-note--ok" style={{ padding: "10px 12px", alignItems: "center" }}><Check color="var(--brand)" />{failed ? tr("buyer.order_saved") : tr("buyer.signed_by", { name: sig?.fullName ?? "", time: sig ? time(sig.signedAt) : "" })}</div>
           <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 16 }}>{money(s, order.amountDueMinor)}</span></div>
           {order.recurringMinor > 0 ? <div className="b-row"><span>{tr("buyer.then_monthly")}</span><span className="b-num">{money(s, order.recurringMinor)}</span></div> : null}
           {err ? <span className="b-err" role="alert">{err === "recurring_consent" ? tr("buyer.err.required") : tr("buyer.unavailable")}</span> : null}
@@ -187,7 +188,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
               ) : null}
               <button type="submit" name="outcome" value="succeeded" className="b-btn">{tr("buyer.simulate_ok")}</button>
               <button type="submit" name="outcome" value="failed" className="b-btn b-btn--2">{tr("buyer.simulate_fail")}</button>
-              <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_note")}</span>
+              <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: s.seller.tradeName })}</span>
             </form>
           ) : order.paymentStatus === "bank_transfer_expected" ? (
             <div className="b-note b-note--warn" style={{ flexDirection: "column", gap: 6 }}>

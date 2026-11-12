@@ -46,7 +46,6 @@
   "buyer.recurring_consent": "לחייב {price} בכרטיס הזה מדי חודש, החל מהפעלת השירות.",
   "buyer.simulate_ok": "הדמיית תשלום מוצלח",
   "buyer.simulate_fail": "הדמיית תשלום שנדחה",
-  "buyer.invoice_note": "חשבונית מס תישלח במייל אחרי התשלום.",
   "buyer.bank_title": "תשלום בהעברה בנקאית",
   "buyer.bank_body": "יש להעביר {amount} עם אסמכתה {ref}. ההזמנה תאושר כשהתשלום יתקבל.",
   "buyer.bank_choose": "אשלם בהעברה בנקאית",
@@ -84,5 +83,8 @@
   "buyer.document_hash": "טביעת אצבע של המסמך (SHA-256): {hash}",
   "buyer.print": "הדפסה או שמירה כ-PDF",
   "buyer.back": "חזרה",
-  "buyer.pay_cta": "תשלום {amount}"
+  "buyer.pay_cta": "תשלום {amount}",
+  "buyer.invoice_by": "חשבונית מס תישלח על ידי {seller}.",
+  "buyer.document_record": "כתובת IP {ip} · גרסת טופס {version}",
+  "buyer.generated_by": "הופק על ידי Sales at Scale"
 }

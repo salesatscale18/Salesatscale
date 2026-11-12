@@ -57,13 +57,14 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
         </section>
         <section className="b-sec">
           <b>{tr("buyer.document_signed", { name: sig.fullName, role: sig.role ? `, ${sig.role}` : "", date })}</b>
+          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `Q-${s.quote.number} v${s.quote.version} · ${s.legal.map((l) => `${l.title} v${l.version}`).join(", ")}` })}</span>
           <span className="b-mut b-num" style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>{tr("buyer.document_hash", { hash: sig.documentHash })}</span>
           <div className="b-noprint" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <PrintButton label={tr("buyer.print")} />
             <a className="b-btn b-btn--2" href={`/f/${token}?lang=${lang}`}>{tr("buyer.back")}</a>
           </div>
         </section>
-        <footer className="b-foot">{tr("buyer.secured_by")}</footer>
+        <footer className="b-foot">{tr("buyer.generated_by")}</footer>
       </div>
     </div>
   );
