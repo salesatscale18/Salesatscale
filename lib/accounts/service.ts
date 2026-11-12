@@ -65,7 +65,7 @@ export async function createAccount(db: Db, actor: Actor, input: CreateAccountIn
     details: { tradeName: account.tradeName, plan: account.plan, ownerEmail: input.ownerEmail },
   });
   const invite = await createInvite(db, actor, account.id, { email: input.ownerEmail, name: input.ownerName, isOwner: true }, now);
-  return { account, inviteToken: invite.token };
+  return { account, invite: invite.invite, inviteToken: invite.token };
 }
 
 export async function createInvite(
@@ -97,6 +97,28 @@ export async function createInvite(
     details: { email, isOwner: invite.isOwner },
   });
   return { invite, token };
+}
+
+/**
+ * "Create new link": cancels a pending invite and issues a new one for the same
+ * person (tokens are stored hashed, so an old link can never be shown again).
+ */
+export async function renewInvite(db: Db, actor: Actor, accountId: string, inviteId: string, now = new Date()) {
+  const [old] = await db
+    .update(accountInvites)
+    .set({ revokedAt: now })
+    .where(
+      and(
+        eq(accountInvites.id, inviteId),
+        eq(accountInvites.accountId, accountId),
+        isNull(accountInvites.acceptedAt),
+        isNull(accountInvites.revokedAt),
+      ),
+    )
+    .returning();
+  if (!old) return null;
+  await writeAudit(db, actor, { accountId, action: "invite.revoked", targetType: "invite", targetId: old.id, details: { email: old.email, reason: "renewed" } });
+  return createInvite(db, actor, accountId, { email: old.email, name: old.inviteeName, isOwner: old.isOwner }, now);
 }
 
 export async function listAccounts(db: Db) {

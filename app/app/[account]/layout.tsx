@@ -6,6 +6,7 @@ import { Banner } from "@/components/sas/record";
 import { requireAccount } from "@/lib/auth/account";
 import { displayName, initials } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
+import { resumeAccountAction } from "@/app/sadmin/accounts/actions";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -34,7 +35,23 @@ export default async function AccountLayout({ children, params }: { children: Re
               {t("banner.acting", { account: account.tradeName })}
             </Banner>
           ) : null}
-          {account.status === "paused" ? <Banner kind="paused">{t("access.paused")}</Banner> : null}
+          {account.status === "paused" ? (
+            actingAs ? (
+              <Banner
+                kind="paused"
+                action={
+                  <form action={resumeAccountAction}>
+                    <input type="hidden" name="accountId" value={account.id} />
+                    <button type="submit" className="sas-btn sas-btn--secondary sas-btn--sm">{t("admin.accounts.resume")}</button>
+                  </form>
+                }
+              >
+                {t("access.paused.admin")}
+              </Banner>
+            ) : (
+              <Banner kind="paused">{t("access.paused.seller")}</Banner>
+            )
+          ) : null}
           {children}
         </div>
       </div>

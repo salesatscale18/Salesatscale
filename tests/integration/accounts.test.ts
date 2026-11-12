@@ -4,7 +4,7 @@ import { accountInvites, auditLog, users, type User } from "@/db/schema";
 import { parseCreateAccount, type CreateAccountInput } from "@/lib/accounts/rules";
 import {
   acceptInvite, createAccount, createInvite, listAccountAudit, listMembers, listUserAccounts, pauseAccount,
-  resolveAccountAccess, resumeAccount,
+  renewInvite, resolveAccountAccess, resumeAccount,
 } from "@/lib/accounts/service";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -116,5 +116,29 @@ describe("accounts, invites and access", () => {
     const { invite } = await createInvite(db, { userId: admin.id, actingAs: false }, polarId, { email: "New@Polar.test" }, now);
     expect(invite.email).toBe("new@polar.test");
     expect(invite.expiresAt.getTime() - now.getTime()).toBe(7 * 24 * 3600 * 1000);
+  });
+});
+
+describe("renewing an invite", () => {
+  it("revokes the old link, issues a new one for the same person, and only works once", async () => {
+    const t = await createTestDb();
+    try {
+      const [admin, owner] = await t.db
+        .insert(users)
+        .values([{ clerkId: "a", email: "a@p.test", role: "super_admin" }, { clerkId: "o", email: "yael@hp.test" }])
+        .returning();
+      const actor = { userId: admin.id, actingAs: false };
+      const { account, invite, inviteToken } = await createAccount(t.db, actor, input("Hygiene Plus", "yael@hp.test"));
+      const renewed = await renewInvite(t.db, actor, account.id, invite.id);
+      expect(renewed?.invite).toMatchObject({ email: "yael@hp.test", isOwner: true });
+      expect(await renewInvite(t.db, actor, account.id, invite.id)).toBeNull();
+      expect(await acceptInvite(t.db, owner, ["yael@hp.test"], inviteToken)).toEqual({ ok: false, reason: "revoked" });
+      expect((await acceptInvite(t.db, owner, ["yael@hp.test"], renewed!.token)).ok).toBe(true);
+      // Another account's id cannot renew this account's invite.
+      const other = await createAccount(t.db, actor, input("Other", "x@o.test"));
+      expect(await renewInvite(t.db, actor, other.account.id, renewed!.invite.id)).toBeNull();
+    } finally {
+      await t.close();
+    }
   });
 });

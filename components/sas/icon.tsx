@@ -4,7 +4,7 @@
  */
 import {
   Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
-  CircleSlash, CircleX, Clock, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, MessageCircle,
+  CircleSlash, CircleX, Clock, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
   MessageSquare, Package, Pause, Pen, Rocket, Send, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
   User, UserPlus, type LucideIcon,
 } from "lucide-react";
@@ -30,6 +30,7 @@ const ICONS = {
   "flask-conical": FlaskConical,
   layers: Layers,
   "layout-grid": LayoutGrid,
+  "list-checks": ListChecks,
   "message-circle": MessageCircle,
   "message-square": MessageSquare,
   package: Package,

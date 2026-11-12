@@ -9,7 +9,7 @@ import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
 import { AdminShell } from "../../admin-shell";
 import { enterAccountAction, pauseAccountAction, resumeAccountAction } from "../actions";
-import { InviteForm } from "./invite-form";
+import { InviteForm, RenewInviteButton } from "./invite-form";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Account — Sales at Scale", robots: { index: false, follow: false } };
@@ -93,7 +93,7 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
                 </li>
               ))}
               {invites.map(({ invite, state }) => (
-                <li key={invite.id} className="sas-list__row">
+                <li key={invite.id} className="sas-list__row" style={{ flexWrap: "wrap" }}>
                   <Avatar actor="buyer" />
                   <span className="sas-list__main">
                     <strong>{invite.inviteeName ?? invite.email}</strong>
@@ -101,6 +101,7 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
                       {invite.email} · {state === "expired" ? t("admin.accounts.invite_expired") : t("admin.accounts.invite_pending", { date: dateFmt.format(invite.expiresAt) })}
                     </span>
                   </span>
+                  <RenewInviteButton accountId={account.id} inviteId={invite.id} />
                 </li>
               ))}
             </ul>

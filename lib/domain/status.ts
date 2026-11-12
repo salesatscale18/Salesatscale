@@ -50,9 +50,9 @@ export const STATUS = {
     live: { tone: "success", icon: "sparkles" },
     retired: { tone: "neutral", icon: "archive" },
   },
-  // Not in the design system's status table yet; from the AdminAccounts artboard.
+  // Account row: decided by the UX session (2026-11-12), to be added to the design system table.
   account: {
-    setting_up: { tone: "warning", icon: "sliders" },
+    setting_up: { tone: "warning", icon: "list-checks" },
     live: { tone: "success", icon: "check-circle" },
     paused: { tone: "neutral", icon: "pause" },
   },
