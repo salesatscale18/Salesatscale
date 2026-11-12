@@ -136,7 +136,7 @@ Uploaded sources, logos and signed order-form PDFs go to object storage **(decid
 
 Rules:
 
-- **Tests never touch the production database.** Integration tests run on PGlite with the committed migrations, so they also prove every migration applies cleanly from zero. (Preview shares the production database today; see P0.6.)
+- **Tests never touch the production database.** Integration tests run on PGlite with the committed migrations, so they also prove every migration applies cleanly from zero. (Preview shares the production database until D9 is done before the pilot.)
 - Every tenant-scoped repository gets an isolation test: account B's user cannot read or write account A's rows, by ID guessing included.
 - Every tool gets a precondition test (refused with the right `missing` list) and an idempotency test (same key twice → one effect).
 - Every webhook gets: bad signature rejected, duplicate event processed once, out-of-order event handled.
@@ -173,7 +173,7 @@ Goal: seller accounts exist, a seller admin can sign in to their account only, a
 | P1.1 | Schema: `seller_accounts` (name, slug, status Setting up/Live/Paused, market, languages, currency, timezone, spend cap), `account_members` (account, user, role enum `seller_admin`), `audit_log` | **M1** | Migration applies from zero |
 | P1.2 | `requireAccount()`, `AccountContext`, tenant repository pattern, `audit()`; `proxy.ts` protects `/app(.*)` (claim) | no | Integration: member ok, non-member `notFound`, super_admin → acting; isolation test template |
 | P1.3 | Admin › Accounts: list, create, pause/resume (pause stops all outgoing work for the account), account detail, audit log view. UI: AdminAccounts | no | Integration: only super_admin; pause writes audit; E2E create account |
-| P1.4 | Invite seller admin: Clerk invitation by email; accepting links the user to the account as `seller_admin` | no | Integration: invite → membership; re-invite idempotent |
+| P1.4 | Invite seller admin: our own invite link (hashed token, 7-day expiry); accepting needs a verified email that matches and links the user as `seller_admin`. Sending the link by email waits for D8 | no | Integration: invite → membership; mismatch, expired, reused refused |
 | P1.5 | Enter account (acting as): banner on every seller screen, writes audited with `acting_as` | no | E2E: super admin enters, banner visible, audit row written |
 
 Exit: two test accounts; each seller admin sees only their own; admin can enter both.
@@ -344,10 +344,11 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 | D5 | Retention periods | P10.3 | User decides. |
 | D6 | Background job runner | P6.7 | DB `jobs` table + Vercel Cron every minute (needs a Vercel plan with per-minute cron); alternative: a managed queue. |
 | D7 | File storage | P5.7 / P8.3 | Vercel Blob (private). |
-| D8 | Email for notifications and confirmations | P5.8 / P7.5 | A transactional email API (e.g. Resend). |
-| D9 | Preview database | P0.6, before M1 | A separate Neon branch for Preview, so Preview builds stop pointing at production. |
-| D10 | `npm test` added to the pre-push rule | P0.2 | Yes; Lead posts a `[RULE]` after the user agrees. |
-| D11 | Workspace URL shape | P0.5 | `/app/[account-slug]/…` for sellers; platform admin stays under `/sadmin`. |
+| D8 | Email for notifications, confirmations and invite links | P1.4 / P5.8 / P7.5 | A transactional email API (e.g. Resend). |
+| D9 | Preview database | Before the pilot seller's real data (P8/P10) | **Decided (user, 2026-11-12): deferred.** We push straight to live while there is no real data. Add a separate Neon branch for Preview before the first real seller data, so Preview builds of unfinished code can't touch it. |
+| D10 | `npm test` added to the pre-push rule | P0.2 | **Approved by the user (2026-11-12).** CI runs it on every push; Lead to add it to `CLAUDE.md` with a `[RULE]` post. |
+| D11 | Workspace URL shape | P0.5 | `/app/[account-slug]/…` for sellers; platform admin stays under `/sadmin`. Done in P1. |
+| D12 | Database transactions | Before P3 (quotes) | The Neon HTTP driver has no interactive transactions. Recommendation: switch `db/index.ts` to the Neon WebSocket driver (`drizzle-orm/neon-serverless`) before commercial writes (quotes, orders, payments) need atomic multi-row updates. |
 
 ## 9. Progress tracker
 
@@ -360,9 +361,13 @@ Update the row in the same push that finishes the step.
 | P0.2 | done | determined-hopper | this push | 2026-11-12 | `.github/workflows/ci.yml`: lint, test, build on every push. E2E job runs only when `E2E_CLERK_*` secrets (Clerk dev instance) are set |
 | P0.3 | done | determined-hopper | this push | 2026-11-12 | `components/sas/` (tokens light/dark, `sas-` styles, React components), `lib/domain/status.ts`, `lib/domain/money.ts`; preview at `/sadmin/design` |
 | P0.4 | done | determined-hopper | this push | 2026-11-12 | `lib/i18n` with `en`/`he`; Hebrew strings need native review (P10.4) |
-| P0.5 | in progress | determined-hopper | this push | 2026-11-12 | SideNav, SetupSteps, shell layout and banners done and shown on `/sadmin/design`. The `/app/[account]` route moves to P1.2 (needs `requireAccount`) |
-| P0.6 | blocked | | | | Vercel project link + Preview DB (D9), user action |
-| P1.1–P1.5 | todo | | | | M1 |
+| P0.5 | done | determined-hopper | P1 push | 2026-11-12 | Components in P0; `/app/[account]` shell shipped with P1.2 |
+| P0.6 | deferred | | | | Preview DB deferred to before the pilot (D9). Vercel project link still an open item for the Lead |
+| P1.1 | done | determined-hopper | this push | 2026-11-12 | M1 `0001_tenancy`: `seller_accounts`, `account_members`, `account_invites`, `audit_log` |
+| P1.2 | done | determined-hopper | this push | 2026-11-12 | `requireAccount()` / `resolveAccountAccess`, `Db` type (`db/types.ts`), `/app` entry + picker + no-account, `/app/[account]` shell with placeholders (completes P0.5); `proxy.ts` protects `/app`, `/invite` |
+| P1.3 | done | determined-hopper | this push | 2026-11-12 | `/sadmin/accounts`: list, create (with owner invite), detail, pause/resume, audit log |
+| P1.4 | in progress | determined-hopper | this push | 2026-11-12 | Invite links (hashed token, 7 days, verified-email match) and `/invite/[token]` done. Invite **email** waits for D8; the admin copies the link for now |
+| P1.5 | done | determined-hopper | this push | 2026-11-12 | Enter account → acting banner, entry and writes audited with `acting_as` |
 | P2.1–P2.6 | todo | | | | M2 |
 | P3.1–P3.5 | todo | | | | M3 |
 | P4.1–P4.8 | todo | | | | M4; P4.2 needs D1 |

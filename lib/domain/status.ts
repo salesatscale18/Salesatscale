@@ -50,6 +50,12 @@ export const STATUS = {
     live: { tone: "success", icon: "sparkles" },
     retired: { tone: "neutral", icon: "archive" },
   },
+  // Not in the design system's status table yet; from the AdminAccounts artboard.
+  account: {
+    setting_up: { tone: "warning", icon: "sliders" },
+    live: { tone: "success", icon: "check-circle" },
+    paused: { tone: "neutral", icon: "pause" },
+  },
   channel: {
     connected: { tone: "success", icon: "message-circle" },
     template_pending: { tone: "warning", icon: "clock" },

@@ -179,6 +179,8 @@
 .sas-banner--takeover .sas-ico { color: var(--human); }
 .sas-banner--test { background: var(--warning-soft); color: var(--ink); border-block: 1px dashed var(--warning); }
 .sas-banner--test .sas-ico { color: var(--warning); }
+.sas-banner--paused { background: var(--warning-soft); color: var(--ink); border-block: 1px solid var(--warning); }
+.sas-banner--paused .sas-ico { color: var(--warning); }
 
 /* App shell: 232px side navigation + content */
 .sas-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
@@ -226,3 +228,52 @@
 .sas-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 [dir="rtl"] { --sas-dir-flip: -1; }
 [dir="ltr"] { --sas-dir-flip: 1; }
+
+/* Layout helpers */
+.sas-center { min-height: 100vh; display: grid; place-items: center; padding: var(--space-6) var(--space-4); }
+.sas-card-narrow { width: 100%; max-width: 520px; }
+.sas-stack-2 { display: flex; flex-direction: column; gap: var(--space-2); }
+.sas-stack-4 { display: flex; flex-direction: column; gap: var(--space-4); }
+.sas-page-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.sas-page-head__actions { margin-inline-start: auto; display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sas-grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: var(--space-6); align-items: start; }
+
+/* Row list (account picker, accounts list, members) */
+.sas-list { list-style: none; margin: 0; padding: 0; }
+.sas-list > li + li { border-block-start: 1px solid var(--line); }
+.sas-app a.sas-list__row, .sas-list__row { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); color: var(--ink); text-decoration: none; }
+.sas-app a.sas-list__row:hover { background: var(--surface-sunken); }
+.sas-app a.sas-list__row[aria-current="page"] { background: var(--primary-soft); }
+.sas-list__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+
+/* Key-value pairs */
+.sas-kv { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-2) var(--space-3); margin: 0; }
+.sas-kv dt { color: var(--ink-muted); }
+.sas-kv dd { margin: 0; text-align: end; }
+
+/* Forms */
+.sas-form { display: flex; flex-direction: column; gap: var(--space-6); }
+.sas-fieldset { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); padding: var(--space-4); margin: 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: var(--space-4); }
+.sas-fieldset > legend { font-size: 15px; line-height: 22px; font-weight: 600; padding-inline: var(--space-1); }
+.sas-input-group { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sas-input-group--wide { grid-column: 1 / -1; }
+.sas-input-label { font-weight: 600; font-size: 13px; line-height: 18px; }
+.sas-input-label .sas-req { color: var(--danger); margin-inline-start: 2px; }
+.sas-input, .sas-select, .sas-textarea { height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); font: inherit; color: var(--ink); background: var(--surface-raised); width: 100%; }
+.sas-textarea { height: auto; min-height: 72px; padding: var(--space-2) 10px; }
+.sas-input[aria-invalid="true"], .sas-select[aria-invalid="true"] { border-color: var(--danger); }
+.sas-hint { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.sas-error { font-size: 12px; line-height: 16px; color: var(--danger); }
+.sas-checks { display: flex; flex-wrap: wrap; gap: var(--space-4); padding-block: var(--space-2); }
+.sas-check { display: inline-flex; align-items: center; gap: var(--space-2); }
+.sas-alert { display: flex; gap: var(--space-3); align-items: flex-start; padding: var(--space-3) var(--space-4); border-radius: var(--radius-md); }
+.sas-alert--danger { background: var(--danger-soft); color: var(--ink); }
+.sas-alert--danger .sas-ico { color: var(--danger); }
+.sas-alert--success { background: var(--success-soft); color: var(--ink); }
+.sas-alert--success .sas-ico { color: var(--success); }
+.sas-copy { font-family: var(--font-mono); font-size: 13px; padding: var(--space-2) var(--space-3); background: var(--surface-sunken); border-radius: var(--radius-sm); overflow-wrap: anywhere; user-select: all; }
+
+/* Table */
+.sas-table { width: 100%; border-collapse: collapse; }
+.sas-table th { text-align: start; font: 600 11px/16px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); background: var(--surface-sunken); padding: var(--space-2) var(--space-4); }
+.sas-table td { padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--line); white-space: nowrap; }

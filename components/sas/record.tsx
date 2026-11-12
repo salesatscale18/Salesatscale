@@ -93,9 +93,9 @@ export function MetricTile({
   );
 }
 
-const BANNER_ICON = { acting: "building", takeover: "user", test: "flask-conical" } as const satisfies Record<string, IconName>;
+const BANNER_ICON = { acting: "building", takeover: "user", test: "flask-conical", paused: "pause" } as const satisfies Record<string, IconName>;
 
-/** Full-width banner: acting as (platform admin inside an account), takeover, test mode. */
+/** Full-width banner: acting as (platform admin inside an account), takeover, test mode, account paused. */
 export function Banner({
   kind,
   children,
