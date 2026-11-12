@@ -60,6 +60,11 @@ export const STATUS = {
     refused: { tone: "warning", icon: "shield-alert" },
     failed: { tone: "danger", icon: "x-circle" },
   },
+  intake_result: {
+    created: { tone: "success", icon: "plus" },
+    updated: { tone: "neutral", icon: "refresh-cw" },
+    rejected: { tone: "danger", icon: "x-circle" },
+  },
   channel: {
     connected: { tone: "success", icon: "message-circle" },
     template_pending: { tone: "warning", icon: "clock" },

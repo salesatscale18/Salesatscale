@@ -11,7 +11,7 @@ import { eq } from "drizzle-orm";
 import { sellerAccounts } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
 import { bearerKey, parseLead } from "@/lib/leads/rules";
-import { resolveIntakeKey, upsertLead } from "@/lib/leads/service";
+import { recordDelivery, refusalText, resolveIntakeKey, upsertLead } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
 
 export const dynamic = "force-dynamic";
@@ -28,45 +28,61 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
   const [account] = await appDb.select().from(sellerAccounts).where(eq(sellerAccounts.slug, slug));
   if (!account || account.id !== keyRow.accountId) return unauthorized();
 
+  const log = (result: "created" | "updated" | "rejected", reason: string | null, leadName: unknown, leadId?: string) =>
+    recordDelivery(appDb, { accountId: account.id, keyId: keyRow.id, result, reason, leadId, leadName: typeof leadName === "string" ? leadName : null });
+
   const text = await req.text();
-  if (text.length > MAX_BODY) return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+  if (text.length > MAX_BODY) {
+    await log("rejected", "Body over 32 KB", null);
+    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+  }
   let body: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(text);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("not an object");
     body = parsed as Record<string, unknown>;
   } catch {
+    await log("rejected", "Body is not a JSON object", null);
     return NextResponse.json({ error: "invalid_json" }, { status: 400 });
   }
+  const name = body.full_name ?? body.name;
 
   const consent = (body.consent && typeof body.consent === "object" ? body.consent : {}) as Record<string, unknown>;
   const forwardedFor = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const lead = parseLead(
     {
-      fullName: body.name ?? body.full_name,
-      company: body.company,
+      fullName: name,
+      company: body.business ?? body.company,
+      email: body.email,
       phone: body.phone,
       language: body.language,
       sourceLabel: body.source ?? "Website form",
       sourceRef: body.source_id,
-      consent: consent.given,
+      consent: consent.given ?? (consent.source ? "yes" : undefined),
       consentSource: consent.source,
-      consentWording: consent.wording,
-      consentCapturedAt: consent.captured_at,
+      consentWording: consent.text ?? consent.wording,
+      consentCapturedAt: consent.at ?? consent.captured_at,
       consentIp: consent.ip ?? forwardedFor,
       consentPageUrl: consent.page_url,
     },
     account.market,
-    { language: (account.languages[0] ?? "en") as Locale, now: new Date() },
+    { language: (account.languages[0] ?? "en") as Locale, now: new Date(), requireConsentText: true },
   );
-  if (!lead.ok) return NextResponse.json({ error: "invalid_lead", fields: lead.errors }, { status: 422 });
+  if (!lead.ok) {
+    await log("rejected", Object.values(lead.errors)[0] ?? "Invalid lead", name);
+    return NextResponse.json({ error: "invalid_lead", fields: lead.errors }, { status: 422 });
+  }
 
   const result = await upsertLead(appDb, account.id, { userId: null, actingAs: false }, lead.value, "webhook");
   if (!result.ok) {
-    return result.reason === "consent_required"
-      ? NextResponse.json({ error: "consent_required", message: "A new lead needs consent.given = true and consent.source." }, { status: 422 })
-      : NextResponse.json({ error: "phone_conflict" }, { status: 409 });
+    await log("rejected", refusalText(result).problem, name);
+    if (result.reason === "consent_required") {
+      return NextResponse.json({ error: "consent_required", message: "A new lead needs consent.source and consent.text." }, { status: 422 });
+    }
+    if (result.reason === "opted_out") return NextResponse.json({ error: "opted_out" }, { status: 409 });
+    return NextResponse.json({ error: "phone_conflict" }, { status: 409 });
   }
+  await log(result.created ? "created" : "updated", null, name, result.lead.id);
   return NextResponse.json(
     { id: result.lead.id, created: result.created, status: result.lead.status },
     { status: result.created ? 201 : 200 },

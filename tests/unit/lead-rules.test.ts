@@ -35,11 +35,23 @@ describe("parseLead", () => {
     expect(r.ok && r.value).toMatchObject({ phone: "+972525550193", language: "he", consent: { source: "Contact sheet at HoReCa Expo", capturedAt: now } });
   });
 
-  it("returns no consent when consent is not an explicit yes", () => {
+  it("returns no consent without a yes or a consent source, and an explicit no wins", () => {
     for (const consent of ["", "no", "false", undefined]) {
-      const r = parseLead({ ...base, consent }, "IL", { language: "en", now });
+      const r = parseLead({ ...base, consent, consentSource: "" }, "IL", { language: "en", now });
       expect(r.ok && r.value.consent).toBeNull();
     }
+    const no = parseLead({ ...base, consent: "no" }, "IL", { language: "en", now });
+    expect(no.ok && no.value.consent).toBeNull();
+    const bySource = parseLead({ ...base, consent: undefined }, "IL", { language: "en", now });
+    expect(bySource.ok && bySource.value.consent?.source).toBe("Contact sheet at HoReCa Expo");
+  });
+
+  it("requires consent text for CSV and API, and validates email", () => {
+    const r = parseLead(base, "IL", { language: "en", now, requireConsentText: true });
+    expect(!r.ok && r.errors.consentText).toMatch(/consent_text/);
+    const ok = parseLead({ ...base, consentWording: "I agree", email: "A@B.co" }, "IL", { language: "en", now, requireConsentText: true });
+    expect(ok.ok && ok.value).toMatchObject({ email: "a@b.co", consent: { wording: "I agree" } });
+    expect(parseLead({ ...base, email: "nope" }, "IL", { language: "en", now }).ok).toBe(false);
   });
 
   it("requires a description of how the person agreed", () => {
@@ -67,11 +79,18 @@ describe("CSV", () => {
   });
 
   it("maps header aliases and reports missing and unknown columns", () => {
-    const r = csvToRawLeads(parseCsv("Full Name,WhatsApp,Consent,How they agreed,Colour\nA,1,yes,form,red"));
+    const r = csvToRawLeads(parseCsv("Full Name,WhatsApp,Language,How they agreed,consent_text,Colour\nA,1,he,form,I agree,red"));
     expect(r.missingColumns).toEqual([]);
     expect(r.unknownColumns).toEqual(["colour"]);
-    expect(r.rows[0]).toEqual({ line: 2, raw: { fullName: "A", phone: "1", consent: "yes", consentSource: "form" } });
-    expect(csvToRawLeads(parseCsv("name,phone")).missingColumns).toEqual(["consent", "consent_source"]);
+    expect(r.rows[0]).toEqual({ line: 2, raw: { fullName: "A", phone: "1", language: "he", consentSource: "form", consentWording: "I agree" } });
+    expect(csvToRawLeads(parseCsv("name,phone")).missingColumns).toEqual(["language", "consent_source", "consent_text"]);
+  });
+
+  it("fills whole-file consent only into rows without their own", () => {
+    const r = csvToRawLeads(parseCsv("full_name,phone,language,consent_source\nA,1,he,\nB,2,he,own"), { source: "Expo", wording: "W" });
+    expect(r.rows[0].raw).toMatchObject({ consentSource: "Expo", consentWording: "W" });
+    expect(r.rows[1].raw).toMatchObject({ consentSource: "own" });
+    expect(r.rows[1].raw.consentWording).toBeUndefined();
   });
 });
 

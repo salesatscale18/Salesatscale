@@ -14,6 +14,7 @@ const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   agent_version: [["Draft", "neutral"], ["Testing", "warning"], ["Live", "success"], ["Retired", "neutral"]],
   account: [["Setting up", "warning"], ["Live", "success"], ["Paused", "neutral"]],
   tool_call: [["Refused", "warning"], ["Failed", "danger"]],
+  intake_result: [["Created", "success"], ["Updated", "neutral"], ["Rejected", "danger"]],
   channel: [["Connected", "success"], ["Template pending", "warning"], ["Template rejected", "danger"], ["Disconnected", "danger"]],
 };
 

@@ -165,6 +165,7 @@ export const leads = pgTable(
       .references(() => sellerAccounts.id, { onDelete: "cascade" }),
     fullName: text("full_name").notNull(),
     company: text("company"),
+    email: text("email"),
     /** E.164, e.g. +972525550193. Unique per account (dedupe key). */
     phone: text("phone").notNull(),
     /** Conversation language: "en" or "he". */
@@ -255,6 +256,8 @@ export const leadIntakeKeys = pgTable(
     name: text("name").notNull(),
     /** First characters of the key, shown so people can tell keys apart. */
     keyPrefix: text("key_prefix").notNull(),
+    /** Last characters of the key, shown as "sas_lead_…kX9d". */
+    keyLast4: text("key_last4"),
     keyHash: text("key_hash").notNull().unique(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
@@ -264,9 +267,33 @@ export const leadIntakeKeys = pgTable(
   (t) => [index("lead_intake_keys_account_idx").on(t.accountId)],
 );
 
+export const intakeResult = pgEnum("intake_result", ["created", "updated", "rejected"]);
+
+/** Every call to the intake endpoint, for "Recent deliveries" in Settings. */
+export const leadIntakeDeliveries = pgTable(
+  "lead_intake_deliveries",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    keyId: uuid("key_id").references(() => leadIntakeKeys.id, { onDelete: "set null" }),
+    result: intakeResult("result").notNull(),
+    /** Plain-language reason when rejected. */
+    reason: text("reason"),
+    leadId: uuid("lead_id").references(() => leads.id, { onDelete: "set null" }),
+    /** Name as sent, so rejected deliveries can be recognised. */
+    leadName: text("lead_name"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("lead_intake_deliveries_account_created_idx").on(t.accountId, t.createdAt)],
+);
+
 export type Lead = typeof leads.$inferSelect;
 export type LeadStatus = (typeof leadStatus.enumValues)[number];
 export type LeadOrigin = (typeof leadOrigin.enumValues)[number];
 export type ConsentRecord = typeof consentRecords.$inferSelect;
 export type LeadEvent = typeof leadEvents.$inferSelect;
 export type LeadIntakeKey = typeof leadIntakeKeys.$inferSelect;
+export type LeadIntakeDelivery = typeof leadIntakeDeliveries.$inferSelect;
+export type IntakeResult = (typeof intakeResult.enumValues)[number];

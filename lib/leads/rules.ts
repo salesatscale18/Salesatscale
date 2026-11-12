@@ -49,6 +49,7 @@ export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted on Wha
 export type LeadInput = {
   fullName: string;
   company: string | null;
+  email: string | null;
   phone: string;
   language: Locale;
   sourceLabel: string | null;
@@ -57,11 +58,12 @@ export type LeadInput = {
   consent: { wording: string; source: string; capturedAt: Date; ip: string | null; pageUrl: string | null } | null;
 };
 
-export type LeadFieldErrors = Partial<Record<"fullName" | "phone" | "language" | "consent" | "consentSource", string>>;
+export type LeadFieldErrors = Partial<Record<"fullName" | "phone" | "language" | "email" | "consent" | "consentSource" | "consentText", string>>;
 
 export type RawLead = {
   fullName?: unknown;
   company?: unknown;
+  email?: unknown;
   phone?: unknown;
   language?: unknown;
   sourceLabel?: unknown;
@@ -80,13 +82,14 @@ const yes = (v: unknown) => v === true || /^(1|true|yes|y|on|כן)$/i.test(s(v))
 const LANGUAGE_ALIASES: Record<string, Locale> = { en: "en", english: "en", he: "he", hebrew: "he", "עברית": "he", iw: "he" };
 
 /**
- * Validates one lead from any intake path. Consent needs an explicit yes and a
- * description of how the person agreed; without both the lead is rejected.
+ * Validates one lead from any intake path. Consent is given by an explicit
+ * "yes" or by a consent source; it then needs a description of how the person
+ * agreed, and for CSV and the API (`requireConsentText`) the exact wording.
  */
 export function parseLead(
   raw: RawLead,
   market: string,
-  defaults: { language: Locale; now: Date },
+  defaults: { language: Locale; now: Date; requireConsentText?: boolean },
 ): { ok: true; value: LeadInput } | { ok: false; errors: LeadFieldErrors } {
   const errors: LeadFieldErrors = {};
   const fullName = s(raw.fullName);
@@ -100,17 +103,23 @@ export function parseLead(
   const language = langRaw ? LANGUAGE_ALIASES[langRaw] : defaults.language;
   if (!language || !(LOCALES as readonly string[]).includes(language)) errors.language = "Choose English or Hebrew.";
 
+  const email = s(raw.email).toLowerCase();
+  if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) errors.email = "The email address isn't valid.";
+
   let consent: LeadInput["consent"] = null;
   const consentSource = s(raw.consentSource);
-  if (yes(raw.consent)) {
+  const consentWording = s(raw.consentWording);
+  const noConsent = /^(0|false|no|n|off|לא)$/i.test(s(raw.consent));
+  if (yes(raw.consent) || (!noConsent && consentSource)) {
     if (!consentSource) errors.consentSource = "Say how this person agreed to be contacted.";
+    if (defaults.requireConsentText && !consentWording) errors.consentText = "consent_text is missing: add the exact wording the person agreed to.";
     const capturedRaw = s(raw.consentCapturedAt);
     const capturedAt = capturedRaw ? new Date(capturedRaw) : defaults.now;
     if (Number.isNaN(capturedAt.getTime()) || capturedAt.getTime() > defaults.now.getTime() + 5 * 60_000) {
       errors.consentSource = "The consent time is not a valid past date.";
     }
     consent = {
-      wording: s(raw.consentWording) || CONSENT_WORDING_DEFAULT,
+      wording: consentWording || CONSENT_WORDING_DEFAULT,
       source: consentSource,
       capturedAt,
       ip: s(raw.consentIp) || null,
@@ -124,6 +133,7 @@ export function parseLead(
     value: {
       fullName,
       company: s(raw.company) || null,
+      email: email || null,
       phone: phone!,
       language: language!,
       sourceLabel: s(raw.sourceLabel).slice(0, 80) || null,
@@ -163,43 +173,73 @@ export function parseCsv(text: string): string[][] {
 /** CSV header aliases → RawLead keys. Headers are matched case-insensitively. */
 const CSV_COLUMNS: Record<string, keyof RawLead> = {
   name: "fullName", "full name": "fullName", full_name: "fullName",
-  company: "company", business: "company",
+  company: "company", business: "company", email: "email",
   phone: "phone", whatsapp: "phone", "whatsapp number": "phone", mobile: "phone",
   language: "language", lang: "language",
   source: "sourceLabel",
   source_id: "sourceRef", "source id": "sourceRef", id: "sourceRef",
   consent: "consent",
   consent_source: "consentSource", "consent source": "consentSource", "how they agreed": "consentSource",
-  consent_wording: "consentWording", consent_date: "consentCapturedAt", consent_time: "consentCapturedAt",
+  consent_wording: "consentWording", consent_text: "consentWording",
+  consent_date: "consentCapturedAt", consent_time: "consentCapturedAt", consent_at: "consentCapturedAt",
 };
 
-export const CSV_TEMPLATE_HEADER = "name,company,phone,language,source,source_id,consent,consent_source";
+export const CSV_TEMPLATE_HEADER = "full_name,phone,language,business,email,source_id,consent_source,consent_text,consent_at";
 
-export function csvToRawLeads(rows: string[][]): { rows: { line: number; raw: RawLead }[]; unknownColumns: string[]; missingColumns: string[] } {
-  if (rows.length === 0) return { rows: [], unknownColumns: [], missingColumns: ["name", "phone", "consent", "consent_source"] };
+/** One consent statement for every row of a file (UX: "consent for the whole file"). */
+export type FileConsent = { source: string; wording: string };
+
+/**
+ * Maps CSV rows to RawLead. Required columns: full_name, phone, language, and
+ * consent_source + consent_text unless the whole file has one consent statement
+ * (then rows without their own consent use it).
+ */
+export function csvToRawLeads(
+  rows: string[][],
+  fileConsent?: FileConsent | null,
+): { rows: { line: number; raw: RawLead }[]; unknownColumns: string[]; missingColumns: string[] } {
+  const required: [keyof RawLead, string][] = [["fullName", "full_name"], ["phone", "phone"], ["language", "language"]];
+  if (!fileConsent) required.push(["consentSource", "consent_source"], ["consentWording", "consent_text"]);
+  if (rows.length === 0) return { rows: [], unknownColumns: [], missingColumns: required.map(([, l]) => l) };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const keys = header.map((h) => CSV_COLUMNS[h]);
   const unknownColumns = header.filter((h, i) => h && !keys[i]);
   const present = new Set(keys.filter(Boolean));
-  const missingColumns = (
-    [["fullName", "name"], ["phone", "phone"], ["consent", "consent"], ["consentSource", "consent_source"]] as const
-  ).filter(([k]) => !present.has(k)).map(([, label]) => label);
+  const missingColumns = required.filter(([k]) => !present.has(k)).map(([, label]) => label);
   const out = rows.slice(1).map((r, i) => {
     const raw: RawLead = {};
     keys.forEach((k, ci) => { if (k) (raw as Record<string, unknown>)[k] = r[ci] ?? ""; });
+    if (fileConsent && !s(raw.consentSource) && !yes(raw.consent)) {
+      raw.consentSource = fileConsent.source;
+      raw.consentWording = s(raw.consentWording) || fileConsent.wording;
+    }
     return { line: i + 2, raw };
   });
   return { rows: out, unknownColumns, missingColumns };
 }
+
+/** "How to fix" text for each rejection (canvas: ImportCsv). */
+export const FIX_TEXT: Record<string, string> = {
+  fullName: "Add the person's full name.",
+  phone: "Use the full number with country code, for example +972 54 555 0123.",
+  language: "Use en or he.",
+  email: "Fix the email address or leave it empty.",
+  consentSource: "Add where and how the person agreed, or set one consent statement for the whole file.",
+  consentText: "Add the exact wording the person agreed to.",
+  consent_required: "Add consent_source and consent_text for this row.",
+  phone_conflict: "Check the phone and source_id: they point to two different leads.",
+  opted_out: "This person asked not to be contacted. They can't be imported again without new consent.",
+  duplicate_in_file: "Keep one of the two rows.",
+};
 
 export function hashIntakeKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");
 }
 
 /** "sas_lead_" + 32 random bytes. Only the hash and a short prefix are stored. */
-export function generateIntakeKey(): { key: string; keyHash: string; keyPrefix: string } {
+export function generateIntakeKey(): { key: string; keyHash: string; keyPrefix: string; keyLast4: string } {
   const key = `sas_lead_${randomBytes(32).toString("base64url")}`;
-  return { key, keyHash: hashIntakeKey(key), keyPrefix: key.slice(0, 14) };
+  return { key, keyHash: hashIntakeKey(key), keyPrefix: key.slice(0, 9), keyLast4: key.slice(-4) };
 }
 
 /** Reads "Authorization: Bearer <key>" (or "x-api-key"). */

@@ -2,7 +2,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { users } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { createIntakeKey } from "@/lib/leads/service";
+import { createIntakeKey, listDeliveries, optOutLead } from "@/lib/leads/service";
 import { createTestDb } from "../helpers/db";
 
 // The route reads the app database from lib/auth/account; point it at PGlite.
@@ -23,7 +23,8 @@ function call(slug: string, body: unknown, key?: string) {
 describe("POST /api/leads/[account]", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
   let keyA = "", keyB = "";
-  const good = { name: "Shira Golan", phone: "052-555-0193", consent: { given: true, source: "Contact form" } };
+  const good = { full_name: "Shira Golan", business: "Golan Bakery", phone: "052-555-0193", consent: { source: "Contact form", text: "I agree to be contacted on WhatsApp", at: "2026-11-09T09:12:00Z" } };
+  let accountA = "";
 
   beforeAll(async () => {
     t = await createTestDb();
@@ -35,7 +36,7 @@ describe("POST /api/leads/[account]", () => {
       if (!p.ok) throw new Error("bad");
       const { account } = await createAccount(t.db, actor, p.value);
       const { key } = await createIntakeKey(t.db, actor, account.id, "Website");
-      if (name === "Alpha") keyA = key; else keyB = key;
+      if (name === "Alpha") { keyA = key; accountA = account.id; } else keyB = key;
     }
   });
   afterAll(async () => t.close());
@@ -56,7 +57,9 @@ describe("POST /api/leads/[account]", () => {
     expect((await noConsent.json()).error).toBe("consent_required");
     const bad = await call("alpha", { name: "", phone: "1", consent: { given: true } }, keyA);
     expect(bad.status).toBe(422);
-    expect(Object.keys((await bad.json()).fields).sort()).toEqual(["consentSource", "fullName", "phone"]);
+    expect(Object.keys((await bad.json()).fields).sort()).toEqual(["consentSource", "consentText", "fullName", "phone"]);
+    const noText = await call("alpha", { ...good, consent: { source: "Contact form" } }, keyA);
+    expect(noText.status).toBe(422);
   });
 
   it("creates, then updates the same lead", async () => {
@@ -67,5 +70,17 @@ describe("POST /api/leads/[account]", () => {
     const again = await call("alpha", { ...good, name: "Shira G.", phone: "+972525550193" }, keyA);
     expect(again.status).toBe(200);
     expect((await again.json()).id).toBe(id);
+  });
+
+  it("refuses an opted-out person and logs every delivery for Settings", async () => {
+    const created = await (await call("alpha", { ...good, phone: "0529990000", full_name: "Lior Gat" }, keyA)).json();
+    await optOutLead(holder.db as never, { userId: null as unknown as string, actingAs: false }, accountA, created.id);
+    const res = await call("alpha", { ...good, phone: "0529990000", full_name: "Lior Gat" }, keyA);
+    expect(res.status).toBe(409);
+    expect((await res.json()).error).toBe("opted_out");
+    const log = await listDeliveries(holder.db as never, accountA);
+    expect(log[0].delivery).toMatchObject({ result: "rejected", leadName: "Lior Gat", reason: expect.stringMatching(/^Opted out/) });
+    expect(log.map((l) => l.delivery.result)).toEqual(expect.arrayContaining(["created", "updated", "rejected"]));
+    expect(log.every((l) => l.key?.name === "Website")).toBe(true);
   });
 });

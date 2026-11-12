@@ -9,14 +9,14 @@ import { and, asc, count, desc, eq, gte, ilike, isNull, or, sql, type SQL } from
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/db/types";
 import {
-  consentRecords, leadEvents, leadIntakeKeys, leads, users,
-  type Lead, type LeadOrigin, type LeadStatus,
+  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, users,
+  type IntakeResult, type Lead, type LeadOrigin, type LeadStatus,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { Locale } from "@/lib/i18n";
 import {
-  csvToRawLeads, generateIntakeKey, hashIntakeKey, parseCsv, parseLead,
-  type LeadFieldErrors, type LeadInput,
+  csvToRawLeads, FIX_TEXT, generateIntakeKey, hashIntakeKey, parseCsv, parseLead,
+  type FileConsent, type LeadFieldErrors, type LeadInput,
 } from "./rules";
 
 /** Who is acting: a person (userId) or the system (webhook, import worker). */
@@ -53,12 +53,13 @@ async function findExisting(db: Db, accountId: string, input: Pick<LeadInput, "p
 
 export type UpsertResult =
   | { ok: true; lead: Lead; created: boolean }
-  | { ok: false; reason: "consent_required" | "phone_conflict" };
+  | { ok: false; reason: "consent_required" | "phone_conflict" }
+  | { ok: false; reason: "opted_out"; optedOutAt: Date | null };
 
 /**
  * Creates a lead, or updates the existing one with the same phone (or the same
  * source ID). A new lead needs a consent record; an update may add another.
- * Opted-out leads stay opted out.
+ * A lead who opted out is never re-added or changed from here (UX rule).
  */
 export async function upsertLead(
   db: Db,
@@ -82,6 +83,7 @@ export async function upsertLead(
           accountId,
           fullName: input.fullName,
           company: input.company,
+          email: input.email,
           phone: input.phone,
           language: input.language,
           origin,
@@ -103,6 +105,7 @@ export async function upsertLead(
     return { ok: true, lead, created: true };
   }
 
+  if (existing.status === "opted_out") return { ok: false, reason: "opted_out", optedOutAt: existing.optedOutAt };
   if (existing.phone !== input.phone) {
     const [clash] = await db.select({ id: leads.id }).from(leads).where(and(eq(leads.accountId, accountId), eq(leads.phone, input.phone)));
     if (clash) return { ok: false, reason: "phone_conflict" };
@@ -118,6 +121,7 @@ export async function upsertLead(
     .set({
       fullName: input.fullName,
       company: input.company ?? existing.company,
+      email: input.email ?? existing.email,
       phone: input.phone,
       language: input.language,
       sourceLabel: input.sourceLabel ?? existing.sourceLabel,
@@ -264,43 +268,62 @@ export async function optOutLead(db: Db, actor: Actor, accountId: string, leadId
 
 export const CSV_MAX_ROWS = 2000;
 
+export type RejectedRow = { line: number; name: string; problem: string; fix: string };
+
 export type ImportResult = {
   created: number;
   updated: number;
-  rejected: { line: number; reasons: string[] }[];
+  rejected: RejectedRow[];
+  totalRows: number;
   unknownColumns: string[];
   missingColumns: string[];
   tooManyRows: boolean;
 };
 
-const REASON_TEXT: Record<string, string> = {
-  consent_required: "No consent: set consent to yes and fill consent_source.",
-  phone_conflict: "Another lead already has this phone number.",
-};
+const dateShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
+/** Plain-language problem and fix for an upsert refusal. */
+export function refusalText(r: Exclude<UpsertResult, { ok: true }>): { problem: string; fix: string } {
+  if (r.reason === "opted_out") {
+    return { problem: r.optedOutAt ? `Opted out on ${dateShort.format(r.optedOutAt)}` : "Opted out", fix: FIX_TEXT.opted_out };
+  }
+  if (r.reason === "consent_required") return { problem: "No consent for this person", fix: FIX_TEXT.consent_required };
+  return { problem: "Another lead already has this phone number", fix: FIX_TEXT.phone_conflict };
+}
 
 export async function importLeadsCsv(
   db: Db,
   account: { id: string; market: string; languages: string[] },
   actor: LeadActor,
   csvText: string,
-  now = new Date(),
+  opts: { fileConsent?: FileConsent | null; now?: Date } = {},
 ): Promise<ImportResult> {
-  const parsed = csvToRawLeads(parseCsv(csvText));
+  const now = opts.now ?? new Date();
+  const parsed = csvToRawLeads(parseCsv(csvText), opts.fileConsent);
   const result: ImportResult = {
-    created: 0, updated: 0, rejected: [],
+    created: 0, updated: 0, rejected: [], totalRows: parsed.rows.length,
     unknownColumns: parsed.unknownColumns, missingColumns: parsed.missingColumns,
     tooManyRows: parsed.rows.length > CSV_MAX_ROWS,
   };
   if (parsed.missingColumns.length > 0 || result.tooManyRows) return result;
   const defaultLanguage = (account.languages[0] ?? "en") as Locale;
+  const seenPhones = new Map<string, number>();
   for (const { line, raw } of parsed.rows) {
-    const p = parseLead(raw, account.market, { language: defaultLanguage, now });
+    const name = typeof raw.fullName === "string" && raw.fullName.trim() ? raw.fullName.trim() : "(empty)";
+    const p = parseLead(raw, account.market, { language: defaultLanguage, now, requireConsentText: true });
     if (!p.ok) {
-      result.rejected.push({ line, reasons: Object.values(p.errors as LeadFieldErrors) as string[] });
+      const [field, problem] = Object.entries(p.errors as LeadFieldErrors)[0];
+      result.rejected.push({ line, name, problem: problem!, fix: FIX_TEXT[field] ?? "" });
       continue;
     }
+    const firstLine = seenPhones.get(p.value.phone);
+    if (firstLine) {
+      result.rejected.push({ line, name, problem: `Same phone as row ${firstLine} in this file`, fix: FIX_TEXT.duplicate_in_file });
+      continue;
+    }
+    seenPhones.set(p.value.phone, line);
     const r = await upsertLead(db, account.id, actor, p.value, "csv", { now });
-    if (!r.ok) result.rejected.push({ line, reasons: [REASON_TEXT[r.reason]] });
+    if (!r.ok) result.rejected.push({ line, name, ...refusalText(r) });
     else if (r.created) result.created++;
     else result.updated++;
   }
@@ -308,7 +331,7 @@ export async function importLeadsCsv(
     await writeAudit(db, { userId: actor.userId, actingAs: actor.actingAs }, {
       accountId: account.id,
       action: "leads.imported",
-      details: { created: result.created, updated: result.updated, rejected: result.rejected.length },
+      details: { created: result.created, updated: result.updated, rejected: result.rejected.length, fileConsent: opts.fileConsent?.source ?? null },
     });
   }
   return result;
@@ -319,10 +342,10 @@ export async function importLeadsCsv(
 // ---------------------------------------------------------------------------
 
 export async function createIntakeKey(db: Db, actor: Actor, accountId: string, name: string) {
-  const { key, keyHash, keyPrefix } = generateIntakeKey();
+  const { key, keyHash, keyPrefix, keyLast4 } = generateIntakeKey();
   const [row] = await db
     .insert(leadIntakeKeys)
-    .values({ accountId, name: name.trim() || "Website form", keyHash, keyPrefix, createdByUserId: actor.userId })
+    .values({ accountId, name: name.trim() || "Website form", keyHash, keyPrefix, keyLast4, createdByUserId: actor.userId })
     .returning();
   await writeAudit(db, actor, { accountId, action: "intake_key.created", targetType: "intake_key", targetId: row.id, details: { name: row.name } });
   return { row, key };
@@ -355,4 +378,29 @@ export async function resolveIntakeKey(db: Db, key: string, now = new Date()) {
   if (!row) return null;
   await db.update(leadIntakeKeys).set({ lastUsedAt: now }).where(eq(leadIntakeKeys.id, row.id));
   return row;
+}
+
+/** Logs one call to the intake endpoint ("Recent deliveries" in Settings). */
+export async function recordDelivery(
+  db: Db,
+  entry: { accountId: string; keyId: string | null; result: IntakeResult; reason?: string | null; leadId?: string | null; leadName?: string | null },
+) {
+  await db.insert(leadIntakeDeliveries).values({
+    accountId: entry.accountId,
+    keyId: entry.keyId,
+    result: entry.result,
+    reason: entry.reason ?? null,
+    leadId: entry.leadId ?? null,
+    leadName: entry.leadName?.slice(0, 120) || null,
+  });
+}
+
+export async function listDeliveries(db: Db, accountId: string, limit = 20) {
+  return db
+    .select({ delivery: leadIntakeDeliveries, key: leadIntakeKeys })
+    .from(leadIntakeDeliveries)
+    .leftJoin(leadIntakeKeys, eq(leadIntakeKeys.id, leadIntakeDeliveries.keyId))
+    .where(eq(leadIntakeDeliveries.accountId, accountId))
+    .orderBy(desc(leadIntakeDeliveries.createdAt))
+    .limit(limit);
 }

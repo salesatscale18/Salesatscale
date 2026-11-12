@@ -374,6 +374,7 @@ Update the row in the same push that finishes the step.
 | P2.4 | done | determined-hopper | this push | 2026-11-12 | CSV import with per-row results (2,000 rows, 1 MB) |
 | P2.5 | done | determined-hopper | this push | 2026-11-12 | `POST /api/leads/[account]` with per-account hashed keys (Settings), `docs/lead-intake.md`. Rate limiting in P10.1 |
 | P2.6 | done | determined-hopper | this push | 2026-11-12 | Lead card shell: header with masked phone, empty conversation, timeline, consent record, opt-out (audited) |
+| P2.7 | done | determined-hopper | next push | 2026-11-12 | UX follow-up (canvas ImportCsv, LeadIntake): migration `0003_leads_intake` (lead email, key last-4, `lead_intake_deliveries`), opted-out people rejected on every intake path, whole-file consent, duplicate-in-file check, problem/fix per rejected row with download, template, Recent deliveries, Copy buttons. "Send a test lead" not built (it would create a real lead) |
 | P3.1–P3.5 | todo | | | | M3 |
 | P4.1–P4.8 | todo | | | | M4; P4.2 needs D1 |
 | P5.1–P5.8 | todo | | | | M5 → Milestone A |

@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
-import { parseLead, type LeadFieldErrors } from "@/lib/leads/rules";
+import { CONSENT_WORDING_DEFAULT, parseLead, type LeadFieldErrors } from "@/lib/leads/rules";
 import { importLeadsCsv, optOutLead, upsertLead, type ImportResult } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
 
@@ -12,14 +12,14 @@ import type { Locale } from "@/lib/i18n";
 
 export type AddLeadState =
   | { status: "idle" }
-  | { status: "error"; errors: LeadFieldErrors; formError?: "consent_required" | "phone_conflict"; values: Record<string, string> };
+  | { status: "error"; errors: LeadFieldErrors; formError?: "consent_required" | "phone_conflict" | "opted_out"; values: Record<string, string> };
 
 export async function addLeadAction(_prev: AddLeadState, form: FormData): Promise<AddLeadState> {
   const slug = String(form.get("slug") ?? "");
   const access = await requireAccount(slug);
   const { account } = access;
   const values: Record<string, string> = {};
-  for (const k of ["fullName", "company", "phone", "language", "sourceLabel", "consent", "consentSource", "after"]) {
+  for (const k of ["fullName", "company", "email", "phone", "language", "sourceLabel", "consent", "consentSource", "after"]) {
     values[k] = String(form.get(k) ?? "");
   }
   const parsed = parseLead(values, account.market, { language: (account.languages[0] ?? "en") as Locale, now: new Date() });
@@ -45,7 +45,11 @@ export async function optOutLeadAction(form: FormData) {
   revalidatePath(`/app/${access.account.slug}/leads/${leadId}`);
 }
 
-export type ImportState = { status: "idle" } | { status: "bad_file" } | { status: "done"; result: ImportResult };
+export type ImportState =
+  | { status: "idle" }
+  | { status: "bad_file" }
+  | { status: "missing_file_consent" }
+  | { status: "done"; result: ImportResult; fileName: string; fileConsent: string | null; at: string };
 
 const MAX_BYTES = 1024 * 1024;
 
@@ -53,8 +57,12 @@ export async function importLeadsAction(_prev: ImportState, form: FormData): Pro
   const access = await requireAccount(String(form.get("slug") ?? ""));
   const file = form.get("file");
   if (!(file instanceof File) || file.size === 0 || file.size > MAX_BYTES) return { status: "bad_file" };
+  const wholeFile = form.get("fileConsent") === "yes";
+  const statement = String(form.get("fileConsentSource") ?? "").trim().slice(0, 300);
+  if (wholeFile && !statement) return { status: "missing_file_consent" };
+  const fileConsent = wholeFile ? { source: statement, wording: CONSENT_WORDING_DEFAULT } : null;
   const text = await file.text();
-  const result = await importLeadsCsv(appDb, access.account, actorOf(access), text);
+  const result = await importLeadsCsv(appDb, access.account, actorOf(access), text, { fileConsent });
   revalidatePath(`/app/${access.account.slug}/leads`);
-  return { status: "done", result };
+  return { status: "done", result, fileName: file.name.slice(0, 120), fileConsent: fileConsent?.source ?? null, at: new Date().toISOString() };
 }
