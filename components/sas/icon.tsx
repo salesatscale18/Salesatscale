@@ -4,9 +4,9 @@
  */
 import {
   Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
-  CircleSlash, CircleX, Clock, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
+  CircleSlash, CircleX, Clock, Cog, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
   MessageSquare, Package, Pause, Pen, Rocket, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
-  User, UserPlus, Wrench, type LucideIcon,
+  Trophy, User, UserPlus, Wrench, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -24,6 +24,7 @@ const ICONS = {
   "circle-dot": CircleDot,
   "circle-slash": CircleSlash,
   clock: Clock,
+  cog: Cog,
   "credit-card": CreditCard,
   eye: Eye,
   "file-text": FileText,
@@ -42,6 +43,7 @@ const ICONS = {
   "shield-check": ShieldCheck,
   sliders: SlidersHorizontal,
   sparkles: Sparkles,
+  trophy: Trophy,
   user: User,
   "user-plus": UserPlus,
   wrench: Wrench,

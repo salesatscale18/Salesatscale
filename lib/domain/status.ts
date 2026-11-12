@@ -18,7 +18,7 @@ export const STATUS = {
     agent_handling: { tone: "agent", icon: "sparkles" },
     human_handling: { tone: "human", icon: "user" },
     meeting_booked: { tone: "success", icon: "calendar" },
-    won: { tone: "success", icon: "check-circle" },
+    won: { tone: "success", icon: "trophy" },
     lost: { tone: "neutral", icon: "circle-slash" },
     opted_out: { tone: "danger", icon: "x-circle" },
   },

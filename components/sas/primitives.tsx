@@ -60,7 +60,7 @@ export type Actor = "buyer" | "agent" | "human" | "system";
 export function Avatar({ actor, initials, label }: { actor: Actor; initials?: string; label?: string }) {
   const cls = actor === "agent" || actor === "human" ? `sas-av sas-av--${actor}` : "sas-av";
   const content =
-    actor === "agent" ? <Icon name="sparkles" /> : initials ? initials : <Icon name={actor === "system" ? "layers" : "user"} />;
+    actor === "agent" ? <Icon name="sparkles" /> : initials ? initials : <Icon name={actor === "system" ? "cog" : "user"} />;
   return (
     <span className={cls} role={label ? "img" : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
       {content}
