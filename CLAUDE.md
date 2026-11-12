@@ -24,10 +24,17 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
   it must check `role === "super_admin"` server-side and call `notFound()` otherwise.
   Super admins come only from the `SUPER_ADMIN_EMAILS` env var.
 
-## Workflow
-- Work on a branch and open a PR to `main`; never push to `main` directly.
-- `npm run build` must pass before opening a PR.
-- Never commit secrets; keep `.env.example` updated when adding env vars.
+## Workflow (current stage: direct pushes to `main`, no PRs)
+- At this stage we push directly to `main`; do not open PRs. Do the work on a
+  local branch or commits, then rebase onto the latest `origin/main` and push to `main`.
+- Before every push to `main`, run the checks and push only if both pass:
+  `npm run lint` and `npm run build`.
+- Schema changes: commit the generated migration files in `drizzle/` in the same
+  push as the `db/schema.ts` change (never a schema change without its migration).
+- Never commit secrets (`.env*` files, keys, tokens, connection strings); check
+  `git diff --cached` before committing. Keep `.env.example` updated when adding env vars.
+- Pushing to `main` deploys to production and runs migrations, so announce every
+  push in the team channel (see below).
 
 ## Team coordination (parallel sessions)
 - Several sessions work in parallel. The shared channel is GitHub issue #2
@@ -36,5 +43,6 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
 - Post `[START]` / `[CLAIM]` / `[QUEUE]` / `[BLOCKED]` / `[DONE]` comments there.
 - Claim shared areas before editing them; only one migration (`db/schema.ts` +
   `drizzle/`) may be in flight at a time.
-- Only the Lead session merges to `main`, one PR at a time, via the release
-  queue in the channel.
+- Pushes to `main` go one at a time through the release queue in the channel:
+  post `[QUEUE]`, push when the Lead gives the go (or immediately if the queue is
+  empty and no migration is in flight), then post `[PUSHED] <commit sha>`.
