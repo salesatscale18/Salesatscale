@@ -1,0 +1,228 @@
+/*
+ * Sales at Scale workspace styles (design system "Trust Blue").
+ * Tokens mirror the design system's tokens.json; component rules are ported
+ * from its components/bundle.css. Everything is scoped under .sas-app so the
+ * marketing landing page (app/globals.css) is unaffected.
+ * Layout uses logical properties only, so every component mirrors under dir="rtl".
+ */
+
+.sas-app {
+  --surface: #f5f6f8; --surface-raised: #ffffff; --surface-sunken: #eceef2;
+  --line: #dde1e8; --line-strong: #7d8697;
+  --ink: #0f1420; --ink-muted: #566073;
+  --primary: #2357d0; --on-primary: #ffffff;
+  /* Not in tokens.json yet: active nav item fill, taken from the SideNav artboard. */
+  --primary-soft: #e8effc;
+  --agent: #6a43c7; --agent-soft: #efeafc; --on-agent: #ffffff;
+  --human: #a8327a; --human-soft: #fbe8f3;
+  --success: #1d7a35; --success-soft: #e5f4e8;
+  --warning: #a15c07; --warning-soft: #fdf1dc;
+  --danger: #c23a2b; --danger-soft: #fbe9e6;
+  --focus-ring: var(--primary);
+  --brand-blue: #4f8cff; --brand-teal: #22c39a;
+  --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px; --space-6: 24px; --space-8: 32px;
+  --radius-sm: 4px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 999px;
+  --shadow-pop: 0 8px 24px rgba(15,20,32,0.12), 0 1px 2px rgba(15,20,32,0.08);
+  --font-sans: Inter, var(--font-noto-hebrew, "Noto Sans Hebrew"), system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: var(--font-jetbrains-mono, "JetBrains Mono"), ui-monospace, SFMono-Regular, Menlo, monospace;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sas-app:not([data-theme="light"]) {
+    --surface: #0b0d12; --surface-raised: #151922; --surface-sunken: #10131a;
+    --line: #262c38; --line-strong: #5b6577;
+    --ink: #e8ebf1; --ink-muted: #9aa3b2;
+    --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #17233f;
+    --agent: #b49af7; --agent-soft: #241c3c; --on-agent: #0b0d12;
+    --human: #f08cc4; --human-soft: #3a1630;
+    --success: #5fd47a; --success-soft: #12291a;
+    --warning: #f0b04a; --warning-soft: #2e2210;
+    --danger: #ff7a68; --danger-soft: #34160f;
+    --shadow-pop: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px #262c38;
+    color-scheme: dark;
+  }
+}
+.sas-app[data-theme="dark"] {
+  --surface: #0b0d12; --surface-raised: #151922; --surface-sunken: #10131a;
+  --line: #262c38; --line-strong: #5b6577;
+  --ink: #e8ebf1; --ink-muted: #9aa3b2;
+  --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #17233f;
+  --agent: #b49af7; --agent-soft: #241c3c; --on-agent: #0b0d12;
+  --human: #f08cc4; --human-soft: #3a1630;
+  --success: #5fd47a; --success-soft: #12291a;
+  --warning: #f0b04a; --warning-soft: #2e2210;
+  --danger: #ff7a68; --danger-soft: #34160f;
+  --shadow-pop: 0 8px 24px rgba(0,0,0,0.5), 0 0 0 1px #262c38;
+  color-scheme: dark;
+}
+
+.sas-app { min-height: 100vh; background: var(--surface); color: var(--ink); font-family: var(--font-sans); font-size: 14px; line-height: 20px; -webkit-font-smoothing: antialiased; }
+.sas-app *, .sas-app *::before, .sas-app *::after { box-sizing: border-box; }
+.sas-app a { color: var(--primary); }
+.sas-app :where(button, a, input, select, textarea, [tabindex]):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-app [lang="he"] { letter-spacing: 0; text-transform: none; }
+@media (prefers-reduced-motion: reduce) { .sas-app * { transition: none !important; animation: none !important; } }
+
+.sas-ico { width: 16px; height: 16px; flex: none; }
+.sas-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
+
+/* Typography helpers (design system type styles) */
+.sas-display { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
+.sas-title { font-size: 20px; line-height: 28px; font-weight: 600; letter-spacing: -0.01em; margin: 0; }
+.sas-heading { font-size: 15px; line-height: 22px; font-weight: 600; margin: 0; }
+.sas-small { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-label { font-size: 11px; line-height: 16px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); }
+
+/* Panel */
+.sas-panel { background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.sas-panel__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
+.sas-panel__body { padding: var(--space-4); }
+
+/* Button */
+.sas-btn { display: inline-flex; align-items: center; gap: var(--space-2); height: 36px; padding-inline: 14px; border-radius: var(--radius-md); border: 1px solid transparent; font: 600 14px/20px var(--font-sans); cursor: pointer; background: none; color: var(--ink); white-space: nowrap; text-decoration: none; transition: background-color 120ms ease-out; }
+.sas-app a.sas-btn { color: var(--ink); }
+.sas-btn--primary, .sas-app a.sas-btn--primary { background: var(--primary); color: var(--on-primary); }
+.sas-btn--secondary { background: var(--surface-raised); border-color: var(--line-strong); }
+.sas-btn--ghost, .sas-app a.sas-btn--ghost { color: var(--ink-muted); }
+.sas-btn--ghost:hover, .sas-btn--secondary:hover { background: var(--surface-sunken); }
+.sas-btn--takeover, .sas-app a.sas-btn--takeover { background: var(--human); color: var(--on-agent); }
+.sas-btn--danger, .sas-app a.sas-btn--danger { background: var(--surface-raised); border-color: var(--danger); color: var(--danger); }
+.sas-btn--sm { height: 28px; padding-inline: 10px; font-size: 13px; }
+.sas-btn[disabled], .sas-btn[aria-disabled="true"] { opacity: .45; cursor: not-allowed; }
+
+/* Status pill */
+.sas-pill { display: inline-flex; align-items: center; gap: 6px; height: 24px; padding-inline: 8px 10px; border-radius: var(--radius-pill); font: 600 12px/16px var(--font-sans); background: var(--surface-sunken); color: var(--ink-muted); white-space: nowrap; }
+.sas-pill .sas-ico { width: 12px; height: 12px; }
+.sas-pill--agent { background: var(--agent-soft); color: var(--agent); }
+.sas-pill--human { background: var(--human-soft); color: var(--human); }
+.sas-pill--success { background: var(--success-soft); color: var(--success); }
+.sas-pill--warning { background: var(--warning-soft); color: var(--warning); }
+.sas-pill--danger { background: var(--danger-soft); color: var(--danger); }
+
+/* Provenance tag */
+.sas-prov { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding-inline: 6px; border-radius: var(--radius-sm); font: 600 11px/16px var(--font-sans); white-space: nowrap; border: 1px solid transparent; }
+.sas-prov .sas-ico { width: 12px; height: 12px; }
+.sas-prov--buyer { background: var(--surface-sunken); color: var(--ink-muted); }
+.sas-prov--inferred { border: 1px dashed var(--agent); color: var(--agent); background: transparent; }
+.sas-prov--verified { background: var(--success-soft); color: var(--success); }
+
+/* Avatar */
+.sas-av { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-pill); font: 600 11px/1 var(--font-sans); flex: none; background: var(--surface-sunken); color: var(--ink-muted); }
+.sas-av--agent { background: var(--agent); color: var(--on-agent); }
+.sas-av--human { background: var(--human); color: var(--on-agent); }
+.sas-av .sas-ico { width: 14px; height: 14px; }
+
+/* Chat */
+.sas-chat { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-4); background: var(--surface-sunken); }
+.sas-msg { display: flex; flex-direction: column; gap: 4px; max-width: 78%; animation: sas-fade-in 150ms ease-out; }
+@keyframes sas-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.sas-msg__bubble { padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--ink); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
+.sas-msg__meta { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.sas-msg__time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.sas-msg--buyer { align-self: flex-start; }
+.sas-msg--buyer .sas-msg__bubble { border-start-start-radius: var(--radius-sm); }
+.sas-msg--agent, .sas-msg--human { align-self: flex-end; align-items: flex-end; }
+.sas-msg--agent .sas-msg__bubble { background: var(--agent-soft); border-color: transparent; border-start-end-radius: var(--radius-sm); }
+.sas-msg--human .sas-msg__bubble { background: var(--human-soft); border-color: transparent; border-start-end-radius: var(--radius-sm); }
+.sas-msg--system { align-self: center; max-width: 100%; }
+.sas-msg--system .sas-msg__bubble { background: transparent; border: 1px dashed var(--line-strong); color: var(--ink-muted); font-size: 13px; line-height: 18px; }
+.sas-msg__who { font-weight: 600; }
+.sas-msg--agent .sas-msg__who { color: var(--agent); }
+.sas-msg--human .sas-msg__who { color: var(--human); }
+.sas-msg__trace { display: flex; flex-wrap: wrap; gap: 4px; }
+.sas-chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding-inline: 6px; border-radius: var(--radius-sm); font: 500 11px/16px var(--font-mono); background: var(--surface-raised); color: var(--ink-muted); border: 1px solid var(--line); }
+.sas-chip .sas-ico { width: 12px; height: 12px; }
+
+/* Timeline */
+.sas-tl { list-style: none; margin: 0; padding: var(--space-4); display: flex; flex-direction: column; }
+.sas-tl__item { display: grid; grid-template-columns: 28px 1fr auto; gap: var(--space-3); position: relative; padding-block-end: var(--space-4); }
+.sas-tl__item::before { content: ""; position: absolute; inset-inline-start: 13px; inset-block: 30px 0; width: 2px; background: var(--line); }
+.sas-tl__item:last-child::before { display: none; }
+.sas-tl__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-block-start: 4px; }
+.sas-tl__title { font-weight: 600; }
+.sas-tl__detail { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-tl__time { font: 500 12px/16px var(--font-mono); color: var(--ink-muted); padding-block-start: 6px; font-variant-numeric: tabular-nums; }
+
+/* Deal-state fields */
+.sas-fields { display: grid; gap: 0; padding: 0 var(--space-4); background: var(--surface-raised); margin: 0; }
+.sas-field { display: grid; grid-template-columns: minmax(120px, 38%) 1fr; gap: var(--space-3); align-items: start; padding-block: 10px; border-block-end: 1px solid var(--line); }
+.sas-field:last-child { border-block-end: 0; }
+.sas-field__label { font-size: 13px; line-height: 20px; color: var(--ink-muted); margin: 0; }
+.sas-field__value { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; margin: 0; }
+.sas-field--missing .sas-field__value { color: var(--ink-muted); font-style: italic; }
+.sas-group-label { font: 600 11px/16px var(--font-sans); letter-spacing: .06em; text-transform: uppercase; color: var(--ink-muted); padding: var(--space-4) var(--space-4) var(--space-1); }
+
+/* WhatsApp service-window timer */
+.sas-window { display: inline-flex; align-items: center; gap: 6px; height: 28px; padding-inline: 10px; border-radius: var(--radius-pill); font: 600 12px/16px var(--font-sans); border: 1px solid var(--line); background: var(--surface-raised); color: var(--ink); }
+.sas-window .sas-ico { width: 14px; height: 14px; }
+.sas-window--open .sas-ico { color: var(--success); }
+.sas-window--closing { border-color: var(--warning); color: var(--warning); background: var(--warning-soft); }
+.sas-window--closed { color: var(--ink-muted); background: var(--surface-sunken); }
+
+/* Metric tile */
+.sas-metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: var(--space-3); }
+.sas-metric { display: flex; flex-direction: column; gap: 4px; padding: var(--space-4); background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.sas-metric__label { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-metric__value { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; }
+.sas-metric__delta { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.sas-metric__delta--up { color: var(--success); }
+.sas-metric__delta--down { color: var(--danger); }
+
+/* Banner */
+.sas-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); font-size: 13px; line-height: 18px; flex-wrap: wrap; }
+.sas-banner .sas-ico { width: 16px; height: 16px; }
+.sas-banner__text { flex: 1; min-width: 200px; }
+.sas-banner--acting { background: var(--ink); color: var(--surface); }
+.sas-banner--acting .sas-btn, .sas-app .sas-banner--acting a.sas-btn { color: var(--surface); border-color: currentColor; background: transparent; }
+.sas-banner--takeover { background: var(--human-soft); color: var(--ink); border-block: 1px solid var(--human); }
+.sas-banner--takeover .sas-ico { color: var(--human); }
+.sas-banner--test { background: var(--warning-soft); color: var(--ink); border-block: 1px dashed var(--warning); }
+.sas-banner--test .sas-ico { color: var(--warning); }
+
+/* App shell: 232px side navigation + content */
+.sas-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
+.sas-shell__main { min-width: 0; display: flex; flex-direction: column; }
+.sas-shell__content { padding: var(--space-6) var(--space-8); display: flex; flex-direction: column; gap: var(--space-6); }
+@media (max-width: 860px) {
+  .sas-shell { grid-template-columns: 1fr; }
+  .sas-shell__content { padding: var(--space-4); }
+}
+
+/* Side navigation */
+.sas-nav { background: var(--surface-raised); border-inline-end: 1px solid var(--line); padding: var(--space-4) var(--space-3); display: flex; flex-direction: column; gap: 20px; min-height: 100%; }
+.sas-nav__brand { display: flex; align-items: center; gap: 10px; padding: 0 6px; font-weight: 700; font-size: 15px; letter-spacing: -0.01em; }
+.sas-nav__mark { width: 28px; height: 28px; border-radius: var(--radius-md); background: linear-gradient(135deg, var(--brand-blue), var(--brand-teal)); flex: none; }
+.sas-nav__account { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: var(--space-2) 10px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); }
+.sas-nav__account-text { display: flex; flex-direction: column; min-width: 0; }
+.sas-nav__account-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-nav__sub { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.sas-nav__group { display: flex; flex-direction: column; gap: 2px; list-style: none; margin: 0; padding: 0; }
+.sas-nav__group-label { padding: 0 10px 4px; }
+.sas-app a.sas-nav__item { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: var(--radius-md); text-decoration: none; color: var(--ink-muted); font-weight: 500; transition: background-color 120ms ease-out; }
+.sas-app a.sas-nav__item:hover { background: var(--surface-sunken); }
+.sas-app a.sas-nav__item[aria-current="page"] { color: var(--primary); background: var(--primary-soft); font-weight: 600; }
+.sas-nav__label { flex: 1; }
+.sas-nav__count { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sas-nav__count--human { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 700 11px/20px var(--font-sans); text-align: center; }
+.sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
+.sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; }
+.sas-nav__user-name { font-weight: 600; }
+@media (max-width: 860px) {
+  .sas-nav { border-inline-end: 0; border-block-end: 1px solid var(--line); min-height: 0; }
+  .sas-nav__user { display: none; }
+}
+
+/* Setup steps bar */
+.sas-steps { display: flex; gap: 4px; overflow-x: auto; padding-block: 14px; margin: 0; list-style: none; padding-inline: 0; }
+.sas-app a.sas-steps__step { display: flex; align-items: center; gap: var(--space-2); height: 36px; padding-inline: 6px 12px; border-radius: var(--radius-pill); white-space: nowrap; text-decoration: none; color: var(--ink-muted); font-weight: 500; }
+.sas-app a.sas-steps__step[aria-current="step"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.sas-steps__dot { width: 24px; height: 24px; border-radius: var(--radius-pill); display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--surface-sunken); color: var(--ink-muted); }
+.sas-steps__dot .sas-ico { width: 14px; height: 14px; }
+.sas-steps__step--done .sas-steps__dot { background: var(--success-soft); color: var(--success); }
+.sas-steps__step[aria-current="step"] .sas-steps__dot { background: var(--primary); color: var(--on-primary); }
+
+/* Visually hidden (screen-reader text) */
+.sas-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+[dir="rtl"] { --sas-dir-flip: -1; }
+[dir="ltr"] { --sas-dir-flip: 1; }

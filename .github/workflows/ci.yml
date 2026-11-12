@@ -1,0 +1,59 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm test
+      # Not a Vercel build: VERCEL_ENV is unset, so scripts/migrate.ts skips migrations.
+      - run: npm run build
+
+  e2e:
+    name: End-to-end (Playwright)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: checks
+    env:
+      # Clerk *development* instance keys, stored as repository secrets. Never production keys.
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: ${{ secrets.E2E_CLERK_PUBLISHABLE_KEY }}
+      CLERK_SECRET_KEY: ${{ secrets.E2E_CLERK_SECRET_KEY }}
+    steps:
+      - name: Skip when Clerk test keys are not configured
+        id: keys
+        run: |
+          if [ -z "$CLERK_SECRET_KEY" ]; then
+            echo "E2E_CLERK_* secrets not set; skipping end-to-end tests."
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.keys.outputs.run == 'true'
+      - uses: actions/setup-node@v4
+        if: steps.keys.outputs.run == 'true'
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+        if: steps.keys.outputs.run == 'true'
+      - run: npx playwright install --with-deps chromium
+        if: steps.keys.outputs.run == 'true'
+      - run: npm run test:e2e -- --trace off
+        if: steps.keys.outputs.run == 'true'

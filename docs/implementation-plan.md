@@ -159,7 +159,7 @@ Goal: every later phase can write tests, use the design system and run CI.
 | P0.2 | CI: GitHub Actions running lint, unit + integration tests and build on every push | no | CI green on `main` |
 | P0.3 | Design system in code: tokens → CSS variables (light/dark), `sas-` component styles, `components/sas/*` React wrappers, status-word map, Inter + Noto Sans Hebrew + JetBrains Mono | no | Unit: status map covers the design system's status table; Playwright screenshot of a components page |
 | P0.4 | i18n: `t()` with `en.json`/`he.json`, `dir()` helper, typed keys | no | Unit: every key in `en` exists in `he` for buyer namespaces |
-| P0.5 | Workspace shell: `app/app/[account]/layout.tsx` with SideNav (seller mode), top bar, acting Banner slot. Placeholder pages per nav item. UI: SideNav | no | E2E: shell renders, nav links work |
+| P0.5 | Workspace shell components: SideNav (seller and admin modes), SetupSteps, shell layout, acting/test/takeover banners, shown on `/sadmin/design`. The `app/app/[account]/layout.tsx` route with placeholder pages ships in P1.2, once `requireAccount()` exists. UI: SideNav, SetupSteps | no | Unit: nav links and active item; E2E: shell renders, nav links work (P1.2) |
 | P0.6 | Environments: confirm the Vercel project link (open item in the channel), set up a separate Neon branch for Preview, document env vars in `.env.example` | no | Preview deploy uses its own DB |
 
 Exit: CI green; components page matches the canvas; a signed-in user sees the shell.
@@ -356,11 +356,11 @@ Update the row in the same push that finishes the step.
 | Step | Status | Owner | Commit | Date | Notes |
 |---|---|---|---|---|---|
 | Plan | done | determined-hopper | this push | 2026-11-12 | This document + `docs/mvp-plan.md` on `main` |
-| P0.1 | todo | | | | |
-| P0.2 | todo | | | | |
-| P0.3 | todo | | | | |
-| P0.4 | todo | | | | |
-| P0.5 | todo | | | | |
+| P0.1 | done | determined-hopper | this push | 2026-11-12 | Vitest (unit + PGlite integration on `drizzle/` migrations), Playwright config + smoke spec. `npm test`, `npm run test:e2e` |
+| P0.2 | done | determined-hopper | this push | 2026-11-12 | `.github/workflows/ci.yml`: lint, test, build on every push. E2E job runs only when `E2E_CLERK_*` secrets (Clerk dev instance) are set |
+| P0.3 | done | determined-hopper | this push | 2026-11-12 | `components/sas/` (tokens light/dark, `sas-` styles, React components), `lib/domain/status.ts`, `lib/domain/money.ts`; preview at `/sadmin/design` |
+| P0.4 | done | determined-hopper | this push | 2026-11-12 | `lib/i18n` with `en`/`he`; Hebrew strings need native review (P10.4) |
+| P0.5 | in progress | determined-hopper | this push | 2026-11-12 | SideNav, SetupSteps, shell layout and banners done and shown on `/sadmin/design`. The `/app/[account]` route moves to P1.2 (needs `requireAccount`) |
 | P0.6 | blocked | | | | Vercel project link + Preview DB (D9), user action |
 | P1.1–P1.5 | todo | | | | M1 |
 | P2.1–P2.6 | todo | | | | M2 |
