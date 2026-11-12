@@ -337,7 +337,7 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 
 | # | Decision | Needed by | Recommendation / default |
 |---|---|---|---|
-| D1 | LLM provider and model for the agent | P4.2 | User decides. Built behind an interface; fake LLM keeps tests deterministic. |
+| D1 | LLM provider and model for the agent | P4.2 | **Default applied:** Anthropic, `claude-opus-5-5` (override with `AGENT_MODEL`), effort medium, server-side refusal fallback on. Behind `LlmClient`; a scripted fake keeps tests deterministic. Needs `ANTHROPIC_API_KEY` in Vercel. |
 | D2 | WhatsApp: Meta Cloud API or a BSP; coexistence for the pilot number | P6.2 | User decides; check coexistence early with the pilot seller. |
 | D3 | Payment provider for the pilot | P10.2 (fake provider until then) | User decides after confirming where the pilot seller is registered. |
 | D4 | E-signature level | P5.4 | Checkbox + typed name (as designed) unless the pilot seller requires a provider. |
@@ -381,7 +381,14 @@ Update the row in the same push that finishes the step.
 | P3.3 | done | determined-hopper | P3 push | 2026-11-12 | `lib/catalog/fit.ts`: requires (per site), max per, advice |
 | P3.4 | done | determined-hopper | P3 push | 2026-11-12 | Catalog setup screen: products, item editor, fit rules, VAT, draft → publish / discard. Spreadsheet import comes with Sources (P8) |
 | P3.5 | done | determined-hopper | P3 push | 2026-11-12 | Quotes and orders (quote side): tabs, approval with custom prices, versions, cancel; quote editor from the lead card with live server-side preview |
-| P4.1–P4.8 | todo | | | | M4; P4.2 needs D1 |
+| P4.1 | done | determined-hopper | P4 push | 2026-11-12 | Migration `0005_agent`: agent_versions (playbook jsonb snapshot, model, effort; one draft + one live), knowledge_facts, conversations, messages, tool_calls, deal_states; `leads.is_test` (test-lab leads hidden from lists and counts) |
+| P4.2 | done | determined-hopper | P4 push | 2026-11-12 | `lib/agent/llm.ts`: `LlmClient`, Anthropic provider (D1 default), `ScriptedLlm` fake |
+| P4.3 | done | determined-hopper | P4 push | 2026-11-12 | `lib/agent/tools.ts`: six strict tools; refusals carry a rule and what is missing; quotes idempotent per tool call; discount above the limit → Awaiting approval |
+| P4.4 | done | determined-hopper | P4 push | 2026-11-12 | `lib/agent/turn.ts`: prompt from playbook + deal state, language from the conversation, safety in code (STOP / הסר opt-out, card numbers masked, refusal → hand-off), up to 8 tool rounds, usage per message. Rolling summary deferred: last 40 messages + deal state for now |
+| P4.5 | done | determined-hopper | P4 push | 2026-11-12 | `derivedStage` (new / qualified / quoted); agreed, paid and meeting arrive with P5/P7 |
+| P4.6 | done | determined-hopper | P4 push | 2026-11-12 | Versions and test lab: publish, one-step rollback, test chat by version and language, trace per reply (input, result, Refused/Failed, tokens), deal-state panel. Scenario picker deferred |
+| P4.7 | done | determined-hopper | P4 push | 2026-11-12 | Playbook editor (draft) + minimal Knowledge (approved facts with source) |
+| P4.8 | done | determined-hopper | P4 push | 2026-11-12 | Lead card deal state with provenance; "Set and verify" → Verified, audited, event on the timeline; agent never overwrites Verified. Chat column on real leads arrives with the channel (P6) |
 | P5.1–P5.8 | todo | | | | M5 → Milestone A |
 | P6.1–P6.8 | todo | | | | M6; needs D2, D6 → Milestone B |
 | P7.1–P7.5 | todo | | | | M7 |

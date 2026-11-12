@@ -28,6 +28,11 @@ export async function liveVersion(db: Db, accountId: string) {
   return byStatus(db, accountId, "live");
 }
 
+/** The playbook the seller's team works against: live, else the draft, else none yet (read-only). */
+export async function currentPlaybook(db: Db, accountId: string) {
+  return ((await byStatus(db, accountId, "live")) ?? (await byStatus(db, accountId, "draft")))?.playbook ?? null;
+}
+
 /** The draft to edit and test, created from the live version (or defaults) when missing. */
 export async function ensureDraftVersion(db: Db, accountId: string): Promise<AgentVersion> {
   const existing = await byStatus(db, accountId, "draft");

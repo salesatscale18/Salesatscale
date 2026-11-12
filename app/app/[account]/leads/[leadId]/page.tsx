@@ -1,7 +1,9 @@
 import { notFound } from "next/navigation";
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
-import { Timeline, type TimelineItem } from "@/components/sas/record";
+import { DealStateFields, Timeline, type TimelineItem } from "@/components/sas/record";
+import { currentPlaybook, getDealState } from "@/lib/agent/service";
+import { verifyFieldAction } from "../actions";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { displayName, nameInitials } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
@@ -23,6 +25,8 @@ const EVENT_ICON: Record<string, IconName> = {
   "quote.versioned": "file-text",
   "quote.approved": "check-circle",
   "quote.cancelled": "archive",
+  "handoff.requested": "user",
+  "deal.verified": "shield-check",
 };
 
 /** Lead card (canvas: Main, LeadEmpty). Conversation, deal state and quotes arrive in P4–P6. */
@@ -40,10 +44,12 @@ export default async function LeadCardPage({
   const row = await getLead(appDb, account.id, leadId);
   if (!row) notFound();
   const { lead, owner, creator } = row;
-  const [events, consent, leadQuotes] = await Promise.all([
+  const [events, consent, leadQuotes, playbook, deal] = await Promise.all([
     listLeadEvents(appDb, account.id, lead.id),
     latestConsent(appDb, account.id, lead.id),
     quotesForLead(appDb, account.id, lead.id),
+    currentPlaybook(appDb, account.id),
+    getDealState(appDb, account.id, lead.id),
   ]);
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
@@ -125,7 +131,33 @@ export default async function LeadCardPage({
           </div>
           <aside className="sas-lead__side">
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
-            <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("lead.card.learn_pending")}</p>
+            {sp.verified ? <div className="sas-alert sas-alert--success" role="status" style={{ margin: "0 16px 12px" }}><Icon name="check-circle" /><span>{t("lead.card.verified_saved")}</span></div> : null}
+            {!playbook || playbook.fields.length === 0 ? (
+              <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t(playbook ? "lead.card.learn_none" : "lead.card.learn_pending")}</p>
+            ) : (
+              <div className="sas-stack-4" style={{ padding: "0 16px 16px" }}>
+                <DealStateFields fields={playbook.fields.map((f) => ({ key: f.key, label: f.label, value: deal?.fields[f.key]?.value, provenance: deal?.fields[f.key]?.provenance }))} />
+                {deal?.objections.length ? (
+                  <div className="sas-stack-2">
+                    <span className="sas-group-label">{t("lead.card.objections")}</span>
+                    <ul style={{ margin: 0, paddingInlineStart: 18 }}>{deal.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
+                  </div>
+                ) : null}
+                {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
+                <details>
+                  <summary className="sas-small">{t("lead.card.verify")}</summary>
+                  <form action={verifyFieldAction} className="sas-stack-2" style={{ paddingBlockStart: 8 }}>
+                    <input type="hidden" name="slug" value={account.slug} />
+                    <input type="hidden" name="leadId" value={lead.id} />
+                    <select className="sas-select" name="key" aria-label={t("lead.card.verify")}>
+                      {playbook.fields.map((f) => <option key={f.key} value={f.key}>{f.label}</option>)}
+                    </select>
+                    <input className="sas-input" name="value" required maxLength={300} aria-label={t("lead.card.verify_value")} />
+                    <div><button type="submit" className={buttonClass("secondary", "sm")}><Icon name="shield-check" />{t("lead.card.verify")}</button></div>
+                  </form>
+                </details>
+              </div>
+            )}
             <div className="sas-lead__consent">
               <Icon name="shield-check" />
               <div className="sas-stack-2" style={{ flex: 1 }}>

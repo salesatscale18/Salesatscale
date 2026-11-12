@@ -7,6 +7,7 @@ import { writeAudit } from "@/lib/accounts/audit";
 import { CONSENT_WORDING_DEFAULT, parseLead, type LeadFieldErrors } from "@/lib/leads/rules";
 import { importLeadsCsv, optOutLead, upsertLead, type ImportResult } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
+import { currentPlaybook, verifyField } from "@/lib/agent/service";
 
 // Server actions are public endpoints: every one re-checks access with requireAccount().
 
@@ -65,4 +66,18 @@ export async function importLeadsAction(_prev: ImportState, form: FormData): Pro
   const result = await importLeadsCsv(appDb, access.account, actorOf(access), text, { fileConsent });
   revalidatePath(`/app/${access.account.slug}/leads`);
   return { status: "done", result, fileName: file.name.slice(0, 120), fileConsent: fileConsent?.source ?? null, at: new Date().toISOString() };
+}
+
+/** A person sets a deal-state field; it becomes Verified and the agent will not change it. */
+export async function verifyFieldAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const leadId = String(form.get("leadId") ?? "");
+  const key = String(form.get("key") ?? "");
+  const value = String(form.get("value") ?? "").trim().slice(0, 300);
+  const playbook = await currentPlaybook(appDb, access.account.id);
+  const back = `/app/${access.account.slug}/leads/${leadId}`;
+  if (!value || !playbook?.fields.some((f) => f.key === key)) redirect(back);
+  const ok = await verifyField(appDb, actorOf(access), access.account.id, leadId, key, value);
+  revalidatePath(back);
+  redirect(ok ? `${back}?verified=1` : back);
 }
