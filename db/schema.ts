@@ -181,6 +181,8 @@ export const leads = pgTable(
     /** Null = the agent owns the lead; otherwise the person on the seller's team. */
     ownerUserId: uuid("owner_user_id").references(() => users.id, { onDelete: "set null" }),
     optedOutAt: timestamp("opted_out_at", { withTimezone: true }),
+    /** Test-lab buyers: never contacted, never counted in reports, hidden from the leads list. */
+    isTest: boolean("is_test").notNull().default(false),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -507,3 +509,207 @@ export type Quote = typeof quotes.$inferSelect;
 export type QuoteVersion = typeof quoteVersions.$inferSelect;
 export type QuoteLine = typeof quoteLines.$inferSelect;
 export type QuoteStatus = (typeof quoteStatus.enumValues)[number];
+
+// ---------------------------------------------------------------------------
+// Agent core (implementation plan P4, migration M5)
+// ---------------------------------------------------------------------------
+
+export const agentVersionStatus = pgEnum("agent_version_status", ["draft", "testing", "live", "retired"]);
+
+/** A deal-state field the playbook asks the agent to learn. */
+export type PlaybookField = {
+  key: string;
+  label: string;
+  /** Needed before a quote, before the order form, or just useful. */
+  stage: "before_quote" | "before_order_form" | "optional";
+  hint?: string;
+};
+
+export type Playbook = {
+  agentName: string;
+  goal: string;
+  tone: string;
+  outcomes: { orderForm: boolean; bankTransfer: boolean; meeting: boolean };
+  fields: PlaybookField[];
+  objections: { objection: string; answer: string }[];
+  /** Discount the agent may offer without approval, in basis points. */
+  maxDiscountBp: number;
+  offerMeetingWhen: string;
+  handOffWhen: string;
+  neverDo: string[];
+};
+
+/**
+ * A version of the seller's agent (mvp-plan 3.10): a frozen package of
+ * playbook, model and settings. One draft and one live version per account.
+ */
+export const agentVersions = pgTable(
+  "agent_versions",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    version: integer("version").notNull(),
+    status: agentVersionStatus("status").notNull().default("draft"),
+    playbook: jsonb("playbook").$type<Playbook>().notNull(),
+    model: text("model").notNull(),
+    effort: text("effort").notNull().default("medium"),
+    changeNote: text("change_note"),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedByUserId: uuid("published_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("agent_versions_account_version_uq").on(t.accountId, t.version),
+    uniqueIndex("agent_versions_one_draft_uq").on(t.accountId).where(sql`${t.status} = 'draft'`),
+    uniqueIndex("agent_versions_one_live_uq").on(t.accountId).where(sql`${t.status} = 'live'`),
+  ],
+);
+
+export const factStatus = pgEnum("fact_status", ["suggested", "approved", "rejected"]);
+
+/** Approved facts the agent may state, each with where it came from. P8 adds extraction from sources. */
+export const knowledgeFacts = pgTable(
+  "knowledge_facts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    topic: text("topic").notNull(),
+    statement: text("statement").notNull(),
+    sourceLabel: text("source_label"),
+    status: factStatus("status").notNull().default("approved"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("knowledge_facts_account_idx").on(t.accountId, t.status)],
+);
+
+export const conversationStatus = pgEnum("conversation_status", ["open", "human", "closed"]);
+
+/** One conversation with a lead on one channel. The agent never knows which channel. */
+export const conversations = pgTable(
+  "conversations",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    /** "testlab" now; "whatsapp" in P6. */
+    channel: text("channel").notNull(),
+    isTest: boolean("is_test").notNull().default(false),
+    /** The agent version this conversation runs on. */
+    agentVersionId: uuid("agent_version_id")
+      .notNull()
+      .references(() => agentVersions.id),
+    status: conversationStatus("status").notNull().default("open"),
+    takenOverByUserId: uuid("taken_over_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    language: text("language").notNull(),
+    /** Scenario name for test-lab runs. */
+    scenario: text("scenario"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("conversations_account_lead_idx").on(t.accountId, t.leadId), index("conversations_account_updated_idx").on(t.accountId, t.updatedAt)],
+);
+
+export const messages = pgTable(
+  "messages",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    /** buyer | agent | human | system */
+    actor: text("actor").notNull(),
+    actorUserId: uuid("actor_user_id").references(() => users.id, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    language: text("language"),
+    agentVersionId: uuid("agent_version_id").references(() => agentVersions.id, { onDelete: "set null" }),
+    /** Model usage for agent messages (cost reporting, P9). */
+    usage: jsonb("usage").$type<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; model: string }>(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("messages_conversation_created_idx").on(t.conversationId, t.createdAt)],
+);
+
+export const toolOutcome = pgEnum("tool_outcome", ["ok", "refused", "failed"]);
+
+/** Every tool the agent called, with its result: the trace shown in the lead card and test lab. */
+export const toolCalls = pgTable(
+  "tool_calls",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    /** The agent reply this call led to. */
+    messageId: uuid("message_id").references(() => messages.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+    name: text("name").notNull(),
+    input: jsonb("input").$type<Record<string, unknown>>().notNull(),
+    result: jsonb("result").$type<Record<string, unknown>>().notNull(),
+    outcome: toolOutcome("outcome").notNull(),
+    /** For refusals: the rule that refused, in plain words. */
+    rule: text("rule"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("tool_calls_conversation_idx").on(t.conversationId, t.createdAt)],
+);
+
+export type DealFieldValue = {
+  value: string;
+  provenance: "buyer" | "inferred" | "verified";
+  updatedAt: string;
+  /** User id when a person verified it. */
+  verifiedBy?: string;
+};
+
+/** The live checklist of what is known about a deal (mvp-plan 3.1). One per lead, across channels. */
+export const dealStates = pgTable(
+  "deal_states",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    fields: jsonb("fields").$type<Record<string, DealFieldValue>>().notNull().default({}),
+    objections: jsonb("objections").$type<{ text: string; handled: boolean }[]>().notNull().default([]),
+    nextStep: text("next_step"),
+    summary: text("summary"),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [uniqueIndex("deal_states_lead_uq").on(t.leadId)],
+);
+
+export type AgentVersion = typeof agentVersions.$inferSelect;
+export type KnowledgeFact = typeof knowledgeFacts.$inferSelect;
+export type Conversation = typeof conversations.$inferSelect;
+export type Message = typeof messages.$inferSelect;
+export type ToolCall = typeof toolCalls.$inferSelect;
+export type DealState = typeof dealStates.$inferSelect;

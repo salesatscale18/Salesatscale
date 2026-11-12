@@ -181,7 +181,7 @@ function escapeLike(v: string) {
 }
 
 function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
-  const parts: SQL[] = [eq(leads.accountId, accountId)];
+  const parts: SQL[] = [eq(leads.accountId, accountId), eq(leads.isTest, false)];
   if (f.view && f.view !== "all") parts.push(eq(leads.status, f.view as LeadStatus));
   if (f.language) parts.push(eq(leads.language, f.language));
   if (f.sourceLabel) parts.push(eq(leads.sourceLabel, f.sourceLabel));
@@ -216,7 +216,7 @@ export async function countLeadsByView(db: Db, accountId: string): Promise<Recor
   const rows = await db
     .select({ status: leads.status, n: count() })
     .from(leads)
-    .where(eq(leads.accountId, accountId))
+    .where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)))
     .groupBy(leads.status);
   const out = Object.fromEntries(LEAD_VIEWS.map((v) => [v, 0])) as Record<LeadView, number>;
   for (const r of rows) {
@@ -230,7 +230,7 @@ export async function listSourceLabels(db: Db, accountId: string): Promise<strin
   const rows = await db
     .selectDistinct({ label: leads.sourceLabel })
     .from(leads)
-    .where(and(eq(leads.accountId, accountId), sql`${leads.sourceLabel} is not null`))
+    .where(and(eq(leads.accountId, accountId), eq(leads.isTest, false), sql`${leads.sourceLabel} is not null`))
     .orderBy(asc(leads.sourceLabel));
   return rows.map((r) => r.label!).filter(Boolean);
 }

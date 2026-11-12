@@ -74,7 +74,7 @@ describe("POST /api/leads/[account]", () => {
 
   it("refuses an opted-out person and logs every delivery for Settings", async () => {
     const created = await (await call("alpha", { ...good, phone: "0529990000", full_name: "Lior Gat" }, keyA)).json();
-    await optOutLead(holder.db as never, { userId: null as unknown as string, actingAs: false }, accountA, created.id);
+    await optOutLead(holder.db as never, { userId: null, actingAs: false }, accountA, created.id);
     const res = await call("alpha", { ...good, phone: "0529990000", full_name: "Lior Gat" }, keyA);
     expect(res.status).toBe(409);
     expect((await res.json()).error).toBe("opted_out");
