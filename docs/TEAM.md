@@ -46,21 +46,28 @@ and `[RULE]` posts by the Lead that the user approved.
 
 ## Release queue (managed by the Lead)
 
-Pushing to `main` deploys to **production** on Vercel and runs migrations, and
-Preview shares the production database. So:
+Pushing to `main` **auto-deploys to production** (Vercel project
+`salesatscale/salesatscale18`, https://salesatscale18.vercel.app) and runs
+pending migrations. Every branch push also gets a Preview deploy, which skips
+migrations but uses the **production database**. So:
 
 1. Pushes go **one at a time**, in the order of the queue table. If the queue
    is empty and no migration is in flight, a session may push right away.
 2. Before pushing, the session confirms: rebased on current `origin/main`,
    lint, test and build green, follows `CLAUDE.md` (server-side auth checks,
    `/sadmin` super-admin only, generated migrations committed, no secrets,
-   `.env.example` updated).
-3. A push with a migration goes alone, and the next push waits until that
-   production deploy succeeded.
-4. After each push, the Lead verifies the production deployment, moves the
-   entry to *Released*, and tells the next session in line to rebase and push.
-5. A failing production deploy freezes the queue until it is fixed or rolled
-   back.
+   `.env.example` updated). Nothing gates a push after this point, so these
+   checks are the only gate.
+3. **Deploy verification is done by the user, manually**, in the Vercel
+   dashboard. Sessions do not access Vercel (no Vercel API or connector).
+4. A push with a migration goes alone and says `migration: yes` in `[PUSHED]`.
+   The next push waits until the user confirms that deploy is Ready.
+5. If the user reports a failed deploy, the Lead freezes the queue
+   (`[RULE] queue frozen`). The session that pushed fixes it with a new
+   push, or reverts its commit with `git revert` (never a force-push). Then the
+   Lead reopens the queue.
+6. After each push, the Lead moves the entry to *Released* and tells the next
+   session in line to rebase and push.
 
 ## Changing the rules
 
