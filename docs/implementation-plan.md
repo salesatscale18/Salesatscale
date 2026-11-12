@@ -368,7 +368,12 @@ Update the row in the same push that finishes the step.
 | P1.3 | done | determined-hopper | this push | 2026-11-12 | `/sadmin/accounts`: list, create (with owner invite), detail, pause/resume, audit log |
 | P1.4 | in progress | determined-hopper | this push | 2026-11-12 | Invite links (hashed token, 7 days, verified-email match) and `/invite/[token]` done. Invite **email** waits for D8; the admin copies the link for now |
 | P1.5 | done | determined-hopper | this push | 2026-11-12 | Enter account → acting banner, entry and writes audited with `acting_as` |
-| P2.1–P2.6 | todo | | | | M2 |
+| P2.1 | done | determined-hopper | this push | 2026-11-12 | M2 `0002_leads`: `leads`, `consent_records`, `lead_events`, `lead_intake_keys` |
+| P2.2 | done | determined-hopper | this push | 2026-11-12 | `lib/leads/rules.ts`: E.164 normalization by market, masking, one validator for all intake paths, consent required |
+| P2.3 | done | determined-hopper | this push | 2026-11-12 | Leads list: views with counts, search, source/language/period filters, Add lead panel, first-use/filtered/error/loading states. "Needs you" view, progress and next-step columns wait for P4–P6 data |
+| P2.4 | done | determined-hopper | this push | 2026-11-12 | CSV import with per-row results (2,000 rows, 1 MB) |
+| P2.5 | done | determined-hopper | this push | 2026-11-12 | `POST /api/leads/[account]` with per-account hashed keys (Settings), `docs/lead-intake.md`. Rate limiting in P10.1 |
+| P2.6 | done | determined-hopper | this push | 2026-11-12 | Lead card shell: header with masked phone, empty conversation, timeline, consent record, opt-out (audited) |
 | P3.1–P3.5 | todo | | | | M3 |
 | P4.1–P4.8 | todo | | | | M4; P4.2 needs D1 |
 | P5.1–P5.8 | todo | | | | M5 → Milestone A |

@@ -9,3 +9,9 @@ export function initials(u: Pick<User, "firstName" | "lastName" | "email">): str
   const letters = parts.length > 0 ? parts.map((p) => p[0]) : [(u.email ?? "?")[0]];
   return letters.join("").slice(0, 2).toUpperCase();
 }
+
+/** Initials from a free-text full name ("Shira Golan" → "SG"). */
+export function nameInitials(fullName: string): string {
+  const parts = fullName.trim().split(/\s+/).filter(Boolean);
+  return (parts.length > 1 ? parts[0][0] + parts[parts.length - 1][0] : (parts[0] ?? "?").slice(0, 2)).toUpperCase();
+}

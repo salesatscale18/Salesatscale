@@ -15,6 +15,13 @@
       "when": 1794486644218,
       "tag": "0001_tenancy",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1794494226791,
+      "tag": "0002_leads",
+      "breakpoints": true
     }
   ]
 }
