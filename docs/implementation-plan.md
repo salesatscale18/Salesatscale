@@ -6,12 +6,22 @@ This plan turns the product plan into build phases. It does not repeat product d
 
 | Source | Where | What it fixes |
 |---|---|---|
-| Product plan | `docs/mvp-plan.md` (branch `claude/git-repo-connection-r5zu47`, not on `main` yet) | Scope, decisions 3.1–3.12, screens, go-live checklist, open decisions |
+| Product plan | [`docs/mvp-plan.md`](mvp-plan.md) | Scope, decisions 3.1–3.12, screens, go-live checklist, open decisions |
 | Design system (Trust Blue) | https://claude.ai/artifact/JqDhGuh7uQXqV1er6vwQgu | Tokens, type, status words, icons, RTL rules, `sas-` components |
-| Screen designs + notes | https://claude.ai/artifact/Q4qUgGrnwScxyysAd1iHdM | 25 screens: seller workspace (8), setup (8 + test lab), buyer (5), admin (3), side nav and setup steps |
+| Screen designs + notes | https://claude.ai/artifact/Q4qUgGrnwScxyysAd1iHdM | 25 screens: seller workspace (8), setup (8 + test lab), buyer (5), admin (3), side nav and setup steps; "States and gaps" page in progress (see below) |
 | Repo rules | `CLAUDE.md`, `docs/TEAM.md`, channel issue #2 | Stack, migrations, auth, release queue |
 
 When this plan and the product plan disagree, the product plan wins. Fix this file.
+
+Ownership: the UX/product session owns `docs/mvp-plan.md`, the screens and the design system; this plan, the phases, tests and code are owned by the implementation session. Screen or product questions go to the UX session or the channel.
+
+States being designed by the UX session (canvas page "States and gaps"), needed by the steps in brackets:
+
+1. Signed in with no account, account picker, invite acceptance (P0.5, P1.4)
+2. Admin "create account" form with required fields (P1.3)
+3. Lead card empty state; test-lab trace row for a tool refusal (P2.6, P4.6)
+4. Buyer "price changed" and "payment failed" pages (P5.4, P5.5)
+5. Empty, error and loading states for Leads, Orders and Inbox (P2.3, P3.5, P6.6)
 
 ---
 
@@ -345,7 +355,7 @@ Update the row in the same push that finishes the step.
 
 | Step | Status | Owner | Commit | Date | Notes |
 |---|---|---|---|---|---|
-| Plan | in progress | determined-hopper | — | 2026-11-12 | This document |
+| Plan | done | determined-hopper | this push | 2026-11-12 | This document + `docs/mvp-plan.md` on `main` |
 | P0.1 | todo | | | | |
 | P0.2 | todo | | | | |
 | P0.3 | todo | | | | |
