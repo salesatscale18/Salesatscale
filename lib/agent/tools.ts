@@ -16,7 +16,7 @@ import { createQuote } from "@/lib/quotes/service";
 import { createOrderForm } from "@/lib/orders/service";
 import type { ToolDef } from "./llm";
 import { missingFields } from "./playbook";
-import { applyAgentUpdates, getDealState, listFacts, rankFacts } from "./service";
+import { applyAgentUpdates, approvedFacts, getDealState, rankFacts } from "./service";
 
 const lineSchema = {
   type: "array",
@@ -181,7 +181,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "lookup_knowledge") {
-    const facts = (await listFacts(ctx.db, ctx.accountId)).filter((f) => f.status === "approved");
+    const facts = await approvedFacts(ctx.db, ctx.accountId);
     const hits = rankFacts(facts, String(args.query ?? ""));
     return {
       outcome: "ok",

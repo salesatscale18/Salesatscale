@@ -8,7 +8,7 @@ import type { DealState, Playbook } from "@/db/schema";
 import { missingFields } from "./playbook";
 
 export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; currency: string; languages: string[] }): string {
-  const fields = p.fields.map((f) => `- ${f.key}: ${f.label} (${f.stage.replace(/_/g, " ")})${f.hint ? ` - ${f.hint}` : ""}`).join("\n") || "- (none)";
+  const fields = p.fields.map((f) => `- ${f.key}: ${f.label} (${f.stage.replace(/_/g, " ")})${f.hint ? ` - ${f.hint}` : ""}${f.example ? `. Example question: "${f.example}"` : ""}`).join("\n") || "- (none)";
   const objections = p.objections.map((o) => `- "${o.objection}" -> ${o.answer}`).join("\n") || "- (none yet)";
   const outcomes = [
     p.outcomes.orderForm ? "a quote followed by the seller's order form (send_order_form), which the buyer signs and pays" : null,
