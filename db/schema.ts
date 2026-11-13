@@ -28,6 +28,18 @@ export type UserRole = (typeof userRole.enumValues)[number];
 
 export const accountStatus = pgEnum("account_status", ["setting_up", "live", "paused"]);
 export const memberRole = pgEnum("member_role", ["seller_admin"]);
+/** Who the agent contacts first once the account is live (canvas: GoLive). */
+export const rolloutMode = pgEnum("rollout_mode", ["test_only", "half", "all"]);
+
+/** One weekday's contact hours, "HH:MM" local time in the account's time zone. */
+export type ContactHoursDay = { on: boolean; from: string; to: string };
+/** Seven entries, index 0 = Sunday … 6 = Saturday. */
+export type ContactHours = ContactHoursDay[];
+
+export const NOTIFICATION_EVENTS = ["handoff", "approval", "payment_failed", "order_paid"] as const;
+export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
+/** Per-event channels the seller wants to be told on. Only email for now. */
+export type NotificationPrefs = Partial<Record<NotificationEvent, { email: boolean }>>;
 
 /** A seller account (tenant). Every seller-side table carries account_id. */
 export const sellerAccounts = pgTable(
@@ -53,6 +65,17 @@ export const sellerAccounts = pgTable(
     /** Largest discount the agent may give without approval, in basis points (playbook limit, P4 edits it). */
     maxDiscountBp: integer("max_discount_bp").notNull().default(0),
     notes: text("notes"),
+    /** Business address shown on the order form (Setup › Company). */
+    address: text("address"),
+    /** Free text shown to buyers under "Reply to us in the chat". */
+    supportContact: text("support_contact"),
+    /** Member who takes handoffs. Must be a member of this account (checked on save). */
+    salesRepUserId: uuid("sales_rep_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** Null = defaults (lib/accounts/contact-hours.ts). */
+    contactHours: jsonb("contact_hours").$type<ContactHours>(),
+    /** Null = defaults (email on for every event). */
+    notifications: jsonb("notifications").$type<NotificationPrefs>(),
+    rollout: rolloutMode("rollout").notNull().default("test_only"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
     pausedAt: timestamp("paused_at", { withTimezone: true }),
@@ -138,6 +161,7 @@ export type AccountInvite = typeof accountInvites.$inferSelect;
 export type AuditEntry = typeof auditLog.$inferSelect;
 export type AccountStatus = (typeof accountStatus.enumValues)[number];
 export type MemberRole = (typeof memberRole.enumValues)[number];
+export type RolloutMode = (typeof rolloutMode.enumValues)[number];
 
 // ---------------------------------------------------------------------------
 // Leads and consent (implementation plan P2, migration M2)
@@ -782,6 +806,8 @@ export type OrderSnapshot = {
   prefill: Partial<Record<OrderFormField | "signatory_name", string>>;
   paymentMethods: { card: boolean; bankTransfer: boolean };
   bankDetails: string | null;
+  /** Seller's support contact shown to buyers. Missing on snapshots made before it existed. */
+  supportContact?: string | null;
 };
 
 /**

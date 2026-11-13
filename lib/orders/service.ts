@@ -77,6 +77,7 @@ export async function createOrderForm(
     },
     paymentMethods: { card: settings.card, bankTransfer: settings.bankTransfer },
     bankDetails: settings.bankDetails,
+    supportContact: account.supportContact ?? null,
   };
 
   const id = randomUUID();
