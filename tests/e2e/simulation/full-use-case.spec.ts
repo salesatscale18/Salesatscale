@@ -102,16 +102,24 @@ test("2. Catalog: products, tiers, fit rule, publish", async () => {
   await expect(page.getByText(/is live|published/i).first()).toBeVisible();
 });
 
-test("3. Knowledge, playbook and agent version", async () => {
+test("3. Company, knowledge, playbook and agent version", async () => {
+  await page.goto(`${appBase}/setup/company`);
+  await page.locator("#co-ad").fill("12 HaMelacha St, Tel Aviv");
+  await page.locator("#co-sup").fill("support@e2e-polar.test · 03 555 0142");
+  await page.getByRole("button", { name: "Save", exact: true }).first().click();
+  await expect(page.getByText("Company details saved.")).toBeVisible();
+
   await page.goto(`${appBase}/setup/knowledge`);
-  await page.getByLabel("Topic").first().fill("Warranty");
-  await page.getByLabel("Fact").first().fill("Sensors have a 24-month warranty.");
+  await page.locator("#kf-new-topic").fill("Warranty");
+  await page.locator("#kf-statement").fill("Sensors have a 24-month warranty.");
+  await page.locator("#kf-source").fill("Product sheet p.2");
   await page.getByRole("button", { name: "Add fact" }).last().click();
+  await expect(page.getByText("Fact added. The agent can use it now.")).toBeVisible();
   await expect(page.getByText("Sensors have a 24-month warranty.")).toBeVisible();
 
   await page.goto(`${appBase}/setup/playbook`);
-  await page.getByLabel(/Discount limit/).fill("10");
-  await page.getByRole("button", { name: "Save draft" }).click();
+  await page.locator("#pb-maxDiscount").fill("10");
+  await page.getByRole("button", { name: "Save draft" }).first().click();
   await expect(page.getByText(/Draft saved/)).toBeVisible();
 
   await page.goto(`${appBase}/setup/test-lab`);
@@ -129,6 +137,29 @@ test("4. Order form: legal text EN/HE, fields, payment methods", async () => {
   // Live preview switches to Hebrew, right to left.
   await page.getByRole("button", { name: "עברית" }).click();
   await expect(page.locator('[dir="rtl"]').first()).toBeVisible();
+});
+
+test("4b. Test lab hand-off without the model, settings, go live", async () => {
+  await page.goto(`${appBase}/setup/test-lab`);
+  await page.getByRole("button", { name: "Start" }).click();
+  await page.waitForURL(/test-lab\?c=/);
+  await page.getByRole("button", { name: "Take over chat" }).click();
+  await page.getByRole("textbox", { name: /Reply as/ }).fill("Hi, Danny from the team here. How can I help?");
+  await page.locator('form:has(textarea[id^="reply-"])').getByRole("button", { name: "Send" }).click();
+  await expect(page.getByText("Hi, Danny from the team here. How can I help?")).toBeVisible();
+  await page.getByRole("button", { name: "Hand back to agent" }).click();
+  await expect(page.getByRole("button", { name: "Take over chat" })).toBeVisible();
+
+  await page.goto(`${appBase}/settings?section=hours`);
+  await page.getByRole("button", { name: "Save" }).first().click();
+  await expect(page.getByText("Contact hours saved.")).toBeVisible();
+  await page.goto(`${appBase}/settings?section=users`);
+  await expect(page.getByText("Owner").first()).toBeVisible();
+
+  await page.goto(`${appBase}/setup/go-live`);
+  await expect(page.getByText(/You can go live/)).toBeVisible();
+  await page.getByRole("button", { name: "Go live" }).click();
+  await expect(page.getByText(/Live since|You are live/).first()).toBeVisible();
 });
 
 async function addLead(name: string, phone: string, language: "en" | "he", company: string) {
@@ -238,6 +269,8 @@ test("6. Lead 2 (HE): discount above the limit, approval, bank transfer marked r
   await expect(buyer.getByText("ממתינים להעברה שלך")).toBeVisible();
   await buyer.context().close();
 
+  await page.goto(appBase);
+  await expect(page.getByText("Confirm bank transfer")).toBeVisible();
   await page.goto(`${appBase}/orders?quote=${quoteId}`);
   await expect(page.getByText("Bank transfer expected").first()).toBeVisible();
   await page.getByRole("button", { name: "Mark payment received" }).click();
@@ -276,10 +309,14 @@ test("8. Opt-out is respected", async () => {
   await expect(page.getByRole("link", { name: "Create quote" })).toHaveCount(0);
 });
 
-test("9. Orders and timeline add up", async () => {
+test("9. Orders, overview and admin activity add up", async () => {
   await page.goto(`${appBase}/orders?tab=orders`);
   await expect(page.locator("tbody tr")).toHaveCount(3);
-  await expect(page.getByText("Paid")).toHaveCount(2);
+  await expect(page.locator("tbody").getByText("Paid")).toHaveCount(2);
+  await page.goto(appBase);
+  await expect(page.getByText("Nothing needs you right now.").or(page.getByText("Order form not signed"))).toBeVisible();
+  await page.goto(`/sadmin`);
+  await expect(page.getByText("account.went_live").or(page.getByText(/went live/i)).first()).toBeVisible();
 });
 
 test("10. Agent in the test lab (live model, opt-in)", async () => {

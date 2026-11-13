@@ -398,6 +398,11 @@ Update the row in the same push that finishes the step.
 | P5.6 | done | determined-hopper | P5 push | 2026-11-12 | Bank transfer: buyer chooses it → Bank transfer expected; seller "Mark payment received" (only bank-transfer orders, audited) |
 | P5.7 | done (partial) | determined-hopper | P5 push | 2026-11-12 | Signed document page `/f/[token]/document` from the write-once snapshot + signature + SHA-256 fingerprint; "Print or save as PDF" via the browser. A stored PDF file comes later |
 | P5.8 | done (stub) | determined-hopper | P5 push | 2026-11-12 | Confirmations: system message in the buyer's conversation (EN/HE) and timeline events; seller email is a log stub until D8 |
+| PC.A | done | determined-hopper | pilot pass | 2026-11-13 | Pilot completion lane A: migration `0007_company_golive`; Setup · Company (business details, sales rep, support contact on buyer pages, brand color shared with the order form); Settings (users and invites, notifications, contact hours with `isWithinContactHours`); Setup · Go live (checklist from real data, rollout choice, Go live) |
+| PC.B | done | determined-hopper | pilot pass | 2026-11-13 | Lane B: structured Playbook editor (field rows with example question, objections, limits, never-do rows; stable keys); Knowledge with topics, suggested/approved/rejected, edit, approve all, and "Questions we couldn't answer" from real `lookup_knowledge` misses |
+| PC.C | done | determined-hopper | pilot pass | 2026-11-13 | Lane C: Overview (Needs you queue, period numbers, setup progress, recent activity, sidebar badge); Admin · Activity feed (filters, paging); setup steps show completion |
+| PC.D | done | determined-hopper | pilot pass | 2026-11-13 | Lane D: lead-card conversation (take over, reply as a person, hand back; delivery seam for P6); test-lab scenarios with pass/fail checks |
+| PC.E | done | determined-hopper | pilot pass | 2026-11-13 | Playwright full-use-case simulation against a deployed site (`docs/e2e-simulation.md`, `npm run test:sim`) |
 | P6.1–P6.8 | todo | | | | M6; needs D2, D6 → Milestone B |
 | P7.1–P7.5 | todo | | | | M7 |
 | P8.1–P8.7 | todo | | | | M8 |
