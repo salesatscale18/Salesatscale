@@ -11,7 +11,8 @@
     "db:migrate": "drizzle-kit migrate",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:sim": "playwright test -c playwright.sim.config.ts --trace off"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.8.0",
