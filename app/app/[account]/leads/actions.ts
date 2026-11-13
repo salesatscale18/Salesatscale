@@ -7,7 +7,8 @@ import { writeAudit } from "@/lib/accounts/audit";
 import { CONSENT_WORDING_DEFAULT, parseLead, type LeadFieldErrors } from "@/lib/leads/rules";
 import { importLeadsCsv, optOutLead, upsertLead, type ImportResult } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
-import { currentPlaybook, verifyField } from "@/lib/agent/service";
+import { currentPlaybook, getConversation, verifyField } from "@/lib/agent/service";
+import { addHumanReply, handBack, takeOver } from "@/lib/agent/conversation";
 
 // Server actions are public endpoints: every one re-checks access with requireAccount().
 
@@ -80,4 +81,50 @@ export async function verifyFieldAction(form: FormData) {
   const ok = await verifyField(appDb, actorOf(access), access.account.id, leadId, key, value);
   revalidatePath(back);
   redirect(ok ? `${back}?verified=1` : back);
+}
+
+// ---------------------------------------------------------------------------
+// Conversation: take over, hand back, reply as a person (lead card and test lab)
+// ---------------------------------------------------------------------------
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Where to go after a conversation action: the lead card, or the test-lab chat. */
+function conversationBack(slug: string, from: string, conv: { id: string; leadId: string } | null, notice?: string) {
+  if (from === "lab") {
+    const base = `/app/${slug}/setup/test-lab`;
+    return conv ? `${base}?c=${conv.id}${notice ? `&notice=${notice}` : ""}#end` : base;
+  }
+  return conv ? `/app/${slug}/leads/${conv.leadId}${notice ? `?notice=${notice}` : ""}#conversation` : `/app/${slug}/leads`;
+}
+
+/** Access first, then the conversation, looked up inside the caller's account only. */
+async function conversationForm(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const conversationId = String(form.get("conversationId") ?? "");
+  const conv = UUID.test(conversationId) ? await getConversation(appDb, access.account.id, conversationId) : null;
+  return { access, conv, from: String(form.get("from") ?? "") };
+}
+
+export async function takeOverAction(form: FormData) {
+  const { access, conv, from } = await conversationForm(form);
+  const r = conv ? await takeOver(appDb, actorOf(access), access.account.id, conv.id) : null;
+  if (conv) revalidatePath(`/app/${access.account.slug}/leads/${conv.leadId}`);
+  redirect(conversationBack(access.account.slug, from, conv, r && !r.ok ? r.reason : undefined));
+}
+
+export async function handBackAction(form: FormData) {
+  const { access, conv, from } = await conversationForm(form);
+  const r = conv ? await handBack(appDb, actorOf(access), access.account.id, conv.id) : null;
+  if (conv) revalidatePath(`/app/${access.account.slug}/leads/${conv.leadId}`);
+  redirect(conversationBack(access.account.slug, from, conv, r && !r.ok ? r.reason : undefined));
+}
+
+export async function humanReplyAction(form: FormData) {
+  const { access, conv, from } = await conversationForm(form);
+  const text = String(form.get("text") ?? "");
+  const r = conv ? await addHumanReply(appDb, { ...actorOf(access), userId: access.user.id }, access.account.id, conv.id, text) : null;
+  const notice = !r ? undefined : !r.ok ? r.reason : r.delivery && !r.delivery.delivered ? "saved_not_sent" : undefined;
+  if (conv) revalidatePath(`/app/${access.account.slug}/leads/${conv.leadId}`);
+  redirect(conversationBack(access.account.slug, from, conv, notice));
 }

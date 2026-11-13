@@ -17,14 +17,14 @@ function Send() {
 }
 
 /** Message box for a test chat. The turn runs on the server; the page reloads with the reply. */
-export function Composer({ slug, conversationId, dir }: { slug: string; conversationId: string; dir: "ltr" | "rtl" }) {
+export function Composer({ slug, conversationId, dir, initialText }: { slug: string; conversationId: string; dir: "ltr" | "rtl"; initialText?: string }) {
   return (
     <form action={sendTestMessageAction} className="sas-stack-2" style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="conversationId" value={conversationId} />
       <label className="sas-input-label" htmlFor="lab-text">{t("lab.message")}</label>
       <textarea
-        className="sas-textarea" id="lab-text" name="text" rows={2} required maxLength={4000} dir={dir} autoFocus
+        className="sas-textarea" id="lab-text" name="text" rows={2} required maxLength={4000} dir={dir} autoFocus defaultValue={initialText}
         onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.form?.requestSubmit(); } }}
       />
       <div style={{ display: "flex", gap: 8, alignItems: "center", justifyContent: "flex-end" }}><Send /></div>
