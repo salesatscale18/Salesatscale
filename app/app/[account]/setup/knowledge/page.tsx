@@ -1,6 +1,7 @@
 import { Button } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { listFacts } from "@/lib/agent/service";
 import { t } from "@/lib/i18n";
@@ -18,7 +19,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
       <header className="sas-stack-2">
         <div className="sas-page-head"><h1 className="sas-title">{t("knowledge.title")}</h1></div>
         <span className="sas-small">{t("knowledge.intro")}</span>
-        <SetupSteps basePath={base} current="knowledge" completed={new Set()} />
+        <SetupSteps basePath={base} current="knowledge" completed={await setupProgress(appDb, account.id)} />
       </header>
       {sp.added ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("knowledge.added")}</span></div> : null}
       {sp.error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("knowledge.error")}</span></div> : null}
