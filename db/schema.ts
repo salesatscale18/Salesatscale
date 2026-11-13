@@ -523,6 +523,8 @@ export type PlaybookField = {
   /** Needed before a quote, before the order form, or just useful. */
   stage: "before_quote" | "before_order_form" | "optional";
   hint?: string;
+  /** How the agent might ask for it (optional; adapted to the buyer and language). */
+  example?: string;
 };
 
 export type Playbook = {
@@ -531,7 +533,7 @@ export type Playbook = {
   tone: string;
   outcomes: { orderForm: boolean; bankTransfer: boolean; meeting: boolean };
   fields: PlaybookField[];
-  objections: { objection: string; answer: string }[];
+  objections: { objection: string; answer: string; source?: string }[];
   /** Discount the agent may offer without approval, in basis points. */
   maxDiscountBp: number;
   offerMeetingWhen: string;

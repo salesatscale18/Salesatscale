@@ -3,7 +3,7 @@
  * P4.7, P4.8). Scoped by account id everywhere.
  */
 import { randomBytes, randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, max } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, like, max, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -12,6 +12,7 @@ import {
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { defaultPlaybook } from "./playbook";
+import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
 
 export const DEFAULT_MODEL = process.env.AGENT_MODEL?.trim() || "claude-opus-5-5";
 
@@ -161,23 +162,147 @@ export async function verifyField(db: Db, actor: Actor, accountId: string, leadI
 }
 
 // ---------------------------------------------------------------------------
-// Knowledge (minimal until P8)
+// Knowledge (manual facts, review statuses, unanswered questions; sources and extraction come in P8)
 // ---------------------------------------------------------------------------
 
-export async function listFacts(db: Db, accountId: string) {
-  return db.select().from(knowledgeFacts).where(eq(knowledgeFacts.accountId, accountId)).orderBy(asc(knowledgeFacts.topic), asc(knowledgeFacts.createdAt));
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const factWhere = (accountId: string, factId: string) => and(eq(knowledgeFacts.id, factId), eq(knowledgeFacts.accountId, accountId));
+
+/** All facts of the account (any status), optionally one topic. */
+export async function listFacts(db: Db, accountId: string, opts: { topic?: string } = {}) {
+  return db
+    .select()
+    .from(knowledgeFacts)
+    .where(opts.topic ? and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.topic, opts.topic)) : eq(knowledgeFacts.accountId, accountId))
+    .orderBy(asc(knowledgeFacts.topic), asc(knowledgeFacts.createdAt));
 }
 
-export async function addFact(db: Db, actor: Actor, accountId: string, f: { topic: string; statement: string; sourceLabel?: string | null }) {
+/** Only approved facts: the agent sees nothing else (lookup_knowledge). */
+export async function approvedFacts(db: Db, accountId: string) {
+  return db
+    .select()
+    .from(knowledgeFacts)
+    .where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "approved")))
+    .orderBy(asc(knowledgeFacts.topic), asc(knowledgeFacts.createdAt));
+}
+
+export async function getFact(db: Db, accountId: string, factId: string) {
+  if (!UUID_RE.test(factId)) return null;
+  const [f] = await db.select().from(knowledgeFacts).where(factWhere(accountId, factId));
+  return f ?? null;
+}
+
+/** Facts typed by a person are approved; `suggested` is for facts found by the system (P8) and tests. */
+export async function addFact(
+  db: Db, actor: Actor, accountId: string,
+  f: { topic: string; statement: string; sourceLabel?: string | null; status?: FactStatus },
+) {
   const [row] = await db
     .insert(knowledgeFacts)
-    .values({ accountId, topic: f.topic.trim().slice(0, 60) || "General", statement: f.statement.trim().slice(0, 1000), sourceLabel: f.sourceLabel?.trim().slice(0, 200) || null, status: "approved", createdByUserId: actor.userId })
+    .values({
+      accountId, topic: f.topic.trim().slice(0, 60) || "General", statement: f.statement.trim().slice(0, 1000),
+      sourceLabel: f.sourceLabel?.trim().slice(0, 200) || null, status: f.status ?? "approved", createdByUserId: actor.userId,
+    })
     .returning();
   return row;
 }
 
+/** Edits a fact's wording, topic or source; its status stays. Null when the fact is not this account's. */
+export async function updateFact(db: Db, accountId: string, factId: string, f: { topic: string; statement: string; sourceLabel: string | null }) {
+  if (!UUID_RE.test(factId)) return null;
+  const [row] = await db
+    .update(knowledgeFacts)
+    .set({ topic: f.topic.trim().slice(0, 60) || "General", statement: f.statement.trim().slice(0, 1000), sourceLabel: f.sourceLabel?.trim().slice(0, 200) || null })
+    .where(factWhere(accountId, factId))
+    .returning();
+  return row ?? null;
+}
+
+export async function setFactStatus(db: Db, accountId: string, factId: string, status: FactStatus) {
+  if (!UUID_RE.test(factId)) return null;
+  const [row] = await db.update(knowledgeFacts).set({ status }).where(factWhere(accountId, factId)).returning();
+  return row ?? null;
+}
+
+/** Approves every suggested fact of one topic. Returns how many. */
+export async function approveAllSuggested(db: Db, accountId: string, topic: string) {
+  const rows = await db
+    .update(knowledgeFacts)
+    .set({ status: "approved" })
+    .where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.topic, topic), eq(knowledgeFacts.status, "suggested")))
+    .returning({ id: knowledgeFacts.id });
+  return rows.length;
+}
+
 export async function removeFact(db: Db, accountId: string, factId: string) {
-  await db.delete(knowledgeFacts).where(and(eq(knowledgeFacts.id, factId), eq(knowledgeFacts.accountId, accountId)));
+  if (!UUID_RE.test(factId)) return false;
+  const rows = await db.delete(knowledgeFacts).where(factWhere(accountId, factId)).returning({ id: knowledgeFacts.id });
+  return rows.length > 0;
+}
+
+export type TopicSummary = { topic: string; total: number; approved: number; suggested: number; rejected: number };
+
+export async function listTopics(db: Db, accountId: string): Promise<TopicSummary[]> {
+  const rows = await db
+    .select({ topic: knowledgeFacts.topic, status: knowledgeFacts.status, n: count() })
+    .from(knowledgeFacts)
+    .where(eq(knowledgeFacts.accountId, accountId))
+    .groupBy(knowledgeFacts.topic, knowledgeFacts.status);
+  const byTopic = new Map<string, TopicSummary>();
+  for (const r of rows) {
+    const s = byTopic.get(r.topic) ?? { topic: r.topic, total: 0, approved: 0, suggested: 0, rejected: 0 };
+    s[r.status] += Number(r.n);
+    s.total += Number(r.n);
+    byTopic.set(r.topic, s);
+  }
+  return [...byTopic.values()].sort((a, b) => a.topic.localeCompare(b.topic));
+}
+
+export type UnansweredQuestion = { question: string; lastAskedAt: Date; times: number };
+
+/**
+ * Questions the agent looked up and found no approved fact for (tool calls
+ * `lookup_knowledge` with an empty result, test-lab conversations included),
+ * newest first, one per question text. A question drops off once a fact
+ * exists whose source is "Buyer question: <same text>" (answerQuestion).
+ */
+export async function unansweredQuestions(db: Db, accountId: string, limit = 10): Promise<UnansweredQuestion[]> {
+  const calls = await db
+    .select({ input: toolCalls.input, createdAt: toolCalls.createdAt })
+    .from(toolCalls)
+    .where(and(
+      eq(toolCalls.accountId, accountId), eq(toolCalls.name, "lookup_knowledge"), eq(toolCalls.outcome, "ok"),
+      sql`${toolCalls.result} -> 'facts' = '[]'::jsonb`,
+    ))
+    .orderBy(desc(toolCalls.createdAt))
+    .limit(500);
+  if (calls.length === 0) return [];
+  const answered = new Set(
+    (await db.select({ s: knowledgeFacts.sourceLabel }).from(knowledgeFacts)
+      .where(and(eq(knowledgeFacts.accountId, accountId), like(knowledgeFacts.sourceLabel, `${QUESTION_PREFIX}%`))))
+      .map((r) => answeredQuestionKey(r.s))
+      .filter((k): k is string => !!k),
+  );
+  const out = new Map<string, UnansweredQuestion>();
+  for (const c of calls) {
+    const question = typeof c.input?.query === "string" ? c.input.query.replace(/\s+/g, " ").trim() : "";
+    const key = normalizeQuestion(question);
+    if (!key || answered.has(key)) continue;
+    const seen = out.get(key);
+    if (seen) seen.times += 1;
+    else out.set(key, { question: question.slice(0, 300), lastAskedAt: c.createdAt, times: 1 });
+  }
+  return [...out.values()].slice(0, limit);
+}
+
+/** A person answers an unanswered question: the answer becomes an approved fact sourced to the question. */
+export async function answerQuestion(db: Db, actor: Actor, accountId: string, a: { question: string; answer: string; topic?: string }) {
+  const question = a.question.replace(/\s+/g, " ").trim();
+  const answer = a.answer.trim();
+  if (!normalizeQuestion(question) || !answer) return null;
+  const fact = await addFact(db, actor, accountId, { topic: a.topic?.trim() || "General", statement: answer, sourceLabel: questionSourceLabel(question), status: "approved" });
+  await writeAudit(db, actor, { accountId, action: "knowledge.question_answered", targetType: "knowledge_fact", targetId: fact.id, details: { question: question.slice(0, 200) } });
+  return fact;
 }
 
 /** Simple word-overlap search over approved facts. Good enough until P8 adds better retrieval. */
