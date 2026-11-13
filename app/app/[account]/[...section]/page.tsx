@@ -6,9 +6,8 @@ import { t, type MessageKey } from "@/lib/i18n";
 /** Which implementation-plan phase builds each workspace section. */
 const PHASE: Record<string, string> = {
   "/leads": "P2", "/inbox": "P6", "/orders": "P3", "/meetings": "P7", "/reports": "P9", "/settings": "P6",
-  "/setup/company": "P8", "/setup/sources": "P8", "/setup/knowledge": "P8", "/setup/catalog": "P3",
+  "/setup/sources": "P8", "/setup/knowledge": "P8", "/setup/catalog": "P3",
   "/setup/playbook": "P4", "/setup/order-form": "P5", "/setup/follow-ups": "P7", "/setup/test-lab": "P4",
-  "/setup/go-live": "P8",
 };
 
 const LABELS: Record<string, MessageKey> = Object.fromEntries([

@@ -104,6 +104,8 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={s.seller.tradeName} sub={sub}>{children}</Shell>
   );
   const quoteRef = `Q-${s.quote.number} v${s.quote.version}`;
+  // Older snapshots have no supportContact: show nothing then.
+  const support = (center: boolean) => s.supportContact ? <span className="b-mut" style={{ display: "block", ...(center ? { textAlign: "center" as const } : {}) }}><bdi>{s.supportContact}</bdi></span> : null;
   const hidden = <><input type="hidden" name="token" value={token} /><input type="hidden" name="lang" value={lang} /></>;
 
   // Offer updated / expired (canvas: BuyerExpired).
@@ -124,7 +126,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           </div>
         ) : null}
         <div style={{ marginTop: "auto", padding: "16px 20px" }} className="b-noprint">
-          {n ? <a className="b-btn" href={`/f/${n.token}?lang=${lang}`}>{tr("buyer.view_new")}</a> : <span className="b-mut">{tr("buyer.questions")}</span>}
+          {n ? <a className="b-btn" href={`/f/${n.token}?lang=${lang}`}>{tr("buyer.view_new")}</a> : <><span className="b-mut">{tr("buyer.questions")}</span>{support(false)}</>}
         </div>
       </>
     ));
@@ -153,6 +155,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             <a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a>
             <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: s.seller.tradeName })}</span>
             <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.questions")}</span>
+            {support(true)}
           </section>
         </>
       ));

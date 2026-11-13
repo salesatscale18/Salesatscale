@@ -1,10 +1,78 @@
 "use server";
 
+import { headers } from "next/headers";
+import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { createIntakeKey, previewLead, revokeIntakeKey } from "@/lib/leads/service";
 import { parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
 import { t, type Locale } from "@/lib/i18n";
+import { inviteMember, parseNotifications, removeMember, saveContactHours, saveNotifications } from "@/lib/accounts/company";
+import { parseContactHours } from "@/lib/accounts/contact-hours";
+import { renewInvite } from "@/lib/accounts/service";
+
+// ---------------------------------------------------------------------------
+// Users, notifications, contact hours. Every action re-resolves access with
+// requireAccount and passes only that account's id to the service.
+// ---------------------------------------------------------------------------
+
+const settingsPath = (slug: string, section: string) => `/app/${slug}/settings?section=${section}`;
+
+async function inviteUrl(token: string): Promise<string> {
+  const configured = process.env.APP_URL?.replace(/\/+$/, "");
+  if (configured) return `${configured}/invite/${token}`;
+  const h = await headers();
+  const host = h.get("x-forwarded-host") ?? h.get("host") ?? "localhost:3000";
+  const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+  return `${proto}://${host}/invite/${token}`;
+}
+
+export type UserInviteState =
+  | { status: "idle" }
+  | { status: "error"; message: string }
+  | { status: "created"; email: string; name: string | null; expiresAt: string; url: string };
+
+export async function inviteUserAction(_prev: UserInviteState, form: FormData): Promise<UserInviteState> {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const r = await inviteMember(appDb, actorOf(access), access.account.id, { email: String(form.get("email") ?? ""), name: String(form.get("name") ?? "") });
+  if (!r.ok) return { status: "error", message: t(r.reason === "already_member" ? "settings.users.err.already_member" : "settings.users.err.email") };
+  revalidatePath(`/app/${access.account.slug}/settings`);
+  return { status: "created", email: r.invite.email, name: r.invite.inviteeName, expiresAt: r.invite.expiresAt.toISOString(), url: await inviteUrl(r.token) };
+}
+
+export async function renewUserInviteAction(_prev: UserInviteState, form: FormData): Promise<UserInviteState> {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const renewed = await renewInvite(appDb, actorOf(access), access.account.id, String(form.get("inviteId") ?? ""));
+  if (!renewed) return { status: "error", message: t("settings.users.err.invite_gone") };
+  revalidatePath(`/app/${access.account.slug}/settings`);
+  const { invite, token } = renewed;
+  return { status: "created", email: invite.email, name: invite.inviteeName, expiresAt: invite.expiresAt.toISOString(), url: await inviteUrl(token) };
+}
+
+export async function removeMemberAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const r = await removeMember(appDb, actorOf(access), access.account.id, String(form.get("memberId") ?? ""));
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(`${settingsPath(access.account.slug, "users")}&${r.ok ? "removed=1" : `error=${r.reason}`}`);
+}
+
+const rawOf = (form: FormData) => Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : ""]));
+
+export async function saveNotificationsAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  await saveNotifications(appDb, actorOf(access), access.account.id, parseNotifications(rawOf(form)));
+  revalidatePath(`/app/${access.account.slug}/settings`);
+  redirect(`${settingsPath(access.account.slug, "notifications")}&saved=1`);
+}
+
+export async function saveContactHoursAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const parsed = parseContactHours(rawOf(form));
+  if (!parsed.ok) redirect(`${settingsPath(access.account.slug, "hours")}&error=${encodeURIComponent(parsed.error)}`);
+  await saveContactHours(appDb, actorOf(access), access.account.id, parsed.value);
+  revalidatePath(`/app/${access.account.slug}/settings`);
+  redirect(`${settingsPath(access.account.slug, "hours")}&saved=1`);
+}
 
 export type KeyState = { status: "idle" } | { status: "created"; name: string; key: string };
 
