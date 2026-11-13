@@ -1,6 +1,7 @@
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { ensureDraftVersion } from "@/lib/agent/service";
 import { t } from "@/lib/i18n";
@@ -24,7 +25,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           </div>
         </div>
         <span className="sas-small">{t("playbook.intro")}</span>
-        <SetupSteps basePath={base} current="playbook" completed={new Set()} />
+        <SetupSteps basePath={base} current="playbook" completed={await setupProgress(appDb, account.id)} />
       </header>
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.saved")}</span></div> : null}
       <div style={{ maxWidth: 760 }}>

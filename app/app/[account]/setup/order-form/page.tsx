@@ -1,6 +1,7 @@
 import { Button } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { currentLegal, getOrderFormSettings, REQUIRED_FIELDS } from "@/lib/orders/settings";
 import { ORDER_FORM_FIELDS } from "@/db/schema";
@@ -32,7 +33,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
       <header className="sas-stack-2">
         <div className="sas-page-head"><h1 className="sas-title">{t("ofs.title")}</h1></div>
         <span className="sas-small">{t("ofs.intro")}</span>
-        <SetupSteps basePath={base} current="order-form" completed={new Set()} />
+        <SetupSteps basePath={base} current="order-form" completed={await setupProgress(appDb, account.id)} />
       </header>
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.saved")}</span></div> : null}
       {sp.legal ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.legal_saved", { version: one(sp.legal).split(".")[2] ?? "" })}</span></div> : null}

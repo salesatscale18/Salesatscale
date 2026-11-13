@@ -1,6 +1,7 @@
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { catalogState } from "@/lib/catalog/service";
 import { describeFitRule } from "@/lib/catalog/fit";
@@ -57,7 +58,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
           </div>
         </div>
         <span className="sas-small">{t("catalog.intro")}</span>
-        <SetupSteps basePath={`/app/${account.slug}`} current="catalog" completed={new Set()} />
+        <SetupSteps basePath={`/app/${account.slug}`} current="catalog" completed={await setupProgress(appDb, account.id)} />
       </header>
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.published", { version: one(sp.published) })}</span></div> : null}
