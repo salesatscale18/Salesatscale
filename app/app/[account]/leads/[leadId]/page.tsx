@@ -11,6 +11,8 @@ import { maskPhone } from "@/lib/leads/rules";
 import { exactTime, relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
+import { ConversationPanel } from "./conversation";
+import { latestConversationForLead } from "@/lib/agent/conversation";
 import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
 import { formatMoney } from "@/lib/domain/money";
 
@@ -36,9 +38,12 @@ const EVENT_ICON: Record<string, IconName> = {
   "payment.bank_transfer": "clock",
   "payment.failed": "x-circle",
   "order.paid": "credit-card",
+  "conversation.taken_over": "user",
+  "conversation.handed_back": "sparkles",
+  "conversation.human_reply": "message-square",
 };
 
-/** Lead card (canvas: Main, LeadEmpty). Conversation, deal state and quotes arrive in P4–P6. */
+/** Lead card (canvas: Main, LeadEmpty): the latest conversation with take over / hand back, deal state, quotes and timeline. */
 export default async function LeadCardPage({
   params,
   searchParams,
@@ -48,17 +53,18 @@ export default async function LeadCardPage({
 }) {
   const { account: slug, leadId } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const { account, user: me } = await requireAccount(slug);
   if (!UUID.test(leadId)) notFound();
   const row = await getLead(appDb, account.id, leadId);
   if (!row) notFound();
   const { lead, owner, creator } = row;
-  const [events, consent, leadQuotes, playbook, deal] = await Promise.all([
+  const [events, consent, leadQuotes, playbook, deal, conversation] = await Promise.all([
     listLeadEvents(appDb, account.id, lead.id),
     latestConsent(appDb, account.id, lead.id),
     quotesForLead(appDb, account.id, lead.id),
     currentPlaybook(appDb, account.id),
     getDealState(appDb, account.id, lead.id),
+    latestConversationForLead(appDb, account.id, lead.id),
   ]);
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
@@ -109,11 +115,18 @@ export default async function LeadCardPage({
         </header>
         <div className="sas-lead__body">
           <div className="sas-lead__main">
-            <div className="sas-empty sas-lead__chat">
-              <span className="sas-empty__icon sas-empty__icon--agent"><Icon name="message-circle" /></span>
-              <strong>{t("lead.card.no_messages")}</strong>
-              <span className="sas-small">{chatNote}</span>
-            </div>
+            {conversation ? (
+              <ConversationPanel
+                slug={account.slug} view={conversation} me={me} buyerName={lead.fullName}
+                leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
+              />
+            ) : (
+              <div className="sas-empty sas-lead__chat">
+                <span className="sas-empty__icon sas-empty__icon--agent"><Icon name="message-circle" /></span>
+                <strong>{t("lead.card.no_messages")}</strong>
+                <span className="sas-small">{chatNote}</span>
+              </div>
+            )}
             <section aria-labelledby="lq-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
               <div className="sas-page-head" style={{ padding: "16px 16px 4px" }}>
                 <h2 id="lq-h" className="sas-label" style={{ margin: 0 }}>{t("lead.card.quotes")}</h2>

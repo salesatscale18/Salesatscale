@@ -5,12 +5,18 @@ import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { llmConfigured } from "@/lib/agent/llm";
-import { conversationMessages, getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
+import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
+import { conversationView } from "@/lib/agent/conversation";
+import { SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenarios";
+import { conversationScenarioCheck, latestScenarioResults } from "@/lib/agent/scenario-results";
+import { getLead } from "@/lib/leads/service";
+import { type IconName } from "@/components/sas/icon";
 import { exactTime, relativeTime } from "@/lib/format";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
+import { ConversationControls } from "../../leads/[leadId]/conversation";
 
 // A turn can take several model rounds.
 export const maxDuration = 300;
@@ -18,6 +24,21 @@ export const maxDuration = 300;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const LANG_NAME: Record<string, string> = { en: "English", he: "Hebrew" };
 const json = (v: unknown) => JSON.stringify(v, null, 2);
+
+/**
+ * Scenario results have no status word in the design system, so they are
+ * plain pill-styled chips with an icon (neutral / success / danger).
+ */
+const RESULT_LOOK: Record<ScenarioResult | "not_run", { cls: string; icon: IconName }> = {
+  passed: { cls: "sas-pill sas-pill--success", icon: "check-circle" },
+  not_yet: { cls: "sas-pill", icon: "clock" },
+  failed: { cls: "sas-pill sas-pill--danger", icon: "x-circle" },
+  not_run: { cls: "sas-pill", icon: "circle-dot" },
+};
+function ResultChip({ result }: { result: ScenarioResult | "not_run" }) {
+  const look = RESULT_LOOK[result];
+  return <span className={look.cls} data-scenario-result={result}><Icon name={look.icon} />{t(`lab.scenario_result.${result}`)}</span>;
+}
 
 /** Setup · Versions and test lab (P4.4): versions with publish/rollback, a test chat with the draft and its tool trace. */
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -31,7 +52,16 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const draft = versions.find((v) => v.status === "draft");
   const chats = await listTestConversations(appDb, account.id);
   const conv = sp.c ? await getConversation(appDb, account.id, one(sp.c)) : null;
-  const thread = conv?.isTest ? await conversationMessages(appDb, account.id, conv.id) : [];
+  const view = conv?.isTest ? await conversationView(appDb, account.id, conv) : null;
+  const thread = view?.thread ?? [];
+  const convLead = conv?.isTest ? await getLead(appDb, account.id, conv.leadId) : null;
+  const scenario = conv?.isTest ? scenarioById(conv.scenario) : null;
+  const scenarioCheck = conv?.isTest ? await conversationScenarioCheck(appDb, account.id, conv) : null;
+  const scenarios = SCENARIOS.filter((s) => account.languages.includes(s.language));
+  // Scenario results for the version picked in the panel, else the open chat's, else the draft (or newest).
+  const resultsVersion = versions.find((v) => v.id === one(sp.v)) ?? versions.find((v) => v.id === conv?.agentVersionId) ?? draft ?? versions[0];
+  const results = resultsVersion ? await latestScenarioResults(appDb, account.id, resultsVersion.id) : [];
+  const notice = one(sp.notice) || undefined;
   const convVersion = conv ? versions.find((v) => v.id === conv.agentVersionId) : undefined;
   const deal = conv ? await getDealState(appDb, account.id, conv.leadId) : null;
   const error = one(sp.error);
@@ -106,8 +136,30 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 })}
                 <span id="end" />
               </ChatThread>
-              {conv.status === "open" ? <Composer slug={account.slug} conversationId={conv.id} dir={dir(locale)} /> : (
-                <div className="sas-alert" role="status" style={{ margin: 16 }}><Icon name="pause" /><span>{t(conv.status === "human" ? "lab.human" : "lab.closed")}</span></div>
+              {scenario && scenarioCheck ? (
+                <div className="sas-stack-2" role="status" aria-label={t("lab.scenario_check", { title: scenario.title })} style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong className="sas-small">{t("lab.scenario_check", { title: scenario.title })}</strong>
+                    <ResultChip result={scenarioCheck.result} />
+                  </div>
+                  <span className="sas-small">{scenarioCheck.reason} {t("lab.scenario_expected", { text: scenario.expected })}</span>
+                </div>
+              ) : null}
+              {conv.status === "closed" ? (
+                <div className="sas-alert" role="status" style={{ margin: 16 }}><Icon name="pause" /><span>{t("lab.closed")}</span></div>
+              ) : (
+                <>
+                  <Composer
+                    slug={account.slug} conversationId={conv.id} dir={dir(locale)}
+                    initialText={scenario && thread.length === 0 ? scenario.opening : undefined}
+                  />
+                  {view ? (
+                    <ConversationControls
+                      slug={account.slug} from="lab" view={view} me={user} buyerName={t("lab.who.buyer")}
+                      leadOptedOut={convLead?.lead.status === "opted_out"} notice={notice}
+                    />
+                  ) : null}
+                </>
               )}
             </section>
           ) : null}
@@ -116,6 +168,13 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             <form action={startChatAction} className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
               <h2 id="lab-new-h" className="sas-heading" style={{ flexBasis: "100%" }}>{t("lab.new_chat")}</h2>
               <input type="hidden" name="slug" value={account.slug} />
+              <div className="sas-input-group">
+                <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
+                <select className="sas-select" id="lab-scenario" name="scenario" defaultValue="">
+                  <option value="">{t("lab.scenario_none")}</option>
+                  {scenarios.map((s) => <option key={s.id} value={s.id}>{s.title}{s.language !== "en" ? ` (${LANG_NAME[s.language] ?? s.language})` : ""}</option>)}
+                </select>
+              </div>
               <div className="sas-input-group">
                 <label className="sas-input-label" htmlFor="lab-lang">{t("lab.language")}</label>
                 <select className="sas-select" id="lab-lang" name="language" defaultValue={account.languages[0]}>
@@ -147,6 +206,47 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   </div>
                 ) : null}
                 {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
+              </div>
+            </section>
+          ) : null}
+
+          {resultsVersion ? (
+            <section className="sas-panel" aria-labelledby="lab-sc-h">
+              <div className="sas-panel__body sas-stack-4">
+                <div className="sas-page-head" style={{ gap: 8 }}>
+                  <h2 id="lab-sc-h" className="sas-heading">{t("lab.scenarios")}</h2>
+                  <span className="sas-num sas-small sas-page-head__actions">
+                    {results.filter((r) => r.check?.result === "passed" && scenarios.some((s) => s.id === r.scenarioId)).length} / {scenarios.length}
+                  </span>
+                </div>
+                <span className="sas-small">{t("lab.scenarios_for", { version: resultsVersion.version })}</span>
+                {versions.length > 1 ? (
+                  <form method="get" action={lab} style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
+                    {conv ? <input type="hidden" name="c" value={conv.id} /> : null}
+                    <div className="sas-input-group">
+                      <label className="sas-input-label" htmlFor="lab-sc-v">{t("lab.scenarios_version")}</label>
+                      <select className="sas-select" id="lab-sc-v" name="v" defaultValue={resultsVersion.id}>
+                        {versions.map((v) => <option key={v.id} value={v.id}>{t("lab.version", { version: v.version })} · {t(`status.agent_version.${v.status}` as MessageKey)}</option>)}
+                      </select>
+                    </div>
+                    <Button type="submit" variant="ghost" size="sm">{t("lab.scenarios_show")}</Button>
+                  </form>
+                ) : null}
+                <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {scenarios.map((s) => {
+                    const r = results.find((x) => x.scenarioId === s.id);
+                    return (
+                      <li key={s.id} className="sas-stack-2" style={{ gap: 2 }}>
+                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
+                          <ResultChip result={r?.check?.result ?? "not_run"} />
+                          <span style={{ flex: "1 1 0", minWidth: 0 }}>{r?.conversationId ? <a href={`${lab}?c=${r.conversationId}`}>{s.title}</a> : s.title}</span>
+                        </div>
+                        {r?.check && r.check.result !== "passed" ? <span className="sas-small">{r.check.reason}</span> : null}
+                      </li>
+                    );
+                  })}
+                </ul>
+                <span className="sas-small">{t("lab.scenarios_manual")}</span>
               </div>
             </section>
           ) : null}
