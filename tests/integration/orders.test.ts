@@ -1,6 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { auditLog, conversations, leadEvents, leads, messages, orderForms, orders, providerEvents, users, type User } from "@/db/schema";
+import { auditLog, conversations, leadEvents, leads, messages, orderForms, orders, paymentAttempts, providerEvents, quotes, sellerAccounts, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { parseCatalogItem } from "@/lib/catalog/rules";
@@ -10,7 +10,7 @@ import { upsertLead } from "@/lib/leads/service";
 import { createQuote, createQuoteVersion } from "@/lib/quotes/service";
 import { currentLegal, getOrderFormSettings, saveLegalSection } from "@/lib/orders/settings";
 import {
-  acceptNewPrice, createOrderForm, formsForQuote, loadForm, markBankTransferReceived, markOpened, orderLabel, signForm, startPayment,
+  acceptNewPrice, createOrderForm, formsForQuote, loadForm, markBankTransferReceived, markOpened, orderLabel, priceCheck, signForm, startPayment,
 } from "@/lib/orders/service";
 import { formIdFromToken, tokenFor } from "@/lib/orders/token";
 import { handleProviderEvent, signFake, simulateFakePayment } from "@/lib/payments/events";
@@ -231,5 +231,159 @@ describe("order forms, signatures and payments", () => {
     expect(msgs.at(-1)?.body).toContain("התשלום התקבל");
     expect(tokenFor(f.form.id)).toBe(f.token);
     expect((await db.select().from(orderForms).where(eq(orderForms.id, f.form.id)))[0].language).toBe("he");
+  });
+
+  // --- Hardening (lane P3) -------------------------------------------------
+
+  const setPrice = async (sku: string, price: string) => {
+    const { catalogState, draftItemIdFor } = await import("@/lib/catalog/service");
+    const item = (await catalogState(db, acc)).items.find((i) => i.sku === sku)!;
+    const known: Record<string, { name: string; unit: string }> = { "SNS-200": { name: "Wireless fridge sensor", unit: "sensor" }, "GW-10": { name: "Site gateway", unit: "site" } };
+    const p = parseCatalogItem({ sku, ...known[sku], price }, "ILS");
+    if (!p.ok) throw new Error();
+    await saveDraftItem(db, acc, p.value, (await draftItemIdFor(db, acc, item.id))!);
+    await publishDraft(db, actor(), acc);
+  };
+  /** Counts db.select() calls, to check the short path of priceCheck. */
+  const counting = () => {
+    const box = { n: 0 };
+    const proxy = new Proxy(db, {
+      get(target, prop, recv) {
+        if (prop === "select") return (...a: unknown[]) => { box.n++; return (target.select as (...x: unknown[]) => unknown)(...a); };
+        return Reflect.get(target, prop, recv);
+      },
+    });
+    return { db: proxy as TestDb, box };
+  };
+
+  it("priceCheck: same catalog version is 'same' in one query; a new version re-prices", async () => {
+    const leadId = await newLead("0525550201");
+    const f = await createOrderForm(db, acc, human(), await newQuote(leadId));
+    if (!f.ok) throw new Error(f.reason);
+    const c = counting();
+    expect(await priceCheck(c.db, f.form)).toEqual({ status: "same" });
+    expect(c.box.n).toBe(1);
+    await setPrice("GW-10", "700");
+    const c2 = counting();
+    expect(await priceCheck(c2.db, f.form)).toMatchObject({ status: "changed", oneTimeMinor: f.form.snapshot.oneTime.totalMinor + 2 * 4_000 });
+    expect(c2.box.n).toBe(3);
+    // A republished catalog with the same prices is still "same" after a full re-price.
+    await setPrice("GW-10", "660");
+    expect(await priceCheck(db, f.form)).toEqual({ status: "same" });
+  });
+
+  it("accept-new-price is refused when nothing changed, and carries the seller's custom prices over", async () => {
+    const leadId = await newLead("0525550202");
+    const q = await newQuote(leadId);
+    const same = await createOrderForm(db, acc, human(), q);
+    if (!same.ok) throw new Error(same.reason);
+    expect(await acceptNewPrice(db, same.token)).toEqual({ ok: false, reason: "not_open" });
+    const [qr] = await db.select().from(quotes).where(eq(quotes.id, q));
+    expect(qr.currentVersion).toBe(1);
+    expect((await loadForm(db, same.token))?.state).toBe("open");
+
+    // The seller set a custom gateway price; then the sensor price changes.
+    const v2 = await createQuoteVersion(db, acc, human(), q, { lines: [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], discountBp: 0, sites: 2 }, new Date(), { "GW-10": 50_000 });
+    if (!v2.ok) throw new Error(v2.reason);
+    const f = await createOrderForm(db, acc, human(), q);
+    if (!f.ok) throw new Error(f.reason);
+    expect(f.form.snapshot.lines.find((l) => l.sku === "GW-10")?.unitPriceMinor).toBe(50_000);
+    await setPrice("SNS-200", "650");
+    const check = await priceCheck(db, f.form);
+    expect(check).toMatchObject({ status: "changed", oneTimeMinor: 6 * 65_000 + 2 * 50_000 });
+    const accepted = await acceptNewPrice(db, f.token);
+    if (!accepted.ok) throw new Error(accepted.reason);
+    const fresh = await loadForm(db, accepted.token);
+    if (fresh?.state !== "open") throw new Error();
+    expect(fresh.form.snapshot.lines.find((l) => l.sku === "GW-10")?.unitPriceMinor).toBe(50_000);
+    expect(fresh.form.snapshot.oneTime.totalMinor).toBe(6 * 65_000 + 2 * 50_000);
+    expect(await priceCheck(db, fresh.form)).toEqual({ status: "same" });
+    expect((await signForm(db, accepted.token, sign, {})).ok).toBe(true);
+  });
+
+  it("an old link past its own expiry shows 'expired', never the newer offer", async () => {
+    const leadId = await newLead("0525550203");
+    const q = await newQuote(leadId);
+    const old = await createOrderForm(db, acc, human(), q, {}, new Date(Date.now() - 30 * 86_400_000));
+    if (!old.ok) throw new Error(old.reason);
+    expect(old.form.expiresAt.getTime()).toBeLessThan(Date.now());
+    const fresh = await createOrderForm(db, acc, human(), q);
+    if (!fresh.ok) throw new Error(fresh.reason);
+    expect(await loadForm(db, old.token)).toMatchObject({ state: "expired" });
+    expect((await loadForm(db, fresh.token))?.state).toBe("open");
+    // A superseded link that has not expired still points to the new one, with the change note.
+    const third = await createOrderForm(db, acc, human(), q);
+    if (!third.ok) throw new Error();
+    const v = await loadForm(db, fresh.token);
+    expect(v?.state === "updated" && v.newer?.token).toBe(third.token);
+  });
+
+  it("card is refused when test payments are off, and a chosen bank transfer stays one", async () => {
+    const leadId = await newLead("0525550204");
+    const f = await createOrderForm(db, acc, human(), await newQuote(leadId));
+    if (!f.ok) throw new Error();
+    expect((await signForm(db, f.token, sign, {})).ok).toBe(true);
+    vi.stubEnv("PAYMENTS_MODE", "live");
+    try {
+      expect(await startPayment(db, f.token, { method: "card", recurringConsent: true })).toEqual({ ok: false, reason: "method_off" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    let view = await loadForm(db, f.token);
+    if (view?.state !== "signed") throw new Error();
+    expect(view.order.paymentStatus).toBe("not_started");
+    expect(await db.select().from(paymentAttempts).where(eq(paymentAttempts.orderId, view.order.id))).toHaveLength(0);
+
+    expect(await startPayment(db, f.token, { method: "bank_transfer", recurringConsent: false })).toEqual({ ok: true, kind: "bank_transfer" });
+    expect(await startPayment(db, f.token, { method: "card", recurringConsent: true })).toEqual({ ok: false, reason: "method_off" });
+    view = await loadForm(db, f.token);
+    expect(view?.state === "signed" && view.order.paymentStatus).toBe("bank_transfer_expected");
+  });
+
+  it("a paused account can't send, sign or pay", async () => {
+    const lead1 = await newLead("0525550205");
+    const q1 = await newQuote(lead1);
+    const open = await createOrderForm(db, acc, human(), q1);
+    const lead2 = await newLead("0525550206");
+    const signedForm = await createOrderForm(db, acc, human(), await newQuote(lead2));
+    if (!open.ok || !signedForm.ok) throw new Error();
+    expect((await signForm(db, signedForm.token, sign, {})).ok).toBe(true);
+    const [{ status: was }] = await db.select({ status: sellerAccounts.status }).from(sellerAccounts).where(eq(sellerAccounts.id, acc));
+    await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, acc));
+    try {
+      expect(await createOrderForm(db, acc, human(), q1)).toEqual({ ok: false, reason: "account_paused" });
+      expect(await signForm(db, open.token, sign, {})).toEqual({ ok: false, reason: "unavailable" });
+      expect(await startPayment(db, signedForm.token, { method: "card", recurringConsent: true })).toEqual({ ok: false, reason: "unavailable" });
+      expect(await startPayment(db, signedForm.token, { method: "bank_transfer", recurringConsent: false })).toEqual({ ok: false, reason: "unavailable" });
+      expect((await loadForm(db, open.token))?.state).toBe("open");
+    } finally {
+      await db.update(sellerAccounts).set({ status: was }).where(eq(sellerAccounts.id, acc));
+    }
+    expect((await signForm(db, open.token, sign, {})).ok).toBe(true);
+  });
+
+  it("two concurrent success events for one payment confirm it once", async () => {
+    const leadId = await newLead("0525550207");
+    const { ensureDraftVersion } = await import("@/lib/agent/service");
+    const av = await ensureDraftVersion(db, acc);
+    const [conv] = await db.insert(conversations).values({ accountId: acc, leadId, channel: "testlab", isTest: true, agentVersionId: av.id, language: "en" }).returning();
+    const f = await createOrderForm(db, acc, human(), await newQuote(leadId));
+    if (!f.ok) throw new Error();
+    await signForm(db, f.token, sign, {});
+    const a = await startPayment(db, f.token, { method: "card", recurringConsent: true });
+    if (!a.ok || a.kind !== "card") throw new Error();
+    const view = await loadForm(db, f.token);
+    if (view?.state !== "signed") throw new Error();
+    const ev = (id: string) => JSON.stringify({ id, type: "payment.succeeded", provider_ref: a.providerRef, account_id: acc, order_id: view.order.id, amount_minor: view.order.amountDueMinor, currency: "ILS", card_last4: "4242" });
+    const [e1, e2] = [ev("evt_race_1"), ev("evt_race_2")];
+    const results = await Promise.all([handleProviderEvent(db, "fake", e1, signFake(e1)), handleProviderEvent(db, "fake", e2, signFake(e2))]);
+    expect(results.filter((r) => r === "paid")).toHaveLength(1);
+    expect(results.filter((r) => r.startsWith("rejected"))).toHaveLength(1);
+    const msgs = await db.select().from(messages).where(eq(messages.conversationId, conv.id));
+    expect(msgs.filter((m) => m.body.includes("Payment received"))).toHaveLength(1);
+    const paidEvents = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, leadId), eq(leadEvents.type, "order.paid")));
+    expect(paidEvents).toHaveLength(1);
+    const after = await loadForm(db, f.token);
+    expect(after?.state === "signed" && after.order.paymentStatus).toBe("paid");
   });
 });

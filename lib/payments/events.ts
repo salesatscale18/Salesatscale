@@ -4,7 +4,7 @@
  * before, and amount, currency, account and order all match the attempt.
  */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, ne } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { conversations, leadEvents, leads, messages, orders, paymentAttempts, providerEvents, sellerAccounts } from "@/db/schema";
@@ -37,6 +37,20 @@ function verifyFake(raw: string, signature: string) {
 
 export type EventResult = "paid" | "failed" | "duplicate" | `rejected: ${string}`;
 
+/**
+ * Like atomic() (one transaction: db.batch on Neon, a transaction on PGlite),
+ * but hands back each statement's rows, so callers can see what changed.
+ */
+async function atomicRows(db: Db, build: (q: Db) => PromiseLike<{ id: string }[]>[]): Promise<{ id: string }[][]> {
+  const withBatch = db as unknown as { batch?: (s: readonly unknown[]) => Promise<{ id: string }[][]> };
+  if (typeof withBatch.batch === "function") return withBatch.batch(build(db));
+  return db.transaction(async (tx) => {
+    const out: { id: string }[][] = [];
+    for (const st of build(tx as unknown as Db)) out.push(await st);
+    return out;
+  });
+}
+
 export async function handleProviderEvent(db: Db, provider: "fake", raw: string, signature: string, now = new Date()): Promise<EventResult> {
   let event: ProviderEvent | null = null;
   try { event = JSON.parse(raw) as ProviderEvent; } catch { event = null; }
@@ -68,20 +82,31 @@ export async function handleProviderEvent(db: Db, provider: "fake", raw: string,
   if (attempt.status !== "pending") return finish("rejected: attempt already settled", attempt.accountId);
   if (order.paymentStatus === "paid") return finish("rejected: order already paid", attempt.accountId);
 
+  if (event.type !== "payment.failed" && event.type !== "payment.succeeded") return finish("rejected: unknown event type", order.accountId);
+
+  // Two different events for the same attempt can race past the checks above.
+  // The writes are conditional (attempt still pending, order not paid), and only
+  // the event that actually moved the attempt records it and confirms.
   if (event.type === "payment.failed") {
     const reason = (event.reason ?? "declined").slice(0, 200);
-    await atomic(db, (tx) => [
-      tx.update(paymentAttempts).set({ status: "failed", failureReason: reason }).where(eq(paymentAttempts.id, attempt.id)),
-      tx.update(orders).set({ paymentStatus: "failed" }).where(eq(orders.id, order.id)),
-      tx.insert(leadEvents).values({ accountId: order.accountId, leadId: order.leadId, type: "payment.failed", actor: "system", data: { orderId: order.id, number: order.number, reason } }),
+    const [moved] = await atomicRows(db, (tx) => [
+      tx.update(paymentAttempts).set({ status: "failed", failureReason: reason })
+        .where(and(eq(paymentAttempts.id, attempt.id), eq(paymentAttempts.status, "pending"))).returning({ id: paymentAttempts.id }),
+      tx.update(orders).set({ paymentStatus: "failed" }).where(and(eq(orders.id, order.id), ne(orders.paymentStatus, "paid"))).returning({ id: orders.id }),
     ]);
+    if (!moved.length) return finish("rejected: attempt already settled", attempt.accountId);
+    await db.insert(leadEvents).values({ accountId: order.accountId, leadId: order.leadId, type: "payment.failed", actor: "system", data: { orderId: order.id, number: order.number, reason } });
     return finish("failed", order.accountId);
   }
-  if (event.type !== "payment.succeeded") return finish("rejected: unknown event type", order.accountId);
 
+  const [moved, paid] = await atomicRows(db, (tx) => [
+    tx.update(paymentAttempts).set({ status: "succeeded" })
+      .where(and(eq(paymentAttempts.id, attempt.id), eq(paymentAttempts.status, "pending"))).returning({ id: paymentAttempts.id }),
+    tx.update(orders).set({ paymentStatus: "paid", paidAt: now }).where(and(eq(orders.id, order.id), ne(orders.paymentStatus, "paid"))).returning({ id: orders.id }),
+  ]);
+  if (!moved.length) return finish("rejected: attempt already settled", attempt.accountId);
+  if (!paid.length) return finish("rejected: order already paid", attempt.accountId);
   await atomic(db, (tx) => [
-    tx.update(paymentAttempts).set({ status: "succeeded" }).where(eq(paymentAttempts.id, attempt.id)),
-    tx.update(orders).set({ paymentStatus: "paid", paidAt: now }).where(and(eq(orders.id, order.id))),
     tx.update(leads).set({ status: "won", lastActivityAt: now }).where(eq(leads.id, order.leadId)),
     tx.insert(leadEvents).values({ accountId: order.accountId, leadId: order.leadId, type: "order.paid", actor: "system", data: { orderId: order.id, number: order.number, method: "card", last4: event.card_last4 ?? null } }),
   ]);

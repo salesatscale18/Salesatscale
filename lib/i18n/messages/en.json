@@ -734,6 +734,7 @@
   "orders.detail.send.price_missing": "Some items still need a price.",
   "orders.detail.send.lead_opted_out": "This lead opted out.",
   "orders.detail.send.no_legal": "Add legal text in the buyer's language first (Setup, Order form).",
+  "orders.detail.send.account_paused": "This account is paused. Order forms can't be sent.",
   "lead.event.order_form.sent": "Order form sent",
   "lead.event.order_form.opened": "Order form opened",
   "lead.event.order_form.signed": "Order form signed",

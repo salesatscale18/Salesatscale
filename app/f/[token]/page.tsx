@@ -98,7 +98,15 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const s = form.snapshot;
   const lang: Locale = isLocale(asked) ? asked : isLocale(form.language) ? form.language : "en";
   const tr = translator(lang);
-  const [account] = await appDb.select().from(sellerAccounts).where(eq(sellerAccounts.id, form.accountId));
+  // One parallel step after loadForm: the account, and for an open form the first-view mark and the price check.
+  const isOpen = view.state === "open";
+  const [[account], , priced] = await Promise.all([
+    appDb.select().from(sellerAccounts).where(eq(sellerAccounts.id, form.accountId)),
+    isOpen ? markOpened(appDb, form) : null,
+    isOpen ? priceCheck(appDb, form) : null,
+  ]);
+  // A paused account takes no signatures or payments: show "unavailable".
+  const paused = account.status === "paused";
   const date = (d: Date | string) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: account.timezone }).format(new Date(d));
   const time = (d: Date) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { hour: "2-digit", minute: "2-digit", timeZone: account.timezone }).format(d);
   const shell = (sub: string | undefined, children: ReactNode) => (
@@ -136,11 +144,15 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   // Signed: payment, bank transfer, failed or paid (canvas: BuyerPay, BuyerPayFailed, BuyerPaid).
   if (view.state === "signed") {
     const { order } = view;
-    const sig = await signatureFor(appDb, form.id);
+    const isFailed = order.paymentStatus === "failed";
+    const [sig, attempt, tries] = await Promise.all([
+      signatureFor(appDb, form.id),
+      order.paymentStatus === "paid" || isFailed ? lastAttempt(appDb, order.id) : null,
+      isFailed ? attemptCount(appDb, order.id) : 0,
+    ]);
     const label = orderLabel(s.seller.tradeName, order.number);
-    const err = one(sp.err);
+    const err = paused ? "unavailable" : one(sp.err);
     if (order.paymentStatus === "paid") {
-      const attempt = await lastAttempt(appDb, order.id);
       return shell(undefined, (
         <>
           <div className="b-center" style={{ background: "var(--ok-soft)" }}>
@@ -164,8 +176,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     // Card needs a provider: today only the test provider exists (off when PAYMENTS_MODE=live).
     const cardOn = s.paymentMethods.card && fakePaymentsEnabled();
     const method = order.paymentStatus === "bank_transfer_expected" ? "bank" : one(sp.pay) === "bank" && s.paymentMethods.bankTransfer ? "bank" : cardOn ? "card" : "bank";
-    const failed = order.paymentStatus === "failed" ? await lastAttempt(appDb, order.id) : null;
-    const tries = failed ? await attemptCount(appDb, order.id) : 0;
+    const failed = isFailed ? attempt : null;
     return shell(tr("buyer.step_pay"), (
       <>
         <section className="b-sec">
@@ -179,13 +190,13 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 16 }}>{money(s, order.amountDueMinor)}</span></div>
           {order.recurringMinor > 0 ? <div className="b-row"><span>{tr("buyer.then_monthly")}</span><span className="b-num">{money(s, order.recurringMinor)}</span></div> : null}
           {err ? <span className="b-err" role="alert">{err === "recurring_consent" ? tr("buyer.err.required") : tr("buyer.unavailable")}</span> : null}
-          {cardOn && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
+          {paused && order.paymentStatus !== "bank_transfer_expected" ? null : cardOn && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
             <nav className="b-tabs" aria-label={tr("buyer.method")}>
               <a href={`/f/${token}?lang=${lang}`} aria-current={method === "card" ? "true" : undefined}>{tr("buyer.card")}</a>
               <a href={`/f/${token}?lang=${lang}&pay=bank`} aria-current={method === "bank" ? "true" : undefined}>{tr("buyer.bank")}</a>
             </nav>
           ) : null}
-          {method === "card" ? (
+          {paused && order.paymentStatus !== "bank_transfer_expected" ? null : method === "card" ? (
             <form action={payCardAction} className="b-stack" style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {hidden}
               <div className="b-testbox"><span className="b-mut" style={{ display: "flex", gap: 6, alignItems: "center" }}><Lock />{tr("buyer.card_test_box")}</span></div>
@@ -218,8 +229,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   }
 
   // Open: check the price again, then review and sign (canvas: BuyerOrder, BuyerPriceChanged).
-  await markOpened(appDb, form);
-  const check = await priceCheck(appDb, form);
+  const check = paused || !priced ? { status: "unavailable" as const } : priced;
   const notice = one(sp.notice);
   if (check.status === "changed") {
     return shell(`${tr("buyer.order_form")} · Q-${s.quote.number}`, (
