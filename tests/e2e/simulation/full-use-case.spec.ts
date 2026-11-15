@@ -85,36 +85,80 @@ test("1. Platform admin creates the seller account", async () => {
   appBase = new URL(page.url()).pathname;
 });
 
-test("2. Catalog: products, tiers, fit rule, publish", async () => {
+test("2. Catalog (no prices), rules, price list, publish", async () => {
   await page.goto(`${appBase}/setup/catalog`);
-  const product = async (p: { sku: string; name: string; unit: string; price: string; monthly?: boolean; tiers?: [string, string][] }) => {
-    await page.getByRole("link", { name: "Add product" }).first().click();
+  const item = async (p: { sku: string; name: string; unit: string; kind?: "product" | "service" }) => {
+    await page.getByRole("link", { name: "Add item" }).first().click();
+    await page.locator(`input[name="kind"][value="${p.kind ?? "product"}"]`).check();
     await page.locator("#ci-sku").fill(p.sku);
-    if (p.monthly) await page.locator("#ci-charge").selectOption("recurring");
     await page.locator("#ci-name").fill(p.name);
-    await page.locator("#ci-unit").fill(p.unit);
-    await page.locator("#ci-price").fill(p.price);
-    for (const [qty, price] of p.tiers ?? []) {
-      await page.getByRole("button", { name: "Add tier" }).click();
-      const rows = page.locator('input[id^="pt-q-"]');
-      await rows.last().fill(qty);
-      await page.locator('input[id^="pt-p-"]').last().fill(price);
-    }
+    await page.locator("#ci-unit").selectOption(p.unit);
     await page.getByRole("button", { name: "Save to draft" }).click();
-    await expect(page.getByText("Saved to the draft")).toBeVisible();
+    await expect(page.getByText("Saved to the draft").first()).toBeVisible();
   };
-  await product({ sku: "SNS-200", name: "Wireless fridge sensor", unit: "sensor", price: "590", tiers: [["10", "550"]] });
-  await product({ sku: "GW-10", name: "Site gateway", unit: "site", price: "660" });
-  await product({ sku: "PLAN-M", name: "Monitoring plan", unit: "site", price: "90", monthly: true });
+  await item({ sku: "SNS-200", name: "Wireless sensor", unit: "device" });
+  await item({ sku: "GW-10", name: "Site gateway", unit: "site" });
+  await item({ sku: "INST-1", name: "Installation", unit: "site", kind: "service" });
   // Fit rule: a sensor needs a gateway per site.
-  await page.locator('select[name="kind"]').selectOption("requires");
-  await page.locator('select[name="sku"]').selectOption("SNS-200");
-  await page.locator('input[name="oneOf"]').fill("GW-10");
+  await page.locator("#r-kind").selectOption("requires");
+  await page.locator("#r-sku").selectOption("SNS-200");
+  await page.locator("#r-oneof").fill("GW-10");
   await page.locator('input[name="perSite"]').check();
   await page.getByRole("button", { name: "Add rule" }).click();
   await expect(page.getByText("SNS-200 needs one GW-10 per site.")).toBeVisible();
+  // Auto-add: installation once per site whenever a gateway is quoted.
+  await page.locator("#r-kind").selectOption("auto_add");
+  await page.locator("#r-sku").selectOption("INST-1");
+  await page.locator('input[name="whenAnyOf"][value="GW-10"]').check();
+  await page.locator('input[name="qty"][value="sites"]').check();
+  await page.getByRole("button", { name: "Add rule" }).click();
+  await expect(page.getByText(/INST-1/).filter({ hasText: /GW-10/ }).first()).toBeVisible();
   await page.getByRole("button", { name: /^Publish v\d+$/ }).click();
-  await expect(page.getByText(/is live|published/i).first()).toBeVisible();
+  await expect(page.getByText(/is published|is live/i).first()).toBeVisible();
+
+  // Price list: the account may already have its first (empty) list from account creation.
+  await page.goto(`${appBase}/setup/price-lists`);
+  const create = page.getByRole("button", { name: "Create price list" });
+  if (await create.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await create.click();
+  } else {
+    const openCreate = page.getByRole("link", { name: "Create price list" });
+    if (await openCreate.isVisible({ timeout: 1000 }).catch(() => false)) {
+      await openCreate.click();
+      await page.getByRole("button", { name: "Create price list" }).click();
+    } else {
+      await page.locator('a[href*="/setup/price-lists/"]').first().click();
+    }
+  }
+  await page.waitForURL(/\/setup\/price-lists\/[0-9a-f-]{36}/);
+  const listUrl = new URL(page.url()).pathname;
+  const price = async (p: { sku: string; oneTime?: string; tiers?: string; monthly?: string }) => {
+    await page.goto(`${listUrl}?sku=${encodeURIComponent(p.sku)}`);
+    await page.locator('input[name="sold"][value="yes"]').check();
+    const ot = page.locator('input[name="oneTimeCharged"]');
+    if (p.oneTime) {
+      await ot.check();
+      await page.locator("#pe-ot").fill(p.oneTime);
+      if (p.tiers) await page.locator("#pe-ott").fill(p.tiers);
+    } else await ot.uncheck();
+    const rc = page.locator('input[name="recurringCharged"]');
+    if (p.monthly) {
+      await rc.check();
+      await page.locator("#pe-rc").fill(p.monthly);
+      await page.locator("#pe-rp").selectOption("monthly");
+    } else await rc.uncheck();
+    await page.getByRole("button", { name: "Save to draft" }).click();
+    await expect(page.getByText("Saved to the draft").first()).toBeVisible();
+  };
+  await price({ sku: "SNS-200", oneTime: "590", tiers: "10: 550" });
+  await price({ sku: "GW-10", oneTime: "660", monthly: "90" });
+  await price({ sku: "INST-1", oneTime: "250" });
+  await page.goto(listUrl);
+  await page.getByRole("button", { name: /^Publish v\d+$/ }).click();
+  await expect(page.getByText(/Version \d+ is live/)).toBeVisible();
+  await page.goto(`${appBase}/setup/price-lists`);
+  await expect(page.getByText(/Used by/).first()).toBeVisible();
+  await noHorizontalScroll(page);
 });
 
 test("3. Company, knowledge, playbook and agent version", async () => {
