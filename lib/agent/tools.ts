@@ -259,6 +259,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         quote_not_found: "Quote not found for this buyer", quote_not_ready: "Quote waits for the seller's approval or was cancelled",
         quote_expired: "Quote expired", price_missing: "Quote has items still to be priced", lead_opted_out: "Lead opted out",
         no_legal: "The seller has not set up the order form in this language",
+        account_paused: "The seller's account is paused",
       }[r.reason];
       return refuse(rule, { message: r.reason === "quote_expired" ? "Create a new quote version with current prices." : "Tell the buyer the team will send the order form shortly, and hand off if needed." });
     }

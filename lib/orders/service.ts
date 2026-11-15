@@ -7,16 +7,17 @@
  * person confirms a bank transfer. Snapshots and signatures are never updated.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, max } from "drizzle-orm";
+import { and, count, desc, eq, inArray, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  leadEvents, leads, orderForms, orders, paymentAttempts, quotes, sellerAccounts, signatures,
+  catalogVersions, leadEvents, leads, orderForms, orders, paymentAttempts, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
   type OrderForm, type OrderFormField, type OrderSnapshot,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { priceQuote } from "@/lib/catalog/pricing";
-import { publishedCatalog } from "@/lib/catalog/service";
+import { itemsOf, publishedCatalog } from "@/lib/catalog/service";
+import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
 import { currentLegal, getOrderFormSettings } from "./settings";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
@@ -38,7 +39,7 @@ export const formPath = (token: string) => `/f/${token}`;
 
 export type CreateFormResult =
   | { ok: true; form: OrderForm; token: string; url: string }
-  | { ok: false; reason: "quote_not_found" | "quote_not_ready" | "quote_expired" | "price_missing" | "lead_opted_out" | "no_legal" };
+  | { ok: false; reason: "quote_not_found" | "quote_not_ready" | "quote_expired" | "price_missing" | "lead_opted_out" | "no_legal" | "account_paused" };
 
 export async function createOrderForm(
   db: Db, accountId: string, actor: FormActor, quoteId: string, opts: { language?: string } = {}, now = new Date(),
@@ -52,6 +53,7 @@ export async function createOrderForm(
   if (cur.lines.some((l) => l.unitPriceMinor === null || l.lineTotalMinor === null)) return { ok: false, reason: "price_missing" };
 
   const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  if (account.status === "paused") return { ok: false, reason: "account_paused" };
   const language = opts.language && account.languages.includes(opts.language) ? opts.language : q.lead.language && account.languages.includes(q.lead.language) ? q.lead.language : account.languages[0] ?? "en";
   const legal = (await currentLegal(db, accountId)).filter((s) => s.language === language);
   if (legal.length === 0) return { ok: false, reason: "no_legal" };
@@ -130,16 +132,20 @@ export async function loadForm(db: Db, token: string, now = new Date()): Promise
   }
   const [quote] = await db.select().from(quotes).where(eq(quotes.id, form.quoteId));
   if (quote.status === "cancelled") return { state: "expired", form };
+  // Past its own expiry the link is expired, even when a newer offer exists:
+  // an expired link never hands out a newer one.
+  if (form.expiresAt.getTime() <= now.getTime()) return { state: "expired", form };
   const replaced = form.supersededById !== null || quote.currentVersion !== form.snapshot.quote.version;
   if (replaced) {
     const [newest] = await db.select().from(orderForms)
       .where(and(eq(orderForms.quoteId, form.quoteId), inArray(orderForms.status, ["sent", "opened"])))
       .orderBy(desc(orderForms.createdAt)).limit(1);
     const newer = newest && newest.id !== form.id && newest.expiresAt.getTime() > now.getTime() ? { token: tokenFor(newest.id), snapshot: newest.snapshot } : null;
-    const q = await getQuote(db, form.accountId, form.quoteId);
-    return { state: "updated", form, newer, changeNote: q?.versions[0].version.changeNote ?? null };
+    const [cur] = await db.select({ changeNote: quoteVersions.changeNote }).from(quoteVersions)
+      .where(and(eq(quoteVersions.quoteId, form.quoteId), eq(quoteVersions.version, quote.currentVersion)));
+    return { state: "updated", form, newer, changeNote: cur?.changeNote ?? null };
   }
-  if (form.status === "link_expired" || form.expiresAt.getTime() <= now.getTime()) return { state: "expired", form };
+  if (form.status === "link_expired") return { state: "expired", form };
   return { state: "open", form };
 }
 
@@ -159,19 +165,28 @@ export type PriceCheck =
 
 /** Re-prices the snapshot against the published catalog (mvp-plan 3.5: before signing and payment). */
 export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
-  const catalog = await publishedCatalog(db, form.accountId);
-  if (!catalog) return { status: "unavailable" };
-  const q = await getQuote(db, form.accountId, form.quoteId);
-  const v = q?.versions.find((x) => x.version.id === form.quoteVersionId);
-  if (!q || !v) return { status: "unavailable" };
-  const custom = new Map(v.lines.filter((l) => l.priceSource === "custom").map((l) => [l.sku, l.unitPriceMinor!]));
+  // One round trip: the quote version and today's published catalog version.
+  const [row] = await db.select({ catalogVersionId: quoteVersions.catalogVersionId, discountBp: quoteVersions.discountBp, published: catalogVersions })
+    .from(quoteVersions)
+    .leftJoin(catalogVersions, and(eq(catalogVersions.accountId, quoteVersions.accountId), eq(catalogVersions.status, "published")))
+    .where(and(eq(quoteVersions.id, form.quoteVersionId), eq(quoteVersions.accountId, form.accountId)));
+  if (!row || !row.published) return { status: "unavailable" };
+  // Published catalog versions never change: same version, same prices.
+  if (row.published.id === row.catalogVersionId) return { status: "same" };
+  const published = row.published;
+  const [items, lines] = await Promise.all([
+    itemsOf(db, form.accountId, published.id),
+    db.select({ sku: quoteLines.sku, unitPriceMinor: quoteLines.unitPriceMinor, priceSource: quoteLines.priceSource }).from(quoteLines)
+      .where(and(eq(quoteLines.quoteVersionId, form.quoteVersionId), eq(quoteLines.accountId, form.accountId))),
+  ]);
+  const custom = customPrices(lines);
   const r = priceQuote({
-    items: catalog.items,
-    lines: form.snapshot.lines.map((l) => ({ sku: l.sku, qty: l.qty, ...(custom.has(l.sku) ? { customUnitPriceMinor: custom.get(l.sku) } : {}) })),
-    discountBp: v.version.discountBp,
+    items,
+    lines: form.snapshot.lines.map((l) => ({ sku: l.sku, qty: l.qty, ...(custom[l.sku] !== undefined ? { customUnitPriceMinor: custom[l.sku] } : {}) })),
+    discountBp: row.discountBp,
     maxDiscountBp: 10_000,
-    pricesIncludeTax: catalog.version.pricesIncludeTax,
-    taxRateBp: catalog.version.taxRateBp,
+    pricesIncludeTax: published.pricesIncludeTax,
+    taxRateBp: published.taxRateBp,
   });
   if (!r.ok || !r.complete) return { status: "unavailable" };
   const s = form.snapshot;
@@ -187,16 +202,25 @@ export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
   };
 }
 
+/** Prices a person set on custom lines; they carry over when the catalog re-prices the rest. */
+function customPrices(lines: { sku: string; unitPriceMinor: number | null; priceSource: string }[]) {
+  const out: Record<string, number> = {};
+  for (const l of lines) if (l.priceSource === "custom" && l.unitPriceMinor !== null) out[l.sku] = l.unitPriceMinor;
+  return out;
+}
+
 /** "Accept new total": a new quote version from today's catalog and a new link. The old link stops working. */
 export async function acceptNewPrice(db: Db, token: string, now = new Date()): Promise<{ ok: true; token: string } | { ok: false; reason: "not_open" | "needs_approval" | "failed" }> {
   const view = await loadForm(db, token, now);
   if (!view || view.state !== "open") return { ok: false, reason: "not_open" };
+  // Only when the price really changed; otherwise a link holder could churn quote versions.
+  if ((await priceCheck(db, view.form)).status !== "changed") return { ok: false, reason: "not_open" };
   const q = await getQuote(db, view.form.accountId, view.form.quoteId);
   const v = q?.versions.find((x) => x.version.id === view.form.quoteVersionId);
   if (!q || !v) return { ok: false, reason: "failed" };
   const r = await createQuoteVersion(db, view.form.accountId, { kind: "agent" }, q.quote.id, {
     lines: v.lines.map((l) => ({ sku: l.sku, qty: l.qty })), discountBp: v.version.discountBp, changeNote: "Price updated from the catalog; accepted by the buyer",
-  }, now);
+  }, now, customPrices(v.lines));
   if (!r.ok) return { ok: false, reason: "failed" };
   if (r.quote.status === "awaiting_approval") return { ok: false, reason: "needs_approval" };
   const f = await createOrderForm(db, view.form.accountId, { kind: "agent" }, q.quote.id, { language: view.form.language }, now);
@@ -238,7 +262,8 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
   const form = view.form;
   const errors = validateSignature(form.snapshot, input);
   if (Object.keys(errors).length) return { ok: false, reason: "invalid", errors };
-  const check = await priceCheck(db, form);
+  const [check, paused] = await Promise.all([priceCheck(db, form), accountPaused(db, form.accountId)]);
+  if (paused) return { ok: false, reason: "unavailable" };
   if (check.status !== "same") return { ok: false, reason: check.status === "changed" ? "price_changed" : "unavailable" };
 
   const buyerFields: Record<string, string> = {};
@@ -297,7 +322,10 @@ export async function startPayment(
   if (order.paymentStatus === "paid") return { ok: false, reason: "already_paid" };
   const methods = form.snapshot.paymentMethods;
   if ((opts.method === "card" && !methods.card) || (opts.method === "bank_transfer" && !methods.bankTransfer)) return { ok: false, reason: "method_off" };
-  const check = await priceCheck(db, form);
+  // Card needs a provider (only the test one exists today); a chosen bank transfer stays a bank transfer.
+  if (opts.method === "card" && (!fakePaymentsEnabled() || order.paymentStatus === "bank_transfer_expected")) return { ok: false, reason: "method_off" };
+  const [check, paused] = await Promise.all([priceCheck(db, form), accountPaused(db, form.accountId)]);
+  if (paused) return { ok: false, reason: "unavailable" };
   if (check.status !== "same") return { ok: false, reason: check.status === "changed" ? "price_changed" : "unavailable" };
 
   if (opts.method === "bank_transfer") {
@@ -324,13 +352,20 @@ export async function pendingAttempt(db: Db, orderId: string) {
   return a ?? null;
 }
 
+/** A paused account takes no new signatures or payments and sends no new links. */
+export async function accountPaused(db: Db, accountId: string) {
+  const [a] = await db.select({ status: sellerAccounts.status }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  return a?.status === "paused";
+}
+
 export async function lastAttempt(db: Db, orderId: string) {
   const [a] = await db.select().from(paymentAttempts).where(eq(paymentAttempts.orderId, orderId)).orderBy(desc(paymentAttempts.createdAt)).limit(1);
   return a ?? null;
 }
 
 export async function attemptCount(db: Db, orderId: string) {
-  return (await db.select({ id: paymentAttempts.id }).from(paymentAttempts).where(eq(paymentAttempts.orderId, orderId))).length;
+  const [r] = await db.select({ n: count() }).from(paymentAttempts).where(eq(paymentAttempts.orderId, orderId));
+  return r?.n ?? 0;
 }
 
 /** Seller confirms a bank transfer arrived. Only bank-transfer orders; audited. */
