@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const userRole = pgEnum("user_role", ["user", "admin", "super_admin"]);
@@ -210,6 +210,8 @@ export const leads = pgTable(
     optedOutAt: timestamp("opted_out_at", { withTimezone: true }),
     /** Test-lab buyers: never contacted, never counted in reports, hidden from the leads list. */
     isTest: boolean("is_test").notNull().default(false),
+    /** Market assigned at intake (mvp-plan 3.13). Null = the home market. */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -224,6 +226,7 @@ export const leads = pgTable(
     index("leads_account_status_idx").on(t.accountId, t.status),
     index("leads_account_activity_idx").on(t.accountId, t.lastActivityAt),
     index("leads_account_created_idx").on(t.accountId, t.createdAt),
+    index("leads_account_market_idx").on(t.accountId, t.marketId),
   ],
 );
 
@@ -294,6 +297,8 @@ export const leadIntakeKeys = pgTable(
     /** Last characters of the key, shown as "sas_lead_…kX9d". */
     keyLast4: text("key_last4"),
     keyHash: text("key_hash").notNull().unique(),
+    /** Leads delivered with this key go to this market. Null = no market of its own. */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
     revokedAt: timestamp("revoked_at", { withTimezone: true }),
@@ -371,6 +376,11 @@ export const catalogVersions = pgTable(
 
 export type VolumeTier = { minQty: number; priceMinor: number };
 
+/** Product or Service (mvp-plan 3.13). */
+export const itemKind = pgEnum("item_kind", ["product", "service"]);
+/** A custom unit's singular ("one") and plural ("other") per language, e.g. { en: { one: "crate", other: "crates" } }. */
+export type UnitCustom = Record<string, { one: string; other: string }>;
+
 export const catalogItems = pgTable(
   "catalog_items",
   {
@@ -397,6 +407,10 @@ export const catalogItems = pgTable(
     active: boolean("active").notNull().default(true),
     availabilityNote: text("availability_note"),
     sortOrder: integer("sort_order").notNull().default(0),
+    /** Null on items made before kinds existed: treat as "product". */
+    kind: itemKind("kind"),
+    /** Custom unit names per language, used when `unit` is "custom" (lib/pricing/units.ts). */
+    unitCustom: jsonb("unit_custom").$type<UnitCustom>(),
   },
   (t) => [
     uniqueIndex("catalog_items_version_sku_uq").on(t.catalogVersionId, t.sku),
@@ -440,6 +454,8 @@ export const quotes = pgTable(
     number: integer("number").notNull(),
     status: quoteStatus("status").notNull().default("draft"),
     currentVersion: integer("current_version").notNull().default(1),
+    /** Null = the home market (and every quote made before markets existed). */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
       .notNull()
@@ -499,6 +515,10 @@ export const quoteVersions = pgTable(
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     /** Same key twice → the same version (tool retries, double clicks). */
     idempotencyKey: text("idempotency_key"),
+    /** Null = the home market. */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
+    /** The price list version this quote was priced from (frozen). Null on quotes priced from catalog prices. */
+    priceListId: uuid("price_list_id").references((): AnyPgColumn => priceLists.id),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [
@@ -807,6 +827,12 @@ export const legalSections = pgTable(
     active: boolean("active").notNull().default(true),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /**
+     * Null = the account default. Set = this market's own text for the section,
+     * replacing the default in that market (lib/markets/legal.ts). Version
+     * numbers stay one sequence per (account, section, language).
+     */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "cascade" }),
   },
   (t) => [uniqueIndex("legal_sections_version_uq").on(t.accountId, t.sectionKey, t.language, t.version)],
 );
@@ -858,6 +884,8 @@ export const orderForms = pgTable(
     expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
     /** Set when a newer offer replaced this one ("Offer updated"). */
     supersededById: uuid("superseded_by_id"),
+    /** Null = the home market. */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     signedAt: timestamp("signed_at", { withTimezone: true }),
     createdBy: text("created_by").notNull(),
@@ -922,6 +950,8 @@ export const orders = pgTable(
     amountDueMinor: integer("amount_due_minor").notNull(),
     recurringMinor: integer("recurring_minor").notNull(),
     recurringConsent: boolean("recurring_consent").notNull().default(false),
+    /** Null = the home market. */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
     markedPaidByUserId: uuid("marked_paid_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -996,3 +1026,144 @@ export const rateLimits = pgTable(
   },
   (t) => [primaryKey({ name: "rate_limits_pk", columns: [t.key, t.windowStart] }), index("rate_limits_window_idx").on(t.windowStart)],
 );
+
+// ---------------------------------------------------------------------------
+// Markets and price lists (mvp-plan 3.13)
+// ---------------------------------------------------------------------------
+
+export const marketStatus = pgEnum("market_status", ["setting_up", "live", "paused"]);
+
+export type PaymentMethods = { card: boolean; bankTransfer: boolean };
+
+/**
+ * What a market sets differently from its account. A missing key means
+ * "Same as account"; lib/markets/settings.ts resolves the effective values.
+ */
+export type MarketOverrides = {
+  /** Selling languages, e.g. ["en"]. */
+  languages?: string[];
+  /** IANA time zone. */
+  timezone?: string;
+  contactHours?: ContactHours;
+  paymentMethods?: PaymentMethods;
+  bankDetails?: string | null;
+  /** ISO dates (YYYY-MM-DD) when the agent starts no conversations. */
+  holidays?: string[];
+};
+
+/**
+ * Where and how a seller sells. Every account has exactly one home market
+ * (created lazily by lib/markets/service.ts ensureHomeMarket); leads that match
+ * no other market belong to it.
+ */
+export const markets = pgTable(
+  "markets",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    isHome: boolean("is_home").notNull().default(false),
+    status: marketStatus("status").notNull().default("setting_up"),
+    /** ISO 3166-1 alpha-2 codes, e.g. ["GB"]. */
+    countries: text("countries").array().notNull().default(sql`'{}'::text[]`),
+    /** Lead phone prefixes, e.g. ["+44"]. The longest matching prefix wins. */
+    phonePrefixes: text("phone_prefixes").array().notNull().default(sql`'{}'::text[]`),
+    /** Values of the intake form's country field that mean this market, e.g. ["GB", "United Kingdom"]. */
+    formCountryValues: text("form_country_values").array().notNull().default(sql`'{}'::text[]`),
+    /** Intake keys whose leads always come here (kept in sync with lead_intake_keys.market_id). */
+    intakeKeyIds: uuid("intake_key_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    /** The price list (lineage) this market sells from. Several markets may share one. */
+    priceListLineageId: uuid("price_list_lineage_id"),
+    overrides: jsonb("overrides").$type<MarketOverrides>().notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("markets_account_idx").on(t.accountId),
+    uniqueIndex("markets_one_home_uq").on(t.accountId).where(sql`${t.isHome}`),
+  ],
+);
+
+export const priceListStatus = pgEnum("price_list_status", ["draft", "live", "archived"]);
+
+/**
+ * One row per price list VERSION. `lineage_id` is the stable id of the price
+ * list across versions; each lineage has at most one draft and one live
+ * version. Quotes keep the version they were priced from.
+ */
+export const priceLists = pgTable(
+  "price_lists",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    lineageId: uuid("lineage_id").notNull(),
+    name: text("name").notNull(),
+    /** ISO 4217. */
+    currency: text("currency").notNull(),
+    /** True when listed prices already include tax (VAT). */
+    pricesIncludeTax: boolean("prices_include_tax").notNull().default(true),
+    /** Tax rate in basis points, e.g. 1800 = 18%. */
+    taxRateBp: integer("tax_rate_bp").notNull().default(0),
+    validFrom: date("valid_from", { mode: "string" }),
+    version: integer("version").notNull(),
+    status: priceListStatus("status").notNull().default("draft"),
+    /** The version this one was copied from (the previous version, or the source of "Copy and adjust"). */
+    copiedFromId: uuid("copied_from_id").references((): AnyPgColumn => priceLists.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    publishedAt: timestamp("published_at", { withTimezone: true }),
+    publishedByUserId: uuid("published_by_user_id").references(() => users.id, { onDelete: "set null" }),
+  },
+  (t) => [
+    index("price_lists_account_idx").on(t.accountId),
+    uniqueIndex("price_lists_lineage_version_uq").on(t.lineageId, t.version),
+    uniqueIndex("price_lists_one_draft_uq").on(t.lineageId).where(sql`${t.status} = 'draft'`),
+    uniqueIndex("price_lists_one_live_uq").on(t.lineageId).where(sql`${t.status} = 'live'`),
+  ],
+);
+
+export type RecurringPeriod = "month" | "year";
+
+/**
+ * A SKU's prices in one price list version. No row = "Not sold" in that list.
+ * Per part (one-time, recurring): charged=false means the part is not
+ * charged; charged=true with a null price means "Price missing", which blocks
+ * publishing.
+ */
+export const priceListEntries = pgTable(
+  "price_list_entries",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    priceListId: uuid("price_list_id")
+      .notNull()
+      .references(() => priceLists.id, { onDelete: "cascade" }),
+    sku: text("sku").notNull(),
+    oneTimeCharged: boolean("one_time_charged").notNull().default(false),
+    oneTimeMinor: integer("one_time_minor"),
+    oneTimeTiers: jsonb("one_time_tiers").$type<VolumeTier[]>().notNull().default([]),
+    recurringCharged: boolean("recurring_charged").notNull().default(false),
+    recurringMinor: integer("recurring_minor"),
+    /** "month" | "year"; set when the recurring part is charged. */
+    recurringPeriod: text("recurring_period").$type<RecurringPeriod>(),
+    recurringTiers: jsonb("recurring_tiers").$type<VolumeTier[]>().notNull().default([]),
+    /** From this quantity the seller prices the item by hand. */
+    customPricingFromQty: integer("custom_pricing_from_qty"),
+  },
+  (t) => [uniqueIndex("price_list_entries_list_sku_uq").on(t.priceListId, t.sku)],
+);
+
+export type Market = typeof markets.$inferSelect;
+export type MarketStatus = (typeof marketStatus.enumValues)[number];
+export type PriceList = typeof priceLists.$inferSelect;
+export type PriceListStatus = (typeof priceListStatus.enumValues)[number];
+export type PriceListEntry = typeof priceListEntries.$inferSelect;
+export type ItemKind = (typeof itemKind.enumValues)[number];

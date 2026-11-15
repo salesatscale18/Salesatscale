@@ -64,6 +64,13 @@
       "when": 1794761036442,
       "tag": "0008_hardening_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1794762088343,
+      "tag": "0009_markets_price_lists",
+      "breakpoints": true
     }
   ]
 }
