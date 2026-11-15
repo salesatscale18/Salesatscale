@@ -133,7 +133,7 @@ export function ImportForm({ slug, who }: { slug: string; who: string }) {
             </label>
             <div className="sas-input-group">
               <label className="sas-input-label" htmlFor="fileConsentSource">{t("import.file_consent_source")}<span className="sas-req" aria-hidden="true">*</span></label>
-              <input className="sas-input" id="fileConsentSource" name="fileConsentSource" value={statement} onChange={(e) => setStatement(e.target.value)} placeholder="Signed contact sheet at HoReCa Expo, 10 Nov" required />
+              <input className="sas-input" id="fileConsentSource" name="fileConsentSource" value={statement} onChange={(e) => setStatement(e.target.value)} placeholder="Signed contact sheet at a trade show, 10 Nov" required />
             </div>
           </>
         ) : null}

@@ -108,7 +108,7 @@ export function CreateAccountForm({ timezones }: { timezones: string[] }) {
             {Object.entries(PLANS).map(([id, p]) => <option key={id} value={id}>{p.label}</option>)}
           </select>
         </Field>
-        <Field name="monthlySpendCap" label="admin.create.spend_cap" required error={errors.monthlySpendCapMinor}>
+        <Field name="monthlySpendCap" label="admin.create.spend_cap" hint="admin.create.limits_note" required error={errors.monthlySpendCapMinor}>
           <input className="sas-input sas-num" id="monthlySpendCap" name="monthlySpendCap" inputMode="decimal" defaultValue={v("monthlySpendCap")} {...(errors.monthlySpendCapMinor ? { "aria-invalid": true, "aria-describedby": "monthlySpendCap-error" } : {})} />
         </Field>
         <Field name="dailyConversationLimit" label="admin.create.conversation_limit" hint="admin.create.conversation_limit_hint" error={errors.dailyConversationLimit}>

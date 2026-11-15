@@ -101,7 +101,7 @@ export function RuleForm({ slug, skus }: { slug: string; skus: string[] }) {
         <>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-oneof">{t("catalog.rules.one_of")}</label>
-            <input className="sas-input sas-num" id="r-oneof" name="oneOf" placeholder="GW-10, GW-10C" />
+            <input className="sas-input sas-num" id="r-oneof" name="oneOf" placeholder="SKU-1, SKU-2" />
           </div>
           <label className="sas-check"><input type="checkbox" name="perSite" />{t("catalog.rules.per_site")}</label>
         </>
@@ -114,14 +114,14 @@ export function RuleForm({ slug, skus }: { slug: string; skus: string[] }) {
           </div>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-per">{t("catalog.rules.per_one_of")}</label>
-            <input className="sas-input sas-num" id="r-per" name="perOneOf" placeholder="GW-10, GW-10C" />
+            <input className="sas-input sas-num" id="r-per" name="perOneOf" placeholder="SKU-1, SKU-2" />
           </div>
         </div>
       ) : null}
       {kind === "advice" ? (
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="r-text">{t("catalog.rules.text")}</label>
-          <input className="sas-input" id="r-text" name="text" placeholder="No Wi-Fi on site: use GW-10C." />
+          <input className="sas-input" id="r-text" name="text" placeholder="Offer the annual plan to buyers with 5 or more sites." />
         </div>
       ) : null}
       <div><button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}><Icon name="plus" />{t("catalog.rules.add")}</button></div>

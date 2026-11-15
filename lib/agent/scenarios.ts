@@ -44,7 +44,7 @@ export const SCENARIOS: Scenario[] = [
     id: "ready_buyer",
     title: "Ready buyer → order form",
     language: "en",
-    opening: "Hi, I own a cafe with one site and 2 fridges. I decide on purchases. Please send me a price and the order form so I can sign today.",
+    opening: "Hi, I run a business with one location. I decide on purchases. Please send me a price and the order form so I can sign today.",
     expected: "The agent quotes from the catalog and sends the order form link.",
     check(run) {
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);
@@ -58,7 +58,7 @@ export const SCENARIOS: Scenario[] = [
     id: "discount_push",
     title: "Discount push above the limit",
     language: "en",
-    opening: "We are a restaurant with 1 site. I want 1 gateway and 2 sensors, but only with 15% off.",
+    opening: "We have one location. I want your basic package, but only with 15% off.",
     expected: "A discount above the limit is not promised: the quote waits for your approval.",
     check(run) {
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);
@@ -115,7 +115,7 @@ export const SCENARIOS: Scenario[] = [
     id: "hebrew_buyer",
     title: "Hebrew buyer",
     language: "he",
-    opening: "שלום, יש לנו מסעדה עם 4 מקררים בסניף אחד. כמה זה עולה?",
+    opening: "שלום, יש לנו עסק עם סניף אחד. כמה זה עולה?",
     expected: "The agent answers in Hebrew.",
     check(run) {
       const replies = agentReplies(run);
@@ -128,7 +128,7 @@ export const SCENARIOS: Scenario[] = [
     id: "no_approved_answer",
     title: "Question with no approved answer",
     language: "en",
-    opening: "Do your sensors work inside a blast freezer at minus 40 degrees?",
+    opening: "Do you offer on-site training in our city, and how long does it take?",
     expected: "The agent looks it up, finds nothing approved and does not guess.",
     check(run) {
       const replies = agentReplies(run);

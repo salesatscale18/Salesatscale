@@ -151,7 +151,7 @@
   "admin.create.plan": "Plan",
   "admin.create.spend_cap": "Monthly spend cap",
   "admin.create.conversation_limit": "New conversations per day",
-  "admin.create.conversation_limit_hint": "Leave empty for the plan default.",
+  "admin.create.conversation_limit_hint": "Leave empty for the plan default. Enforced once WhatsApp is live: warning at 80%, no new conversations at 100%.",
   "admin.create.retention": "Keep conversations for (months)",
   "admin.create.retention_hint": "Leave empty for 24 months.",
   "admin.create.notes": "Internal notes",
@@ -370,7 +370,7 @@
   "catalog.edit.description": "Description",
   "catalog.edit.charge": "Charged",
   "catalog.edit.unit": "Per",
-  "catalog.edit.unit_hint": "What one unit is: sensor, site, gateway…",
+  "catalog.edit.unit_hint": "What one unit is, for example item, seat, site or hour.",
   "catalog.edit.price": "Price",
   "catalog.edit.price_hint": "Leave empty if you price this by hand on each quote.",
   "catalog.edit.custom_from": "Custom pricing from (quantity)",
@@ -533,7 +533,7 @@
   "lab.chats": "Recent test chats",
   "lab.chats_empty": "No test chats yet.",
   "lab.chat_with": "Testing v{version}",
-  "lab.chat_empty": "Write the first message as a buyer would, for example: Hi, we have 3 restaurants. How much would monitoring cost?",
+  "lab.chat_empty": "Write the first message as a buyer would, for example: Hi, we have 3 locations. What would it cost for us?",
   "lab.message": "Message as the buyer",
   "lab.send": "Send",
   "lab.sending": "The agent is replying…",
@@ -1091,5 +1091,6 @@
   "knowledge.error.missing": "That fact no longer exists.",
   "knowledge.error.answer": "Type an answer to at least one question.",
   "admin.accounts.setup_count": "{done} of {total} setup steps done",
-  "admin.accounts.setup_hint": "Enter the account to work on setup. Go live is the last step."
+  "admin.accounts.setup_hint": "Enter the account to work on setup. Go live is the last step.",
+  "admin.create.limits_note": "Enforced once WhatsApp is live: warning at 80%, no new conversations at 100%."
 }

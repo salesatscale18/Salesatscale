@@ -29,7 +29,7 @@ const EXAMPLE = `{
   "full_name": "Rina Cohen",
   "phone": "+972545551842",
   "language": "he",
-  "business": "Rina's Kitchen",
+  "business": "Cohen Trading Ltd",
   "source_id": "form-88213",
   "consent": {
     "source": "yoursite.example/contact",

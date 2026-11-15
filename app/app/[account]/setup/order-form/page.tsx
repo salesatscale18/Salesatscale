@@ -148,7 +148,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
                 </div>
                 <div className="sas-input-group">
                   <label className="sas-input-label" htmlFor="of-bank">{t("ofs.bank_details")}</label>
-                  <textarea className="sas-textarea" id="of-bank" name="bankDetails" rows={3} defaultValue={settings.bankDetails ?? ""} placeholder="Bank Leumi · branch 800 · account 123456" />
+                  <textarea className="sas-textarea" id="of-bank" name="bankDetails" rows={3} defaultValue={settings.bankDetails ?? ""} placeholder="Bank name · branch · account number" />
                 </div>
                 <span className="sas-small">{t("ofs.recorded")}</span>
                 <div><Button type="submit" variant="primary">{t("ofs.save")}</Button></div>
