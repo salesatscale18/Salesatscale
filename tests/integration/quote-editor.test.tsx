@@ -4,11 +4,12 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { quoteLines, quoteVersions, users, type SellerAccount, type User } from "@/db/schema";
+import { orderForms, quoteLines, quoteVersions, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { parseLead } from "@/lib/leads/rules";
 import { upsertLead } from "@/lib/leads/service";
+import { saveLegalSection } from "@/lib/orders/settings";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -177,6 +178,40 @@ describe("quote editor: preview and save from the market's price list", () => {
     expect(pv.fitProblems.length).toBe(1);
     expect(pv.fitProblems[0].fix).toMatchObject({ sku: "GW-10", name: "Site gateway" });
     expect(pv.approval.join(" ")).toMatch(/Discount 50\.0% is above/);
+  });
+
+  it("page header: Cancel goes back to the lead card; the search box is there", async () => {
+    as(accA);
+    const html = await page(accA, leadA);
+    expect(html).toContain(`<a class="sas-btn sas-btn--ghost" href="/app/${accA.slug}/leads/${leadA}">Cancel</a>`);
+    expect(html).toContain('id="qe-search"');
+    expect(html).toContain("Wireless fridge sensor · SNS-200 · €590.00</option>");
+  });
+
+  it("Create and send goes on to the order form; Save as draft stops at the quote (created, not sent)", async () => {
+    as(accA);
+    const f = { slug: accA.slug, leadId: leadA, "qty:GW-10": "1", sites: "1" };
+    const quoteOf = (r: unknown) => /quote=([0-9a-f-]{36})/.exec((r as { redirect: string }).redirect)![1];
+    const formsOf = async (quoteId: string) => db.select().from(orderForms).where(eq(orderForms.quoteId, quoteId));
+
+    const draft = await run(saveQuoteAction(idle, form({ ...f, intent: "draft", idem: "draft-1" })));
+    expect((draft as { redirect: string }).redirect).toMatch(/\/orders\?quote=[0-9a-f-]{36}$/);
+    expect(await formsOf(quoteOf(draft))).toEqual([]);
+
+    // No legal text in the buyer's language yet: the quote is saved and the reason shows on the order page.
+    const noLegal = await run(saveQuoteAction(idle, form({ ...f, intent: "send", idem: "send-1" })));
+    expect((noLegal as { redirect: string }).redirect).toMatch(/\/orders\?quote=[0-9a-f-]{36}&send=no_legal$/);
+    expect(await formsOf(quoteOf(noLegal))).toEqual([]);
+
+    await saveLegalSection(db, accA.id, admin.id, { sectionKey: "sales_terms", title: "Sales terms", language: "he", body: "Terms" });
+    const sent = await run(saveQuoteAction(idle, form({ ...f, intent: "send", idem: "send-2" })));
+    expect((sent as { redirect: string }).redirect).toMatch(/&sent=1$/);
+    expect(await formsOf(quoteOf(sent))).toHaveLength(1);
+    // A repeated submit reuses the quote and does not send a second link.
+    const again = await run(saveQuoteAction(idle, form({ ...f, intent: "send", idem: "send-2" })));
+    expect(quoteOf(again)).toBe(quoteOf(sent));
+    expect((again as { redirect: string }).redirect).not.toContain("sent=1");
+    expect(await formsOf(quoteOf(sent))).toHaveLength(1);
   });
 
   it("account isolation: another account can not preview, quote or open this lead", async () => {

@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import type { QuoteRequestLine } from "@/lib/catalog/pricing";
 import { createQuote, createQuoteVersion } from "@/lib/quotes/service";
+import { createOrderForm } from "@/lib/orders/service";
 import { t } from "@/lib/i18n";
 import { buildPreview, refusalMessages, type QuotePreview, type RefusalLink } from "./preview";
 
@@ -50,7 +51,15 @@ export async function saveQuoteAction(_prev: SaveQuoteState, form: FormData): Pr
     : await createQuote(appDb, a.account.id, actor, leadId, input);
   // Refusals include no_price_list (with a link to price lists) and not_sold.
   if (!r.ok) return { status: "error", ...refusalMessages(a.account.slug, r) };
+  // "Create and send": a quote that is ready (draft: approved or needing no approval) goes straight
+  // on to its order form, as the order page's "Send order form" does. "Save as draft" stops here
+  // (created, not sent). A repeated submit (reused) does not send again.
+  let sent = "";
+  if (form.get("intent") === "send" && r.quote.status === "draft" && !r.reused) {
+    const f = await createOrderForm(appDb, a.account.id, { kind: "human", userId: a.user.id, actingAs: a.actingAs }, r.quote.id);
+    sent = f.ok ? "&sent=1" : `&send=${f.reason}`;
+  }
   revalidatePath(`/app/${a.account.slug}/orders`);
   revalidatePath(`/app/${a.account.slug}/leads/${r.quote.leadId}`);
-  redirect(`/app/${a.account.slug}/orders?quote=${r.quote.id}`);
+  redirect(`/app/${a.account.slug}/orders?quote=${r.quote.id}${sent}`);
 }

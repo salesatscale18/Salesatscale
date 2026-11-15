@@ -42,7 +42,7 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
     const charges: EditorItem["charges"] = [];
     if (e?.oneTimeCharged) charges.push({ charge: "one_time", period: null, priceMinor: e.oneTimeMinor });
     if (e?.recurringCharged) charges.push({ charge: "recurring", period: e.recurringPeriod ?? "month", priceMinor: e.recurringMinor });
-    return { sku: i.sku, name: i.name, unit: i.unit, sold: e !== undefined, charges };
+    return { sku: i.sku, name: i.name, unit: i.unit, unitCustom: i.unitCustom ?? null, sold: e !== undefined, charges };
   });
   const cv = current?.version;
   const initialPreview = catalog && priceList && from && cv
@@ -51,20 +51,23 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
 
   return (
     <main className="sas-shell__content">
-      <header className="sas-stack-2">
-        <nav aria-label="Breadcrumb" className="sas-small"><a href={`/app/${account.slug}/leads/${leadId}`}>{row.lead.fullName}</a> / {from ? `Q-${from.quote.number}` : t("quote.editor.create")}</nav>
-        <h1 className="sas-title">{from ? t("quote.editor.title_version", { number: from.quote.number, version: from.quote.currentVersion + 1 }) : t("quote.editor.title_new", { name: row.lead.fullName })}</h1>
-        {cv ? (
-          <span className="sas-small">
-            {t("quote.editor.replaces", { version: cv.version, total: formatMoney(cv.oneTimeTotalMinor, cv.currency) })}
-            {cv.recurringTotalMinor ? ` + ${formatMoney(cv.recurringTotalMinor, cv.currency, { period: cv.recurringPeriod === "year" ? "year" : "month" })}` : ""}
-          </span>
-        ) : null}
-        {catalog && priceList ? (
-          <span className="sas-small">
-            {t("quote.editor.intro_list", { list: priceList.list.name, version: priceList.list.version, market: ctx.market.name, currency: priceList.list.currency })}
-          </span>
-        ) : null}
+      <header style={{ display: "flex", flexWrap: "wrap", alignItems: "flex-start", gap: 12 }}>
+        <div className="sas-stack-2" style={{ flex: "1 1 320px", minWidth: 0 }}>
+          <nav aria-label="Breadcrumb" className="sas-small"><a href={`/app/${account.slug}/leads/${leadId}`}>{row.lead.fullName}</a> / {from ? `Q-${from.quote.number}` : t("quote.editor.create")}</nav>
+          <h1 className="sas-title">{from ? t("quote.editor.title_version", { number: from.quote.number, version: from.quote.currentVersion + 1 }) : t("quote.editor.title_new", { name: row.lead.fullName })}</h1>
+          {cv ? (
+            <span className="sas-small">
+              {t("quote.editor.replaces", { version: cv.version, total: formatMoney(cv.oneTimeTotalMinor, cv.currency) })}
+              {cv.recurringTotalMinor ? ` + ${formatMoney(cv.recurringTotalMinor, cv.currency, { period: cv.recurringPeriod === "year" ? "year" : "month" })}` : ""}
+            </span>
+          ) : null}
+          {catalog && priceList ? (
+            <span className="sas-small">
+              {t("quote.editor.intro_list", { list: priceList.list.name, version: priceList.list.version, market: ctx.market.name, currency: priceList.list.currency })}
+            </span>
+          ) : null}
+        </div>
+        <a className={buttonClass("ghost")} href={`/app/${account.slug}/leads/${leadId}`}>{t("common.cancel")}</a>
       </header>
       {!catalog ? (
         <section className="sas-panel sas-empty">

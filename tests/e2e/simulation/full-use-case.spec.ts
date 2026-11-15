@@ -278,7 +278,7 @@ test("5. Lead 1 (EN): quote with a fit fix, order form, decline then card paymen
   // The gateway brings its monthly plan and an installation fee per site (auto-add rule).
   await expect(page.getByText("Added automatically").first()).toBeVisible();
   await expect(page.getByText(/Monthly/).first()).toBeVisible();
-  await page.getByRole("button", { name: "Create quote" }).click();
+  await page.getByRole("button", { name: "Save as draft" }).click();
   await page.waitForURL(/\/orders\?quote=/);
   links.l1 = await sendForm();
 

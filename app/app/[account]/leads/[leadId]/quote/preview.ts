@@ -7,6 +7,7 @@ import { pricingErrorText, approvalReasonText, type PricingError } from "@/lib/c
 import { previewQuote, type QuoteInput, type QuoteRefusal } from "@/lib/quotes/service";
 import type { Charge } from "@/lib/pricing/engine";
 import type { AutoAddRule } from "@/lib/pricing/auto-add";
+import { applyAutoAdd } from "@/lib/pricing/auto-add";
 import { catalogAutoAdd } from "@/lib/quotes/pricing";
 import { t, type MessageKey } from "@/lib/i18n";
 
@@ -18,6 +19,8 @@ export type PreviewLine = {
   removable: boolean;
   /** For an auto-added line the buyer cannot remove: the quoted items it comes with ("Required with …"). */
   requiredWith?: string;
+  /** Set when the line's quantity comes from another count (one per site): shown as "× 2 sites". */
+  perCount?: { qty: number; unit: string };
 };
 type Totals = { subtotal: number; discount: number; tax: number; total: number };
 /** A link that helps fix a refusal (e.g. "Open price lists"). */
@@ -37,8 +40,10 @@ export type QuotePreview =
       fitProblems: { text: string; fix: { sku: string; add: number; name: string } | null }[];
       notes: string[];
       complete: boolean;
+      /** The discount on one-time items the preview was priced with, in basis points. */
+      discountBp: number;
       /** Auto-added lines left out at the buyer's request (the rule would add them now). */
-      removed: { sku: string; name: string }[];
+      removed: { sku: string; name: string; qty: number | null }[];
     };
 
 function pricingErrorMessage(e: PricingError): string {
@@ -74,6 +79,10 @@ export async function buildPreview(
     const skus = [...new Set(rules.filter((x) => x.sku === sku).flatMap((x) => x.whenAnyOf.filter((s) => quoted.has(s))))];
     return skus.length ? skus.map(nameOf).join(", ") : undefined;
   };
+  /** Lines whose quantity is one per site (an auto-added "sites" rule). */
+  const perSite = new Set(rules.filter((x) => x.qty === "sites").map((x) => x.sku));
+  /** What the rules would add with no removals: the quantity of a removed line. */
+  const wouldAdd = new Map(applyAutoAdd(rules, input.lines, input.sites).autoAdded.map((a) => [a.sku, a.qty]));
   const tot = (x: typeof priced.oneTime): Totals => ({ subtotal: x.subtotalMinor, discount: x.discountMinor, tax: x.taxMinor, total: x.totalMinor });
   return {
     status: "ok",
@@ -82,6 +91,7 @@ export async function buildPreview(
       sku: l.sku, name: l.name, qty: l.qty, charge: l.charge, period: l.period,
       unitPriceMinor: l.unitPriceMinor, lineTotalMinor: l.lineTotalMinor, priceSource: l.priceSource, autoAdded: l.autoAdded,
       removable: l.removable, ...(l.autoAdded && !l.removable ? { requiredWith: requiredWith(l.sku) } : {}),
+      ...(l.autoAdded && perSite.has(l.sku) ? { perCount: { qty: l.qty, unit: "site" } } : {}),
     })),
     oneTime: tot(priced.oneTime),
     recurring: tot(priced.recurring),
@@ -95,7 +105,8 @@ export async function buildPreview(
     }),
     notes: fit.notes,
     complete: priced.complete,
-    removed: r.removedNow.map((sku) => ({ sku, name: nameOf(sku) })),
+    discountBp: input.discountBp,
+    removed: r.removedNow.map((sku) => ({ sku, name: nameOf(sku), qty: wouldAdd.get(sku) ?? null })),
   };
 }
 

@@ -159,7 +159,7 @@ describe("auto-added lines removed at the buyer's request", () => {
     if (pv.status !== "ok") throw new Error(JSON.stringify(pv));
     expect(pv.lines.map((l) => [l.sku, l.autoAdded, l.removable])).toEqual([["GW-10", false, true], ["SNS-200", false, true], ["SVC-INST", true, false]]);
     expect(pv.lines.find((l) => l.sku === "SVC-INST")?.requiredWith).toBe("Site gateway");
-    expect(pv.removed).toEqual([{ sku: "SETUP", name: "Setup fee" }]);
+    expect(pv.removed).toEqual([{ sku: "SETUP", name: "Setup fee", qty: 1 }]);
 
     const saved = await run(saveQuoteAction({ status: "idle" }, form({ ...f, idem: "rm-1" })));
     const quoteId = /quote=([0-9a-f-]{36})/.exec((saved as { redirect: string }).redirect)![1];
