@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { Year } from "../year";
+// Landing-site styles only: they style bare elements (header, section, details, input),
+// so they must never load on the seller app or buyer pages.
+import "../globals.css";
 
 export const metadata: Metadata = {
   title: "Terms & Conditions — Sales at Scale",

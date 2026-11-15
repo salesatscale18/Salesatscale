@@ -23,17 +23,32 @@ let appBase = ""; // /app/<slug>
 const links: Record<string, string> = {};
 
 async function signIn(p: Page) {
+  const base = new URL(test.info().project.use.baseURL ?? "https://salesatscale18.vercel.app");
+  const onApp = (u: URL) => u.host === base.host;
   await p.goto("/app");
-  await p.waitForURL(/sign-in|\/app/);
-  if (!/sign-in/.test(p.url())) return;
+  await p.waitForLoadState("networkidle");
+  if (onApp(new URL(p.url()))) return;
   await p.locator('input[name="identifier"]').fill(EMAIL);
   await p.getByRole("button", { name: "Continue", exact: true }).click();
   await p.locator('input[name="password"]').fill(PASSWORD);
   await p.getByRole("button", { name: "Continue", exact: true }).click();
-  // Dev instances may ask for an email code on a new device; +clerk_test addresses accept 424242.
-  const code = p.locator('input[autocomplete="one-time-code"]').first();
-  if (await code.isVisible({ timeout: 5000 }).catch(() => false)) await code.pressSequentially("424242");
-  await p.waitForURL(/salesatscale18|localhost|\/app|\/sadmin/, { timeout: 60_000 });
+  // Clerk asks for an email code on a new device ("client trust"); +clerk_test addresses accept 424242.
+  await p.waitForURL((u) => onApp(u) || /client-trust|factor-two|verify/.test(u.pathname), { timeout: 60_000 });
+  if (!onApp(new URL(p.url()))) {
+    const code = p.locator('input[autocomplete="one-time-code"], input[name="code"]').first();
+    await p.waitForLoadState("networkidle");
+    await code.waitFor();
+    await p.waitForTimeout(1500);
+    await code.pressSequentially("424242");
+    const notSent = p.getByText("You need to send a verification code");
+    if (await notSent.isVisible({ timeout: 4000 }).catch(() => false)) {
+      await p.getByRole("button", { name: /Resend/ }).click();
+      await p.waitForTimeout(2500);
+      await code.click();
+      await code.pressSequentially("424242");
+    }
+    await p.waitForURL(onApp, { timeout: 60_000 });
+  }
 }
 
 async function buyerPage(browser: Browser, url: string) {
@@ -73,7 +88,7 @@ test("1. Platform admin creates the seller account", async () => {
 test("2. Catalog: products, tiers, fit rule, publish", async () => {
   await page.goto(`${appBase}/setup/catalog`);
   const product = async (p: { sku: string; name: string; unit: string; price: string; monthly?: boolean; tiers?: [string, string][] }) => {
-    await page.getByRole("link", { name: "Add product" }).click();
+    await page.getByRole("link", { name: "Add product" }).first().click();
     await page.locator("#ci-sku").fill(p.sku);
     if (p.monthly) await page.locator("#ci-charge").selectOption("recurring");
     await page.locator("#ci-name").fill(p.name);
@@ -215,7 +230,7 @@ test("5. Lead 1 (EN): quote with a fit fix, order form, decline then card paymen
 
   const buyer = await buyerPage(browser, links.l1);
   await expect(buyer.getByText("Test payment. No real card is charged.")).toBeVisible();
-  await expect(buyer.getByText(/here is your order/)).toBeVisible();
+  await expect(buyer.getByRole("heading", { name: /here is your order/ })).toBeVisible();
   await noHorizontalScroll(buyer);
   await buyer.getByRole("link", { name: "עב" }).click();
   await expect(buyer.locator('.b-root[dir="rtl"]')).toBeVisible();
@@ -291,7 +306,7 @@ test("7. Lead 3: the price changes before signing; the buyer accepts the new tot
   const buyer = await buyerPage(browser, links.l3);
   await expect(buyer.getByText("The price has changed")).toBeVisible();
   await buyer.getByRole("button", { name: "Accept new total and continue" }).click();
-  await expect(buyer.getByText(/here is your order/)).toBeVisible();
+  await expect(buyer.getByRole("heading", { name: /here is your order/ })).toBeVisible();
   const newUrl = buyer.url();
   expect(newUrl).not.toBe(links.l3);
   // The old link now says the offer was updated.
