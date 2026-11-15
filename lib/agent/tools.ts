@@ -7,7 +7,8 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leadEvents, leads, orderForms, orders, quotes, type Playbook } from "@/db/schema";
+import { conversations, leadEvents, leads, orderForms, orders, quotes, type Playbook, type SellerAccount } from "@/db/schema";
+import { optOutLead } from "@/lib/leads/service";
 import { checkFit } from "@/lib/catalog/fit";
 import { approvalReasonText, pricingErrorText } from "@/lib/catalog/pricing";
 import { publishedCatalog } from "@/lib/catalog/service";
@@ -16,7 +17,8 @@ import { createQuote } from "@/lib/quotes/service";
 import { createOrderForm } from "@/lib/orders/service";
 import type { ToolDef } from "./llm";
 import { missingFields } from "./playbook";
-import { applyAgentUpdates, approvedFacts, getDealState, rankFacts } from "./service";
+import { OPT_OUT_REPLY } from "./safety";
+import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
 
 const lineSchema = {
   type: "array",
@@ -104,6 +106,17 @@ export const TOOL_DEFS: ToolDef[] = [
     input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
   },
   {
+    name: "record_opt_out",
+    description: "Record that the buyer does not want to be contacted any more, in any wording or language. Opts the buyer out and closes the chat. Then send only the reply the result gives you.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: { reason: { type: "string", description: "What the buyer said, short." } },
+      required: ["reason"],
+      additionalProperties: false,
+    },
+  },
+  {
     name: "hand_off_to_human",
     description: "Pause the automation and hand this conversation to a person on the seller's team, with a brief.",
     strict: true,
@@ -125,7 +138,28 @@ export type ToolContext = {
   currency: string;
   /** Tool-use id: the idempotency key for writes. */
   callId: string;
+  /** Conversation language, for fixed replies. */
+  language?: string;
+  /** Per-turn memo shared by every call of one turn, so the same rows are not reloaded on each call. */
+  memo?: TurnMemo;
 };
+
+/** Data read once per turn. Create one per turn (never share across turns). */
+export type TurnMemo = {
+  account?: SellerAccount;
+  catalog?: Promise<Awaited<ReturnType<typeof publishedCatalog>>>;
+  facts?: Promise<Awaited<ReturnType<typeof approvedFacts>>>;
+};
+
+function catalogOf(ctx: ToolContext) {
+  if (!ctx.memo) return publishedCatalog(ctx.db, ctx.accountId);
+  return (ctx.memo.catalog ??= publishedCatalog(ctx.db, ctx.accountId));
+}
+
+function factsOf(ctx: ToolContext) {
+  if (!ctx.memo) return approvedFacts(ctx.db, ctx.accountId);
+  return (ctx.memo.facts ??= approvedFacts(ctx.db, ctx.accountId));
+}
 
 export type ToolResult = { outcome: "ok" | "refused" | "failed"; rule?: string; result: Record<string, unknown> };
 
@@ -154,7 +188,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   const money = (m: number, recurring = false) => formatMoney(m, ctx.currency, recurring ? { period: "month" } : {});
 
   if (name === "search_catalog") {
-    const catalog = await publishedCatalog(ctx.db, ctx.accountId);
+    const catalog = await catalogOf(ctx);
     if (!catalog) return refuse("No published catalog yet", { message: "Tell the buyer you will check product details with the team." });
     const words = String(args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
     const items = catalog.items
@@ -173,7 +207,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   if (name === "check_fit") {
     const lines = asLines(args.lines);
     if (!lines) return { outcome: "failed", result: { ok: false, error: "lines must be [{sku, qty}]" } };
-    const catalog = await publishedCatalog(ctx.db, ctx.accountId);
+    const catalog = await catalogOf(ctx);
     if (!catalog) return refuse("No published catalog yet");
     const sites = typeof args.sites === "number" ? args.sites : undefined;
     const fit = checkFit(catalog.rules, lines, sites);
@@ -181,7 +215,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "lookup_knowledge") {
-    const facts = await approvedFacts(ctx.db, ctx.accountId);
+    const facts = await factsOf(ctx);
     const hits = rankFacts(facts, String(args.query ?? ""));
     return {
       outcome: "ok",
@@ -198,24 +232,46 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       nextStep: typeof args.next_step === "string" ? args.next_step : undefined,
       objection,
     });
-    if (r.unknown.length && !r.applied.length && !r.verified.length) {
+    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length) {
       return refuse("Unknown deal-state fields", { unknown: r.unknown, valid_keys: ctx.playbook.fields.map((f) => f.key) });
     }
-    return { outcome: "ok", result: { ok: true, saved: r.applied, ignored_unknown: r.unknown, kept_verified: r.verified } };
+    // The deal-state context in the system prompt is fixed for the turn; what is still needed now comes back here.
+    const stillQuote = missingFields(ctx.playbook, r.fields, "before_quote").map((f) => f.label);
+    const stillForm = missingFields(ctx.playbook, r.fields, "before_order_form").filter((f) => f.stage === "before_order_form").map((f) => f.label);
+    return {
+      outcome: "ok",
+      result: {
+        ok: true, saved: r.applied, ignored_unknown: r.unknown, kept_verified: r.verified,
+        ...(r.placeholder.length
+          ? { rejected_placeholder: r.placeholder, message: "Not saved: these need a real answer from the buyer, not a placeholder. Ask for them." }
+          : {}),
+        still_needed_before_quote: stillQuote,
+        still_needed_before_order_form: stillForm,
+      },
+    };
+  }
+
+  if (name === "record_opt_out") {
+    // Same effect as an exact STOP word (runBuyerTurn): the lead is opted out (logged there) and the chat closes.
+    await optOutLead(ctx.db, { userId: null, actingAs: false }, ctx.accountId, ctx.leadId);
+    await ctx.db.update(conversations).set({ status: "closed" }).where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+    const reply = OPT_OUT_REPLY[ctx.language ?? "en"] ?? OPT_OUT_REPLY.en;
+    return { outcome: "ok", result: { ok: true, reply, message: `The buyer is opted out and will not be contacted again. Reply with exactly this text and nothing else: ${reply}` } };
   }
 
   if (name === "create_quote") {
     const lines = asLines(args.lines);
     if (!lines) return { outcome: "failed", result: { ok: false, error: "lines must be [{sku, qty}]" } };
-    const deal = await getDealState(ctx.db, ctx.accountId, ctx.leadId);
+    const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
     const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_quote");
     if (missing.length) {
       return refuse("Before-quote fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these before quoting." });
     }
     const pct = typeof args.discount_percent === "number" ? args.discount_percent : 0;
     const sites = typeof args.sites === "number" ? args.sites : undefined;
+    const preloaded = ctx.memo ? { account: ctx.memo.account, catalog: await catalogOf(ctx) } : undefined;
     const r = await createQuote(ctx.db, ctx.accountId, { kind: "agent" }, ctx.leadId, {
-      lines, discountBp: Math.round(pct * 100), sites, idempotencyKey: `tool:${ctx.callId}`,
+      lines, discountBp: Math.round(pct * 100), sites, idempotencyKey: `tool:${ctx.callId}`, preloaded,
     });
     if (!r.ok) {
       if (r.reason === "fit") return refuse("Fit check failed", { problems: r.problems });
@@ -244,7 +300,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
 
   if (name === "send_order_form") {
     if (!ctx.playbook.outcomes.orderForm) return refuse("Order form is not offered by this seller", { message: "Offer a meeting or hand off instead." });
-    const deal = await getDealState(ctx.db, ctx.accountId, ctx.leadId);
+    const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
     const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_order_form");
     if (missing.length) return refuse("Before-order-form fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these first." });
     const number = Number(String(args.quote ?? "").replace(/^\s*Q-?/i, "").replace(/\s*v\d+$/i, ""));

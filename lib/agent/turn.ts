@@ -3,23 +3,25 @@
  * reply out, with every tool call stored for the trace. Safety rules run in
  * code before the model sees anything.
  */
-import { and, desc, eq } from "drizzle-orm";
+import { randomUUID } from "node:crypto";
+import { and, desc, eq, exists } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
+import { atomic } from "@/db/atomic";
 import { agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, users } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
-import type { Block, LlmClient } from "./llm";
+import { withHistoryCacheBreakpoint, type Block, type LlmClient } from "./llm";
 import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
-import { getDealState } from "./service";
-import { runTool, TOOL_DEFS, type ToolResult } from "./tools";
+import { readDealState } from "./service";
+import { runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
 
 export type TurnResult =
   | { status: "replied"; messageId: string; text: string; calls: number }
-  | { status: "opted_out" | "human" | "closed" | "not_found" }
+  | { status: "opted_out" | "human" | "closed" | "not_found" | "paused" }
   | { status: "error"; error: string };
 
 const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
@@ -27,13 +29,19 @@ const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
 export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string }): Promise<TurnResult> {
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
-  const [lead] = await db.select().from(leads).where(eq(leads.id, conv.leadId));
-  const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, conv.agentVersionId));
-  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, args.accountId));
   const lang = conv.language;
-
   const masked = maskCardNumbers(args.text.slice(0, 4000));
-  await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang });
+
+  // One round trip: lead, version, account and deal state are read while the buyer message is stored.
+  const [[lead], [version], [account], deal] = await Promise.all([
+    db.select().from(leads).where(and(eq(leads.id, conv.leadId), eq(leads.accountId, args.accountId))),
+    db.select().from(agentVersions).where(and(eq(agentVersions.id, conv.agentVersionId), eq(agentVersions.accountId, args.accountId))),
+    db.select().from(sellerAccounts).where(eq(sellerAccounts.id, args.accountId)),
+    readDealState(db, args.accountId, conv.leadId),
+    db.insert(messages).values({ id: randomUUID(), accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang }),
+  ]);
+  if (!lead || !version || !account) return { status: "not_found" };
+
   const say = async (body: string) => {
     const [m] = await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "agent", body, language: lang, agentVersionId: version.id }).returning();
     return m;
@@ -41,6 +49,7 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
 
   if (lead.status === "opted_out") return { status: "opted_out" };
   if (conv.status === "closed") return { status: "closed" };
+  // An opt-out is honoured even while the account is paused or a person handles the chat.
   if (isOptOut(masked.text)) {
     await optOutLead(db, { userId: null, actingAs: false }, args.accountId, lead.id);
     const m = await say(pick(OPT_OUT_REPLY, lang));
@@ -48,6 +57,8 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
     return { status: "replied", messageId: m.id, text: m.body, calls: 0 };
   }
   if (conv.status === "human") return { status: "human" };
+  // A paused account sends nothing automated: the message is stored, the model is not called.
+  if (account.status === "paused") return { status: "paused" };
   if (masked.found) {
     const m = await say(pick(CARD_REPLY, lang));
     return { status: "replied", messageId: m.id, text: m.body, calls: 0 };
@@ -66,19 +77,26 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
   }
   while (history.length && history[0].role !== "user") history.shift();
 
+  // Both system blocks are fixed for the whole turn, so the prompt prefix stays
+  // byte-stable across tool rounds. Deal-state changes made during the turn reach
+  // the model through the update_deal_state tool result.
   const system: [string, string] = [
     stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }),
-    "",
+    `${turnContext(version.playbook, deal)}\nConversation language: ${lang}.`,
   ];
+  const memo: TurnMemo = { account };
+  const ctx = (callId: string): ToolContext => ({
+    db, accountId: args.accountId, conversationId: conv.id, leadId: lead.id, playbook: version.playbook, currency: account.currency,
+    callId, language: lang, memo,
+  });
   const pending: { name: string; input: unknown; r: ToolResult }[] = [];
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, model: version.model };
   let text = "";
+  let optedOut = false;
 
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const deal = await getDealState(db, args.accountId, lead.id);
-      system[1] = `${turnContext(version.playbook, deal)}\nConversation language: ${lang}.`;
-      const res = await llm.create({ model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: history });
+      const res = await llm.create({ model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: withHistoryCacheBreakpoint(history) });
       usage.inputTokens += res.usage.inputTokens;
       usage.outputTokens += res.usage.outputTokens;
       usage.cacheReadTokens += res.usage.cacheReadTokens;
@@ -86,7 +104,7 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
 
       if (res.stopReason === "refusal") {
         text = pick(HANDOFF_REPLY, lang);
-        const r = await runTool("hand_off_to_human", { reason: "The model declined to continue", summary: "", suggested_reply: "" }, toolCtx(db, args.accountId, conv.id, lead.id, version.playbook, account.currency, "refusal"));
+        const r = await runTool("hand_off_to_human", { reason: "The model declined to continue", summary: "", suggested_reply: "" }, ctx("refusal"));
         pending.push({ name: "hand_off_to_human", input: { reason: "model refusal" }, r });
         break;
       }
@@ -100,7 +118,8 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
       for (const u of uses) {
         let r: ToolResult;
         try {
-          r = await runTool(u.name, u.input, toolCtx(db, args.accountId, conv.id, lead.id, version.playbook, account.currency, u.id));
+          r = await runTool(u.name, u.input, ctx(u.id));
+          if (u.name === "record_opt_out" && r.outcome === "ok") optedOut = true;
         } catch (e) {
           r = { outcome: "failed", result: { ok: false, error: "The tool failed. Tell the buyer you will check and get back to them." } };
           console.error(`[agent] tool ${u.name} failed`, e);
@@ -116,26 +135,28 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
     return { status: "error", error: e instanceof Error ? e.name : "error" };
   }
 
+  // After an opt-out the buyer gets the fixed reply, whatever the model wrote.
+  if (optedOut) text = pick(OPT_OUT_REPLY, lang);
   if (!text) text = pick(HANDOFF_REPLY, lang);
-  const [m] = await db.insert(messages).values({
-    accountId: args.accountId, conversationId: conv.id, actor: "agent", body: text, language: lang, agentVersionId: version.id, usage,
-  }).returning();
-  if (pending.length) {
-    await db.insert(toolCalls).values(pending.map((p, i) => ({
-      accountId: args.accountId, conversationId: conv.id, messageId: m.id, sequence: i + 1, name: p.name,
-      input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
-      result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
-    })));
-  }
-  const [after] = await db.select().from(conversations).where(eq(conversations.id, conv.id));
-  if (after.status === "open" && lead.status === "new") {
-    await db.update(leads).set({ status: "agent_handling", lastActivityAt: new Date() }).where(eq(leads.id, lead.id));
-  }
-  await db.update(conversations).set({ updatedAt: new Date() }).where(eq(conversations.id, conv.id));
-  return { status: "replied", messageId: m.id, text, calls: pending.length };
+  const messageId = randomUUID();
+  const now = new Date();
+  await atomic(db, (q) => [
+    q.insert(messages).values({
+      id: messageId, accountId: args.accountId, conversationId: conv.id, actor: "agent", body: text, language: lang, agentVersionId: version.id, usage,
+    }),
+    ...(pending.length
+      ? [q.insert(toolCalls).values(pending.map((p, i) => ({
+          accountId: args.accountId, conversationId: conv.id, messageId, sequence: i + 1, name: p.name,
+          input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
+          result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
+        })))]
+      : []),
+    q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, args.accountId))),
+    // A new lead becomes agent-handled, only while the conversation is still open (not handed off or closed this turn).
+    q.update(leads).set({ status: "agent_handling", lastActivityAt: now }).where(and(
+      eq(leads.id, lead.id), eq(leads.accountId, args.accountId), eq(leads.status, "new"),
+      exists(q.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.id, conv.id), eq(conversations.status, "open")))),
+    )),
+  ]);
+  return { status: "replied", messageId, text, calls: pending.length };
 }
-
-function toolCtx(db: Db, accountId: string, conversationId: string, leadId: string, playbook: Parameters<typeof runTool>[2]["playbook"], currency: string, callId: string) {
-  return { db, accountId, conversationId, leadId, playbook, currency, callId };
-}
-

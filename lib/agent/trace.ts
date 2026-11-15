@@ -16,6 +16,7 @@ export const TRACE_LABEL: Record<string, string> = {
   hand_off_to_human: "handoff.request",
   send_order_form: "order_form.send",
   check_payment: "payment.check",
+  record_opt_out: "lead.opt_out",
 };
 
 export type TraceLine = { label: string; sent: string; got: string; missing: string[] };
@@ -45,7 +46,8 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
       sent = ups.length ? ups.map((u) => `${str(u.key)} = ${str(u.value)}`).join(", ") : "No field changes";
       if (input.objection && typeof input.objection === "object") sent += `; objection: ${str((input.objection as Obj).text)}`;
       const kept = arr(result.kept_verified).map(str);
-      got = `Saved ${arr(result.saved).length}${kept.length ? `; kept verified: ${kept.join(", ")}` : ""}`;
+      const placeholders = arr(result.rejected_placeholder).map(str);
+      got = `Saved ${arr(result.saved).length}${kept.length ? `; kept verified: ${kept.join(", ")}` : ""}${placeholders.length ? `; not saved (no real value): ${placeholders.join(", ")}` : ""}`;
       break;
     }
     case "create_quote":
@@ -65,6 +67,10 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
     case "hand_off_to_human":
       sent = str(input.reason) || "Asked for a person";
       got = "Handed to a person";
+      break;
+    case "record_opt_out":
+      sent = str(input.reason) || "Buyer asked not to be contacted";
+      got = "Opted out; the chat is closed";
       break;
     default:
       sent = "";

@@ -29,6 +29,8 @@ export type QuoteInput = {
   sites?: number;
   idempotencyKey?: string;
   changeNote?: string;
+  /** Optional: account and published catalog the caller already loaded (see price()). */
+  preloaded?: PricingPreload;
 };
 
 export type QuoteRefusal =
@@ -47,11 +49,26 @@ async function versionByKey(db: Db, accountId: string, key: string) {
   return { quote: q, version: v };
 }
 
-/** Prices a request against the published catalog and the account's discount limit. */
+/** Rows a caller already loaded (the agent's per-turn memo), so price() does not read them again. */
+export type PricingPreload = {
+  account?: typeof sellerAccounts.$inferSelect;
+  catalog?: Awaited<ReturnType<typeof publishedCatalog>>;
+};
+
+/**
+ * Prices a request against the published catalog and the account's discount limit.
+ * `input.preloaded` (optional) skips reading the account and catalog again; rows
+ * of another account are ignored.
+ */
 async function price(db: Db, accountId: string, input: QuoteInput, customs?: Record<string, number>) {
-  const catalog = await publishedCatalog(db, accountId);
+  const pre = input.preloaded;
+  const catalog = pre?.catalog && pre.catalog.version.accountId === accountId
+    ? pre.catalog
+    : await publishedCatalog(db, accountId);
   if (!catalog) return { ok: false as const, reason: "no_catalog" as const };
-  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const [account] = pre?.account && pre.account.id === accountId
+    ? [pre.account]
+    : await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const lines = input.lines.map((l) => (customs && customs[l.sku] !== undefined ? { ...l, customUnitPriceMinor: customs[l.sku] } : l));
   const priced = priceQuote({
     items: catalog.items,

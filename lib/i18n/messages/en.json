@@ -1092,5 +1092,7 @@
   "knowledge.error.answer": "Type an answer to at least one question.",
   "admin.accounts.setup_count": "{done} of {total} setup steps done",
   "admin.accounts.setup_hint": "Enter the account to work on setup. Go live is the last step.",
-  "admin.create.limits_note": "Enforced once WhatsApp is live: warning at 80%, no new conversations at 100%."
+  "admin.create.limits_note": "Enforced once WhatsApp is live: warning at 80%, no new conversations at 100%.",
+  "lab.paused": "This account is paused.",
+  "lab.rate_limited": "Too many test messages this hour. Try again later."
 }
