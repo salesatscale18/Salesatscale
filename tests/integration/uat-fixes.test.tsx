@@ -32,7 +32,7 @@ const { GET: templateGet } = await import("@/app/leads-template.csv/route");
 const { createPriceList } = await import("@/lib/pricing/price-lists");
 const { createMarket, getMarketView, setMarketPriceList } = await import("@/lib/markets/service");
 const { saveLegalSection } = await import("@/lib/orders/settings");
-const { createOrderForm } = await import("@/lib/orders/service");
+const { acceptNewPrice, createOrderForm } = await import("@/lib/orders/service");
 const { createQuote } = await import("@/lib/quotes/service");
 const { parseLead } = await import("@/lib/leads/rules");
 const { upsertLead } = await import("@/lib/leads/service");
@@ -229,6 +229,15 @@ describe("UAT round 2 fixes", () => {
       expect(html).toMatch(/VAT<\/span><span class="b-num b-old">₪180\.00<\/span><span class="b-num">₪277\.20<\/span>/);
       expect(html).toContain("₪1,817.20");
       expect(html).toMatch(/data-support=""/);
+    });
+
+    it("the offer-updated screen also shows the support contact next to the new link", async () => {
+      const r = await acceptNewPrice(db, token);
+      if (!r.ok) throw new Error(r.reason);
+      const html = await page();
+      expect(html).toContain("The offer was updated");
+      expect(html).toContain(`/f/${r.token}`);
+      expect(html).toMatch(/data-support=""[^]*support@polar\.test · 03 555 0142/);
     });
   });
 });

@@ -129,6 +129,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         <div style={{ marginTop: "auto", padding: "16px 20px" }} className="b-noprint">
           {n ? <a className="b-btn" href={`/f/${n.token}?lang=${lang}`}>{tr("buyer.view_new")}</a> : <><span className="b-mut">{tr("buyer.questions")}</span>{support(false)}</>}
         </div>
+        {n ? help : null}
       </>
     ));
   }
