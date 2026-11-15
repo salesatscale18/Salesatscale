@@ -11,14 +11,22 @@ import { appDb } from "@/lib/auth/account";
 import { acceptNewPrice, signForm, startPayment, type SignErrors } from "@/lib/orders/service";
 import { simulateFakePayment } from "@/lib/payments/events";
 import { ORDER_FORM_FIELDS, type OrderFormField } from "@/db/schema";
+import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 
 const back = (token: string, lang: string, extra = "") => `/f/${token}?lang=${lang === "he" ? "he" : "en"}${extra}`;
+
+/** Sign, accept price and pay share one budget per link: 20 per 10 minutes. The key holds a hash, never the token. */
+async function limited(token: string) {
+  return !(await rateLimit(appDb, `buyer:${hashKey(token)}`, { limit: 20, windowSeconds: 600 })).ok;
+}
 
 export type SignState = { status: "idle" } | { status: "error"; errors: SignErrors; formError?: "not_open" | "price_changed" | "unavailable" };
 
 export async function signAction(_prev: SignState, form: FormData): Promise<SignState> {
   const token = String(form.get("token") ?? "");
   const lang = String(form.get("lang") ?? "en");
+  // The open form shows formError, not ?err=, so a limited sign returns the generic error in place.
+  if (await limited(token)) return { status: "error", errors: {}, formError: "unavailable" };
   const fields: Partial<Record<OrderFormField, string>> = {};
   for (const f of ORDER_FORM_FIELDS) if (form.has(f)) fields[f] = String(form.get(f) ?? "");
   const h = await headers();
@@ -34,6 +42,7 @@ export async function signAction(_prev: SignState, form: FormData): Promise<Sign
 export async function acceptPriceAction(form: FormData) {
   const token = String(form.get("token") ?? "");
   const lang = String(form.get("lang") ?? "en");
+  if (await limited(token)) redirect(back(token, lang, "&err=rate_limited"));
   const r = await acceptNewPrice(appDb, token);
   if (r.ok) redirect(back(r.token, lang));
   redirect(back(token, lang, `&notice=${r.reason}`));
@@ -43,6 +52,7 @@ export async function payCardAction(form: FormData) {
   const token = String(form.get("token") ?? "");
   const lang = String(form.get("lang") ?? "en");
   const outcome = form.get("outcome") === "failed" ? "failed" : "succeeded";
+  if (await limited(token)) redirect(back(token, lang, "&err=rate_limited"));
   const r = await startPayment(appDb, token, { method: "card", recurringConsent: form.get("recurring") === "on" });
   if (!r.ok || r.kind !== "card") redirect(back(token, lang, `&err=${r.ok ? "method_off" : r.reason}`));
   await simulateFakePayment(appDb, r.providerRef, outcome);
@@ -52,6 +62,7 @@ export async function payCardAction(form: FormData) {
 export async function payBankAction(form: FormData) {
   const token = String(form.get("token") ?? "");
   const lang = String(form.get("lang") ?? "en");
+  if (await limited(token)) redirect(back(token, lang, "&err=rate_limited"));
   const r = await startPayment(appDb, token, { method: "bank_transfer", recurringConsent: false });
   redirect(back(token, lang, r.ok ? "" : `&err=${r.reason}`));
 }

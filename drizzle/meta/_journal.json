@@ -57,6 +57,13 @@
       "when": 1794580910281,
       "tag": "0007_company_golive",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1794761036442,
+      "tag": "0008_hardening_indexes",
+      "breakpoints": true
     }
   ]
 }

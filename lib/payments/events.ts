@@ -3,7 +3,7 @@
  * paid. An event counts only when its signature verifies, it has not been seen
  * before, and amount, currency, account and order all match the attempt.
  */
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
@@ -40,8 +40,10 @@ export type EventResult = "paid" | "failed" | "duplicate" | `rejected: ${string}
 export async function handleProviderEvent(db: Db, provider: "fake", raw: string, signature: string, now = new Date()): Promise<EventResult> {
   let event: ProviderEvent | null = null;
   try { event = JSON.parse(raw) as ProviderEvent; } catch { event = null; }
+  // Rejected bodies are untrusted: keep only their size and hash, never the content.
   const record = async (result: EventResult, dedupeKey = `rejected:${randomUUID()}`, valid = false) => {
-    await db.insert(providerEvents).values({ provider, dedupeKey, signatureValid: valid, raw: (event ?? { raw: raw.slice(0, 2000) }) as Record<string, unknown>, result, accountId: null, receivedAt: now });
+    const fingerprint = { size: Buffer.byteLength(raw, "utf8"), sha256: createHash("sha256").update(raw).digest("hex") };
+    await db.insert(providerEvents).values({ provider, dedupeKey, signatureValid: valid, raw: fingerprint, result, accountId: null, receivedAt: now });
     return result;
   };
   if (!verifyFake(raw, signature)) return record("rejected: bad signature");
