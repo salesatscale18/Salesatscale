@@ -11,18 +11,51 @@ import { and, count, desc, eq, inArray, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  catalogVersions, leadEvents, leads, orderForms, orders, paymentAttempts, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
-  type OrderForm, type OrderFormField, type OrderSnapshot,
+  catalogItems, catalogVersions, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
+  type OrderForm, type OrderFormField, type OrderSnapshot, type RecurringPeriod, type UnitCustom,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { priceQuote } from "@/lib/catalog/pricing";
 import { itemsOf, publishedCatalog } from "@/lib/catalog/service";
+import { marketLegal } from "@/lib/markets/legal";
+import { resolveMarket } from "@/lib/markets/service";
+import { accountDefaultsFrom, effectiveSettings } from "@/lib/markets/settings";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
+import { priceWithList } from "@/lib/pricing/engine";
+import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
+import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesOf } from "@/lib/quotes/pricing";
 import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
-import { currentLegal, getOrderFormSettings } from "./settings";
+import { getOrderFormSettings } from "./settings";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
 
 const DAY_MS = 86_400_000;
+
+/**
+ * A snapshot line. Forms made from price-list quotes also say which charge the
+ * line is (one-time or recurring, with its period) and its unit; older
+ * snapshots have only `recurring`. The stored type (db/schema.ts OrderSnapshot)
+ * is unchanged: these fields are optional extras in the same jsonb.
+ */
+export type SnapshotLine = OrderSnapshot["lines"][number] & {
+  charge?: "one_time" | "recurring";
+  period?: RecurringPeriod | null;
+  unit?: string;
+  unitCustom?: UnitCustom | null;
+  /** "list" | "tier" | "custom" | "not_charged" */
+  priceSource?: string;
+};
+export type FormSnapshot = Omit<OrderSnapshot, "lines"> & {
+  lines: SnapshotLine[];
+  /** Period of the recurring total; missing on older snapshots (= month). */
+  recurringPeriod?: RecurringPeriod | null;
+  taxRateBp?: number;
+  /** The price list version the quote was priced from; missing on catalog-priced snapshots. */
+  priceList?: { name: string; version: number } | null;
+};
+
+/** The snapshot with the optional price-list fields typed. */
+export const snapshotOf = (form: Pick<OrderForm, "snapshot">) => form.snapshot as FormSnapshot;
+export const chargeOf = (l: Pick<SnapshotLine, "charge" | "recurring">): "one_time" | "recurring" => l.charge ?? (l.recurring ? "recurring" : "one_time");
 
 export type FormActor = { kind: "human"; userId: string; actingAs: boolean } | { kind: "agent" };
 
@@ -54,21 +87,42 @@ export async function createOrderForm(
 
   const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   if (account.status === "paused") return { ok: false, reason: "account_paused" };
-  const language = opts.language && account.languages.includes(opts.language) ? opts.language : q.lead.language && account.languages.includes(q.lead.language) ? q.lead.language : account.languages[0] ?? "en";
-  const legal = (await currentLegal(db, accountId)).filter((s) => s.language === language);
-  if (legal.length === 0) return { ok: false, reason: "no_legal" };
-  const settings = await getOrderFormSettings(db, accountId);
-  const catalog = await publishedCatalog(db, accountId);
-
   const v = cur.version;
-  const snapshot: OrderSnapshot = {
+  // The quote's market decides languages, legal texts and payment methods.
+  const market = await resolveMarket(db, accountId, v.marketId ?? q.quote.marketId ?? q.lead.marketId);
+  const itemIds = [...new Set(cur.lines.map((l) => l.catalogItemId).filter((x): x is string => !!x))];
+  const [settings, sections, [list], [catalogVersion], units] = await Promise.all([
+    getOrderFormSettings(db, accountId),
+    marketLegal(db, accountId, market.id),
+    v.priceListId ? db.select().from(priceLists).where(and(eq(priceLists.id, v.priceListId), eq(priceLists.accountId, accountId))) : Promise.resolve([]),
+    db.select({ version: catalogVersions.version }).from(catalogVersions).where(and(eq(catalogVersions.id, v.catalogVersionId), eq(catalogVersions.accountId, accountId))),
+    itemIds.length
+      ? db.select({ id: catalogItems.id, unitCustom: catalogItems.unitCustom }).from(catalogItems).where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, itemIds)))
+      : Promise.resolve([]),
+  ]);
+  const eff = effectiveSettings(accountDefaultsFrom(account, settings), market, list ?? null);
+  const languages = eff.languages.value;
+  const language = opts.language && languages.includes(opts.language) ? opts.language : q.lead.language && languages.includes(q.lead.language) ? q.lead.language : languages[0] ?? "en";
+  const legal = sections.filter((s) => s.language === language);
+  if (legal.length === 0) return { ok: false, reason: "no_legal" };
+  const unitCustomOf = new Map(units.map((u) => [u.id, u.unitCustom ?? null]));
+
+  const lines: SnapshotLine[] = cur.lines.map((l) => ({
+    sku: l.sku, name: l.name, qty: l.qty, unitPriceMinor: l.unitPriceMinor!, lineTotalMinor: l.lineTotalMinor!, recurring: l.chargeType === "recurring",
+    charge: l.chargeType, period: l.chargeType === "recurring" ? ((l.period as RecurringPeriod | null) ?? "month") : null,
+    unit: l.unit, unitCustom: l.catalogItemId ? unitCustomOf.get(l.catalogItemId) ?? null : null, priceSource: l.priceSource,
+  }));
+  const snapshot: FormSnapshot = {
     seller: { tradeName: account.tradeName, legalName: account.legalName, brandColor: settings.brandColor },
-    quote: { number: q.quote.number, version: v.version, catalogVersion: catalog?.version.id === v.catalogVersionId ? catalog.version.version : 0 },
+    quote: { number: q.quote.number, version: v.version, catalogVersion: catalogVersion?.version ?? 0 },
     currency: v.currency,
     pricesIncludeTax: v.pricesIncludeTax,
-    lines: cur.lines.map((l) => ({ sku: l.sku, name: l.name, qty: l.qty, unitPriceMinor: l.unitPriceMinor!, lineTotalMinor: l.lineTotalMinor!, recurring: l.chargeType === "recurring" })),
+    taxRateBp: v.taxRateBp,
+    lines,
     oneTime: { subtotalMinor: v.oneTimeSubtotalMinor, discountMinor: v.oneTimeDiscountMinor, taxMinor: v.oneTimeTaxMinor, totalMinor: v.oneTimeTotalMinor },
     recurring: { subtotalMinor: v.recurringSubtotalMinor, discountMinor: v.recurringDiscountMinor, taxMinor: v.recurringTaxMinor, totalMinor: v.recurringTotalMinor },
+    recurringPeriod: (v.recurringPeriod as RecurringPeriod | null) ?? null,
+    priceList: list ? { name: list.name, version: list.version } : null,
     validUntil: v.validUntil.toISOString(),
     legal: legal.map((s) => ({ key: s.sectionKey, title: s.title, version: s.version, body: s.body })),
     fields: settings.fields,
@@ -77,8 +131,8 @@ export async function createOrderForm(
       ...(q.lead.email ? { invoice_email: q.lead.email } : {}),
       signatory_name: q.lead.fullName,
     },
-    paymentMethods: { card: settings.card, bankTransfer: settings.bankTransfer },
-    bankDetails: settings.bankDetails,
+    paymentMethods: eff.paymentMethods.value,
+    bankDetails: eff.bankDetails.value,
     supportContact: account.supportContact ?? null,
   };
 
@@ -89,7 +143,7 @@ export async function createOrderForm(
     tx.update(orderForms).set({ status: "link_expired", supersededById: id })
       .where(and(eq(orderForms.accountId, accountId), eq(orderForms.quoteId, quoteId), inArray(orderForms.status, ["sent", "opened"]))),
     tx.insert(orderForms).values({
-      id, accountId, leadId: q.lead.id, quoteId, quoteVersionId: v.id, tokenHash: hashToken(token), language, snapshot, expiresAt,
+      id, accountId, leadId: q.lead.id, quoteId, quoteVersionId: v.id, tokenHash: hashToken(token), language, snapshot: snapshot as OrderSnapshot, expiresAt, marketId: market.id,
       createdBy: actor.kind, createdByUserId: actor.kind === "human" ? actor.userId : null, createdAt: now,
     }),
     tx.update(quotes).set({ status: "sent" }).where(and(eq(quotes.id, quoteId), eq(quotes.accountId, accountId))),
@@ -158,20 +212,97 @@ export async function markOpened(db: Db, form: OrderForm, now = new Date()) {
   }
 }
 
+export type PriceCheckLine = {
+  sku: string; name: string; qty: number;
+  charge: "one_time" | "recurring";
+  /** Recurring period ("month" | "year"); null for one-time lines. */
+  period: RecurringPeriod | null;
+  beforeMinor: number; nowMinor: number;
+  recurring: boolean;
+};
+
 export type PriceCheck =
   | { status: "same" }
-  | { status: "changed"; lines: { sku: string; name: string; qty: number; beforeMinor: number; nowMinor: number; recurring: boolean }[]; oneTimeMinor: number; recurringMinor: number }
+  | { status: "changed"; lines: PriceCheckLine[]; oneTimeMinor: number; recurringMinor: number; recurringPeriod: RecurringPeriod | null }
   | { status: "unavailable" };
 
-/** Re-prices the snapshot against the published catalog (mvp-plan 3.5: before signing and payment). */
+const lineKey = (sku: string, charge: string) => `${sku}|${charge}`;
+
+/**
+ * Re-prices the snapshot against the live price list of the form's market
+ * (mvp-plan 3.5: before signing and payment), line by line and charge by
+ * charge. The quote froze the price list version it was priced from: the
+ * same live version means the same prices (one query). Forms of quotes priced
+ * from the catalog (before price lists) are checked against the catalog.
+ */
 export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
-  // One round trip: the quote version and today's published catalog version.
+  const [row] = await db
+    .select({ priceListId: quoteVersions.priceListId, discountBp: quoteVersions.discountBp, market: markets, live: priceLists })
+    .from(quoteVersions)
+    .leftJoin(markets, and(eq(markets.id, quoteVersions.marketId), eq(markets.accountId, quoteVersions.accountId)))
+    .leftJoin(priceLists, and(eq(priceLists.accountId, quoteVersions.accountId), eq(priceLists.lineageId, markets.priceListLineageId), eq(priceLists.status, "live")))
+    .where(and(eq(quoteVersions.id, form.quoteVersionId), eq(quoteVersions.accountId, form.accountId)));
+  if (!row) return { status: "unavailable" };
+  if (!row.priceListId) return catalogPriceCheck(db, form);
+  let live = row.live;
+  if (!row.market) {
+    // The market was removed: the lead is served by the home market now.
+    const home = await resolveMarket(db, form.accountId, null);
+    live = home.priceListLineageId ? (await livePriceList(db, form.accountId, home.priceListLineageId))?.list ?? null : null;
+  }
+  if (!live) return { status: "unavailable" };
+  // Price list versions never change once live: same version, same prices.
+  if (live.id === row.priceListId) return { status: "same" };
+
+  const [entries, catalog, lines] = await Promise.all([
+    entriesOf(db, form.accountId, live.id),
+    publishedCatalog(db, form.accountId),
+    db.select({ sku: quoteLines.sku, qty: quoteLines.qty, chargeType: quoteLines.chargeType, unitPriceMinor: quoteLines.unitPriceMinor, priceSource: quoteLines.priceSource })
+      .from(quoteLines).where(and(eq(quoteLines.quoteVersionId, form.quoteVersionId), eq(quoteLines.accountId, form.accountId))).orderBy(quoteLines.sortOrder),
+  ]);
+  if (!catalog) return { status: "unavailable" };
+  const custom = customPricesOf(lines);
+  const entryBySku = new Map(entries.map((e) => [e.sku, e]));
+  const r = priceWithList({
+    items: engineItems(catalog),
+    entries,
+    priceList: enginePriceList(live),
+    // The stored lines already hold the auto-added ones: no rules applied again.
+    lines: requestLinesOf(lines).map((l) => ({ ...l, ...customsFor(custom, l.sku, entryBySku.get(l.sku)) })),
+    discountBp: row.discountBp,
+    maxDiscountBp: 10_000,
+  });
+  // Not sold any more, or a price is missing: the buyer can't sign this offer.
+  if (!r.ok || !r.complete) return { status: "unavailable" };
+  const s = snapshotOf(form);
+  const now = new Map(r.lines.map((l) => [lineKey(l.sku, l.charge), l]));
+  const before = new Set(s.lines.map((l) => lineKey(l.sku, chargeOf(l))));
+  const out: PriceCheckLine[] = s.lines.map((l) => {
+    const charge = chargeOf(l);
+    const n = now.get(lineKey(l.sku, charge));
+    return { sku: l.sku, name: l.name, qty: l.qty, charge, period: charge === "recurring" ? n?.period ?? l.period ?? "month" : null, beforeMinor: l.lineTotalMinor, nowMinor: n?.lineTotalMinor ?? 0, recurring: charge === "recurring" };
+  });
+  // A charge the new price list adds (for example a new monthly fee).
+  for (const n of r.lines) {
+    if (!before.has(lineKey(n.sku, n.charge))) {
+      out.push({ sku: n.sku, name: n.name, qty: n.qty, charge: n.charge, period: n.period, beforeMinor: 0, nowMinor: n.lineTotalMinor ?? 0, recurring: n.charge === "recurring" });
+    }
+  }
+  const same = r.currency === s.currency
+    && r.oneTime.totalMinor === s.oneTime.totalMinor
+    && r.recurring.totalMinor === s.recurring.totalMinor
+    && out.every((l) => l.beforeMinor === l.nowMinor && now.has(lineKey(l.sku, l.charge)) && before.has(lineKey(l.sku, l.charge)));
+  if (same) return { status: "same" };
+  return { status: "changed", lines: out, oneTimeMinor: r.oneTime.totalMinor, recurringMinor: r.recurring.totalMinor, recurringPeriod: r.recurringPeriod };
+}
+
+/** Forms of quotes priced from the catalog (before price lists): compared with today's published catalog. */
+async function catalogPriceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
   const [row] = await db.select({ catalogVersionId: quoteVersions.catalogVersionId, discountBp: quoteVersions.discountBp, published: catalogVersions })
     .from(quoteVersions)
     .leftJoin(catalogVersions, and(eq(catalogVersions.accountId, quoteVersions.accountId), eq(catalogVersions.status, "published")))
     .where(and(eq(quoteVersions.id, form.quoteVersionId), eq(quoteVersions.accountId, form.accountId)));
   if (!row || !row.published) return { status: "unavailable" };
-  // Published catalog versions never change: same version, same prices.
   if (row.published.id === row.catalogVersionId) return { status: "same" };
   const published = row.published;
   const [items, lines] = await Promise.all([
@@ -179,7 +310,8 @@ export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
     db.select({ sku: quoteLines.sku, unitPriceMinor: quoteLines.unitPriceMinor, priceSource: quoteLines.priceSource }).from(quoteLines)
       .where(and(eq(quoteLines.quoteVersionId, form.quoteVersionId), eq(quoteLines.accountId, form.accountId))),
   ]);
-  const custom = customPrices(lines);
+  const custom: Record<string, number> = {};
+  for (const l of lines) if (l.priceSource === "custom" && l.unitPriceMinor !== null) custom[l.sku] = l.unitPriceMinor;
   const r = priceQuote({
     items,
     lines: form.snapshot.lines.map((l) => ({ sku: l.sku, qty: l.qty, ...(custom[l.sku] !== undefined ? { customUnitPriceMinor: custom[l.sku] } : {}) })),
@@ -195,21 +327,16 @@ export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
     status: "changed",
     lines: s.lines.map((l) => {
       const n = r.lines.find((x) => x.sku === l.sku);
-      return { sku: l.sku, name: l.name, qty: l.qty, beforeMinor: l.lineTotalMinor, nowMinor: n?.lineTotalMinor ?? l.lineTotalMinor, recurring: l.recurring };
+      const charge = l.recurring ? "recurring" as const : "one_time" as const;
+      return { sku: l.sku, name: l.name, qty: l.qty, charge, period: l.recurring ? "month" as const : null, beforeMinor: l.lineTotalMinor, nowMinor: n?.lineTotalMinor ?? l.lineTotalMinor, recurring: l.recurring };
     }),
     oneTimeMinor: r.oneTime.totalMinor,
     recurringMinor: r.recurring.totalMinor,
+    recurringPeriod: r.recurring.totalMinor ? "month" : null,
   };
 }
 
-/** Prices a person set on custom lines; they carry over when the catalog re-prices the rest. */
-function customPrices(lines: { sku: string; unitPriceMinor: number | null; priceSource: string }[]) {
-  const out: Record<string, number> = {};
-  for (const l of lines) if (l.priceSource === "custom" && l.unitPriceMinor !== null) out[l.sku] = l.unitPriceMinor;
-  return out;
-}
-
-/** "Accept new total": a new quote version from today's catalog and a new link. The old link stops working. */
+/** "Accept new total": a new quote version from today's price list and a new link. The old link stops working. */
 export async function acceptNewPrice(db: Db, token: string, now = new Date()): Promise<{ ok: true; token: string } | { ok: false; reason: "not_open" | "needs_approval" | "failed" }> {
   const view = await loadForm(db, token, now);
   if (!view || view.state !== "open") return { ok: false, reason: "not_open" };
@@ -219,8 +346,8 @@ export async function acceptNewPrice(db: Db, token: string, now = new Date()): P
   const v = q?.versions.find((x) => x.version.id === view.form.quoteVersionId);
   if (!q || !v) return { ok: false, reason: "failed" };
   const r = await createQuoteVersion(db, view.form.accountId, { kind: "agent" }, q.quote.id, {
-    lines: v.lines.map((l) => ({ sku: l.sku, qty: l.qty })), discountBp: v.version.discountBp, changeNote: "Price updated from the catalog; accepted by the buyer",
-  }, now, customPrices(v.lines));
+    lines: requestLinesOf(v.lines), discountBp: v.version.discountBp, changeNote: "Price updated from the price list; accepted by the buyer",
+  }, now, customPricesOf(v.lines));
   if (!r.ok) return { ok: false, reason: "failed" };
   if (r.quote.status === "awaiting_approval") return { ok: false, reason: "needs_approval" };
   const f = await createOrderForm(db, view.form.accountId, { kind: "agent" }, q.quote.id, { language: view.form.language }, now);
@@ -286,7 +413,7 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
         tx.update(orderForms).set({ status: "signed", signedAt: now }).where(and(eq(orderForms.id, form.id), inArray(orderForms.status, ["sent", "opened"]))),
         tx.insert(orders).values({
           id: orderId, accountId: form.accountId, leadId: form.leadId, quoteId: form.quoteId, orderFormId: form.id, number: (top ?? 10_000) + 1,
-          currency: s.currency, amountDueMinor: s.oneTime.totalMinor, recurringMinor: s.recurring.totalMinor, createdAt: now,
+          currency: s.currency, amountDueMinor: s.oneTime.totalMinor, recurringMinor: s.recurring.totalMinor, marketId: form.marketId, createdAt: now,
         }),
         tx.insert(leadEvents).values({
           accountId: form.accountId, leadId: form.leadId, type: "order_form.signed", actor: "buyer",

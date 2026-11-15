@@ -43,6 +43,8 @@ export type Totals = { subtotalMinor: number; discountMinor: number; taxMinor: n
 export type PricingError =
   | { kind: "unknown_sku"; sku: string }
   | { kind: "inactive"; sku: string }
+  /** Price lists (lib/pricing/engine.ts): the SKU has no entry in the market's price list. */
+  | { kind: "not_sold"; sku: string }
   | { kind: "bad_qty"; sku: string }
   | { kind: "duplicate_sku"; sku: string }
   | { kind: "no_lines" }
@@ -166,8 +168,12 @@ export function priceQuote(input: {
 }
 
 /** Plain-language text for an approval reason. */
-export function approvalReasonText(r: ApprovalReason): string {
-  if (r.kind === "price_missing") return `${r.sku} has no price in the catalog.`;
+export function approvalReasonText(r: ApprovalReason & { charge?: "one_time" | "recurring" }): string {
+  if (r.kind === "price_missing") {
+    // Price-list quotes say which charge; older catalog quotes do not.
+    if (r.charge) return `${r.sku} has no ${r.charge === "recurring" ? "recurring" : "one-time"} price in the price list.`;
+    return `${r.sku} has no price in the catalog.`;
+  }
   if (r.kind === "custom_pricing_qty") return `${r.qty} × ${r.sku} is at or above the custom-pricing quantity (${r.from}).`;
   return `Discount ${(r.requestedBp / 100).toFixed(1)}% is above the ${(r.limitBp / 100).toFixed(1)}% limit.`;
 }
@@ -176,6 +182,7 @@ export function pricingErrorText(e: PricingError): string {
   switch (e.kind) {
     case "unknown_sku": return `${e.sku} is not in the published catalog.`;
     case "inactive": return `${e.sku} is not available.`;
+    case "not_sold": return `${e.sku} is not sold in this market.`;
     case "bad_qty": return `Quantity for ${e.sku} must be a whole number from 1 to ${MAX_QTY.toLocaleString("en-US")}.`;
     case "duplicate_sku": return `${e.sku} appears twice. Use one line with the total quantity.`;
     case "no_lines": return "Add at least one product.";

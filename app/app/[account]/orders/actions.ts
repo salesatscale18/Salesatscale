@@ -4,11 +4,13 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
-import { approveQuote, cancelQuote } from "@/lib/quotes/service";
+import { approveQuote, cancelQuote, getQuote } from "@/lib/quotes/service";
 import { createOrderForm, markBankTransferReceived } from "@/lib/orders/service";
 
 /** Ids come from the form: refuse anything that isn't a UUID before it reaches a query. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Approve form field: "price:<SKU>:<charge>". */
+const PRICE_KEY = /^price:([A-Za-z0-9][A-Za-z0-9._-]{0,39}):(one_time|recurring)$/;
 
 /** The quote id from the form, or back to the list when it is not a valid id. */
 function quoteIdOf(form: FormData, slug: string) {
@@ -20,12 +22,18 @@ function quoteIdOf(form: FormData, slug: string) {
 export async function approveQuoteAction(form: FormData) {
   const a = await requireAccount(String(form.get("slug") ?? ""));
   const quoteId = quoteIdOf(form, a.account.slug);
+  // The quote's own currency (from its price list) decides the decimals.
+  const quote = await getQuote(appDb, a.account.id, quoteId);
+  const currency = quote?.versions[0]?.version.currency ?? a.account.currency;
   const customs: Record<string, number> = {};
   for (const [k, v] of form.entries()) {
     if (!k.startsWith("price:") || !String(v).trim()) continue;
-    const minor = parseMajorToMinor(String(v), a.account.currency);
+    // "price:<SKU>:<one_time|recurring>": a price per charge.
+    const m = k.match(PRICE_KEY);
+    if (!m) redirect(`/app/${a.account.slug}/orders?quote=${quoteId}&approve=invalid`);
+    const minor = parseMajorToMinor(String(v), currency);
     if (minor === null) redirect(`/app/${a.account.slug}/orders?quote=${quoteId}&approve=invalid`);
-    customs[k.slice(6)] = minor;
+    customs[`${m[1]}:${m[2]}`] = minor;
   }
   const r = await approveQuote(appDb, a.account.id, { userId: a.user.id, actingAs: a.actingAs }, quoteId, customs);
   revalidatePath(`/app/${a.account.slug}/orders`);

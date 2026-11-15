@@ -1,7 +1,9 @@
 /**
- * Quotes (implementation plan P3.2, P3.5). Every price comes from the quote
- * engine and the published catalog; a version is immutable once written.
- * Multi-row writes are atomic (db/atomic.ts).
+ * Quotes (implementation plan P3.2, P3.5; mvp-plan 3.13). Every price comes
+ * from the pricing engine (lib/pricing/engine.ts) and the live price list of
+ * the lead's market; catalog prices are not used. A version freezes its
+ * market, price list version and catalog version, and is immutable once
+ * written. Multi-row writes are atomic (db/atomic.ts).
  */
 import { randomUUID } from "node:crypto";
 import { and, asc, count, desc, eq, inArray, max } from "drizzle-orm";
@@ -12,9 +14,13 @@ import {
   type ApprovalReason, type Quote, type QuoteStatus, type QuoteVersion,
 } from "@/db/schema";
 import { writeAudit } from "@/lib/accounts/audit";
-import { approvalReasonText, priceQuote, type PricingError, type QuoteRequestLine } from "@/lib/catalog/pricing";
-import { checkFit } from "@/lib/catalog/fit";
-import { publishedCatalog } from "@/lib/catalog/service";
+import { approvalReasonText, type PricingError, type QuoteRequestLine } from "@/lib/catalog/pricing";
+import { checkFit, type FitResult } from "@/lib/catalog/fit";
+import { priceWithList, type EngineResult } from "@/lib/pricing/engine";
+import {
+  catalogAutoAdd, contextFits, customsFor, customPricesOf, engineItems, enginePriceList, pricingContext, requestLinesOf,
+  type PricingContext, type PublishedCatalog,
+} from "./pricing";
 
 export const QUOTE_VALID_DAYS = 7;
 const DAY_MS = 86_400_000;
@@ -23,18 +29,24 @@ const DAY_MS = 86_400_000;
 export type QuoteActor = { kind: "human"; userId: string; actingAs: boolean } | { kind: "agent" } | { kind: "system" };
 
 export type QuoteInput = {
+  /** One line per SKU; the engine makes a line per charge (one-time, recurring). */
   lines: QuoteRequestLine[];
   discountBp: number;
-  /** Site count from the deal state, for per-site fit rules. */
+  /** Site count from the deal state, for per-site fit and auto-add rules. */
   sites?: number;
+  /**
+   * SKUs the buyer asked to remove (auto-added lines). Not stored: quote
+   * versions have no column for it yet, so it applies to this pricing only.
+   */
+  removedByBuyer?: string[];
   idempotencyKey?: string;
   changeNote?: string;
-  /** Optional: account and published catalog the caller already loaded (see price()). */
+  /** Optional: rows the caller already loaded (see price()). */
   preloaded?: PricingPreload;
 };
 
 export type QuoteRefusal =
-  | { reason: "lead_not_found" | "lead_opted_out" | "no_catalog" | "quote_not_found" | "quote_closed" }
+  | { reason: "lead_not_found" | "lead_opted_out" | "no_catalog" | "no_price_list" | "quote_not_found" | "quote_closed" }
   | { reason: "pricing"; errors: PricingError[] }
   | { reason: "fit"; problems: string[] };
 
@@ -52,42 +64,68 @@ async function versionByKey(db: Db, accountId: string, key: string) {
 /** Rows a caller already loaded (the agent's per-turn memo), so price() does not read them again. */
 export type PricingPreload = {
   account?: typeof sellerAccounts.$inferSelect;
-  catalog?: Awaited<ReturnType<typeof publishedCatalog>>;
+  catalog?: PublishedCatalog | null;
+  /** Market, catalog and live price list for the lead's market. Ignored unless it is this account's and this market's. */
+  context?: PricingContext;
 };
 
+type Priced = Extract<EngineResult, { ok: true }>;
+type PriceOk = { ok: true; priced: Priced; fit: FitResult; ctx: PricingContext & { catalog: PublishedCatalog; priceList: NonNullable<PricingContext["priceList"]> } };
+type PriceFail = { ok: false; reason: "no_catalog" | "no_price_list" } | { ok: false; reason: "pricing"; errors: PricingError[] };
+
 /**
- * Prices a request against the published catalog and the account's discount limit.
- * `input.preloaded` (optional) skips reading the account and catalog again; rows
- * of another account are ignored.
+ * Prices a request with the live price list of the market (null = home) and
+ * the account's discount limit. `customs` are a person's prices per charge
+ * ("SKU:one_time" / "SKU:recurring"). Preloaded rows of another account or
+ * market are ignored.
  */
-async function price(db: Db, accountId: string, input: QuoteInput, customs?: Record<string, number>) {
+async function price(db: Db, accountId: string, marketId: string | null, input: QuoteInput, customs?: Record<string, number>): Promise<PriceOk | PriceFail> {
   const pre = input.preloaded;
-  const catalog = pre?.catalog && pre.catalog.version.accountId === accountId
-    ? pre.catalog
-    : await publishedCatalog(db, accountId);
-  if (!catalog) return { ok: false as const, reason: "no_catalog" as const };
+  const ctx = contextFits(pre?.context, accountId, marketId) ? pre!.context! : await pricingContext(db, accountId, marketId, { catalog: pre?.catalog });
+  if (!ctx.catalog) return { ok: false, reason: "no_catalog" };
+  if (!ctx.priceList) return { ok: false, reason: "no_price_list" };
   const [account] = pre?.account && pre.account.id === accountId
     ? [pre.account]
     : await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
-  const lines = input.lines.map((l) => (customs && customs[l.sku] !== undefined ? { ...l, customUnitPriceMinor: customs[l.sku] } : l));
-  const priced = priceQuote({
-    items: catalog.items,
-    lines,
+  const entryBySku = new Map(ctx.priceList.entries.map((e) => [e.sku, e]));
+  const priced = priceWithList({
+    items: engineItems(ctx.catalog),
+    entries: ctx.priceList.entries,
+    priceList: enginePriceList(ctx.priceList.list),
+    lines: input.lines.map((l) => ({ sku: l.sku, qty: l.qty, ...customsFor(customs, l.sku, entryBySku.get(l.sku)) })),
+    sites: input.sites,
     discountBp: input.discountBp,
     maxDiscountBp: account.maxDiscountBp,
-    pricesIncludeTax: catalog.version.pricesIncludeTax,
-    taxRateBp: catalog.version.taxRateBp,
+    autoAdd: catalogAutoAdd(ctx.catalog),
+    removedByBuyer: input.removedByBuyer,
   });
-  if (!priced.ok) return { ok: false as const, reason: "pricing" as const, errors: priced.errors };
-  const fit = checkFit(catalog.rules, input.lines, input.sites);
-  return { ok: true as const, priced, fit, catalog, currency: account.currency };
+  if (!priced.ok) return { ok: false, reason: "pricing", errors: priced.errors };
+  // Fit rules see what will be quoted, including lines added automatically.
+  const fit = checkFit(ctx.catalog.rules, requestLinesOf(priced.lines), input.sites);
+  return { ok: true, priced, fit, ctx: ctx as PriceOk["ctx"] };
+}
+
+export type QuotePreview =
+  | { ok: true; priced: Priced; fit: FitResult; context: PriceOk["ctx"] }
+  | ({ ok: false } & QuoteRefusal);
+
+/**
+ * Prices a request for a lead exactly as createQuote would, and saves nothing
+ * (the quote editor's live preview). Scoped by account.
+ */
+export async function previewQuote(db: Db, accountId: string, leadId: string, input: QuoteInput): Promise<QuotePreview> {
+  const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
+  if (!lead) return { ok: false, reason: "lead_not_found" };
+  const p = await price(db, accountId, lead.marketId, input);
+  if (!p.ok) return p;
+  return { ok: true, priced: p.priced, fit: p.fit, context: p.ctx };
 }
 
 function versionRows(
   accountId: string,
   quoteId: string,
   version: number,
-  p: Extract<Awaited<ReturnType<typeof price>>, { ok: true }>,
+  p: PriceOk,
   actor: QuoteActor,
   input: QuoteInput,
   now: Date,
@@ -99,11 +137,13 @@ function versionRows(
     accountId,
     quoteId,
     version,
-    catalogVersionId: p.catalog.version.id,
-    currency: p.currency,
+    catalogVersionId: p.ctx.catalog.version.id,
+    marketId: p.ctx.market.id,
+    priceListId: p.ctx.priceList.list.id,
+    currency: p.priced.currency,
     discountBp: input.discountBp,
-    pricesIncludeTax: p.catalog.version.pricesIncludeTax,
-    taxRateBp: p.catalog.version.taxRateBp,
+    pricesIncludeTax: p.priced.pricesIncludeTax,
+    taxRateBp: p.priced.taxRateBp,
     oneTimeSubtotalMinor: p.priced.oneTime.subtotalMinor,
     oneTimeDiscountMinor: p.priced.oneTime.discountMinor,
     oneTimeTaxMinor: p.priced.oneTime.taxMinor,
@@ -113,7 +153,8 @@ function versionRows(
     recurringTaxMinor: p.priced.recurring.taxMinor,
     recurringTotalMinor: p.priced.recurring.totalMinor,
     recurringPeriod: p.priced.recurringPeriod,
-    approvalReasons: p.priced.approvalReasons,
+    // Price-missing reasons also say which charge ({ charge }): extra jsonb data, read by approvalReasonText.
+    approvalReasons: p.priced.approvalReasons as ApprovalReason[],
     approvedByUserId,
     approvedAt: approvedByUserId ? now : null,
     validUntil: new Date(now.getTime() + QUOTE_VALID_DAYS * DAY_MS),
@@ -123,7 +164,22 @@ function versionRows(
     idempotencyKey: input.idempotencyKey ?? null,
     createdAt: now,
   };
-  const lines = p.priced.lines.map((l, i) => ({ ...l, id: randomUUID(), accountId, quoteVersionId: versionId, sortOrder: i }));
+  const lines = p.priced.lines.map((l, i) => ({
+    id: randomUUID(),
+    accountId,
+    quoteVersionId: versionId,
+    catalogItemId: l.catalogItemId,
+    sku: l.sku,
+    name: l.name,
+    chargeType: l.charge,
+    period: l.period,
+    unit: l.unit,
+    qty: l.qty,
+    unitPriceMinor: l.unitPriceMinor,
+    priceSource: l.priceSource,
+    lineTotalMinor: l.lineTotalMinor,
+    sortOrder: i,
+  }));
   return { v, lines };
 }
 
@@ -134,6 +190,10 @@ function statusFor(reasons: ApprovalReason[], complete: boolean, actor: QuoteAct
   return { status: "awaiting_approval", approvedBy: null };
 }
 
+function refusalOf(p: PriceFail): { ok: false } & QuoteRefusal {
+  return p.reason === "pricing" ? { ok: false, reason: "pricing", errors: p.errors } : { ok: false, reason: p.reason };
+}
+
 export async function createQuote(db: Db, accountId: string, actor: QuoteActor, leadId: string, input: QuoteInput, now = new Date()): Promise<QuoteResult> {
   if (input.idempotencyKey) {
     const hit = await versionByKey(db, accountId, input.idempotencyKey);
@@ -142,8 +202,8 @@ export async function createQuote(db: Db, accountId: string, actor: QuoteActor, 
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return { ok: false, reason: "lead_not_found" };
   if (lead.status === "opted_out") return { ok: false, reason: "lead_opted_out" };
-  const p = await price(db, accountId, input);
-  if (!p.ok) return p.reason === "pricing" ? { ok: false, reason: "pricing", errors: p.errors } : { ok: false, reason: p.reason };
+  const p = await price(db, accountId, lead.marketId, input);
+  if (!p.ok) return refusalOf(p);
   if (!p.fit.ok) return { ok: false, reason: "fit", problems: p.fit.problems };
   const { status, approvedBy } = statusFor(p.priced.approvalReasons, p.priced.complete, actor);
 
@@ -154,7 +214,7 @@ export async function createQuote(db: Db, accountId: string, actor: QuoteActor, 
     const { v, lines } = versionRows(accountId, quoteId, 1, p, actor, input, now, approvedBy);
     try {
       await atomic(db, (q) => [
-        q.insert(quotes).values({ id: quoteId, accountId, leadId, number, status, currentVersion: 1, createdAt: now }),
+        q.insert(quotes).values({ id: quoteId, accountId, leadId, number, status, currentVersion: 1, marketId: p.ctx.market.id, createdAt: now }),
         q.insert(quoteVersions).values(v),
         ...lines.map((l) => q.insert(quoteLines).values(l)),
         q.insert(leadEvents).values({
@@ -199,10 +259,13 @@ async function currentVersionOf(db: Db, q: Quote) {
 
 /**
  * A material change makes a new version; the previous one is replaced
- * (its order-form link stops working once forms exist, P5).
+ * (its order-form link stops working once forms exist, P5). The new version is
+ * priced from the quote's market's live price list as it is now.
  */
 export async function createQuoteVersion(
-  db: Db, accountId: string, actor: QuoteActor, quoteId: string, input: QuoteInput, now = new Date(), customs?: Record<string, number>,
+  db: Db, accountId: string, actor: QuoteActor, quoteId: string, input: QuoteInput, now = new Date(),
+  /** A person's prices per charge: "SKU:one_time" / "SKU:recurring" (a bare "SKU" means its only or one-time charge). */
+  customs?: Record<string, number>,
   /** Set by approveQuote: the person approving this version. */
   approvingUserId?: string,
 ): Promise<QuoteResult> {
@@ -215,8 +278,9 @@ export async function createQuoteVersion(
   if (q.status === "cancelled") return { ok: false, reason: "quote_closed" };
   const [lead] = await db.select().from(leads).where(eq(leads.id, q.leadId));
   if (lead.status === "opted_out") return { ok: false, reason: "lead_opted_out" };
-  const p = await price(db, accountId, input, customs);
-  if (!p.ok) return p.reason === "pricing" ? { ok: false, reason: "pricing", errors: p.errors } : { ok: false, reason: p.reason };
+  // A quote stays in its market; quotes made before markets follow the lead's.
+  const p = await price(db, accountId, q.marketId ?? lead.marketId, input, customs);
+  if (!p.ok) return refusalOf(p);
   if (!p.fit.ok) return { ok: false, reason: "fit", problems: p.fit.problems };
   const decided = statusFor(p.priced.approvalReasons, p.priced.complete, actor);
   const status = approvingUserId && p.priced.complete ? "draft" : decided.status;
@@ -228,7 +292,7 @@ export async function createQuoteVersion(
       tx.insert(quoteVersions).values(v),
       ...lines.map((l) => tx.insert(quoteLines).values(l)),
       // Guarded on the current version so two concurrent edits can't both win.
-      tx.update(quotes).set({ currentVersion: next, status }).where(and(eq(quotes.id, q.id), eq(quotes.currentVersion, q.currentVersion))),
+      tx.update(quotes).set({ currentVersion: next, status, marketId: p.ctx.market.id }).where(and(eq(quotes.id, q.id), eq(quotes.currentVersion, q.currentVersion))),
       tx.insert(leadEvents).values({
         accountId, leadId: q.leadId, type: "quote.versioned", actor: actor.kind, actorUserId: actor.kind === "human" ? actor.userId : null,
         data: { quoteId: q.id, number: q.number, version: next, note: v.changeNote, status },
@@ -256,10 +320,13 @@ export async function createQuoteVersion(
   return { ok: true, quote, version, reused: false };
 }
 
+/** The key of a person's price for one charge of a SKU (approve form: "price:SKU:charge"). */
+export const customKey = (sku: string, charge: string) => `${sku}:${charge}`;
+
 /**
  * "Approve and send" (canvas: Orders): a person prices custom lines and/or
  * accepts the discount. Same lines → the current version is approved; custom
- * prices → a new, approved version.
+ * prices (per charge, "SKU:one_time" / "SKU:recurring") → a new, approved version.
  */
 export async function approveQuote(
   db: Db, accountId: string, actor: { userId: string; actingAs: boolean }, quoteId: string, customPrices: Record<string, number>, now = new Date(),
@@ -269,17 +336,24 @@ export async function approveQuote(
   if (q.status !== "awaiting_approval") return { ok: false, reason: "quote_closed" };
   const current = await currentVersionOf(db, q);
   const lines = await db.select().from(quoteLines).where(eq(quoteLines.quoteVersionId, current.id)).orderBy(asc(quoteLines.sortOrder));
-  const missing = lines.some((l) => l.unitPriceMinor === null && customPrices[l.sku] === undefined);
-  if (missing) return { ok: false, reason: "pricing", errors: lines.filter((l) => l.unitPriceMinor === null && customPrices[l.sku] === undefined).map((l) => ({ kind: "bad_custom_price" as const, sku: l.sku })) };
+  // A bare "SKU" key covers a SKU that has only one line (older forms).
+  const perSku = new Map<string, number>();
+  for (const l of lines) perSku.set(l.sku, (perSku.get(l.sku) ?? 0) + 1);
+  const priceFor = (l: (typeof lines)[number]) => customPrices[customKey(l.sku, l.chargeType)] ?? (perSku.get(l.sku) === 1 ? customPrices[l.sku] : undefined);
+  const unpriced = lines.filter((l) => l.unitPriceMinor === null && priceFor(l) === undefined);
+  if (unpriced.length) return { ok: false, reason: "pricing", errors: unpriced.map((l) => ({ kind: "bad_custom_price" as const, sku: l.sku })) };
   const human: QuoteActor = { kind: "human", ...actor };
   if (Object.keys(customPrices).length > 0) {
-    // Keep prices a person already set on earlier custom lines.
-    const carried: Record<string, number> = {};
-    for (const l of lines) if (l.priceSource === "custom" && l.unitPriceMinor !== null) carried[l.sku] = l.unitPriceMinor;
+    // Keep prices a person already set on earlier custom lines; normalise bare keys to per-charge keys.
+    const given: Record<string, number> = {};
+    for (const l of lines) {
+      const p = priceFor(l);
+      if (p !== undefined) given[customKey(l.sku, l.chargeType)] = p;
+    }
     return createQuoteVersion(
       db, accountId, human, q.id,
-      { lines: lines.map((l) => ({ sku: l.sku, qty: l.qty })), discountBp: current.discountBp, changeNote: "Priced and approved by the seller" },
-      now, { ...carried, ...customPrices }, actor.userId,
+      { lines: requestLinesOf(lines), discountBp: current.discountBp, changeNote: "Priced and approved by the seller" },
+      now, { ...customPricesOf(lines), ...given }, actor.userId,
     );
   }
   await atomic(db, (tx) => [

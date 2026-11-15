@@ -3,8 +3,6 @@ import { and, eq } from "drizzle-orm";
 import { conversations, leadEvents, leads, messages, quotes, sellerAccounts, toolCalls, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { parseCatalogItem } from "@/lib/catalog/rules";
-import { publishDraft, saveDraftItem, addDraftRule } from "@/lib/catalog/service";
 import { listLeads } from "@/lib/leads/service";
 import { ScriptedLlm, type Block, type LlmRequest } from "@/lib/agent/llm";
 import {
@@ -13,6 +11,7 @@ import {
 } from "@/lib/agent/service";
 import { runBuyerTurn } from "@/lib/agent/turn";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { seedCatalog, seedPricing } from "../helpers/pricing";
 
 const use = (id: string, name: string, input: unknown): Block => ({ type: "tool_use", id, name, input });
 const say = (text: string): Block => ({ type: "text", text });
@@ -35,17 +34,23 @@ describe("agent turns (scripted model)", () => {
     };
     acc = await mk("Polar");
     other = await mk("Other");
-    for (const raw of [
-      { sku: "SNS-200", name: "Wireless fridge sensor", unit: "sensor", price: "590" },
-      { sku: "GW-10", name: "Site gateway", unit: "site", price: "660" },
-      { sku: "PLAN-M", name: "Monitoring plan", unit: "site", price: "90", chargeType: "recurring" },
-    ]) {
-      const p = parseCatalogItem(raw, "ILS");
-      if (!p.ok) throw new Error();
-      await saveDraftItem(db, acc, p.value);
-    }
-    await addDraftRule(db, acc, { kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true });
-    await publishDraft(db, { userId: me.id, actingAs: false }, acc);
+    await seedCatalog(db, acc, [
+      { sku: "SNS-200", name: "Wireless fridge sensor", unit: "device" },
+      { sku: "GW-10", name: "Site gateway", unit: "site" },
+      { sku: "PLAN-M", name: "Monitoring plan", unit: "site", kind: "service" },
+      { sku: "SVC-INST", name: "Installation", unit: "site", kind: "service" },
+      { sku: "EXPORT-ONLY", name: "Export kit", unit: "item" },
+    ], [
+      { kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true },
+      { kind: "auto_add", sku: "SVC-INST", whenAnyOf: ["GW-10"], qty: "sites", removable: true },
+    ]);
+    await seedPricing(db, acc, [
+      { sku: "SNS-200", oneTime: 59_000 },
+      { sku: "GW-10", oneTime: 66_000 },
+      { sku: "PLAN-M", recurring: 9_000 },
+      // The installation fee is free in this price list ("Included"), so totals stay as in the canvas.
+      { sku: "SVC-INST" },
+    ], { userId: me.id });
     await addFact(db, { userId: me.id, actingAs: false }, acc, { topic: "Warranty", statement: "Sensors have a 24-month warranty.", sourceLabel: "Product sheet p.2" });
     const draft = await ensureDraftVersion(db, acc);
     await saveDraftPlaybook(db, acc, { ...draft.playbook, maxDiscountBp: 700 });
@@ -416,5 +421,80 @@ describe("agent turns (scripted model)", () => {
     const fctx = (callId: string) => ({ ...plain(callId), conversationId: c3.conversationId, leadId: c3.leadId, memo: foreign });
     await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, fctx("f1"));
     expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, fctx("f2"))).result).toMatchObject({ status: "ready" });
+  });
+  // --- Markets and price lists (wave 2, lane Q) ------------------------------
+
+  const toolCtx = async (memo?: import("@/lib/agent/tools").TurnMemo) => {
+    const c = await newConv();
+    const draft = await ensureDraftVersion(db, acc);
+    return { c, ctx: (callId: string) => ({ db, accountId: acc, conversationId: c.conversationId, leadId: c.leadId, playbook: draft.playbook, currency: "ILS", callId, memo }) };
+  };
+  const qualify = { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "2", provenance: "buyer" }], next_step: null, objection: null };
+
+  it("search_catalog and check_fit show the market's prices; an item missing from the price list is not sold there", async () => {
+    const { runTool } = await import("@/lib/agent/tools");
+    const memo: import("@/lib/agent/tools").TurnMemo = {};
+    const { ctx } = await toolCtx(memo);
+    const s = await runTool("search_catalog", { query: "" }, ctx("s1"));
+    expect(s.outcome).toBe("ok");
+    const items = (s.result as { items: Record<string, unknown>[] }).items;
+    expect(items.find((i) => i.sku === "SNS-200")).toMatchObject({ sold_here: true, one_time_price: "₪590.00", recurring_price: null });
+    expect(items.find((i) => i.sku === "PLAN-M")).toMatchObject({ sold_here: true, one_time_price: null, recurring_price: "₪90.00/month", kind: "service" });
+    expect(items.find((i) => i.sku === "EXPORT-ONLY")).toMatchObject({ sold_here: false });
+    expect(items.find((i) => i.sku === "EXPORT-ONLY")).not.toHaveProperty("one_time_price");
+    expect(s.result).toMatchObject({ currency: "ILS", prices_include_tax: true });
+    const firstPricing = memo.pricing;
+    expect(firstPricing).toBeInstanceOf(Promise);
+
+    const fit = await runTool("check_fit", { lines: [{ sku: "SNS-200", qty: 4 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], sites: 2 }, ctx("s2"));
+    expect(memo.pricing).toBe(firstPricing);
+    expect(fit.result).toMatchObject({
+      ok: true, added_automatically: ["SVC-INST"], due_on_signing: "₪3,680.00", recurring: "₪180.00/month",
+      lines: expect.arrayContaining([{ sku: "SVC-INST", name: "Installation", qty: 2, charge: "one-time", total: "included", added_automatically: true, buyer_can_remove: true }]),
+    });
+    const bad = await runTool("check_fit", { lines: [{ sku: "EXPORT-ONLY", qty: 1 }], sites: null }, ctx("s3"));
+    expect(bad.result).toMatchObject({ ok: false, not_sold_here: ["EXPORT-ONLY"], problems: ["EXPORT-ONLY is not sold in this market."] });
+  });
+
+  it("create_quote refuses items not sold in the market, and every price tool refuses without a price list", async () => {
+    const { runTool } = await import("@/lib/agent/tools");
+    const { ctx } = await toolCtx();
+    await runTool("update_deal_state", qualify, ctx("ns1"));
+    const r = await runTool("create_quote", { lines: [{ sku: "EXPORT-ONLY", qty: 1 }], discount_percent: 0, sites: 2 }, ctx("ns2"));
+    expect(r).toMatchObject({ outcome: "refused", rule: "Not sold in this buyer's market", result: { not_sold_here: ["EXPORT-ONLY"] } });
+
+    const { createMarket } = await import("@/lib/markets/service");
+    const cy = await createMarket(db, { userId: me.id, actingAs: false }, acc, { name: "Cyprus", countries: ["CY"], phonePrefixes: ["+357"] });
+    if (!cy.ok) throw new Error();
+    const { c, ctx: ctx2 } = await toolCtx();
+    await db.update(leads).set({ marketId: cy.market.id }).where(eq(leads.id, c.leadId));
+    await runTool("update_deal_state", qualify, ctx2("np1"));
+    for (const [name, input] of [
+      ["search_catalog", { query: "" }],
+      ["create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1 }],
+    ] as const) {
+      expect(await runTool(name, input, ctx2(`np-${name}`))).toMatchObject({ outcome: "refused", rule: "No price list for this buyer's market" });
+    }
+    expect((await runTool("check_fit", { lines: [{ sku: "GW-10", qty: 1 }], sites: 1 }, ctx2("np3"))).result).toMatchObject({ ok: true, prices: "No price list for this buyer's market" });
+    expect(await db.select().from(quotes).where(eq(quotes.leadId, c.leadId))).toEqual([]);
+  });
+
+  it("create_quote prices in the lead's market; a memo loaded for another market or account is not used", async () => {
+    const { runTool } = await import("@/lib/agent/tools");
+    const { createMarket } = await import("@/lib/markets/service");
+    const gr = await createMarket(db, { userId: me.id, actingAs: false }, acc, { name: "Greece", countries: ["GR"], phonePrefixes: ["+30"] });
+    if (!gr.ok) throw new Error();
+    await seedPricing(db, acc, [{ sku: "GW-10", oneTime: 20_000 }, { sku: "PLAN-M", recurring: 50_000, period: "year" }], { name: "EUR", currency: "EUR", marketId: gr.market.id });
+    // The memo holds the home market's prices (as if loaded earlier in the turn for another lead).
+    const homeMemo: import("@/lib/agent/tools").TurnMemo = {};
+    const { ctx: homeCtx } = await toolCtx(homeMemo);
+    await runTool("search_catalog", { query: "" }, homeCtx("hm1"));
+    const { c, ctx } = await toolCtx(homeMemo);
+    await db.update(leads).set({ marketId: gr.market.id }).where(eq(leads.id, c.leadId));
+    await runTool("update_deal_state", qualify, ctx("gr1"));
+    const r = await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }, { sku: "PLAN-M", qty: 1 }], discount_percent: 0, sites: 1 }, ctx("gr2"));
+    expect(r.result).toMatchObject({ ok: true, due_on_signing: "€200.00", monthly: null, recurring: "€500.00/year", status: "ready" });
+    const [q] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
+    expect(q.marketId).toBe(gr.market.id);
   });
 });
