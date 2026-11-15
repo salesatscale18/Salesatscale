@@ -5,6 +5,7 @@ import { displayName } from "@/lib/auth/display";
 import { countLeadsByView, LEAD_VIEWS, listLeads, listSourceLabels, type LeadFilters, type LeadView } from "@/lib/leads/service";
 import { relativeTime } from "@/lib/format";
 import { isLocale, t, type Locale } from "@/lib/i18n";
+import { listMarkets } from "@/lib/markets/service";
 import { AddLeadForm } from "./add-lead-form";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -47,16 +48,20 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   let data: Awaited<ReturnType<typeof listLeads>> | null = null;
   let counts: Record<LeadView, number> | null = null;
   let sources: string[] = [];
+  let marketList: { id: string; name: string }[] = [];
   try {
-    [data, counts, sources] = await Promise.all([
+    [data, counts, sources, marketList] = await Promise.all([
       listLeads(appDb, account.id, filters),
       countLeadsByView(appDb, account.id),
       listSourceLabels(appDb, account.id),
+      listMarkets(appDb, account.id),
     ]);
   } catch (e) {
     console.error("[leads] list failed", e);
   }
   const now = new Date();
+  // Leads without a market belong to the home market (listMarkets puts it first).
+  const homeName = marketList[0]?.name ?? "";
 
   return (
     <div className={showAdd ? "sas-with-panel" : undefined}>
@@ -136,18 +141,19 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             ) : (
               <section className="sas-panel" style={{ overflow: "hidden" }}>
                 <div style={{ overflowX: "auto" }}>
-                  <table className="sas-table" style={{ minWidth: 720 }}>
+                  <table className="sas-table" style={{ minWidth: 820 }}>
                     <thead>
                       <tr>
                         <th scope="col">{t("leads.col.lead")}</th>
                         <th scope="col">{t("leads.col.status")}</th>
+                        <th scope="col">{t("leads.col.market")}</th>
                         <th scope="col">{t("leads.col.owner")}</th>
                         <th scope="col">{t("leads.col.source")}</th>
                         <th scope="col" style={{ textAlign: "end" }}>{t("leads.col.activity")}</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {data.rows.map(({ lead, owner }) => (
+                      {data.rows.map(({ lead, owner, market }) => (
                         <tr key={lead.id}>
                           <td>
                             <a className="sas-row-link" href={`${base}/${lead.id}`}>
@@ -156,6 +162,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                             </a>
                           </td>
                           <td><StatusPill object="lead" state={lead.status} /></td>
+                          <td><span className="sas-chip" data-market={market?.id ?? "home"}>{market?.name ?? homeName}</span></td>
                           <td>{owner ? <span className="sas-owner sas-owner--human">{displayName(owner)}</span> : lead.status === "opted_out" ? <span className="sas-small">—</span> : <span className="sas-owner sas-owner--agent">{t("leads.owner.agent")}</span>}</td>
                           <td className="sas-small">{lead.sourceLabel ?? t(`lead.origin.${lead.origin}`)}</td>
                           <td className="sas-num sas-small" style={{ textAlign: "end" }} title={lead.lastActivityAt.toISOString()}>{relativeTime(lead.lastActivityAt, now)}</td>
@@ -173,7 +180,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
           </>
         )}
       </main>
-      {showAdd ? <AddLeadForm slug={account.slug} languages={account.languages as Locale[]} closeHref={qs({})} /> : null}
+      {showAdd ? <AddLeadForm slug={account.slug} languages={account.languages as Locale[]} markets={marketList.map((m) => ({ id: m.id, name: m.name }))} closeHref={qs({})} /> : null}
     </div>
   );
 }

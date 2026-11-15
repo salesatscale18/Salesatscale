@@ -12,7 +12,8 @@ import { displayName, initials } from "@/lib/auth/display";
 import { relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { NOTIFICATION_EVENTS, type NotificationEvent, type SellerAccount } from "@/db/schema";
-import { removeMemberAction, revokeIntakeKeyAction, saveContactHoursAction, saveNotificationsAction } from "./actions";
+import { removeMemberAction, revokeIntakeKeyAction, saveContactHoursAction, saveNotificationsAction, setIntakeKeyMarketAction } from "./actions";
+import { listMarkets } from "@/lib/markets/service";
 import { IntakeKeyForm } from "./key-form";
 import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
@@ -59,9 +60,10 @@ export default async function SettingsPage({ params, searchParams }: { params: P
           {SECTIONS.map((s) => (
             <a key={s} className="sas-subnav__item" href={href(s)} aria-current={s === section ? "page" : undefined}>{t(`settings.section.${s}` as MessageKey)}</a>
           ))}
+          <a className="sas-subnav__item" href={`/app/${account.slug}/markets`}>{t("settings.section.markets")}</a>
         </nav>
         {section === "intake" ? (
-          await IntakeSection({ account })
+          await IntakeSection({ account, sp })
         ) : (
           <div className="sas-split__main" style={{ flexBasis: 520 }}>
             {section === "whatsapp" ? <WhatsAppSection /> : null}
@@ -239,8 +241,8 @@ function HoursSection({ account, saved, error }: { account: SellerAccount; saved
 }
 
 /** Settings › Lead intake (P2.5, canvas: LeadIntake). */
-async function IntakeSection({ account }: { account: SellerAccount }) {
-  const [keys, deliveries] = await Promise.all([listIntakeKeys(appDb, account.id), listDeliveries(appDb, account.id)]);
+async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Record<string, string | string[] | undefined> }) {
+  const [keys, deliveries, marketList] = await Promise.all([listIntakeKeys(appDb, account.id), listDeliveries(appDb, account.id), listMarkets(appDb, account.id)]);
   const endpoint = `${await baseUrl()}/api/leads/${account.slug}`;
   const now = new Date();
   return (
@@ -258,6 +260,8 @@ async function IntakeSection({ account }: { account: SellerAccount }) {
             </div>
           </section>
 
+          {sp.key_market ? <Saved text={t("settings.intake.key_market_saved")} /> : null}
+          {sp.key_market_error ? <Failed text={t("settings.intake.key_market_error")} /> : null}
           <section className="sas-panel" aria-labelledby="k-h" style={{ overflow: "hidden" }}>
             <div className="sas-panel__body sas-stack-2" style={{ gap: 2 }}>
               <h2 id="k-h" className="sas-heading">{t("settings.intake.keys")}</h2>
@@ -268,12 +272,23 @@ async function IntakeSection({ account }: { account: SellerAccount }) {
               <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("settings.intake.none")}</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 560 }}>
-                  <thead><tr><th scope="col">{t("settings.intake.col.name")}</th><th scope="col">{t("settings.intake.col.key")}</th><th scope="col">{t("settings.intake.col.created")}</th><th scope="col">{t("settings.intake.col.last_used")}</th><th scope="col"><span className="sas-sr">{t("settings.intake.revoke")}</span></th></tr></thead>
+                <table className="sas-table" style={{ minWidth: 720 }}>
+                  <thead><tr><th scope="col">{t("settings.intake.col.name")}</th><th scope="col">{t("settings.intake.col.market")}</th><th scope="col">{t("settings.intake.col.key")}</th><th scope="col">{t("settings.intake.col.created")}</th><th scope="col">{t("settings.intake.col.last_used")}</th><th scope="col"><span className="sas-sr">{t("settings.intake.revoke")}</span></th></tr></thead>
                   <tbody>
                     {keys.map((k) => (
                       <tr key={k.id}>
                         <td><strong>{k.name}</strong></td>
+                        <td>
+                          <form action={setIntakeKeyMarketAction} style={{ display: "flex", gap: 6, alignItems: "center" }} data-key-market={k.id}>
+                            <input type="hidden" name="slug" value={account.slug} />
+                            <input type="hidden" name="keyId" value={k.id} />
+                            <select className="sas-select" name="marketId" defaultValue={k.marketId && marketList.some((m) => m.id === k.marketId) ? k.marketId : ""} aria-label={t("settings.intake.market_for", { name: k.name })} style={{ minWidth: 0, width: 160 }}>
+                              <option value="">{t("settings.intake.market_auto")}</option>
+                              {marketList.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                            </select>
+                            <Button type="submit" size="sm" variant="ghost">{t("settings.intake.market_link")}</Button>
+                          </form>
+                        </td>
                         <td className="sas-num">{k.keyPrefix}…{k.keyLast4 ?? ""}</td>
                         <td className="sas-small">{relativeTime(k.createdAt, now)}</td>
                         <td className="sas-small">{k.lastUsedAt ? relativeTime(k.lastUsedAt, now) : t("settings.intake.never")}</td>

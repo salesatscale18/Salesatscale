@@ -16,7 +16,8 @@ Content-Type: application/json
 |---|---|---|
 | `full_name` | yes | Full name (`name` also accepted) |
 | `phone` | yes | WhatsApp number. International format (`+972…`) or national for the account's market |
-| `language` | no | `en` or `he` (also `English`, `Hebrew`). Defaults to the account's first language |
+| `language` | no | `en` or `he` (also `English`, `Hebrew`). Defaults to the first selling language of the lead's market |
+| `country` | no | The form's country field, e.g. `GB` or `United Kingdom`. Chooses the lead's market when it matches a market's form country values |
 | `business` | no | Business name (`company` also accepted) |
 | `email` | no | Email address |
 | `source` | no | Label shown in the leads list. Default `Website form` |
@@ -26,6 +27,8 @@ Content-Type: application/json
 | `consent.at` | no | ISO time they agreed. Default: now |
 | `consent.page_url` | no | Page where they agreed |
 | `consent.ip` | no | Defaults to the caller's IP |
+
+Every lead gets a market: the market linked to the intake key, else the market whose form country values match `country`, else the market with the longest matching phone prefix, else the home market. A lead that already exists keeps its market.
 
 ```json
 {

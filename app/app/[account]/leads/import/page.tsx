@@ -29,7 +29,7 @@ export default async function ImportLeadsPage({ params }: { params: Promise<{ ac
           <a className={buttonClass("secondary", "sm")} href="/leads-template.csv" download style={{ alignSelf: "flex-start" }}><Icon name="download" />{t("import.download_template")}</a>
           <div className="sas-stack-2"><strong>{t("import.required")}</strong><span className="sas-chips"><Chip>full_name</Chip><Chip>phone</Chip><Chip>language</Chip></span></div>
           <div className="sas-stack-2"><strong>{t("import.consent_cols")}</strong><span className="sas-chips"><Chip>consent_source</Chip><Chip>consent_text</Chip><Chip>consent_at</Chip></span></div>
-          <div className="sas-stack-2"><strong>{t("import.optional")}</strong><span className="sas-chips"><Chip>business</Chip><Chip>email</Chip><Chip>source_id</Chip></span></div>
+          <div className="sas-stack-2"><strong>{t("import.optional")}</strong><span className="sas-chips"><Chip>business</Chip><Chip>email</Chip><Chip>source_id</Chip><Chip>country</Chip></span><span className="sas-small">{t("import.country_hint")}</span></div>
           <span className="sas-small">{t("import.rules")}</span>
         </aside>
       </div>

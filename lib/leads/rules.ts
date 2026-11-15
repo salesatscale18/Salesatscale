@@ -58,6 +58,15 @@ export type LeadInput = {
   sourceRef: string | null;
   /** Null when the input carries no consent (allowed only for an existing lead). */
   consent: { wording: string; source: string; capturedAt: Date; ip: string | null; pageUrl: string | null } | null;
+  /** The form's country field, used to choose the lead's market (lib/markets/match.ts). */
+  formCountry?: string | null;
+  /** True when no language came with the lead: the market's language is used instead. */
+  languageFromDefault?: boolean;
+  /**
+   * The lead's market. Undefined: chosen at intake (intake key, country, phone,
+   * else the home market). Set by the caller only for a market the seller chose.
+   */
+  marketId?: string | null;
 };
 
 export type LeadFieldErrors = Partial<Record<"fullName" | "phone" | "language" | "email" | "consent" | "consentSource" | "consentText", string>>;
@@ -76,6 +85,7 @@ export type RawLead = {
   consentCapturedAt?: unknown;
   consentIp?: unknown;
   consentPageUrl?: unknown;
+  country?: unknown;
 };
 
 const s = (v: unknown) => (typeof v === "string" ? v.trim() : typeof v === "number" ? String(v) : "");
@@ -141,6 +151,8 @@ export function parseLead(
       sourceLabel: s(raw.sourceLabel).slice(0, 80) || null,
       sourceRef: s(raw.sourceRef).slice(0, 200) || null,
       consent,
+      formCountry: s(raw.country).slice(0, 60) || null,
+      languageFromDefault: !langRaw,
     },
   };
 }
@@ -181,12 +193,13 @@ const CSV_COLUMNS: Record<string, keyof RawLead> = {
   source: "sourceLabel",
   source_id: "sourceRef", "source id": "sourceRef", id: "sourceRef",
   consent: "consent",
+  country: "country", market: "country",
   consent_source: "consentSource", "consent source": "consentSource", "how they agreed": "consentSource",
   consent_wording: "consentWording", consent_text: "consentWording",
   consent_date: "consentCapturedAt", consent_time: "consentCapturedAt", consent_at: "consentCapturedAt",
 };
 
-export const CSV_TEMPLATE_HEADER = "full_name,phone,language,business,email,source_id,consent_source,consent_text,consent_at";
+export const CSV_TEMPLATE_HEADER = "full_name,phone,language,business,email,source_id,consent_source,consent_text,consent_at,country";
 
 /** One consent statement for every row of a file (UX: "consent for the whole file"). */
 export type FileConsent = { source: string; wording: string };
@@ -234,6 +247,15 @@ export const FIX_TEXT: Record<string, string> = {
   duplicate_in_file: "Keep one of the two rows.",
   account_paused: "This account is paused. Leads can be added again once it is resumed.",
 };
+
+/**
+ * The market an existing lead keeps when a lead with the same phone comes in
+ * again: intake only fills an empty market (like mergeLeadFields); a change of
+ * market is a separate, audited action on the lead card.
+ */
+export function mergeMarketId(existing: string | null, incoming: string | null | undefined): string | null {
+  return existing ?? incoming ?? null;
+}
 
 /** Identity fields that intake (webhook, CSV) may fill but never overwrite on an existing lead. */
 export const PROTECTED_LEAD_FIELDS = ["fullName", "language", "email", "company"] as const;
@@ -313,6 +335,7 @@ export function rawFromIntakeBody(body: Record<string, unknown>, callerIp?: stri
     consentCapturedAt: consent.at ?? consent.captured_at,
     consentIp: consent.ip ?? callerIp ?? undefined,
     consentPageUrl: consent.page_url,
+    country: body.country,
   };
 }
 

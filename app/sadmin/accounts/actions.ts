@@ -37,7 +37,7 @@ export async function createAccountAction(_prev: CreateAccountState, form: FormD
   }
   const parsed = parseCreateAccount(raw);
   if (!parsed.ok) return { status: "error", errors: parsed.errors, values: raw };
-  const { account, invite, inviteToken } = await createAccount(appDb, { userId: me.id, actingAs: false }, parsed.value);
+  const { account, invite, inviteToken } = await createAccount(appDb, { userId: me.id, actingAs: false }, parsed.value, new Date(), { homeMarket: true });
   revalidatePath("/sadmin/accounts");
   return {
     status: "created",

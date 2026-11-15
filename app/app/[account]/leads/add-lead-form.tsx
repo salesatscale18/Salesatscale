@@ -7,7 +7,7 @@ import { t, type Locale } from "@/lib/i18n";
 import { addLeadAction, type AddLeadState } from "./actions";
 
 /** Add lead side panel (canvas: Leads). Consent is required to save. */
-export function AddLeadForm({ slug, languages, closeHref }: { slug: string; languages: Locale[]; closeHref: string }) {
+export function AddLeadForm({ slug, languages, markets = [], closeHref }: { slug: string; languages: Locale[]; markets?: { id: string; name: string }[]; closeHref: string }) {
   const [state, action, pending] = useActionState<AddLeadState, FormData>(addLeadAction, { status: "idle" });
   const errors = state.status === "error" ? state.errors : {};
   const v = (k: string, d = "") => (state.status === "error" ? state.values[k] ?? d : d);
@@ -46,7 +46,8 @@ export function AddLeadForm({ slug, languages, closeHref }: { slug: string; lang
         <div className="sas-grid-2" style={{ gap: 12 }}>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="language">{t("lead.form.language")}</label>
-            <select className="sas-select" id="language" name="language" defaultValue={v("language", languages[0])} {...err("language")}>
+            <select className="sas-select" id="language" name="language" defaultValue={v("language", "")} {...err("language")}>
+              <option value="">{t("lead.form.language_market")}</option>
               {languages.map((l) => <option key={l} value={l}>{t(`lang.${l}`)}</option>)}
             </select>
           </div>
@@ -56,6 +57,16 @@ export function AddLeadForm({ slug, languages, closeHref }: { slug: string; lang
             <span className="sas-hint" id="sourceLabel-hint">{t("lead.form.source_hint")}</span>
           </div>
         </div>
+        {markets.length > 1 ? (
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor="marketId">{t("lead.form.market_label")}</label>
+            <select className="sas-select" id="marketId" name="marketId" defaultValue={v("marketId", "")} aria-describedby="marketId-hint">
+              <option value="">{t("lead.form.market_auto")}</option>
+              {markets.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+            <span className="sas-hint" id="marketId-hint">{t("lead.form.market_hint")}</span>
+          </div>
+        ) : null}
         <fieldset className="sas-fieldset" style={{ gridTemplateColumns: "1fr", padding: 12 }}>
           <legend>{t("lead.form.consent")}</legend>
           <label className="sas-check">

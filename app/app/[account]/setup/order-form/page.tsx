@@ -1,4 +1,4 @@
-import { Button } from "@/components/sas/primitives";
+import { Button, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
@@ -6,7 +6,9 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { currentLegal, getOrderFormSettings, REQUIRED_FIELDS } from "@/lib/orders/settings";
 import { ORDER_FORM_FIELDS } from "@/db/schema";
 import { t, type MessageKey } from "@/lib/i18n";
-import { removeSectionAction, saveSectionAction, saveSettingsAction, starterAction } from "./actions";
+import { removeSectionAction, saveMarketSectionAction, saveSectionAction, saveSettingsAction, starterAction } from "./actions";
+import { getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
+import { marketLegal, type EffectiveSection } from "@/lib/markets/legal";
 import { BuyerPreview } from "./preview";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -18,7 +20,11 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const [settings, legal, progress] = await Promise.all([getOrderFormSettings(appDb, account.id), currentLegal(appDb, account.id), setupProgress(appDb, account)]);
+  const [settings, legal, progress, marketList] = await Promise.all([getOrderFormSettings(appDb, account.id), currentLegal(appDb, account.id), setupProgress(appDb, account), listMarkets(appDb, account.id)]);
+  // Market switcher: the home market edits the account defaults; another market shows its effective texts.
+  const chosen = marketList.find((m) => m.id === one(sp.market));
+  const marketView = chosen && !chosen.isHome ? await getMarketView(appDb, account.id, chosen.id) : null;
+  const marketSections = marketView ? await marketLegal(appDb, account.id, marketView.market.id) : [];
   const base = `/app/${account.slug}`;
   const here = `${base}/setup/order-form`;
   const keys = [...new Set(legal.map((s) => s.sectionKey))];
@@ -38,9 +44,26 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.saved")}</span></div> : null}
       {sp.legal ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.legal_saved", { version: one(sp.legal).split(".")[2] ?? "" })}</span></div> : null}
       {sp.error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{one(sp.error)}</span></div> : null}
+      {sp.mlegal ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.market_saved", { version: one(sp.mlegal) })}</span></div> : null}
+      {marketList.length > 1 ? (
+        <nav aria-label={t("ofs.market_switch")} className="sas-views" data-market-switcher>
+          {marketList.map((m) => {
+            const current = marketView ? m.id === marketView.market.id : m.isHome;
+            return (
+              <a key={m.id} className="sas-view" href={m.isHome ? here : `${here}?market=${m.id}`} aria-current={current ? "page" : undefined}>
+                {m.isHome ? t("ofs.market_home", { name: m.name }) : m.name}
+              </a>
+            );
+          })}
+        </nav>
+      ) : null}
 
       <div className="sas-split">
         <div className="sas-split__main">
+          {marketView ? (
+            <MarketLegal slug={account.slug} here={here} view={marketView} sections={marketSections} editKey={editKey} editLang={one(sp.lang)} />
+          ) : (
+            <>
           <section className="sas-panel" aria-labelledby="leg-h">
             <div className="sas-panel__body sas-stack-2">
               <h2 id="leg-h" className="sas-heading">{t("ofs.legal")}</h2>
@@ -104,6 +127,9 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
             </form>
           </section>
 
+            </>
+          )}
+
           <form action={saveSettingsAction} className="sas-stack-4">
             <input type="hidden" name="slug" value={account.slug} />
             <section className="sas-panel" aria-labelledby="fld-h">
@@ -161,5 +187,79 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
         </aside>
       </div>
     </main>
+  );
+}
+
+/** Legal texts of a market that is not the home market: each section shows its effective text and where it comes from. */
+function MarketLegal({ slug, here, view, sections, editKey, editLang }: { slug: string; here: string; view: MarketView; sections: EffectiveSection[]; editKey: string; editLang: string }) {
+  const market = view.market;
+  const languages = view.settings.languages.value;
+  const keys = [...new Set(sections.map((s) => s.sectionKey))];
+  const at = (k: string, l: string) => `${here}?market=${market.id}&edit=${encodeURIComponent(k)}&lang=${l}#editor`;
+  const lang = editLang && languages.includes(editLang) ? editLang : languages[0];
+  const editing = editKey ? sections.find((s) => s.sectionKey === editKey && s.language === lang) ?? null : null;
+  const anyTitle = sections.find((s) => s.sectionKey === editKey)?.title ?? "";
+  return (
+    <>
+      <section className="sas-panel" aria-labelledby="mleg-h" data-market-legal={market.id}>
+        <div className="sas-panel__body sas-stack-2">
+          <h2 id="mleg-h" className="sas-heading">{t("ofs.legal")} · {market.name}</h2>
+          <span className="sas-small">{t("ofs.market_intro", { market: market.name })}</span>
+          {keys.length === 0 ? <span>{t("ofs.market_none")}</span> : null}
+          <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+            {keys.map((k) => {
+              const rows = sections.filter((s) => s.sectionKey === k);
+              return (
+                <li key={k} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 0", borderTop: "1px solid var(--line)" }}>
+                  <strong>{(rows.find((x) => languages.includes(x.language)) ?? rows[0]).title}</strong>
+                  {languages.map((l) => {
+                    const r = rows.find((x) => x.language === l);
+                    return (
+                      <span key={l} data-section={`${k}.${l}`} data-source={r?.source ?? "missing"} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 10px" }}>
+                        {r ? (
+                          <>
+                            <span className="sas-chip">{LANG[l] ?? l} v{r.version}</span>
+                            {r.source === "market"
+                              ? <span className="sas-pill sas-pill--agent">{t("ofs.overridden")}</span>
+                              : <span className="sas-pill">{t("ofs.same_as_account")}</span>}
+                            <a className={buttonClass("ghost", "sm")} href={at(k, l)}>{t(r.source === "market" ? "ofs.edit_market" : "ofs.override")}</a>
+                          </>
+                        ) : (
+                          <a className="sas-pill sas-pill--warning" href={at(k, l)}><Icon name="alert-triangle" />{t("ofs.market_missing", { lang: LANG[l] ?? l })}</a>
+                        )}
+                      </span>
+                    );
+                  })}
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      </section>
+      {editKey ? (
+        <section className="sas-panel" aria-labelledby="med-h" id="editor">
+          <form action={saveMarketSectionAction} className="sas-panel__body sas-stack-4">
+            <h2 id="med-h" className="sas-heading">{t("ofs.market_edit_section", { title: editing?.title ?? anyTitle, lang: LANG_NAME[lang] ?? lang, market: market.name })}</h2>
+            <input type="hidden" name="slug" value={slug} />
+            <input type="hidden" name="marketId" value={market.id} />
+            <input type="hidden" name="sectionKey" value={editKey} />
+            <input type="hidden" name="language" value={lang} />
+            <div className="sas-input-group">
+              <label className="sas-input-label" htmlFor="ms-title">{t("ofs.section_title")}</label>
+              <input className="sas-input" id="ms-title" name="title" defaultValue={editing?.title ?? anyTitle} required maxLength={80} />
+            </div>
+            <div className="sas-input-group">
+              <label className="sas-input-label" htmlFor="ms-body">{t("ofs.section_body")}</label>
+              <textarea className="sas-textarea" id="ms-body" name="body" rows={10} required defaultValue={editing?.body ?? ""} dir={lang === "he" ? "rtl" : "ltr"} />
+              <span className="sas-hint">{t("ofs.market_hint")}</span>
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <Button type="submit" variant="primary">{t("ofs.market_save", { market: market.name })}</Button>
+              <a className="sas-btn sas-btn--ghost" href={`${here}?market=${market.id}`}>{t("ofs.cancel")}</a>
+            </div>
+          </form>
+        </section>
+      ) : null}
+    </>
   );
 }

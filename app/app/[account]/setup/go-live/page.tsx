@@ -1,4 +1,5 @@
-import { Button, buttonClass } from "@/components/sas/primitives";
+import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
+import { getMarketView, listMarkets } from "@/lib/markets/service";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -33,7 +34,8 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const result = await loadGoLive(appDb, account);
+  const [result, marketList] = await Promise.all([loadGoLive(appDb, account), listMarkets(appDb, account.id)]);
+  const marketViews = (await Promise.all(marketList.map((m) => getMarketView(appDb, account.id, m.id)))).filter((v) => v !== null);
   const base = `/app/${account.slug}`;
   const pct = result.total === 0 ? 0 : Math.round((result.passed / result.total) * 100);
   const err = one(sp.error);
@@ -131,6 +133,39 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
           </form>
         </section>
       </div>
+
+      <section className="sas-panel" aria-labelledby="mk-h" style={{ gap: 0, overflow: "hidden" }} data-golive-markets>
+        <div className="sas-panel__body sas-stack-2" style={{ gap: 2 }}>
+          <h2 id="mk-h" className="sas-heading">{t("golive.markets.title")}</h2>
+          <span className="sas-small">{t("golive.markets.intro")}</span>
+        </div>
+        <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
+          {marketViews.map(({ market, checks }) => {
+            const passed = checks.filter((c) => c.ok).length;
+            return (
+              <li key={market.id} data-market={market.id} style={{ padding: "14px 16px", borderTop: "1px solid var(--line)" }} className="sas-stack-2">
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
+                  <strong style={{ flex: "1 1 200px", minWidth: 0 }}>
+                    {market.name}{market.isHome ? <span className="sas-chip" style={{ marginInlineStart: 8 }}>{t("golive.markets.home")}</span> : null}
+                  </strong>
+                  <StatusPill object="market" state={market.status} />
+                  <span className="sas-small sas-num">{t("golive.markets.checks", { passed, total: checks.length })}</span>
+                  <a className={buttonClass("secondary", "sm")} href={`${base}/markets?m=${market.id}`}>{t("golive.markets.open")}</a>
+                </div>
+                <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
+                  {checks.map((c) => (
+                    <li key={c.key} data-check={c.key} data-ok={c.ok} className="sas-small" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+                      <span style={{ color: c.ok ? "var(--success)" : c.blocking ? "var(--danger)" : "var(--ink-muted)", display: "inline-flex" }}><Icon name={c.ok ? "check" : c.blocking ? "x" : "clock"} /></span>
+                      {t(`markets.check.${c.key}` as MessageKey)}
+                      <span className="sas-sr"> · {t(c.ok ? "golive.state.pass" : c.blocking ? "golive.state.fail" : "golive.state.later")}</span>
+                    </li>
+                  ))}
+                </ul>
+              </li>
+            );
+          })}
+        </ul>
+      </section>
     </main>
   );
 }

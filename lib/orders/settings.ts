@@ -1,6 +1,6 @@
 /** Order form settings and versioned legal sections (P5.2). Scoped by account. */
 import { cache } from "react";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, isNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { legalSections, orderFormSettings, ORDER_FORM_FIELDS, type LegalSection, type OrderFormField } from "@/db/schema";
 
@@ -33,9 +33,13 @@ export async function saveOrderFormSettings(db: Db, accountId: string, v: Settin
   await db.insert(orderFormSettings).values({ accountId, ...v }).onConflictDoUpdate({ target: orderFormSettings.accountId, set: v });
 }
 
-/** The latest version of each (section, language); removed sections are left out. */
+/**
+ * The account default legal texts: the latest version of each (section,
+ * language) with market_id null; removed sections are left out. A market's own
+ * texts are read with marketLegal (lib/markets/legal.ts).
+ */
 export async function currentLegal(db: Db, accountId: string): Promise<LegalSection[]> {
-  const rows = await db.select().from(legalSections).where(eq(legalSections.accountId, accountId)).orderBy(desc(legalSections.version));
+  const rows = await db.select().from(legalSections).where(and(eq(legalSections.accountId, accountId), isNull(legalSections.marketId))).orderBy(desc(legalSections.version));
   const latest = new Map<string, LegalSection>();
   for (const r of rows) if (!latest.has(`${r.sectionKey}|${r.language}`)) latest.set(`${r.sectionKey}|${r.language}`, r);
   return [...latest.values()].filter((r) => r.active).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sectionKey.localeCompare(b.sectionKey));
@@ -50,7 +54,7 @@ export const currentLegalKeys = cache(async (db: Db, accountId: string): Promise
   const rows = await db
     .select({ sectionKey: legalSections.sectionKey, language: legalSections.language, version: legalSections.version, active: legalSections.active })
     .from(legalSections)
-    .where(eq(legalSections.accountId, accountId))
+    .where(and(eq(legalSections.accountId, accountId), isNull(legalSections.marketId)))
     .orderBy(desc(legalSections.version));
   const latest = new Map<string, (typeof rows)[number]>();
   for (const r of rows) if (!latest.has(`${r.sectionKey}|${r.language}`)) latest.set(`${r.sectionKey}|${r.language}`, r);
@@ -61,7 +65,12 @@ export function sectionKeyOf(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || `section_${Date.now()}`;
 }
 
-/** Saves a new version of a section in one language. Returns the version number. */
+/**
+ * Saves a new version of an account default section (market_id null) in one
+ * language. Returns the version number. The number continues the single
+ * sequence per (account, section, language) that market texts share, because
+ * the unique index legal_sections_version_uq has no market_id.
+ */
 export async function saveLegalSection(
   db: Db, accountId: string, userId: string | null, s: { sectionKey: string; title: string; language: string; body: string; active?: boolean },
 ) {
@@ -72,7 +81,7 @@ export async function saveLegalSection(
     const version = (top?.v ?? 0) + 1;
     try {
       await db.insert(legalSections).values({
-        accountId, sectionKey: s.sectionKey, title: s.title.trim().slice(0, 80), language: s.language, version,
+        accountId, marketId: null, sectionKey: s.sectionKey, title: s.title.trim().slice(0, 80), language: s.language, version,
         body: s.body.trim().slice(0, 20000), active: s.active ?? true, createdByUserId: userId,
       });
       return version;

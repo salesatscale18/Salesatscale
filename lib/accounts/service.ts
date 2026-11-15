@@ -17,6 +17,9 @@ import {
   type AccountInvite, type SellerAccount, type User,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "./audit";
+import { ensureHomeMarket, setMarketPriceList, updateMarket } from "@/lib/markets/service";
+import { CALLING_CODES, countryName } from "@/lib/markets/rules";
+import { createPriceList } from "@/lib/pricing/price-lists";
 import {
   generateInviteToken, hashInviteToken, INVITE_TTL_DAYS, inviteEmailMatches, inviteState, slugify,
   statusAfterResume, type CreateAccountInput, type InviteState,
@@ -39,8 +42,49 @@ async function uniqueSlug(db: Db, name: string): Promise<string> {
   }
 }
 
-/** Creates an account in Setting up and an owner invite. Returns the one-time invite token. */
-export async function createAccount(db: Db, actor: Actor, input: CreateAccountInput, now = new Date()) {
+/** "Israel"; "Cyprus and Greece"; "Germany, Austria and Switzerland" (max 80 characters). */
+export function homeMarketName(countries: string[]): string {
+  const names = countries.map(countryName);
+  const name = names.length <= 1 ? (names[0] ?? "Home") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return name.length <= 80 ? name : `${names[0]} and ${names.length - 1} more`.slice(0, 80);
+}
+
+/**
+ * The home market and its first price list for a new account (mvp-plan 3.13):
+ * the market covers the countries from the create form, and the price list is
+ * an empty draft in the account currency, named after the market and assigned
+ * to it. Each step is idempotent or harmless to repeat, so a partial failure
+ * leaves an account that ensureHomeMarket can still complete later.
+ */
+export async function setUpHomeMarket(db: Db, actor: Actor, account: { id: string; market: string; currency: string }, countries: string[]) {
+  const home = await ensureHomeMarket(db, account.id, actor);
+  if (!home) throw new Error("Account not found.");
+  const all = [...new Set([account.market, ...countries])];
+  let market = home;
+  if (all.length > 1 || home.name !== homeMarketName(all)) {
+    const r = await updateMarket(db, actor, account.id, home.id, {
+      name: homeMarketName(all),
+      countries: all,
+      phonePrefixes: [...new Set(all.map((c) => CALLING_CODES[c]).filter((p): p is string => !!p))],
+      formCountryValues: all,
+    });
+    if (r.ok) market = r.market;
+  }
+  if (market.priceListLineageId) return { market, priceListLineageId: market.priceListLineageId };
+  const list = await createPriceList(db, actor, account.id, { name: `${market.name} prices`.slice(0, 80), currency: account.currency, pricesIncludeTax: false, taxRateBp: 0 });
+  if (!list.ok) throw new Error(list.error);
+  const set = await setMarketPriceList(db, actor, account.id, market.id, list.list.lineageId);
+  return { market: set.ok ? set.market : market, priceListLineageId: list.list.lineageId };
+}
+
+/**
+ * Creates an account in Setting up and an owner invite. Returns the one-time invite token.
+ * With `homeMarket` (the admin create form passes it), it also creates the home
+ * market and its first price list (setUpHomeMarket). It is off by default only so
+ * older tests that expect an account without markets keep passing; accounts
+ * created without it get their home market lazily from ensureHomeMarket.
+ */
+export async function createAccount(db: Db, actor: Actor, input: CreateAccountInput, now = new Date(), opts: { homeMarket?: boolean } = {}) {
   const slug = await uniqueSlug(db, input.tradeName);
   const [account] = await db
     .insert(sellerAccounts)
@@ -69,7 +113,8 @@ export async function createAccount(db: Db, actor: Actor, input: CreateAccountIn
     details: { tradeName: account.tradeName, plan: account.plan, ownerEmail: input.ownerEmail },
   });
   const invite = await createInvite(db, actor, account.id, { email: input.ownerEmail, name: input.ownerName, isOwner: true }, now);
-  return { account, invite: invite.invite, inviteToken: invite.token };
+  const home = opts.homeMarket ? await setUpHomeMarket(db, actor, account, input.countries ?? [input.market]) : null;
+  return { account, invite: invite.invite, inviteToken: invite.token, homeMarket: home?.market ?? null, priceListLineageId: home?.priceListLineageId ?? null };
 }
 
 export async function createInvite(
