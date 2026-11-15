@@ -18,7 +18,7 @@ import {
 } from "@/db/schema";
 import { writeAudit, type Actor } from "./audit";
 import { ensureHomeMarket, setMarketPriceList, updateMarket } from "@/lib/markets/service";
-import { CALLING_CODES, countryName } from "@/lib/markets/rules";
+import { CALLING_CODES, countryName, standardVatBp } from "@/lib/markets/rules";
 import { createPriceList } from "@/lib/pricing/price-lists";
 import {
   generateInviteToken, hashInviteToken, INVITE_TTL_DAYS, inviteEmailMatches, inviteState, slugify,
@@ -71,7 +71,7 @@ export async function setUpHomeMarket(db: Db, actor: Actor, account: { id: strin
     if (r.ok) market = r.market;
   }
   if (market.priceListLineageId) return { market, priceListLineageId: market.priceListLineageId };
-  const list = await createPriceList(db, actor, account.id, { name: `${market.name} prices`.slice(0, 80), currency: account.currency, pricesIncludeTax: false, taxRateBp: 0 });
+  const list = await createPriceList(db, actor, account.id, { name: `${market.name} prices`.slice(0, 80), currency: account.currency, pricesIncludeTax: false, taxRateBp: standardVatBp(account.market) });
   if (!list.ok) throw new Error(list.error);
   const set = await setMarketPriceList(db, actor, account.id, market.id, list.list.lineageId);
   return { market: set.ok ? set.market : market, priceListLineageId: list.list.lineageId };

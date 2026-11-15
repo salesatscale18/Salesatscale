@@ -240,3 +240,13 @@ describe("legal texts per market", () => {
     expect(languagesWithoutLegal(effectiveLegal(rows, "uk"), ["en", "he", "de"])).toEqual(["de"]);
   });
 });
+
+describe("standard VAT starting rates", () => {
+  it("knows common countries and falls back to 0", async () => {
+    const { standardVatBp } = await import("@/lib/markets/rules");
+    expect(standardVatBp("IL")).toBe(1800);
+    expect(standardVatBp("de")).toBe(1900);
+    expect(standardVatBp("US")).toBe(0);
+    expect(standardVatBp("ZZ")).toBe(0);
+  });
+});

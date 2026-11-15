@@ -4,7 +4,7 @@ import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { CURRENCIES } from "@/lib/accounts/rules";
 import { t } from "@/lib/i18n";
-import { countryName } from "@/lib/markets/rules";
+import { countryName, standardVatBp } from "@/lib/markets/rules";
 import { setupProgress } from "@/lib/overview/setup";
 import { listPriceLists, type PriceListSummary } from "@/lib/pricing/price-lists";
 import { CopyForm, CreateForm } from "./forms";
@@ -25,7 +25,7 @@ export default async function PriceListsPage({ params, searchParams }: { params:
     name: lists.length === 0 ? `${countryName(account.market)} ${new Date().getFullYear()}` : "",
     currency: account.currency,
     pricesIncludeTax: true,
-    taxRate: account.market === "IL" ? "18" : "0",
+    taxRate: String(standardVatBp(account.market) / 100),
     validFrom: "",
   };
   const source = (l: PriceListSummary) => l.live ?? l.shown;

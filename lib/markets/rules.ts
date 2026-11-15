@@ -3,6 +3,22 @@ import type { MarketStatus } from "@/db/schema";
 import type { EffectiveSettings } from "./settings";
 
 /** Country calling codes, used to suggest phone prefixes for a new market. */
+/**
+ * Standard VAT/GST rate per country, in basis points. Only a starting value
+ * for a new price list: the seller can change it, and it may be outdated.
+ * Countries not listed (or with sales tax, like the US) start at 0.
+ */
+export const STANDARD_VAT_BP: Record<string, number> = {
+  IL: 1800, GB: 2000, DE: 1900, FR: 2000, NL: 2100, ES: 2100, IT: 2200, IE: 2300, CY: 1900, GR: 2400, PT: 2300, BE: 2100,
+  AT: 2000, CH: 810, SE: 2500, NO: 2500, DK: 2500, FI: 2550, PL: 2300, CZ: 2100, RO: 1900, HU: 2700, AE: 500, AU: 1000,
+  NZ: 1500, ZA: 1500, IN: 1800, SG: 900, JP: 1000, MX: 1600, CA: 500,
+};
+
+/** The starting VAT rate for a country (0 when unknown). */
+export function standardVatBp(country: string): number {
+  return STANDARD_VAT_BP[country.toUpperCase()] ?? 0;
+}
+
 export const CALLING_CODES: Record<string, string> = {
   IL: "+972", US: "+1", CA: "+1", GB: "+44", AU: "+61", DE: "+49", FR: "+33", NL: "+31", ES: "+34", IT: "+39", AE: "+971",
   IE: "+353", CY: "+357", GR: "+30", PT: "+351", BE: "+32", AT: "+43", CH: "+41", SE: "+46", NO: "+47", DK: "+45", FI: "+358",
