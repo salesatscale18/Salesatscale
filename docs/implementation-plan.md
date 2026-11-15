@@ -297,6 +297,19 @@ Exit: in the test lab, the scripted "ready buyer" scenario reaches a valid quote
 | P10.5 | Pilot seller onboarding through the wizard; go-live checklist passes; launch with "only test leads", then a share |
 | P10.6 | Monitoring: runtime error alerts, failed-job alerts, daily pilot report in the channel |
 
+#### Pre-pilot security gate (deferred on purpose)
+
+While production is only a dev/test environment, these are deliberately **not** enforced. All must be done before the first real seller or buyer:
+
+- [ ] **Separate environments:** a new production project and database for the pilot; the current one becomes dev/preview (removes the shared-DB constraint in `scripts/migrate.ts`).
+- [ ] **Fail-closed test payments:** default `PAYMENTS_MODE` to `live` in production, and require it to be set explicitly to enable the fake provider.
+- [ ] **Required secrets:** `ORDER_LINK_SECRET` and `FAKE_PAYMENT_SECRET` must be set in production, and the app refuses to start or sign without them (no dev fallback).
+- [ ] **Full Content-Security-Policy:** list the Clerk, font and Anthropic origins, and use nonces for Next's inline scripts (today only `frame-ancestors`, `base-uri` and `object-src` are set).
+- [ ] **Rate-limit review:** check the limits on intake, the payment webhook, buyer actions and the test lab against pilot volumes; add limits on the WhatsApp webhook (P6).
+- [ ] **Clerk production instance:** production keys, bot protection, allowed origins; no `+clerk_test` accounts.
+- [ ] **Neon region:** the database is in the same region as the Vercel functions (`iad1`), or the functions are moved.
+- [ ] **`/security-review` pass** over the whole diff since the hardening cycle (P10.1), plus a check that no secrets or PII are in logs.
+
 ## 6. Migrations sequence
 
 Only one migration in flight at a time (`docs/TEAM.md`). Each is generated from `db/schema.ts` with `npm run db:generate`, committed with the schema change, and pushed alone; the next schema change waits until that production deploy succeeds.

@@ -4,6 +4,7 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { appDb, requireSuperAdmin } from "@/lib/auth/account";
+import { isUuid } from "@/lib/security/ids";
 import { writeAudit } from "@/lib/accounts/audit";
 import { parseCreateAccount, type FieldErrors } from "@/lib/accounts/rules";
 import { createAccount, createInvite, getAccountById, pauseAccount, renewInvite, resumeAccount } from "@/lib/accounts/service";
@@ -53,6 +54,7 @@ export async function inviteAction(_prev: InviteState, form: FormData): Promise<
   const email = String(form.get("email") ?? "").trim().toLowerCase();
   const name = String(form.get("name") ?? "").trim() || null;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { status: "error", message: "Enter a valid email address." };
+  if (!isUuid(accountId)) notFound();
   const account = await getAccountById(appDb, accountId);
   if (!account) notFound();
   const { invite, token } = await createInvite(appDb, { userId: me.id, actingAs: false }, account.id, { email, name });
@@ -65,6 +67,7 @@ export async function renewInviteAction(_prev: InviteState, form: FormData): Pro
   const me = await requireSuperAdmin();
   const accountId = String(form.get("accountId") ?? "");
   const inviteId = String(form.get("inviteId") ?? "");
+  if (!isUuid(accountId) || !isUuid(inviteId)) return { status: "error", message: "This invite was already used or cancelled. Reload the page." };
   const renewed = await renewInvite(appDb, { userId: me.id, actingAs: false }, accountId, inviteId);
   if (!renewed) return { status: "error", message: "This invite was already used or cancelled. Reload the page." };
   revalidatePath(`/sadmin/accounts/${accountId}`);
@@ -75,6 +78,7 @@ export async function renewInviteAction(_prev: InviteState, form: FormData): Pro
 export async function pauseAccountAction(form: FormData) {
   const me = await requireSuperAdmin();
   const id = String(form.get("accountId") ?? "");
+  if (!isUuid(id)) notFound();
   const row = await pauseAccount(appDb, { userId: me.id, actingAs: true }, id);
   revalidatePath(`/sadmin/accounts/${id}`);
   if (row) revalidatePath(`/app/${row.slug}`, "layout");
@@ -83,6 +87,7 @@ export async function pauseAccountAction(form: FormData) {
 export async function resumeAccountAction(form: FormData) {
   const me = await requireSuperAdmin();
   const id = String(form.get("accountId") ?? "");
+  if (!isUuid(id)) notFound();
   const row = await resumeAccount(appDb, { userId: me.id, actingAs: true }, id);
   revalidatePath(`/sadmin/accounts/${id}`);
   if (row) revalidatePath(`/app/${row.slug}`, "layout");
@@ -91,7 +96,9 @@ export async function resumeAccountAction(form: FormData) {
 /** Logs the entry, then opens the seller workspace in acting-as mode. */
 export async function enterAccountAction(form: FormData) {
   const me = await requireSuperAdmin();
-  const account = await getAccountById(appDb, String(form.get("accountId") ?? ""));
+  const accountId = String(form.get("accountId") ?? "");
+  if (!isUuid(accountId)) notFound();
+  const account = await getAccountById(appDb, accountId);
   if (!account) notFound();
   await writeAudit(appDb, { userId: me.id, actingAs: true }, {
     accountId: account.id,

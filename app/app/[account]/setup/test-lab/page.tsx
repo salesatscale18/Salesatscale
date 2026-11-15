@@ -1,3 +1,4 @@
+import { isUuid } from "@/lib/security/ids";
 import { Fragment } from "react";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
@@ -51,7 +52,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const [versions, chats, conv] = await Promise.all([
     listVersions(appDb, account.id),
     listTestConversations(appDb, account.id),
-    sp.c ? getConversation(appDb, account.id, one(sp.c)) : Promise.resolve(null),
+    isUuid(one(sp.c)) ? getConversation(appDb, account.id, one(sp.c)) : Promise.resolve(null),
   ]);
   const draft = versions.find((v) => v.status === "draft");
   const scenario = conv?.isTest ? scenarioById(conv.scenario) : null;

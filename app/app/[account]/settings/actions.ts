@@ -1,5 +1,6 @@
 "use server";
 
+import { isUuid } from "@/lib/security/ids";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
@@ -42,7 +43,8 @@ export async function inviteUserAction(_prev: UserInviteState, form: FormData): 
 
 export async function renewUserInviteAction(_prev: UserInviteState, form: FormData): Promise<UserInviteState> {
   const access = await requireAccount(String(form.get("slug") ?? ""));
-  const renewed = await renewInvite(appDb, actorOf(access), access.account.id, String(form.get("inviteId") ?? ""));
+  const inviteId = String(form.get("inviteId") ?? "");
+  const renewed = isUuid(inviteId) ? await renewInvite(appDb, actorOf(access), access.account.id, inviteId) : null;
   if (!renewed) return { status: "error", message: t("settings.users.err.invite_gone") };
   revalidatePath(`/app/${access.account.slug}/settings`);
   const { invite, token } = renewed;
@@ -51,7 +53,9 @@ export async function renewUserInviteAction(_prev: UserInviteState, form: FormDa
 
 export async function removeMemberAction(form: FormData) {
   const access = await requireAccount(String(form.get("slug") ?? ""));
-  const r = await removeMember(appDb, actorOf(access), access.account.id, String(form.get("memberId") ?? ""));
+  const memberId = String(form.get("memberId") ?? "");
+  if (!isUuid(memberId)) redirect(settingsPath(access.account.slug, "users"));
+  const r = await removeMember(appDb, actorOf(access), access.account.id, memberId);
   revalidatePath(`/app/${access.account.slug}`, "layout");
   redirect(`${settingsPath(access.account.slug, "users")}&${r.ok ? "removed=1" : `error=${r.reason}`}`);
 }
@@ -86,7 +90,8 @@ export async function createIntakeKeyAction(_prev: KeyState, form: FormData): Pr
 
 export async function revokeIntakeKeyAction(form: FormData) {
   const access = await requireAccount(String(form.get("slug") ?? ""));
-  await revokeIntakeKey(appDb, actorOf(access), access.account.id, String(form.get("keyId") ?? ""));
+  const keyId = String(form.get("keyId") ?? "");
+  if (isUuid(keyId)) await revokeIntakeKey(appDb, actorOf(access), access.account.id, keyId);
   revalidatePath(`/app/${access.account.slug}/settings`);
 }
 
