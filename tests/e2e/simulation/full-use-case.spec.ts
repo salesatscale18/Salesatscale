@@ -134,6 +134,7 @@ test("2. Catalog (no prices), rules, price list, publish", async () => {
   }
   await page.waitForURL(/\/setup\/price-lists\/[0-9a-f-]{36}/);
   const listUrl = new URL(page.url()).pathname;
+  links.priceList = listUrl;
   const price = async (p: { sku: string; oneTime?: string; tiers?: string; monthly?: string }) => {
     await page.goto(`${listUrl}?sku=${encodeURIComponent(p.sku)}`);
     await page.locator('input[name="sold"][value="yes"]').check();
@@ -267,9 +268,9 @@ test("5. Lead 1 (EN): quote with a fit fix, order form, decline then card paymen
   const fix = page.getByRole("button", { name: /Add 2 × Site gateway/ });
   await expect(fix).toBeVisible();
   await fix.click();
-  await page.locator("#qe-add").selectOption("PLAN-M");
-  await page.locator('[id="q-PLAN-M"]').fill("2");
-  await expect(page.getByText("Due on signing")).toBeVisible();
+  // The gateway brings its monthly plan and an installation fee per site (auto-add rule).
+  await expect(page.getByText(/Installation/).first()).toBeVisible();
+  await expect(page.getByText(/Monthly/).first()).toBeVisible();
   await page.getByRole("button", { name: "Create quote" }).click();
   await page.waitForURL(/\/orders\?quote=/);
   links.l1 = await sendForm();
@@ -277,6 +278,8 @@ test("5. Lead 1 (EN): quote with a fit fix, order form, decline then card paymen
   const buyer = await buyerPage(browser, links.l1);
   await expect(buyer.getByText("Test payment. No real card is charged.")).toBeVisible();
   await expect(buyer.getByRole("heading", { name: /here is your order/ })).toBeVisible();
+  await expect(buyer.getByText("One-time").first()).toBeVisible();
+  await expect(buyer.getByText("Monthly total")).toBeVisible();
   await noHorizontalScroll(buyer);
   await buyer.getByRole("link", { name: "עב" }).click();
   await expect(buyer.locator('.b-root[dir="rtl"]')).toBeVisible();
@@ -342,12 +345,14 @@ test("7. Lead 3: the price changes before signing; the buyer accepts the new tot
   const lead = await addLead("Dana Mizrahi", `05257${RUN.slice(-5)}`, "en", "Dana Deli");
   await createQuote(lead, [["SNS-200", 1], ["GW-10", 1]], { sites: 1 });
   links.l3 = await sendForm();
-  // Change the gateway price and publish.
-  await page.goto(`${appBase}/setup/catalog`);
-  await page.getByRole("link", { name: "Site gateway" }).click();
-  await page.locator("#ci-price").fill("700");
+  // Change the gateway price in the price list and publish a new version.
+  await page.goto(`${links.priceList}?sku=GW-10`);
+  await page.locator("#pe-ot").fill("700");
   await page.getByRole("button", { name: "Save to draft" }).click();
+  await expect(page.getByText("Saved to the draft").first()).toBeVisible();
+  await page.goto(links.priceList);
   await page.getByRole("button", { name: /^Publish v\d+$/ }).click();
+  await expect(page.getByText(/Version \d+ is live/)).toBeVisible();
 
   const buyer = await buyerPage(browser, links.l3);
   await expect(buyer.getByText("The price has changed")).toBeVisible();
