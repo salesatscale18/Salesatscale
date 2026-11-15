@@ -1379,5 +1379,11 @@
   "orders.detail.created_list": "Created by {who} · priced from {list} v{version}",
   "orders.detail.market": "Market: {market}",
   "orders.detail.price_for_charge": "{charge} unit price for {sku} ({currency})",
-  "orders.detail.auto_added": "Added automatically"
+  "orders.detail.auto_added": "Added automatically",
+  "quote.editor.intro_list": "Prices come from {list} v{version} for the {market} market, in {currency}. You choose items and quantities; the server does the math.",
+  "quote.editor.open_price_lists": "Open price lists",
+  "quote.editor.not_sold": "Not sold in this market",
+  "quote.editor.charge": "Charge",
+  "quote.editor.auto_added": "Added automatically",
+  "quote.editor.refused.not_sold": "{sku} is not sold in this lead's market. Remove it, or add it to the market's price list."
 }

@@ -111,12 +111,19 @@ export type QuotePreview =
 
 /**
  * Prices a request for a lead exactly as createQuote would, and saves nothing
- * (the quote editor's live preview). Scoped by account.
+ * (the quote editor's live preview). Scoped by account. With `fromQuoteId`
+ * (a new version) it prices in that quote's market, as createQuoteVersion does.
  */
-export async function previewQuote(db: Db, accountId: string, leadId: string, input: QuoteInput): Promise<QuotePreview> {
+export async function previewQuote(db: Db, accountId: string, leadId: string, input: QuoteInput, fromQuoteId?: string): Promise<QuotePreview> {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return { ok: false, reason: "lead_not_found" };
-  const p = await price(db, accountId, lead.marketId, input);
+  let marketId = lead.marketId;
+  if (fromQuoteId) {
+    const q = await quoteOf(db, accountId, fromQuoteId);
+    if (!q || q.leadId !== leadId) return { ok: false, reason: "quote_not_found" };
+    marketId = q.marketId ?? lead.marketId;
+  }
+  const p = await price(db, accountId, marketId, input);
   if (!p.ok) return p;
   return { ok: true, priced: p.priced, fit: p.fit, context: p.ctx };
 }
