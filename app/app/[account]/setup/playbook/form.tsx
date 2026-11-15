@@ -27,6 +27,15 @@ function move<T>(rows: T[], i: number, by: -1 | 1): T[] {
   return next;
 }
 
+/** The scalar inputs' values: after a refused save, what was submitted, not the saved playbook. */
+export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
+  const sent = state.status === "error" ? state.values : null;
+  return {
+    goal: sent?.goal ?? p.goal, agentName: sent?.agentName ?? p.agentName, tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
+    maxDiscount: sent?.maxDiscount ?? String(p.maxDiscountBp / 100), offerMeetingWhen: sent?.offerMeetingWhen ?? p.offerMeetingWhen, handOffWhen: sent?.handOffWhen ?? p.handOffWhen,
+  };
+}
+
 /**
  * Playbook editor (canvas: Playbook). Rows live in local state; inputs are
  * named `field.<i>.<prop>` etc. in display order, and the server action
@@ -36,6 +45,7 @@ function move<T>(rows: T[], i: number, by: -1 | 1): T[] {
 export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string; p: Playbook; draftVersion: number; labHref: string }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
+  const v = playbookFormValues(p, state);
   const lastId = useRef(1000);
   const newId = () => ++lastId.current;
   const [fields, setFields] = useState<FieldRow[]>(() => p.fields.map((f, i) => ({ id: i, key: f.key, label: f.label, stage: f.stage, example: f.example ?? "", hint: f.hint ?? "" })));
@@ -79,25 +89,25 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
             <>
               <div className="sas-input-group">
                 <label className="sas-input-label" htmlFor="pb-goal">{t("playbook.goal_label")}</label>
-                <textarea className="sas-textarea" id="pb-goal" name="goal" rows={3} maxLength={1000} defaultValue={p.goal} {...invalid("goal")} />
+                <textarea className="sas-textarea" id="pb-goal" name="goal" rows={3} maxLength={1000} defaultValue={v.goal} {...invalid("goal")} />
                 {err("goal")}
               </div>
               <fieldset className="sas-checks" style={{ border: 0, margin: 0, padding: 0 }}>
                 <legend className="sas-sr">{t("playbook.outcomes")}</legend>
                 {([["orderForm", "playbook.outcome.order_form"], ["bankTransfer", "playbook.outcome.bank_transfer"], ["meeting", "playbook.outcome.meeting"]] as const).map(([k, label]) => (
-                  <label key={k} className="sas-check"><input type="checkbox" name={k} defaultChecked={p.outcomes[k]} />{t(label)}</label>
+                  <label key={k} className="sas-check"><input type="checkbox" name={k} defaultChecked={v.outcomes[k]} />{t(label)}</label>
                 ))}
               </fieldset>
               <div className="sas-grid-2" style={{ gap: 12 }}>
                 <div className="sas-input-group">
                   <label className="sas-input-label" htmlFor="pb-agentName">{t("playbook.agent_name")}</label>
-                  <input className="sas-input" id="pb-agentName" name="agentName" maxLength={60} defaultValue={p.agentName} {...invalid("agentName")} aria-describedby={e.agentName ? "pb-agentName-error" : "pb-agentName-hint"} />
+                  <input className="sas-input" id="pb-agentName" name="agentName" maxLength={60} defaultValue={v.agentName} {...invalid("agentName")} aria-describedby={e.agentName ? "pb-agentName-error" : "pb-agentName-hint"} />
                   <span className="sas-hint" id="pb-agentName-hint">{t("playbook.agent_name_hint")}</span>
                   {err("agentName")}
                 </div>
                 <div className="sas-input-group">
                   <label className="sas-input-label" htmlFor="pb-tone">{t("playbook.tone")}</label>
-                  <input className="sas-input" id="pb-tone" name="tone" maxLength={300} defaultValue={p.tone} />
+                  <input className="sas-input" id="pb-tone" name="tone" maxLength={300} defaultValue={v.tone} />
                 </div>
               </div>
             </>
@@ -196,7 +206,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
               <div className="sas-input-group">
                 <label className="sas-input-label" htmlFor="pb-maxDiscount">{t("playbook.max_discount")}</label>
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <input className="sas-input sas-num" style={{ width: 80 }} id="pb-maxDiscount" name="maxDiscount" inputMode="decimal" defaultValue={String(p.maxDiscountBp / 100)} {...invalid("maxDiscount")} aria-describedby={e.maxDiscount ? "pb-maxDiscount-error" : "pb-maxDiscount-hint"} />
+                  <input className="sas-input sas-num" style={{ width: 80 }} id="pb-maxDiscount" name="maxDiscount" inputMode="decimal" defaultValue={v.maxDiscount} {...invalid("maxDiscount")} aria-describedby={e.maxDiscount ? "pb-maxDiscount-error" : "pb-maxDiscount-hint"} />
                   <span className="sas-small">{t("playbook.max_discount_unit")}</span>
                 </div>
                 <span className="sas-hint" id="pb-maxDiscount-hint">{t("playbook.max_discount_hint")}</span>
@@ -204,11 +214,11 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
               </div>
               <div className="sas-input-group">
                 <label className="sas-input-label" htmlFor="pb-offerMeetingWhen">{t("playbook.meeting_when")}</label>
-                <textarea className="sas-textarea" id="pb-offerMeetingWhen" name="offerMeetingWhen" rows={3} maxLength={500} defaultValue={p.offerMeetingWhen} />
+                <textarea className="sas-textarea" id="pb-offerMeetingWhen" name="offerMeetingWhen" rows={3} maxLength={500} defaultValue={v.offerMeetingWhen} />
               </div>
               <div className="sas-input-group">
                 <label className="sas-input-label" htmlFor="pb-handOffWhen">{t("playbook.handoff_when")}</label>
-                <textarea className="sas-textarea" id="pb-handOffWhen" name="handOffWhen" rows={3} maxLength={500} defaultValue={p.handOffWhen} aria-describedby="pb-handOffWhen-hint" />
+                <textarea className="sas-textarea" id="pb-handOffWhen" name="handOffWhen" rows={3} maxLength={500} defaultValue={v.handOffWhen} aria-describedby="pb-handOffWhen-hint" />
                 <span className="sas-hint" id="pb-handOffWhen-hint">{t("playbook.handoff_always")}</span>
               </div>
             </>

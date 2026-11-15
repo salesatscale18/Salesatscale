@@ -37,6 +37,7 @@ export async function startChatAction(form: FormData) {
   const r = await startTestConversation(appDb, a.account.id, a.user.id, {
     language, scenario: scenario && scenario.language === language ? scenario.id : null, versionId: isUuid(form.get("versionId")) ? String(form.get("versionId")) : undefined,
   });
+  revalidatePath(path(a.account.slug));
   redirect(r ? `${path(a.account.slug)}?c=${r.conversationId}` : path(a.account.slug));
 }
 
@@ -54,5 +55,7 @@ export async function sendTestMessageAction(form: FormData) {
   // Each turn spends model tokens: 120 test messages per account per hour.
   if (!(await rateLimit(appDb, `testlab:${a.account.id}`, { limit: 120, windowSeconds: 3600 })).ok) redirect(`${back}&error=rate_limited`);
   const r = await runBuyerTurn(appDb, new AnthropicLlm(), { accountId: a.account.id, conversationId, text });
+  // The redirect goes to the same URL (+ #end): without this the message and the reply only showed after a reload.
+  revalidatePath(path(a.account.slug));
   redirect(r.status === "error" ? `${back}&error=model` : r.status === "paused" ? `${back}&error=paused` : `${back}#end`);
 }

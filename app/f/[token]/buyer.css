@@ -47,6 +47,7 @@
 .b-center { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 20px 20px; text-align: center; }
 .b-badge { width: 56px; height: 56px; border-radius: 999px; display: grid; place-items: center; }
 .b-foot { margin-block-start: auto; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 16px; font-size: 12px; color: var(--muted); border-block-start: 1px solid var(--line); }
+.b-help { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 20px; text-align: center; }
 .b-grid3 { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 12px; align-items: baseline; font-size: 14px; line-height: 20px; }
 .b-old { color: var(--muted); text-decoration: line-through; }
 @media print { .b-strip, .b-noprint { display: none; } .b-root { background: #fff; } }

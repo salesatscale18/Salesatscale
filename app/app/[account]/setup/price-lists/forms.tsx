@@ -33,7 +33,7 @@ const aria = (id: string, error?: string) => (error ? { "aria-invalid": true as 
 export type MetaDefaults = { name: string; currency: string; pricesIncludeTax: boolean; taxRate: string; validFrom: string };
 
 /** Shared fields: name, (currency), VAT included, tax rate, valid from. */
-function MetaFields({ prefix, d, errors, currencies }: { prefix: string; d: MetaDefaults; errors: Partial<Record<string, string>>; currencies?: string[] }) {
+function MetaFields({ prefix, d, errors, currencies, resetKey }: { prefix: string; d: MetaDefaults; errors: Partial<Record<string, string>>; currencies?: string[]; resetKey?: string }) {
   return (
     <>
       <Field id={`${prefix}-name`} label={t("price_lists.field.name")} error={errors.name}>
@@ -42,7 +42,7 @@ function MetaFields({ prefix, d, errors, currencies }: { prefix: string; d: Meta
       <div className="sas-grid-2" style={{ gap: 12 }}>
         {currencies ? (
           <Field id={`${prefix}-cur`} label={t("price_lists.field.currency")} error={errors.currency}>
-            <select className="sas-select" id={`${prefix}-cur`} name="currency" defaultValue={d.currency}>
+            <select className="sas-select" id={`${prefix}-cur`} name="currency" defaultValue={d.currency} key={resetKey}>
               {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
@@ -52,10 +52,10 @@ function MetaFields({ prefix, d, errors, currencies }: { prefix: string; d: Meta
         </Field>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>
-        <label className="sas-check"><input type="checkbox" name="pricesIncludeTax" defaultChecked={d.pricesIncludeTax} />{t("price_lists.field.incl_vat")}</label>
+        <label className="sas-check"><input type="checkbox" name="pricesIncludeTax" defaultChecked={d.pricesIncludeTax} key={resetKey} />{t("price_lists.field.incl_vat")}</label>
         <div style={{ width: 140 }}>
           <Field id={`${prefix}-tax`} label={t("price_lists.field.tax_rate")} error={errors.taxRate}>
-            <input className="sas-input sas-num" id={`${prefix}-tax`} name="taxRate" inputMode="decimal" defaultValue={d.taxRate} {...aria(`${prefix}-tax`, errors.taxRate)} />
+            <input className="sas-input sas-num" id={`${prefix}-tax`} name="taxRate" inputMode="decimal" defaultValue={d.taxRate} key={resetKey} {...aria(`${prefix}-tax`, errors.taxRate)} />
           </Field>
         </div>
       </div>
@@ -278,20 +278,26 @@ export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { s
 }
 
 /** "Copy and adjust" (canvas: PriceLists). */
-export function CopyForm({ slug, sources, currencies, d }: { slug: string; sources: { id: string; label: string }[]; currencies: string[]; d: MetaDefaults & { source: string } }) {
+export type CopySource = { id: string; label: string; meta: Pick<MetaDefaults, "currency" | "pricesIncludeTax" | "taxRate"> };
+
+export function CopyForm({ slug, sources, currencies, d }: { slug: string; sources: CopySource[]; currencies: string[]; d: MetaDefaults & { source: string } }) {
   const [state, action, pending] = useActionState<CopyFormState, FormData>(copyPriceListAction, { status: "idle" });
   const errors = state.status === "error" ? state.errors : {};
   const [mode, setMode] = useState<"percent" | "factor">("percent");
+  // Currency, VAT included and the rate follow the chosen source list.
+  const [src, setSrc] = useState(d.source);
+  const meta = sources.find((s) => s.id === src)?.meta;
+  const fields = meta ? { ...d, ...meta } : d;
   return (
     <form action={action} className="sas-stack-4" noValidate>
       <input type="hidden" name="slug" value={slug} />
       <FormError text={state.status === "error" ? state.formError : undefined} />
       <Field id="pc-src" label={t("price_lists.copy.source")} error={errors.source}>
-        <select className="sas-select" id="pc-src" name="source" defaultValue={d.source}>
+        <select className="sas-select" id="pc-src" name="source" value={src} onChange={(e) => setSrc(e.target.value)}>
           {sources.map((s) => <option key={s.id} value={s.id}>{s.label}</option>)}
         </select>
       </Field>
-      <MetaFields prefix="pl-copy" d={d} errors={errors} currencies={currencies} />
+      <MetaFields prefix="pl-copy" d={fields} errors={errors} currencies={currencies} resetKey={src} />
       <fieldset className="sas-stack-2" style={plain}>
         <legend className="sas-input-label">{t("price_lists.copy.adjust")}</legend>
         <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>

@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { accountInvites, accountMembers, auditLog, orderForms, orderFormSettings, sellerAccounts, users, type User } from "@/db/schema";
+import { accountInvites, accountMembers, auditLog, markets, orderForms, orderFormSettings, sellerAccounts, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount, getAccountById, listMembers, renewInvite } from "@/lib/accounts/service";
 import {
@@ -254,8 +254,14 @@ describe("company, users, settings and go live", () => {
       expect(await audits(acc, "account.rollout_saved")).toHaveLength(1);
 
       const now = new Date("2026-11-13T10:00:00Z");
+      const homeBefore = await db.select().from(markets).where(and(eq(markets.accountId, acc), eq(markets.isHome, true)));
+      expect(homeBefore[0].status).toBe("setting_up");
       const r = await goLive(db, as(admin, true), acc, now);
-      expect(r).toMatchObject({ ok: true, account: { status: "live", wentLiveAt: now } });
+      // UAT: the home market went live with the account (its own checks pass: price list live, legal texts, bank details).
+      expect(r).toMatchObject({ ok: true, account: { status: "live", wentLiveAt: now }, homeMarketLive: true });
+      const [homeAfter] = await db.select().from(markets).where(and(eq(markets.accountId, acc), eq(markets.isHome, true)));
+      expect(homeAfter.status).toBe("live");
+      expect(await audits(acc, "market.status_changed")).toHaveLength(1);
       const [entry] = await audits(acc, "account.went_live");
       expect(entry).toMatchObject({ actorUserId: admin.id, actingAs: true, details: { rollout: "half" } });
       expect(await goLive(db, as(owner), acc)).toEqual({ ok: false, reason: "not_setting_up" });

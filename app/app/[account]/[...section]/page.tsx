@@ -27,7 +27,7 @@ export default async function SectionPlaceholder({ params }: { params: Promise<{
       <section className="sas-panel">
         <div className="sas-panel__body sas-stack-4">
           <h1 className="sas-title">{t("placeholder.title", { section: t(label) })}</h1>
-          <p className="sas-small">{t("placeholder.body", { phase: PHASE[path] })}</p>
+          <p className="sas-small">{t("placeholder.body")}</p>
         </div>
       </section>
     </main>

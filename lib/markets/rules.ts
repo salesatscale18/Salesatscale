@@ -25,6 +25,34 @@ export const CALLING_CODES: Record<string, string> = {
   PL: "+48", CZ: "+420", RO: "+40", HU: "+36", NZ: "+64", ZA: "+27", IN: "+91", SG: "+65", JP: "+81", BR: "+55", MX: "+52",
 };
 
+/**
+ * A country's main time zone, used as a new market's starting time zone.
+ * Countries with several zones use the most populous one; the seller can
+ * override it on the Markets page.
+ */
+export const COUNTRY_TIMEZONE: Record<string, string> = {
+  IL: "Asia/Jerusalem", US: "America/New_York", CA: "America/Toronto", GB: "Europe/London", IE: "Europe/Dublin", AU: "Australia/Sydney",
+  NZ: "Pacific/Auckland", DE: "Europe/Berlin", AT: "Europe/Vienna", CH: "Europe/Zurich", FR: "Europe/Paris", NL: "Europe/Amsterdam",
+  BE: "Europe/Brussels", ES: "Europe/Madrid", PT: "Europe/Lisbon", IT: "Europe/Rome", GR: "Europe/Athens", CY: "Asia/Nicosia",
+  SE: "Europe/Stockholm", NO: "Europe/Oslo", DK: "Europe/Copenhagen", FI: "Europe/Helsinki", PL: "Europe/Warsaw", CZ: "Europe/Prague",
+  RO: "Europe/Bucharest", HU: "Europe/Budapest", AE: "Asia/Dubai", ZA: "Africa/Johannesburg", IN: "Asia/Kolkata", SG: "Asia/Singapore",
+  JP: "Asia/Tokyo", BR: "America/Sao_Paulo", MX: "America/Mexico_City",
+};
+
+/** The default time zone for a country, or null when unknown. */
+export function countryTimezone(country: string | null | undefined): string | null {
+  return country ? COUNTRY_TIMEZONE[country.toUpperCase()] ?? null : null;
+}
+
+/**
+ * A new market's time zone: the first country's zone when it differs from the
+ * account's (UAT: a DE+AT market kept Asia/Jerusalem). Null keeps the account's.
+ */
+export function newMarketTimezone(countries: string[], accountTimezone: string): string | null {
+  const tz = countryTimezone(countries[0]);
+  return tz && tz !== accountTimezone ? tz : null;
+}
+
 /** "GB" → "United Kingdom". Falls back to the code. */
 export function countryName(code: string): string {
   try {
@@ -97,13 +125,13 @@ export type GoLiveFacts = {
   livePriceList: { name: string } | null;
   /** Languages with at least one legal text that applies in this market. */
   legalLanguages: string[];
-  /** The market's WhatsApp number. Arrives with P6; always null for now. */
+  /** The market's WhatsApp number. Comes with the WhatsApp channel; always null for now. */
   whatsappNumber: string | null;
 };
 
 /**
  * The market's go-live checks (canvas: Markets, "Go-live checks · 3 of 5").
- * The WhatsApp check is shown but not blocking until WhatsApp arrives (P6).
+ * The WhatsApp check is shown but not blocking until the WhatsApp channel is connected.
  */
 export function marketGoLiveChecks(f: GoLiveFacts): GoLiveCheck[] {
   const m = f.market;
@@ -145,10 +173,13 @@ export function marketGoLiveChecks(f: GoLiveFacts): GoLiveCheck[] {
       label: "WhatsApp number",
       ok: !!f.whatsappNumber,
       blocking: false,
-      detail: f.whatsappNumber ? null : "Arrives with P6.",
+      detail: f.whatsappNumber ? null : WHATSAPP_LATER,
     },
   ];
 }
+
+/** Shown to customers: never an internal phase code. */
+export const WHATSAPP_LATER = "Available once WhatsApp is connected.";
 
 /** True when every blocking check passes. */
 export function canGoLive(checks: GoLiveCheck[]): boolean {

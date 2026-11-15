@@ -8,7 +8,7 @@ import { ORDER_FORM_FIELDS } from "@/db/schema";
 import { t, type MessageKey } from "@/lib/i18n";
 import { removeSectionAction, saveMarketSectionAction, saveSectionAction, saveSettingsAction, starterAction } from "./actions";
 import { getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
-import { marketLegal, type EffectiveSection } from "@/lib/markets/legal";
+import { headingTitle, marketLegal, type EffectiveSection } from "@/lib/markets/legal";
 import { BuyerPreview } from "./preview";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -79,7 +79,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
                   const rows = legal.filter((s) => s.sectionKey === k);
                   return (
                     <li key={k} style={{ display: "flex", flexWrap: "wrap", gap: "8px 12px", alignItems: "center", padding: "12px 0", borderTop: "1px solid var(--line)" }}>
-                      <strong style={{ flex: "1 1 200px" }}>{rows[0].title}</strong>
+                      <strong style={{ flex: "1 1 200px" }}><bdi>{headingTitle(rows)}</bdi></strong>
                       {account.languages.map((l) => {
                         const r = rows.find((x) => x.language === l);
                         return r ? (
@@ -211,7 +211,7 @@ function MarketLegal({ slug, here, view, sections, editKey, editLang }: { slug: 
               const rows = sections.filter((s) => s.sectionKey === k);
               return (
                 <li key={k} style={{ display: "flex", flexDirection: "column", gap: 6, padding: "12px 0", borderTop: "1px solid var(--line)" }}>
-                  <strong>{(rows.find((x) => languages.includes(x.language)) ?? rows[0]).title}</strong>
+                  <strong><bdi>{headingTitle(rows.filter((x) => languages.includes(x.language)).length ? rows.filter((x) => languages.includes(x.language)) : rows)}</bdi></strong>
                   {languages.map((l) => {
                     const r = rows.find((x) => x.language === l);
                     return (

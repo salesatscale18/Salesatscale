@@ -52,9 +52,14 @@ function Row({ label, value, pill, action, muted, id }: { label: string; value: 
   return (
     <div id={id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", padding: "10px 20px", borderTop: "1px solid var(--line)" }}>
       <strong style={{ flex: "0 1 180px", minWidth: 120 }}>{label}</strong>
-      <span style={{ flex: "1 1 220px", minWidth: 0, overflowWrap: "anywhere", color: muted ? "var(--ink-muted)" : undefined }}>{value}</span>
-      {pill ? <span style={{ flex: "none" }}>{pill}</span> : null}
-      {action ? <span style={{ flex: "none", display: "inline-flex", gap: 8 }}>{action}</span> : null}
+      <span style={{ flex: "1 1 160px", minWidth: 0, overflowWrap: "anywhere", color: muted ? "var(--ink-muted)" : undefined }}>{value}</span>
+      {/* Pill and action stay together on one line, so "Override" and "Reset" line up the same way. */}
+      {pill || action ? (
+        <span style={{ flex: "0 0 auto", minWidth: 250, display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginInlineStart: "auto" }} data-row-end="">
+          {pill}
+          {action}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -387,7 +392,19 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
             <Group>{t("markets.group.legal")}</Group>
             <Row
               label={t("markets.setting.legal")}
-              value={legal.length === 0 ? t("markets.legal_none") : legal.map((s) => `${s.title} (${s.language.toUpperCase()}) v${s.version}${s.source === "account" ? ` ${t("markets.from_account")}` : ""}`).join(" · ")}
+              value={legal.length === 0 ? t("markets.legal_none") : (
+                // One line per language; each title in <bdi> so Hebrew titles don't flip the reading order.
+                <span className="sas-stack-2" style={{ gap: 4 }}>
+                  {[...new Set(legal.map((s) => s.language))].map((lang) => (
+                    <span key={lang} data-legal-lang={lang}>
+                      <span className="sas-chip" style={{ marginInlineEnd: 8 }}>{lang.toUpperCase()}</span>
+                      {legal.filter((s) => s.language === lang).map((s, i) => (
+                        <span key={s.id}>{i > 0 ? " · " : null}<bdi>{s.title}</bdi> v{s.version}{s.source === "account" ? ` ${t("markets.from_account")}` : ""}</span>
+                      ))}
+                    </span>
+                  ))}
+                </span>
+              )}
               pill={ownLegal === 0 ? <SourcePill source="account" /> : <span className="sas-pill sas-pill--agent">{ownLegal === legal.length ? t("markets.overridden") : t("markets.partly_overridden")}</span>}
               action={<a className="sas-small" href={`${base}/setup/order-form?market=${selected.id}`}>{t("markets.edit")}</a>}
             />

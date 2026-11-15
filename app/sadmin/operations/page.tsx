@@ -14,7 +14,7 @@ export default async function OperationsPage() {
         <section className="sas-panel">
           <div className="sas-panel__body sas-stack-4">
             <h1 className="sas-title">{t("placeholder.title", { section: t("admin.ops.title") })}</h1>
-            <p className="sas-small">{t("placeholder.body", { phase: "P9" })}</p>
+            <p className="sas-small">{t("placeholder.body")}</p>
           </div>
         </section>
       </main>

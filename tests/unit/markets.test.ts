@@ -176,7 +176,7 @@ describe("go-live checks", () => {
       ["payment_methods", true, true],
       ["whatsapp", false, false],
     ]);
-    expect(checks[4].detail).toBe("Arrives with P6.");
+    expect(checks[4].detail).toBe("Available once WhatsApp is connected.");
     expect(canGoLive(checks)).toBe(true);
   });
 

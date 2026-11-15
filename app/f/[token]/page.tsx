@@ -6,9 +6,10 @@ import { appDb } from "@/lib/auth/account";
 import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
 import { attemptCount, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor, snapshotOf, type FormSnapshot } from "@/lib/orders/service";
+import { marketLegal } from "@/lib/markets/legal";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { acceptPriceAction, payBankAction, payCardAction } from "./actions";
-import { chargeLabel, moneyFor, OrderLines } from "./lines";
+import { chargeLabel, legalTitle, moneyFor, OrderLines } from "./lines";
 import { SignForm } from "./sign-form";
 import "./buyer.css";
 
@@ -100,6 +101,13 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   // Older snapshots have no supportContact: show nothing then.
   const support = (center: boolean) => s.supportContact ? <span className="b-mut" style={{ display: "block", ...(center ? { textAlign: "center" as const } : {}) }}><bdi>{s.supportContact}</bdi></span> : null;
   const hidden = <><input type="hidden" name="token" value={token} /><input type="hidden" name="lang" value={lang} /></>;
+  // The seller's support contact, shown subtly while the buyer reviews, signs and pays (not only after payment).
+  const help = s.supportContact ? (
+    <div className="b-help b-noprint" data-support="">
+      <span className="b-mut">{tr("buyer.questions")}</span>
+      {support(true)}
+    </div>
+  ) : null;
 
   // Offer updated / expired (canvas: BuyerExpired).
   if (view.state === "updated" || view.state === "expired") {
@@ -208,6 +216,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           )}
         </section>
         <section className="b-sec b-noprint"><a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a></section>
+        {help}
       </>
     ));
   }
@@ -231,6 +240,17 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             const p = charge === "recurring" ? (check.recurringPeriod ?? period) : null;
             const before = charge === "one_time" ? s.oneTime.totalMinor : s.recurring.totalMinor;
             const now = charge === "one_time" ? check.oneTimeMinor : check.recurringMinor;
+            // Line prices are before VAT when the list excludes it: show before VAT and VAT so the total adds up (as on the main page).
+            const b = charge === "one_time" ? s.oneTime : s.recurring;
+            const n = charge === "one_time" ? check.oneTime : check.recurring;
+            const vatRows = !check.pricesIncludeTax || !s.pricesIncludeTax;
+            const pair = (label: string, x: number, y: number, minus = false) => (
+              <div className="b-grid3 b-mut" data-vat-row="">
+                <span>{label}</span>
+                <span className={`b-num ${x !== y ? "b-old" : ""}`}>{minus ? "−" : ""}{money(s, x)}</span>
+                <span className="b-num">{minus ? "−" : ""}{per(y, p)}</span>
+              </div>
+            );
             return (
               <div key={charge} style={{ display: "contents" }}>
                 {rows.map((l) => (
@@ -240,6 +260,13 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
                     <span className="b-num" style={{ fontWeight: l.beforeMinor !== l.nowMinor ? 700 : 400 }}>{per(l.nowMinor, l.charge === "recurring" ? l.period ?? period : null)}</span>
                   </div>
                 ))}
+                {b.discountMinor > 0 || n.discountMinor > 0 ? pair(tr("buyer.discount"), b.discountMinor, n.discountMinor, true) : null}
+                {vatRows ? (
+                  <>
+                    {pair(charge === "one_time" ? tr("buyer.one_time_subtotal") : tr(p === "year" ? "buyer.recurring_subtotal.year" : "buyer.recurring_subtotal.month"), b.subtotalMinor - b.discountMinor, n.subtotalMinor - n.discountMinor)}
+                    {pair(tr("buyer.vat"), b.taxMinor, n.taxMinor)}
+                  </>
+                ) : null}
                 <div className="b-grid3" style={{ paddingTop: 10, borderTop: "1px solid var(--line)", fontWeight: 700 }}>
                   <span>{charge === "one_time" ? tr("buyer.due_today") : tr(p === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span>
                   <span className={`b-num ${before !== now ? "b-old" : "b-mut"}`} style={{ fontWeight: 400 }}>{money(s, before)}</span>
@@ -255,9 +282,14 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           <button type="submit" className="b-btn">{tr("buyer.accept_new")}</button>
           <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.accept_note")}</span>
         </form>
+        {help}
       </>
     ));
   }
+  // Viewing in another language than the form's: section titles come from that language's version, when there is one.
+  const titles = lang !== form.language
+    ? new Map((await marketLegal(appDb, form.accountId, form.marketId ?? null)).filter((x) => x.language === lang).map((x) => [x.sectionKey, x.title]))
+    : null;
   return shell(`${tr("buyer.order_form")} · ${quoteRef}`, (
     <>
       <div className="b-sec b-hero">
@@ -274,7 +306,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         <h2 id="tm-h" className="b-h2" style={{ paddingBottom: 8 }}>{tr("buyer.terms")}</h2>
         {s.legal.map((l) => (
           <details key={l.key}>
-            <summary><span>{l.title} <span className="b-mut">{tr("buyer.version", { version: l.version })}</span></span><span aria-hidden="true">›</span></summary>
+            <summary><span><bdi>{legalTitle(l, titles)}</bdi> <span className="b-mut">{tr("buyer.version", { version: l.version })}</span></span><span aria-hidden="true">›</span></summary>
             <pre>{l.body}</pre>
           </details>
         ))}
@@ -282,6 +314,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
       {check.status === "same" ? (
         <SignForm token={token} lang={lang} fields={s.fields} prefill={s.prefill as Record<string, string>} company={s.prefill.company_name ?? ""} />
       ) : null}
+      {help}
     </>
   ));
 }

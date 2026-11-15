@@ -16,6 +16,15 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 export type EffectiveSection = LegalSection & { source: "account" | "market" };
 
 /**
+ * The group heading of a section on the seller screens: the English (UI
+ * language) version's title when there is one, else the first. Each language
+ * has its own chip on the row.
+ */
+export function headingTitle(rows: Pick<LegalSection, "language" | "title">[]): string {
+  return (rows.find((r) => r.language === "en") ?? rows[0])?.title ?? "";
+}
+
+/**
  * The sections that apply in a market: per (section, language), the market's
  * latest version when it has one, else the account default's latest version.
  * Removed sections (latest version inactive) are left out. With marketId null

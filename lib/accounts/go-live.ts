@@ -10,6 +10,7 @@ import { conversations, knowledgeFacts, sellerAccounts, type RolloutMode, type S
 import { publishedCatalog } from "@/lib/catalog/service";
 import { liveVersion } from "@/lib/agent/service";
 import { currentLegal, getOrderFormSettings } from "@/lib/orders/settings";
+import { ensureHomeMarket, setMarketStatus } from "@/lib/markets/service";
 import { writeAudit, type Actor } from "./audit";
 
 export type GoLiveInput = {
@@ -100,7 +101,8 @@ export async function loadGoLive(db: Db, account: SellerAccount) {
 }
 
 export type GoLiveOutcome =
-  | { ok: true; account: SellerAccount }
+  /** homeMarketLive: the home market went live with the account (false: its own checks fail; the Markets page shows them). */
+  | { ok: true; account: SellerAccount; homeMarketLive: boolean }
   | { ok: false; reason: "not_found" | "not_setting_up" | "not_ready"; failing?: GoLiveCheckId[] };
 
 /** Setting up → Live. Re-checks every blocking item on the server; audited. */
@@ -119,7 +121,12 @@ export async function goLive(db: Db, actor: Actor, accountId: string, now = new 
     .returning();
   if (!row) return { ok: false, reason: "not_setting_up" };
   await writeAudit(db, actor, { accountId, action: "account.went_live", targetType: "account", targetId: accountId, details: { rollout: row.rollout } });
-  return { ok: true, account: row };
+  // The home market goes live with the account when its own go-live checks pass
+  // (UAT: it stayed "Setting up"). Otherwise it stays, and Settings > Markets lists the failing checks.
+  const home = await ensureHomeMarket(db, accountId, actor);
+  let homeMarketLive = home?.status === "live";
+  if (home && home.status === "setting_up") homeMarketLive = (await setMarketStatus(db, actor, accountId, home.id, "live")).ok;
+  return { ok: true, account: row, homeMarketLive };
 }
 
 export const ROLLOUT_MODES: readonly RolloutMode[] = ["test_only", "half", "all"];

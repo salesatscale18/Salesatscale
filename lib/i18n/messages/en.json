@@ -100,7 +100,7 @@
   "access.picker.platform": "All accounts (platform admin)",
   "access.picker.role.seller_admin": "Seller admin",
   "placeholder.title": "{section} is not built yet",
-  "placeholder.body": "This screen arrives in {phase} of the implementation plan.",
+  "placeholder.body": "This screen is coming soon.",
   "overview.setting_up.title": "Your workspace is being set up",
   "overview.setting_up.body": "The agent will not contact anyone until every go-live check passes. The setup wizard arrives in a later phase.",
   "invite.title": "Join {account} on Sales at Scale",
@@ -1433,5 +1433,7 @@
   "price_lists.other.none": "No other price lists yet.",
   "price_lists.other.note": "Shown for consistency only. Each list keeps its own prices.",
   "price_lists.other.price_missing": "price missing",
-  "price_lists.other.nothing_charged": "Nothing charged"
+  "price_lists.other.nothing_charged": "Nothing charged",
+  "lead.form.duplicate": "A lead with this phone number already exists.",
+  "lead.form.duplicate_open": "Open the lead"
 }

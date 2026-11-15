@@ -223,8 +223,15 @@ export type PriceCheckLine = {
 
 export type PriceCheck =
   | { status: "same" }
-  | { status: "changed"; lines: PriceCheckLine[]; oneTimeMinor: number; recurringMinor: number; recurringPeriod: RecurringPeriod | null }
+  | {
+    status: "changed"; lines: PriceCheckLine[]; oneTimeMinor: number; recurringMinor: number; recurringPeriod: RecurringPeriod | null;
+    /** Today's VAT basis and totals, so the screen can show before VAT / VAT / Due today like the main buyer page. */
+    pricesIncludeTax: boolean; oneTime: PriceCheckTotals; recurring: PriceCheckTotals;
+  }
   | { status: "unavailable" };
+
+export type PriceCheckTotals = { subtotalMinor: number; discountMinor: number; taxMinor: number; totalMinor: number };
+const totalsOf = (t: PriceCheckTotals): PriceCheckTotals => ({ subtotalMinor: t.subtotalMinor, discountMinor: t.discountMinor, taxMinor: t.taxMinor, totalMinor: t.totalMinor });
 
 const lineKey = (sku: string, charge: string) => `${sku}|${charge}`;
 
@@ -295,7 +302,10 @@ export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
     && r.recurring.totalMinor === s.recurring.totalMinor
     && out.every((l) => l.beforeMinor === l.nowMinor && now.has(lineKey(l.sku, l.charge)) && before.has(lineKey(l.sku, l.charge)));
   if (same) return { status: "same" };
-  return { status: "changed", lines: out, oneTimeMinor: r.oneTime.totalMinor, recurringMinor: r.recurring.totalMinor, recurringPeriod: r.recurringPeriod };
+  return {
+    status: "changed", lines: out, oneTimeMinor: r.oneTime.totalMinor, recurringMinor: r.recurring.totalMinor, recurringPeriod: r.recurringPeriod,
+    pricesIncludeTax: live.pricesIncludeTax, oneTime: totalsOf(r.oneTime), recurring: totalsOf(r.recurring),
+  };
 }
 
 /** Forms of quotes priced from the catalog (before price lists): compared with today's published catalog. */
@@ -335,6 +345,7 @@ async function catalogPriceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
     oneTimeMinor: r.oneTime.totalMinor,
     recurringMinor: r.recurring.totalMinor,
     recurringPeriod: r.recurring.totalMinor ? "month" : null,
+    pricesIncludeTax: published.pricesIncludeTax, oneTime: totalsOf(r.oneTime), recurring: totalsOf(r.recurring),
   };
 }
 

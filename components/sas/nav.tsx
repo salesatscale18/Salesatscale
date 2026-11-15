@@ -105,7 +105,7 @@ export function SideNav({
       <div className="sas-nav__user">
         <Avatar actor="human" initials={user.initials} />
         <span className="sas-nav__user-text">
-          <span className="sas-nav__user-name">{user.name}</span>
+          <span className="sas-nav__user-name" title={user.name}>{user.name}</span>
           <span className="sas-nav__sub">{t(mode === "admin" ? "nav.role.platform_admin" : "nav.role.seller_admin")}</span>
         </span>
       </div>

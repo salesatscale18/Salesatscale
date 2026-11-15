@@ -9,6 +9,7 @@ import { defaultPlaybook } from "@/lib/agent/playbook";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { displayName } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
+import { setupProgress } from "@/lib/overview/setup";
 import { saveCompanyAction } from "./actions";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -23,7 +24,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const [members, settings, versions] = await Promise.all([listMembers(appDb, account.id), getOrderFormSettings(appDb, account.id), listVersions(appDb, account.id)]);
+  const [members, settings, versions, progress] = await Promise.all([listMembers(appDb, account.id), getOrderFormSettings(appDb, account.id), listVersions(appDb, account.id), setupProgress(appDb, account)]);
   const base = `/app/${account.slug}`;
   // The agent name lives in the playbook draft (or the live version); read it, never create a draft here.
   const playbook = (versions.find((v) => v.status === "draft") ?? versions.find((v) => v.status === "live"))?.playbook ?? defaultPlaybook(account.tradeName, account.maxDiscountBp);
@@ -39,7 +40,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
           </div>
         </div>
         <span className="sas-small">{t("company.intro")}</span>
-        <SetupSteps basePath={base} current="company" completed={new Set()} />
+        <SetupSteps basePath={base} current="company" completed={progress} />
       </header>
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("company.saved")}</span></div> : null}
       {sp.error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{one(sp.error)}</span></div> : null}
