@@ -148,7 +148,7 @@ test("2. Catalog (no prices), rules, price list, publish", async () => {
     if (p.monthly) {
       await rc.check();
       await page.locator("#pe-rc").fill(p.monthly);
-      await page.locator("#pe-rp").selectOption("monthly");
+      await page.locator("#pe-rp").selectOption("month");
     } else await rc.uncheck();
     await page.getByRole("button", { name: "Save to draft" }).click();
     await expect(page.getByText("Saved to the draft").first()).toBeVisible();
@@ -269,7 +269,7 @@ test("5. Lead 1 (EN): quote with a fit fix, order form, decline then card paymen
   await expect(fix).toBeVisible();
   await fix.click();
   // The gateway brings its monthly plan and an installation fee per site (auto-add rule).
-  await expect(page.getByText(/Installation/).first()).toBeVisible();
+  await expect(page.getByText("Added automatically").first()).toBeVisible();
   await expect(page.getByText(/Monthly/).first()).toBeVisible();
   await page.getByRole("button", { name: "Create quote" }).click();
   await page.waitForURL(/\/orders\?quote=/);

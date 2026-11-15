@@ -564,7 +564,7 @@
   "lab.version_label": "Version",
   "quote.editor.replaces": "Replaces v{version} ({total})",
   "quote.editor.items": "Items",
-  "quote.editor.add_product": "Add product…",
+  "quote.editor.add_product": "Add item…",
   "quote.editor.product": "Product",
   "quote.editor.unit_price": "Unit price",
   "quote.editor.total": "Total",
