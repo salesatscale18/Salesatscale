@@ -11,6 +11,7 @@ import { conversations, leadEvents, leads, messages, orders, paymentAttempts, pr
 import { serverSecret } from "@/lib/orders/token";
 import { orderLabel } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
+import { fakePaymentsEnabled } from "./mode";
 
 export type ProviderEvent = {
   id: string;
@@ -105,6 +106,7 @@ async function confirm(db: Db, accountId: string, leadId: string, number: number
 
 /** Test provider: what the provider would send after the buyer pays. Paid is still set only by handleProviderEvent. */
 export async function simulateFakePayment(db: Db, providerRef: string, outcome: "succeeded" | "failed", now = new Date()) {
+  if (!fakePaymentsEnabled()) return "rejected: test payments are off" as EventResult;
   const [attempt] = await db.select().from(paymentAttempts).where(and(eq(paymentAttempts.provider, "fake"), eq(paymentAttempts.providerRef, providerRef)));
   if (!attempt) return "rejected: unknown payment" as EventResult;
   const event: ProviderEvent = {

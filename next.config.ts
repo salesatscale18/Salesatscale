@@ -1,5 +1,36 @@
 import type { NextConfig } from "next";
 
-const nextConfig: NextConfig = {};
+/**
+ * Security headers (hardening cycle). A full Content-Security-Policy needs the
+ * Clerk and font origins listed and nonces for Next's inline scripts; until
+ * then the CSP only covers what cannot break the app: no framing, no <base>
+ * hijacking, no plugins.
+ */
+const securityHeaders = [
+  { key: "X-Content-Type-Options", value: "nosniff" },
+  { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+  { key: "X-Frame-Options", value: "DENY" },
+  { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+  { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
+];
+
+const nextConfig: NextConfig = {
+  poweredByHeader: false,
+  async headers() {
+    return [
+      { source: "/:path*", headers: securityHeaders },
+      // Buyer links carry a personal token: never send it on in a Referer, never index.
+      {
+        source: "/f/:path*",
+        headers: [
+          { key: "Referrer-Policy", value: "no-referrer" },
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cache-Control", value: "private, no-store" },
+        ],
+      },
+    ];
+  },
+};
 
 export default nextConfig;

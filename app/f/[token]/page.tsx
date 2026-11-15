@@ -6,6 +6,7 @@ import { appDb } from "@/lib/auth/account";
 import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
 import { attemptCount, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor } from "@/lib/orders/service";
+import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { acceptPriceAction, payBankAction, payCardAction } from "./actions";
 import { SignForm } from "./sign-form";
 import "./buyer.css";
@@ -32,7 +33,7 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
   return (
     <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={{ ["--brand" as string]: props.brand }}>
       <div className="b-page">
-        <div className="b-strip" role="note">{tr("buyer.test_strip")}</div>
+        {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}>{props.seller}</b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
@@ -160,7 +161,9 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         </>
       ));
     }
-    const method = order.paymentStatus === "bank_transfer_expected" ? "bank" : one(sp.pay) === "bank" && s.paymentMethods.bankTransfer ? "bank" : s.paymentMethods.card ? "card" : "bank";
+    // Card needs a provider: today only the test provider exists (off when PAYMENTS_MODE=live).
+    const cardOn = s.paymentMethods.card && fakePaymentsEnabled();
+    const method = order.paymentStatus === "bank_transfer_expected" ? "bank" : one(sp.pay) === "bank" && s.paymentMethods.bankTransfer ? "bank" : cardOn ? "card" : "bank";
     const failed = order.paymentStatus === "failed" ? await lastAttempt(appDb, order.id) : null;
     const tries = failed ? await attemptCount(appDb, order.id) : 0;
     return shell(tr("buyer.step_pay"), (
@@ -176,7 +179,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 16 }}>{money(s, order.amountDueMinor)}</span></div>
           {order.recurringMinor > 0 ? <div className="b-row"><span>{tr("buyer.then_monthly")}</span><span className="b-num">{money(s, order.recurringMinor)}</span></div> : null}
           {err ? <span className="b-err" role="alert">{err === "recurring_consent" ? tr("buyer.err.required") : tr("buyer.unavailable")}</span> : null}
-          {s.paymentMethods.card && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
+          {cardOn && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
             <nav className="b-tabs" aria-label={tr("buyer.method")}>
               <a href={`/f/${token}?lang=${lang}`} aria-current={method === "card" ? "true" : undefined}>{tr("buyer.card")}</a>
               <a href={`/f/${token}?lang=${lang}&pay=bank`} aria-current={method === "bank" ? "true" : undefined}>{tr("buyer.bank")}</a>

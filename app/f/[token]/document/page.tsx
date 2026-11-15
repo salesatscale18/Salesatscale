@@ -5,6 +5,7 @@ import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
 import { loadForm, orderLabel, signatureFor } from "@/lib/orders/service";
 import { PrintButton } from "./print-button";
+import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import "../buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
   return (
     <div className="b-root" lang={lang} dir={dir(lang)} style={{ ["--brand" as string]: s.seller.brandColor }}>
       <div className="b-page">
-        <div className="b-strip" role="note">{tr("buyer.test_strip")}</div>
+        {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <section className="b-sec">
           <h1 className="b-h1">{tr("buyer.document_title")}</h1>
           <span>{s.seller.legalName ?? s.seller.tradeName} · <span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
