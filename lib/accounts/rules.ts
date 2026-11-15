@@ -22,7 +22,10 @@ export type CreateAccountInput = {
   tradeName: string;
   legalName: string | null;
   companyId: string | null;
+  /** The home market's main country (also seller_accounts.market). */
   market: string;
+  /** Every country of the home market, main country first. */
+  countries?: string[];
   languages: Locale[];
   timezone: string;
   currency: string;
@@ -75,7 +78,13 @@ export function parseCreateAccount(raw: Raw): { ok: true; value: CreateAccountIn
   else if (tradeName.length > 120) errors.tradeName = "Use 120 characters or fewer.";
 
   const market = str(raw.market).toUpperCase();
-  if (!(MARKETS as readonly string[]).includes(market)) errors.market = "Choose a market.";
+  if (!(MARKETS as readonly string[]).includes(market)) errors.market = "Choose a country.";
+
+  // More countries for the home market: "CY, GR" or several form values.
+  const extraRaw = (Array.isArray(raw.countries) ? raw.countries : [raw.countries ?? ""]).join(",");
+  const extra = extraRaw.split(/[\s,;]+/).map((c) => c.trim().toUpperCase()).filter(Boolean);
+  if (extra.length > 30 || !extra.every((c) => /^[A-Z]{2}$/.test(c))) errors.countries = "Use two-letter country codes, for example CY, GR.";
+  const countries = [...new Set([market, ...extra])];
 
   const langs = (Array.isArray(raw.languages) ? raw.languages : raw.languages ? [raw.languages] : []).map((l) => l.trim());
   const languages = [...new Set(langs)].filter((l): l is Locale => (LOCALES as readonly string[]).includes(l));
@@ -115,6 +124,7 @@ export function parseCreateAccount(raw: Raw): { ok: true; value: CreateAccountIn
       legalName: opt(raw.legalName),
       companyId: opt(raw.companyId),
       market,
+      countries,
       languages,
       timezone,
       currency,

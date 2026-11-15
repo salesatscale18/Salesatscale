@@ -58,7 +58,7 @@ export function CreateAccountForm({ timezones }: { timezones: string[] }) {
       ) : null}
 
       <fieldset className="sas-fieldset">
-        <legend>{t("admin.create.section.seller")}</legend>
+        <legend>{t("admin.create.section.business")}</legend>
         <Field name="tradeName" label="admin.create.trade_name" required error={errors.tradeName}>
           <input className="sas-input" id="tradeName" name="tradeName" defaultValue={v("tradeName")} required {...invalid("tradeName")} />
         </Field>
@@ -68,10 +68,18 @@ export function CreateAccountForm({ timezones }: { timezones: string[] }) {
         <Field name="companyId" label="admin.create.company_id">
           <input className="sas-input" id="companyId" name="companyId" defaultValue={v("companyId")} />
         </Field>
-        <Field name="market" label="admin.create.market" required error={errors.market}>
+      </fieldset>
+
+      <fieldset className="sas-fieldset">
+        <legend>{t("admin.create.section.home_market")}</legend>
+        <p className="sas-small sas-input-group--wide" style={{ margin: 0 }}>{t("admin.create.home_market_intro")}</p>
+        <Field name="market" label="admin.create.country" required error={errors.market}>
           <select className="sas-select" id="market" name="market" defaultValue={v("market", "IL")} {...invalid("market")}>
             {MARKETS.map((m) => <option key={m} value={m}>{regionName.of(m)}</option>)}
           </select>
+        </Field>
+        <Field name="countries" label="admin.create.more_countries" hint="admin.create.more_countries_hint" error={errors.countries}>
+          <input className="sas-input" id="countries" name="countries" defaultValue={v("countries")} autoComplete="off" {...invalid("countries")} />
         </Field>
         <Field name="timezone" label="admin.create.timezone" required error={errors.timezone}>
           <select className="sas-select" id="timezone" name="timezone" defaultValue={v("timezone", "Asia/Jerusalem")} {...invalid("timezone")}>

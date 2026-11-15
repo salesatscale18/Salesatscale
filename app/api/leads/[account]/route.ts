@@ -67,7 +67,11 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
     return NextResponse.json({ error: "invalid_lead", fields: lead.errors }, { status: 422 });
   }
 
-  const result = await upsertLead(appDb, account.id, { userId: null, actingAs: false }, lead.value, "webhook");
+  // The lead's market: the key's market first, then the optional "country" field, then the phone prefix.
+  const result = await upsertLead(appDb, account.id, { userId: null, actingAs: false }, lead.value, "webhook", {
+    intakeKeyId: keyRow.id,
+    keyMarketId: keyRow.marketId,
+  });
   if (!result.ok) {
     await log("rejected", refusalText(result).problem, name);
     if (result.reason === "consent_required") {

@@ -5,7 +5,7 @@ import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
-import { createIntakeKey, previewLead, revokeIntakeKey } from "@/lib/leads/service";
+import { createIntakeKey, previewLead, revokeIntakeKey, setIntakeKeyMarket } from "@/lib/leads/service";
 import { parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
 import { t, type Locale } from "@/lib/i18n";
 import { inviteMember, parseNotifications, removeMember, saveContactHours, saveNotifications } from "@/lib/accounts/company";
@@ -93,6 +93,18 @@ export async function revokeIntakeKeyAction(form: FormData) {
   const keyId = String(form.get("keyId") ?? "");
   if (isUuid(keyId)) await revokeIntakeKey(appDb, actorOf(access), access.account.id, keyId);
   revalidatePath(`/app/${access.account.slug}/settings`);
+}
+
+/** Links an intake key to a market (or to none: then country and phone choose the market). */
+export async function setIntakeKeyMarketAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const keyId = String(form.get("keyId") ?? "");
+  const marketId = String(form.get("marketId") ?? "");
+  const ok = isUuid(keyId) && (marketId === "" || isUuid(marketId))
+    ? await setIntakeKeyMarket(appDb, actorOf(access), access.account.id, keyId, marketId || null)
+    : false;
+  revalidatePath(`/app/${access.account.slug}/settings`);
+  redirect(`${settingsPath(access.account.slug, "intake")}&${ok ? "key_market=1" : "key_market_error=1"}`);
 }
 
 export type SampleState =

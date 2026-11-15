@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import { CONSENT_WORDING_DEFAULT, parseLead, type LeadFieldErrors } from "@/lib/leads/rules";
-import { importLeadsCsv, optOutLead, upsertLead, type ImportResult } from "@/lib/leads/service";
+import { importLeadsCsv, optOutLead, setLeadMarket, upsertLead, type ImportResult } from "@/lib/leads/service";
+import { getMarket } from "@/lib/markets/service";
 import type { Locale } from "@/lib/i18n";
 import { currentPlaybook, getConversation, verifyField } from "@/lib/agent/service";
 import { addHumanReply, handBack, takeOver } from "@/lib/agent/conversation";
@@ -16,19 +17,24 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type AddLeadState =
   | { status: "idle" }
-  | { status: "error"; errors: LeadFieldErrors; formError?: "consent_required" | "phone_conflict" | "opted_out"; values: Record<string, string> };
+  | { status: "error"; errors: LeadFieldErrors; formError?: "consent_required" | "phone_conflict" | "opted_out" | "market"; values: Record<string, string> };
 
 export async function addLeadAction(_prev: AddLeadState, form: FormData): Promise<AddLeadState> {
   const slug = String(form.get("slug") ?? "");
   const access = await requireAccount(slug);
   const { account } = access;
   const values: Record<string, string> = {};
-  for (const k of ["fullName", "company", "email", "phone", "language", "sourceLabel", "consent", "consentSource", "after"]) {
+  for (const k of ["fullName", "company", "email", "phone", "language", "sourceLabel", "consent", "consentSource", "after", "marketId"]) {
     values[k] = String(form.get(k) ?? "");
   }
   const parsed = parseLead(values, account.market, { language: (account.languages[0] ?? "en") as Locale, now: new Date() });
   if (!parsed.ok) return { status: "error", errors: parsed.errors, values };
   if (!parsed.value.consent) return { status: "error", errors: {}, formError: "consent_required", values };
+  // Optional market chosen by the seller; empty means "choose from the phone number".
+  if (values.marketId && (!UUID.test(values.marketId) || !(await getMarket(appDb, account.id, values.marketId)))) {
+    return { status: "error", errors: {}, formError: "market", values };
+  }
+  if (values.marketId) parsed.value.marketId = values.marketId;
 
   const actor = actorOf(access);
   const result = await upsertLead(appDb, account.id, actor, parsed.value, "manual", {
@@ -41,6 +47,18 @@ export async function addLeadAction(_prev: AddLeadState, form: FormData): Promis
   }
   revalidatePath(`/app/${account.slug}/leads`);
   redirect(`/app/${account.slug}/leads/${result.lead.id}${result.created ? "" : "?existing=1"}`);
+}
+
+/** Lead card: moves the lead to another market of this account (audited in setLeadMarket). */
+export async function setLeadMarketAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const leadId = String(form.get("leadId") ?? "");
+  const marketId = String(form.get("marketId") ?? "");
+  if (!UUID.test(leadId)) redirect(`/app/${access.account.slug}/leads`);
+  const back = `/app/${access.account.slug}/leads/${leadId}`;
+  const ok = UUID.test(marketId) ? await setLeadMarket(appDb, actorOf(access), access.account.id, leadId, marketId) : null;
+  revalidatePath(back);
+  redirect(`${back}?${ok ? "market=1" : "market_error=1"}`);
 }
 
 export async function optOutLeadAction(form: FormData) {

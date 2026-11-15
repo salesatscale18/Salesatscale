@@ -10,13 +10,15 @@ import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, sellerAccounts, users,
+  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, markets, sellerAccounts, users,
   type IntakeResult, type Lead, type LeadOrigin, type LeadStatus,
 } from "@/db/schema";
+import { getMarket, listMarkets, updateMarket } from "@/lib/markets/service";
+import { applyLeadMarket, leadMarketContext, type LeadMarketHints } from "./market";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { Locale } from "@/lib/i18n";
 import {
-  csvToRawLeads, FIX_TEXT, generateIntakeKey, hashIntakeKey, mergeLeadFields, parseCsv, parseLead,
+  csvToRawLeads, FIX_TEXT, generateIntakeKey, hashIntakeKey, mergeLeadFields, mergeMarketId, parseCsv, parseLead,
   type FileConsent, type LeadFieldErrors, type LeadInput,
 } from "./rules";
 
@@ -77,6 +79,8 @@ function updatedEventData(origin: LeadOrigin, proposed: Record<string, string>) 
  * A lead who opted out is never re-added or changed from here (UX rule).
  * Intake (webhook, CSV) never overwrites an existing lead's name, language,
  * email or company (mergeLeadFields), and is refused while the account is paused.
+ * Every lead gets a market (lib/leads/market.ts); an existing lead keeps the
+ * market it has and only gets one when it had none (mergeMarketId).
  */
 export async function upsertLead(
   db: Db,
@@ -84,11 +88,13 @@ export async function upsertLead(
   actor: LeadActor,
   input: LeadInput,
   origin: LeadOrigin,
-  opts: { ownerUserId?: string | null; now?: Date; skipPausedCheck?: boolean } = {},
+  opts: { ownerUserId?: string | null; now?: Date; skipPausedCheck?: boolean } & LeadMarketHints = {},
   retry = true,
 ): Promise<UpsertResult> {
   const now = opts.now ?? new Date();
   if (origin !== "manual" && !opts.skipPausedCheck && (await isPaused(db, accountId))) return { ok: false, reason: "account_paused" };
+  const ctx = await leadMarketContext(db, accountId);
+  if (ctx) input = applyLeadMarket(ctx, input, opts);
   const existing = await findExisting(db, accountId, input);
 
   if (!existing) {
@@ -107,6 +113,7 @@ export async function upsertLead(
           origin,
           sourceLabel: input.sourceLabel,
           sourceRef: input.sourceRef,
+          marketId: input.marketId ?? null,
           ownerUserId: opts.ownerUserId ?? null,
           createdByUserId: actor.userId,
           lastActivityAt: now,
@@ -137,7 +144,7 @@ export async function upsertLead(
   const { fields, proposed } = mergeLeadFields(existing, input, origin);
   const [lead] = await db
     .update(leads)
-    .set({ ...fields, phone: input.phone, sourceRef, lastActivityAt: now })
+    .set({ ...fields, phone: input.phone, sourceRef, marketId: mergeMarketId(existing.marketId, input.marketId), lastActivityAt: now })
     .where(and(eq(leads.id, existing.id), eq(leads.accountId, accountId)))
     .returning();
   await addEvent(db, accountId, lead.id, "lead.updated", actor, updatedEventData(origin, proposed));
@@ -213,9 +220,10 @@ export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, 
   const where = filterWhere(accountId, f, now);
   const [rows, [{ total }]] = await Promise.all([
     db
-      .select({ lead: leads, owner })
+      .select({ lead: leads, owner, market: { id: markets.id, name: markets.name } })
       .from(leads)
       .leftJoin(owner, eq(owner.id, leads.ownerUserId))
+      .leftJoin(markets, and(eq(markets.id, leads.marketId), eq(markets.accountId, leads.accountId)))
       .where(where)
       .orderBy(desc(leads.lastActivityAt), asc(leads.id))
       .limit(Math.min(f.limit ?? 50, 500)),
@@ -256,10 +264,11 @@ export async function getLead(db: Db, accountId: string, leadId: string) {
   const owner = alias(users, "owner");
   const creator = alias(users, "creator");
   const [row] = await db
-    .select({ lead: leads, owner, creator })
+    .select({ lead: leads, owner, creator, market: { id: markets.id, name: markets.name } })
     .from(leads)
     .leftJoin(owner, eq(owner.id, leads.ownerUserId))
     .leftJoin(creator, eq(creator.id, leads.createdByUserId))
+    .leftJoin(markets, and(eq(markets.id, leads.marketId), eq(markets.accountId, leads.accountId)))
     .where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   return row ?? null;
 }
@@ -286,6 +295,40 @@ export async function latestConsent(db: Db, accountId: string, leadId: string) {
     .orderBy(desc(consentRecords.createdAt))
     .limit(1);
   return row ?? null;
+}
+
+/**
+ * Moves a lead to another market of the same account (lead card). Audited and
+ * shown on the lead timeline. Null when the lead or the market is not this account's.
+ */
+export async function setLeadMarket(db: Db, actor: Actor, accountId: string, leadId: string, marketId: string) {
+  const [[lead], market] = await Promise.all([
+    db.select({ id: leads.id, marketId: leads.marketId }).from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId))),
+    getMarket(db, accountId, marketId),
+  ]);
+  if (!lead || !market) return null;
+  if (lead.marketId === market.id) return market;
+  const before = lead.marketId ? await getMarket(db, accountId, lead.marketId) : null;
+  await db.update(leads).set({ marketId: market.id }).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
+  const data = { from: before?.name ?? null, to: market.name };
+  await addEvent(db, accountId, leadId, "lead.market_changed", actor, data);
+  await writeAudit(db, actor, { accountId, action: "lead.market_changed", targetType: "lead", targetId: leadId, details: { fromMarketId: lead.marketId, toMarketId: market.id, ...data } });
+  return market;
+}
+
+/** Leads per market (test leads left out). Leads without a market count for the home market. */
+export async function countLeadsByMarket(db: Db, accountId: string, homeMarketId: string): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ marketId: leads.marketId, n: count() })
+    .from(leads)
+    .where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)))
+    .groupBy(leads.marketId);
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const id = r.marketId ?? homeMarketId;
+    out.set(id, (out.get(id) ?? 0) + r.n);
+  }
+  return out;
 }
 
 /** Opt-out is honoured at once (mvp-plan 3.7). Later phases also cancel scheduled messages here. */
@@ -337,7 +380,7 @@ const IMPORT_CHUNK = 200;
 type ImportCandidate = { line: number; name: string; input: LeadInput };
 
 /** What the import needs to know about a lead, kept in memory while a file is processed. */
-type LeadState = Pick<Lead, "id" | "fullName" | "company" | "email" | "phone" | "language" | "sourceLabel" | "sourceRef" | "status" | "optedOutAt">;
+type LeadState = Pick<Lead, "id" | "fullName" | "company" | "email" | "phone" | "language" | "sourceLabel" | "sourceRef" | "status" | "optedOutAt" | "marketId">;
 
 /**
  * Applies upsertLead's rules to every valid row of a file without a round
@@ -359,7 +402,7 @@ async function importCandidates(
   const refs = [...new Set(candidates.map((c) => c.input.sourceRef).filter((r): r is string => !!r))];
   const cols = {
     id: leads.id, fullName: leads.fullName, company: leads.company, email: leads.email, phone: leads.phone, language: leads.language,
-    sourceLabel: leads.sourceLabel, sourceRef: leads.sourceRef, status: leads.status, optedOutAt: leads.optedOutAt,
+    sourceLabel: leads.sourceLabel, sourceRef: leads.sourceRef, status: leads.status, optedOutAt: leads.optedOutAt, marketId: leads.marketId,
   };
   const found: LeadState[] = [
     ...(await db.select(cols).from(leads).where(and(eq(leads.accountId, accountId), inArray(leads.phone, phones)))),
@@ -416,11 +459,11 @@ async function importCandidates(
       const id = crypto.randomUUID();
       const state: LeadState = {
         id, fullName: input.fullName, company: input.company, email: input.email, phone: input.phone, language: input.language,
-        sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, status: "new", optedOutAt: null,
+        sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, status: "new", optedOutAt: null, marketId: input.marketId ?? null,
       };
       inserts.push({
         id, accountId, fullName: input.fullName, company: input.company, email: input.email, phone: input.phone, language: input.language,
-        origin: "csv", sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, ownerUserId: null, createdByUserId: actor.userId, lastActivityAt: now,
+        origin: "csv", sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, marketId: input.marketId ?? null, ownerUserId: null, createdByUserId: actor.userId, lastActivityAt: now,
       });
       consents.push({ accountId, leadId: id, ...input.consent, recordedByUserId: actor.userId });
       event(id, "lead.created", { origin: "csv", source: input.sourceLabel });
@@ -435,14 +478,15 @@ async function importCandidates(
     let sourceRef = existing.sourceRef;
     if (!sourceRef && input.sourceRef && !byRef.has(input.sourceRef)) sourceRef = input.sourceRef;
     const { fields, proposed } = mergeLeadFields(existing, input, "csv");
-    updates.push({ id: existing.id, set: { ...fields, phone: input.phone, sourceRef, lastActivityAt: now } });
+    const marketId = mergeMarketId(existing.marketId, input.marketId);
+    updates.push({ id: existing.id, set: { ...fields, phone: input.phone, sourceRef, marketId, lastActivityAt: now } });
     if (existing.phone !== input.phone) {
       freedPhones.add(existing.phone);
       if (byPhone.get(existing.phone) === existing) byPhone.delete(existing.phone);
       byPhone.set(input.phone, existing);
     }
     if (sourceRef && sourceRef !== existing.sourceRef) byRef.set(sourceRef, existing);
-    Object.assign(existing, fields, { phone: input.phone, sourceRef });
+    Object.assign(existing, fields, { phone: input.phone, sourceRef, marketId });
     event(existing.id, "lead.updated", updatedEventData("csv", proposed));
     if (input.consent) {
       consents.push({ accountId, leadId: existing.id, ...input.consent, recordedByUserId: actor.userId });
@@ -488,6 +532,7 @@ export async function importLeadsCsv(
   };
   if (parsed.missingColumns.length > 0 || result.tooManyRows) return result;
   const defaultLanguage = (account.languages[0] ?? "en") as Locale;
+  const ctx = await leadMarketContext(db, account.id);
   const seenPhones = new Map<string, number>();
   const candidates: ImportCandidate[] = [];
   for (const { line, raw } of parsed.rows) {
@@ -504,7 +549,7 @@ export async function importLeadsCsv(
       continue;
     }
     seenPhones.set(p.value.phone, line);
-    candidates.push({ line, name, input: p.value });
+    candidates.push({ line, name, input: ctx ? applyLeadMarket(ctx, p.value) : p.value });
   }
   if (candidates.length > 0) {
     if (await isPaused(db, account.id)) {
@@ -556,6 +601,33 @@ export async function revokeIntakeKey(db: Db, actor: Actor, accountId: string, k
     .returning();
   if (row) await writeAudit(db, actor, { accountId, action: "intake_key.revoked", targetType: "intake_key", targetId: keyId });
   return row ?? null;
+}
+
+/**
+ * Links an intake key to a market (or to none): leads that come with the key
+ * go to that market. Goes through updateMarket, which keeps markets.intake_key_ids
+ * and lead_intake_keys.market_id in step and audits the change.
+ */
+export async function setIntakeKeyMarket(db: Db, actor: Actor, accountId: string, keyId: string, marketId: string | null): Promise<boolean> {
+  const [key] = await db
+    .select()
+    .from(leadIntakeKeys)
+    .where(and(eq(leadIntakeKeys.id, keyId), eq(leadIntakeKeys.accountId, accountId), isNull(leadIntakeKeys.revokedAt)));
+  if (!key) return false;
+  const all = await listMarkets(db, accountId);
+  if (marketId) {
+    const target = all.find((m) => m.id === marketId);
+    if (!target) return false;
+    if (target.intakeKeyIds.includes(keyId) && key.marketId === target.id) return true;
+    const r = await updateMarket(db, actor, accountId, target.id, { intakeKeyIds: [...new Set([...target.intakeKeyIds, keyId])] });
+    return r.ok;
+  }
+  for (const m of all.filter((x) => x.intakeKeyIds.includes(keyId))) {
+    const r = await updateMarket(db, actor, accountId, m.id, { intakeKeyIds: m.intakeKeyIds.filter((k) => k !== keyId) });
+    if (!r.ok) return false;
+  }
+  if (key.marketId) await db.update(leadIntakeKeys).set({ marketId: null }).where(and(eq(leadIntakeKeys.id, keyId), eq(leadIntakeKeys.accountId, accountId)));
+  return true;
 }
 
 /** Finds the account for a presented key; revoked or unknown keys return null. */

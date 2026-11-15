@@ -3,7 +3,8 @@ import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { DealStateFields, Timeline, type TimelineItem } from "@/components/sas/record";
 import { currentPlaybook, getDealState } from "@/lib/agent/service";
-import { verifyFieldAction } from "../actions";
+import { setLeadMarketAction, verifyFieldAction } from "../actions";
+import { listMarkets } from "@/lib/markets/service";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { displayName, nameInitials } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
@@ -26,6 +27,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "lead.updated": "file-text",
   "consent.recorded": "shield-check",
   "lead.opted_out": "x-circle",
+  "lead.market_changed": "layers",
   "quote.created": "file-text",
   "quote.versioned": "file-text",
   "quote.approved": "check-circle",
@@ -57,7 +59,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -65,9 +67,12 @@ export default async function LeadCardPage({
     currentPlaybook(appDb, account.id),
     getDealState(appDb, account.id, leadId),
     latestConversationForLead(appDb, account.id, leadId),
+    listMarkets(appDb, account.id),
   ]);
   if (!row) notFound();
   const { lead, owner, creator } = row;
+  // A lead without a market belongs to the home market (listMarkets puts it first).
+  const leadMarket = (row.market ? marketList.find((m) => m.id === row.market!.id) : null) ?? marketList[0];
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
 
@@ -81,6 +86,8 @@ export default async function LeadCardPage({
         ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${displayName(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
+        : event.type === "lead.market_changed"
+        ? `${(event.data as { from?: string | null } | null)?.from ?? "-"} → ${(event.data as { to?: string } | null)?.to ?? ""}${user ? ` · ${displayName(user)}` : ""}`
         : user
           ? displayName(user)
           : event.type === "lead.created" || event.type === "lead.updated"
@@ -109,6 +116,7 @@ export default async function LeadCardPage({
             </div>
             <span className="sas-small">
               {t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}
+              {leadMarket ? <span data-testid="lead-market">{t("lead.card.market_line", { market: leadMarket.name })} · </span> : null}
               {creator
                 ? t("lead.card.added", { source, who: displayName(creator), when: relativeTime(lead.createdAt, now) })
                 : t("lead.card.added_system", { source, when: relativeTime(lead.createdAt, now) })}
@@ -166,6 +174,24 @@ export default async function LeadCardPage({
             </div>
           </div>
           <aside className="sas-lead__side">
+            <section aria-labelledby="lm-h" className="sas-stack-2" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
+              <h2 id="lm-h" className="sas-group-label" style={{ padding: "16px 0 0" }}>{t("lead.card.market")}</h2>
+              {sp.market ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lead.card.market_saved")}</span></div> : null}
+              {sp.market_error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lead.card.market_error")}</span></div> : null}
+              {marketList.length > 1 ? (
+                <form action={setLeadMarketAction} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
+                  <input type="hidden" name="slug" value={account.slug} />
+                  <input type="hidden" name="leadId" value={lead.id} />
+                  <select className="sas-select" name="marketId" defaultValue={leadMarket?.id} aria-label={t("lead.card.market")} style={{ flex: "1 1 160px", minWidth: 0 }}>
+                    {marketList.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <button type="submit" className={buttonClass("secondary", "sm")}>{t("lead.card.market_change")}</button>
+                </form>
+              ) : (
+                <span>{leadMarket?.name}</span>
+              )}
+              <span className="sas-small">{t("lead.card.market_hint")}</span>
+            </section>
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
             {sp.verified ? <div className="sas-alert sas-alert--success" role="status" style={{ margin: "0 16px 12px" }}><Icon name="check-circle" /><span>{t("lead.card.verified_saved")}</span></div> : null}
             {!playbook || playbook.fields.length === 0 ? (

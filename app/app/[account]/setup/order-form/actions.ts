@@ -5,6 +5,9 @@ import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import { currentLegal, parseSettings, saveLegalSection, saveOrderFormSettings, sectionKeyOf, STARTER_SECTIONS } from "@/lib/orders/settings";
+import { saveMarketLegalSection } from "@/lib/markets/legal";
+import { getMarketView } from "@/lib/markets/service";
+import { isUuid } from "@/lib/security/ids";
 
 const path = (slug: string) => `/app/${slug}/setup/order-form`;
 
@@ -53,4 +56,27 @@ export async function starterAction(form: FormData) {
   }
   revalidatePath(path(a.account.slug));
   redirect(`${path(a.account.slug)}?starter=1`);
+}
+
+/**
+ * A market's own text for one section and language ("Override" on the market
+ * switcher). The market must belong to the account and sell in the language;
+ * the account default stays as it is.
+ */
+export async function saveMarketSectionAction(form: FormData) {
+  const a = await requireAccount(String(form.get("slug") ?? ""));
+  const marketId = String(form.get("marketId") ?? "");
+  const view = isUuid(marketId) ? await getMarketView(appDb, a.account.id, marketId) : null;
+  if (!view) redirect(`${path(a.account.slug)}?error=${encodeURIComponent("This market was not found.")}`);
+  const back = `${path(a.account.slug)}?market=${view.market.id}`;
+  const title = String(form.get("title") ?? "").trim();
+  const body = String(form.get("body") ?? "").trim();
+  const language = String(form.get("language") ?? "");
+  const key = String(form.get("sectionKey") ?? "") || sectionKeyOf(title);
+  if (!title || !body || !view.settings.languages.value.includes(language) || !/^[a-z0-9_]{1,40}$/.test(key)) {
+    redirect(`${back}&error=${encodeURIComponent("Enter a title and the text.")}`);
+  }
+  const v = await saveMarketLegalSection(appDb, actorOf(a), a.account.id, view.market.id, { sectionKey: key, title, language, body });
+  revalidatePath(path(a.account.slug));
+  redirect(`${back}&mlegal=${v}`);
 }
