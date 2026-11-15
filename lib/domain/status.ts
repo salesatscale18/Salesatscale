@@ -18,7 +18,7 @@ export const STATUS = {
     agent_handling: { tone: "agent", icon: "sparkles" },
     human_handling: { tone: "human", icon: "user" },
     meeting_booked: { tone: "success", icon: "calendar" },
-    won: { tone: "success", icon: "check-circle" },
+    won: { tone: "success", icon: "trophy" },
     lost: { tone: "neutral", icon: "circle-slash" },
     opted_out: { tone: "danger", icon: "x-circle" },
   },
@@ -29,6 +29,7 @@ export const STATUS = {
     expires_today: { tone: "warning", icon: "clock" },
     expired: { tone: "neutral", icon: "calendar-x" },
     replaced: { tone: "neutral", icon: "file-text" },
+    cancelled: { tone: "neutral", icon: "file-x" },
   },
   order_form: {
     sent: { tone: "neutral", icon: "send" },
@@ -47,14 +48,33 @@ export const STATUS = {
   agent_version: {
     draft: { tone: "neutral", icon: "file-text" },
     testing: { tone: "warning", icon: "flask-conical" },
-    live: { tone: "success", icon: "sparkles" },
+    live: { tone: "success", icon: "check-circle" },
     retired: { tone: "neutral", icon: "archive" },
   },
-  // Not in the design system's status table yet; from the AdminAccounts artboard.
   account: {
-    setting_up: { tone: "warning", icon: "sliders" },
+    setting_up: { tone: "warning", icon: "list-checks" },
     live: { tone: "success", icon: "check-circle" },
     paused: { tone: "neutral", icon: "pause" },
+  },
+  // Trace only (lead card and test lab): a refusal is the rules working, never an error.
+  tool_call: {
+    refused: { tone: "warning", icon: "shield-alert" },
+    failed: { tone: "danger", icon: "x-circle" },
+  },
+  catalog_version: {
+    draft: { tone: "neutral", icon: "file-text" },
+    live: { tone: "success", icon: "check-circle" },
+  },
+  // Active is neutral: green is only for wins and verified data.
+  catalog_item: {
+    active: { tone: "neutral", icon: "check" },
+    inactive: { tone: "neutral", icon: "pause" },
+    price_missing: { tone: "warning", icon: "alert-triangle" },
+  },
+  intake_result: {
+    created: { tone: "success", icon: "plus" },
+    updated: { tone: "neutral", icon: "refresh-cw" },
+    rejected: { tone: "danger", icon: "x-circle" },
   },
   channel: {
     connected: { tone: "success", icon: "message-circle" },

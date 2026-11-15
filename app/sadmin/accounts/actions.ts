@@ -6,7 +6,7 @@ import { revalidatePath } from "next/cache";
 import { appDb, requireSuperAdmin } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import { parseCreateAccount, type FieldErrors } from "@/lib/accounts/rules";
-import { createAccount, createInvite, getAccountById, pauseAccount, resumeAccount } from "@/lib/accounts/service";
+import { createAccount, createInvite, getAccountById, pauseAccount, renewInvite, resumeAccount } from "@/lib/accounts/service";
 
 // Every action re-checks super_admin on the server: actions are public endpoints.
 
@@ -22,7 +22,10 @@ async function inviteUrl(token: string): Promise<string> {
 export type CreateAccountState =
   | { status: "idle" }
   | { status: "error"; errors: FieldErrors; values: Record<string, string | string[]> }
-  | { status: "created"; accountId: string; tradeName: string; ownerEmail: string; inviteUrl: string };
+  | { status: "created"; accountId: string; link: InviteLink };
+
+/** What the one-time invite-link panel shows. */
+export type InviteLink = { name: string | null; email: string; expiresAt: string; url: string };
 
 export async function createAccountAction(_prev: CreateAccountState, form: FormData): Promise<CreateAccountState> {
   const me = await requireSuperAdmin();
@@ -33,43 +36,56 @@ export async function createAccountAction(_prev: CreateAccountState, form: FormD
   }
   const parsed = parseCreateAccount(raw);
   if (!parsed.ok) return { status: "error", errors: parsed.errors, values: raw };
-  const { account, inviteToken } = await createAccount(appDb, { userId: me.id, actingAs: false }, parsed.value);
+  const { account, invite, inviteToken } = await createAccount(appDb, { userId: me.id, actingAs: false }, parsed.value);
   revalidatePath("/sadmin/accounts");
   return {
     status: "created",
     accountId: account.id,
-    tradeName: account.tradeName,
-    ownerEmail: parsed.value.ownerEmail,
-    inviteUrl: await inviteUrl(inviteToken),
+    link: { name: invite.inviteeName, email: invite.email, expiresAt: invite.expiresAt.toISOString(), url: await inviteUrl(inviteToken) },
   };
 }
 
-export type InviteState = { status: "idle" } | { status: "error"; message: string } | { status: "created"; email: string; inviteUrl: string };
+export type InviteState = { status: "idle" } | { status: "error"; message: string } | { status: "created"; link: InviteLink };
 
 export async function inviteAction(_prev: InviteState, form: FormData): Promise<InviteState> {
   const me = await requireSuperAdmin();
   const accountId = String(form.get("accountId") ?? "");
   const email = String(form.get("email") ?? "").trim().toLowerCase();
+  const name = String(form.get("name") ?? "").trim() || null;
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { status: "error", message: "Enter a valid email address." };
   const account = await getAccountById(appDb, accountId);
   if (!account) notFound();
-  const { token } = await createInvite(appDb, { userId: me.id, actingAs: false }, account.id, { email });
+  const { invite, token } = await createInvite(appDb, { userId: me.id, actingAs: false }, account.id, { email, name });
   revalidatePath(`/sadmin/accounts/${account.id}`);
-  return { status: "created", email, inviteUrl: await inviteUrl(token) };
+  return { status: "created", link: { name, email, expiresAt: invite.expiresAt.toISOString(), url: await inviteUrl(token) } };
+}
+
+/** "Create new link": cancels the pending invite and shows a fresh link once. */
+export async function renewInviteAction(_prev: InviteState, form: FormData): Promise<InviteState> {
+  const me = await requireSuperAdmin();
+  const accountId = String(form.get("accountId") ?? "");
+  const inviteId = String(form.get("inviteId") ?? "");
+  const renewed = await renewInvite(appDb, { userId: me.id, actingAs: false }, accountId, inviteId);
+  if (!renewed) return { status: "error", message: "This invite was already used or cancelled. Reload the page." };
+  revalidatePath(`/sadmin/accounts/${accountId}`);
+  const { invite, token } = renewed;
+  return { status: "created", link: { name: invite.inviteeName, email: invite.email, expiresAt: invite.expiresAt.toISOString(), url: await inviteUrl(token) } };
 }
 
 export async function pauseAccountAction(form: FormData) {
   const me = await requireSuperAdmin();
   const id = String(form.get("accountId") ?? "");
-  await pauseAccount(appDb, { userId: me.id, actingAs: true }, id);
+  const row = await pauseAccount(appDb, { userId: me.id, actingAs: true }, id);
   revalidatePath(`/sadmin/accounts/${id}`);
+  if (row) revalidatePath(`/app/${row.slug}`, "layout");
 }
 
 export async function resumeAccountAction(form: FormData) {
   const me = await requireSuperAdmin();
   const id = String(form.get("accountId") ?? "");
-  await resumeAccount(appDb, { userId: me.id, actingAs: true }, id);
+  const row = await resumeAccount(appDb, { userId: me.id, actingAs: true }, id);
   revalidatePath(`/sadmin/accounts/${id}`);
+  if (row) revalidatePath(`/app/${row.slug}`, "layout");
 }
 
 /** Logs the entry, then opens the seller workspace in acting-as mode. */

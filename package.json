@@ -11,9 +11,11 @@
     "db:migrate": "drizzle-kit migrate",
     "test": "vitest run",
     "test:watch": "vitest",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:sim": "playwright test -c playwright.sim.config.ts --trace off"
   },
   "dependencies": {
+    "@anthropic-ai/sdk": "^1.8.0",
     "@clerk/nextjs": "^7.9.25",
     "@neondatabase/serverless": "^1.2.0",
     "drizzle-orm": "^0.45.4",

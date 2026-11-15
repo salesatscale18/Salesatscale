@@ -3,9 +3,11 @@ import type { ReactNode } from "react";
 import { SasRoot } from "@/components/sas/root";
 import { SideNavForPath } from "@/components/sas/side-nav-client";
 import { Banner } from "@/components/sas/record";
-import { requireAccount } from "@/lib/auth/account";
+import { appDb, requireAccount } from "@/lib/auth/account";
+import { needsYouForRequest } from "@/lib/overview/service";
 import { displayName, initials } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
+import { resumeAccountAction } from "@/app/sadmin/accounts/actions";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -15,6 +17,7 @@ export default async function AccountLayout({ children, params }: { children: Re
   const { account: slug } = await params;
   const access = await requireAccount(slug);
   const { account, user, actingAs } = access;
+  const needsYouCount = (await needsYouForRequest(appDb, account.id)).length;
 
   return (
     <SasRoot>
@@ -24,6 +27,7 @@ export default async function AccountLayout({ children, params }: { children: Re
           basePath={`/app/${account.slug}`}
           accountName={account.tradeName}
           user={{ name: displayName(user), initials: initials(user) }}
+          counts={needsYouCount ? { overview: { value: needsYouCount, tone: "human" } } : undefined}
         />
         <div className="sas-shell__main">
           {actingAs ? (
@@ -34,7 +38,23 @@ export default async function AccountLayout({ children, params }: { children: Re
               {t("banner.acting", { account: account.tradeName })}
             </Banner>
           ) : null}
-          {account.status === "paused" ? <Banner kind="paused">{t("access.paused")}</Banner> : null}
+          {account.status === "paused" ? (
+            actingAs ? (
+              <Banner
+                kind="paused"
+                action={
+                  <form action={resumeAccountAction}>
+                    <input type="hidden" name="accountId" value={account.id} />
+                    <button type="submit" className="sas-btn sas-btn--secondary sas-btn--sm">{t("admin.accounts.resume")}</button>
+                  </form>
+                }
+              >
+                {t("access.paused.admin")}
+              </Banner>
+            ) : (
+              <Banner kind="paused">{t("access.paused.seller")}</Banner>
+            )
+          ) : null}
           {children}
         </div>
       </div>

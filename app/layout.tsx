@@ -1,6 +1,5 @@
 import type { Metadata } from "next";
 import { ClerkProvider } from "@clerk/nextjs";
-import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Sales at Scale — Build a sales engine that grows with you",
@@ -21,7 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             rel="stylesheet"
           />
         </head>
-        <body>{children}</body>
+        <body style={{ margin: 0 }}>{children}</body>
       </html>
     </ClerkProvider>
   );

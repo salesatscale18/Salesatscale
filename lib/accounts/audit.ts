@@ -1,7 +1,8 @@
 import type { Db } from "@/db/types";
 import { auditLog } from "@/db/schema";
 
-export type Actor = { userId: string; actingAs: boolean };
+/** userId is null for system actions (agent, intake, opt-out by message). */
+export type Actor = { userId: string | null; actingAs: boolean };
 
 export type AuditInput = {
   accountId: string | null;

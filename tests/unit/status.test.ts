@@ -8,12 +8,15 @@ import { t, type MessageKey } from "@/lib/i18n";
  */
 const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   lead: [["New", "neutral"], ["Waiting for reply", "neutral"], ["Agent handling", "agent"], ["Human handling", "human"], ["Meeting booked", "success"], ["Won", "success"], ["Lost", "neutral"], ["Opted out", "danger"]],
-  quote: [["Draft", "neutral"], ["Awaiting approval", "warning"], ["Sent", "neutral"], ["Expires today", "warning"], ["Expired", "neutral"], ["Replaced", "neutral"]],
+  quote: [["Draft", "neutral"], ["Awaiting approval", "warning"], ["Sent", "neutral"], ["Expires today", "warning"], ["Expired", "neutral"], ["Replaced", "neutral"], ["Cancelled", "neutral"]],
   order_form: [["Sent", "neutral"], ["Opened", "neutral"], ["Signed", "success"], ["Link expired", "neutral"]],
   payment: [["Not started", "neutral"], ["Pending", "warning"], ["Paid", "success"], ["Failed", "danger"], ["Refunded", "neutral"], ["Bank transfer expected", "warning"]],
   agent_version: [["Draft", "neutral"], ["Testing", "warning"], ["Live", "success"], ["Retired", "neutral"]],
-  // From the AdminAccounts artboard (to be added to the design system table).
   account: [["Setting up", "warning"], ["Live", "success"], ["Paused", "neutral"]],
+  tool_call: [["Refused", "warning"], ["Failed", "danger"]],
+  catalog_version: [["Draft", "neutral"], ["Live", "success"]],
+  catalog_item: [["Active", "neutral"], ["Inactive", "neutral"], ["Price missing", "warning"]],
+  intake_result: [["Created", "success"], ["Updated", "neutral"], ["Rejected", "danger"]],
   channel: [["Connected", "success"], ["Template pending", "warning"], ["Template rejected", "danger"], ["Disconnected", "danger"]],
 };
 

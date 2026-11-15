@@ -2,6 +2,7 @@
 
 import { useActionState } from "react";
 import { Icon } from "@/components/sas/icon";
+import { InviteLinkPanel } from "@/components/sas/invite-link-panel";
 import { buttonClass } from "@/components/sas/primitives";
 import { CURRENCIES, MARKETS, PLANS } from "@/lib/accounts/rules";
 import { LOCALES, t, type MessageKey } from "@/lib/i18n";
@@ -34,19 +35,8 @@ export function CreateAccountForm({ timezones }: { timezones: string[] }) {
   if (state.status === "created") {
     return (
       <section className="sas-panel">
-        <div className="sas-panel__body sas-stack-4">
-          <div className="sas-alert sas-alert--success" role="status">
-            <Icon name="check-circle" />
-            <span>{t("admin.create.done", { name: state.tradeName })}</span>
-          </div>
-          <div className="sas-stack-2">
-            <strong>{t("admin.accounts.invite_link", { email: state.ownerEmail })}</strong>
-            <code className="sas-copy">{state.inviteUrl}</code>
-            <span className="sas-hint">{t("common.copy_hint")}</span>
-          </div>
-          <a className={buttonClass("primary")} href={`/sadmin/accounts/${state.accountId}`} style={{ alignSelf: "flex-start" }}>
-            {t("admin.create.open")}
-          </a>
+        <div className="sas-panel__body">
+          <InviteLinkPanel title="invite_link.title.account" {...state.link} doneHref={`/sadmin/accounts/${state.accountId}`} />
         </div>
       </section>
     );

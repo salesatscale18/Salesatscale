@@ -337,7 +337,7 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 
 | # | Decision | Needed by | Recommendation / default |
 |---|---|---|---|
-| D1 | LLM provider and model for the agent | P4.2 | User decides. Built behind an interface; fake LLM keeps tests deterministic. |
+| D1 | LLM provider and model for the agent | P4.2 | **Default applied:** Anthropic, `claude-opus-5-5` (override with `AGENT_MODEL`), effort medium, server-side refusal fallback on. Behind `LlmClient`; a scripted fake keeps tests deterministic. Needs `ANTHROPIC_API_KEY` in Vercel. |
 | D2 | WhatsApp: Meta Cloud API or a BSP; coexistence for the pilot number | P6.2 | User decides; check coexistence early with the pilot seller. |
 | D3 | Payment provider for the pilot | P10.2 (fake provider until then) | User decides after confirming where the pilot seller is registered. |
 | D4 | E-signature level | P5.4 | Checkbox + typed name (as designed) unless the pilot seller requires a provider. |
@@ -347,8 +347,9 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 | D8 | Email for notifications, confirmations and invite links | P1.4 / P5.8 / P7.5 | A transactional email API (e.g. Resend). |
 | D9 | Preview database | Before the pilot seller's real data (P8/P10) | **Decided (user, 2026-11-12): deferred.** We push straight to live while there is no real data. Add a separate Neon branch for Preview before the first real seller data, so Preview builds of unfinished code can't touch it. |
 | D10 | `npm test` added to the pre-push rule | P0.2 | **Approved by the user (2026-11-12).** CI runs it on every push; Lead to add it to `CLAUDE.md` with a `[RULE]` post. |
+| D13 | Release cadence | Now | **Decided (user, 2026-11-12): fast-track.** Push to `main` as soon as lint + test + build pass; sessions verify deploys via the Vercel connector; the user runs UAT at milestones. |
 | D11 | Workspace URL shape | P0.5 | `/app/[account-slug]/…` for sellers; platform admin stays under `/sadmin`. Done in P1. |
-| D12 | Database transactions | Before P3 (quotes) | The Neon HTTP driver has no interactive transactions. Recommendation: switch `db/index.ts` to the Neon WebSocket driver (`drizzle-orm/neon-serverless`) before commercial writes (quotes, orders, payments) need atomic multi-row updates. |
+| D12 | Database transactions | Before P3 (quotes) | **Done (P3):** kept neon-http; multi-row writes go through `db/atomic.ts` (`db.batch()` = one transaction on Neon, `db.transaction()` on PGlite), with app-generated IDs. |
 
 ## 9. Progress tracker
 
@@ -368,10 +369,40 @@ Update the row in the same push that finishes the step.
 | P1.3 | done | determined-hopper | this push | 2026-11-12 | `/sadmin/accounts`: list, create (with owner invite), detail, pause/resume, audit log |
 | P1.4 | in progress | determined-hopper | this push | 2026-11-12 | Invite links (hashed token, 7 days, verified-email match) and `/invite/[token]` done. Invite **email** waits for D8; the admin copies the link for now |
 | P1.5 | done | determined-hopper | this push | 2026-11-12 | Enter account → acting banner, entry and writes audited with `acting_as` |
-| P2.1–P2.6 | todo | | | | M2 |
-| P3.1–P3.5 | todo | | | | M3 |
-| P4.1–P4.8 | todo | | | | M4; P4.2 needs D1 |
-| P5.1–P5.8 | todo | | | | M5 → Milestone A |
+| P2.1 | done | determined-hopper | this push | 2026-11-12 | M2 `0002_leads`: `leads`, `consent_records`, `lead_events`, `lead_intake_keys` |
+| P2.2 | done | determined-hopper | this push | 2026-11-12 | `lib/leads/rules.ts`: E.164 normalization by market, masking, one validator for all intake paths, consent required |
+| P2.3 | done | determined-hopper | this push | 2026-11-12 | Leads list: views with counts, search, source/language/period filters, Add lead panel, first-use/filtered/error/loading states. "Needs you" view, progress and next-step columns wait for P4–P6 data |
+| P2.4 | done | determined-hopper | this push | 2026-11-12 | CSV import with per-row results (2,000 rows, 1 MB) |
+| P2.5 | done | determined-hopper | this push | 2026-11-12 | `POST /api/leads/[account]` with per-account hashed keys (Settings), `docs/lead-intake.md`. Rate limiting in P10.1 |
+| P2.6 | done | determined-hopper | this push | 2026-11-12 | Lead card shell: header with masked phone, empty conversation, timeline, consent record, opt-out (audited) |
+| P2.7 | done | determined-hopper | next push | 2026-11-12 | UX follow-up (canvas ImportCsv, LeadIntake): migration `0003_leads_intake` (lead email, key last-4, `lead_intake_deliveries`), opted-out people rejected on every intake path, whole-file consent, duplicate-in-file check, problem/fix per rejected row with download, template, Recent deliveries, Copy buttons. "Send a test lead" not built (it would create a real lead) |
+| P3.1 | done | determined-hopper | P3 push | 2026-11-12 | Migration `0004_catalog_quotes` (plan's M3): versioned catalog (one draft + one published), items with tiers and custom-pricing quantity, fit rules as data, quotes / versions / lines, `seller_accounts.max_discount_bp`. `db/atomic.ts` for all-or-nothing writes (D12, no driver change) |
+| P3.2 | done | determined-hopper | P3 push | 2026-11-12 | `lib/catalog/pricing.ts`: integer-only engine (tiers, discount cap, VAT incl./excl., approval reasons); quotes service with idempotency keys, numbering, versions, approval, cancel |
+| P3.3 | done | determined-hopper | P3 push | 2026-11-12 | `lib/catalog/fit.ts`: requires (per site), max per, advice |
+| P3.4 | done | determined-hopper | P3 push | 2026-11-12 | Catalog setup screen: products, item editor, fit rules, VAT, draft → publish / discard. Spreadsheet import comes with Sources (P8) |
+| P3.5 | done | determined-hopper | P3 push | 2026-11-12 | Quotes and orders (quote side): tabs, approval with custom prices, versions, cancel; quote editor from the lead card with live server-side preview |
+| P3.6 | done | determined-hopper | P3 UX push | 2026-11-12 | UX P3 decisions: statuses (quote Cancelled file-x, catalog Draft/Live, item Active neutral, Live = check-circle everywhere, info icon for advice); price-tier row editor with inline errors, enforced on save and publish; quote editor per canvas (items table, Add product, × N sites, amber discount, sticky preview, red fit checks with one-click fix, amber approval, grey advice, Fix N problems / Submit for approval / Create and approve, What changed required); lead card quotes show older versions under "Show v1". "Save as draft" waits for P5 (create vs send) |
+| P4.1 | done | determined-hopper | P4 push | 2026-11-12 | Migration `0005_agent`: agent_versions (playbook jsonb snapshot, model, effort; one draft + one live), knowledge_facts, conversations, messages, tool_calls, deal_states; `leads.is_test` (test-lab leads hidden from lists and counts) |
+| P4.2 | done | determined-hopper | P4 push | 2026-11-12 | `lib/agent/llm.ts`: `LlmClient`, Anthropic provider (D1 default), `ScriptedLlm` fake |
+| P4.3 | done | determined-hopper | P4 push | 2026-11-12 | `lib/agent/tools.ts`: six strict tools; refusals carry a rule and what is missing; quotes idempotent per tool call; discount above the limit → Awaiting approval |
+| P4.4 | done | determined-hopper | P4 push | 2026-11-12 | `lib/agent/turn.ts`: prompt from playbook + deal state, language from the conversation, safety in code (STOP / הסר opt-out, card numbers masked, refusal → hand-off), up to 8 tool rounds, usage per message. Rolling summary deferred: last 40 messages + deal state for now |
+| P4.5 | done | determined-hopper | P4 push | 2026-11-12 | `derivedStage` (new / qualified / quoted); agreed, paid and meeting arrive with P5/P7 |
+| P4.6 | done | determined-hopper | P4 push | 2026-11-12 | Versions and test lab: publish, one-step rollback, test chat by version and language, trace per reply (input, result, Refused/Failed, tokens), deal-state panel. Scenario picker deferred |
+| P4.7 | done | determined-hopper | P4 push | 2026-11-12 | Playbook editor (draft) + minimal Knowledge (approved facts with source) |
+| P4.8 | done | determined-hopper | P4 push | 2026-11-12 | Lead card deal state with provenance; "Set and verify" → Verified, audited, event on the timeline; agent never overwrites Verified. Chat column on real leads arrives with the channel (P6) |
+| P5.1 | done | determined-hopper | P5 push | 2026-11-12 | Migration `0006_orders`: order_form_settings, legal_sections (write-once versions per language), order_forms (token hash, immutable snapshot, superseded link), signatures (write-once, SHA-256 document hash, IP, user agent, legal versions), orders, payment_attempts, provider_events (dedupe key) |
+| P5.2 | done | determined-hopper | P5 push | 2026-11-12 | Setup 6 · Order form: legal sections per language with versions, sample text to start, buyer fields, payment methods, bank details, link validity, brand color, live EN/HE mobile preview |
+| P5.3 | done | determined-hopper | P5 push | 2026-11-12 | `createOrderForm` + agent tool `send_order_form` (refuses before-order-form fields missing, awaiting approval, expired, unpriced, opted out, no legal text in the language); HMAC link tokens; new link or new quote version → old link shows "Offer updated" with the new one. Seller can send from Quotes and orders |
+| P5.4 | done | determined-hopper | P5 push | 2026-11-12 | Buyer pages `/f/[token]`: review, business details, terms with versions, sign; Offer updated, Expired, Price changed (accept → new version and link), test-payment strip, EN/HE switch with RTL, seller branding, "Secured by Sales at Scale" |
+| P5.5 | done | determined-hopper | P5 push | 2026-11-12 | Payment provider: fake provider with HMAC-signed events (`/api/payments/fake`), `handleProviderEvent` is the only path to Paid (signature, dedupe, amount, currency, account, order checked); price re-check before payment; recurring consent; "Simulate successful / declined payment" per UX. Agent tool `check_payment` |
+| P5.6 | done | determined-hopper | P5 push | 2026-11-12 | Bank transfer: buyer chooses it → Bank transfer expected; seller "Mark payment received" (only bank-transfer orders, audited) |
+| P5.7 | done (partial) | determined-hopper | P5 push | 2026-11-12 | Signed document page `/f/[token]/document` from the write-once snapshot + signature + SHA-256 fingerprint; "Print or save as PDF" via the browser. A stored PDF file comes later |
+| P5.8 | done (stub) | determined-hopper | P5 push | 2026-11-12 | Confirmations: system message in the buyer's conversation (EN/HE) and timeline events; seller email is a log stub until D8 |
+| PC.A | done | determined-hopper | pilot pass | 2026-11-13 | Pilot completion lane A: migration `0007_company_golive`; Setup · Company (business details, sales rep, support contact on buyer pages, brand color shared with the order form); Settings (users and invites, notifications, contact hours with `isWithinContactHours`); Setup · Go live (checklist from real data, rollout choice, Go live) |
+| PC.B | done | determined-hopper | pilot pass | 2026-11-13 | Lane B: structured Playbook editor (field rows with example question, objections, limits, never-do rows; stable keys); Knowledge with topics, suggested/approved/rejected, edit, approve all, and "Questions we couldn't answer" from real `lookup_knowledge` misses |
+| PC.C | done | determined-hopper | pilot pass | 2026-11-13 | Lane C: Overview (Needs you queue, period numbers, setup progress, recent activity, sidebar badge); Admin · Activity feed (filters, paging); setup steps show completion |
+| PC.D | done | determined-hopper | pilot pass | 2026-11-13 | Lane D: lead-card conversation (take over, reply as a person, hand back; delivery seam for P6); test-lab scenarios with pass/fail checks |
+| PC.E | done | determined-hopper | pilot pass | 2026-11-13 | Playwright full-use-case simulation against a deployed site (`docs/e2e-simulation.md`, `npm run test:sim`) |
 | P6.1–P6.8 | todo | | | | M6; needs D2, D6 → Milestone B |
 | P7.1–P7.5 | todo | | | | M7 |
 | P8.1–P8.7 | todo | | | | M8 |

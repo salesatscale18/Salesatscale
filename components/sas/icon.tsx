@@ -4,9 +4,9 @@
  */
 import {
   Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
-  CircleSlash, CircleX, Clock, CreditCard, Eye, FileText, FlaskConical, Layers, LayoutGrid, MessageCircle,
-  MessageSquare, Package, Pause, Pen, Rocket, Send, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
-  User, UserPlus, type LucideIcon,
+  CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, ListChecks, MessageCircle,
+  MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
+  Trophy, Upload, User, UserPlus, Wrench, X, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -24,25 +24,39 @@ const ICONS = {
   "circle-dot": CircleDot,
   "circle-slash": CircleSlash,
   clock: Clock,
+  cog: Cog,
+  copy: Copy,
+  download: Download,
   "credit-card": CreditCard,
   eye: Eye,
   "file-text": FileText,
   "flask-conical": FlaskConical,
   layers: Layers,
   "layout-grid": LayoutGrid,
+  "list-checks": ListChecks,
   "message-circle": MessageCircle,
   "message-square": MessageSquare,
   package: Package,
   pause: Pause,
   pen: Pen,
+  plus: Plus,
+  "refresh-cw": RefreshCw,
   rocket: Rocket,
+  search: Search,
   send: Send,
+  "shield-alert": ShieldAlert,
   "shield-check": ShieldCheck,
   sliders: SlidersHorizontal,
   sparkles: Sparkles,
+  trophy: Trophy,
+  upload: Upload,
   user: User,
   "user-plus": UserPlus,
+  wrench: Wrench,
   "x-circle": CircleX,
+  x: X,
+  "file-x": FileX,
+  info: Info,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

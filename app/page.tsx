@@ -2,6 +2,9 @@ import Link from "next/link";
 import { AuthBar } from "./auth-bar";
 import { ContactForm } from "./contact-form";
 import { Year } from "./year";
+// Landing-site styles only: they style bare elements (header, section, details, input),
+// so they must never load on the seller app or buyer pages.
+import "./globals.css";
 
 const svg = {
   fill: "none",

@@ -27,8 +27,10 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
 ## Workflow (current stage: direct pushes to `main`, no PRs)
 - At this stage we push directly to `main`; do not open PRs. Do the work on a
   local branch or commits, then rebase onto the latest `origin/main` and push to `main`.
-- Before every push to `main`, run the checks and push only if both pass:
-  `npm run lint` and `npm run build`.
+- Before every push to `main`, run the checks and push only if all pass:
+  `npm run lint`, `npm test` and `npm run build`.
+- Never force-push `main`. If the push is rejected because someone pushed
+  first: `git fetch origin && git rebase origin/main`, rerun the checks, push again.
 - Schema changes: commit the generated migration files in `drizzle/` in the same
   push as the `db/schema.ts` change (never a schema change without its migration).
 - Never commit secrets (`.env*` files, keys, tokens, connection strings); check
@@ -40,7 +42,9 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
 - Several sessions work in parallel. The shared channel is GitHub issue #2
   (https://github.com/salesatscale18/Salesatscale/issues/2); the protocol is
   `docs/TEAM.md`. Read both at the start of every session.
-- Post `[START]` / `[CLAIM]` / `[QUEUE]` / `[BLOCKED]` / `[DONE]` comments there.
+- Post `[START]` / `[CLAIM]` / `[QUEUE]` / `[PUSHED]` / `[BLOCKED]` / `[INFO]` /
+  `[DONE]` comments there. Re-read the channel's latest comments right before
+  `[QUEUE]`: another session may have just pushed or claimed something.
 - Claim shared areas before editing them; only one migration (`db/schema.ts` +
   `drizzle/`) may be in flight at a time.
 - Pushes to `main` go one at a time through the release queue in the channel:
