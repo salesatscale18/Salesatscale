@@ -1095,5 +1095,6 @@
   "admin.accounts.setup_count": "{done} of {total} setup steps done",
   "admin.accounts.setup_hint": "Enter the account to work on setup. Go live is the last step.",
   "admin.create.limits_note": "Enforced once WhatsApp is live: warning at 80%, no new conversations at 100%.",
-  "settings.users.err.owner_only": "Only an owner can remove another owner."
+  "settings.users.err.owner_only": "Only an owner can remove another owner.",
+  "lab.paused": "This account is paused."
 }

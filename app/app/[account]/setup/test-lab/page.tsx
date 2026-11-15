@@ -48,22 +48,26 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const isAdmin = user.role === "super_admin";
   const base = `/app/${account.slug}`;
   const lab = `${base}/setup/test-lab`;
-  const versions = await listVersions(appDb, account.id);
+  const [versions, chats, conv] = await Promise.all([
+    listVersions(appDb, account.id),
+    listTestConversations(appDb, account.id),
+    sp.c ? getConversation(appDb, account.id, one(sp.c)) : Promise.resolve(null),
+  ]);
   const draft = versions.find((v) => v.status === "draft");
-  const chats = await listTestConversations(appDb, account.id);
-  const conv = sp.c ? await getConversation(appDb, account.id, one(sp.c)) : null;
-  const view = conv?.isTest ? await conversationView(appDb, account.id, conv) : null;
-  const thread = view?.thread ?? [];
-  const convLead = conv?.isTest ? await getLead(appDb, account.id, conv.leadId) : null;
   const scenario = conv?.isTest ? scenarioById(conv.scenario) : null;
-  const scenarioCheck = conv?.isTest ? await conversationScenarioCheck(appDb, account.id, conv) : null;
   const scenarios = SCENARIOS.filter((s) => account.languages.includes(s.language));
   // Scenario results for the version picked in the panel, else the open chat's, else the draft (or newest).
   const resultsVersion = versions.find((v) => v.id === one(sp.v)) ?? versions.find((v) => v.id === conv?.agentVersionId) ?? draft ?? versions[0];
-  const results = resultsVersion ? await latestScenarioResults(appDb, account.id, resultsVersion.id) : [];
+  const [view, convLead, scenarioCheck, results, deal] = await Promise.all([
+    conv?.isTest ? conversationView(appDb, account.id, conv) : null,
+    conv?.isTest ? getLead(appDb, account.id, conv.leadId) : null,
+    conv?.isTest ? conversationScenarioCheck(appDb, account.id, conv) : null,
+    resultsVersion ? latestScenarioResults(appDb, account.id, resultsVersion.id) : [],
+    conv ? getDealState(appDb, account.id, conv.leadId) : null,
+  ]);
+  const thread = view?.thread ?? [];
   const notice = one(sp.notice) || undefined;
   const convVersion = conv ? versions.find((v) => v.id === conv.agentVersionId) : undefined;
-  const deal = conv ? await getDealState(appDb, account.id, conv.leadId) : null;
   const error = one(sp.error);
   const locale = conv && isLocale(conv.language) ? conv.language : "en";
 
@@ -86,6 +90,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
       {sp.rolledback ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.rolled_back", { version: one(sp.rolledback) })}</span></div> : null}
       {!llmConfigured() || error === "no_key" ? <div className="sas-alert sas-alert--warning" role="alert"><Icon name="alert-triangle" /><span>{t("lab.no_key")}</span></div> : null}
       {error === "model" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lab.error")}</span></div> : null}
+      {error === "rate_limited" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lab.rate_limited")}</span></div> : null}
+      {account.status === "paused" || error === "paused" ? <div className="sas-alert sas-alert--warning" role="status"><Icon name="pause" /><span>{t("lab.paused")}</span></div> : null}
 
       <div className="sas-split">
         <div className="sas-split__main">

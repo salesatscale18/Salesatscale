@@ -3,15 +3,31 @@
  * (mvp-plan 3.7, 3.1). Never left to the prompt alone.
  */
 
-const STOP_WORDS = [
+const STOP_WORDS = new Set([
   "stop", "unsubscribe", "opt out", "opt-out", "remove me", "don't contact me", "do not contact me",
-  "הסר", "הסירו", "הסירו אותי", "תסירו אותי", "די", "אל תפנו אליי", "לא מעוניין שתפנו",
-];
+  "stop messaging me", "stop messaging", "stop texting me", "stop contacting me", "stop sending me messages",
+  "unsubscribe me", "please unsubscribe me", "remove me from your list", "dont contact me", "don't contact me again",
+  "do not contact me again", "don't message me", "do not message me", "leave me alone",
+  "הסר", "הסירו", "הסירו אותי", "תסירו אותי", "די", "אל תפנו אליי", "אל תפנו אלי", "לא מעוניין שתפנו",
+  "תפסיקו לשלוח", "תפסיקו לשלוח לי", "תפסיקו לשלוח לי הודעות", "תפסיקו לפנות אליי", "תפסיקו לפנות אלי",
+]);
 
-/** A buyer message that is only an opt-out request (e.g. "STOP", "הסר"). */
+/**
+ * A buyer message that is only an opt-out request ("STOP", "הסר", "stop messaging me").
+ * Whole-message match only, so "how do I stop alerts?" is not an opt-out; other
+ * wordings reach the model, which records them with the record_opt_out tool.
+ */
 export function isOptOut(text: string): boolean {
-  const t = text.trim().toLowerCase().replace(/[.!?,׳"']+$/g, "").trim();
-  return STOP_WORDS.includes(t);
+  const t = text
+    .toLowerCase()
+    .replace(/[‘’׳`]/g, "'")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/^please,? /, "")
+    .replace(/[.!?,׳"'\s]+$/g, "")
+    .replace(/,? please$/, "")
+    .trim();
+  return STOP_WORDS.has(t);
 }
 
 function luhn(digits: string): boolean {

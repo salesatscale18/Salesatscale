@@ -107,22 +107,36 @@ export async function rollbackTo(db: Db, actor: Actor, accountId: string, versio
 // Deal state
 // ---------------------------------------------------------------------------
 
-export async function getDealState(db: Db, accountId: string, leadId: string) {
+/** Uncached read: the agent's tools re-read after their own writes. */
+export async function readDealState(db: Db, accountId: string, leadId: string) {
   const [d] = await db.select().from(dealStates).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, leadId)));
   return d ?? null;
 }
 
+/** Deduplicated within one server render (React cache); outside a render it reads every time. */
+export const getDealState = cache(readDealState);
+
 async function ensureDealState(db: Db, accountId: string, leadId: string) {
-  const existing = await getDealState(db, accountId, leadId);
+  const existing = await readDealState(db, accountId, leadId);
   if (existing) return existing;
   await db.insert(dealStates).values({ accountId, leadId }).onConflictDoNothing({ target: dealStates.leadId });
-  return (await getDealState(db, accountId, leadId))!;
+  return (await readDealState(db, accountId, leadId))!;
 }
 
 export type FieldUpdate = { key: string; value: string; provenance: "buyer" | "inferred" };
 
+/** A value that says nothing ("n/a", "unknown", "-", "?", "לא ידוע", empty): it cannot satisfy a gating field. */
+export function isPlaceholderValue(value: string): boolean {
+  const t = value.trim().toLowerCase();
+  if (/^[\p{P}\p{S}\s]*$/u.test(t)) return true; // empty, "-", "?", "..."
+  const core = t.replace(/[.!?\s]+$/g, "");
+  return PLACEHOLDERS.has(core);
+}
+const PLACEHOLDERS = new Set(["n/a", "na", "n.a", "none", "unknown", "tbd", "לא ידוע"]);
+
 /**
- * Agent updates: verified values (set by a person) are never overwritten.
+ * Agent updates: verified values (set by a person) are never overwritten, and
+ * placeholder values are refused for fields that gate a quote or the order form.
  * Returns the keys applied and the keys refused.
  */
 export async function applyAgentUpdates(
@@ -130,14 +144,17 @@ export async function applyAgentUpdates(
   extra: { nextStep?: string | null; objection?: { text: string; handled: boolean } | null } = {}, now = new Date(),
 ) {
   const state = await ensureDealState(db, accountId, leadId);
-  const valid = new Set(playbook.fields.map((f) => f.key));
+  const stageOf = new Map(playbook.fields.map((f) => [f.key, f.stage]));
   const fields = { ...state.fields };
   const applied: string[] = [];
   const unknown: string[] = [];
   const verified: string[] = [];
+  const placeholder: string[] = [];
   for (const u of updates) {
-    if (!valid.has(u.key)) { unknown.push(u.key); continue; }
+    const stage = stageOf.get(u.key);
+    if (!stage) { unknown.push(u.key); continue; }
     if (fields[u.key]?.provenance === "verified") { verified.push(u.key); continue; }
+    if ((stage === "before_quote" || stage === "before_order_form") && isPlaceholderValue(String(u.value ?? ""))) { placeholder.push(u.key); continue; }
     fields[u.key] = { value: u.value.slice(0, 300), provenance: u.provenance, updatedAt: now.toISOString() };
     applied.push(u.key);
   }
@@ -148,7 +165,7 @@ export async function applyAgentUpdates(
     .update(dealStates)
     .set({ fields, objections, nextStep: extra.nextStep === undefined ? state.nextStep : extra.nextStep?.slice(0, 200) ?? null })
     .where(eq(dealStates.id, state.id));
-  return { applied, unknown, verified };
+  return { applied, unknown, verified, placeholder, fields };
 }
 
 /** A person edits a field: it becomes Verified, and the change is logged (canvas: Main). */
@@ -366,15 +383,39 @@ export async function listTestConversations(db: Db, accountId: string, limit = 2
     .limit(limit);
 }
 
-export async function conversationMessages(db: Db, accountId: string, conversationId: string) {
-  const rows = await db
-    .select()
-    .from(messages)
-    .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId)))
-    .orderBy(asc(messages.createdAt));
-  const ids = rows.map((m) => m.id);
-  const calls = ids.length
-    ? await db.select().from(toolCalls).where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.messageId, ids))).orderBy(asc(toolCalls.sequence))
-    : [];
-  return rows.map((m) => ({ message: m, calls: calls.filter((c) => c.messageId === m.id) }));
+/** Most messages a conversation view shows: the latest ones. */
+export const THREAD_LIMIT = 100;
+
+type Message = typeof messages.$inferSelect;
+type ToolCall = typeof toolCalls.$inferSelect;
+
+/** Pairs messages (oldest first) with their tool calls, grouped by message id. */
+export function threadOf(rows: Message[], calls: ToolCall[]) {
+  const byMessage = new Map<string, ToolCall[]>();
+  for (const c of calls) {
+    if (!c.messageId) continue;
+    const list = byMessage.get(c.messageId);
+    if (list) list.push(c);
+    else byMessage.set(c.messageId, [c]);
+  }
+  for (const list of byMessage.values()) list.sort((a, b) => a.sequence - b.sequence);
+  return rows.map((m) => ({ message: m, calls: byMessage.get(m.id) ?? [] }));
 }
+
+/**
+ * The last THREAD_LIMIT messages of a conversation, oldest first, each with
+ * its tool calls. Tool calls are read by conversation id (indexed), in
+ * parallel with the messages. Deduplicated within one server render.
+ */
+export const conversationMessages = cache(async (db: Db, accountId: string, conversationId: string) => {
+  const [latest, calls] = await Promise.all([
+    db.select().from(messages)
+      .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId)))
+      .orderBy(desc(messages.createdAt), desc(messages.id))
+      .limit(THREAD_LIMIT),
+    db.select().from(toolCalls)
+      .where(and(eq(toolCalls.accountId, accountId), eq(toolCalls.conversationId, conversationId)))
+      .orderBy(asc(toolCalls.sequence)),
+  ]);
+  return threadOf(latest.reverse(), calls);
+});

@@ -67,7 +67,9 @@ describe("agent turns (scripted model)", () => {
     const llm = new ScriptedLlm([
       (req: LlmRequest) => { seenSystem = req.system[0]; return { content: [use("t1", "update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "2", provenance: "buyer" }], next_step: "quote", objection: null }), use("t2", "search_catalog", { query: "sensor" })] }; },
       (req: LlmRequest) => {
-        expect(req.system[1]).toContain("Still needed before a quote: nothing.");
+        // The deal-state context is fixed for the turn; the tool result says what is still needed now.
+        const saved = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
+        expect(saved).toMatchObject({ saved: ["business_type", "sites"], still_needed_before_quote: [] });
         return { content: [use("t3", "create_quote", { lines: [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], discount_percent: 0, sites: 2 })] };
       },
       step(say("Your quote Q-1001 is ₪4,860.00 plus ₪180.00/month.")),
@@ -75,6 +77,26 @@ describe("agent turns (scripted model)", () => {
     const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "We run 2 restaurant kitchens with 6 fridges. Price?" });
     expect(r).toMatchObject({ status: "replied", calls: 3 });
     expect(seenSystem).toContain("Polar assistant");
+    // system[1] (deal-state context) is computed once per turn: identical in every round.
+    expect(llm.requests).toHaveLength(3);
+    expect(new Set(llm.requests.map((q) => q.system[1])).size).toBe(1);
+    expect(llm.requests[0].system[1]).toContain("Still needed before a quote: Business type, Number of sites.");
+    // One cache breakpoint on the last history block of every request, none earlier.
+    for (const q of llm.requests) {
+      const blocks = q.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])) as { cache_control?: unknown }[];
+      const last = q.messages.at(-1)!.content as { cache_control?: unknown }[];
+      expect(Array.isArray(last)).toBe(true);
+      expect(last.at(-1)?.cache_control).toEqual({ type: "ephemeral" });
+      expect(blocks.filter((b) => b.cache_control)).toHaveLength(1);
+    }
+    expect(llm.requests[0].messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "We run 2 restaurant kitchens with 6 fridges. Price?", cache_control: { type: "ephemeral" } }] });
+    // End-of-turn writes: agent message, its calls (linked by id) and the conversation's updated_at.
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
+    const [agentMsg] = await db.select().from(messages).where(and(eq(messages.conversationId, c.conversationId), eq(messages.actor, "agent")));
+    expect(r.status === "replied" && r.messageId).toBe(agentMsg.id);
+    expect(agentMsg.usage).toMatchObject({ inputTokens: 30, outputTokens: 15, model: "scripted" });
+    expect(conv.updatedAt.getTime()).toBeGreaterThanOrEqual(conv.createdAt.getTime());
+    expect((await db.select().from(toolCalls).where(eq(toolCalls.messageId, agentMsg.id)))).toHaveLength(3);
     const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
     expect(calls.map((x) => [x.sequence, x.name, x.outcome])).toEqual([[1, "update_deal_state", "ok"], [2, "search_catalog", "ok"], [3, "create_quote", "ok"]]);
     expect(calls[2].result).toMatchObject({ quote: "Q-1001 v1", due_on_signing: "₪4,860.00", monthly: "₪180.00/month" });
@@ -257,5 +279,142 @@ describe("agent turns (scripted model)", () => {
     const statuses = Object.fromEntries((await listVersions(db, acc)).map((v) => [v.version, v.status]));
     expect(statuses).toEqual({ 1: "live", 2: "retired" });
     expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc)))[0].maxDiscountBp).toBe(700);
+  });
+
+  it("record_opt_out: an opt-out in other words opts the lead out, closes the chat and sends the fixed reply", async () => {
+    const c = await newConv();
+    const llm = new ScriptedLlm([
+      step(use("o", "record_opt_out", { reason: "Please never write to me again" })),
+      (req: LlmRequest) => {
+        const res = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
+        expect(res).toMatchObject({ ok: true, reply: "Understood. We won't contact you again. Have a good day." });
+        return { content: [say("Sorry to see you go! Maybe a discount?")] };
+      },
+    ]);
+    const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "Please never write to me again" });
+    expect(r).toMatchObject({ status: "replied", text: "Understood. We won't contact you again. Have a good day.", calls: 1 });
+    const [lead] = await db.select().from(leads).where(eq(leads.id, c.leadId));
+    expect(lead.status).toBe("opted_out");
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
+    expect(conv.status).toBe("closed");
+    const [call] = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
+    expect(call).toMatchObject({ name: "record_opt_out", outcome: "ok" });
+    expect((await runBuyerTurn(db, new ScriptedLlm([]), { accountId: acc, conversationId: c.conversationId, text: "hello?" })).status).toBe("opted_out");
+    // Hebrew chat gets the Hebrew fixed reply.
+    const he = await newConv("he");
+    const r2 = await runBuyerTurn(db, new ScriptedLlm([step(use("o2", "record_opt_out", { reason: "לא רוצה הודעות" })), step(say("ok"))]), { accountId: acc, conversationId: he.conversationId, text: "אני לא רוצה לקבל מכם הודעות" });
+    expect(r2).toMatchObject({ status: "replied", text: "הבנתי, לא נפנה אליך שוב. יום טוב." });
+  });
+
+  it("broadened opt-out phrases opt out without calling the model", async () => {
+    for (const text of ["Stop messaging me!", "תפסיקו לשלוח"]) {
+      const c = await newConv(text.startsWith("S") ? "en" : "he");
+      const llm = new ScriptedLlm([]);
+      const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text });
+      expect(r.status).toBe("replied");
+      expect(llm.requests).toHaveLength(0);
+      expect((await db.select().from(leads).where(eq(leads.id, c.leadId)))[0].status).toBe("opted_out");
+    }
+  });
+
+  it("placeholder values do not satisfy gating fields, and create_quote stays refused", async () => {
+    const c = await newConv();
+    const llm = new ScriptedLlm([
+      step(use("p1", "update_deal_state", { updates: [
+        { key: "business_type", value: "n/a", provenance: "inferred" }, { key: "sites", value: " Unknown ", provenance: "inferred" },
+        { key: "decision_maker", value: "לא ידוע", provenance: "inferred" },
+      ], next_step: null, objection: null })),
+      (req: LlmRequest) => {
+        const res = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
+        expect(res).toMatchObject({ ok: true, saved: [], rejected_placeholder: ["business_type", "sites", "decision_maker"] });
+        return { content: [use("p2", "create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, sites: null })] };
+      },
+      step(say("What kind of business is it?")),
+    ]);
+    await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "just quote" });
+    expect((await getDealState(db, acc, c.leadId))?.fields ?? {}).toEqual({});
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
+    expect(calls.map((x) => [x.name, x.outcome, x.rule])).toEqual([["update_deal_state", "ok", null], ["create_quote", "refused", "Before-quote fields missing"]]);
+    expect(await db.select().from(quotes).where(eq(quotes.leadId, c.leadId))).toEqual([]);
+  });
+
+  it("a paused account gets 'paused' with no model call; the message is kept and STOP still works", async () => {
+    const c = await newConv();
+    await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, acc));
+    try {
+      const llm = new ScriptedLlm([]);
+      expect(await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "hi there" })).toEqual({ status: "paused" });
+      expect(llm.requests).toHaveLength(0);
+      const thread = await conversationMessages(db, acc, c.conversationId);
+      expect(thread.map((x) => [x.message.actor, x.message.body])).toEqual([["buyer", "hi there"]]);
+      expect((await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "STOP" })).status).toBe("replied");
+      expect((await db.select().from(leads).where(eq(leads.id, c.leadId)))[0].status).toBe("opted_out");
+    } finally {
+      await db.update(sellerAccounts).set({ status: "setting_up" }).where(eq(sellerAccounts.id, acc));
+    }
+  });
+
+  it("a hand-off during the turn keeps the lead with a person (no move to agent_handling)", async () => {
+    const c = await newConv();
+    await runBuyerTurn(db, new ScriptedLlm([
+      step(use("h1", "hand_off_to_human", { reason: "asks for a person", summary: "", suggested_reply: "" })),
+      step(say("A person will continue.")),
+    ]), { accountId: acc, conversationId: c.conversationId, text: "a human please" });
+    expect((await db.select().from(leads).where(eq(leads.id, c.leadId)))[0].status).toBe("human_handling");
+  });
+
+  it("a conversation thread shows the latest 100 messages, oldest first, each with its own tool calls", async () => {
+    const c = await newConv();
+    const base = Date.now() - 1_000_000;
+    const rows = Array.from({ length: 105 }, (_, i) => ({
+      id: crypto.randomUUID(), accountId: acc, conversationId: c.conversationId, actor: i % 2 ? "agent" : "buyer", body: `m${i}`, createdAt: new Date(base + i * 1000),
+    }));
+    await db.insert(messages).values(rows);
+    await db.insert(toolCalls).values([
+      { accountId: acc, conversationId: c.conversationId, messageId: rows[103].id, sequence: 2, name: "check_fit", input: {}, result: {}, outcome: "ok" as const },
+      { accountId: acc, conversationId: c.conversationId, messageId: rows[103].id, sequence: 1, name: "search_catalog", input: {}, result: {}, outcome: "ok" as const },
+      { accountId: acc, conversationId: c.conversationId, messageId: rows[1].id, sequence: 1, name: "lookup_knowledge", input: {}, result: {}, outcome: "ok" as const },
+    ]);
+    const thread = await conversationMessages(db, acc, c.conversationId);
+    expect(thread).toHaveLength(100);
+    expect(thread[0].message.body).toBe("m5");
+    expect(thread.at(-1)!.message.body).toBe("m104");
+    expect(thread.find((x) => x.message.body === "m103")!.calls.map((x) => x.name)).toEqual(["search_catalog", "check_fit"]);
+    expect(thread.filter((x) => x.calls.length).map((x) => x.message.body)).toEqual(["m103"]);
+    expect(await conversationMessages(db, other, c.conversationId)).toEqual([]);
+  });
+
+  it("tools reuse the turn's memo: catalog and facts load once, create_quote prices with the loaded account", async () => {
+    const { runTool } = await import("@/lib/agent/tools");
+    const c = await newConv();
+    const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc));
+    const draft = await ensureDraftVersion(db, acc);
+    const memo: import("@/lib/agent/tools").TurnMemo = { account: { ...account, maxDiscountBp: 0 } };
+    const ctx = (callId: string) => ({ db, accountId: acc, conversationId: c.conversationId, leadId: c.leadId, playbook: draft.playbook, currency: "ILS", callId, memo });
+    await runTool("search_catalog", { query: "" }, ctx("m1"));
+    const firstCatalog = memo.catalog;
+    expect(firstCatalog).toBeInstanceOf(Promise);
+    await runTool("check_fit", { lines: [{ sku: "GW-10", qty: 1 }], sites: 1 }, ctx("m2"));
+    expect(memo.catalog).toBe(firstCatalog);
+    await runTool("lookup_knowledge", { query: "warranty" }, ctx("m3"));
+    const firstFacts = memo.facts;
+    await runTool("lookup_knowledge", { query: "sensor warranty" }, ctx("m4"));
+    expect(memo.facts).toBe(firstFacts);
+    await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, ctx("m5"));
+    // The memo account (limit 0%) is used, not a re-read (limit 7%): a 5% discount needs approval.
+    const q = await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, ctx("m6"));
+    expect(q.result).toMatchObject({ ok: true, status: "awaiting_seller_approval" });
+    // Without a memo the account is read from the database (limit 7%): ready.
+    const c2 = await newConv();
+    const plain = (callId: string) => ({ db, accountId: acc, conversationId: c2.conversationId, leadId: c2.leadId, playbook: draft.playbook, currency: "ILS", callId });
+    await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, plain("n1"));
+    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, plain("n2"))).result).toMatchObject({ status: "ready" });
+    // Rows of another account in the memo are ignored.
+    const c3 = await newConv();
+    const [otherAcc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, other));
+    const foreign = { account: { ...otherAcc, maxDiscountBp: 0 } };
+    const fctx = (callId: string) => ({ ...plain(callId), conversationId: c3.conversationId, leadId: c3.leadId, memo: foreign });
+    await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, fctx("f1"));
+    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1 }, fctx("f2"))).result).toMatchObject({ status: "ready" });
   });
 });

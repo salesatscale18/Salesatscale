@@ -123,6 +123,14 @@ describe("knowledge rules", () => {
 describe("safety", () => {
   it.each(["STOP", "stop.", " Unsubscribe ", "הסר", "הסירו אותי", "Remove me!"])("%s is an opt-out", (t) => expect(isOptOut(t)).toBe(true));
   it.each(["don't stop now", "How do I stop alerts?", "stop by tomorrow?", ""])("%s is not", (t) => expect(isOptOut(t)).toBe(false));
+  it.each([
+    "stop messaging me", "Stop messaging me!", "Unsubscribe me", "unsubscribe me please", "Please unsubscribe me.", "Don't contact me",
+    "Don’t contact me!", "do not contact me again", "Leave me alone", "תפסיקו לשלוח", "תפסיקו לשלוח לי!", "אל תפנו אליי", "אל תפנו אלי.",
+  ])("broadened: %s is an opt-out", (t) => expect(isOptOut(t)).toBe(true));
+  it.each([
+    "stop messaging me about the old offer, send the new one", "Don't contact me before Monday", "how do I unsubscribe me from the reports?",
+    "please stop the alarm", "תפסיקו לשלוח לי את המחירון הישן, שלחו את החדש", "אל תפנו אליי לפני יום ראשון", "Stop sending the wrong sensor",
+  ])("broadened: %s is not", (t) => expect(isOptOut(t)).toBe(false));
   it("masks valid card numbers only", () => {
     expect(maskCardNumbers("my card 4111 1111 1111 1111 exp 12/29")).toEqual({ text: "my card [card number removed …1111] exp 12/29", found: true });
     expect(maskCardNumbers("order 1234 5678 9012 3456").found).toBe(false); // fails Luhn
@@ -162,5 +170,63 @@ describe("trace lines", async () => {
       .toBe("Q-1001 v1: ₪100.00 due on signing (awaiting your approval)");
     expect(describeCall("lookup_knowledge", { query: "warranty" }, { facts: [{ topic: "Warranty", source: "Sheet" }] }, "ok").got).toBe("Warranty (Sheet)");
     expect(describeCall("update_deal_state", { updates: [{ key: "sites", value: "1" }] }, { saved: [], kept_verified: ["sites"] }, "ok").got).toBe("Saved 0; kept verified: sites");
+    expect(describeCall("update_deal_state", { updates: [{ key: "sites", value: "n/a" }] }, { saved: [], rejected_placeholder: ["sites"] }, "ok").got).toBe("Saved 0; not saved (no real value): sites");
+    expect(describeCall("record_opt_out", { reason: "never write again" }, { ok: true }, "ok")).toEqual({ label: "lead.opt_out", sent: "never write again", got: "Opted out; the chat is closed", missing: [] });
+  });
+});
+
+describe("opt-out tool and prompt", async () => {
+  const { TOOL_DEFS } = await import("@/lib/agent/tools");
+  it("record_opt_out has a strict { reason } schema, and the prompt tells the model to use it for any wording", () => {
+    const def = TOOL_DEFS.find((d) => d.name === "record_opt_out");
+    expect(def).toMatchObject({ strict: true, input_schema: { type: "object", required: ["reason"], additionalProperties: false } });
+    expect(Object.keys((def!.input_schema as { properties: object }).properties)).toEqual(["reason"]);
+    const p = stableSystemPrompt(pb, { tradeName: "Polar", currency: "ILS", languages: ["en"] });
+    expect(p).toContain("in any wording or language");
+    expect(p).toContain("call record_opt_out");
+  });
+});
+
+describe("placeholder values", async () => {
+  const { isPlaceholderValue } = await import("@/lib/agent/service");
+  it.each(["n/a", "N/A", "na", "None", "unknown", " Unknown. ", "-", "?", "??", "tbd", "TBD", "לא ידוע", "", "   "])("%j is a placeholder", (v) => expect(isPlaceholderValue(v)).toBe(true));
+  it.each(["2", "Restaurant", "None of your business? no: Cafe", "Unknown Pleasures Bar", "Owner", "מסעדה", "0"])("%j is a real value", (v) => expect(isPlaceholderValue(v)).toBe(false));
+});
+
+describe("prompt caching", async () => {
+  const { buildRequestParams, countCacheBreakpoints, MAX_CACHE_BREAKPOINTS, withHistoryCacheBreakpoint } = await import("@/lib/agent/llm");
+  type Msg = Parameters<typeof withHistoryCacheBreakpoint>[0][number];
+  const history: Msg[] = [
+    { role: "user", content: "hello" },
+    { role: "assistant", content: [{ type: "thinking", thinking: "", signature: "sig" }, { type: "tool_use", id: "t1", name: "search_catalog", input: { query: "" } }] },
+    { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "{}" }] },
+  ];
+
+  it("puts one breakpoint on the last history block without changing the input", () => {
+    const before = structuredClone(history);
+    const out = withHistoryCacheBreakpoint(history);
+    expect(history).toEqual(before);
+    expect(out.at(-1)).toEqual({ role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "{}", cache_control: { type: "ephemeral" } }] });
+    expect(out[1]).toEqual(history[1]); // thinking blocks pass through unchanged
+    expect(out[0]).toEqual({ role: "user", content: "hello" });
+  });
+
+  it("turns a string-content last message into a text block, and moves the breakpoint forward", () => {
+    const first = withHistoryCacheBreakpoint([{ role: "user", content: "hi" }]);
+    expect(first).toEqual([{ role: "user", content: [{ type: "text", text: "hi", cache_control: { type: "ephemeral" } }] }]);
+    // An earlier breakpoint is dropped: only the last block keeps one.
+    const next = withHistoryCacheBreakpoint([...first, { role: "assistant", content: "ok" }, { role: "user", content: "and?" }]);
+    expect(next[0]).toEqual({ role: "user", content: [{ type: "text", text: "hi" }] });
+    expect(next.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "and?", cache_control: { type: "ephemeral" } }] });
+  });
+
+  it("the AnthropicLlm request keeps fallbacks and effort, caches system[0] and the last history block, within the breakpoint limit", () => {
+    const params = buildRequestParams({ model: "claude-opus-5-5", effort: "medium", system: ["stable", "per turn"], tools: [], messages: history });
+    expect(params).toMatchObject({ model: "claude-opus-5-5", betas: ["server-side-fallback-2026-07-01"], fallbacks: "default", output_config: { effort: "medium" } });
+    expect(params.system).toEqual([{ type: "text", text: "stable", cache_control: { type: "ephemeral" } }, { type: "text", text: "per turn" }]);
+    const last = params.messages.at(-1)!.content as { cache_control?: unknown }[];
+    expect(last.at(-1)!.cache_control).toEqual({ type: "ephemeral" });
+    expect(countCacheBreakpoints(params)).toBe(2);
+    expect(countCacheBreakpoints(params)).toBeLessThanOrEqual(MAX_CACHE_BREAKPOINTS);
   });
 });

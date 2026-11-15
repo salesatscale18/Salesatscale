@@ -165,14 +165,17 @@ export async function latestConversationForLead(db: Db, accountId: string, leadI
 }
 
 export async function conversationView(db: Db, accountId: string, conv: Conversation): Promise<ConversationView> {
-  const thread = await conversationMessages(db, accountId, conv.id);
+  // Messages (with their tool calls) and the suggested reply load in parallel.
+  const [thread, suggested] = await Promise.all([
+    conversationMessages(db, accountId, conv.id),
+    conv.status === "human" ? latestSuggestedReply(db, accountId, conv.leadId) : Promise.resolve(null),
+  ]);
   const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId)].filter((x): x is string => !!x))];
   const people = ids.length
     ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email }).from(users).where(inArray(users.id, ids))
     : [];
   const authors = Object.fromEntries(people.map((p) => [p.id, p]));
   // Prefill only until a person has replied after that hand-off.
-  const suggested = conv.status === "human" ? await latestSuggestedReply(db, accountId, conv.leadId) : null;
   const answered = suggested && thread.some(({ message: m }) => m.actor === "human" && m.createdAt >= suggested.at);
   return {
     conversation: conv,
