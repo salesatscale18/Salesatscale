@@ -309,6 +309,15 @@ test("7. Lead 3: the price changes before signing; the buyer accepts the new tot
   await expect(buyer.getByRole("heading", { name: /here is your order/ })).toBeVisible();
   const newUrl = buyer.url();
   expect(newUrl).not.toBe(links.l3);
+  // Sign the updated offer (no payment yet): it becomes the third order.
+  await buyer.locator("#f-company_id").fill("512345670");
+  await buyer.locator("#f-billing_address").fill("3 Herzl St, Haifa");
+  await buyer.locator("#f-delivery_address").fill("3 Herzl St, Haifa").catch(() => undefined);
+  await buyer.locator("#f-invoice_email").fill("dana@deli.test");
+  await buyer.locator("#f-role").fill("Owner").catch(() => undefined);
+  await buyer.locator('input[name="agreed"]').check();
+  await buyer.getByRole("button", { name: "Sign and continue to payment" }).click();
+  await expect(buyer.getByText(/Signed by Dana Mizrahi/)).toBeVisible();
   // The old link now says the offer was updated.
   await buyer.goto(links.l3);
   await expect(buyer.getByText("The offer was updated")).toBeVisible();
@@ -329,7 +338,7 @@ test("9. Orders, overview and admin activity add up", async () => {
   await expect(page.locator("tbody tr")).toHaveCount(3);
   await expect(page.locator("tbody").getByText("Paid")).toHaveCount(2);
   await page.goto(appBase);
-  await expect(page.getByText("Nothing needs you right now.").or(page.getByText("Order form not signed"))).toBeVisible();
+  await expect(page.getByText("Nothing needs you right now.").first()).toBeVisible();
   await page.goto(`/sadmin`);
   await expect(page.getByText("account.went_live").or(page.getByText(/went live/i)).first()).toBeVisible();
 });
