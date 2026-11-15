@@ -104,3 +104,24 @@ export function customPricesOf(lines: { sku: string; chargeType: string; unitPri
   for (const l of lines) if (l.priceSource === "custom" && l.unitPriceMinor !== null) out[`${l.sku}:${l.chargeType}`] = l.unitPriceMinor;
   return out;
 }
+
+/**
+ * The buyer's removals that take effect (stored on the version as
+ * removed_auto_add): SKUs that only removable "Add automatically with" rules
+ * add. A SKU any rule adds as required is never removed, and a SKU the request
+ * itself holds is on the quote, so it is not a removal. A removal stays stored
+ * while its product is off the quote, so it holds if the product comes back.
+ */
+export function effectiveRemovals(rules: AutoAddRule[], requested: readonly string[] | undefined, lineSkus: readonly string[]): string[] {
+  if (!requested?.length) return [];
+  const removable = new Map<string, boolean>();
+  for (const r of rules) removable.set(r.sku, (removable.get(r.sku) ?? true) && r.removable);
+  const onQuote = new Set(lineSkus);
+  const out: string[] = [];
+  for (const sku of requested) {
+    if (typeof sku !== "string" || out.includes(sku) || onQuote.has(sku) || removable.get(sku) !== true) continue;
+    out.push(sku);
+    if (out.length >= 50) break;
+  }
+  return out;
+}

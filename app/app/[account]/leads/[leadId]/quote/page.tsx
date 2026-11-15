@@ -33,7 +33,8 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
 
   const current = from?.versions[0];
   // Lines a rule added are left to the rule again (and give back the site count).
-  const start = editorStart(current?.lines ?? [], catalog ? catalogAutoAdd(catalog) : []);
+  const start = editorStart(current?.lines ?? [], catalog ? catalogAutoAdd(catalog) : [], current?.version.removedAutoAdd ?? []);
+  const initialRemoved = start.removed ?? [];
   const initialQty = start.qty;
   const entryBySku = new Map((priceList?.entries ?? []).map((e) => [e.sku, e]));
   const items: EditorItem[] = (catalog?.items ?? []).filter((i) => i.active).map((i) => {
@@ -45,7 +46,7 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
   });
   const cv = current?.version;
   const initialPreview = catalog && priceList && from && cv
-    ? await buildPreview(appDb, account, leadId, { lines: Object.entries(initialQty).map(([sku, qty]) => ({ sku, qty })), discountBp: cv.discountBp, sites: start.sites }, from.quote.id)
+    ? await buildPreview(appDb, account, leadId, { lines: Object.entries(initialQty).map(([sku, qty]) => ({ sku, qty })), discountBp: cv.discountBp, sites: start.sites, removedByBuyer: initialRemoved }, from.quote.id)
     : undefined;
 
   return (
@@ -91,6 +92,7 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
           validDays={QUOTE_VALID_DAYS}
           initialPreview={initialPreview}
           initialSites={start.sites ? String(start.sites) : ""}
+          initialRemoved={initialRemoved}
         />
       )}
     </main>

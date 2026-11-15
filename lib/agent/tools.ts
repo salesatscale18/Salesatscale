@@ -90,8 +90,17 @@ export const TOOL_DEFS: ToolDef[] = [
     strict: true,
     input_schema: {
       type: "object",
-      properties: { lines: lineSchema, discount_percent: { type: "number" }, sites: { type: ["integer", "null"] } },
-      required: ["lines", "discount_percent", "sites"],
+      properties: {
+        lines: lineSchema,
+        discount_percent: { type: "number" },
+        sites: { type: ["integer", "null"] },
+        remove_auto_added: {
+          type: ["array", "null"],
+          items: { type: "string" },
+          description: "SKUs of lines added automatically that the buyer explicitly asked to remove. Only lines marked buyer_can_remove are removed; null otherwise.",
+        },
+      },
+      required: ["lines", "discount_percent", "sites", "remove_auto_added"],
       additionalProperties: false,
     },
   },
@@ -339,10 +348,13 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     const pct = typeof args.discount_percent === "number" ? args.discount_percent : 0;
     const sites = typeof args.sites === "number" ? args.sites : undefined;
+    const removeAsked = Array.isArray(args.remove_auto_added)
+      ? [...new Set(args.remove_auto_added.filter((s): s is string => typeof s === "string").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 50)
+      : [];
     // The memo's market, catalog and price list (read once per turn); createQuote ignores them if they are not this lead's.
     const preloaded = ctx.memo ? { account: ctx.memo.account, context: await pricingOf(ctx) } : undefined;
     const r = await createQuote(ctx.db, ctx.accountId, { kind: "agent" }, ctx.leadId, {
-      lines, discountBp: Math.round(pct * 100), sites, idempotencyKey: `tool:${ctx.callId}`, preloaded,
+      lines, discountBp: Math.round(pct * 100), sites, removedByBuyer: removeAsked, idempotencyKey: `tool:${ctx.callId}`, preloaded,
     });
     if (!r.ok) {
       if (r.reason === "fit") return refuse("Fit check failed", { problems: r.problems });
@@ -358,11 +370,17 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const money = moneyIn(v.currency);
     const period = v.recurringPeriod === "year" ? "year" : "month";
     const awaiting = r.quote.status === "awaiting_approval";
+    // Only lines that removable rules add can be removed; the rest stay on the quote.
+    const cannotRemove = removeAsked.filter((s) => !v.removedAutoAdd.includes(s));
     return {
       outcome: "ok",
       result: {
         ok: true,
         quote: `Q-${r.quote.number} v${v.version}`,
+        ...(v.removedAutoAdd.length ? { removed_at_buyer_request: v.removedAutoAdd } : {}),
+        ...(cannotRemove.length
+          ? { cannot_remove: cannotRemove, cannot_remove_message: `These lines cannot be removed and stay on the quote: ${cannotRemove.join(", ")}. Tell the buyer they are required.` }
+          : {}),
         status: awaiting ? "awaiting_seller_approval" : "ready",
         due_on_signing: awaiting && v.approvalReasons.some((x) => x.kind === "price_missing") ? "to be priced by the seller" : money(v.oneTimeTotalMinor),
         // "monthly" stays for the trace (lib/agent/trace.ts); "recurring" also covers yearly prices.

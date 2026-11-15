@@ -1385,5 +1385,10 @@
   "quote.editor.not_sold": "Not sold in this market",
   "quote.editor.charge": "Charge",
   "quote.editor.auto_added": "Added automatically",
-  "quote.editor.refused.not_sold": "{sku} is not sold in this lead's market. Remove it, or add it to the market's price list."
+  "quote.editor.refused.not_sold": "{sku} is not sold in this lead's market. Remove it, or add it to the market's price list.",
+  "quote.editor.remove_for_buyer": "Remove at the buyer's request",
+  "quote.editor.removed_by_buyer": "Removed at the buyer's request",
+  "quote.editor.add_back": "Add back",
+  "quote.editor.required_with": "Required with {item}. You can discount it within your limits.",
+  "quote.editor.required": "Required. You can discount it within your limits."
 }

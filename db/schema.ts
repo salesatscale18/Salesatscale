@@ -519,6 +519,11 @@ export const quoteVersions = pgTable(
     marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     /** The price list version this quote was priced from (frozen). Null on quotes priced from catalog prices. */
     priceListId: uuid("price_list_id").references((): AnyPgColumn => priceLists.id),
+    /**
+     * SKUs of auto-added lines removed at the buyer's request (removable rules
+     * only). A new version inherits them unless its input says otherwise.
+     */
+    removedAutoAdd: text("removed_auto_add").array().notNull().default(sql`'{}'::text[]`),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

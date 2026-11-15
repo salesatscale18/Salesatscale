@@ -41,6 +41,8 @@ export function QuoteEditor(props: {
   /** Server-computed preview of the initial lines (a new version), so prices show before the first edit. */
   initialPreview?: QuotePreview;
   initialSites?: string;
+  /** SKUs of auto-added lines removed at the buyer's request (the version's removals). */
+  initialRemoved?: string[];
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [preview, setPreview] = useState<QuotePreview>(props.initialPreview ?? { status: "empty" });
@@ -50,6 +52,7 @@ export function QuoteEditor(props: {
   const [order, setOrder] = useState<string[]>(() => Object.keys(props.initialQty));
   const [sites, setSites] = useState(props.initialSites ?? "");
   const [discount, setDiscount] = useState(props.initialDiscount);
+  const [removed, setRemoved] = useState<string[]>(() => props.initialRemoved ?? []);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ok = preview.status === "ok" ? preview : null;
   const currency = ok?.currency ?? props.currency;
@@ -63,10 +66,12 @@ export function QuoteEditor(props: {
       const fd = new FormData(formRef.current);
       startTransition(async () => setPreview(await previewQuoteAction(fd)));
     }, 250);
-  }, [qty, sites, discount]);
+  }, [qty, sites, discount, removed]);
 
   const add = (sku: string, n = 1) => {
     if (!bySku.get(sku)?.sold) return;
+    // Picked by the seller: it is on the quote, so it is no longer a removal.
+    setRemoved((r) => r.filter((s) => s !== sku));
     setOrder((o) => (o.includes(sku) ? o : [...o, sku]));
     setQty((q) => ({ ...q, [sku]: String((Number(q[sku]) || 0) + n) }));
   };
@@ -78,7 +83,12 @@ export function QuoteEditor(props: {
   const linesOf = (sku: string) => ok?.lines.filter((l) => l.sku === sku) ?? [];
   /** Lines the engine added that the seller did not pick (shown read-only). */
   const autoOnly = (ok?.lines ?? []).filter((l) => l.autoAdded && !order.includes(l.sku));
-  const autoSkus = [...new Set(autoOnly.map((l) => l.sku))];
+  const autoSkus = [...new Set(autoOnly.map((l) => l.sku))].filter((s) => !removed.includes(s));
+  /** Removed at the buyer's request and added by a rule now (or until the preview catches up). */
+  const removedRows = removed.flatMap((sku) => {
+    const name = ok?.removed.find((r) => r.sku === sku)?.name ?? autoOnly.find((l) => l.sku === sku)?.name;
+    return name !== undefined ? [{ sku, name }] : [];
+  });
   const overLimit = Number(discount) > props.maxDiscountPct;
   const red = ok?.fitProblems.length ?? 0;
   const amber = ok?.approval.length ?? 0;
@@ -124,6 +134,8 @@ export function QuoteEditor(props: {
       <input type="hidden" name="leadId" value={props.leadId} />
       <input type="hidden" name="idem" value={props.idem} />
       {props.fromQuote ? <input type="hidden" name="fromQuote" value={props.fromQuote} /> : null}
+      <input type="hidden" name="removedSet" value="1" />
+      {removed.map((sku) => <input key={sku} type="hidden" name="removed" value={sku} />)}
       <div className="sas-split__main">
         <section className="sas-panel" style={{ overflow: "hidden" }} aria-labelledby="qe-items">
           <div className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
@@ -181,11 +193,28 @@ export function QuoteEditor(props: {
                   {autoSkus.map((sku) => {
                     const ls = autoOnly.filter((l) => l.sku === sku);
                     const cells = fromPreview(ls);
+                    const removable = ls.every((l) => l.removable);
+                    const requiredWith = ls.find((l) => l.requiredWith)?.requiredWith;
                     return (
-                      <tr key={`auto-${sku}`} style={{ verticalAlign: "top" }} data-auto-added="true">
+                      <tr key={`auto-${sku}`} style={{ verticalAlign: "top" }} data-auto-added="true" data-removable={removable ? "true" : "false"}>
                         <td>
                           <strong>{ls[0].name}</strong> <span className="sas-chip">{sku}</span>
                           <div className="sas-small"><Icon name="plus" /> {t("quote.editor.auto_added")}</div>
+                          {removable ? (
+                            <div style={{ marginTop: 4 }}>
+                              <button
+                                type="button" id={`q-rm-${sku}`} className={buttonClass("secondary", "sm")} title={t("quote.editor.remove_for_buyer")}
+                                aria-label={`${t("quote.editor.remove")} ${ls[0].name}: ${t("quote.editor.remove_for_buyer")}`}
+                                onClick={() => setRemoved((r) => (r.includes(sku) ? r : [...r, sku]))}
+                              >
+                                <Icon name="x" />{t("quote.editor.remove")}
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="sas-hint" id={`q-req-${sku}`} style={{ maxWidth: "34ch" }}>
+                              {requiredWith ? t("quote.editor.required_with", { item: requiredWith }) : t("quote.editor.required")}
+                            </div>
+                          )}
                         </td>
                         {chargeCells(cells)}
                         <td className="sas-num">{ls[0].qty}</td>
@@ -194,6 +223,28 @@ export function QuoteEditor(props: {
                       </tr>
                     );
                   })}
+                  {removedRows.map(({ sku, name }) => (
+                    <tr key={`removed-${sku}`} style={{ verticalAlign: "top" }} data-removed="true">
+                      <td>
+                        <span style={{ textDecoration: "line-through", color: "var(--ink-muted)" }}><strong>{name}</strong></span> <span className="sas-chip">{sku}</span>
+                        <div className="sas-small">{t("quote.editor.removed_by_buyer")}</div>
+                        <div style={{ marginTop: 4 }}>
+                          <button
+                            type="button" id={`q-back-${sku}`} className={buttonClass("secondary", "sm")}
+                            aria-label={`${t("quote.editor.add_back")} ${name}`}
+                            onClick={() => setRemoved((r) => r.filter((s) => s !== sku))}
+                          >
+                            <Icon name="plus" />{t("quote.editor.add_back")}
+                          </button>
+                        </div>
+                      </td>
+                      <td className="sas-small">—</td>
+                      <td className="sas-num" style={{ textAlign: "end" }}>—</td>
+                      <td className="sas-num">0</td>
+                      <td className="sas-num" style={{ textAlign: "end" }}>—</td>
+                      <td />
+                    </tr>
+                  ))}
                 </tbody>
               </table>
             </div>

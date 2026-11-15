@@ -1,0 +1,1 @@
+ALTER TABLE "quote_versions" ADD COLUMN "removed_auto_add" text[] DEFAULT '{}'::text[] NOT NULL;

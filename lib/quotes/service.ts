@@ -17,8 +17,9 @@ import { writeAudit } from "@/lib/accounts/audit";
 import { approvalReasonText, type PricingError, type QuoteRequestLine } from "@/lib/catalog/pricing";
 import { checkFit, type FitResult } from "@/lib/catalog/fit";
 import { priceWithList, type EngineResult } from "@/lib/pricing/engine";
+import { applyAutoAdd } from "@/lib/pricing/auto-add";
 import {
-  catalogAutoAdd, contextFits, customsFor, customPricesOf, engineItems, enginePriceList, pricingContext, requestLinesOf,
+  catalogAutoAdd, contextFits, customsFor, customPricesOf, effectiveRemovals, engineItems, enginePriceList, pricingContext, requestLinesOf,
   type PricingContext, type PublishedCatalog,
 } from "./pricing";
 
@@ -35,8 +36,10 @@ export type QuoteInput = {
   /** Site count from the deal state, for per-site fit and auto-add rules. */
   sites?: number;
   /**
-   * SKUs the buyer asked to remove (auto-added lines). Not stored: quote
-   * versions have no column for it yet, so it applies to this pricing only.
+   * SKUs of auto-added lines the buyer asked to remove. Only SKUs that
+   * removable rules add take effect; those are stored on the version
+   * (removed_auto_add). Left out on a new version: the current version's
+   * removals carry over. An empty list clears them.
    */
   removedByBuyer?: string[];
   idempotencyKey?: string;
@@ -70,7 +73,13 @@ export type PricingPreload = {
 };
 
 type Priced = Extract<EngineResult, { ok: true }>;
-type PriceOk = { ok: true; priced: Priced; fit: FitResult; ctx: PricingContext & { catalog: PublishedCatalog; priceList: NonNullable<PricingContext["priceList"]> } };
+type PriceOk = {
+  ok: true; priced: Priced; fit: FitResult; ctx: PricingContext & { catalog: PublishedCatalog; priceList: NonNullable<PricingContext["priceList"]> };
+  /** The buyer's removals that take effect (stored on the version). */
+  removed: string[];
+  /** Of those, the lines a rule would add to this quote now (sold here): what the editor shows as removed. */
+  removedNow: string[];
+};
 type PriceFail = { ok: false; reason: "no_catalog" | "no_price_list" } | { ok: false; reason: "pricing"; errors: PricingError[] };
 
 /**
@@ -88,6 +97,8 @@ async function price(db: Db, accountId: string, marketId: string | null, input: 
     ? [pre.account]
     : await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const entryBySku = new Map(ctx.priceList.entries.map((e) => [e.sku, e]));
+  const rules = catalogAutoAdd(ctx.catalog);
+  const removed = effectiveRemovals(rules, input.removedByBuyer, input.lines.map((l) => l.sku));
   const priced = priceWithList({
     items: engineItems(ctx.catalog),
     entries: ctx.priceList.entries,
@@ -96,36 +107,42 @@ async function price(db: Db, accountId: string, marketId: string | null, input: 
     sites: input.sites,
     discountBp: input.discountBp,
     maxDiscountBp: account.maxDiscountBp,
-    autoAdd: catalogAutoAdd(ctx.catalog),
-    removedByBuyer: input.removedByBuyer,
+    autoAdd: rules,
+    removedByBuyer: removed,
   });
   if (!priced.ok) return { ok: false, reason: "pricing", errors: priced.errors };
   // Fit rules see what will be quoted, including lines added automatically.
   const fit = checkFit(ctx.catalog.rules, requestLinesOf(priced.lines), input.sites);
-  return { ok: true, priced, fit, ctx: ctx as PriceOk["ctx"] };
+  const wouldAdd = new Set(removed.length ? applyAutoAdd(rules, input.lines, input.sites).autoAdded.map((a) => a.sku) : []);
+  const sold = (sku: string) => entryBySku.has(sku) && ctx.catalog!.items.some((i) => i.sku === sku && i.active);
+  const removedNow = removed.filter((sku) => wouldAdd.has(sku) && sold(sku));
+  return { ok: true, priced, fit, ctx: ctx as PriceOk["ctx"], removed, removedNow };
 }
 
 export type QuotePreview =
-  | { ok: true; priced: Priced; fit: FitResult; context: PriceOk["ctx"] }
+  | { ok: true; priced: Priced; fit: FitResult; context: PriceOk["ctx"]; removed: string[]; removedNow: string[] }
   | ({ ok: false } & QuoteRefusal);
 
 /**
  * Prices a request for a lead exactly as createQuote would, and saves nothing
  * (the quote editor's live preview). Scoped by account. With `fromQuoteId`
- * (a new version) it prices in that quote's market, as createQuoteVersion does.
+ * (a new version) it prices in that quote's market, as createQuoteVersion does,
+ * and carries over the current version's removals unless the input gives them.
  */
 export async function previewQuote(db: Db, accountId: string, leadId: string, input: QuoteInput, fromQuoteId?: string): Promise<QuotePreview> {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return { ok: false, reason: "lead_not_found" };
   let marketId = lead.marketId;
+  let removedByBuyer = input.removedByBuyer;
   if (fromQuoteId) {
     const q = await quoteOf(db, accountId, fromQuoteId);
     if (!q || q.leadId !== leadId) return { ok: false, reason: "quote_not_found" };
     marketId = q.marketId ?? lead.marketId;
+    removedByBuyer ??= (await currentVersionOf(db, q))?.removedAutoAdd ?? [];
   }
-  const p = await price(db, accountId, marketId, input);
+  const p = await price(db, accountId, marketId, { ...input, removedByBuyer });
   if (!p.ok) return p;
-  return { ok: true, priced: p.priced, fit: p.fit, context: p.ctx };
+  return { ok: true, priced: p.priced, fit: p.fit, context: p.ctx, removed: p.removed, removedNow: p.removedNow };
 }
 
 function versionRows(
@@ -147,6 +164,7 @@ function versionRows(
     catalogVersionId: p.ctx.catalog.version.id,
     marketId: p.ctx.market.id,
     priceListId: p.ctx.priceList.list.id,
+    removedAutoAdd: p.removed,
     currency: p.priced.currency,
     discountBp: input.discountBp,
     pricesIncludeTax: p.priced.pricesIncludeTax,
@@ -285,8 +303,10 @@ export async function createQuoteVersion(
   if (q.status === "cancelled") return { ok: false, reason: "quote_closed" };
   const [lead] = await db.select().from(leads).where(eq(leads.id, q.leadId));
   if (lead.status === "opted_out") return { ok: false, reason: "lead_opted_out" };
+  // The buyer's removals carry over from the current version unless the input gives them.
+  const removedByBuyer = input.removedByBuyer ?? (await currentVersionOf(db, q))?.removedAutoAdd ?? [];
   // A quote stays in its market; quotes made before markets follow the lead's.
-  const p = await price(db, accountId, q.marketId ?? lead.marketId, input, customs);
+  const p = await price(db, accountId, q.marketId ?? lead.marketId, { ...input, removedByBuyer }, customs);
   if (!p.ok) return refusalOf(p);
   if (!p.fit.ok) return { ok: false, reason: "fit", problems: p.fit.problems };
   const decided = statusFor(p.priced.approvalReasons, p.priced.complete, actor);

@@ -20,7 +20,13 @@ function readForm(form: FormData) {
   const discountBp = pct ? Math.round(Number(pct) * 100) : 0;
   const sitesRaw = String(form.get("sites") ?? "").trim();
   const sites = sitesRaw ? Number(sitesRaw) : undefined;
-  return { lines, discountBp: Number.isFinite(discountBp) ? discountBp : -1, sites: Number.isInteger(sites) && sites! > 0 ? sites : undefined };
+  // Auto-added lines removed at the buyer's request ("removed" per SKU). The editor always
+  // sends "removedSet", so an empty list clears earlier removals; the service keeps only removable ones.
+  const removedByBuyer = form.has("removedSet") ? form.getAll("removed").map((v) => String(v).trim()).filter(Boolean).slice(0, 50) : undefined;
+  return {
+    lines, discountBp: Number.isFinite(discountBp) ? discountBp : -1, sites: Number.isInteger(sites) && sites! > 0 ? sites : undefined,
+    ...(removedByBuyer ? { removedByBuyer } : {}),
+  };
 }
 
 /** Live preview: same pricing as saving (previewQuote), nothing saved. The account comes from requireAccount, never the form. */
