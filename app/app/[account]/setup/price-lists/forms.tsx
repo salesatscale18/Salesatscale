@@ -1,14 +1,15 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { Fragment, useActionState, useRef, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
+import { checkPriceBlock, serializeTierRows, tierErrorText, tierLines, tierSummary, wholeQty, type PriceBlockCheck } from "@/lib/catalog/tiers";
 import { t } from "@/lib/i18n";
 import {
   copyPriceListAction, createPriceListAction, saveEntryAction, saveMetaAction,
   type CopyFormState, type EntryFormState, type MetaFormState,
 } from "./actions";
-import type { EntryFormDefaults } from "./rules";
+import type { EntryFormDefaults, EntryFormErrors } from "./rules";
 
 const plain = { border: 0, padding: 0, margin: 0 } as const;
 
@@ -93,68 +94,185 @@ export function MetaForm({ slug, lineageId, d }: { slug: string; lineageId: stri
   );
 }
 
-/** Prices of one item in the draft: sold here, one-time, recurring, tiers, custom pricing. */
-export function EntryForm({ slug, lineageId, sku, currency, d }: { slug: string; lineageId: string; sku: string; currency: string; d: EntryFormDefaults }) {
+type TierRow = { id: number; qty: string; price: string };
+const rowsFrom = (text: string): TierRow[] => tierLines(text).map((r) => ({ id: r.key, qty: r.qty, price: r.price }));
+const byQty = (rows: TierRow[]) => [...rows].sort((a, b) => (wholeQty(a.qty) ?? Infinity) - (wholeQty(b.qty) ?? Infinity));
+
+function currencySymbol(currency: string): string {
+  return new Intl.NumberFormat("en-US", { style: "currency", currency, currencyDisplay: "narrowSymbol" }).formatToParts(0).find((p) => p.type === "currency")?.value ?? currency;
+}
+
+const section = { borderTop: "1px solid var(--line)", paddingTop: 16 } as const;
+const grid = { display: "grid", gridTemplateColumns: "minmax(0, 0.8fr) minmax(0, 1.2fr) 36px", gap: "8px 10px", alignItems: "center" } as const;
+const readOnly = { background: "var(--surface)" } as const;
+
+/**
+ * One price block of the item panel (canvas: PriceEntry, PriceTiers): a base
+ * row from 1, tier rows (from quantity, unit price, remove), "Add tier", a
+ * closing custom-pricing row and a summary line. Errors come from
+ * checkPriceBlock, the same check the server runs on save.
+ */
+function TierBlock(props: {
+  part: "ot" | "rc"; title: string; chargeWord: string; currency: string; charged: boolean; onCharged: (v: boolean) => void;
+  base: string; onBase: (v: string) => void; rows: TierRow[]; onRows: (f: (rows: TierRow[]) => TierRow[]) => void; nextId: () => number;
+  check: PriceBlockCheck<number>; custom: number | null; period?: "month" | "year"; periodControl?: React.ReactNode;
+  baseName: string; tiersName: string; chargedName: string; serverErrors: string[];
+}) {
+  const { part, currency, check } = props;
+  const errorOf = new Map(check.rows.map((r) => [r.key, r.error]));
+  const header = props.period ? t(props.period === "year" ? "price_lists.entry.col_per_year" : "price_lists.entry.col_per_month", { symbol: currencySymbol(currency) }) : t("price_lists.entry.col_unit_price", { symbol: currencySymbol(currency) });
+  const baseErr = check.baseError === "invalid" ? t("price_lists.entry.err_money") : check.baseError === "needed" ? t("catalog.tiers.err_base") : null;
+  const update = (id: number, patch: Partial<TierRow>) => props.onRows((rs) => rs.map((r) => (r.id === id ? { ...r, ...patch } : r)));
+  const summary = check.baseMinor !== null || check.tiers.length > 0 ? tierSummary(check.baseMinor, check.tiers, props.custom, currency, props.period ?? null) : null;
+  return (
+    <section id={`${part}-block`} className="sas-stack-2" style={{ ...section, gap: 12 }} aria-labelledby={`${part}-h`}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
+        <h3 id={`${part}-h`} className="sas-heading" style={{ fontSize: 15 }}>{props.title}</h3>
+        <label className="sas-check"><input type="checkbox" name={props.chargedName} checked={props.charged} onChange={(e) => props.onCharged(e.target.checked)} />{t("price_lists.entry.charged")}</label>
+      </div>
+      {props.charged ? (
+        <>
+          {props.periodControl}
+          <input type="hidden" name={props.tiersName} value={serializeTierRows(check.rows)} />
+          <div style={grid}>
+            <span className="sas-small" style={{ fontWeight: 600 }}>{t("price_lists.entry.col_from")}</span>
+            <span className="sas-small" style={{ fontWeight: 600 }}>{header}</span>
+            <span />
+            <input className="sas-input sas-num" value="1" readOnly tabIndex={-1} style={readOnly} aria-label={t("price_lists.entry.base_from", { charge: props.chargeWord })} />
+            <input
+              className="sas-input sas-num" id={`pe-${part}`} name={props.baseName} inputMode="decimal" value={props.base} onChange={(e) => props.onBase(e.target.value)}
+              aria-label={t("price_lists.entry.base_price", { charge: props.chargeWord })} aria-invalid={baseErr ? true : undefined} aria-describedby={`pe-${part}-hint${baseErr ? ` pe-${part}-error` : ""}`}
+            />
+            <span className="sas-small">{t("catalog.tiers.base_short")}</span>
+            {props.rows.map((r) => {
+              const e = errorOf.get(r.id) ?? null;
+              const q = wholeQty(r.qty);
+              return (
+                <Fragment key={r.id}>
+                  <input
+                    className="sas-input sas-num" id={`pe-${part}-q-${r.id}`} inputMode="numeric" value={r.qty} data-tier="qty"
+                    onChange={(ev) => update(r.id, { qty: ev.target.value })} onBlur={() => props.onRows(byQty)}
+                    aria-label={t("price_lists.entry.tier_from", { charge: props.chargeWord })}
+                    aria-invalid={e && e.kind !== "price" && e.kind !== "lower" ? true : undefined} aria-describedby={e ? `pe-${part}-e-${r.id}` : undefined}
+                  />
+                  <input
+                    className="sas-input sas-num" id={`pe-${part}-p-${r.id}`} inputMode="decimal" value={r.price} data-tier="price"
+                    onChange={(ev) => update(r.id, { price: ev.target.value })}
+                    aria-label={t("price_lists.entry.tier_price", { charge: props.chargeWord })}
+                    aria-invalid={e && (e.kind === "price" || e.kind === "lower") ? true : undefined} aria-describedby={e ? `pe-${part}-e-${r.id}` : undefined}
+                  />
+                  <button
+                    type="button" className={buttonClass("ghost", "sm")} onClick={() => props.onRows((rs) => rs.filter((x) => x.id !== r.id))}
+                    aria-label={q ? t("price_lists.entry.tier_remove", { qty: q }) : t("price_lists.entry.tier_remove_new")}
+                  ><Icon name="x" /></button>
+                  {e ? <span className="sas-error" id={`pe-${part}-e-${r.id}`} style={{ gridColumn: "1 / -1", marginTop: -4 }}>{tierErrorText(e, currency)}</span> : null}
+                </Fragment>
+              );
+            })}
+            {props.custom !== null ? (
+              <>
+                <input className="sas-input sas-num" value={props.custom} readOnly tabIndex={-1} style={readOnly} aria-label={t("price_lists.entry.custom_row_from")} />
+                <span className="sas-small" style={{ gridColumn: "2 / -1" }}>{t("catalog.tiers.custom_row")}</span>
+              </>
+            ) : null}
+          </div>
+          <div>
+            <button type="button" className={buttonClass("secondary", "sm")} onClick={() => { const id = props.nextId(); props.onRows((rs) => [...byQty(rs), { id, qty: "", price: "" }]); }}>
+              <Icon name="plus" />{t("catalog.tiers.add")}
+            </button>
+          </div>
+          {summary ? <div className="sas-num" id={`pe-${part}-summary`} style={{ padding: "8px 12px", borderRadius: 8, background: "var(--surface)", fontSize: 13, overflowWrap: "anywhere" }}>{summary}</div> : null}
+          <span className="sas-hint" id={`pe-${part}-hint`}>{t("price_lists.entry.price_hint")}</span>
+          {baseErr ? <span className="sas-error" id={`pe-${part}-error`}>{baseErr}</span> : null}
+          {check.errorCount === 0 ? props.serverErrors.map((m) => <span key={m} className="sas-error" role="alert">{m}</span>) : null}
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+/**
+ * The item panel of a price list (canvas: PriceEntry): sold here, a one-time
+ * and a recurring price block with the structured tier editor, and custom
+ * pricing for both. Errors show on the row and block saving; the server
+ * checks the same rules again (parseEntryForm).
+ */
+export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { slug: string; lineageId: string; sku: string; currency: string; d: EntryFormDefaults; unitPlural: string }) {
   const [state, action, pending] = useActionState<EntryFormState, FormData>(saveEntryAction, { status: "idle" });
   const errors = state.status === "error" ? state.errors : {};
   const [sold, setSold] = useState(d.sold);
   const [oneTime, setOneTime] = useState(d.oneTimeCharged);
   const [recurring, setRecurring] = useState(d.recurringCharged);
+  const [period, setPeriod] = useState<"month" | "year">(d.recurringPeriod === "year" ? "year" : "month");
+  const [otBase, setOtBase] = useState(d.oneTimePrice);
+  const [rcBase, setRcBase] = useState(d.recurringPrice);
+  const [otRows, setOtRows] = useState<TierRow[]>(() => rowsFrom(d.oneTimeTiers));
+  const [rcRows, setRcRows] = useState<TierRow[]>(() => rowsFrom(d.recurringTiers).map((r) => ({ ...r, id: r.id + 1000 })));
+  const [customText, setCustomText] = useState(d.customPricingFromQty);
+  const ids = useRef(2000);
+  const nextId = () => ++ids.current;
+
+  const custom = customText.trim() ? wholeQty(customText) : null;
+  const customInvalid = customText.trim() !== "" && custom === null;
+  const ot = checkPriceBlock(otBase, otRows.map((r) => ({ key: r.id, qty: r.qty, price: r.price })), custom, currency);
+  const rc = checkPriceBlock(rcBase, rcRows.map((r) => ({ key: r.id, qty: r.qty, price: r.price })), custom, currency);
+  const errorCount = sold ? (oneTime ? ot.errorCount : 0) + (recurring ? rc.errorCount : 0) + (customInvalid ? 1 : 0) : 0;
+  const server = (...keys: (keyof EntryFormErrors)[]) => keys.map((k) => errors[k]).filter((m): m is string => !!m);
+  const customErr = customInvalid ? t("price_lists.entry.err_custom_from") : errors.customPricingFromQty;
+
   return (
     <form action={action} className="sas-stack-4" noValidate key={sku}>
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="lineageId" value={lineageId} />
       <input type="hidden" name="sku" value={sku} />
       <FormError text={state.status === "error" ? state.formError : undefined} />
-      <fieldset className="sas-stack-2" style={plain}>
-        <legend className="sas-input-label">{t("price_lists.entry.sold")}</legend>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-          <label className="sas-check"><input type="radio" name="sold" value="yes" checked={sold} onChange={() => setSold(true)} />{t("price_lists.entry.sold_yes")}</label>
-          <label className="sas-check"><input type="radio" name="sold" value="no" checked={!sold} onChange={() => setSold(false)} />{t("price_lists.entry.sold_no")}</label>
-        </div>
+      <fieldset style={{ ...plain, ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
+        <legend className="sas-sr">{t("price_lists.entry.sold")}</legend>
+        <strong aria-hidden="true">{t("price_lists.entry.sold")}</strong>
+        <label className="sas-check"><input type="radio" name="sold" value="yes" checked={sold} onChange={() => setSold(true)} />{t("price_lists.entry.sold_yes")}</label>
+        <label className="sas-check"><input type="radio" name="sold" value="no" checked={!sold} onChange={() => setSold(false)} />{t("price_lists.entry.sold_no")}</label>
       </fieldset>
       {sold ? (
         <>
-          <fieldset className="sas-stack-2" style={plain}>
-            <legend className="sas-input-label">{t("price_lists.col.one_time")} ({currency})</legend>
-            <label className="sas-check"><input type="checkbox" name="oneTimeCharged" checked={oneTime} onChange={(e) => setOneTime(e.target.checked)} />{t("price_lists.entry.charged")}</label>
-            {oneTime ? (
-              <div className="sas-grid-2" style={{ gap: 12 }}>
-                <Field id="pe-ot" label={t("price_lists.entry.price")} error={errors.oneTimePrice} hint={t("price_lists.entry.price_hint")}>
-                  <input className="sas-input sas-num" id="pe-ot" name="oneTimePrice" inputMode="decimal" defaultValue={d.oneTimePrice} {...aria("pe-ot", errors.oneTimePrice)} />
-                </Field>
-                <Field id="pe-ott" label={t("price_lists.entry.tiers")} error={errors.oneTimeTiers} hint={t("price_lists.entry.tiers_hint")}>
-                  <textarea className="sas-textarea sas-num" id="pe-ott" name="oneTimeTiers" rows={2} defaultValue={d.oneTimeTiers} {...aria("pe-ott", errors.oneTimeTiers)} />
-                </Field>
+          <TierBlock
+            part="ot" title={t("price_lists.entry.one_time_title")} chargeWord={t("price_lists.entry.charge_one_time")} currency={currency}
+            charged={oneTime} onCharged={setOneTime} base={otBase} onBase={setOtBase} rows={otRows} onRows={setOtRows} nextId={nextId}
+            check={ot} custom={custom} baseName="oneTimePrice" tiersName="oneTimeTiers" chargedName="oneTimeCharged" serverErrors={server("oneTimePrice", "oneTimeTiers")}
+          />
+          <TierBlock
+            part="rc" title={t("price_lists.entry.recurring_title")} chargeWord={t("price_lists.entry.charge_recurring")} currency={currency}
+            charged={recurring} onCharged={setRecurring} base={rcBase} onBase={setRcBase} rows={rcRows} onRows={setRcRows} nextId={nextId}
+            check={rc} custom={custom} period={period} baseName="recurringPrice" tiersName="recurringTiers" chargedName="recurringCharged"
+            serverErrors={server("recurringPrice", "recurringTiers", "recurringPeriod")}
+            periodControl={
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <label htmlFor="pe-rp" style={{ fontWeight: 500 }}>{t("price_lists.entry.every")}</label>
+                <select className="sas-select" id="pe-rp" name="recurringPeriod" value={period} onChange={(e) => setPeriod(e.target.value === "year" ? "year" : "month")} style={{ width: "auto" }}>
+                  <option value="month">{t("price_lists.entry.period_month")}</option>
+                  <option value="year">{t("price_lists.entry.period_year")}</option>
+                </select>
               </div>
-            ) : null}
-          </fieldset>
-          <fieldset className="sas-stack-2" style={plain}>
-            <legend className="sas-input-label">{t("price_lists.col.recurring")} ({currency})</legend>
-            <label className="sas-check"><input type="checkbox" name="recurringCharged" checked={recurring} onChange={(e) => setRecurring(e.target.checked)} />{t("price_lists.entry.charged")}</label>
-            {recurring ? (
-              <div className="sas-grid-2" style={{ gap: 12 }}>
-                <Field id="pe-rc" label={t("price_lists.entry.price")} error={errors.recurringPrice}>
-                  <input className="sas-input sas-num" id="pe-rc" name="recurringPrice" inputMode="decimal" defaultValue={d.recurringPrice} {...aria("pe-rc", errors.recurringPrice)} />
-                </Field>
-                <Field id="pe-rp" label={t("price_lists.entry.period")} error={errors.recurringPeriod}>
-                  <select className="sas-select" id="pe-rp" name="recurringPeriod" defaultValue={d.recurringPeriod}>
-                    <option value="month">{t("price_lists.period.month")}</option>
-                    <option value="year">{t("price_lists.period.year")}</option>
-                  </select>
-                </Field>
-                <Field id="pe-rct" label={t("price_lists.entry.tiers")} error={errors.recurringTiers} hint={t("price_lists.entry.tiers_hint")}>
-                  <textarea className="sas-textarea sas-num" id="pe-rct" name="recurringTiers" rows={2} defaultValue={d.recurringTiers} {...aria("pe-rct", errors.recurringTiers)} />
-                </Field>
-              </div>
-            ) : null}
-          </fieldset>
-          <Field id="pe-cf" label={t("price_lists.entry.custom_from")} error={errors.customPricingFromQty} hint={t("price_lists.entry.custom_from_hint")}>
-            <input className="sas-input sas-num" id="pe-cf" name="customPricingFromQty" inputMode="numeric" defaultValue={d.customPricingFromQty} style={{ maxWidth: 160 }} {...aria("pe-cf", errors.customPricingFromQty)} />
-          </Field>
+            }
+          />
+          <section className="sas-stack-2" style={section} aria-labelledby="cp-h">
+            <h3 id="cp-h" className="sas-heading" style={{ fontSize: 15 }}>{t("price_lists.entry.custom_title")}</h3>
+            <label htmlFor="pe-cf" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+              <span>{t("price_lists.entry.custom_before")}</span>
+              <input
+                className="sas-input sas-num" id="pe-cf" name="customPricingFromQty" inputMode="numeric" value={customText} onChange={(e) => setCustomText(e.target.value)}
+                style={{ width: 90 }} aria-invalid={customErr ? true : undefined} aria-describedby={`pe-cf-hint${customErr ? " pe-cf-error" : ""}`}
+              />
+              <span>{t("price_lists.entry.custom_after", { units: unitPlural })}</span>
+            </label>
+            <span className="sas-hint" id="pe-cf-hint">{t("price_lists.entry.custom_hint")}</span>
+            {customErr ? <span className="sas-error" id="pe-cf-error">{customErr}</span> : null}
+          </section>
         </>
       ) : <span className="sas-small">{t("price_lists.entry.not_sold_hint")}</span>}
-      <div><button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>{t("price_lists.entry.save")}</button></div>
+      <div style={{ ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending || errorCount > 0}>{t("price_lists.entry.save")}</button>
+        {errorCount > 0 ? <span className="sas-error" role="status" style={{ fontSize: 13 }}>{errorCount === 1 ? t("price_lists.entry.fix_one") : t("price_lists.entry.fix_many", { count: errorCount })}</span> : null}
+      </div>
     </form>
   );
 }

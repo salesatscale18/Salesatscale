@@ -3,8 +3,9 @@
  * in major units of the list's currency and stored in minor units.
  */
 import type { PriceListEntry, VolumeTier } from "@/db/schema";
-import { parseMajorToMinor } from "@/lib/accounts/rules";
-import { parseTaxRate, parseTiers } from "@/lib/catalog/rules";
+import { parseTaxRate } from "@/lib/catalog/rules";
+import { checkPriceBlock, tierErrorText, tierLines, wholeQty } from "@/lib/catalog/tiers";
+import { t } from "@/lib/i18n";
 import { ROUNDINGS, type Rounding } from "@/lib/pricing/adjust";
 import { isCurrency, isIsoDate, type CopyOptions, type EntryInput, type PriceListMetaInput } from "@/lib/pricing/price-lists";
 
@@ -18,45 +19,35 @@ export type EntryForm =
   | { ok: true; sold: true; entry: EntryInput }
   | { ok: false; errors: EntryFormErrors };
 
-const MONEY_ERROR = "Enter the price as a number, or leave it empty to add it later.";
-const TIERS_ERROR = "One tier per line, like 10: 550. Quantities of 2 or more, each used once.";
-
 /**
  * One row of the price list editor. "Sold here: no" removes the entry. A
  * charged part with an empty price is kept as "Price missing", which blocks
- * publishing but not saving.
+ * publishing but not saving. Tiers come from the tier editor as "qty: price"
+ * lines and are checked with the editor's own rules (checkPriceBlock), so
+ * anything the editor blocks is refused here too.
  */
 export function parseEntryForm(raw: Record<string, unknown>, currency: string): EntryForm {
   const sku = s(raw.sku).toUpperCase();
   if (raw.sold === "no") return { ok: true, sold: false, sku };
   const errors: EntryFormErrors = {};
-  const money = (key: "oneTimePrice" | "recurringPrice", charged: boolean): number | null => {
-    const text = s(raw[key]);
-    if (!charged || !text) return null;
-    const v = parseMajorToMinor(text, currency);
-    if (v === null) errors[key] = MONEY_ERROR;
-    return v;
-  };
-  const tiers = (key: "oneTimeTiers" | "recurringTiers", charged: boolean): VolumeTier[] => {
-    if (!charged) return [];
-    const v = parseTiers(s(raw[key]), currency);
-    if (v === null) errors[key] = TIERS_ERROR;
-    return v ?? [];
+  const fromText = s(raw.customPricingFromQty);
+  const customPricingFromQty = fromText ? wholeQty(fromText) : null;
+  if (fromText && customPricingFromQty === null) errors.customPricingFromQty = t("price_lists.entry.err_custom_from");
+  const block = (part: "oneTime" | "recurring", charged: boolean): { minor: number | null; tiers: VolumeTier[] } => {
+    if (!charged) return { minor: null, tiers: [] };
+    const c = checkPriceBlock(s(raw[`${part}Price`]), tierLines(s(raw[`${part}Tiers`])), customPricingFromQty, currency);
+    if (c.baseError === "invalid") errors[`${part}Price`] = t("price_lists.entry.err_money");
+    const rowError = c.rows.find((r) => r.error)?.error;
+    if (rowError) errors[`${part}Tiers`] = tierErrorText(rowError, currency);
+    else if (c.baseError === "needed") errors[`${part}Tiers`] = t("catalog.tiers.err_base");
+    return { minor: c.baseMinor, tiers: c.tiers };
   };
   const oneTimeCharged = on(raw.oneTimeCharged);
   const recurringCharged = on(raw.recurringCharged);
-  const oneTimeMinor = money("oneTimePrice", oneTimeCharged);
-  const recurringMinor = money("recurringPrice", recurringCharged);
-  const oneTimeTiers = tiers("oneTimeTiers", oneTimeCharged);
-  const recurringTiers = tiers("recurringTiers", recurringCharged);
+  const { minor: oneTimeMinor, tiers: oneTimeTiers } = block("oneTime", oneTimeCharged);
+  const { minor: recurringMinor, tiers: recurringTiers } = block("recurring", recurringCharged);
   const period = s(raw.recurringPeriod) || "month";
   if (period !== "month" && period !== "year") errors.recurringPeriod = "Choose monthly or yearly.";
-  const fromText = s(raw.customPricingFromQty);
-  let customPricingFromQty: number | null = null;
-  if (fromText) {
-    customPricingFromQty = /^\d+$/.test(fromText) ? Number(fromText) : NaN;
-    if (!Number.isSafeInteger(customPricingFromQty) || customPricingFromQty < 1) errors.customPricingFromQty = "Enter a whole number, or leave it empty.";
-  }
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {
     ok: true,

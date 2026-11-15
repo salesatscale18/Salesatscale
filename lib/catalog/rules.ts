@@ -2,6 +2,7 @@
 import type { ItemKind, UnitCustom, VolumeTier } from "@/db/schema";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
 import { CUSTOM_UNIT, isUnitKey, parseUnitCustom } from "@/lib/pricing/units";
+import { tierRowErrors } from "./tiers";
 
 /**
  * What saveDraftItem writes. Catalog items hold no price (mvp-plan 3.13):
@@ -59,18 +60,23 @@ export function parseTiers(text: string, currency: string): VolumeTier[] | null 
 }
 
 /**
- * Tier rules (canvas: Catalog · Price tiers editor). Each tier's price is lower
- * than the one before (the base price first), and every tier starts below the
- * custom-pricing quantity. Duplicates are rejected by parseTiers.
+ * Tier rules (canvas: PriceTiers, PriceEntry) as one message, for publish
+ * checks: the first row error of tierRowErrors (lib/catalog/tiers.ts), the
+ * same check the price list tier editor runs as you type and on save. Each
+ * tier starts at 2 or more, once, below the custom-pricing quantity, with a
+ * price lower than the one before (the base price first).
  */
 export function tierProblem(priceMinor: number | null, tiers: VolumeTier[], customFrom: number | null): string | null {
-  let prev = priceMinor;
-  for (const tier of [...tiers].sort((a, b) => a.minQty - b.minQty)) {
-    if (prev !== null && tier.priceMinor >= prev) return `The price from ${tier.minQty} must be lower than the tier before.`;
-    if (customFrom !== null && tier.minQty >= customFrom) return `The tier from ${tier.minQty} starts at or above custom pricing (${customFrom}+).`;
-    prev = tier.priceMinor;
+  const { sorted, errors } = tierRowErrors(priceMinor, tiers.map((x, key) => ({ key, qty: x.minQty, price: x.priceMinor })), customFrom);
+  const first = sorted.map((r) => errors.get(r.key)).find((e) => e !== undefined);
+  if (!first) return null;
+  switch (first.kind) {
+    case "qty": return `Each tier starts at a quantity of 2 or more (${first.qty ?? "none"} given).`;
+    case "duplicate": return `Two tiers start at ${first.qty}.`;
+    case "custom": return `The tier from ${first.qty} starts at or above custom pricing (${first.custom}+).`;
+    case "price": return `The tier from ${first.qty} has no price.`;
+    case "lower": return `The price from ${first.qty} must be lower than the tier before.`;
   }
-  return null;
 }
 
 export function parseCatalogItem(raw: Record<string, unknown>, currency: string): { ok: true; value: CatalogItemInput } | { ok: false; errors: CatalogItemErrors } {

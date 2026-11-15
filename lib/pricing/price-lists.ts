@@ -229,6 +229,25 @@ export async function listPriceLists(db: Db, accountId: string): Promise<PriceLi
   });
 }
 
+export type OtherListPrice = { lineageId: string; list: PriceList; entry: PriceListEntry | null };
+
+/**
+ * One SKU in the account's other price lists (canvas: PriceEntry, "This item
+ * in your other price lists"): each list as its editor shows it (the draft if
+ * there is one, else the live version) with the SKU's entry, or null when it
+ * is not sold there. Read only; shown for consistency.
+ */
+export async function itemInOtherLists(db: Db, accountId: string, sku: string, exceptLineageId: string): Promise<OtherListPrice[]> {
+  const lists = (await listPriceLists(db, accountId)).filter((l) => l.lineageId !== exceptLineageId);
+  if (lists.length === 0) return [];
+  const key = sku.trim().toUpperCase();
+  const entries = await db
+    .select()
+    .from(priceListEntries)
+    .where(and(eq(priceListEntries.accountId, accountId), eq(priceListEntries.sku, key), inArray(priceListEntries.priceListId, lists.map((l) => l.shown.id))));
+  return lists.map((l) => ({ lineageId: l.lineageId, list: l.shown, entry: entries.find((e) => e.priceListId === l.shown.id) ?? null }));
+}
+
 /** Every version of one price list, newest first. */
 export async function priceListVersions(db: Db, accountId: string, lineageId: string) {
   return db

@@ -7,7 +7,7 @@ import { catalogState, publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
 import { exactTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
-import { entriesOf, entryProblems, listPriceLists, partState, priceListVersions } from "@/lib/pricing/price-lists";
+import { entriesOf, entryProblems, itemInOtherLists, listPriceLists, partState, priceListVersions } from "@/lib/pricing/price-lists";
 import { unitLabel } from "@/lib/pricing/units";
 import { isUuid } from "@/lib/security/ids";
 import { discardPriceListDraftAction, publishPriceListAction } from "../actions";
@@ -27,6 +27,15 @@ function Part({ entry, charge, currency }: { entry: PriceListEntry | null; charg
 }
 
 const tierCount = (tiers: VolumeTier[]) => tiers.length;
+
+/** "£129.00 + £3.00/mo" for the other-price-lists card. */
+function otherPrices(e: PriceListEntry | null, currency: string): string {
+  if (!e) return t("price_lists.part.not_sold");
+  const parts: string[] = [];
+  if (e.oneTimeCharged) parts.push(e.oneTimeMinor === null ? t("price_lists.other.price_missing") : formatMoney(e.oneTimeMinor, currency));
+  if (e.recurringCharged) parts.push(e.recurringMinor === null ? t("price_lists.other.price_missing") : formatMoney(e.recurringMinor, currency, { period: e.recurringPeriod ?? "month" }));
+  return parts.length > 0 ? parts.join(" + ") : t("price_lists.other.nothing_charged");
+}
 
 /** Setup · one price list (canvas: PriceLists, right side): one row per catalog item; edits go to the draft. */
 export default async function PriceListEditorPage({ params, searchParams }: { params: Promise<{ account: string; lineageId: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -61,6 +70,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
   const selectedItem = items.find((r) => r.item.sku === selectedSku)?.item;
   const selectedOrphan = orphans.find((e) => e.sku === selectedSku);
   const nextVersion = draft?.version ?? (live ? live.version + 1 : 1);
+  const others = selectedItem || selectedOrphan ? await itemInOtherLists(appDb, account.id, selectedSku, lineageId) : [];
 
   return (
     <main className="sas-shell__content">
@@ -180,17 +190,50 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
         </div>
 
         {selectedItem || selectedOrphan ? (
-          <aside className="sas-panel sas-panel__body sas-stack-4 sas-split__side" aria-labelledby="entry-h">
-            <div className="sas-page-head">
-              <div className="sas-stack-2" style={{ gap: 0 }}>
-                <span className="sas-small sas-num">{selectedSku}</span>
-                <h2 id="entry-h" className="sas-heading" style={{ fontSize: 17 }}>{selectedItem?.name ?? t("price_lists.not_in_catalog")}</h2>
+          <div className="sas-split__side sas-stack-4">
+            <aside className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="entry-h">
+              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+                <div className="sas-stack-2" style={{ gap: 0, flex: 1, minWidth: 0 }}>
+                  <span className="sas-small sas-num">
+                    {selectedSku}
+                    {selectedItem ? ` · ${t(selectedItem.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · ${t("catalog.per", { unit: unitLabel(selectedItem.unit, selectedItem.unitCustom, "en", 1) })}` : ""}
+                  </span>
+                  <h2 id="entry-h" className="sas-heading" style={{ fontSize: 17 }}>{selectedItem?.name ?? t("price_lists.not_in_catalog")}</h2>
+                  <span className="sas-small">
+                    {t("price_lists.entry.header_line", {
+                      list: shown.name,
+                      currency: shown.currency,
+                      vat: t(shown.pricesIncludeTax ? "price_lists.entry.vat_incl" : "price_lists.entry.vat_excl"),
+                      version: t("price_lists.entry.version_draft", { version: nextVersion }),
+                    })}
+                  </span>
+                </div>
+                <a className={buttonClass("ghost", "sm")} href={here} aria-label={t("lead.form.close")}><Icon name="x" /></a>
               </div>
-              <a className={`${buttonClass("ghost", "sm")} sas-page-head__actions`} href={here} aria-label={t("lead.form.close")}><Icon name="x" /></a>
-            </div>
-            {bySku.has(selectedSku) ? entryProblems(bySku.get(selectedSku)!).map((p) => <span key={`${p.charge}-${p.kind}`} className="sas-error">{p.message}</span>) : null}
-            <EntryForm slug={account.slug} lineageId={lineageId} sku={selectedSku} currency={shown.currency} d={entryFormDefaults(bySku.get(selectedSku) ?? null, shown.currency)} />
-          </aside>
+              {bySku.has(selectedSku) ? entryProblems(bySku.get(selectedSku)!).map((p) => <span key={`${p.charge}-${p.kind}`} className="sas-error">{p.message}</span>) : null}
+              <EntryForm
+                slug={account.slug} lineageId={lineageId} sku={selectedSku} currency={shown.currency} d={entryFormDefaults(bySku.get(selectedSku) ?? null, shown.currency)}
+                unitPlural={selectedItem ? unitLabel(selectedItem.unit, selectedItem.unitCustom, "en", 2) : t("price_lists.entry.custom_units_default")}
+              />
+            </aside>
+            <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="other-h">
+              <h2 id="other-h" className="sas-heading" style={{ fontSize: 15 }}>{t("price_lists.other.title")}</h2>
+              {others.length === 0 ? <span className="sas-small">{t("price_lists.other.none")}</span> : (
+                <ul className="sas-list">
+                  {others.map((o) => (
+                    <li key={o.lineageId} className="sas-list__row" style={{ flexDirection: "column", alignItems: "stretch", gap: 2 }}>
+                      <span className="sas-small">
+                        <a href={`${base}/${o.lineageId}?sku=${encodeURIComponent(selectedSku)}`}>{o.list.name}</a>
+                        {" · "}{t("price_lists.other.line", { currency: o.list.currency, vat: t(o.list.pricesIncludeTax ? "price_lists.incl_vat" : "price_lists.excl_vat") })}
+                      </span>
+                      <span className="sas-num sas-small">{otherPrices(o.entry, o.list.currency)}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <span className="sas-small">{t("price_lists.other.note")}</span>
+            </section>
+          </div>
         ) : null}
       </div>
     </main>
