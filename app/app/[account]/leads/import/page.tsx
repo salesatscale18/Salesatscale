@@ -5,6 +5,9 @@ import { displayName } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
 import { ImportForm } from "./import-form";
 
+/** The import action runs in this segment; a 2000-row file needs more than the default time. */
+export const maxDuration = 60;
+
 /** CSV import (P2.4, canvas: ImportCsv). */
 export default async function ImportLeadsPage({ params }: { params: Promise<{ account: string }> }) {
   const { account: slug } = await params;

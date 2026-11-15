@@ -129,6 +129,29 @@ describe("company, users, settings and go live", () => {
       expect(await removeMember(db, as(admin, true), acc, ownerRow.id)).toEqual({ ok: false, reason: "last_owner" });
       await db.insert(accountMembers).values({ accountId: acc, userId: rep.id });
     });
+
+    it("only an owner (or a platform admin acting as the account) removes an owner (L10)", async () => {
+      const [second] = await db.insert(users).values({ clerkId: "o2", email: "second@polar.test", firstName: "Second" }).returning();
+      await db.insert(accountMembers).values({ accountId: acc, userId: second.id, isOwner: true });
+      const members = await listMembers(db, acc);
+      const row = (u: User) => members.find((m) => m.user.id === u.id)!.member;
+      // A non-owner member cannot remove either owner, even though neither is the last one.
+      expect(await removeMember(db, as(rep), acc, row(second).id)).toEqual({ ok: false, reason: "owner_only" });
+      expect(await removeMember(db, as(rep), acc, row(owner).id)).toEqual({ ok: false, reason: "owner_only" });
+      // A member of another account is refused too (not a member here, so not an owner here).
+      expect(await removeMember(db, as(outsider), acc, row(second).id)).toEqual({ ok: false, reason: "owner_only" });
+      expect((await listMembers(db, acc)).map((m) => m.user.id)).toEqual(expect.arrayContaining([owner.id, second.id, rep.id]));
+      // Garbage ids are refused cleanly instead of failing the query.
+      expect(await removeMember(db, as(owner), acc, "not-a-uuid")).toEqual({ ok: false, reason: "not_found" });
+      // An owner can remove another owner; the existing protections still apply.
+      expect(await removeMember(db, as(owner), acc, row(second).id)).toEqual({ ok: true });
+      expect(await removeMember(db, as(owner), acc, row(owner).id)).toEqual({ ok: false, reason: "self" });
+      expect(await removeMember(db, as(rep), acc, row(owner).id)).toEqual({ ok: false, reason: "last_owner" });
+      // A non-owner can still remove another non-owner.
+      await db.insert(accountMembers).values({ accountId: acc, userId: second.id });
+      const plain = (await listMembers(db, acc)).find((m) => m.user.id === second.id)!.member;
+      expect(await removeMember(db, as(rep), acc, plain.id)).toEqual({ ok: true });
+    });
   });
 
   describe("Settings › Notifications and Contact hours", () => {

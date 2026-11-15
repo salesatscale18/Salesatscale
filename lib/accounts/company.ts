@@ -121,16 +121,26 @@ export async function inviteMember(db: Db, actor: Actor, accountId: string, who:
   return { ok: true, invite: r.invite, token: r.token };
 }
 
-export type RemoveMemberResult = { ok: true } | { ok: false; reason: "not_found" | "self" | "last_owner" };
+export type RemoveMemberResult = { ok: true } | { ok: false; reason: "not_found" | "self" | "last_owner" | "owner_only" };
 
-/** Removes a member of this account. Never yourself, never the last owner. Audited. */
+/**
+ * Removes a member of this account. Never yourself, never the last owner, and
+ * only an owner (or a platform admin acting as the account) removes an owner. Audited.
+ */
 export async function removeMember(db: Db, actor: Actor, accountId: string, memberId: string): Promise<RemoveMemberResult> {
+  if (!UUID.test(memberId)) return { ok: false, reason: "not_found" };
   const [m] = await db.select().from(accountMembers).where(and(eq(accountMembers.id, memberId), eq(accountMembers.accountId, accountId)));
   if (!m) return { ok: false, reason: "not_found" };
   if (actor.userId && m.userId === actor.userId) return { ok: false, reason: "self" };
   if (m.isOwner) {
     const [{ owners }] = await db.select({ owners: count() }).from(accountMembers).where(and(eq(accountMembers.accountId, accountId), eq(accountMembers.isOwner, true)));
     if (Number(owners) <= 1) return { ok: false, reason: "last_owner" };
+    if (!actor.actingAs) {
+      const [me] = actor.userId
+        ? await db.select({ isOwner: accountMembers.isOwner }).from(accountMembers).where(and(eq(accountMembers.accountId, accountId), eq(accountMembers.userId, actor.userId)))
+        : [];
+      if (!me?.isOwner) return { ok: false, reason: "owner_only" };
+    }
   }
   await atomic(db, (q) => [
     q.delete(accountMembers).where(and(eq(accountMembers.id, m.id), eq(accountMembers.accountId, accountId))),

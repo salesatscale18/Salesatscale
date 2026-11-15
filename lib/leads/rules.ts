@@ -6,6 +6,8 @@
 import { createHash, randomBytes } from "node:crypto";
 import { LOCALES, type Locale } from "@/lib/i18n";
 
+export { csvEscape } from "./csv";
+
 /** Calling codes for the markets we sell in (lib/accounts/rules.ts MARKETS). */
 const CALLING_CODE: Record<string, string> = {
   IL: "972", US: "1", CA: "1", GB: "44", AU: "61", DE: "49", FR: "33", NL: "31", ES: "34", IT: "39", AE: "971",
@@ -230,7 +232,53 @@ export const FIX_TEXT: Record<string, string> = {
   phone_conflict: "Check the phone and source_id: they point to two different leads.",
   opted_out: "This person asked not to be contacted. They can't be imported again without new consent.",
   duplicate_in_file: "Keep one of the two rows.",
+  account_paused: "This account is paused. Leads can be added again once it is resumed.",
 };
+
+/** Identity fields that intake (webhook, CSV) may fill but never overwrite on an existing lead. */
+export const PROTECTED_LEAD_FIELDS = ["fullName", "language", "email", "company"] as const;
+export type ProtectedLeadField = (typeof PROTECTED_LEAD_FIELDS)[number];
+
+type MergeBase = { fullName: string; company: string | null; email: string | null; language: string; sourceLabel: string | null };
+
+/**
+ * New field values for an existing lead that matched an incoming one.
+ * A seller's manual edit replaces name and language and any email/company it
+ * sends. Intake (webhook, CSV) only fills fields that are empty on the lead:
+ * anyone can post to a public form, so it must not change who the lead is.
+ * Differing intake values are returned in `proposed` for a person to review.
+ */
+export function mergeLeadFields(
+  existing: MergeBase,
+  input: Pick<LeadInput, ProtectedLeadField | "sourceLabel">,
+  origin: "manual" | "csv" | "webhook",
+): { fields: MergeBase; proposed: Partial<Record<ProtectedLeadField, string>> } {
+  const proposed: Partial<Record<ProtectedLeadField, string>> = {};
+  const sourceLabel = input.sourceLabel ?? existing.sourceLabel;
+  if (origin === "manual") {
+    return {
+      fields: {
+        fullName: input.fullName,
+        company: input.company ?? existing.company,
+        email: input.email ?? existing.email,
+        language: input.language,
+        sourceLabel,
+      },
+      proposed,
+    };
+  }
+  const keep = <F extends ProtectedLeadField>(f: F): MergeBase[F] => {
+    const current = existing[f];
+    const incoming = input[f];
+    if (!current) return (incoming ?? current) as MergeBase[F];
+    if (incoming && incoming !== current) proposed[f] = incoming;
+    return current;
+  };
+  return {
+    fields: { fullName: keep("fullName"), company: keep("company"), email: keep("email"), language: keep("language"), sourceLabel },
+    proposed,
+  };
+}
 
 export function hashIntakeKey(key: string): string {
   return createHash("sha256").update(key).digest("hex");

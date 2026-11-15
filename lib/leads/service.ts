@@ -5,25 +5,29 @@
  * only from requireAccount() (pages/actions) or from a verified intake key
  * (webhook). Integration tests run these against PGlite.
  */
-import { and, asc, count, desc, eq, gte, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
 import { alias } from "drizzle-orm/pg-core";
 import type { Db } from "@/db/types";
+import { atomic } from "@/db/atomic";
 import {
-  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, users,
+  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, sellerAccounts, users,
   type IntakeResult, type Lead, type LeadOrigin, type LeadStatus,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { Locale } from "@/lib/i18n";
 import {
-  csvToRawLeads, FIX_TEXT, generateIntakeKey, hashIntakeKey, parseCsv, parseLead,
+  csvToRawLeads, FIX_TEXT, generateIntakeKey, hashIntakeKey, mergeLeadFields, parseCsv, parseLead,
   type FileConsent, type LeadFieldErrors, type LeadInput,
 } from "./rules";
 
 /** Who is acting: a person (userId) or the system (webhook, import worker). */
 export type LeadActor = { userId: string | null; actingAs: boolean };
 
-const isUniqueViolation = (e: unknown) =>
-  typeof e === "object" && e !== null && ("code" in e ? (e as { code?: string }).code === "23505" : String(e).includes("23505"));
+/** Postgres unique violation, also when wrapped by Drizzle (DrizzleQueryError.cause). */
+const isUniqueViolation = (e: unknown): boolean =>
+  typeof e === "object" && e !== null &&
+  (("code" in e ? (e as { code?: string }).code === "23505" : String(e).includes("23505")) ||
+    ("cause" in e && isUniqueViolation((e as { cause?: unknown }).cause)));
 
 async function addEvent(
   db: Db,
@@ -53,13 +57,26 @@ async function findExisting(db: Db, accountId: string, input: Pick<LeadInput, "p
 
 export type UpsertResult =
   | { ok: true; lead: Lead; created: boolean }
-  | { ok: false; reason: "consent_required" | "phone_conflict" }
+  | { ok: false; reason: "consent_required" | "phone_conflict" | "account_paused" }
   | { ok: false; reason: "opted_out"; optedOutAt: Date | null };
+
+/** A paused account takes no leads from intake (webhook, CSV). */
+async function isPaused(db: Db, accountId: string) {
+  const [row] = await db.select({ status: sellerAccounts.status }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  return row?.status === "paused";
+}
+
+/** lead.updated event data: the origin, plus intake values that were not applied. */
+function updatedEventData(origin: LeadOrigin, proposed: Record<string, string>) {
+  return Object.keys(proposed).length > 0 ? { origin, proposed } : { origin };
+}
 
 /**
  * Creates a lead, or updates the existing one with the same phone (or the same
  * source ID). A new lead needs a consent record; an update may add another.
  * A lead who opted out is never re-added or changed from here (UX rule).
+ * Intake (webhook, CSV) never overwrites an existing lead's name, language,
+ * email or company (mergeLeadFields), and is refused while the account is paused.
  */
 export async function upsertLead(
   db: Db,
@@ -67,10 +84,11 @@ export async function upsertLead(
   actor: LeadActor,
   input: LeadInput,
   origin: LeadOrigin,
-  opts: { ownerUserId?: string | null; now?: Date } = {},
+  opts: { ownerUserId?: string | null; now?: Date; skipPausedCheck?: boolean } = {},
   retry = true,
 ): Promise<UpsertResult> {
   const now = opts.now ?? new Date();
+  if (origin !== "manual" && !opts.skipPausedCheck && (await isPaused(db, accountId))) return { ok: false, reason: "account_paused" };
   const existing = await findExisting(db, accountId, input);
 
   if (!existing) {
@@ -96,7 +114,7 @@ export async function upsertLead(
         .returning();
     } catch (e) {
       // Another request created the same lead a moment ago: update it instead.
-      if (retry && isUniqueViolation(e)) return upsertLead(db, accountId, actor, input, origin, opts, false);
+      if (retry && isUniqueViolation(e)) return upsertLead(db, accountId, actor, input, origin, { ...opts, skipPausedCheck: true }, false);
       throw e;
     }
     await db.insert(consentRecords).values({ accountId, leadId: lead.id, ...input.consent, recordedByUserId: actor.userId });
@@ -116,21 +134,13 @@ export async function upsertLead(
     const [owner] = await db.select({ id: leads.id }).from(leads).where(and(eq(leads.accountId, accountId), eq(leads.sourceRef, input.sourceRef)));
     if (!owner) sourceRef = input.sourceRef;
   }
+  const { fields, proposed } = mergeLeadFields(existing, input, origin);
   const [lead] = await db
     .update(leads)
-    .set({
-      fullName: input.fullName,
-      company: input.company ?? existing.company,
-      email: input.email ?? existing.email,
-      phone: input.phone,
-      language: input.language,
-      sourceLabel: input.sourceLabel ?? existing.sourceLabel,
-      sourceRef,
-      lastActivityAt: now,
-    })
+    .set({ ...fields, phone: input.phone, sourceRef, lastActivityAt: now })
     .where(and(eq(leads.id, existing.id), eq(leads.accountId, accountId)))
     .returning();
-  await addEvent(db, accountId, lead.id, "lead.updated", actor, { origin });
+  await addEvent(db, accountId, lead.id, "lead.updated", actor, updatedEventData(origin, proposed));
   if (input.consent) {
     await db.insert(consentRecords).values({ accountId, leadId: lead.id, ...input.consent, recordedByUserId: actor.userId });
     await addEvent(db, accountId, lead.id, "consent.recorded", actor, { source: input.consent.source, wording: input.consent.wording });
@@ -148,6 +158,7 @@ export type PreviewResult =
  * ("Check a sample" in Settings). Mirrors upsertLead's decisions.
  */
 export async function previewLead(db: Db, accountId: string, input: LeadInput): Promise<PreviewResult> {
+  if (await isPaused(db, accountId)) return { result: "rejected", reason: refusalText({ ok: false, reason: "account_paused" }).problem };
   const existing = await findExisting(db, accountId, input);
   if (!existing) return input.consent ? { result: "created" } : { result: "rejected", reason: refusalText({ ok: false, reason: "consent_required" }).problem };
   if (existing.status === "opted_out") {
@@ -316,7 +327,149 @@ export function refusalText(r: Exclude<UpsertResult, { ok: true }>): { problem: 
     return { problem: r.optedOutAt ? `Opted out on ${dateShort.format(r.optedOutAt)}` : "Opted out", fix: FIX_TEXT.opted_out };
   }
   if (r.reason === "consent_required") return { problem: "No consent for this person", fix: FIX_TEXT.consent_required };
+  if (r.reason === "account_paused") return { problem: "This account is paused", fix: FIX_TEXT.account_paused };
   return { problem: "Another lead already has this phone number", fix: FIX_TEXT.phone_conflict };
+}
+
+/** Rows written per atomic() batch during a CSV import. */
+const IMPORT_CHUNK = 200;
+
+type ImportCandidate = { line: number; name: string; input: LeadInput };
+
+/** What the import needs to know about a lead, kept in memory while a file is processed. */
+type LeadState = Pick<Lead, "id" | "fullName" | "company" | "email" | "phone" | "language" | "sourceLabel" | "sourceRef" | "status" | "optedOutAt">;
+
+/**
+ * Applies upsertLead's rules to every valid row of a file without a round
+ * trip per row: existing leads for the whole file are loaded with two queries,
+ * each row is decided in memory (tracking the leads earlier rows created or
+ * changed), and the writes go out in atomic chunks of IMPORT_CHUNK rows.
+ * If a chunk hits a unique violation (another request wrote the same lead
+ * meanwhile), the rest of the file falls back to upsertLead row by row.
+ */
+async function importCandidates(
+  db: Db,
+  accountId: string,
+  actor: LeadActor,
+  candidates: ImportCandidate[],
+  now: Date,
+  result: ImportResult,
+) {
+  const phones = [...new Set(candidates.map((c) => c.input.phone))];
+  const refs = [...new Set(candidates.map((c) => c.input.sourceRef).filter((r): r is string => !!r))];
+  const cols = {
+    id: leads.id, fullName: leads.fullName, company: leads.company, email: leads.email, phone: leads.phone, language: leads.language,
+    sourceLabel: leads.sourceLabel, sourceRef: leads.sourceRef, status: leads.status, optedOutAt: leads.optedOutAt,
+  };
+  const found: LeadState[] = [
+    ...(await db.select(cols).from(leads).where(and(eq(leads.accountId, accountId), inArray(leads.phone, phones)))),
+    ...(refs.length ? await db.select(cols).from(leads).where(and(eq(leads.accountId, accountId), inArray(leads.sourceRef, refs))) : []),
+  ];
+  const byId = new Map(found.map((l) => [l.id, l]));
+  const byPhone = new Map<string, LeadState>();
+  const byRef = new Map<string, LeadState>();
+  for (const l of byId.values()) {
+    byPhone.set(l.phone, l);
+    if (l.sourceRef) byRef.set(l.sourceRef, l);
+  }
+
+  type Outcome = { kind: "created" } | { kind: "updated" } | ({ kind: "rejected" } & RejectedRow);
+  let inserts: (typeof leads.$inferInsert)[] = [];
+  let updates: { id: string; set: Partial<typeof leads.$inferInsert> }[] = [];
+  let consents: (typeof consentRecords.$inferInsert)[] = [];
+  let events: (typeof leadEvents.$inferInsert)[] = [];
+  let outcomes: Outcome[] = [];
+  // Phones that a lead in the pending chunk moved away from: a new lead taking
+  // one must wait for the next chunk, because inserts run before updates.
+  let freedPhones = new Set<string>();
+  let chunkStart = 0;
+
+  const flush = async () => {
+    if (outcomes.length === 0) return;
+    const [ins, upd, con, evs] = [inserts, updates, consents, events];
+    await atomic(db, (q) => [
+      ...(ins.length ? [q.insert(leads).values(ins)] : []),
+      ...upd.map((u) => q.update(leads).set(u.set).where(and(eq(leads.id, u.id), eq(leads.accountId, accountId)))),
+      ...(con.length ? [q.insert(consentRecords).values(con)] : []),
+      ...(evs.length ? [q.insert(leadEvents).values(evs)] : []),
+    ]);
+    for (const o of outcomes) {
+      if (o.kind === "created") result.created++;
+      else if (o.kind === "updated") result.updated++;
+      else result.rejected.push({ line: o.line, name: o.name, problem: o.problem, fix: o.fix });
+    }
+    inserts = []; updates = []; consents = []; events = []; outcomes = []; freedPhones = new Set();
+  };
+
+  const event = (leadId: string, type: string, data: Record<string, unknown>) =>
+    events.push({ accountId, leadId, type, actor: actor.userId ? "human" : "system", actorUserId: actor.userId, data });
+
+  const decide = async ({ line, name, input }: ImportCandidate, index: number) => {
+    const reject = (r: Exclude<UpsertResult, { ok: true }>) => outcomes.push({ kind: "rejected", line, name, ...refusalText(r) });
+    const existing = byPhone.get(input.phone) ?? (input.sourceRef ? byRef.get(input.sourceRef) : undefined);
+    if (!existing) {
+      if (!input.consent) return reject({ ok: false, reason: "consent_required" });
+      if (freedPhones.has(input.phone)) {
+        await flush();
+        chunkStart = index;
+      }
+      const id = crypto.randomUUID();
+      const state: LeadState = {
+        id, fullName: input.fullName, company: input.company, email: input.email, phone: input.phone, language: input.language,
+        sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, status: "new", optedOutAt: null,
+      };
+      inserts.push({
+        id, accountId, fullName: input.fullName, company: input.company, email: input.email, phone: input.phone, language: input.language,
+        origin: "csv", sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, ownerUserId: null, createdByUserId: actor.userId, lastActivityAt: now,
+      });
+      consents.push({ accountId, leadId: id, ...input.consent, recordedByUserId: actor.userId });
+      event(id, "lead.created", { origin: "csv", source: input.sourceLabel });
+      event(id, "consent.recorded", { source: input.consent.source, wording: input.consent.wording });
+      byPhone.set(state.phone, state);
+      if (state.sourceRef) byRef.set(state.sourceRef, state);
+      outcomes.push({ kind: "created" });
+      return;
+    }
+    if (existing.status === "opted_out") return reject({ ok: false, reason: "opted_out", optedOutAt: existing.optedOutAt });
+    if (existing.phone !== input.phone && byPhone.has(input.phone)) return reject({ ok: false, reason: "phone_conflict" });
+    let sourceRef = existing.sourceRef;
+    if (!sourceRef && input.sourceRef && !byRef.has(input.sourceRef)) sourceRef = input.sourceRef;
+    const { fields, proposed } = mergeLeadFields(existing, input, "csv");
+    updates.push({ id: existing.id, set: { ...fields, phone: input.phone, sourceRef, lastActivityAt: now } });
+    if (existing.phone !== input.phone) {
+      freedPhones.add(existing.phone);
+      if (byPhone.get(existing.phone) === existing) byPhone.delete(existing.phone);
+      byPhone.set(input.phone, existing);
+    }
+    if (sourceRef && sourceRef !== existing.sourceRef) byRef.set(sourceRef, existing);
+    Object.assign(existing, fields, { phone: input.phone, sourceRef });
+    event(existing.id, "lead.updated", updatedEventData("csv", proposed));
+    if (input.consent) {
+      consents.push({ accountId, leadId: existing.id, ...input.consent, recordedByUserId: actor.userId });
+      event(existing.id, "consent.recorded", { source: input.consent.source, wording: input.consent.wording });
+    }
+    outcomes.push({ kind: "updated" });
+  };
+
+  try {
+    for (let i = 0; i < candidates.length; i++) {
+      await decide(candidates[i], i);
+      if (outcomes.length >= IMPORT_CHUNK) {
+        await flush();
+        chunkStart = i + 1;
+      }
+    }
+    await flush();
+  } catch (e) {
+    if (!isUniqueViolation(e)) throw e;
+    // The failed chunk wrote nothing; finish the file row by row.
+    for (const { line, name, input } of candidates.slice(chunkStart)) {
+      const r = await upsertLead(db, accountId, actor, input, "csv", { now, skipPausedCheck: true });
+      if (!r.ok) result.rejected.push({ line, name, ...refusalText(r) });
+      else if (r.created) result.created++;
+      else result.updated++;
+    }
+  }
 }
 
 export async function importLeadsCsv(
@@ -336,6 +489,7 @@ export async function importLeadsCsv(
   if (parsed.missingColumns.length > 0 || result.tooManyRows) return result;
   const defaultLanguage = (account.languages[0] ?? "en") as Locale;
   const seenPhones = new Map<string, number>();
+  const candidates: ImportCandidate[] = [];
   for (const { line, raw } of parsed.rows) {
     const name = typeof raw.fullName === "string" && raw.fullName.trim() ? raw.fullName.trim() : "(empty)";
     const p = parseLead(raw, account.market, { language: defaultLanguage, now, requireConsentText: true });
@@ -350,10 +504,17 @@ export async function importLeadsCsv(
       continue;
     }
     seenPhones.set(p.value.phone, line);
-    const r = await upsertLead(db, account.id, actor, p.value, "csv", { now });
-    if (!r.ok) result.rejected.push({ line, name, ...refusalText(r) });
-    else if (r.created) result.created++;
-    else result.updated++;
+    candidates.push({ line, name, input: p.value });
+  }
+  if (candidates.length > 0) {
+    if (await isPaused(db, account.id)) {
+      const paused = refusalText({ ok: false, reason: "account_paused" });
+      for (const c of candidates) result.rejected.push({ line: c.line, name: c.name, ...paused });
+    } else {
+      await importCandidates(db, account.id, actor, candidates, now, result);
+    }
+    // Rows are decided in chunks; report them in file order, as before.
+    result.rejected.sort((a, b) => a.line - b.line);
   }
   if (actor.userId) {
     await writeAudit(db, { userId: actor.userId, actingAs: actor.actingAs }, {
