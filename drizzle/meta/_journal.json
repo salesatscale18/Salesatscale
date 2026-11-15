@@ -71,6 +71,13 @@
       "when": 1794762088343,
       "tag": "0009_markets_price_lists",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1794768444607,
+      "tag": "0010_removed_auto_add",
+      "breakpoints": true
     }
   ]
 }

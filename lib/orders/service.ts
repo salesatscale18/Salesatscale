@@ -237,7 +237,7 @@ const lineKey = (sku: string, charge: string) => `${sku}|${charge}`;
  */
 export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
   const [row] = await db
-    .select({ priceListId: quoteVersions.priceListId, discountBp: quoteVersions.discountBp, market: markets, live: priceLists })
+    .select({ priceListId: quoteVersions.priceListId, discountBp: quoteVersions.discountBp, removedAutoAdd: quoteVersions.removedAutoAdd, market: markets, live: priceLists })
     .from(quoteVersions)
     .leftJoin(markets, and(eq(markets.id, quoteVersions.marketId), eq(markets.accountId, quoteVersions.accountId)))
     .leftJoin(priceLists, and(eq(priceLists.accountId, quoteVersions.accountId), eq(priceLists.lineageId, markets.priceListLineageId), eq(priceLists.status, "live")))
@@ -267,8 +267,10 @@ export async function priceCheck(db: Db, form: OrderForm): Promise<PriceCheck> {
     items: engineItems(catalog),
     entries,
     priceList: enginePriceList(live),
-    // The stored lines already hold the auto-added ones: no rules applied again.
+    // The stored lines already hold the auto-added ones: no rules applied again,
+    // so a line the buyer removed stays out. The removals go along regardless.
     lines: requestLinesOf(lines).map((l) => ({ ...l, ...customsFor(custom, l.sku, entryBySku.get(l.sku)) })),
+    removedByBuyer: row.removedAutoAdd,
     discountBp: row.discountBp,
     maxDiscountBp: 10_000,
   });
@@ -346,7 +348,9 @@ export async function acceptNewPrice(db: Db, token: string, now = new Date()): P
   const v = q?.versions.find((x) => x.version.id === view.form.quoteVersionId);
   if (!q || !v) return { ok: false, reason: "failed" };
   const r = await createQuoteVersion(db, view.form.accountId, { kind: "agent" }, q.quote.id, {
-    lines: requestLinesOf(v.lines), discountBp: v.version.discountBp, changeNote: "Price updated from the price list; accepted by the buyer",
+    // The new version re-applies the catalog's auto-add rules: the buyer's removals keep their lines out.
+    lines: requestLinesOf(v.lines), discountBp: v.version.discountBp, removedByBuyer: v.version.removedAutoAdd,
+    changeNote: "Price updated from the price list; accepted by the buyer",
   }, now, customPricesOf(v.lines));
   if (!r.ok) return { ok: false, reason: "failed" };
   if (r.quote.status === "awaiting_approval") return { ok: false, reason: "needs_approval" };
