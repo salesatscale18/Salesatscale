@@ -539,6 +539,7 @@
   "lab.sending": "The agent is replying…",
   "lab.no_key": "The agent cannot reply yet: the Anthropic API key is not set for this deployment (ANTHROPIC_API_KEY).",
   "lab.error": "The agent could not reply. Try again.",
+  "lab.rate_limited": "Too many test messages this hour. Try again later.",
   "lab.closed": "This chat is closed (the buyer opted out).",
   "lab.deal_state": "Deal state",
   "lab.trace": "Trace",

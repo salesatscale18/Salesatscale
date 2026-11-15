@@ -1,4 +1,4 @@
-import { boolean, index, integer, jsonb, pgEnum, pgTable, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
+import { boolean, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const userRole = pgEnum("user_role", ["user", "admin", "super_admin"]);
@@ -151,7 +151,10 @@ export const auditLog = pgTable(
     details: jsonb("details").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("audit_log_account_created_idx").on(t.accountId, t.createdAt)],
+  (t) => [
+    index("audit_log_account_created_idx").on(t.accountId, t.createdAt),
+    index("audit_log_created_id_idx").on(t.createdAt, t.id),
+  ],
 );
 
 export type SellerAccount = typeof sellerAccounts.$inferSelect;
@@ -220,6 +223,7 @@ export const leads = pgTable(
     uniqueIndex("leads_account_source_ref_uq").on(t.accountId, t.sourceRef).where(sql`${t.sourceRef} is not null`),
     index("leads_account_status_idx").on(t.accountId, t.status),
     index("leads_account_activity_idx").on(t.accountId, t.lastActivityAt),
+    index("leads_account_created_idx").on(t.accountId, t.createdAt),
   ],
 );
 
@@ -270,7 +274,10 @@ export const leadEvents = pgTable(
     data: jsonb("data").$type<Record<string, unknown>>(),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("lead_events_lead_created_idx").on(t.leadId, t.createdAt)],
+  (t) => [
+    index("lead_events_lead_created_idx").on(t.leadId, t.createdAt),
+    index("lead_events_account_created_idx").on(t.accountId, t.createdAt),
+  ],
 );
 
 /** Keys for the lead intake webhook (website form). Only a SHA-256 hash is stored. */
@@ -443,6 +450,7 @@ export const quotes = pgTable(
     uniqueIndex("quotes_account_number_uq").on(t.accountId, t.number),
     index("quotes_account_status_idx").on(t.accountId, t.status),
     index("quotes_lead_idx").on(t.leadId),
+    index("quotes_account_created_idx").on(t.accountId, t.createdAt),
   ],
 );
 
@@ -614,7 +622,10 @@ export const knowledgeFacts = pgTable(
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("knowledge_facts_account_idx").on(t.accountId, t.status)],
+  (t) => [
+    index("knowledge_facts_account_idx").on(t.accountId, t.status),
+    index("knowledge_facts_account_topic_idx").on(t.accountId, t.topic),
+  ],
 );
 
 export const conversationStatus = pgEnum("conversation_status", ["open", "human", "closed"]);
@@ -649,7 +660,11 @@ export const conversations = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [index("conversations_account_lead_idx").on(t.accountId, t.leadId), index("conversations_account_updated_idx").on(t.accountId, t.updatedAt)],
+  (t) => [
+    index("conversations_account_lead_idx").on(t.accountId, t.leadId),
+    index("conversations_account_updated_idx").on(t.accountId, t.updatedAt),
+    index("conversations_account_agent_version_created_idx").on(t.accountId, t.agentVersionId, t.createdAt),
+  ],
 );
 
 export const messages = pgTable(
@@ -699,7 +714,11 @@ export const toolCalls = pgTable(
     rule: text("rule"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("tool_calls_conversation_idx").on(t.conversationId, t.createdAt)],
+  (t) => [
+    index("tool_calls_conversation_idx").on(t.conversationId, t.createdAt),
+    index("tool_calls_message_idx").on(t.messageId),
+    index("tool_calls_account_name_created_idx").on(t.accountId, t.name, t.createdAt),
+  ],
 );
 
 export type DealFieldValue = {
@@ -845,7 +864,13 @@ export const orderForms = pgTable(
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("order_forms_quote_idx").on(t.accountId, t.quoteId)],
+  (t) => [
+    index("order_forms_quote_idx").on(t.accountId, t.quoteId),
+    index("order_forms_account_status_idx").on(t.accountId, t.status),
+    index("order_forms_account_created_idx").on(t.accountId, t.createdAt),
+    index("order_forms_quote_created_idx").on(t.quoteId, t.createdAt),
+    index("order_forms_lead_created_idx").on(t.leadId, t.createdAt),
+  ],
 );
 
 /** Checkbox plus typed name (mvp-plan open question 4: enough for the pilot). Write-once. */
@@ -905,7 +930,14 @@ export const orders = pgTable(
       .defaultNow()
       .$onUpdate(() => new Date()),
   },
-  (t) => [uniqueIndex("orders_number_uq").on(t.accountId, t.number)],
+  (t) => [
+    uniqueIndex("orders_number_uq").on(t.accountId, t.number),
+    index("orders_account_created_idx").on(t.accountId, t.createdAt),
+    index("orders_account_payment_status_idx").on(t.accountId, t.paymentStatus),
+    index("orders_account_paid_idx").on(t.accountId, t.paidAt),
+    index("orders_quote_idx").on(t.quoteId),
+    index("orders_lead_created_idx").on(t.leadId, t.createdAt),
+  ],
 );
 
 export const paymentAttemptStatus = pgEnum("payment_attempt_status", ["pending", "succeeded", "failed"]);
@@ -929,7 +961,7 @@ export const paymentAttempts = pgTable("payment_attempts", {
     .notNull()
     .defaultNow()
     .$onUpdate(() => new Date()),
-});
+}, (t) => [index("payment_attempts_order_created_idx").on(t.orderId, t.createdAt)]);
 
 /** Every inbound provider event, verified or not. The dedupe key makes processing happen once. */
 export const providerEvents = pgTable("provider_events", {
@@ -950,3 +982,17 @@ export type OrderForm = typeof orderForms.$inferSelect;
 export type Signature = typeof signatures.$inferSelect;
 export type Order = typeof orders.$inferSelect;
 export type PaymentAttempt = typeof paymentAttempts.$inferSelect;
+
+/**
+ * Fixed-window rate-limit counters (lib/security/rate-limit.ts). One row per
+ * key and window; old windows are deleted opportunistically.
+ */
+export const rateLimits = pgTable(
+  "rate_limits",
+  {
+    key: text("key").notNull(),
+    windowStart: timestamp("window_start", { withTimezone: true }).notNull(),
+    count: integer("count").notNull().default(1),
+  },
+  (t) => [primaryKey({ name: "rate_limits_pk", columns: [t.key, t.windowStart] }), index("rate_limits_window_idx").on(t.windowStart)],
+);

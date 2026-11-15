@@ -13,14 +13,24 @@ import { appDb } from "@/lib/auth/account";
 import { bearerKey, parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
 import { recordDelivery, refusalText, resolveIntakeKey, upsertLead } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
+import { clientIp, declaredTooLarge, rateLimit } from "@/lib/security/rate-limit";
 
 export const dynamic = "force-dynamic";
 
 const MAX_BODY = 32 * 1024;
 const unauthorized = () => NextResponse.json({ error: "unauthorized" }, { status: 401 });
+const tooMany = (retryAfterSeconds: number) =>
+  NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(retryAfterSeconds) } });
 
 export async function POST(req: Request, { params }: { params: Promise<{ account: string }> }) {
   const { account: slug } = await params;
+  // Checked before the key, so guessing keys is throttled too.
+  const ip = clientIp(req.headers);
+  const perIp = await rateLimit(appDb, `intake:ip:${ip}`, { limit: 120, windowSeconds: 60 });
+  if (!perIp.ok) return tooMany(perIp.retryAfterSeconds);
+  const perAccount = await rateLimit(appDb, `intake:acct:${slug.slice(0, 100)}:${ip}`, { limit: 60, windowSeconds: 60 });
+  if (!perAccount.ok) return tooMany(perAccount.retryAfterSeconds);
+
   const key = bearerKey(req.headers.get("authorization"), req.headers.get("x-api-key"));
   if (!key) return unauthorized();
   const keyRow = await resolveIntakeKey(appDb, key);
@@ -31,6 +41,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
   const log = (result: "created" | "updated" | "rejected", reason: string | null, leadName: unknown, leadId?: string) =>
     recordDelivery(appDb, { accountId: account.id, keyId: keyRow.id, result, reason, leadId, leadName: typeof leadName === "string" ? leadName : null });
 
+  if (declaredTooLarge(req.headers, MAX_BODY)) {
+    await log("rejected", "Body over 32 KB", null);
+    return NextResponse.json({ error: "payload_too_large" }, { status: 413 });
+  }
   const text = await req.text();
   if (text.length > MAX_BODY) {
     await log("rejected", "Body over 32 KB", null);
