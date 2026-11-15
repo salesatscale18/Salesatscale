@@ -25,6 +25,7 @@ export const SELLER_NAV: NavGroup[] = [
     items: [
       { id: "knowledge", label: "nav.knowledge", icon: "book-open", path: "/setup/knowledge" },
       { id: "catalog", label: "nav.catalog", icon: "package", path: "/setup/catalog" },
+      { id: "price-lists", label: "nav.price_lists", icon: "credit-card", path: "/setup/price-lists" },
       { id: "playbook", label: "nav.playbook", icon: "sparkles", path: "/setup/playbook" },
       { id: "order-form", label: "nav.order_form", icon: "pen", path: "/setup/order-form" },
       { id: "follow-ups", label: "nav.follow_ups", icon: "clock", path: "/setup/follow-ups" },
@@ -117,6 +118,7 @@ export const SETUP_STEPS: { id: string; label: MessageKey; path: string }[] = [
   { id: "sources", label: "setup.sources", path: "/setup/sources" },
   { id: "knowledge", label: "setup.knowledge", path: "/setup/knowledge" },
   { id: "catalog", label: "setup.catalog", path: "/setup/catalog" },
+  { id: "prices", label: "setup.prices", path: "/setup/price-lists" },
   { id: "playbook", label: "setup.playbook", path: "/setup/playbook" },
   { id: "order-form", label: "setup.order_form", path: "/setup/order-form" },
   { id: "follow-ups", label: "setup.follow_ups", path: "/setup/follow-ups" },

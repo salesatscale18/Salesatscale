@@ -1,20 +1,38 @@
 /** Validation for catalog edits (pure; unit-tested). */
-import type { VolumeTier } from "@/db/schema";
+import type { ItemKind, UnitCustom, VolumeTier } from "@/db/schema";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
+import { CUSTOM_UNIT, isUnitKey, parseUnitCustom } from "@/lib/pricing/units";
 
+/**
+ * What saveDraftItem writes. Catalog items hold no price (mvp-plan 3.13):
+ * the price fields are the old catalog columns, kept optional so older
+ * callers still work. New items get neutral values for them (see
+ * lib/catalog/service.ts).
+ */
 export type CatalogItemInput = {
   sku: string;
   name: string;
   description: string | null;
-  chargeType: "one_time" | "recurring";
-  period: string | null;
   unit: string;
-  priceMinor: number | null;
-  volumeTiers: VolumeTier[];
-  customPricingFromQty: number | null;
   active: boolean;
   availabilityNote: string | null;
+  kind?: ItemKind | null;
+  unitCustom?: UnitCustom | null;
+  /** Legacy price columns, no longer edited. */
+  chargeType?: "one_time" | "recurring";
+  period?: string | null;
+  priceMinor?: number | null;
+  volumeTiers?: VolumeTier[];
+  customPricingFromQty?: number | null;
 };
+
+/** The item editor (canvas: ProductEditor): no price fields. */
+export type CatalogItemEdit = Required<Pick<CatalogItemInput, "sku" | "name" | "description" | "unit" | "active" | "availabilityNote">> & {
+  kind: ItemKind;
+  unitCustom: UnitCustom | null;
+};
+
+export type ItemEditErrors = Partial<Record<"sku" | "name" | "kind" | "unit" | "unitCustom", string>>;
 
 export type CatalogItemErrors = Partial<Record<"sku" | "name" | "unit" | "price" | "tiers" | "customPricingFromQty", string>>;
 
@@ -100,6 +118,48 @@ export function parseCatalogItem(raw: Record<string, unknown>, currency: string)
       availabilityNote: s(raw.availabilityNote).slice(0, 120) || null,
     },
   };
+}
+
+/**
+ * Parses the item editor form. `unit` is a key from UNIT_OPTIONS or
+ * "custom"; a custom unit needs a singular and a plural for English and for
+ * each selling language, sent as `unitOne_<lang>` and `unitOther_<lang>`.
+ */
+export function parseItemEdit(raw: Record<string, unknown>, languages: readonly string[]): { ok: true; value: CatalogItemEdit } | { ok: false; errors: ItemEditErrors } {
+  const errors: ItemEditErrors = {};
+  const sku = s(raw.sku).toUpperCase();
+  if (!SKU.test(sku)) errors.sku = "Use 1–40 letters, digits, dots, dashes or underscores.";
+  const name = s(raw.name);
+  if (!name) errors.name = "Enter the name.";
+  const kind = raw.kind === "product" || raw.kind === "service" ? raw.kind : null;
+  if (!kind) errors.kind = "Choose Product or Service.";
+  const unit = s(raw.unit);
+  let unitCustom: UnitCustom | null = null;
+  if (unit === CUSTOM_UNIT) {
+    const langs = unitLanguages(languages);
+    const forms = Object.fromEntries(langs.map((l) => [l, { one: s(raw[`unitOne_${l}`]), other: s(raw[`unitOther_${l}`]) }]));
+    unitCustom = parseUnitCustom(forms);
+    if (!unitCustom) errors.unitCustom = "Enter the singular and the plural, up to 30 characters each, for every language.";
+  } else if (!isUnitKey(unit)) errors.unit = "Choose a unit from the list.";
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+  return {
+    ok: true,
+    value: {
+      sku,
+      name: name.slice(0, 120),
+      description: s(raw.description).slice(0, 500) || null,
+      kind: kind!,
+      unit,
+      unitCustom,
+      active: raw.active === undefined ? true : raw.active === true || raw.active === "on" || raw.active === "yes",
+      availabilityNote: s(raw.availabilityNote).slice(0, 120) || null,
+    },
+  };
+}
+
+/** Languages a custom unit needs names in: English first, then the selling languages. */
+export function unitLanguages(languages: readonly string[]): string[] {
+  return [...new Set(["en", ...languages.filter((l) => /^[a-z]{2}$/.test(l))])];
 }
 
 /** Tax rate text like "18" or "17.5" (%) → basis points. */

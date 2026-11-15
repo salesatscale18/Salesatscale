@@ -5,16 +5,17 @@ import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import { parseFitRule } from "@/lib/catalog/fit";
-import { parseCatalogItem, parseTaxRate, type CatalogItemErrors } from "@/lib/catalog/rules";
+import { parseItemEdit, type ItemEditErrors } from "@/lib/catalog/rules";
 import {
-  addDraftRule, catalogState, discardDraft, draftItemIdFor, publishDraft, removeDraftItem, removeDraftRule, saveDraftItem, saveDraftSettings,
+  addDraftRule, catalogState, discardDraft, draftItemIdFor, publishDraft, removeDraftItem, removeDraftRule, saveDraftItem,
 } from "@/lib/catalog/service";
+import { parseAutoAddRule } from "@/lib/pricing/auto-add";
+import { isUuid } from "@/lib/security/ids";
 
 const path = (slug: string) => `/app/${slug}/setup/catalog`;
 
 async function access(form: FormData) {
-  const a = await requireAccount(String(form.get("slug") ?? ""));
-  return a;
+  return requireAccount(String(form.get("slug") ?? ""));
 }
 
 /** Acting-as edits are audited; the seller's own draft edits are not (publishing always is). */
@@ -22,15 +23,17 @@ async function auditActing(a: Awaited<ReturnType<typeof access>>, action: string
   if (a.actingAs) await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action, details });
 }
 
-export type ItemFormState = { status: "idle" } | { status: "saved"; itemId: string } | { status: "error"; errors: CatalogItemErrors; formError?: string };
+export type ItemFormState = { status: "idle" } | { status: "error"; errors: ItemEditErrors; formError?: "sku_taken" | "not_found" };
 
+/** Saves the item editor (canvas: ProductEditor) into the catalog draft. Items hold no price. */
 export async function saveItemAction(_prev: ItemFormState, form: FormData): Promise<ItemFormState> {
   const a = await access(form);
   const raw = Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : ""]));
   raw.active = form.get("active") === "on" ? "on" : "off";
-  const parsed = parseCatalogItem(raw, a.account.currency);
+  const parsed = parseItemEdit(raw, a.account.languages);
   if (!parsed.ok) return { status: "error", errors: parsed.errors };
   const shownId = String(form.get("itemId") ?? "");
+  if (shownId && !isUuid(shownId)) return { status: "error", errors: {}, formError: "not_found" };
   const draftId = shownId ? await draftItemIdFor(appDb, a.account.id, shownId) : undefined;
   if (shownId && !draftId) return { status: "error", errors: {}, formError: "not_found" };
   const r = await saveDraftItem(appDb, a.account.id, parsed.value, draftId ?? undefined);
@@ -42,8 +45,8 @@ export async function saveItemAction(_prev: ItemFormState, form: FormData): Prom
 
 export async function removeItemAction(form: FormData) {
   const a = await access(form);
-  await removeDraftItem(appDb, a.account.id, String(form.get("itemId") ?? ""));
-  await auditActing(a, "catalog.item_removed");
+  const itemId = String(form.get("itemId") ?? "");
+  if (isUuid(itemId) && (await removeDraftItem(appDb, a.account.id, itemId))) await auditActing(a, "catalog.item_removed");
   revalidatePath(path(a.account.slug));
   redirect(path(a.account.slug));
 }
@@ -52,48 +55,52 @@ const skus = (v: FormDataEntryValue | null) => String(v ?? "").split(",").map((s
 
 export type RuleFormState = { status: "idle" } | { status: "error" };
 
+/** Adds a fit rule or an "Add automatically with" rule to the draft. */
 export async function addRuleAction(_prev: RuleFormState, form: FormData): Promise<RuleFormState> {
   const a = await access(form);
   const kind = String(form.get("kind") ?? "");
   const sku = String(form.get("sku") ?? "").trim().toUpperCase();
-  const raw =
-    kind === "requires" ? { kind, sku, oneOf: skus(form.get("oneOf")), perSite: form.get("perSite") === "on" }
-    : kind === "max_per" ? { kind, sku, max: Number(form.get("max")), perOneOf: skus(form.get("perOneOf")) }
-    : { kind: "advice", text: String(form.get("text") ?? ""), ...(sku ? { sku } : {}) };
-  const rule = parseFitRule(raw);
+  const rule =
+    kind === "auto_add"
+      ? parseAutoAddRule({
+          kind,
+          sku,
+          whenAnyOf: form.getAll("whenAnyOf").map((v) => String(v).trim().toUpperCase()).filter(Boolean),
+          qty: String(form.get("qty") ?? ""),
+          removable: form.get("removable") === "on",
+        })
+      : parseFitRule(
+          kind === "requires" ? { kind, sku, oneOf: skus(form.get("oneOf")), perSite: form.get("perSite") === "on" }
+          : kind === "max_per" ? { kind, sku, max: Number(form.get("max")), perOneOf: skus(form.get("perOneOf")) }
+          : { kind: "advice", text: String(form.get("text") ?? ""), ...(sku ? { sku } : {}) },
+        );
   if (!rule) return { status: "error" };
   // Every SKU a rule names must exist in the catalog being edited.
   const known = new Set((await catalogState(appDb, a.account.id)).items.map((i) => i.sku));
-  const named = rule.kind === "requires" ? [rule.sku, ...rule.oneOf] : rule.kind === "max_per" ? [rule.sku, ...rule.perOneOf] : rule.sku ? [rule.sku] : [];
+  const named =
+    rule.kind === "requires" ? [rule.sku, ...rule.oneOf]
+    : rule.kind === "max_per" ? [rule.sku, ...rule.perOneOf]
+    : rule.kind === "auto_add" ? [rule.sku, ...rule.whenAnyOf]
+    : rule.sku ? [rule.sku] : [];
   if (!named.every((s) => known.has(s))) return { status: "error" };
   await addDraftRule(appDb, a.account.id, rule);
-  await auditActing(a, "catalog.rule_added");
+  await auditActing(a, "catalog.rule_added", { kind: rule.kind });
   revalidatePath(path(a.account.slug));
   redirect(path(a.account.slug));
 }
 
 export async function removeRuleAction(form: FormData) {
   const a = await access(form);
-  await removeDraftRule(appDb, a.account.id, String(form.get("ruleId") ?? ""));
-  await auditActing(a, "catalog.rule_removed");
+  const ruleId = String(form.get("ruleId") ?? "");
+  if (isUuid(ruleId) && (await removeDraftRule(appDb, a.account.id, ruleId))) await auditActing(a, "catalog.rule_removed");
   revalidatePath(path(a.account.slug));
-}
-
-export async function saveTaxAction(form: FormData) {
-  const a = await access(form);
-  const rate = parseTaxRate(String(form.get("taxRate") ?? ""));
-  if (rate === null) redirect(`${path(a.account.slug)}?tax=invalid`);
-  await saveDraftSettings(appDb, a.account.id, { pricesIncludeTax: form.get("pricesIncludeTax") === "on", taxRateBp: rate });
-  await auditActing(a, "catalog.tax_saved");
-  revalidatePath(path(a.account.slug));
-  redirect(path(a.account.slug));
 }
 
 export async function publishAction(form: FormData) {
   const a = await access(form);
   const r = await publishDraft(appDb, actorOf(a), a.account.id);
   revalidatePath(path(a.account.slug));
-  redirect(r.ok ? `${path(a.account.slug)}?published=${r.version}` : `${path(a.account.slug)}?publish=${r.reason}${r.skus ? `&skus=${encodeURIComponent(r.skus.join(","))}` : ""}`);
+  redirect(r.ok ? `${path(a.account.slug)}?published=${r.version}` : `${path(a.account.slug)}?publish=${r.reason}`);
 }
 
 export async function discardAction(form: FormData) {

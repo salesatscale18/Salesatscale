@@ -6,6 +6,7 @@
  *
  * - `qty: "sites"`: one per site (1 when the site count is not known yet).
  * - `qty: "matching"`: as many as the matching products quoted, in total.
+ * - `qty: "one"`: one line of 1, however many matching products are quoted.
  * - `removable: false`: the buyer cannot remove the line. A discount or a
  *   waiver is still possible, within the account's discount limits.
  */
@@ -13,7 +14,7 @@ export type AutoAddRule = {
   kind: "auto_add";
   sku: string;
   whenAnyOf: string[];
-  qty: "sites" | "matching";
+  qty: "sites" | "matching" | "one";
   removable: boolean;
 };
 
@@ -38,7 +39,7 @@ export function parseAutoAddRule(raw: unknown): AutoAddRule | null {
   if (!Array.isArray(r.whenAnyOf) || r.whenAnyOf.length === 0 || !r.whenAnyOf.every((s) => typeof s === "string" && SKU.test(s))) return null;
   const whenAnyOf = [...new Set(r.whenAnyOf as string[])];
   if (whenAnyOf.includes(r.sku)) return null;
-  if (r.qty !== "sites" && r.qty !== "matching") return null;
+  if (r.qty !== "sites" && r.qty !== "matching" && r.qty !== "one") return null;
   return { kind: "auto_add", sku: r.sku, whenAnyOf, qty: r.qty, removable: r.removable === true };
 }
 
@@ -46,8 +47,8 @@ const list = (skus: string[]) => (skus.length === 1 ? skus[0] : `${skus.slice(0,
 
 /** Plain-language description (canvas: ProductEditor, Rules). */
 export function describeAutoAddRule(r: AutoAddRule): string {
-  const qty = r.qty === "sites" ? "number of sites" : "the same quantity";
-  return `When a quote has ${list(r.whenAnyOf)}, add ${r.sku} × ${qty}.${r.removable ? " The buyer can remove it." : ""}`;
+  const qty = r.qty === "sites" ? " × number of sites" : r.qty === "matching" ? " × the same quantity" : " once";
+  return `When a quote has ${list(r.whenAnyOf)}, add ${r.sku}${qty}.${r.removable ? " The buyer can remove it." : ""}`;
 }
 
 /**
@@ -74,7 +75,7 @@ export function applyAutoAdd<L extends AutoAddLine>(
       if (r.removable) continue;
       kept.add(r.sku);
     }
-    const n = r.qty === "sites" ? (sites !== undefined && Number.isInteger(sites) && sites > 0 ? sites : 1) : matching;
+    const n = r.qty === "sites" ? (sites !== undefined && Number.isInteger(sites) && sites > 0 ? sites : 1) : r.qty === "one" ? 1 : matching;
     const prev = wanted.get(r.sku);
     // Two rules for one SKU: the larger quantity wins; it stays removable only if both are.
     wanted.set(r.sku, { sku: r.sku, qty: Math.max(prev?.qty ?? 0, n), removable: (prev?.removable ?? true) && r.removable });

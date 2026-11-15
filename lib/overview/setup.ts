@@ -4,11 +4,11 @@
  */
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { agentVersions, catalogVersions, knowledgeFacts, sellerAccounts, type SellerAccount } from "@/db/schema";
+import { agentVersions, catalogVersions, knowledgeFacts, markets, priceLists, sellerAccounts, type SellerAccount } from "@/db/schema";
 import { currentLegalKeys } from "@/lib/orders/settings";
 
 /** Step ids of `SETUP_STEPS` in components/sas/nav.tsx. */
-export type SetupStepId = "company" | "sources" | "knowledge" | "catalog" | "playbook" | "order-form" | "follow-ups" | "go-live";
+export type SetupStepId = "company" | "sources" | "knowledge" | "catalog" | "prices" | "playbook" | "order-form" | "follow-ups" | "go-live";
 
 /** The account columns setup progress reads. Pages pass the row they already loaded. */
 export type ProgressAccount = Pick<SellerAccount, "id" | "legalName" | "companyId" | "languages" | "status">;
@@ -20,7 +20,7 @@ export type ProgressAccount = Pick<SellerAccount, "id" | "legalName" | "companyI
  */
 export async function setupProgress(db: Db, accountOrId: string | ProgressAccount): Promise<Set<SetupStepId>> {
   const accountId = typeof accountOrId === "string" ? accountOrId : accountOrId.id;
-  const [account, [fact], [catalog], [agent], legal] = await Promise.all([
+  const [account, [fact], [catalog], [agent], legal, [homePrices]] = await Promise.all([
     typeof accountOrId === "string"
       ? db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)).then(([a]) => a as ProgressAccount | undefined)
       : accountOrId,
@@ -31,12 +31,18 @@ export async function setupProgress(db: Db, accountOrId: string | ProgressAccoun
     db.select({ id: agentVersions.id }).from(agentVersions)
       .where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))).limit(1),
     currentLegalKeys(db, accountId),
+    // Prices: the home market sells from a price list that has a live version.
+    // Read only: an account without a home market yet is simply not done.
+    db.select({ id: priceLists.id }).from(markets)
+      .innerJoin(priceLists, and(eq(priceLists.accountId, markets.accountId), eq(priceLists.lineageId, markets.priceListLineageId), eq(priceLists.status, "live")))
+      .where(and(eq(markets.accountId, accountId), eq(markets.isHome, true))).limit(1),
   ]);
   const done = new Set<SetupStepId>();
   if (!account) return done;
   if (account.legalName?.trim() && account.companyId?.trim()) done.add("company");
   if (fact) done.add("knowledge");
   if (catalog) done.add("catalog");
+  if (homePrices) done.add("prices");
   if (agent) done.add("playbook");
   const legalLanguages = new Set(legal.map((s) => s.language));
   if (account.languages.length > 0 && account.languages.every((l) => legalLanguages.has(l))) done.add("order-form");
