@@ -54,5 +54,5 @@ export async function sendTestMessageAction(form: FormData) {
   // Each turn spends model tokens: 120 test messages per account per hour.
   if (!(await rateLimit(appDb, `testlab:${a.account.id}`, { limit: 120, windowSeconds: 3600 })).ok) redirect(`${back}&error=rate_limited`);
   const r = await runBuyerTurn(appDb, new AnthropicLlm(), { accountId: a.account.id, conversationId, text });
-  redirect(r.status === "error" ? `${back}&error=model` : `${back}#end`);
+  redirect(r.status === "error" ? `${back}&error=model` : r.status === "paused" ? `${back}&error=paused` : `${back}#end`);
 }
