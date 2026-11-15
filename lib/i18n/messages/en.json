@@ -133,7 +133,6 @@
   "admin.accounts.invite_expired": "Invite expired",
   "admin.accounts.no_admins": "Nobody has joined yet.",
   "admin.accounts.setup": "Setup progress",
-  "admin.accounts.setup_pending": "The go-live checklist arrives with the setup wizard (P8).",
   "admin.accounts.audit": "Audit log",
   "admin.accounts.audit_empty": "Nothing logged yet.",
   "admin.accounts.acting_note": "(platform admin, acting as)",
@@ -1090,5 +1089,7 @@
   "knowledge.error.statement": "Write the fact (1,000 characters or fewer).",
   "knowledge.error.source": "Keep the source to 200 characters or fewer.",
   "knowledge.error.missing": "That fact no longer exists.",
-  "knowledge.error.answer": "Type an answer to at least one question."
+  "knowledge.error.answer": "Type an answer to at least one question.",
+  "admin.accounts.setup_count": "{done} of {total} setup steps done",
+  "admin.accounts.setup_hint": "Enter the account to work on setup. Go live is the last step."
 }

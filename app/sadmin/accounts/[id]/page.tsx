@@ -7,6 +7,9 @@ import { PLANS, type Plan } from "@/lib/accounts/rules";
 import { getAccountById, listAccountAudit, listMembers, listPendingInvites } from "@/lib/accounts/service";
 import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
+import { Icon } from "@/components/sas/icon";
+import { SETUP_STEPS } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { AdminShell } from "../../admin-shell";
 import { enterAccountAction, pauseAccountAction, resumeAccountAction } from "../actions";
 import { InviteForm, RenewInviteButton } from "./invite-form";
@@ -26,6 +29,7 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
   if (!UUID.test(id)) notFound();
   const account = await getAccountById(appDb, id);
   if (!account) notFound();
+  const done = await setupProgress(appDb, account.id);
   const [members, invites, audit] = await Promise.all([
     listMembers(appDb, account.id),
     listPendingInvites(appDb, account.id),
@@ -110,7 +114,18 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
 
           <section className="sas-panel" aria-labelledby="set-h">
             <div className="sas-panel__head"><h2 id="set-h" className="sas-heading">{t("admin.accounts.setup")}</h2></div>
-            <p className="sas-panel__body sas-small" style={{ margin: 0 }}>{t("admin.accounts.setup_pending")}</p>
+            <div className="sas-panel__body sas-stack-2">
+              <span className="sas-small">{t("admin.accounts.setup_count", { done: done.size, total: SETUP_STEPS.length })}</span>
+              <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {SETUP_STEPS.map((s) => (
+                  <li key={s.id} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <Icon name={done.has(s.id as never) ? "check-circle" : "clock"} />
+                    <span style={{ color: done.has(s.id as never) ? "var(--ink)" : "var(--ink-muted)" }}>{t(s.label)}</span>
+                  </li>
+                ))}
+              </ul>
+              <span className="sas-small">{t("admin.accounts.setup_hint")}</span>
+            </div>
           </section>
 
           <section className="sas-panel" aria-labelledby="log-h">
