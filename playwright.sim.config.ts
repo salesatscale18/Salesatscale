@@ -2,7 +2,7 @@
  * Full-use-case simulation (docs/e2e-simulation.md) against a deployed site.
  *
  *   E2E_BASE_URL=https://salesatscale18.vercel.app \
- *   E2E_EMAIL=e2e+clerk_test@salesatscale.test E2E_PASSWORD=... \
+ *   E2E_EMAIL=e2e+clerk_test@example.com E2E_PASSWORD=... \
  *   npm run test:sim
  *
  * It creates its own seller account ("E2E <run id>") and test data in that

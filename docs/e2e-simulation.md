@@ -16,7 +16,7 @@ Spec: `tests/e2e/simulation/full-use-case.spec.ts`. Config: `playwright.sim.conf
 
 ```bash
 E2E_BASE_URL=https://salesatscale18.vercel.app \
-E2E_EMAIL=e2e+clerk_test@salesatscale.test \
+E2E_EMAIL=e2e+clerk_test@example.com \
 E2E_PASSWORD='<password>' \
 npm run test:sim
 ```
