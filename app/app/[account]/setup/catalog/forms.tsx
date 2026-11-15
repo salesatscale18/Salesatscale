@@ -86,7 +86,7 @@ export function ItemForm({ slug, d, unitLanguages }: { slug: string; d: ItemDefa
       ) : null}
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor="ci-av">{t("catalog.edit.availability")}</label>
-        <input className="sas-input" id="ci-av" name="availabilityNote" defaultValue={d.availabilityNote} />
+        <input className="sas-input" id="ci-av" name="availabilityNote" defaultValue={d.availabilityNote} placeholder={t("catalog.edit.availability_placeholder")} />
       </div>
       <label className="sas-check"><input type="checkbox" name="active" defaultChecked={d.active} />{t("catalog.edit.active")}</label>
       <div><button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>{t("catalog.edit.save")}</button></div>
@@ -161,7 +161,7 @@ export function RuleForm({ slug, items }: { slug: string; items: { sku: string; 
         <div className="sas-grid-2" style={{ gap: 12 }}>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-max">{t("catalog.rules.max")}</label>
-            <input className="sas-input sas-num" id="r-max" name="max" inputMode="numeric" />
+            <input className="sas-input sas-num" id="r-max" name="max" inputMode="numeric" placeholder={t("catalog.rules.max_placeholder")} />
           </div>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-per">{t("catalog.rules.per_one_of")}</label>
@@ -172,7 +172,7 @@ export function RuleForm({ slug, items }: { slug: string; items: { sku: string; 
       {kind === "advice" ? (
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="r-text">{t("catalog.rules.text")}</label>
-          <input className="sas-input" id="r-text" name="text" />
+          <input className="sas-input" id="r-text" name="text" placeholder={t("catalog.rules.text_placeholder")} />
         </div>
       ) : null}
       <div><button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}><Icon name="plus" />{t("catalog.rules.add")}</button></div>

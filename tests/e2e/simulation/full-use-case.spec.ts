@@ -135,14 +135,21 @@ test("2. Catalog (no prices), rules, price list, publish", async () => {
   await page.waitForURL(/\/setup\/price-lists\/[0-9a-f-]{36}/);
   const listUrl = new URL(page.url()).pathname;
   links.priceList = listUrl;
-  const price = async (p: { sku: string; oneTime?: string; tiers?: string; monthly?: string }) => {
+  const price = async (p: { sku: string; oneTime?: string; tier?: { from: string; price: string }; monthly?: string }) => {
     await page.goto(`${listUrl}?sku=${encodeURIComponent(p.sku)}`);
     await page.locator('input[name="sold"][value="yes"]').check();
     const ot = page.locator('input[name="oneTimeCharged"]');
     if (p.oneTime) {
       await ot.check();
       await page.locator("#pe-ot").fill(p.oneTime);
-      if (p.tiers) await page.locator("#pe-ott").fill(p.tiers);
+      if (p.tier) {
+        // Structured tier editor: add a row, then its from-quantity and unit price.
+        const block = page.locator("#ot-block");
+        await block.getByRole("button", { name: "Add tier" }).click();
+        await block.locator('input[data-tier="qty"]').last().fill(p.tier.from);
+        await block.locator('input[data-tier="price"]').last().fill(p.tier.price);
+        await expect(block.getByText(`1–${Number(p.tier.from) - 1}:`)).toBeVisible();
+      }
     } else await ot.uncheck();
     const rc = page.locator('input[name="recurringCharged"]');
     if (p.monthly) {
@@ -153,7 +160,7 @@ test("2. Catalog (no prices), rules, price list, publish", async () => {
     await page.getByRole("button", { name: "Save to draft" }).click();
     await expect(page.getByText("Saved to the draft").first()).toBeVisible();
   };
-  await price({ sku: "SNS-200", oneTime: "590", tiers: "10: 550" });
+  await price({ sku: "SNS-200", oneTime: "590", tier: { from: "10", price: "550" } });
   await price({ sku: "GW-10", oneTime: "660", monthly: "90" });
   await price({ sku: "INST-1", oneTime: "250" });
   await page.goto(listUrl);
