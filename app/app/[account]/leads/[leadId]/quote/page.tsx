@@ -3,16 +3,21 @@ import { notFound } from "next/navigation";
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { publishedCatalog } from "@/lib/catalog/service";
 import { getLead } from "@/lib/leads/service";
 import { getQuote, QUOTE_VALID_DAYS } from "@/lib/quotes/service";
+import { catalogAutoAdd, pricingContext } from "@/lib/quotes/pricing";
 import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
-import { QuoteEditor } from "./editor";
+import { QuoteEditor, type EditorItem } from "./editor";
+import { buildPreview, editorStart } from "./preview";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Create a quote, or a new version of one (?from=<quoteId>). P3.5. */
+/**
+ * Create a quote, or a new version of one (?from=<quoteId>). P3.5. Items come
+ * from the published catalog; prices from the live price list of the lead's
+ * market (a new version: the quote's market), as createQuote prices them.
+ */
 export default async function QuoteEditorPage({ params, searchParams }: { params: Promise<{ account: string; leadId: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug, leadId } = await params;
   const sp = await searchParams;
@@ -23,22 +28,42 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
   const fromId = typeof sp.from === "string" && UUID.test(sp.from) ? sp.from : undefined;
   const from = fromId ? await getQuote(appDb, account.id, fromId) : null;
   if (fromId && (!from || from.quote.leadId !== leadId)) notFound();
-  const catalog = await publishedCatalog(appDb, account.id);
+  const ctx = await pricingContext(appDb, account.id, from?.quote.marketId ?? row.lead.marketId);
+  const { catalog, priceList } = ctx;
 
   const current = from?.versions[0];
-  const initialQty = Object.fromEntries((current?.lines ?? []).map((l) => [l.sku, l.qty]));
+  // Lines a rule added are left to the rule again (and give back the site count).
+  const start = editorStart(current?.lines ?? [], catalog ? catalogAutoAdd(catalog) : []);
+  const initialQty = start.qty;
+  const entryBySku = new Map((priceList?.entries ?? []).map((e) => [e.sku, e]));
+  const items: EditorItem[] = (catalog?.items ?? []).filter((i) => i.active).map((i) => {
+    const e = entryBySku.get(i.sku);
+    const charges: EditorItem["charges"] = [];
+    if (e?.oneTimeCharged) charges.push({ charge: "one_time", period: null, priceMinor: e.oneTimeMinor });
+    if (e?.recurringCharged) charges.push({ charge: "recurring", period: e.recurringPeriod ?? "month", priceMinor: e.recurringMinor });
+    return { sku: i.sku, name: i.name, unit: i.unit, sold: e !== undefined, charges };
+  });
+  const cv = current?.version;
+  const initialPreview = catalog && priceList && from && cv
+    ? await buildPreview(appDb, account, leadId, { lines: Object.entries(initialQty).map(([sku, qty]) => ({ sku, qty })), discountBp: cv.discountBp, sites: start.sites }, from.quote.id)
+    : undefined;
+
   return (
     <main className="sas-shell__content">
       <header className="sas-stack-2">
         <nav aria-label="Breadcrumb" className="sas-small"><a href={`/app/${account.slug}/leads/${leadId}`}>{row.lead.fullName}</a> / {from ? `Q-${from.quote.number}` : t("quote.editor.create")}</nav>
         <h1 className="sas-title">{from ? t("quote.editor.title_version", { number: from.quote.number, version: from.quote.currentVersion + 1 }) : t("quote.editor.title_new", { name: row.lead.fullName })}</h1>
-        {current ? (
+        {cv ? (
           <span className="sas-small">
-            {t("quote.editor.replaces", { version: current.version.version, total: formatMoney(current.version.oneTimeTotalMinor, account.currency) })}
-            {current.version.recurringTotalMinor ? ` + ${formatMoney(current.version.recurringTotalMinor, account.currency, { period: "month" })}` : ""}
+            {t("quote.editor.replaces", { version: cv.version, total: formatMoney(cv.oneTimeTotalMinor, cv.currency) })}
+            {cv.recurringTotalMinor ? ` + ${formatMoney(cv.recurringTotalMinor, cv.currency, { period: cv.recurringPeriod === "year" ? "year" : "month" })}` : ""}
           </span>
         ) : null}
-        {catalog ? <span className="sas-small">{t("quote.editor.intro", { version: catalog.version.version })}</span> : null}
+        {catalog && priceList ? (
+          <span className="sas-small">
+            {t("quote.editor.intro_list", { list: priceList.list.name, version: priceList.list.version, market: ctx.market.name, currency: priceList.list.currency })}
+          </span>
+        ) : null}
       </header>
       {!catalog ? (
         <section className="sas-panel sas-empty">
@@ -46,18 +71,26 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
           <strong>{t("quote.editor.no_catalog")}</strong>
           <a className={buttonClass("primary", "sm")} href={`/app/${account.slug}/setup/catalog`}>{t("quote.editor.open_catalog")}</a>
         </section>
+      ) : !priceList ? (
+        <section className="sas-panel sas-empty">
+          <span className="sas-empty__icon sas-empty__icon--start"><Icon name="package" /></span>
+          <strong>{t("quote.editor.refused.no_price_list")}</strong>
+          <a className={buttonClass("primary", "sm")} href={`/app/${account.slug}/setup/price-lists`}>{t("quote.editor.open_price_lists")}</a>
+        </section>
       ) : (
         <QuoteEditor
           slug={account.slug}
           leadId={leadId}
           fromQuote={from?.quote.id}
-          currency={account.currency}
+          currency={priceList.list.currency}
           maxDiscountPct={account.maxDiscountBp / 100}
-          items={catalog.items.filter((i) => i.active).map((i) => ({ sku: i.sku, name: i.name, unit: i.unit, recurring: i.chargeType === "recurring", priceMinor: i.priceMinor, availability: i.availabilityNote }))}
+          items={items}
           initialQty={initialQty}
-          initialDiscount={current && current.version.discountBp ? String(current.version.discountBp / 100) : ""}
+          initialDiscount={cv && cv.discountBp ? String(cv.discountBp / 100) : ""}
           idem={randomUUID()}
           validDays={QUOTE_VALID_DAYS}
+          initialPreview={initialPreview}
+          initialSites={start.sites ? String(start.sites) : ""}
         />
       )}
     </main>
