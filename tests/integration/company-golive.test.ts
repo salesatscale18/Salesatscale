@@ -17,6 +17,7 @@ import { parseLead } from "@/lib/leads/rules";
 import { upsertLead } from "@/lib/leads/service";
 import { createQuote } from "@/lib/quotes/service";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { seedPricing } from "../helpers/pricing";
 
 describe("company, users, settings and go live", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -186,6 +187,7 @@ describe("company, users, settings and go live", () => {
         await saveDraftItem(db, acc, p.value);
       }
       expect(await publishDraft(db, as(owner), acc)).toMatchObject({ ok: true });
+      await seedPricing(db, acc, [{ sku: "SNS-200", oneTime: 59_000 }]);
       await saveLegalSection(db, acc, owner.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "Terms" });
       const lp = parseLead({ fullName: "Rina Cohen", phone: "0525550101", language: "en", consent: "on", consentSource: "web form" }, "IL", { language: "en", now: new Date() });
       if (!lp.ok) throw new Error();

@@ -13,6 +13,7 @@ import { conversationScenarioCheck, latestScenarioResults } from "@/lib/agent/sc
 import { scenarioById } from "@/lib/agent/scenarios";
 import { runBuyerTurn } from "@/lib/agent/turn";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { seedPricing } from "../helpers/pricing";
 
 const use = (id: string, name: string, input: unknown): Block => ({ type: "tool_use", id, name, input });
 const say = (text: string): Block => ({ type: "text", text });
@@ -46,6 +47,7 @@ describe("take over, hand back and replies from a person", () => {
     }
     await addDraftRule(db, acc, { kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true });
     await publishDraft(db, actor(), acc);
+    await seedPricing(db, acc, [{ sku: "SNS-200", oneTime: 59_000 }, { sku: "GW-10", oneTime: 66_000 }]);
     const draft = await ensureDraftVersion(db, acc);
     await saveDraftPlaybook(db, acc, { ...draft.playbook, maxDiscountBp: 700 });
   });
