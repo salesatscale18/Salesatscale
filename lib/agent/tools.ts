@@ -13,6 +13,8 @@ import { checkFit } from "@/lib/catalog/fit";
 import { approvalReasonText, pricingErrorText } from "@/lib/catalog/pricing";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
+import { priceWithList, type EngineLine } from "@/lib/pricing/engine";
+import { catalogAutoAdd, engineItems, enginePriceList, pricingContext, requestLinesOf, type PricingContext } from "@/lib/quotes/pricing";
 import { createQuote } from "@/lib/quotes/service";
 import { createOrderForm } from "@/lib/orders/service";
 import type { ToolDef } from "./llm";
@@ -33,13 +35,13 @@ const lineSchema = {
 export const TOOL_DEFS: ToolDef[] = [
   {
     name: "search_catalog",
-    description: "Search the seller's published catalog. Returns products with SKU, unit, price and availability. Use before recommending any product.",
+    description: "Search the seller's catalog with the prices of the buyer's market. Returns products with SKU, unit, one-time and recurring price, and availability. Items marked sold_here=false are not sold in the buyer's market: never offer them. Use before recommending any product.",
     strict: true,
     input_schema: { type: "object", properties: { query: { type: "string", description: "Words to match; empty string lists everything." } }, required: ["query"], additionalProperties: false },
   },
   {
     name: "check_fit",
-    description: "Check a set of products against the seller's fit rules (what must be sold together, limits per unit). Returns problems and advice.",
+    description: "Check a set of products against the seller's fit rules (what must be sold together, limits per unit) and price it for the buyer's market. Returns problems, advice, lines added automatically (such as setup fees) and the totals.",
     strict: true,
     input_schema: {
       type: "object",
@@ -84,7 +86,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "create_quote",
-    description: "Create a quote priced by the server from the catalog. Refused with the missing fields if the deal is not qualified yet. A discount above your limit goes to the seller for approval.",
+    description: "Create a quote priced by the server from the price list of the buyer's market. Refused with the missing fields if the deal is not qualified yet, or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval.",
     strict: true,
     input_schema: {
       type: "object",
@@ -148,12 +150,38 @@ export type ToolContext = {
 export type TurnMemo = {
   account?: SellerAccount;
   catalog?: Promise<Awaited<ReturnType<typeof publishedCatalog>>>;
+  /** The lead's market, the catalog and the market's live price list and entries. */
+  pricing?: Promise<PricingContext>;
   facts?: Promise<Awaited<ReturnType<typeof approvedFacts>>>;
 };
 
 function catalogOf(ctx: ToolContext) {
   if (!ctx.memo) return publishedCatalog(ctx.db, ctx.accountId);
   return (ctx.memo.catalog ??= publishedCatalog(ctx.db, ctx.accountId));
+}
+
+/** Prices for this lead: its market (home when none) and that market's live price list. */
+function pricingOf(ctx: ToolContext): Promise<PricingContext> {
+  const load = async () => {
+    const [[lead], catalog] = await Promise.all([
+      ctx.db.select({ marketId: leads.marketId }).from(leads).where(and(eq(leads.id, ctx.leadId), eq(leads.accountId, ctx.accountId))),
+      catalogOf(ctx),
+    ]);
+    return pricingContext(ctx.db, ctx.accountId, lead?.marketId ?? null, { catalog });
+  };
+  if (!ctx.memo) return load();
+  return (ctx.memo.pricing ??= load());
+}
+
+const NO_PRICE_LIST = "No price list for this buyer's market";
+const NOT_SOLD = "Not sold in this buyer's market";
+const NO_PRICES_MESSAGE = "Tell the buyer you will confirm prices with the team. Do not guess prices.";
+
+/** A priced line in plain words for the model: "6 × SNS-200 one-time: ₪3,540.00". */
+function describeLine(l: EngineLine, money: (m: number, period?: "month" | "year") => string) {
+  const charge = l.charge === "one_time" ? "one-time" : l.period === "year" ? "yearly" : "monthly";
+  const total = l.priceSource === "not_charged" ? "included" : l.lineTotalMinor === null ? "priced by the seller" : money(l.lineTotalMinor, l.period ?? undefined);
+  return { sku: l.sku, name: l.name, qty: l.qty, charge, total, ...(l.autoAdded ? { added_automatically: true, buyer_can_remove: l.removable } : {}) };
 }
 
 function factsOf(ctx: ToolContext) {
@@ -185,33 +213,75 @@ function asLines(v: unknown): Line[] | null {
 
 export async function runTool(name: string, input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const args = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
-  const money = (m: number, recurring = false) => formatMoney(m, ctx.currency, recurring ? { period: "month" } : {});
+  /** Money in a currency (the price list's), with the period for recurring amounts. */
+  const moneyIn = (currency: string) => (m: number, period?: "month" | "year") => formatMoney(m, currency, period ? { period } : {});
 
   if (name === "search_catalog") {
-    const catalog = await catalogOf(ctx);
-    if (!catalog) return refuse("No published catalog yet", { message: "Tell the buyer you will check product details with the team." });
+    const p = await pricingOf(ctx);
+    if (!p.catalog) return refuse("No published catalog yet", { message: "Tell the buyer you will check product details with the team." });
+    if (!p.priceList) return refuse(NO_PRICE_LIST, { message: NO_PRICES_MESSAGE });
+    const money = moneyIn(p.priceList.list.currency);
+    const entryBySku = new Map(p.priceList.entries.map((e) => [e.sku, e]));
     const words = String(args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
-    const items = catalog.items
+    const part = (charged: boolean, minor: number | null, period?: "month" | "year") =>
+      !charged ? null : minor === null ? "priced by the seller on request" : money(minor, period);
+    const items = p.catalog.items
       .filter((i) => i.active)
       .filter((i) => words.length === 0 || words.some((w) => `${i.sku} ${i.name} ${i.description ?? ""} ${i.unit}`.toLowerCase().includes(w)))
       .slice(0, 20)
-      .map((i) => ({
-        sku: i.sku, name: i.name, unit: i.unit, charged: i.chargeType === "recurring" ? "monthly" : "one-time",
-        price: i.priceMinor === null ? "priced by the seller on request" : money(i.priceMinor, i.chargeType === "recurring"),
-        volume_prices: i.volumeTiers.map((t) => `from ${t.minQty}: ${money(t.priceMinor, i.chargeType === "recurring")}`),
-        availability: i.availabilityNote, description: i.description,
-      }));
-    return { outcome: "ok", result: { ok: true, items, prices_include_tax: catalog.version.pricesIncludeTax } };
+      .map((i) => {
+        const e = entryBySku.get(i.sku);
+        // Not in this market's price list: not sold here, which is not a price of 0.
+        if (!e) return { sku: i.sku, name: i.name, sold_here: false, note: "Not sold in this buyer's market. Do not offer it." };
+        const period = e.recurringPeriod ?? "month";
+        return {
+          sku: i.sku, name: i.name, kind: i.kind ?? "product", unit: i.unit, sold_here: true,
+          one_time_price: part(e.oneTimeCharged, e.oneTimeMinor),
+          recurring_price: part(e.recurringCharged, e.recurringMinor, period),
+          volume_prices: [
+            ...(e.oneTimeCharged ? e.oneTimeTiers.map((t) => `one-time from ${t.minQty}: ${money(t.priceMinor)}`) : []),
+            ...(e.recurringCharged ? e.recurringTiers.map((t) => `recurring from ${t.minQty}: ${money(t.priceMinor, period)}`) : []),
+          ],
+          ...(e.customPricingFromQty !== null ? { priced_by_seller_from_qty: e.customPricingFromQty } : {}),
+          availability: i.availabilityNote, description: i.description,
+        };
+      });
+    return { outcome: "ok", result: { ok: true, items, currency: p.priceList.list.currency, prices_include_tax: p.priceList.list.pricesIncludeTax } };
   }
 
   if (name === "check_fit") {
     const lines = asLines(args.lines);
     if (!lines) return { outcome: "failed", result: { ok: false, error: "lines must be [{sku, qty}]" } };
-    const catalog = await catalogOf(ctx);
-    if (!catalog) return refuse("No published catalog yet");
+    const p = await pricingOf(ctx);
+    if (!p.catalog) return refuse("No published catalog yet");
     const sites = typeof args.sites === "number" ? args.sites : undefined;
-    const fit = checkFit(catalog.rules, lines, sites);
-    return { outcome: "ok", result: { ok: fit.ok, problems: fit.problems, advice: fit.notes } };
+    if (!p.priceList) {
+      const fit = checkFit(p.catalog.rules, lines, sites);
+      return { outcome: "ok", result: { ok: fit.ok, problems: fit.problems, advice: fit.notes, prices: NO_PRICE_LIST } };
+    }
+    const money = moneyIn(p.priceList.list.currency);
+    const r = priceWithList({
+      items: engineItems(p.catalog), entries: p.priceList.entries, priceList: enginePriceList(p.priceList.list),
+      lines, sites, discountBp: 0, maxDiscountBp: 10_000, autoAdd: catalogAutoAdd(p.catalog),
+    });
+    if (!r.ok) {
+      const fit = checkFit(p.catalog.rules, lines, sites);
+      const notSold = r.errors.flatMap((e) => (e.kind === "not_sold" ? [e.sku] : []));
+      return { outcome: "ok", result: { ok: false, problems: [...r.errors.map(pricingErrorText), ...fit.problems], advice: fit.notes, ...(notSold.length ? { not_sold_here: notSold } : {}) } };
+    }
+    // Fit rules see what will be quoted, including lines added automatically.
+    const fit = checkFit(p.catalog.rules, requestLinesOf(r.lines), sites);
+    return {
+      outcome: "ok",
+      result: {
+        ok: fit.ok, problems: fit.problems, advice: fit.notes,
+        lines: r.lines.map((l) => describeLine(l, money)),
+        added_automatically: r.autoAdded,
+        due_on_signing: r.complete ? money(r.oneTime.totalMinor) : "to be priced by the seller",
+        recurring: r.recurring.totalMinor ? money(r.recurring.totalMinor, r.recurringPeriod ?? "month") : null,
+        prices_include_tax: r.pricesIncludeTax,
+      },
+    };
   }
 
   if (name === "lookup_knowledge") {
@@ -269,16 +339,24 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     const pct = typeof args.discount_percent === "number" ? args.discount_percent : 0;
     const sites = typeof args.sites === "number" ? args.sites : undefined;
-    const preloaded = ctx.memo ? { account: ctx.memo.account, catalog: await catalogOf(ctx) } : undefined;
+    // The memo's market, catalog and price list (read once per turn); createQuote ignores them if they are not this lead's.
+    const preloaded = ctx.memo ? { account: ctx.memo.account, context: await pricingOf(ctx) } : undefined;
     const r = await createQuote(ctx.db, ctx.accountId, { kind: "agent" }, ctx.leadId, {
       lines, discountBp: Math.round(pct * 100), sites, idempotencyKey: `tool:${ctx.callId}`, preloaded,
     });
     if (!r.ok) {
       if (r.reason === "fit") return refuse("Fit check failed", { problems: r.problems });
-      if (r.reason === "pricing") return refuse("Products or quantities not valid", { problems: r.errors.map(pricingErrorText) });
+      if (r.reason === "pricing") {
+        const notSold = r.errors.flatMap((e) => (e.kind === "not_sold" ? [e.sku] : []));
+        if (notSold.length) return refuse(NOT_SOLD, { not_sold_here: notSold, problems: r.errors.map(pricingErrorText), message: "Do not offer these items to this buyer." });
+        return refuse("Products or quantities not valid", { problems: r.errors.map(pricingErrorText) });
+      }
+      if (r.reason === "no_price_list") return refuse(NO_PRICE_LIST, { message: NO_PRICES_MESSAGE });
       return refuse(r.reason === "lead_opted_out" ? "Lead opted out" : r.reason === "no_catalog" ? "No published catalog yet" : r.reason);
     }
     const v = r.version;
+    const money = moneyIn(v.currency);
+    const period = v.recurringPeriod === "year" ? "year" : "month";
     const awaiting = r.quote.status === "awaiting_approval";
     return {
       outcome: "ok",
@@ -287,7 +365,9 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         quote: `Q-${r.quote.number} v${v.version}`,
         status: awaiting ? "awaiting_seller_approval" : "ready",
         due_on_signing: awaiting && v.approvalReasons.some((x) => x.kind === "price_missing") ? "to be priced by the seller" : money(v.oneTimeTotalMinor),
-        monthly: v.recurringTotalMinor ? money(v.recurringTotalMinor, true) : null,
+        // "monthly" stays for the trace (lib/agent/trace.ts); "recurring" also covers yearly prices.
+        monthly: v.recurringTotalMinor && period === "month" ? money(v.recurringTotalMinor, "month") : null,
+        recurring: v.recurringTotalMinor ? money(v.recurringTotalMinor, period) : null,
         prices_include_tax: v.pricesIncludeTax,
         valid_until: v.validUntil.toISOString().slice(0, 10),
         approval_reasons: v.approvalReasons.map(approvalReasonText),

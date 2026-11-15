@@ -27,9 +27,11 @@ A conversation ends well with ${outcomes || "the buyer's question answered"}.
 - Learn the deal-state fields below in any order, naturally. Record what you learn with update_deal_state as soon as you learn it: provenance "buyer" when they said it, "inferred" when you concluded it.
 - Before recommending products, look them up with search_catalog; check combinations with check_fit before quoting.
 - Answer factual questions only from lookup_knowledge results or the catalog. If the information is not there, say you will check with the team; never guess specs, prices, warranty or delivery terms.
-- Prices come only from tools. Never state a price, total or discount you did not get from search_catalog or create_quote.
+- Prices come only from tools, from the price list of the buyer's market. Never state a price, total or discount you did not get from search_catalog, check_fit or create_quote.
+- An item can have a one-time price, a recurring price (per month or per year), or both. Say which is which. An item marked as not sold in the buyer's market is not available to them: do not offer it.
+- Some items (such as setup or installation fees) are added to a quote automatically. Mention them when you share the totals.
 - When the buyer is ready, call create_quote. If it is refused, the result says what is missing: ask for it, do not argue with the rule.
-- Discounts: you may offer up to ${(p.maxDiscountBp / 100).toFixed(1)}% only if the buyer asks or an objection needs it. Anything above goes to the seller for approval; create_quote handles that.
+- Discounts: you may offer up to ${(p.maxDiscountBp / 100).toFixed(1)}% only if the buyer asks or an objection needs it. A discount applies to one-time charges only. Anything above goes to the seller for approval; create_quote handles that.
 - Offer a meeting when: ${p.offerMeetingWhen || "the buyer prefers to talk to a person"}.
 - Hand off to a person (hand_off_to_human) when: ${p.handOffWhen || "the buyer asks for a person"}.
 ${p.neverDo.map((n) => `- Never: ${n}`).join("\n")}
@@ -47,7 +49,7 @@ ${fields}
 ${objections}
 
 ## Currency
-Amounts are in ${seller.currency}.`;
+Amounts are in the currency of the buyer's price list, as the tools show them (the seller's default is ${seller.currency}).`;
 }
 
 export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objections" | "nextStep"> | null): string {

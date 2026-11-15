@@ -6,7 +6,7 @@ import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
 import { exactTime, relativeTime } from "@/lib/format";
 import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, type QuoteTab } from "@/lib/quotes/service";
-import { catalogVersions, orderForms, orders, leads, users } from "@/db/schema";
+import { catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
 import { and, count, desc, eq, inArray, or } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
@@ -46,15 +46,21 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     UUID.test(quoteId) ? getQuote(appDb, account.id, quoteId) : Promise.resolve(null),
   ]);
   const now = new Date();
-  const money = (m: number, recurring = false) => formatMoney(m, account.currency, recurring ? { period: "month" } : {});
+  /** Amounts in the document's own currency (from its price list), with the period for recurring ones. */
+  const moneyIn = (currency: string) => (m: number, period?: string | null) =>
+    formatMoney(m, currency, period === "year" || period === "month" ? { period } : {});
+  const money = moneyIn(account.currency);
   const tabHref = (x: string) => (x === "quotes" ? base : `${base}?tab=${x}`);
 
   const cur = detail?.versions[0];
   const incomplete = !!cur?.lines.some((l) => l.unitPriceMinor === null);
+  // The selected quote's amounts: its own currency and recurring period (older quotes: monthly).
+  const dm = cur ? moneyIn(cur.version.currency) : money;
+  const recurringPeriod = cur?.version.recurringPeriod === "year" ? "year" : "month";
   // Round trip 3: everything that depends on the selected quote, in parallel.
   // People named in the panel (approver, creator, form sender) come from one users query.
   const personIds = [cur?.version.approvedByUserId, cur?.version.createdByUserId].filter((x): x is string => !!x);
-  const [people, [catalogVersion], forms, signed] = detail
+  const [people, [catalogVersion], forms, signed, [priceList], [market]] = detail
     ? await Promise.all([
         appDb.select().from(users).where(
           or(
@@ -67,8 +73,15 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         cur ? appDb.select().from(catalogVersions).where(eq(catalogVersions.id, cur.version.catalogVersionId)) : Promise.resolve([]),
         formsForQuote(appDb, account.id, detail.quote.id),
         orderForQuote(appDb, account.id, detail.quote.id),
+        // The price list version and market the quote was priced in (frozen on the version).
+        cur?.version.priceListId
+          ? appDb.select({ name: priceLists.name, version: priceLists.version }).from(priceLists).where(and(eq(priceLists.id, cur.version.priceListId), eq(priceLists.accountId, account.id)))
+          : Promise.resolve([]),
+        cur?.version.marketId
+          ? appDb.select({ name: markets.name }).from(markets).where(and(eq(markets.id, cur.version.marketId), eq(markets.accountId, account.id)))
+          : Promise.resolve([]),
       ])
-    : [[], [], [], null];
+    : [[], [], [], null, [], []];
   const nameById = new Map(people.map((u) => [u.id, displayName(u)]));
   const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
   const approver = nameOf(cur?.version.approvedByUserId ?? null);
@@ -117,8 +130,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                       <tr key={order.id}>
                         <td><a className="sas-num" href={`${base}?tab=orders&quote=${order.quoteId}`}>{orderLabel(account.tradeName, order.number)}</a></td>
                         <td>{lead.company ?? lead.fullName}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{money(order.amountDueMinor)}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{order.recurringMinor ? money(order.recurringMinor) : "—"}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
                         <td><StatusPill object="payment" state={order.paymentStatus} /></td>
                         <td className="sas-small" title={exactTime(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
                       </tr>
@@ -151,8 +164,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                       <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
                         <td><a className="sas-num" href={`${base}?${tab === "quotes" ? "" : `tab=${tab}&`}quote=${quote.id}`}>Q-{quote.number} v{quote.currentVersion}</a></td>
                         <td>{lead.company ?? lead.fullName}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : money(version.oneTimeTotalMinor)}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? money(version.recurringTotalMinor) : "—"}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
                         <td><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now)} /></td>
                         <td>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
                         <td>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
@@ -172,7 +185,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             <div className="sas-stack-2" style={{ gap: 4, flex: 1 }}>
               <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: dateShort.format(cur.version.validUntil) })}</span>
               <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
-              <span className="sas-small">{t("orders.detail.created", { who: creator, catalog: catalogVersion?.version ?? "?" })}</span>
+              <span className="sas-small">
+                {priceList
+                  ? t("orders.detail.created_list", { who: creator, list: priceList.name, version: priceList.version })
+                  : t("orders.detail.created", { who: creator, catalog: catalogVersion?.version ?? "?" })}
+                {market ? ` · ${t("orders.detail.market", { market: market.name })}` : ""}
+              </span>
             </div>
             <a className={buttonClass("ghost", "sm")} href={tab === "quotes" ? base : `${base}?tab=${tab}`} aria-label={t("lead.form.close")}><Icon name="x" /></a>
           </div>
@@ -183,17 +201,29 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           <section className="sas-stack-2" aria-labelledby="items-h">
             <h3 id="items-h" className="sas-heading">{t("orders.detail.items")}</h3>
             <dl className="sas-kv">
-              {cur.lines.map((l) => (
-                <div key={l.id} style={{ display: "contents" }}>
-                  <dt style={{ color: "var(--ink)" }}>{l.qty} × {l.name} <Chip>{l.sku}</Chip><div className="sas-small">{t(`quote.price_source.${l.priceSource as "list" | "tier" | "custom"}`)}</div></dt>
-                  <dd className="sas-num">{l.lineTotalMinor === null ? t("quote.to_price") : money(l.lineTotalMinor, l.chargeType === "recurring")}</dd>
-                </div>
-              ))}
+              {/* One line per charge: an item with a one-time and a recurring price shows twice. */}
+              {cur.lines.map((l) => {
+                const period = l.chargeType === "recurring" ? (l.period === "year" ? "year" : "month") : null;
+                return (
+                  <div key={l.id} style={{ display: "contents" }} data-charge={l.chargeType}>
+                    <dt style={{ color: "var(--ink)" }}>
+                      {l.qty} × {l.name} <Chip>{l.sku}</Chip>
+                      <div className="sas-small">{t(period ? `quote.charge.${period}` : "quote.charge.one_time")} · {t(`quote.price_source.${l.priceSource as "list" | "tier" | "custom" | "not_charged"}`)}</div>
+                    </dt>
+                    <dd className="sas-num">{l.lineTotalMinor === null ? t("quote.to_price") : dm(l.lineTotalMinor, period)}</dd>
+                  </div>
+                );
+              })}
               <dt>{t("quote.discount")}</dt><dd className="sas-num">{(cur.version.discountBp / 100).toFixed(1)}%</dd>
-              <dt className="sas-kv__total">{t("quote.one_time_total")}</dt><dd className="sas-num sas-kv__total">{incomplete ? t("quote.to_price") : money(cur.version.oneTimeTotalMinor)}</dd>
-              {cur.version.recurringTotalMinor || incomplete ? <><dt className="sas-kv__total">{t("quote.monthly_total")}</dt><dd className="sas-num sas-kv__total">{incomplete ? t("quote.to_price") : money(cur.version.recurringTotalMinor, true)}</dd></> : null}
+              <dt className="sas-kv__total">{t("quote.one_time_total")}</dt><dd className="sas-num sas-kv__total">{incomplete ? t("quote.to_price") : dm(cur.version.oneTimeTotalMinor)}</dd>
+              {cur.version.recurringTotalMinor || incomplete ? <><dt className="sas-kv__total">{t(recurringPeriod === "year" ? "quote.yearly_total" : "quote.monthly_total")}</dt><dd className="sas-num sas-kv__total">{incomplete ? t("quote.to_price") : dm(cur.version.recurringTotalMinor, recurringPeriod)}</dd></> : null}
             </dl>
-            {incomplete ? null : <span className="sas-small">{t(cur.version.pricesIncludeTax ? "quote.incl_tax" : "quote.plus_tax", { tax: money(cur.version.oneTimeTaxMinor) })}</span>}
+            {incomplete ? null : (
+              <span className="sas-small">
+                {t(cur.version.pricesIncludeTax ? "quote.incl_tax" : "quote.plus_tax", { tax: dm(cur.version.oneTimeTaxMinor) })}
+                {cur.version.recurringTotalMinor ? ` · ${t(cur.version.pricesIncludeTax ? "quote.incl_tax" : "quote.plus_tax", { tax: dm(cur.version.recurringTaxMinor, recurringPeriod) })}` : ""}
+              </span>
+            )}
           </section>
 
           {detail.quote.status === "awaiting_approval" ? (
@@ -202,12 +232,17 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               <input type="hidden" name="quoteId" value={detail.quote.id} />
               <strong>{t("orders.detail.approval")}</strong>
               <ul style={{ margin: 0, paddingInlineStart: 18 }}>{cur.version.approvalReasons.map((r, i) => <li key={i} className="sas-small" style={{ color: "var(--ink)" }}>{approvalReasonText(r)}</li>)}</ul>
-              {cur.lines.filter((l) => l.unitPriceMinor === null || cur.version.approvalReasons.some((r) => r.kind === "custom_pricing_qty" && r.sku === l.sku)).map((l) => (
-                <div key={l.id} className="sas-input-group">
-                  <label className="sas-input-label" htmlFor={`p-${l.sku}`}>{t("orders.detail.price_for", { sku: l.sku, currency: account.currency })}</label>
-                  <input className="sas-input sas-num" id={`p-${l.sku}`} name={`price:${l.sku}`} inputMode="decimal" placeholder={l.unitPriceMinor === null ? "" : (l.unitPriceMinor / 100).toFixed(2)} required={l.unitPriceMinor === null} />
-                </div>
-              ))}
+              {/* A price per charge: "price:<SKU>:<one_time|recurring>". */}
+              {cur.lines.filter((l) => l.unitPriceMinor === null || cur.version.approvalReasons.some((r) => r.kind === "custom_pricing_qty" && r.sku === l.sku)).map((l) => {
+                const id = `p-${l.sku}-${l.chargeType}`;
+                const charge = t(l.chargeType === "recurring" ? (l.period === "year" ? "quote.charge.year" : "quote.charge.month") : "quote.charge.one_time");
+                return (
+                  <div key={l.id} className="sas-input-group">
+                    <label className="sas-input-label" htmlFor={id}>{t("orders.detail.price_for_charge", { charge, sku: l.sku, currency: cur.version.currency })}</label>
+                    <input className="sas-input sas-num" id={id} name={`price:${l.sku}:${l.chargeType}`} inputMode="decimal" placeholder={l.unitPriceMinor === null ? "" : (l.unitPriceMinor / 100).toFixed(2)} required={l.unitPriceMinor === null} />
+                  </div>
+                );
+              })}
               <div><Button type="submit" variant="primary" size="sm">{t("orders.detail.approve")}</Button></div>
             </form>
           ) : approver && cur.version.approvedAt ? (
@@ -262,7 +297,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </div>
             {sp.marked ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.marked")}</span></div> : null}
             {signed ? (
-              <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {money(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${money(signed.order.recurringMinor, true)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: relativeTime(signed.order.paidAt, now) })}` : ""}</span>
+              <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: relativeTime(signed.order.paidAt, now) })}` : ""}</span>
             ) : <span className="sas-small">{t("orders.detail.payment_soon")}</span>}
             {signed?.order.paymentStatus === "bank_transfer_expected" ? (
               <form action={markBankPaidAction}>

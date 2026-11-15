@@ -3,8 +3,6 @@ import { and, eq } from "drizzle-orm";
 import { auditLog, conversations, leadEvents, leads, messages, orderForms, orders, paymentAttempts, providerEvents, quotes, sellerAccounts, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { parseCatalogItem } from "@/lib/catalog/rules";
-import { addDraftRule, publishDraft, saveDraftItem } from "@/lib/catalog/service";
 import { parseLead } from "@/lib/leads/rules";
 import { upsertLead } from "@/lib/leads/service";
 import { createQuote, createQuoteVersion, quotesForLead } from "@/lib/quotes/service";
@@ -15,6 +13,7 @@ import {
 import { formIdFromToken, tokenFor } from "@/lib/orders/token";
 import { handleProviderEvent, signFake, simulateFakePayment } from "@/lib/payments/events";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { republishPricing, seedCatalog, seedPricing } from "../helpers/pricing";
 
 const sign = { fields: { company_name: "Rina's Kitchen Ltd", company_id: "512345678", billing_address: "8 Dizengoff St", delivery_address: "Tel Aviv", invoice_email: "rina@kitchen.test" }, fullName: "Rina Cohen", role: "Owner", agreed: true };
 
@@ -23,6 +22,7 @@ describe("order forms, signatures and payments", () => {
   let db: TestDb;
   let me: User;
   let acc: string, other: string;
+  let lineage = "";
   const human = () => ({ kind: "human" as const, userId: me.id, actingAs: false });
   const actor = () => ({ userId: me.id, actingAs: false });
 
@@ -49,17 +49,18 @@ describe("order forms, signatures and payments", () => {
     };
     acc = await mk("Polar Monitoring");
     other = await mk("Other");
-    for (const raw of [
-      { sku: "SNS-200", name: "Wireless fridge sensor", unit: "sensor", price: "590" },
-      { sku: "GW-10", name: "Site gateway", unit: "site", price: "660" },
-      { sku: "PLAN-M", name: "Monitoring plan", unit: "site", price: "90", chargeType: "recurring" },
-    ]) {
-      const p = parseCatalogItem(raw, "ILS");
-      if (!p.ok) throw new Error();
-      await saveDraftItem(db, acc, p.value);
-    }
-    await addDraftRule(db, acc, { kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true });
-    await publishDraft(db, actor(), acc);
+    await seedCatalog(db, acc, [
+      { sku: "SNS-200", name: "Wireless fridge sensor", unit: "device" },
+      { sku: "GW-10", name: "Site gateway", unit: "site" },
+      { sku: "PLAN-M", name: "Monitoring plan", unit: "site", kind: "service" },
+      { sku: "KIT-1", name: "Starter kit", unit: "custom", unitCustom: { en: { one: "kit", other: "kits" }, he: { one: "ערכה", other: "ערכות" } } },
+    ], [{ kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true }]);
+    ({ lineageId: lineage } = await seedPricing(db, acc, [
+      { sku: "SNS-200", oneTime: 59_000 },
+      { sku: "GW-10", oneTime: 66_000 },
+      { sku: "PLAN-M", recurring: 9_000 },
+      { sku: "KIT-1", oneTime: 100_000, recurring: 5_000 },
+    ], { userId: me.id }));
   });
   afterAll(async () => t.close());
 
@@ -194,18 +195,12 @@ describe("order forms, signatures and payments", () => {
     expect(await markBankTransferReceived(db, actor(), acc, cardView.order.id)).toEqual({ ok: false, reason: "not_bank_transfer" });
   });
 
-  it("a catalog price change blocks signing until the buyer accepts the new total (new version, new link)", async () => {
+  it("a new price list version blocks signing until the buyer accepts the new total (new version, new link)", async () => {
     const leadId = await newLead("0525550107");
     const q = await newQuote(leadId);
     const f = await createOrderForm(db, acc, human(), q);
     if (!f.ok) throw new Error();
-    const p = parseCatalogItem({ sku: "SNS-200", name: "Wireless fridge sensor", unit: "sensor", price: "620" }, "ILS");
-    if (!p.ok) throw new Error();
-    const { draftItemIdFor } = await import("@/lib/catalog/service");
-    const { catalogState } = await import("@/lib/catalog/service");
-    const sns = (await catalogState(db, acc)).items.find((i) => i.sku === "SNS-200")!;
-    await saveDraftItem(db, acc, p.value, (await draftItemIdFor(db, acc, sns.id))!);
-    await publishDraft(db, actor(), acc);
+    await republishPricing(db, acc, lineage, [{ sku: "SNS-200", oneTime: 62_000 }]);
     expect(await signForm(db, f.token, sign, {})).toEqual({ ok: false, reason: "price_changed" });
     const accepted = await acceptNewPrice(db, f.token);
     if (!accepted.ok) throw new Error(accepted.reason);
@@ -235,15 +230,8 @@ describe("order forms, signatures and payments", () => {
 
   // --- Hardening (lane P3) -------------------------------------------------
 
-  const setPrice = async (sku: string, price: string) => {
-    const { catalogState, draftItemIdFor } = await import("@/lib/catalog/service");
-    const item = (await catalogState(db, acc)).items.find((i) => i.sku === sku)!;
-    const known: Record<string, { name: string; unit: string }> = { "SNS-200": { name: "Wireless fridge sensor", unit: "sensor" }, "GW-10": { name: "Site gateway", unit: "site" } };
-    const p = parseCatalogItem({ sku, ...known[sku], price }, "ILS");
-    if (!p.ok) throw new Error();
-    await saveDraftItem(db, acc, p.value, (await draftItemIdFor(db, acc, item.id))!);
-    await publishDraft(db, actor(), acc);
-  };
+  /** Publishes a new price list version with this one-time price (minor units). */
+  const setPrice = async (sku: string, oneTime: number) => { await republishPricing(db, acc, lineage, [{ sku, oneTime }]); };
   /** Counts db.select() calls, to check the short path of priceCheck. */
   const counting = () => {
     const box = { n: 0 };
@@ -256,20 +244,48 @@ describe("order forms, signatures and payments", () => {
     return { db: proxy as TestDb, box };
   };
 
-  it("priceCheck: same catalog version is 'same' in one query; a new version re-prices", async () => {
+  it("priceCheck: the same live price list version is 'same' in one query; a new version re-prices per line and charge", async () => {
     const leadId = await newLead("0525550201");
     const f = await createOrderForm(db, acc, human(), await newQuote(leadId));
     if (!f.ok) throw new Error(f.reason);
     const c = counting();
     expect(await priceCheck(c.db, f.form)).toEqual({ status: "same" });
     expect(c.box.n).toBe(1);
-    await setPrice("GW-10", "700");
-    const c2 = counting();
-    expect(await priceCheck(c2.db, f.form)).toMatchObject({ status: "changed", oneTimeMinor: f.form.snapshot.oneTime.totalMinor + 2 * 4_000 });
-    expect(c2.box.n).toBe(3);
-    // A republished catalog with the same prices is still "same" after a full re-price.
-    await setPrice("GW-10", "660");
+    await setPrice("GW-10", 70_000);
+    const changed = await priceCheck(db, f.form);
+    expect(changed).toMatchObject({ status: "changed", oneTimeMinor: f.form.snapshot.oneTime.totalMinor + 2 * 4_000, recurringMinor: 18_000, recurringPeriod: "month" });
+    if (changed.status !== "changed") throw new Error();
+    expect(changed.lines.map((l) => [l.sku, l.charge, l.beforeMinor, l.nowMinor])).toEqual([
+      ["SNS-200", "one_time", 6 * 62_000, 6 * 62_000], ["GW-10", "one_time", 132_000, 140_000], ["PLAN-M", "recurring", 18_000, 18_000],
+    ]);
+    // A republished price list with the same prices is still "same" after a full re-price.
+    await setPrice("GW-10", 66_000);
     expect(await priceCheck(db, f.form)).toEqual({ status: "same" });
+  });
+
+  it("priceCheck compares each charge of an item: a recurring change alone is a change; an item no longer sold is unavailable", async () => {
+    const leadId = await newLead("0525550210");
+    const r = await createQuote(db, acc, human(), leadId, { lines: [{ sku: "KIT-1", qty: 2 }], discountBp: 0 });
+    if (!r.ok) throw new Error(r.reason);
+    const f = await createOrderForm(db, acc, human(), r.quote.id);
+    if (!f.ok) throw new Error(f.reason);
+    expect(f.form.snapshot.lines.map((l) => [l.sku, l.recurring, l.lineTotalMinor])).toEqual([["KIT-1", false, 200_000], ["KIT-1", true, 10_000]]);
+    await republishPricing(db, acc, lineage, [{ sku: "KIT-1", oneTime: 100_000, recurring: 6_000 }]);
+    const check = await priceCheck(db, f.form);
+    expect(check).toMatchObject({ status: "changed", oneTimeMinor: 200_000, recurringMinor: 12_000 });
+    if (check.status !== "changed") throw new Error();
+    expect(check.lines.map((l) => [l.charge, l.beforeMinor, l.nowMinor])).toEqual([["one_time", 200_000, 200_000], ["recurring", 10_000, 12_000]]);
+    // Accepting re-prices from the new version: a new quote version and link at the new prices.
+    const accepted = await acceptNewPrice(db, f.token);
+    if (!accepted.ok) throw new Error(accepted.reason);
+    const fresh = await loadForm(db, accepted.token);
+    expect(fresh?.state === "open" && fresh.form.snapshot.recurring.totalMinor).toBe(12_000);
+    // Removed from the price list: not sold any more, so the buyer can't sign.
+    await republishPricing(db, acc, lineage, [], ["KIT-1"]);
+    if (fresh?.state !== "open") throw new Error();
+    expect(await priceCheck(db, fresh.form)).toEqual({ status: "unavailable" });
+    expect(await signForm(db, accepted.token, sign, {})).toEqual({ ok: false, reason: "unavailable" });
+    await republishPricing(db, acc, lineage, [{ sku: "KIT-1", oneTime: 100_000, recurring: 5_000 }]);
   });
 
   it("accept-new-price is refused when nothing changed, and carries the seller's custom prices over", async () => {
@@ -283,12 +299,12 @@ describe("order forms, signatures and payments", () => {
     expect((await loadForm(db, same.token))?.state).toBe("open");
 
     // The seller set a custom gateway price; then the sensor price changes.
-    const v2 = await createQuoteVersion(db, acc, human(), q, { lines: [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], discountBp: 0, sites: 2 }, new Date(), { "GW-10": 50_000 });
+    const v2 = await createQuoteVersion(db, acc, human(), q, { lines: [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], discountBp: 0, sites: 2 }, new Date(), { "GW-10:one_time": 50_000 });
     if (!v2.ok) throw new Error(v2.reason);
     const f = await createOrderForm(db, acc, human(), q);
     if (!f.ok) throw new Error(f.reason);
     expect(f.form.snapshot.lines.find((l) => l.sku === "GW-10")?.unitPriceMinor).toBe(50_000);
-    await setPrice("SNS-200", "650");
+    await setPrice("SNS-200", 65_000);
     const check = await priceCheck(db, f.form);
     expect(check).toMatchObject({ status: "changed", oneTimeMinor: 6 * 65_000 + 2 * 50_000 });
     const accepted = await acceptNewPrice(db, f.token);
@@ -419,5 +435,101 @@ describe("order forms, signatures and payments", () => {
     const grouped = await quotesForLead(db, acc, leadId);
     expect(grouped.map((g) => [g.quote.id, g.version.version, g.older.map((o) => o.version)])).toEqual([[unsent, 2, [1]], [q, 1, []]]);
     expect(await quotesForLead(db, other, leadId)).toEqual([]);
+  });
+  // --- Markets and price lists (wave 2, lane Q) ------------------------------
+
+  it("a form in another market takes that market's legal text, payment methods, bank details and price list; the order keeps the market", async () => {
+    const { createMarket } = await import("@/lib/markets/service");
+    const { saveMarketLegalSection } = await import("@/lib/markets/legal");
+    const uk = await createMarket(db, actor(), acc, {
+      name: "United Kingdom", countries: ["GB"], phonePrefixes: ["+44"],
+      overrides: { paymentMethods: { card: false, bankTransfer: true }, bankDetails: "UK bank 12-34-56" },
+    });
+    if (!uk.ok) throw new Error(JSON.stringify(uk.errors));
+    await seedPricing(db, acc, [{ sku: "GW-10", oneTime: 15_000 }, { sku: "PLAN-M", recurring: 20_000, period: "year" }], { name: "UK GBP", currency: "GBP", pricesIncludeTax: false, taxRateBp: 2000, marketId: uk.market.id });
+    await saveMarketLegalSection(db, actor(), acc, uk.market.id, { sectionKey: "sales_terms", title: "Sales terms (UK)", language: "en", body: "UK terms" });
+    const leadId = await newLead("0525550301");
+    await db.update(leads).set({ marketId: uk.market.id }).where(eq(leads.id, leadId));
+    const r = await createQuote(db, acc, human(), leadId, { lines: [{ sku: "GW-10", qty: 1 }, { sku: "PLAN-M", qty: 1 }], discountBp: 0 });
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    const f = await createOrderForm(db, acc, human(), r.quote.id);
+    if (!f.ok) throw new Error(f.reason);
+    expect(f.form.marketId).toBe(uk.market.id);
+    expect(f.form.snapshot).toMatchObject({
+      currency: "GBP", pricesIncludeTax: false,
+      paymentMethods: { card: false, bankTransfer: true }, bankDetails: "UK bank 12-34-56",
+      legal: [{ key: "sales_terms", title: "Sales terms (UK)", body: "UK terms" }],
+      oneTime: { subtotalMinor: 15_000, taxMinor: 3_000, totalMinor: 18_000 }, recurring: { totalMinor: 24_000 },
+      recurringPeriod: "year", priceList: { name: "UK GBP", version: 1 },
+    });
+    expect(f.form.snapshot.lines).toEqual([
+      expect.objectContaining({ sku: "GW-10", charge: "one_time", period: null, unit: "site", recurring: false }),
+      expect.objectContaining({ sku: "PLAN-M", charge: "recurring", period: "year", unit: "site", recurring: true }),
+    ]);
+    // The legal snapshot keeps its shape.
+    expect(Object.keys(f.form.snapshot.legal[0]).sort()).toEqual(["body", "key", "title", "version"]);
+    // The home market still gets the account's default text and payment methods.
+    const home = await createOrderForm(db, acc, human(), await newQuote(await newLead("0525550302")));
+    if (!home.ok) throw new Error(home.reason);
+    expect(home.form.snapshot).toMatchObject({ currency: "ILS", paymentMethods: { card: true, bankTransfer: true }, legal: [{ key: "sales_terms", body: "v2 text" }] });
+    expect(await priceCheck(db, f.form)).toEqual({ status: "same" });
+    expect((await signForm(db, f.token, sign, {})).ok).toBe(true);
+    const view = await loadForm(db, f.token);
+    expect(view?.state === "signed" && view.order).toMatchObject({ marketId: uk.market.id, currency: "GBP", amountDueMinor: 18_000, recurringMinor: 24_000 });
+    // Card is off in this market.
+    expect(await startPayment(db, f.token, { method: "card", recurringConsent: true })).toEqual({ ok: false, reason: "method_off" });
+  });
+
+  it("refuses a form when the market has no legal text in the buyer's language, even if the account has one", async () => {
+    const { createMarket } = await import("@/lib/markets/service");
+    const { saveMarketLegalSection } = await import("@/lib/markets/legal");
+    const de = await createMarket(db, actor(), acc, { name: "Germany", countries: ["DE"], phonePrefixes: ["+49"] });
+    if (!de.ok) throw new Error();
+    await seedPricing(db, acc, [{ sku: "GW-10", oneTime: 20_000 }], { currency: "EUR", marketId: de.market.id });
+    // The market removed the only English section.
+    await saveMarketLegalSection(db, actor(), acc, de.market.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "-", active: false });
+    const leadId = await newLead("0525550303");
+    await db.update(leads).set({ marketId: de.market.id }).where(eq(leads.id, leadId));
+    const r = await createQuote(db, acc, human(), leadId, { lines: [{ sku: "GW-10", qty: 1 }], discountBp: 0 });
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    expect(await createOrderForm(db, acc, human(), r.quote.id, { language: "en" })).toEqual({ ok: false, reason: "no_legal" });
+  });
+
+  it("the buyer page lists both charges of an item with their labels, units and totals", async () => {
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { createElement } = await import("react");
+    const { OrderLines } = await import("@/app/f/[token]/lines");
+    const { translator } = await import("@/lib/i18n");
+    const leadId = await newLead("0525550304");
+    const r = await createQuote(db, acc, human(), leadId, { lines: [{ sku: "KIT-1", qty: 2 }, { sku: "GW-10", qty: 1 }], discountBp: 0 });
+    if (!r.ok) throw new Error(JSON.stringify(r));
+    const f = await createOrderForm(db, acc, human(), r.quote.id);
+    if (!f.ok) throw new Error(f.reason);
+    const html = renderToStaticMarkup(createElement(OrderLines, { s: f.form.snapshot, tr: translator("en"), lang: "en" }));
+    expect(html.match(/data-charge="one_time"/g)).toHaveLength(2);
+    expect(html.match(/data-charge="recurring"/g)).toHaveLength(1);
+    expect(html).toContain("One-time");
+    expect(html).toContain("Monthly");
+    expect(html).toContain("₪1,000.00 per kit");
+    expect(html).toContain("₪100.00/month");
+    expect(html).toContain("Due today");
+    expect(html).toContain("Monthly total");
+    expect(html).toContain("All prices include VAT.");
+    const he = renderToStaticMarkup(createElement(OrderLines, { s: f.form.snapshot, tr: translator("he"), lang: "he" }));
+    expect(he).toContain("ערכה");
+    expect(he).toContain("חד-פעמי");
+    // An older snapshot (no charge, no unit) still renders.
+    const old = { ...f.form.snapshot, lines: f.form.snapshot.lines.map(({ sku, name, qty, unitPriceMinor, lineTotalMinor, recurring }) => ({ sku, name, qty, unitPriceMinor, lineTotalMinor, recurring })) };
+    expect(renderToStaticMarkup(createElement(OrderLines, { s: old, tr: translator("en"), lang: "en" }))).toContain("₪1,000.00 each");
+  });
+
+  it("price checks and forms never cross accounts", async () => {
+    const leadId = await newLead("0525550305");
+    const q = await newQuote(leadId);
+    expect(await createOrderForm(db, other, human(), q)).toEqual({ ok: false, reason: "quote_not_found" });
+    const f = await createOrderForm(db, acc, human(), q);
+    if (!f.ok) throw new Error();
+    // A form row pointed at another account finds no quote version there.
+    expect(await priceCheck(db, { ...f.form, accountId: other })).toEqual({ status: "unavailable" });
   });
 });

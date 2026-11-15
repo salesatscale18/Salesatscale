@@ -7,11 +7,21 @@
  *              `perSite`, their total quantity must be at least the site count.
  * - max_per:   at most `max` of `sku` per unit of `perOneOf` (e.g. sensors per gateway).
  * - advice:    a sentence the agent should consider (shown when `sku` is quoted, or always).
+ * - auto_add:  "Add automatically with" (lib/pricing/auto-add.ts). Not a check:
+ *              the pricing engine adds the line, and checkFit skips it.
  */
+import { describeAutoAddRule, parseAutoAddRule, type AutoAddRule } from "@/lib/pricing/auto-add";
+
 export type FitRule =
   | { kind: "requires"; sku: string; oneOf: string[]; perSite?: boolean }
   | { kind: "max_per"; sku: string; max: number; perOneOf: string[] }
-  | { kind: "advice"; text: string; sku?: string };
+  | { kind: "advice"; text: string; sku?: string }
+  | AutoAddRule;
+
+/** The "Add automatically with" rules among a catalog's rules. */
+export function autoAddRules(rules: FitRule[]): AutoAddRule[] {
+  return rules.filter((r): r is AutoAddRule => r.kind === "auto_add");
+}
 
 export type FitLine = { sku: string; qty: number };
 /** A one-click fix for a problem: add this many of a product. */
@@ -39,6 +49,7 @@ export function parseFitRule(raw: unknown): FitRule | null {
     const sku = typeof r.sku === "string" && SKU.test(r.sku) ? r.sku : undefined;
     return { kind: "advice", text: r.text.trim().slice(0, 300), ...(sku ? { sku } : {}) };
   }
+  if (r.kind === "auto_add") return parseAutoAddRule(r);
   return null;
 }
 
@@ -48,6 +59,7 @@ const list = (skus: string[]) => (skus.length === 1 ? skus[0] : `${skus.slice(0,
 export function describeFitRule(r: FitRule): string {
   if (r.kind === "requires") return r.perSite ? `${r.sku} needs one ${list(r.oneOf)} per site.` : `${r.sku} is always sold with ${list(r.oneOf)}.`;
   if (r.kind === "max_per") return `Up to ${r.max} × ${r.sku} per ${list(r.perOneOf)}.`;
+  if (r.kind === "auto_add") return describeAutoAddRule(r);
   return r.sku ? `${r.sku}: ${r.text}` : r.text;
 }
 
@@ -60,6 +72,7 @@ export function checkFit(rules: FitRule[], lines: FitLine[], sites?: number): Fi
   const fixes: (FitFix | null)[] = [];
   const problem = (text: string, fix: FitFix | null) => { problems.push(text); fixes.push(fix && fix.add > 0 ? fix : null); };
   for (const r of rules) {
+    if (r.kind === "auto_add") continue;
     if (r.kind === "advice") {
       if (!r.sku || qty.has(r.sku)) notes.push(r.text);
       continue;

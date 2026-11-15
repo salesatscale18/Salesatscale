@@ -86,5 +86,20 @@
   "buyer.pay_cta": "תשלום {amount}",
   "buyer.invoice_by": "חשבונית מס תישלח על ידי {seller}.",
   "buyer.document_record": "כתובת IP {ip} · גרסת טופס {version}",
-  "buyer.generated_by": "הופק על ידי Sales at Scale"
+  "buyer.generated_by": "הופק על ידי Sales at Scale",
+  "buyer.charge.one_time": "חד-פעמי",
+  "buyer.charge.month": "חודשי",
+  "buyer.charge.year": "שנתי",
+  "buyer.per_year": "{price} לשנה",
+  "buyer.per_unit": "{price} ל{unit}",
+  "buyer.included": "כלול",
+  "buyer.vat": "מע\"מ",
+  "buyer.one_time_subtotal": "חד-פעמי לפני מע\"מ",
+  "buyer.recurring_subtotal.month": "חודשי לפני מע\"מ",
+  "buyer.recurring_subtotal.year": "שנתי לפני מע\"מ",
+  "buyer.recurring_total.month": "סה\"כ חודשי",
+  "buyer.recurring_total.year": "סה\"כ שנתי",
+  "buyer.excl_vat": "המחירים לפני מע\"מ. המע\"מ נוסף בסיכומים.",
+  "buyer.then_yearly": "ולאחר מכן שנתי, מההפעלה",
+  "buyer.recurring_consent_year": "לחייב {price} בכרטיס זה מדי שנה, החל מהפעלת השירות."
 }

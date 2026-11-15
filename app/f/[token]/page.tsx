@@ -5,9 +5,10 @@ import { sellerAccounts, type OrderSnapshot } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
 import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
-import { attemptCount, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor } from "@/lib/orders/service";
+import { attemptCount, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor, snapshotOf, type FormSnapshot } from "@/lib/orders/service";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { acceptPriceAction, payBankAction, payCardAction } from "./actions";
+import { chargeLabel, moneyFor, OrderLines } from "./lines";
 import { SignForm } from "./sign-form";
 import "./buyer.css";
 
@@ -55,28 +56,8 @@ function money(s: Pick<OrderSnapshot, "currency">, minor: number) {
   return formatMoney(minor, s.currency);
 }
 
-function Lines({ s, tr }: { s: OrderSnapshot; tr: Tr }) {
-  const oneTime = s.lines.filter((l) => !l.recurring);
-  const monthly = s.lines.filter((l) => l.recurring);
-  return (
-    <>
-      {oneTime.map((l) => (
-        <div key={l.sku} className="b-row">
-          <span><bdi>{l.qty} × {l.name}</bdi><span className="b-mut" style={{ display: "block" }}>{l.sku} · <span className="b-num">{tr("buyer.each", { price: money(s, l.unitPriceMinor) })}</span></span></span>
-          <span className="b-num">{money(s, l.lineTotalMinor)}</span>
-        </div>
-      ))}
-      {s.oneTime.discountMinor > 0 ? <div className="b-row"><span>{tr("buyer.discount")}</span><span className="b-num">−{money(s, s.oneTime.discountMinor)}</span></div> : null}
-      <div className="b-row b-row--total"><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 15 }}>{money(s, s.oneTime.totalMinor)}</span></div>
-      {monthly.map((l) => (
-        <div key={l.sku} className="b-row">
-          <span><bdi>{l.qty} × {l.name}</bdi><span className="b-mut" style={{ display: "block" }}>{tr("buyer.monthly")}</span></span>
-          <span className="b-num">{tr("buyer.per_month", { price: money(s, l.lineTotalMinor) })}</span>
-        </div>
-      ))}
-      <span className="b-mut">{s.pricesIncludeTax ? tr("buyer.incl_vat") : tr("buyer.plus_vat", { tax: money(s, s.oneTime.taxMinor) })}</span>
-    </>
-  );
+function Lines({ s, tr, lang }: { s: OrderSnapshot; tr: Tr; lang: Locale }) {
+  return <OrderLines s={s as FormSnapshot} tr={tr} lang={lang} />;
 }
 
 /** Buyer order form (P5.4). Public: the signed link is the credential. */
@@ -95,9 +76,12 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     );
   }
   const { form } = view;
-  const s = form.snapshot;
+  const s = snapshotOf(form);
   const lang: Locale = isLocale(asked) ? asked : isLocale(form.language) ? form.language : "en";
   const tr = translator(lang);
+  const per = moneyFor(s, tr);
+  // Recurring total period: older snapshots have none (monthly).
+  const period = s.recurringPeriod === "year" ? "year" as const : "month" as const;
   // One parallel step after loadForm: the account, and for an open form the first-view mark and the price check.
   const isOpen = view.state === "open";
   const [[account], , priced] = await Promise.all([
@@ -130,7 +114,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         {n ? (
           <div style={{ margin: "0 20px", padding: 16, border: "1px solid var(--line)", borderRadius: 12, display: "flex", flexDirection: "column", gap: 8 }}>
             <span className="b-mut">{tr("buyer.new_offer")} · <span className="b-num">Q-{n.snapshot.quote.number} v{n.snapshot.quote.version}</span></span>
-            <Lines s={n.snapshot} tr={tr} />
+            <Lines s={n.snapshot} tr={tr} lang={lang} />
             {view.state === "updated" && view.changeNote ? <span className="b-mut">{tr("buyer.what_changed", { note: view.changeNote })}</span> : null}
           </div>
         ) : null}
@@ -161,7 +145,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             <span className="b-mut">{tr("buyer.paid_body", { name: (sig?.fullName ?? "").split(" ")[0], order: label })}</span>
           </div>
           <section className="b-sec">
-            <Lines s={s} tr={tr} />
+            <Lines s={s} tr={tr} lang={lang} />
             <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.paid_today")}{attempt ? ` · ${tr("buyer.card")}` : ` · ${tr("buyer.bank")}`}</span><span className="b-num">{money(s, order.amountDueMinor)}</span></div>
           </section>
           <section className="b-sec b-noprint">
@@ -188,7 +172,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           </div>
         ) : null}
           <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 16 }}>{money(s, order.amountDueMinor)}</span></div>
-          {order.recurringMinor > 0 ? <div className="b-row"><span>{tr("buyer.then_monthly")}</span><span className="b-num">{money(s, order.recurringMinor)}</span></div> : null}
+          {order.recurringMinor > 0 ? <div className="b-row"><span>{tr(period === "year" ? "buyer.then_yearly" : "buyer.then_monthly")}</span><span className="b-num">{per(order.recurringMinor, period)}</span></div> : null}
           {err ? <span className="b-err" role="alert">{err === "recurring_consent" ? tr("buyer.err.required") : tr("buyer.unavailable")}</span> : null}
           {paused && order.paymentStatus !== "bank_transfer_expected" ? null : cardOn && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
             <nav className="b-tabs" aria-label={tr("buyer.method")}>
@@ -201,7 +185,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
               {hidden}
               <div className="b-testbox"><span className="b-mut" style={{ display: "flex", gap: 6, alignItems: "center" }}><Lock />{tr("buyer.card_test_box")}</span></div>
               {order.recurringMinor > 0 ? (
-                <label className="b-check"><input type="checkbox" name="recurring" defaultChecked /><span>{tr("buyer.recurring_consent", { price: money(s, order.recurringMinor) })}</span></label>
+                <label className="b-check"><input type="checkbox" name="recurring" defaultChecked /><span>{tr(period === "year" ? "buyer.recurring_consent_year" : "buyer.recurring_consent", { price: money(s, order.recurringMinor) })}</span></label>
               ) : null}
               <button type="submit" name="outcome" value="succeeded" className="b-btn">{tr("buyer.simulate_ok")}</button>
               <button type="submit" name="outcome" value="failed" className="b-btn b-btn--2">{tr("buyer.simulate_fail")}</button>
@@ -240,16 +224,30 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         </div>
         <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: "0 20px 20px" }}>
           <div className="b-grid3 b-mut" style={{ fontSize: 12 }}><span /><span>{tr("buyer.before")}</span><span>{tr("buyer.now")}</span></div>
-          {check.lines.map((l) => (
-            <div key={l.sku} className="b-grid3">
-              <span><bdi>{l.qty} × {l.name}</bdi></span>
-              <span className={`b-num ${l.beforeMinor !== l.nowMinor ? "b-old" : "b-mut"}`}>{money(s, l.beforeMinor)}</span>
-              <span className="b-num" style={{ fontWeight: l.beforeMinor !== l.nowMinor ? 700 : 400 }}>{l.recurring ? tr("buyer.per_month", { price: money(s, l.nowMinor) }) : money(s, l.nowMinor)}</span>
-            </div>
-          ))}
-          <div className="b-grid3" style={{ paddingTop: 10, borderTop: "1px solid var(--line)", fontWeight: 700 }}>
-            <span>{tr("buyer.due_today")}</span><span className="b-num b-old" style={{ fontWeight: 400 }}>{money(s, s.oneTime.totalMinor)}</span><span className="b-num">{money(s, check.oneTimeMinor)}</span>
-          </div>
+          {/* Per line and charge: one-time lines and the amount due today first, then recurring lines and their total (canvas: BuyerPriceChanged). */}
+          {(["one_time", "recurring"] as const).map((charge) => {
+            const rows = check.lines.filter((l) => l.charge === charge);
+            if (rows.length === 0) return null;
+            const p = charge === "recurring" ? (check.recurringPeriod ?? period) : null;
+            const before = charge === "one_time" ? s.oneTime.totalMinor : s.recurring.totalMinor;
+            const now = charge === "one_time" ? check.oneTimeMinor : check.recurringMinor;
+            return (
+              <div key={charge} style={{ display: "contents" }}>
+                {rows.map((l) => (
+                  <div key={`${l.sku}-${l.charge}`} className="b-grid3" data-charge={l.charge}>
+                    <span><bdi>{l.qty} × {l.name}</bdi><span className="b-mut" style={{ display: "block" }}>{chargeLabel(tr, l.charge, l.period)}</span></span>
+                    <span className={`b-num ${l.beforeMinor !== l.nowMinor ? "b-old" : "b-mut"}`}>{money(s, l.beforeMinor)}</span>
+                    <span className="b-num" style={{ fontWeight: l.beforeMinor !== l.nowMinor ? 700 : 400 }}>{per(l.nowMinor, l.charge === "recurring" ? l.period ?? period : null)}</span>
+                  </div>
+                ))}
+                <div className="b-grid3" style={{ paddingTop: 10, borderTop: "1px solid var(--line)", fontWeight: 700 }}>
+                  <span>{charge === "one_time" ? tr("buyer.due_today") : tr(p === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span>
+                  <span className={`b-num ${before !== now ? "b-old" : "b-mut"}`} style={{ fontWeight: 400 }}>{money(s, before)}</span>
+                  <span className="b-num">{per(now, p)}</span>
+                </div>
+              </div>
+            );
+          })}
         </div>
         <form action={acceptPriceAction} style={{ marginTop: "auto", display: "flex", flexDirection: "column", gap: 10, padding: "16px 20px" }}>
           {hidden}
@@ -269,7 +267,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
       {check.status === "unavailable" ? <div className="b-note b-note--warn" role="alert" style={{ margin: 20 }}><Alert color="var(--warn)" /><span>{tr("buyer.unavailable")}</span></div> : null}
       <section className="b-sec" aria-labelledby="it-h">
         <h2 id="it-h" className="b-h2">{tr("buyer.ordering")}</h2>
-        <Lines s={s} tr={tr} />
+        <Lines s={s} tr={tr} lang={lang} />
         <span className="b-mut">{tr("buyer.change_hint")}</span>
       </section>
       <section className="b-sec b-terms" aria-labelledby="tm-h" style={{ gap: 0 }}>

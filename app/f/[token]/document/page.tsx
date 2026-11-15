@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
-import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
-import { loadForm, orderLabel, signatureFor } from "@/lib/orders/service";
+import { loadForm, orderLabel, signatureFor, snapshotOf } from "@/lib/orders/service";
+import { OrderLines } from "../lines";
 import { PrintButton } from "./print-button";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import "../buyer.css";
@@ -23,11 +23,10 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
   if (!view || view.state !== "signed") notFound();
   const sig = await signatureFor(appDb, view.form.id);
   if (!sig) notFound();
-  const s = view.form.snapshot;
+  const s = snapshotOf(view.form);
   const asked = typeof sp.lang === "string" ? sp.lang : "";
   const lang: Locale = isLocale(asked) ? asked : isLocale(view.form.language) ? view.form.language : "en";
   const tr = translator(lang);
-  const m = (minor: number) => formatMoney(minor, s.currency);
   const date = new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { dateStyle: "long", timeStyle: "short", timeZone: "UTC" }).format(sig.signedAt) + " UTC";
   return (
     <div className="b-root" lang={lang} dir={dir(lang)} style={{ ["--brand" as string]: s.seller.brandColor }}>
@@ -38,11 +37,7 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
           <span>{s.seller.legalName ?? s.seller.tradeName} · <span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
         </section>
         <section className="b-sec">
-          {s.lines.map((l) => (
-            <div key={l.sku} className="b-row"><span>{l.qty} × {l.name} <span className="b-mut">{l.sku}</span></span><span className="b-num">{l.recurring ? tr("buyer.per_month", { price: m(l.lineTotalMinor) }) : m(l.lineTotalMinor)}</span></div>
-          ))}
-          <div className="b-row b-row--total"><span>{tr("buyer.due_today")}</span><span className="b-num">{m(s.oneTime.totalMinor)}</span></div>
-          <span className="b-mut">{s.pricesIncludeTax ? tr("buyer.incl_vat") : tr("buyer.plus_vat", { tax: m(s.oneTime.taxMinor) })}</span>
+          <OrderLines s={s} tr={tr} lang={lang} />
         </section>
         <section className="b-sec">
           <h2 className="b-h2">{tr("buyer.details")}</h2>
