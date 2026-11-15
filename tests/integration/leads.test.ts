@@ -1,12 +1,12 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { consentRecords, leadEvents, leads, users, type User } from "@/db/schema";
+import { consentRecords, leadEvents, leads, sellerAccounts, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { parseLead, type LeadInput } from "@/lib/leads/rules";
+import { FIX_TEXT, parseLead, type LeadInput } from "@/lib/leads/rules";
 import {
   countLeadsByView, createIntakeKey, previewLead, getLead, importLeadsCsv, latestConsent, listLeadEvents, listLeads, optOutLead,
-  resolveIntakeKey, revokeIntakeKey, upsertLead,
+  refusalText, resolveIntakeKey, revokeIntakeKey, upsertLead,
 } from "@/lib/leads/service";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -29,17 +29,18 @@ describe("leads", () => {
   let accA: string, accB: string;
   const account = (id: string) => ({ id, market: "IL", languages: ["he", "en"] });
 
+  const mkAccount = async (name: string) => {
+    const p = parseCreateAccount({ tradeName: name, market: "IL", languages: ["he"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: `${name}@x.test` });
+    if (!p.ok) throw new Error("bad");
+    return (await createAccount(db, { userId: admin.id, actingAs: false }, p.value)).account.id;
+  };
+
   beforeAll(async () => {
     t = await createTestDb();
     db = t.db;
     [admin] = await db.insert(users).values({ clerkId: "adm", email: "a@p.test", role: "super_admin" }).returning();
-    const mk = async (name: string) => {
-      const p = parseCreateAccount({ tradeName: name, market: "IL", languages: ["he"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: `${name}@x.test` });
-      if (!p.ok) throw new Error("bad");
-      return (await createAccount(db, { userId: admin.id, actingAs: false }, p.value)).account.id;
-    };
-    accA = await mk("Alpha");
-    accB = await mk("Beta");
+    accA = await mkAccount("Alpha");
+    accB = await mkAccount("Beta");
   });
   afterAll(async () => t.close());
 
@@ -65,7 +66,33 @@ describe("leads", () => {
     expect(r.ok && !r.created).toBe(true);
     const all = await db.select().from(leads).where(eq(leads.accountId, accA));
     expect(all).toHaveLength(1);
-    expect(all[0]).toMatchObject({ fullName: "Shira G.", company: "Golan Bakery" });
+    // Intake (CSV, webhook) never renames an existing lead; the new name is kept as a proposal.
+    expect(all[0]).toMatchObject({ fullName: "Shira Golan", company: "Golan Bakery" });
+    const [updated] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, all[0].id), eq(leadEvents.type, "lead.updated")));
+    expect(updated.data).toEqual({ origin: "csv", proposed: { fullName: "Shira G." } });
+  });
+
+  it("intake fills only empty fields of an existing lead and records the rest as proposed (security M2)", async () => {
+    const first = await upsertLead(db, accA, human(), lead({ fullName: "Yael Bar", company: "", phone: "0524440000" }), "manual", { now });
+    if (!first.ok) throw new Error(first.reason);
+    expect(first.lead).toMatchObject({ email: null, company: null, language: "he" });
+    // Someone posts the public form with Yael's phone: empty email/company are filled, nothing else changes.
+    const fill = await upsertLead(db, accA, { userId: null, actingAs: false }, lead({ fullName: "Mallory", phone: "0524440000", email: "first@x.example", company: "Bar Co", language: "en", consent: "no" }), "webhook", { now });
+    expect(fill.ok && fill.lead).toMatchObject({ fullName: "Yael Bar", email: "first@x.example", company: "Bar Co", language: "he" });
+    // A second post cannot replace the email (the next order form would pre-fill it).
+    const attack = await upsertLead(db, accA, { userId: null, actingAs: false }, lead({ fullName: "Mallory", phone: "+972524440000", email: "attacker@evil.example", company: "Evil", consentSource: "Website form" }), "webhook", { now });
+    expect(attack.ok && attack.lead).toMatchObject({ fullName: "Yael Bar", email: "first@x.example", company: "Bar Co", language: "he" });
+    const events = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, first.lead.id), eq(leadEvents.type, "lead.updated"))).orderBy(leadEvents.createdAt);
+    expect(events.map((e) => e.data)).toEqual([
+      { origin: "webhook", proposed: { fullName: "Mallory", language: "en" } },
+      { origin: "webhook", proposed: { fullName: "Mallory", email: "attacker@evil.example", company: "Evil" } },
+    ]);
+    // Consent records are still appended.
+    expect((await latestConsent(db, accA, first.lead.id))?.consent.source).toBe("Website form");
+    // A seller's manual edit keeps today's behaviour: it replaces name, language and the values it sends.
+    const manual = await upsertLead(db, accA, human(), lead({ fullName: "Yael Bar-On", phone: "0524440000", email: "yael@bar.example", language: "en", consent: "no" }), "manual", { now });
+    expect(manual.ok && manual.lead).toMatchObject({ fullName: "Yael Bar-On", email: "yael@bar.example", company: "Golan Bakery", language: "en" });
+    await db.delete(leads).where(eq(leads.id, first.lead.id));
   });
 
   it("dedupes by source ID and refuses to steal another lead's phone", async () => {
@@ -168,6 +195,133 @@ describe("leads", () => {
     expect(await previewLead(db, accA, lead())).toMatchObject({ result: "rejected", reason: expect.stringMatching(/^Opted out/) });
     expect((await db.select().from(leads)).length).toBe(before);
     expect((await db.select().from(leadEvents)).length).toBe(events);
+  });
+
+  it("a paused account refuses intake (API and CSV) with account_paused; manual adds still work (security M3)", async () => {
+    const paused = await mkAccount("Paused");
+    await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, paused));
+    const sys = { userId: null, actingAs: false };
+    const r = await upsertLead(db, paused, sys, lead(), "webhook", { now });
+    expect(r).toEqual({ ok: false, reason: "account_paused" });
+    if (r.ok) return;
+    expect(refusalText(r)).toEqual({ problem: "This account is paused", fix: expect.stringMatching(/resumed/) });
+    expect((await upsertLead(db, paused, sys, lead(), "csv", { now })).ok).toBe(false);
+    const csv = "full_name,phone,language,consent_source,consent_text\nA One,0526660001,he,Expo,I agree\nBad,12,he,Expo,I agree";
+    const imp = await importLeadsCsv(db, account(paused), human(), csv, { now });
+    expect(imp).toMatchObject({ created: 0, updated: 0 });
+    expect(imp.rejected.map((x) => [x.line, x.problem])).toEqual([[2, "This account is paused"], [3, expect.stringMatching(/phone|number/i)]]);
+    expect(await previewLead(db, paused, lead())).toEqual({ result: "rejected", reason: "This account is paused" });
+    expect(await db.select().from(leads).where(eq(leads.accountId, paused))).toHaveLength(0);
+    // The seller can still add a lead by hand.
+    expect((await upsertLead(db, paused, human(), lead(), "manual", { now })).ok).toBe(true);
+  });
+
+  it("imports 500 rows in batches with the same per-row results (performance H4)", async () => {
+    const acc = await mkAccount("Bulk");
+    const sys = { userId: null, actingAs: false };
+    // Existing data: 50 leads (10 without email), one opted out, one only known by its source ID.
+    for (let i = 0; i < 50; i++) {
+      const r = await upsertLead(db, acc, sys, lead({ fullName: `Old ${i}`, phone: `05270${String(i).padStart(5, "0")}`, email: i < 40 ? `old${i}@x.example` : "", company: "" }), "manual", { now });
+      if (!r.ok) throw new Error(r.reason);
+    }
+    const [gone] = await db.select().from(leads).where(and(eq(leads.accountId, acc), eq(leads.phone, "+972527000049")));
+    await optOutLead(db, human(), acc, gone.id, now);
+    await upsertLead(db, acc, sys, lead({ fullName: "By Ref", phone: "0528888888", sourceRef: "crm-77" }), "manual", { now });
+
+    const rows = ["full_name,phone,language,email,business,source_id,consent_source,consent_text"];
+    for (let i = 0; i < 500; i++) {
+      if (i < 50) rows.push(`New Name ${i},05270${String(i).padStart(5, "0")},en,new${i}@x.example,Co ${i},,Expo,I agree`); // 49 updates + 1 opted out
+      else if (i === 50) rows.push("Moved,0528888889,he,,,crm-77,Expo,I agree"); // matched by source ID: phone moves
+      else if (i === 51) rows.push("Takes Freed Phone,0528888888,he,,,,Expo,I agree"); // new lead on the phone just freed
+      else if (i === 52) rows.push("Twin,0527000001,he,,,,Expo,I agree"); // same phone as row 3
+      else if (i === 53) rows.push("No Consent,0529000053,he,,,,,"); // new lead, no consent
+      else rows.push(`Lead ${i},05290${String(i).padStart(5, "0")},he,,,src-${i},Expo,I agree`);
+    }
+    // Round trips: on Neon each top-level query and each atomic() batch is one HTTP call.
+    const queries = vi.spyOn(t.client, "query");
+    const batches = vi.spyOn(t.client, "transaction");
+    const started = Date.now();
+    const r = await importLeadsCsv(db, account(acc), human(), rows.join("\n"), { now });
+    expect(Date.now() - started).toBeLessThan(20_000);
+    // Paused check + 2 lookups + audit, and 3 chunks of up to 200 rows (+1 early flush before reusing a freed phone).
+    expect(queries.mock.calls.length).toBeLessThanOrEqual(5);
+    expect(batches.mock.calls.length).toBe(4);
+    queries.mockRestore();
+    batches.mockRestore();
+    expect(r).toMatchObject({ totalRows: 500, created: 447, updated: 50, missingColumns: [], tooManyRows: false });
+    expect(r.rejected.map((x) => [x.line, x.problem])).toEqual([
+      [51, expect.stringMatching(/^Opted out/)],
+      [54, "Same phone as row 3 in this file"],
+      [55, "No consent for this person"],
+    ]);
+    expect(r.rejected.map((x) => x.fix)).toEqual([FIX_TEXT.opted_out, FIX_TEXT.duplicate_in_file, FIX_TEXT.consent_required]);
+
+    const all = await db.select().from(leads).where(eq(leads.accountId, acc));
+    expect(all).toHaveLength(50 + 1 + 447);
+    const byPhone = new Map(all.map((l) => [l.phone, l]));
+    // Existing leads keep their identity; only empty fields are filled.
+    expect(byPhone.get("+972527000003")).toMatchObject({ fullName: "Old 3", email: "old3@x.example", company: "Co 3", language: "he" });
+    expect(byPhone.get("+972527000045")).toMatchObject({ fullName: "Old 45", email: "new45@x.example" });
+    expect(byPhone.get("+972527000049")).toMatchObject({ status: "opted_out", fullName: "Old 49" });
+    expect(byPhone.get("+972528888889")).toMatchObject({ fullName: "By Ref", sourceRef: "crm-77" });
+    expect(byPhone.get("+972528888888")).toMatchObject({ fullName: "Takes Freed Phone", origin: "csv" });
+    expect(byPhone.get("+972529000499")).toMatchObject({ fullName: "Lead 499", sourceRef: "src-499", origin: "csv", createdByUserId: admin.id });
+    // Every new lead has its consent and timeline; updates add a consent record and a lead.updated event.
+    const consents = await db.select().from(consentRecords).where(eq(consentRecords.accountId, acc));
+    expect(consents).toHaveLength(51 + 447 + 50);
+    const ev = await db.select().from(leadEvents).where(eq(leadEvents.accountId, acc));
+    const countOf = (type: string) => ev.filter((e) => e.type === type).length;
+    expect([countOf("lead.created"), countOf("lead.updated"), countOf("consent.recorded")]).toEqual([51 + 447, 50, 51 + 447 + 50]);
+    const old3 = ev.find((e) => e.type === "lead.updated" && e.leadId === byPhone.get("+972527000003")!.id)!;
+    expect(old3.data).toEqual({ origin: "csv", proposed: { fullName: "New Name 3", email: "new3@x.example", language: "en" } });
+
+    // Importing the same file again only updates (nothing new, no duplicates).
+    const again = await importLeadsCsv(db, account(acc), human(), rows.join("\n"), { now });
+    expect(again).toMatchObject({ created: 0, updated: 497 });
+    expect(again.rejected.map((x) => x.line)).toEqual([51, 54, 55]);
+    expect(await db.select().from(leads).where(eq(leads.accountId, acc))).toHaveLength(498);
+  });
+
+  it("batched import gives the same leads as importing row by row", async () => {
+    const batched = await mkAccount("Batched");
+    const single = await mkAccount("Single");
+    const sys = { userId: null, actingAs: false };
+    const seed = async (acc: string) => {
+      await upsertLead(db, acc, sys, lead({ fullName: "Ref Holder", phone: "0521000001", sourceRef: "r-1", email: "" }), "manual", { now });
+      await upsertLead(db, acc, sys, lead({ fullName: "Phone Holder", phone: "0521000002" }), "manual", { now });
+    };
+    await seed(batched);
+    await seed(single);
+    const csv = [
+      "full_name,phone,language,email,business,source_id,consent_source,consent_text",
+      "A,0521000003,he,a@x.example,,r-1,Expo,I agree", // moves Ref Holder to ...003
+      "B,0521000001,en,,,,Expo,I agree", // freed phone: a new lead
+      "C,0521000002,he,c@x.example,,r-2,,", // Phone Holder, adopts r-2, no consent needed
+      "D,0521000004,he,,,r-2,Expo,I agree", // r-2 now belongs to Phone Holder: phone moves again
+      "E,0521000005,he,,,r-3,Expo,I agree", // new
+      "F,0521000006,he,,,r-3,Expo,I agree", // r-3 created above: moves E
+    ].join("\n");
+    const r1 = await importLeadsCsv(db, account(batched), human(), csv, { now });
+    // Row by row, as importLeadsCsv did before batching.
+    const r2 = { created: 0, updated: 0, rejected: [] as { line: number; problem: string }[] };
+    let line = 1;
+    for (const row of csv.split("\n").slice(1)) {
+      line++;
+      const [fullName, phone, language, email, company, sourceRef, consentSource, consentWording] = row.split(",");
+      const p = parseLead({ fullName, phone, language, email, company, sourceRef, consentSource, consentWording }, "IL", { language: "he", now, requireConsentText: true });
+      if (!p.ok) throw new Error(JSON.stringify(p.errors));
+      const r = await upsertLead(db, single, human(), p.value, "csv", { now });
+      if (!r.ok) r2.rejected.push({ line, problem: refusalText(r).problem });
+      else if (r.created) r2.created++;
+      else r2.updated++;
+    }
+    expect({ created: r1.created, updated: r1.updated, rejected: r1.rejected.map((x) => ({ line: x.line, problem: x.problem })) }).toEqual(r2);
+    const snapshot = async (acc: string) =>
+      (await db.select().from(leads).where(eq(leads.accountId, acc)))
+        .map((l) => [l.phone, l.fullName, l.email, l.company, l.language, l.sourceRef, l.status].join("|"))
+        .sort();
+    expect(await snapshot(batched)).toEqual(await snapshot(single));
+    expect(r1).toMatchObject({ created: 2, updated: 4 });
   });
 
   it("stores consent and events only under the lead's account", async () => {

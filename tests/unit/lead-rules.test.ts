@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  bearerKey, csvToRawLeads, generateIntakeKey, hashIntakeKey, maskPhone, normalizePhone, parseCsv, parseLead,
+  bearerKey, csvEscape, csvToRawLeads, generateIntakeKey, hashIntakeKey, maskPhone, mergeLeadFields, normalizePhone, parseCsv, parseLead,
 } from "@/lib/leads/rules";
 
 describe("normalizePhone", () => {
@@ -107,5 +107,48 @@ describe("intake keys", () => {
     expect(bearerKey("Bearer abc", null)).toBe("abc");
     expect(bearerKey(null, " xyz ")).toBe("xyz");
     expect(bearerKey("Basic abc", null)).toBeNull();
+  });
+});
+
+describe("csvEscape (rejected-rows download, L8)", () => {
+  it.each([
+    ['=HYPERLINK("http://x")', `"'=HYPERLINK(""http://x"")"`],
+    ["+972 52 555 0193", "'+972 52 555 0193"],
+    ["-2+3", "'-2+3"],
+    ["@SUM(A1)", "'@SUM(A1)"],
+    ["\tcmd", "'\tcmd"],
+    ["\rcmd", `"'\rcmd"`],
+    ["Shira Golan", "Shira Golan"],
+    ["a,b", '"a,b"'],
+    ['say "hi"', '"say ""hi"""'],
+  ])("%j → %j", (input, out) => expect(csvEscape(input)).toBe(out));
+
+  it("leaves numbers alone", () => {
+    expect(csvEscape(12)).toBe("12");
+  });
+});
+
+describe("mergeLeadFields (security M2)", () => {
+  const existing = { fullName: "Noa Buyer", company: null, email: "noa@buyer.example", language: "he", sourceLabel: "Expo" };
+  const incoming = { fullName: "Mallory", company: "Evil Co", email: "m@evil.example", language: "en" as const, sourceLabel: null };
+
+  it("intake fills empty fields only and proposes the rest", () => {
+    for (const origin of ["webhook", "csv"] as const) {
+      expect(mergeLeadFields(existing, incoming, origin)).toEqual({
+        fields: { fullName: "Noa Buyer", company: "Evil Co", email: "noa@buyer.example", language: "he", sourceLabel: "Expo" },
+        proposed: { fullName: "Mallory", email: "m@evil.example", language: "en" },
+      });
+    }
+  });
+
+  it("proposes nothing when intake sends the same or empty values", () => {
+    expect(mergeLeadFields(existing, { ...incoming, fullName: "Noa Buyer", email: null, company: null, language: "he" }, "webhook").proposed).toEqual({});
+  });
+
+  it("a manual edit replaces name and language and any email or company it sends", () => {
+    expect(mergeLeadFields(existing, { ...incoming, email: null }, "manual")).toEqual({
+      fields: { fullName: "Mallory", company: "Evil Co", email: "noa@buyer.example", language: "en", sourceLabel: "Expo" },
+      proposed: {},
+    });
   });
 });

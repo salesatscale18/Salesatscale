@@ -1,9 +1,10 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { users } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { leadEvents, leads, sellerAccounts, users } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { createIntakeKey, listDeliveries, optOutLead } from "@/lib/leads/service";
-import { createTestDb } from "../helpers/db";
+import { createTestDb, type TestDb } from "../helpers/db";
 
 // The route reads the app database from lib/auth/account; point it at PGlite.
 const holder = vi.hoisted(() => ({ db: null as unknown }));
@@ -70,6 +71,31 @@ describe("POST /api/leads/[account]", () => {
     const again = await call("alpha", { ...good, name: "Shira G.", phone: "+972525550193" }, keyA);
     expect(again.status).toBe(200);
     expect((await again.json()).id).toBe(id);
+  });
+
+  it("never overwrites an existing lead's name or email from the public form (security M2)", async () => {
+    const first = await (await call("alpha", { ...good, phone: "0527771111", full_name: "Noa Buyer", email: "noa@buyer.example" }, keyA)).json();
+    const res = await call("alpha", { ...good, phone: "0527771111", full_name: "Mallory", email: "mallory@evil.example" }, keyA);
+    expect(res.status).toBe(200);
+    expect((await res.json()).id).toBe(first.id);
+    const [row] = await (holder.db as TestDb).select().from(leads).where(eq(leads.id, first.id));
+    expect(row).toMatchObject({ fullName: "Noa Buyer", email: "noa@buyer.example" });
+    const [ev] = await (holder.db as TestDb).select().from(leadEvents).where(and(eq(leadEvents.leadId, first.id), eq(leadEvents.type, "lead.updated")));
+    expect(ev.data).toEqual({ origin: "webhook", proposed: { fullName: "Mallory", email: "mallory@evil.example" } });
+  });
+
+  it("refuses intake while the account is paused and logs the reason (security M3)", async () => {
+    const db = holder.db as TestDb;
+    await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, accountA));
+    try {
+      const res = await call("alpha", { ...good, phone: "0526665555", full_name: "Paused Lead" }, keyA);
+      expect(res.status).toBeGreaterThanOrEqual(400);
+      expect((await db.select().from(leads).where(eq(leads.phone, "+972526665555")))).toHaveLength(0);
+      const [last] = await listDeliveries(db as never, accountA, 1);
+      expect(last.delivery).toMatchObject({ result: "rejected", reason: "This account is paused", leadName: "Paused Lead" });
+    } finally {
+      await db.update(sellerAccounts).set({ status: "setting_up" }).where(eq(sellerAccounts.id, accountA));
+    }
   });
 
   it("refuses an opted-out person and logs every delivery for Settings", async () => {

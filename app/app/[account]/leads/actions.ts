@@ -11,6 +11,8 @@ import { currentPlaybook, getConversation, verifyField } from "@/lib/agent/servi
 import { addHumanReply, handBack, takeOver } from "@/lib/agent/conversation";
 
 // Server actions are public endpoints: every one re-checks access with requireAccount().
+// Ids from forms are checked to be UUIDs before any query (a bad id is refused, not a 500).
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type AddLeadState =
   | { status: "idle" }
@@ -32,7 +34,8 @@ export async function addLeadAction(_prev: AddLeadState, form: FormData): Promis
   const result = await upsertLead(appDb, account.id, actor, parsed.value, "manual", {
     ownerUserId: values.after === "me" ? access.user.id : null,
   });
-  if (!result.ok) return { status: "error", errors: {}, formError: result.reason, values };
+  // A manual add is never refused for a paused account (only intake is).
+  if (!result.ok) return { status: "error", errors: {}, formError: result.reason === "account_paused" ? undefined : result.reason, values };
   if (actor.actingAs) {
     await writeAudit(appDb, actor, { accountId: account.id, action: result.created ? "lead.created" : "lead.updated", targetType: "lead", targetId: result.lead.id });
   }
@@ -43,6 +46,7 @@ export async function addLeadAction(_prev: AddLeadState, form: FormData): Promis
 export async function optOutLeadAction(form: FormData) {
   const access = await requireAccount(String(form.get("slug") ?? ""));
   const leadId = String(form.get("leadId") ?? "");
+  if (!UUID.test(leadId)) return;
   await optOutLead(appDb, actorOf(access), access.account.id, leadId);
   revalidatePath(`/app/${access.account.slug}/leads/${leadId}`);
 }
@@ -76,6 +80,7 @@ export async function verifyFieldAction(form: FormData) {
   const key = String(form.get("key") ?? "");
   const value = String(form.get("value") ?? "").trim().slice(0, 300);
   const playbook = await currentPlaybook(appDb, access.account.id);
+  if (!UUID.test(leadId)) redirect(`/app/${access.account.slug}/leads`);
   const back = `/app/${access.account.slug}/leads/${leadId}`;
   if (!value || !playbook?.fields.some((f) => f.key === key)) redirect(back);
   const ok = await verifyField(appDb, actorOf(access), access.account.id, leadId, key, value);
@@ -86,8 +91,6 @@ export async function verifyFieldAction(form: FormData) {
 // ---------------------------------------------------------------------------
 // Conversation: take over, hand back, reply as a person (lead card and test lab)
 // ---------------------------------------------------------------------------
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Where to go after a conversation action: the lead card, or the test-lab chat. */
 function conversationBack(slug: string, from: string, conv: { id: string; leadId: string } | null, notice?: string) {

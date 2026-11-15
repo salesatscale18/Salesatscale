@@ -4,12 +4,8 @@ import { useActionState, useMemo, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
+import { csvEscape } from "@/lib/leads/csv";
 import { importLeadsAction, type ImportState } from "../actions";
-
-function csvEscape(v: string | number) {
-  const s = String(v);
-  return /[",\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
 
 /** CSV import (canvas: ImportCsv): upload with optional whole-file consent, then the result state. */
 /** Header names that carry per-row consent (same aliases as lib/leads/rules CSV_COLUMNS). */
