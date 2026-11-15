@@ -15,6 +15,15 @@ export function moneyFor(s: Pick<FormSnapshot, "currency">, tr: Tr) {
   };
 }
 
+/**
+ * A legal section's title in the page language: the title of that language's
+ * version of the section when one exists (`titles`: section key → title),
+ * else the frozen title of the signed language. The body is always the frozen one.
+ */
+export function legalTitle(l: { key: string; title: string }, titles?: ReadonlyMap<string, string> | null): string {
+  return titles?.get(l.key)?.trim() || l.title;
+}
+
 /** "One-time", "Monthly" or "Yearly". */
 export function chargeLabel(tr: Tr, charge: "one_time" | "recurring", period: Period | null | undefined) {
   if (charge === "one_time") return tr("buyer.charge.one_time");

@@ -2,7 +2,7 @@
  * Form parsing for the price list screens (pure; unit-tested). Money is typed
  * in major units of the list's currency and stored in minor units.
  */
-import type { PriceListEntry, VolumeTier } from "@/db/schema";
+import type { PriceList, PriceListEntry, VolumeTier } from "@/db/schema";
 import { parseTaxRate } from "@/lib/catalog/rules";
 import { checkPriceBlock, tierErrorText, tierLines, wholeQty } from "@/lib/catalog/tiers";
 import { t } from "@/lib/i18n";
@@ -133,3 +133,12 @@ export function entryFormDefaults(e: PriceListEntry | null, currency: string) {
   };
 }
 export type EntryFormDefaults = ReturnType<typeof entryFormDefaults>;
+
+/**
+ * "Copy and adjust" starts from the source list's own currency, VAT setting
+ * and tax rate, never the account's generic defaults (UAT: an ILS list priced
+ * without VAT was copied as "prices include VAT (18%)").
+ */
+export function copyMetaFrom(l: Pick<PriceList, "currency" | "pricesIncludeTax" | "taxRateBp">): { currency: string; pricesIncludeTax: boolean; taxRate: string } {
+  return { currency: l.currency, pricesIncludeTax: l.pricesIncludeTax, taxRate: (l.taxRateBp / 100).toString() };
+}

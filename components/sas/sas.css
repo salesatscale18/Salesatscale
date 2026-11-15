@@ -208,8 +208,8 @@
 .sas-nav__count { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
 .sas-nav__count--human { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 700 11px/20px var(--font-sans); text-align: center; }
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
-.sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; }
-.sas-nav__user-name { font-weight: 600; }
+.sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.sas-nav__user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 860px) {
   .sas-nav { border-inline-end: 0; border-block-end: 1px solid var(--line); min-height: 0; }
   .sas-nav__user { display: none; }

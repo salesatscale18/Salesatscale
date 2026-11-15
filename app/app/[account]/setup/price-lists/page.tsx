@@ -8,6 +8,7 @@ import { countryName, standardVatBp } from "@/lib/markets/rules";
 import { setupProgress } from "@/lib/overview/setup";
 import { listPriceLists, type PriceListSummary } from "@/lib/pricing/price-lists";
 import { CopyForm, CreateForm } from "./forms";
+import { copyMetaFrom } from "./rules";
 import { listLine } from "./view";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -89,8 +90,8 @@ export default async function PriceListsPage({ params, searchParams }: { params:
                 <CopyForm
                   slug={account.slug}
                   currencies={currencies}
-                  sources={lists.map((l) => ({ id: source(l).id, label: `${l.shown.name} · ${source(l).currency} · v${source(l).version}${source(l).status === "draft" ? ` (${t("status.price_list.draft")})` : ""}` }))}
-                  d={{ ...defaults, source: source(lists.find((l) => l.lineageId === one(sp.copy)) ?? lists[0]).id }}
+                  sources={lists.map((l) => ({ id: source(l).id, label: `${l.shown.name} · ${source(l).currency} · v${source(l).version}${source(l).status === "draft" ? ` (${t("status.price_list.draft")})` : ""}`, meta: copyMetaFrom(source(l)) }))}
+                  d={(() => { const from = source(lists.find((l) => l.lineageId === one(sp.copy)) ?? lists[0]); return { ...defaults, ...copyMetaFrom(from), source: from.id }; })()}
                 />
               </>
             ) : (

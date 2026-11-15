@@ -26,7 +26,10 @@ export function AddLeadForm({ slug, languages, markets = [], closeHref }: { slug
         {state.status === "error" ? (
           <div className="sas-alert sas-alert--danger" role="alert">
             <Icon name="alert-triangle" />
-            <span>{state.formError ? t(`lead.form.${state.formError}`) : t("lead.form.errors")}</span>
+            <span>
+              {state.formError ? t(`lead.form.${state.formError}`) : t("lead.form.errors")}
+              {state.formError === "duplicate" && state.duplicateId ? <> <a href={`/app/${slug}/leads/${state.duplicateId}`}>{t("lead.form.duplicate_open")}</a></> : null}
+            </span>
           </div>
         ) : null}
         <div className="sas-input-group">

@@ -17,7 +17,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type AddLeadState =
   | { status: "idle" }
-  | { status: "error"; errors: LeadFieldErrors; formError?: "consent_required" | "phone_conflict" | "opted_out" | "market"; values: Record<string, string> };
+  | { status: "error"; errors: LeadFieldErrors; formError?: "consent_required" | "phone_conflict" | "opted_out" | "market" | "duplicate"; duplicateId?: string; values: Record<string, string> };
 
 export async function addLeadAction(_prev: AddLeadState, form: FormData): Promise<AddLeadState> {
   const slug = String(form.get("slug") ?? "");
@@ -27,7 +27,7 @@ export async function addLeadAction(_prev: AddLeadState, form: FormData): Promis
   for (const k of ["fullName", "company", "email", "phone", "language", "sourceLabel", "consent", "consentSource", "after", "marketId"]) {
     values[k] = String(form.get(k) ?? "");
   }
-  const parsed = parseLead(values, account.market, { language: (account.languages[0] ?? "en") as Locale, now: new Date() });
+  const parsed = parseLead(values, account.market, { language: (account.languages[0] ?? "en") as Locale, now: new Date(), consentNeedsTick: true });
   if (!parsed.ok) return { status: "error", errors: parsed.errors, values };
   if (!parsed.value.consent) return { status: "error", errors: {}, formError: "consent_required", values };
   // Optional market chosen by the seller; empty means "choose from the phone number".
@@ -39,7 +39,10 @@ export async function addLeadAction(_prev: AddLeadState, form: FormData): Promis
   const actor = actorOf(access);
   const result = await upsertLead(appDb, account.id, actor, parsed.value, "manual", {
     ownerUserId: values.after === "me" ? access.user.id : null,
+    // Never overwrite an existing lead from the manual form (webhook and CSV only fill empty fields).
+    createOnly: true,
   });
+  if (!result.ok && result.reason === "duplicate") return { status: "error", errors: {}, formError: "duplicate", duplicateId: result.leadId, values };
   // A manual add is never refused for a paused account (only intake is).
   if (!result.ok) return { status: "error", errors: {}, formError: result.reason === "account_paused" ? undefined : result.reason, values };
   if (actor.actingAs) {
@@ -119,6 +122,12 @@ function conversationBack(slug: string, from: string, conv: { id: string; leadId
   return conv ? `/app/${slug}/leads/${conv.leadId}${notice ? `?notice=${notice}` : ""}#conversation` : `/app/${slug}/leads`;
 }
 
+/** The lead card, and the test-lab chat when the action came from there (else the lab showed stale messages until a reload). */
+function revalidateConversation(slug: string, from: string, conv: { leadId: string }) {
+  revalidatePath(`/app/${slug}/leads/${conv.leadId}`);
+  if (from === "lab") revalidatePath(`/app/${slug}/setup/test-lab`);
+}
+
 /** Access first, then the conversation, looked up inside the caller's account only. */
 async function conversationForm(form: FormData) {
   const access = await requireAccount(String(form.get("slug") ?? ""));
@@ -130,14 +139,14 @@ async function conversationForm(form: FormData) {
 export async function takeOverAction(form: FormData) {
   const { access, conv, from } = await conversationForm(form);
   const r = conv ? await takeOver(appDb, actorOf(access), access.account.id, conv.id) : null;
-  if (conv) revalidatePath(`/app/${access.account.slug}/leads/${conv.leadId}`);
+  if (conv) revalidateConversation(access.account.slug, from, conv);
   redirect(conversationBack(access.account.slug, from, conv, r && !r.ok ? r.reason : undefined));
 }
 
 export async function handBackAction(form: FormData) {
   const { access, conv, from } = await conversationForm(form);
   const r = conv ? await handBack(appDb, actorOf(access), access.account.id, conv.id) : null;
-  if (conv) revalidatePath(`/app/${access.account.slug}/leads/${conv.leadId}`);
+  if (conv) revalidateConversation(access.account.slug, from, conv);
   redirect(conversationBack(access.account.slug, from, conv, r && !r.ok ? r.reason : undefined));
 }
 
@@ -146,6 +155,6 @@ export async function humanReplyAction(form: FormData) {
   const text = String(form.get("text") ?? "");
   const r = conv ? await addHumanReply(appDb, { ...actorOf(access), userId: access.user.id }, access.account.id, conv.id, text) : null;
   const notice = !r ? undefined : !r.ok ? r.reason : r.delivery && !r.delivery.delivered ? "saved_not_sent" : undefined;
-  if (conv) revalidatePath(`/app/${access.account.slug}/leads/${conv.leadId}`);
+  if (conv) revalidateConversation(access.account.slug, from, conv);
   redirect(conversationBack(access.account.slug, from, conv, notice));
 }

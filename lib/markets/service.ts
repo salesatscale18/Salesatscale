@@ -14,10 +14,10 @@ import { atomic } from "@/db/atomic";
 import { leadIntakeKeys, markets, sellerAccounts, type Market, type MarketOverrides, type MarketStatus } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { getOrderFormSettings } from "@/lib/orders/settings";
-import { lineageExists, livePriceList } from "@/lib/pricing/price-lists";
+import { lineageExists, livePriceList, priceListVersions } from "@/lib/pricing/price-lists";
 import { marketLegal } from "./legal";
 import { matchMarket, type MatchInput, type MatchReason } from "./match";
-import { CALLING_CODES, canGoLive, countryName, marketGoLiveChecks, parseMarketPatch, statusChangeAllowed, type GoLiveCheck, type MarketErrors, type MarketInput } from "./rules";
+import { CALLING_CODES, canGoLive, countryName, marketGoLiveChecks, newMarketTimezone, parseMarketPatch, statusChangeAllowed, type GoLiveCheck, type MarketErrors, type MarketInput } from "./rules";
 import { accountDefaultsFrom, effectiveSettings, OVERRIDABLE, overrideProblem, sanitizeOverrides, type EffectiveSettings, type SettingKey } from "./settings";
 
 async function homeOf(db: Db, accountId: string): Promise<Market | null> {
@@ -130,13 +130,19 @@ export type CreateMarketInput = Partial<MarketInput> & { name: string; overrides
 export async function createMarket(db: Db, actor: Actor, accountId: string, input: CreateMarketInput): Promise<MarketWriteResult> {
   const p = parseMarketPatch({ name: input.name, countries: input.countries ?? [], phonePrefixes: input.phonePrefixes ?? [], formCountryValues: input.formCountryValues ?? [], intakeKeyIds: input.intakeKeyIds ?? [] });
   if (!p.ok) return { ok: false, errors: p.errors };
-  const overrides = input.overrides ?? {};
+  let overrides = input.overrides ?? {};
   const op = overridesProblem(overrides);
   if (op) return { ok: false, errors: { overrides: op } };
   const v = p.value as MarketInput;
   if (!(await keysOwned(db, accountId, v.intakeKeyIds))) return { ok: false, errors: { intakeKeyIds: "Choose intake keys from the list." } };
   if (input.priceListLineageId && !(await lineageExists(db, accountId, input.priceListLineageId))) return { ok: false, errors: { market: "Choose a price list from the list." } };
   if (!(await ensureHomeMarket(db, accountId, actor))) return { ok: false, errors: { market: "Account not found." } };
+  // Start from the first country's time zone when it differs from the account's (unless one was given).
+  if (!("timezone" in overrides)) {
+    const [acc] = await db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+    const tz = acc ? newMarketTimezone(v.countries, acc.timezone) : null;
+    if (tz) overrides = { ...overrides, timezone: tz };
+  }
   const id = randomUUID();
   await atomic(db, (q) => [
     q.insert(markets).values({
@@ -204,14 +210,17 @@ export type MarketView = {
 export async function getMarketView(db: Db, accountId: string, marketId: string): Promise<MarketView | null> {
   const market = await getMarket(db, accountId, marketId);
   if (!market) return null;
-  const [[account], orderForm, legal, live] = await Promise.all([
+  const [[account], orderForm, legal, live, versions] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     getOrderFormSettings(db, accountId),
     marketLegal(db, accountId, market.id),
     market.priceListLineageId ? livePriceList(db, accountId, market.priceListLineageId) : Promise.resolve(null),
+    market.priceListLineageId ? priceListVersions(db, accountId, market.priceListLineageId) : Promise.resolve([]),
   ]);
   if (!account) return null;
-  const settings = effectiveSettings(accountDefaultsFrom(account, orderForm), market, live?.list ?? null);
+  // The currency comes from the assigned price list, even before it is live (UAT: an EUR list showed "ILS · Account currency").
+  const assigned = live?.list ?? versions.find((v) => v.status !== "archived") ?? null;
+  const settings = effectiveSettings(accountDefaultsFrom(account, orderForm), market, assigned);
   const checks = marketGoLiveChecks({
     market,
     settings,

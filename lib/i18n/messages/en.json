@@ -100,7 +100,7 @@
   "access.picker.platform": "All accounts (platform admin)",
   "access.picker.role.seller_admin": "Seller admin",
   "placeholder.title": "{section} is not built yet",
-  "placeholder.body": "This screen arrives in {phase} of the implementation plan.",
+  "placeholder.body": "This screen is coming soon.",
   "overview.setting_up.title": "Your workspace is being set up",
   "overview.setting_up.body": "The agent will not contact anyone until every go-live check passes. The setup wizard arrives in a later phase.",
   "invite.title": "Join {account} on Sales at Scale",
@@ -1456,5 +1456,7 @@
   "quote.editor.times_count": "× {count} {unit}",
   "quote.editor.note_removed": "Removed {item}",
   "quote.editor.note_added_back": "Added back {item}",
-  "quote.editor.note_hint": "Shown in the version history."
+  "quote.editor.note_hint": "Shown in the version history.",
+  "lead.form.duplicate": "A lead with this phone number already exists.",
+  "lead.form.duplicate_open": "Open the lead"
 }

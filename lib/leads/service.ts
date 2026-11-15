@@ -60,7 +60,9 @@ async function findExisting(db: Db, accountId: string, input: Pick<LeadInput, "p
 export type UpsertResult =
   | { ok: true; lead: Lead; created: boolean }
   | { ok: false; reason: "consent_required" | "phone_conflict" | "account_paused" }
-  | { ok: false; reason: "opted_out"; optedOutAt: Date | null };
+  | { ok: false; reason: "opted_out"; optedOutAt: Date | null }
+  /** Only with `createOnly` (the manual add): a lead with this phone already exists and was not changed. */
+  | { ok: false; reason: "duplicate"; leadId: string };
 
 /** A paused account takes no leads from intake (webhook, CSV). */
 async function isPaused(db: Db, accountId: string) {
@@ -88,7 +90,7 @@ export async function upsertLead(
   actor: LeadActor,
   input: LeadInput,
   origin: LeadOrigin,
-  opts: { ownerUserId?: string | null; now?: Date; skipPausedCheck?: boolean } & LeadMarketHints = {},
+  opts: { ownerUserId?: string | null; now?: Date; skipPausedCheck?: boolean; createOnly?: boolean } & LeadMarketHints = {},
   retry = true,
 ): Promise<UpsertResult> {
   const now = opts.now ?? new Date();
@@ -131,6 +133,8 @@ export async function upsertLead(
   }
 
   if (existing.status === "opted_out") return { ok: false, reason: "opted_out", optedOutAt: existing.optedOutAt };
+  // A manual add never overwrites a lead: it shows the existing one instead.
+  if (opts.createOnly) return { ok: false, reason: "duplicate", leadId: existing.id };
   if (existing.phone !== input.phone) {
     const [clash] = await db.select({ id: leads.id }).from(leads).where(and(eq(leads.accountId, accountId), eq(leads.phone, input.phone)));
     if (clash) return { ok: false, reason: "phone_conflict" };

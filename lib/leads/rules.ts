@@ -13,6 +13,9 @@ const CALLING_CODE: Record<string, string> = {
   IL: "972", US: "1", CA: "1", GB: "44", AU: "61", DE: "49", FR: "33", NL: "31", ES: "34", IT: "39", AE: "971",
 };
 
+/** The shortest national number we accept (Israeli landlines have 8, mobiles 9). */
+const MIN_NATIONAL_DIGITS = 7;
+
 /**
  * Normalizes a phone number to E.164. Accepts "+972 52-555-0193",
  * "00972525550193", or a national number like "052-555-0193" (uses the
@@ -32,7 +35,11 @@ export function normalizePhone(raw: string, market: string): string | null {
     // National format: drop the trunk prefix 0 (not used in NANP).
     digits = cc + (cc === "1" ? digits : digits.replace(/^0/, ""));
   }
+  // E.164: 8 to 15 digits overall, and a plausible national number (at least
+  // 7 digits after a known country code), so "12345" is not "+97212345".
   if (!/^[1-9]\d{7,14}$/.test(digits)) return null;
+  const cc = Object.values(CALLING_CODE).filter((c) => digits.startsWith(c)).sort((a, b) => b.length - a.length)[0];
+  if (cc && digits.length - cc.length < MIN_NATIONAL_DIGITS) return null;
   return `+${digits}`;
 }
 
@@ -101,7 +108,15 @@ const LANGUAGE_ALIASES: Record<string, Locale> = { en: "en", english: "en", he: 
 export function parseLead(
   raw: RawLead,
   market: string,
-  defaults: { language: Locale; now: Date; requireConsentText?: boolean },
+  defaults: {
+    language: Locale; now: Date; requireConsentText?: boolean;
+    /**
+     * The manual form: consent needs the box ticked AND a source. A source
+     * alone (box unticked) is no consent. CSV and the webhook keep their rule
+     * (an explicit yes, or a consent source).
+     */
+    consentNeedsTick?: boolean;
+  },
 ): { ok: true; value: LeadInput } | { ok: false; errors: LeadFieldErrors } {
   const errors: LeadFieldErrors = {};
   const fullName = s(raw.fullName);
@@ -122,7 +137,8 @@ export function parseLead(
   const consentSource = s(raw.consentSource);
   const consentWording = s(raw.consentWording);
   const noConsent = /^(0|false|no|n|off|לא)$/i.test(s(raw.consent));
-  if (yes(raw.consent) || (!noConsent && consentSource)) {
+  const given = defaults.consentNeedsTick ? yes(raw.consent) : yes(raw.consent) || (!noConsent && consentSource);
+  if (given) {
     if (!consentSource) errors.consentSource = "Say how this person agreed to be contacted.";
     if (defaults.requireConsentText && !consentWording) errors.consentText = "consent_text is missing: add the exact wording the person agreed to.";
     const capturedRaw = s(raw.consentCapturedAt);
@@ -200,6 +216,22 @@ const CSV_COLUMNS: Record<string, keyof RawLead> = {
 };
 
 export const CSV_TEMPLATE_HEADER = "full_name,phone,language,business,email,source_id,consent_source,consent_text,consent_at,country";
+
+/** One example row, in the order of CSV_TEMPLATE_HEADER. */
+const CSV_TEMPLATE_EXAMPLE: Record<string, string> = {
+  full_name: "Shira Golan", phone: "+972525550193", language: "he", business: "Golan Bakery", email: "shira@example.com", source_id: "expo-001",
+  consent_source: "Signed contact sheet at HoReCa Expo, 10 Nov", consent_text: "I agree to be contacted on WhatsApp", consent_at: "2026-11-10T09:00:00Z", country: "IL",
+};
+
+/** The downloadable CSV template (/leads-template.csv), built from CSV_TEMPLATE_HEADER so the two can't drift. */
+export function csvTemplate(): string {
+  const cols = CSV_TEMPLATE_HEADER.split(",");
+  const row = cols.map((c) => {
+    const v = CSV_TEMPLATE_EXAMPLE[c] ?? "";
+    return /[",\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v;
+  });
+  return `${CSV_TEMPLATE_HEADER}\n${row.join(",")}\n`;
+}
 
 /** One consent statement for every row of a file (UX: "consent for the whole file"). */
 export type FileConsent = { source: string; wording: string };
