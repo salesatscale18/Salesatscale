@@ -20,8 +20,9 @@ Everything in the MVP runs in test mode first (test payment, test numbers), then
 - Lead intake: manual entry, CSV import, and a simple form/webhook that records consent.
 - WhatsApp channel: opening template, free conversation, follow-up templates, human takeover.
 - AI sales agent: free-running, guided by a playbook, acting through tools with hard server-side checks.
-- Knowledge setup wizard: website, PDF/DOCX documents and catalog spreadsheets, turned into approved knowledge, catalog and playbook.
-- Catalog with one-time and recurring price lines.
+- Knowledge setup wizard: website, PDF/DOCX documents, catalog spreadsheets, free-text notes and recorded sales calls, turned into approved knowledge and a suggested playbook draft (3.14).
+- Markets: one seller account sells in one or more markets, each inheriting the account defaults with overrides (3.13).
+- Catalog of generic products and services with neutral units; prices in price lists per currency and market, each item with a one-time and/or recurring price (3.13).
 - Quotes, the binding order form and payment, using the payment provider's test mode.
 - Meeting booking from seller-defined availability.
 - Lead card with a unified timeline, deal state and agent activity.
@@ -34,7 +35,6 @@ Everything in the MVP runs in test mode first (test payment, test numbers), then
 | Area | Why deferred | What we do now so it is easy later |
 |---|---|---|
 | Voice calls | Telephony, latency and voice quality are a separate project | Channel-agnostic conversation model; the same agent, deal state, playbook and tools |
-| Audio sources and learning from recorded calls | Mostly serves voice | Source model already supports media types and timestamps |
 | Detailed roles | Not needed with one admin per account | User, role and scope tables exist; only two roles are defined |
 | External lead API, CRM, inventory sync | Depends on pilot needs | Lead model has a source ID and dedupe rule |
 | Visual flow builder | The loose agent model does not need one | Playbook is stored as structured data and could be shown visually later |
@@ -143,6 +143,39 @@ Agreed with the parallel sessions through the team channel (issue #2, `docs/TEAM
 - Seller admin is scoped to one seller account, so it does not fit the current global `user_role` enum. Proposal for when the data model is built: a `seller_accounts` table and an `account_members` table (account, user, role), with `seller_admin` as the only MVP role. Every seller-side query filters by the account. This is a schema change, so it must be claimed in the team channel (one migration in flight at a time).
 - Workflow: direct pushes to `main` through the release queue, after `npm run lint` and `npm run build` pass.
 
+### 3.13 Markets, price lists and a generic catalog (decided 15 Nov, after the first UAT)
+
+The platform serves any seller in any industry, and its purpose is to help sellers expand into new markets. Nothing in it may assume the pilot's product or a single country.
+
+**Account and market**
+- The **account** is the seller company: legal details, brand, owner and users, our billing to them. It holds the defaults.
+- A **market** is where and how the seller sells: countries or regions, selling languages, time zone, currency, price list, its WhatsApp number (later its phone numbers), order-form legal texts, tax handling (prices with or without VAT), payment methods, contact hours and holidays, follow-up rules, and an optional playbook overlay for local tone and customs.
+- Every market setting shows "Same as account default" with an Override switch. Most sellers override only a few things.
+- Every lead is assigned a market at intake (phone country code, a form field, or the intake key's market). The market decides language, hours, prices, legal texts and channel for that lead.
+- Creating an account creates its first market, the **home market**, from the values in the create form. The create form says "Home market" instead of "Market", and selling languages belong to the market.
+- MVP: the UI supports adding markets; leads, quotes, orders, price lists, WhatsApp numbers and order-form texts carry a market reference from now on.
+
+**Catalog and price lists**
+- A **catalog item** describes what is sold: name, description, SKU, kind (**Product** or **Service**), unit, fit rules. It holds no price.
+- **Units** are neutral: a pick list (item, user/seat, site/location, device, licence, hour, day, month, kg, package) plus a custom unit with singular and plural forms. No interface text uses pilot words as examples.
+- A **price list** holds prices: name, currency, prices shown with or without VAT, valid from. For each item it can give a **one-time price**, a **recurring price** (monthly or yearly), or both, each with optional volume tiers. An item may be left out of a price list, which means it is not sold where that list applies.
+- Each market uses one price list. Several markets can share one (for example euro markets), or each can have its own. "Copy price list and adjust by X%" helps create new ones.
+- A quote freezes the price list and its version, like it freezes the catalog version.
+- **Setup and installation fees** are separate Service items (usually per site), so they appear on their own line on quotes, order forms and invoices and can be discounted or waived within the limits. A fit rule **"Add automatically with"** adds them when a product is added, optionally per site; the seller marks whether the buyer can remove them.
+- MVP: one price list is created with the home market; the model allows many.
+
+**Plan and limits**
+- Until billing exists, the plan only sets defaults. The monthly spend cap and the daily new-conversation limit are enforced from P6 (when WhatsApp and AI costs start): a warning to the seller at 80%, and at 100% no new outgoing conversations (replies to buyers already in a conversation continue). Until then the admin form says they are not enforced yet.
+
+### 3.14 Knowledge from sources, including recorded sales calls (P8)
+
+- **Sources:** website pages, documents (PDF, DOCX), price lists (CSV, XLSX), free-text notes, and recorded sales calls (MP3, WAV, M4A). Recorded calls are now in the MVP; they are the best evidence of how the seller actually sells.
+- **Calls** are transcribed with speakers separated and the language detected. From each call the system suggests: discovery questions, objections with the answers that worked, the usual order of the conversation, product facts, and pricing or discount patterns.
+- Every suggestion links to its source, down to the timestamp in a recording. The admin approves, edits or rejects it.
+- **Generate playbook draft** builds the playbook (sales goal, fields to learn, objections and answers, limits, hand-off rules) from approved knowledge and call patterns, so the admin starts from a solid base and improves it.
+- Safeguards: prices and discounts heard on calls are never used without explicit approval; facts about a specific customer are excluded from general knowledge; the uploader confirms the seller may use the recordings; personal data in transcripts is masked.
+- "Add fact" remains the manual way to add one approved fact; it is also used when the seller answers a question the agent could not.
+
 ## 4. End-to-end MVP flow
 
 1. A lead arrives (form, webhook, CSV or manual entry) with a consent record. The system checks phone, duplicates, consent and contact hours.
@@ -214,4 +247,5 @@ A seller cannot contact real buyers until all of these pass:
 4. **Review round:** collect feedback on the canvas, then finalise the screens.
 5. **Technical architecture document:** data model (tenant, lead, consent, conversation, message, deal state, quote, order form, order, payment attempt, agent version), channel adapter interface, payment provider interface, tool contracts.
 6. **Build:** start with one end-to-end path using a small catalog and test payments, then add the wizard and test lab.
-7. **Phase 2:** voice channel, audio sources, more roles, external lead API and CRM, more languages.
+7. **Phase 2:** voice channel, more roles, external lead API and CRM, more languages.
+8. **After the first UAT (15 Nov):** markets, price lists and the generic catalog (3.13) land before P6; knowledge from sources and recorded calls (3.14) in P8. Designs on the canvas page "Markets, pricing and knowledge".
