@@ -18,7 +18,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const [settings, legal] = await Promise.all([getOrderFormSettings(appDb, account.id), currentLegal(appDb, account.id)]);
+  const [settings, legal, progress] = await Promise.all([getOrderFormSettings(appDb, account.id), currentLegal(appDb, account.id), setupProgress(appDb, account)]);
   const base = `/app/${account.slug}`;
   const here = `${base}/setup/order-form`;
   const keys = [...new Set(legal.map((s) => s.sectionKey))];
@@ -33,7 +33,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
       <header className="sas-stack-2">
         <div className="sas-page-head"><h1 className="sas-title">{t("ofs.title")}</h1></div>
         <span className="sas-small">{t("ofs.intro")}</span>
-        <SetupSteps basePath={base} current="order-form" completed={await setupProgress(appDb, account.id)} />
+        <SetupSteps basePath={base} current="order-form" completed={progress} />
       </header>
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.saved")}</span></div> : null}
       {sp.legal ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("ofs.legal_saved", { version: one(sp.legal).split(".")[2] ?? "" })}</span></div> : null}

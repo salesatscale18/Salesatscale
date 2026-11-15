@@ -6,8 +6,8 @@ import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
 import { exactTime, relativeTime } from "@/lib/format";
 import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, type QuoteTab } from "@/lib/quotes/service";
-import { catalogVersions, users } from "@/db/schema";
-import { eq } from "drizzle-orm";
+import { catalogVersions, orderForms, orders, leads, users } from "@/db/schema";
+import { and, count, desc, eq, inArray, or } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
 import { docStatusByQuote, formsForQuote, linkFor, listOrders, orderForQuote, orderLabel } from "@/lib/orders/service";
@@ -15,6 +15,13 @@ import { CopyButton } from "@/components/sas/copy-button";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+/** Orders of real (non-test) leads, for the tab count; the list itself loads only on the Orders tab. */
+async function countOrders(accountId: string) {
+  const [{ n }] = await appDb.select({ n: count() }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false)));
+  return n;
+}
+
 const dateShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 
 /** Quotes and orders (P3.5, canvas: Orders). The order form and payment columns fill in P5. */
@@ -25,38 +32,54 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const base = `/app/${account.slug}/orders`;
   const tabRaw = one(sp.tab);
   const tab: QuoteTab | "orders" = tabRaw === "approval" ? "approval" : tabRaw === "orders" ? "orders" : "quotes";
-  const [rows, total, awaiting, orderRows] = await Promise.all([
-    tab === "orders" ? Promise.resolve([]) : listQuotes(appDb, account.id, tab),
+  const quoteId = one(sp.quote);
+  // Round trip 1–2: lists, counts and the selected quote all start together;
+  // the doc statuses chain onto the quote list only.
+  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, tab);
+  const [rows, docs, total, awaiting, orderRows, orderCount, detail] = await Promise.all([
+    quotesP,
+    quotesP.then((r) => docStatusByQuote(appDb, account.id, r.map((x) => x.quote.id))),
     countQuotes(appDb, account.id),
     countAwaitingApproval(appDb, account.id),
-    listOrders(appDb, account.id),
+    tab === "orders" ? listOrders(appDb, account.id) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
+    countOrders(account.id),
+    UUID.test(quoteId) ? getQuote(appDb, account.id, quoteId) : Promise.resolve(null),
   ]);
-  const docs = await docStatusByQuote(appDb, account.id, rows.map((r) => r.quote.id));
-  const quoteId = one(sp.quote);
-  const detail = UUID.test(quoteId) ? await getQuote(appDb, account.id, quoteId) : null;
   const now = new Date();
   const money = (m: number, recurring = false) => formatMoney(m, account.currency, recurring ? { period: "month" } : {});
   const tabHref = (x: string) => (x === "quotes" ? base : `${base}?tab=${x}`);
 
   const cur = detail?.versions[0];
   const incomplete = !!cur?.lines.some((l) => l.unitPriceMinor === null);
-  const nameOf = async (id: string | null) => {
-    if (!id) return null;
-    const [u] = await appDb.select().from(users).where(eq(users.id, id));
-    return u ? displayName(u) : null;
-  };
-  const approver = await nameOf(cur?.version.approvedByUserId ?? null);
+  // Round trip 3: everything that depends on the selected quote, in parallel.
+  // People named in the panel (approver, creator, form sender) come from one users query.
+  const personIds = [cur?.version.approvedByUserId, cur?.version.createdByUserId].filter((x): x is string => !!x);
+  const [people, [catalogVersion], forms, signed] = detail
+    ? await Promise.all([
+        appDb.select().from(users).where(
+          or(
+            personIds.length ? inArray(users.id, personIds) : undefined,
+            inArray(users.id, appDb.select({ id: orderForms.createdByUserId }).from(orderForms)
+              .where(and(eq(orderForms.accountId, account.id), eq(orderForms.quoteId, detail.quote.id)))
+              .orderBy(desc(orderForms.createdAt)).limit(1)),
+          ),
+        ),
+        cur ? appDb.select().from(catalogVersions).where(eq(catalogVersions.id, cur.version.catalogVersionId)) : Promise.resolve([]),
+        formsForQuote(appDb, account.id, detail.quote.id),
+        orderForQuote(appDb, account.id, detail.quote.id),
+      ])
+    : [[], [], [], null];
+  const nameById = new Map(people.map((u) => [u.id, displayName(u)]));
+  const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
+  const approver = nameOf(cur?.version.approvedByUserId ?? null);
   const creator =
     cur?.version.createdByActor === "human"
-      ? (await nameOf(cur.version.createdByUserId)) ?? "a person"
+      ? nameOf(cur.version.createdByUserId) ?? "a person"
       : cur
         ? t(`orders.detail.created_by.${cur.version.createdByActor as "agent" | "system"}`)
         : "";
-  const [catalogVersion] = cur ? await appDb.select().from(catalogVersions).where(eq(catalogVersions.id, cur.version.catalogVersionId)) : [];
-  const forms = detail ? await formsForQuote(appDb, account.id, detail.quote.id) : [];
   const latestForm = forms[0] ?? null;
-  const signed = detail ? await orderForQuote(appDb, account.id, detail.quote.id) : null;
-  const formSender = latestForm?.createdByUserId ? await nameOf(latestForm.createdByUserId) : latestForm ? t("orders.detail.created_by.agent") : null;
+  const formSender = latestForm?.createdByUserId ? nameOf(latestForm.createdByUserId) : latestForm ? t("orders.detail.created_by.agent") : null;
   const formStatus = latestForm ? (latestForm.status !== "signed" && latestForm.expiresAt.getTime() <= now.getTime() ? "link_expired" : latestForm.status) : null;
   const sendError = one(sp.send);
 
@@ -67,7 +90,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           <h1 className="sas-title">{t("orders.title")}</h1>
           <nav aria-label={t("orders.tabs")} className="sas-tabs">
             <a className="sas-tab" href={tabHref("quotes")} aria-current={tab === "quotes" ? "page" : undefined}>{t("orders.tab.quotes")} <span className="sas-num">{total}</span></a>
-            <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined}>{t("orders.tab.orders")} <span className="sas-num">{orderRows.length}</span></a>
+            <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined}>{t("orders.tab.orders")} <span className="sas-num">{orderCount}</span></a>
             <a className="sas-tab" href={tabHref("approval")} aria-current={tab === "approval" ? "page" : undefined}>
               {t("orders.tab.approval")} {awaiting ? <span className="sas-pill sas-pill--warning" style={{ height: 20 }}>{awaiting}</span> : <span className="sas-num">0</span>}
             </a>

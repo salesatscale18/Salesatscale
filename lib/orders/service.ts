@@ -386,8 +386,15 @@ export async function markBankTransferReceived(db: Db, actor: Actor & { userId: 
 // Seller views
 // ---------------------------------------------------------------------------
 
+/** A quote's order forms, newest first, without the (large) snapshot. */
 export async function formsForQuote(db: Db, accountId: string, quoteId: string) {
-  return db.select().from(orderForms).where(and(eq(orderForms.accountId, accountId), eq(orderForms.quoteId, quoteId))).orderBy(desc(orderForms.createdAt));
+  return db.select({
+    id: orderForms.id, accountId: orderForms.accountId, leadId: orderForms.leadId, quoteId: orderForms.quoteId,
+    quoteVersionId: orderForms.quoteVersionId, tokenHash: orderForms.tokenHash, language: orderForms.language,
+    status: orderForms.status, expiresAt: orderForms.expiresAt, supersededById: orderForms.supersededById,
+    openedAt: orderForms.openedAt, signedAt: orderForms.signedAt, createdBy: orderForms.createdBy,
+    createdByUserId: orderForms.createdByUserId, createdAt: orderForms.createdAt,
+  }).from(orderForms).where(and(eq(orderForms.accountId, accountId), eq(orderForms.quoteId, quoteId))).orderBy(desc(orderForms.createdAt));
 }
 
 export async function orderForQuote(db: Db, accountId: string, quoteId: string) {
@@ -397,9 +404,10 @@ export async function orderForQuote(db: Db, accountId: string, quoteId: string) 
   return o ?? null;
 }
 
+/** The Orders tab: newest 200 orders of real (non-test) leads. */
 export async function listOrders(db: Db, accountId: string) {
   return db.select({ order: orders, lead: leads }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
-    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false))).orderBy(desc(orders.createdAt));
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false))).orderBy(desc(orders.createdAt)).limit(200);
 }
 
 export async function ordersForLead(db: Db, accountId: string, leadId: string) {
@@ -415,8 +423,12 @@ export async function signatureFor(db: Db, formId: string) {
 export async function docStatusByQuote(db: Db, accountId: string, quoteIds: string[]) {
   const out = new Map<string, { form: OrderForm["status"] | null; payment: (typeof orders.$inferSelect)["paymentStatus"] | null }>();
   if (!quoteIds.length) return out;
-  const forms = await db.select().from(orderForms).where(and(eq(orderForms.accountId, accountId), inArray(orderForms.quoteId, quoteIds))).orderBy(desc(orderForms.createdAt));
-  const ords = await db.select().from(orders).where(and(eq(orders.accountId, accountId), inArray(orders.quoteId, quoteIds))).orderBy(desc(orders.createdAt));
+  const [forms, ords] = await Promise.all([
+    db.select({ quoteId: orderForms.quoteId, status: orderForms.status, expiresAt: orderForms.expiresAt }).from(orderForms)
+      .where(and(eq(orderForms.accountId, accountId), inArray(orderForms.quoteId, quoteIds))).orderBy(desc(orderForms.createdAt)),
+    db.select({ quoteId: orders.quoteId, paymentStatus: orders.paymentStatus }).from(orders)
+      .where(and(eq(orders.accountId, accountId), inArray(orders.quoteId, quoteIds))).orderBy(desc(orders.createdAt)),
+  ]);
   for (const id of quoteIds) {
     const f = forms.find((x) => x.quoteId === id);
     const o = ords.find((x) => x.quoteId === id);

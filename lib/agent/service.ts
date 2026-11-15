@@ -3,6 +3,7 @@
  * P4.7, P4.8). Scoped by account id everywhere.
  */
 import { randomBytes, randomUUID } from "node:crypto";
+import { cache } from "react";
 import { and, asc, count, desc, eq, inArray, like, max, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
@@ -25,13 +26,18 @@ async function byStatus(db: Db, accountId: string, status: "draft" | "live") {
   return v ?? null;
 }
 
-export async function liveVersion(db: Db, accountId: string) {
-  return byStatus(db, accountId, "live");
-}
+/** The live version, or null. Cached per request (Overview, Playbook and Go live read it). */
+export const liveVersion = cache(async (db: Db, accountId: string) => byStatus(db, accountId, "live"));
 
-/** The playbook the seller's team works against: live, else the draft, else none yet (read-only). */
+/** The playbook the seller's team works against: live, else the draft, else none yet (read-only). One query. */
 export async function currentPlaybook(db: Db, accountId: string) {
-  return ((await byStatus(db, accountId, "live")) ?? (await byStatus(db, accountId, "draft")))?.playbook ?? null;
+  const [v] = await db
+    .select({ playbook: agentVersions.playbook })
+    .from(agentVersions)
+    .where(and(eq(agentVersions.accountId, accountId), inArray(agentVersions.status, ["live", "draft"])))
+    .orderBy(sql`case when ${agentVersions.status} = 'live' then 0 else 1 end`)
+    .limit(1);
+  return v?.playbook ?? null;
 }
 
 /** The draft to edit and test, created from the live version (or defaults) when missing. */

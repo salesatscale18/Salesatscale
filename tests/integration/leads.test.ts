@@ -5,7 +5,7 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { parseLead, type LeadInput } from "@/lib/leads/rules";
 import {
-  countLeadsByView, createIntakeKey, previewLead, getLead, importLeadsCsv, latestConsent, listLeadEvents, listLeads, optOutLead,
+  countLeadsByView, createIntakeKey, previewLead, getLead, importLeadsCsv, latestConsent, LEAD_EVENTS_LIMIT, listLeadEvents, listLeads, optOutLead,
   resolveIntakeKey, revokeIntakeKey, upsertLead,
 } from "@/lib/leads/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -176,5 +176,19 @@ describe("leads", () => {
     const leadAccount = new Map((await db.select().from(leads)).map((l) => [l.id, l.accountId]));
     for (const c of consents) expect(c.accountId).toBe(leadAccount.get(c.leadId));
     for (const e of events) expect(e.accountId).toBe(leadAccount.get(e.leadId));
+  });
+
+  it("the timeline returns at most LEAD_EVENTS_LIMIT events, newest first", async () => {
+    const r = await upsertLead(db, accA, human(), lead({ phone: "0529990000", fullName: "Busy Lead" }), "manual", { now });
+    if (!r.ok) throw new Error();
+    const base = Date.now() + 24 * 3_600_000; // after the events upsertLead wrote
+    await db.insert(leadEvents).values(
+      Array.from({ length: LEAD_EVENTS_LIMIT + 5 }, (_, i) => ({
+        accountId: accA, leadId: r.lead.id, type: "lead.updated", actor: "system" as const, createdAt: new Date(base + i * 1000),
+      })),
+    );
+    const events = await listLeadEvents(db, accA, r.lead.id);
+    expect(events).toHaveLength(LEAD_EVENTS_LIMIT);
+    expect(events[0].event.createdAt.getTime()).toBe(base + (LEAD_EVENTS_LIMIT + 4) * 1000);
   });
 });

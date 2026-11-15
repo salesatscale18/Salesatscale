@@ -33,11 +33,16 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const topics = await listTopics(appDb, account.id);
   const requested = one(sp.topic);
+  const [topics, allFacts, questions, progress] = await Promise.all([
+    listTopics(appDb, account.id),
+    listFacts(appDb, account.id),
+    unansweredQuestions(appDb, account.id, 10),
+    setupProgress(appDb, account),
+  ]);
   const current = topics.find((x) => x.topic === requested) ?? null;
-  const facts = await listFacts(appDb, account.id, current ? { topic: current.topic } : {});
-  const questions = await unansweredQuestions(appDb, account.id, 10);
+  // Same rows and order as listFacts({ topic }) (sorted by topic, then created), in the same round trip.
+  const facts = current ? allFacts.filter((f) => f.topic === current.topic) : allFacts;
   const editId = one(sp.edit);
   const done = DONE[one(sp.done)];
   const error = ERRORS[one(sp.error)];
@@ -75,7 +80,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
           {t("knowledge.intro")}{" "}
           {t("knowledge.summary", { total: totals.total, approved: totals.approved, suggested: totals.suggested, gaps: questions.length })}
         </span>
-        <SetupSteps basePath={base} current="knowledge" completed={await setupProgress(appDb, account.id)} />
+        <SetupSteps basePath={base} current="knowledge" completed={progress} />
       </header>
       {done ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t(done, { n })}</span></div> : null}
       {error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(error)}</span></div> : null}

@@ -4,7 +4,7 @@
  * Read-only: derived from leads, quotes, order forms, orders and lead events.
  */
 import { cache } from "react";
-import { and, count, desc, eq, gt, inArray, isNull, lte, ne, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
   leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
@@ -35,41 +35,65 @@ export const EXPIRING_WITHIN_MS = DAY_MS;
 
 const leadCols = { leadId: leads.id, leadName: leads.fullName, company: leads.company };
 
-/** The "Needs you" queue for one account, newest first. */
+/*
+ * The four sources of "Needs you". `needsYou` (full items) and `needsYouCount`
+ * (the nav badge) share these filters so the count always equals the list length.
+ */
+const notTest = eq(leads.isTest, false);
+const approvalWhere = (accountId: string) => and(eq(quotes.accountId, accountId), eq(quotes.status, "awaiting_approval"), notTest);
+const handedWhere = (accountId: string) => and(eq(leads.accountId, accountId), eq(leads.status, "human_handling"), notTest);
+const orderWhere = (accountId: string) =>
+  and(eq(orders.accountId, accountId), inArray(orders.paymentStatus, ["bank_transfer_expected", "failed"]), notTest);
+/** Open, unsigned, unexpired forms of live quotes (before the expiring / long-unsigned split). */
+const openFormWhere = (accountId: string, now: Date) =>
+  and(
+    eq(orderForms.accountId, accountId),
+    inArray(orderForms.status, ["sent", "opened"]),
+    isNull(orderForms.supersededById),
+    isNull(orderForms.signedAt),
+    gt(orderForms.expiresAt, now),
+    ne(quotes.status, "cancelled"),
+    notTest,
+  );
+
+/** The "Needs you" queue for one account, newest first. Selects only the columns it shows (never the form snapshot). */
 export async function needsYou(db: Db, accountId: string, now: Date): Promise<NeedsYouItem[]> {
-  const notTest = eq(leads.isTest, false);
   const [approvals, handed, orderRows, formRows] = await Promise.all([
     db
-      .select({ ...leadCols, quote: quotes, version: quoteVersions })
+      .select({
+        ...leadCols,
+        quote: { id: quotes.id, number: quotes.number },
+        version: { version: quoteVersions.version, createdAt: quoteVersions.createdAt, approvalReasons: quoteVersions.approvalReasons },
+      })
       .from(quotes)
       .innerJoin(leads, eq(leads.id, quotes.leadId))
       .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
-      .where(and(eq(quotes.accountId, accountId), eq(quotes.status, "awaiting_approval"), notTest)),
+      .where(approvalWhere(accountId)),
     db
       .select({ ...leadCols, at: leads.lastActivityAt })
       .from(leads)
-      .where(and(eq(leads.accountId, accountId), eq(leads.status, "human_handling"), notTest)),
+      .where(handedWhere(accountId)),
     db
-      .select({ ...leadCols, order: orders })
+      .select({
+        ...leadCols,
+        order: {
+          id: orders.id, quoteId: orders.quoteId, number: orders.number, paymentStatus: orders.paymentStatus,
+          amountDueMinor: orders.amountDueMinor, currency: orders.currency, updatedAt: orders.updatedAt,
+        },
+      })
       .from(orders)
       .innerJoin(leads, eq(leads.id, orders.leadId))
-      .where(and(eq(orders.accountId, accountId), inArray(orders.paymentStatus, ["bank_transfer_expected", "failed"]), notTest)),
+      .where(orderWhere(accountId)),
     db
-      .select({ ...leadCols, form: orderForms, quoteNumber: quotes.number })
+      .select({
+        ...leadCols,
+        form: { id: orderForms.id, quoteId: orderForms.quoteId, status: orderForms.status, expiresAt: orderForms.expiresAt, openedAt: orderForms.openedAt },
+        quoteNumber: quotes.number,
+      })
       .from(orderForms)
       .innerJoin(leads, eq(leads.id, orderForms.leadId))
       .innerJoin(quotes, eq(quotes.id, orderForms.quoteId))
-      .where(
-        and(
-          eq(orderForms.accountId, accountId),
-          inArray(orderForms.status, ["sent", "opened"]),
-          isNull(orderForms.supersededById),
-          isNull(orderForms.signedAt),
-          gt(orderForms.expiresAt, now),
-          ne(quotes.status, "cancelled"),
-          notTest,
-        ),
-      ),
+      .where(openFormWhere(accountId, now)),
   ]);
 
   const items: NeedsYouItem[] = [];
@@ -103,8 +127,41 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
   return items.sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id));
 }
 
-/** needsYou at the current time, shared by the layout (nav badge) and the Overview within one request. */
+/** needsYou at the current time, cached per request (the Overview list). */
 export const needsYouForRequest = cache((db: Db, accountId: string) => needsYou(db, accountId, new Date()));
+
+/**
+ * How many items `needsYou` would return, as counts only (no rows, no
+ * snapshot). Forms count when they are expiring within EXPIRING_WITHIN_MS or
+ * were opened more than UNSIGNED_AFTER_MS ago, matching needsYou's split.
+ */
+export async function needsYouCount(db: Db, accountId: string, now: Date): Promise<number> {
+  const expiringBy = new Date(now.getTime() + EXPIRING_WITHIN_MS);
+  const openedBefore = new Date(now.getTime() - UNSIGNED_AFTER_MS);
+  const [[a], [h], [o], [f]] = await Promise.all([
+    db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
+      .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
+      .where(approvalWhere(accountId)),
+    db.select({ n: count() }).from(leads).where(handedWhere(accountId)),
+    db.select({ n: count() }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId)).where(orderWhere(accountId)),
+    db.select({ n: count() }).from(orderForms)
+      .innerJoin(leads, eq(leads.id, orderForms.leadId))
+      .innerJoin(quotes, eq(quotes.id, orderForms.quoteId))
+      .where(
+        and(
+          openFormWhere(accountId, now),
+          or(
+            lte(orderForms.expiresAt, expiringBy),
+            and(eq(orderForms.status, "opened"), isNotNull(orderForms.openedAt), lt(orderForms.openedAt, openedBefore)),
+          ),
+        ),
+      ),
+  ]);
+  return a.n + h.n + o.n + f.n;
+}
+
+/** needsYouCount at the current time, cached per request (the nav badge in the layout). */
+export const needsYouCountForRequest = cache((db: Db, accountId: string) => needsYouCount(db, accountId, new Date()));
 
 /** Where each item's action goes, under the account base path (`/app/<slug>`). */
 export function needsYouHref(base: string, item: NeedsYouItem): string {

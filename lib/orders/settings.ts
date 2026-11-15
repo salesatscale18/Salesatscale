@@ -1,4 +1,5 @@
 /** Order form settings and versioned legal sections (P5.2). Scoped by account. */
+import { cache } from "react";
 import { and, desc, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { legalSections, orderFormSettings, ORDER_FORM_FIELDS, type LegalSection, type OrderFormField } from "@/db/schema";
@@ -39,6 +40,22 @@ export async function currentLegal(db: Db, accountId: string): Promise<LegalSect
   for (const r of rows) if (!latest.has(`${r.sectionKey}|${r.language}`)) latest.set(`${r.sectionKey}|${r.language}`, r);
   return [...latest.values()].filter((r) => r.active).sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sectionKey.localeCompare(b.sectionKey));
 }
+
+/**
+ * Light `currentLegal` for setup progress and checklists: the same "latest
+ * active version per (section, language)" rule, selecting only the four
+ * columns it needs (no bodies). Cached per request.
+ */
+export const currentLegalKeys = cache(async (db: Db, accountId: string): Promise<{ sectionKey: string; language: string; version: number }[]> => {
+  const rows = await db
+    .select({ sectionKey: legalSections.sectionKey, language: legalSections.language, version: legalSections.version, active: legalSections.active })
+    .from(legalSections)
+    .where(eq(legalSections.accountId, accountId))
+    .orderBy(desc(legalSections.version));
+  const latest = new Map<string, (typeof rows)[number]>();
+  for (const r of rows) if (!latest.has(`${r.sectionKey}|${r.language}`)) latest.set(`${r.sectionKey}|${r.language}`, r);
+  return [...latest.values()].filter((r) => r.active).map(({ sectionKey, language, version }) => ({ sectionKey, language, version }));
+});
 
 export function sectionKeyOf(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || `section_${Date.now()}`;

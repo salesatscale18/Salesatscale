@@ -55,17 +55,19 @@ export default async function LeadCardPage({
   const sp = await searchParams;
   const { account, user: me } = await requireAccount(slug);
   if (!UUID.test(leadId)) notFound();
-  const row = await getLead(appDb, account.id, leadId);
+  // One parallel batch: every loader is scoped by account, so a lead id from
+  // another account just yields empty results before notFound() below.
+  const [row, events, consent, leadQuotes, playbook, deal, conversation] = await Promise.all([
+    getLead(appDb, account.id, leadId),
+    listLeadEvents(appDb, account.id, leadId),
+    latestConsent(appDb, account.id, leadId),
+    quotesForLead(appDb, account.id, leadId),
+    currentPlaybook(appDb, account.id),
+    getDealState(appDb, account.id, leadId),
+    latestConversationForLead(appDb, account.id, leadId),
+  ]);
   if (!row) notFound();
   const { lead, owner, creator } = row;
-  const [events, consent, leadQuotes, playbook, deal, conversation] = await Promise.all([
-    listLeadEvents(appDb, account.id, lead.id),
-    latestConsent(appDb, account.id, lead.id),
-    quotesForLead(appDb, account.id, lead.id),
-    currentPlaybook(appDb, account.id),
-    getDealState(appDb, account.id, lead.id),
-    latestConversationForLead(appDb, account.id, lead.id),
-  ]);
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
 

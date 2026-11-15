@@ -13,8 +13,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const draft = await ensureDraftVersion(appDb, account.id);
-  const live = await liveVersion(appDb, account.id);
+  const [draft, live, progress] = await Promise.all([ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), setupProgress(appDb, account)]);
   const base = `/app/${account.slug}`;
   const lab = `${base}/setup/test-lab`;
   return (
@@ -34,7 +33,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
             </div>
           </div>
           <span className="sas-small">{t("playbook.intro")}</span>
-          <SetupSteps basePath={base} current="playbook" completed={await setupProgress(appDb, account.id)} />
+          <SetupSteps basePath={base} current="playbook" completed={progress} />
         </header>
         {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.saved")}</span></div> : null}
         <PlaybookForm slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} key={JSON.stringify(draft.playbook)} />

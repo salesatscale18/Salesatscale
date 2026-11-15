@@ -7,10 +7,10 @@ import { parseCatalogItem } from "@/lib/catalog/rules";
 import { addDraftRule, publishDraft, saveDraftItem } from "@/lib/catalog/service";
 import { parseLead } from "@/lib/leads/rules";
 import { upsertLead } from "@/lib/leads/service";
-import { createQuote, createQuoteVersion } from "@/lib/quotes/service";
+import { createQuote, createQuoteVersion, quotesForLead } from "@/lib/quotes/service";
 import { currentLegal, getOrderFormSettings, saveLegalSection } from "@/lib/orders/settings";
 import {
-  acceptNewPrice, createOrderForm, formsForQuote, loadForm, markBankTransferReceived, markOpened, orderLabel, priceCheck, signForm, startPayment,
+  acceptNewPrice, createOrderForm, docStatusByQuote, formsForQuote, listOrders, loadForm, markBankTransferReceived, markOpened, orderLabel, priceCheck, signForm, startPayment,
 } from "@/lib/orders/service";
 import { formIdFromToken, tokenFor } from "@/lib/orders/token";
 import { handleProviderEvent, signFake, simulateFakePayment } from "@/lib/payments/events";
@@ -385,5 +385,39 @@ describe("order forms, signatures and payments", () => {
     expect(paidEvents).toHaveLength(1);
     const after = await loadForm(db, f.token);
     expect(after?.state === "signed" && after.order.paymentStatus).toBe("paid");
+  });
+
+  it("read paths: forms without the snapshot, doc status per quote, orders list, quotes per lead, all scoped", async () => {
+    const leadId = await newLead("0525550109");
+    const q = await newQuote(leadId);
+    const f1 = await createOrderForm(db, acc, human(), q);
+    if (!f1.ok) throw new Error(f1.reason);
+    const f2 = await createOrderForm(db, acc, human(), q);
+    if (!f2.ok) throw new Error(f2.reason);
+    const forms = await formsForQuote(db, acc, q);
+    expect(forms.map((x) => x.id)).toEqual([f2.form.id, f1.form.id]);
+    expect(forms[0]).not.toHaveProperty("snapshot");
+    expect(forms[0]).toMatchObject({ status: "sent", quoteId: q, createdByUserId: me.id });
+
+    const unsent = await newQuote(leadId);
+    const docs = await docStatusByQuote(db, acc, [q, unsent]);
+    expect(docs.get(q)).toEqual({ form: "sent", payment: null });
+    expect(docs.get(unsent)).toEqual({ form: null, payment: null });
+    expect((await docStatusByQuote(db, other, [q])).get(q)).toEqual({ form: null, payment: null });
+    expect((await docStatusByQuote(db, acc, [])).size).toBe(0);
+
+    await signForm(db, f2.token, sign, {});
+    expect((await docStatusByQuote(db, acc, [q])).get(q)).toEqual({ form: "signed", payment: "not_started" });
+    const list = await listOrders(db, acc);
+    expect(list.some((r) => r.order.quoteId === q)).toBe(true);
+    expect(await listOrders(db, other)).toEqual([]);
+
+    const v2 = await createQuoteVersion(db, acc, human(), unsent, { lines: [{ sku: "SNS-200", qty: 3 }, { sku: "GW-10", qty: 1 }, { sku: "PLAN-M", qty: 1 }], discountBp: 0, sites: 1 });
+    if (!v2.ok) throw new Error(v2.reason);
+    expect(v2.quote).toMatchObject({ id: unsent, currentVersion: 2 });
+    expect(v2.version).toMatchObject({ quoteId: unsent, version: 2 });
+    const grouped = await quotesForLead(db, acc, leadId);
+    expect(grouped.map((g) => [g.quote.id, g.version.version, g.older.map((o) => o.version)])).toEqual([[unsent, 2, [1]], [q, 1, []]]);
+    expect(await quotesForLead(db, other, leadId)).toEqual([]);
   });
 });
