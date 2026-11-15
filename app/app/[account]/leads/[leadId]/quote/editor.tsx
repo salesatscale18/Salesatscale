@@ -179,23 +179,31 @@ export function QuoteEditor(props: {
   const disabled = saving || !ok || red > 0;
   const hasChecks = ok ? ok.fitProblems.length + ok.approval.length + ok.notes.length > 0 : false;
 
-  type Cell = { period: Period | null; unit: string; total: string; note?: string };
-  /** Charge, unit price and total cells, one stacked row per charge. */
+  type Cell = { period: Period | null; unit: string; total: string; note?: string; per?: string };
+  /** Unit price cell, one stacked row per charge ("₪90.00/month", then "× 2 sites" or the price source). */
   const chargeCells = (lines: Cell[]) => (
-    <>
-      <td>{lines.map((l, k) => <div key={k}>{chargeLabel(l.period)}</div>)}</td>
-      <td className="sas-num" style={{ textAlign: "end" }}>
-        {lines.map((l, k) => <div key={k}>{l.unit}{l.note ? <div className="sas-small">{l.note}</div> : null}</div>)}
-      </td>
-    </>
+    <td className="sas-num" style={{ textAlign: "end" }}>
+      {lines.map((l, k) => (
+        <div key={k}>
+          {l.unit}
+          {l.per ? <div className="sas-small">{l.per}</div> : null}
+          {l.note ? <div className="sas-small">{l.note}</div> : null}
+        </div>
+      ))}
+    </td>
   );
+  /** "One-time", "One-time + Yearly": the charges of a line, shown under its name. */
+  const chargesText = (lines: Cell[]) => [...new Set(lines.map((l) => chargeLabel(l.period)))].join(" + ");
+  /** The product cell wraps, so the table fits its panel at desktop widths. */
+  const productTd = { whiteSpace: "normal", minWidth: 160 } as const;
   const fromPreview = (ls: PreviewLine[]): Cell[] => ls.map((l) => {
     const unit = l.unitPriceMinor === null ? t("quote.to_price") : money(l.unitPriceMinor, l.period);
     // A recurring line whose quantity is another count (one per site): "₪90.00/mo × 2 sites".
-    const per = l.period && l.perCount ? ` ${t("quote.editor.times_count", { count: l.perCount.qty, unit: unitLabel(l.perCount.unit, null, "en", l.perCount.qty) })}` : "";
+    const per = l.period && l.perCount ? t("quote.editor.times_count", { count: l.perCount.qty, unit: unitLabel(l.perCount.unit, null, "en", l.perCount.qty) }) : undefined;
     return {
       period: l.period,
-      unit: unit + per,
+      unit,
+      per,
       total: l.lineTotalMinor === null ? t("quote.to_price") : money(l.lineTotalMinor, l.period),
       note: l.priceSource === "list" ? undefined : t(`quote.price_source.${l.priceSource}`),
     };
@@ -238,13 +246,14 @@ export function QuoteEditor(props: {
           {order.length === 0 && autoSkus.length === 0 && removedRows.length === 0 ? (
             <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("quote.editor.pick")}</p>
           ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="sas-table" style={{ minWidth: 640 }}>
+            <div style={{ overflowX: "auto", borderRadius: "0 0 var(--radius-lg) var(--radius-lg)" }}>
+              {/* Tighter cells so the table fits its panel at 1280px; narrower screens scroll inside the panel. */}
+              <style>{".qe-table th, .qe-table td { padding-inline: 10px } .qe-table th:first-child, .qe-table td:first-child { padding-inline-start: 16px }"}</style>
+              <table className="sas-table qe-table" style={{ minWidth: 500 }}>
                 <thead><tr>
                   <th scope="col">{t("quote.editor.product")}</th>
-                  <th scope="col">{t("quote.editor.charge")}</th>
                   <th scope="col" style={{ textAlign: "end" }}>{t("quote.editor.unit_price")}</th>
-                  <th scope="col" style={{ width: 110 }}>{t("quote.editor.qty")}</th>
+                  <th scope="col" style={{ width: 96 }}>{t("quote.editor.qty")}</th>
                   <th scope="col" style={{ textAlign: "end" }}>{t("quote.editor.total")}</th>
                   <th scope="col"><span className="sas-sr">{t("quote.editor.remove")}</span></th>
                 </tr></thead>
@@ -256,17 +265,17 @@ export function QuoteEditor(props: {
                     const cells = ls.length ? fromPreview(ls) : fromItem(i);
                     return (
                       <tr key={sku} style={{ verticalAlign: "top" }}>
-                        <td>
+                        <td style={productTd}>
                           <strong>{name}</strong> <span className="sas-chip">{sku}</span>
                           <div className="sas-small">
-                            {i ? perUnit(i) : ""}
+                            {chargesText(cells)}{i ? ` · ${perUnit(i)}` : ""}
                             {ls.some((l) => l.autoAdded) ? ` · ${t("quote.editor.auto_added")}` : ""}
                           </div>
                         </td>
                         {chargeCells(cells)}
                         <td>
                           <input
-                            className="sas-input sas-num" id={`q-${sku}`} name={`qty:${sku}`} type="number" min={1} step={1} inputMode="numeric"
+                            className="sas-input sas-num" style={{ width: 72 }} id={`q-${sku}`} name={`qty:${sku}`} type="number" min={1} step={1} inputMode="numeric"
                             aria-label={t("quote.editor.qty_of", { name })}
                             value={qty[sku] ?? ""} onChange={(e) => setQty((q) => ({ ...q, [sku]: e.target.value }))}
                           />
@@ -284,9 +293,10 @@ export function QuoteEditor(props: {
                     const item = bySku.get(sku);
                     return (
                       <tr key={`auto-${sku}`} style={{ verticalAlign: "top" }} data-auto-added="true" data-removable={removable ? "true" : "false"}>
-                        <td>
+                        <td style={productTd}>
                           <strong>{ls[0].name}</strong> <span className="sas-chip">{sku}</span>
-                          <div className="sas-small"><Icon name="plus" /> {t("quote.editor.auto_added")}{item ? ` · ${perUnit(item)}` : ""}</div>
+                          <div className="sas-small">{chargesText(cells)}{item ? ` · ${perUnit(item)}` : ""}</div>
+                          <div className="sas-small"><Icon name="plus" /> {t("quote.editor.auto_added")}</div>
                           {removable ? (
                             <div style={{ marginTop: 4 }}>
                               <button
@@ -298,7 +308,7 @@ export function QuoteEditor(props: {
                               </button>
                             </div>
                           ) : (
-                            <div className="sas-hint" id={`q-req-${sku}`} style={{ maxWidth: "34ch", display: "flex", gap: 4, alignItems: "flex-start" }}>
+                            <div className="sas-hint" id={`q-req-${sku}`} style={{ maxWidth: "40ch", display: "flex", gap: 4, alignItems: "flex-start" }}>
                               <Icon name="link-2" />
                               <span>{requiredWith ? t("quote.editor.required_with", { item: requiredWith }) : t("quote.editor.required")}</span>
                             </div>
@@ -313,7 +323,7 @@ export function QuoteEditor(props: {
                   })}
                   {removedRows.map(({ sku, name, qty: n }) => (
                     <tr key={`removed-${sku}`} style={{ verticalAlign: "top", color: "var(--ink-muted)", background: "var(--surface)" }} data-removed="true">
-                      <td>
+                      <td style={productTd}>
                         <span style={{ textDecoration: "line-through" }}><strong>{name}</strong></span> <span className="sas-chip">{sku}</span>
                         <div className="sas-small">{t("quote.editor.removed_by_buyer")}</div>
                         <div style={{ marginTop: 4 }}>
@@ -326,7 +336,6 @@ export function QuoteEditor(props: {
                           </button>
                         </div>
                       </td>
-                      <td className="sas-small">—</td>
                       <td className="sas-num" style={{ textAlign: "end" }}>—</td>
                       <td className="sas-num" style={{ textDecoration: "line-through" }}>{n ?? 0}</td>
                       <td className="sas-num" style={{ textAlign: "end" }}>—</td>

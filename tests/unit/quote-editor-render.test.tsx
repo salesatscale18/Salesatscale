@@ -53,10 +53,20 @@ const text = (html: string) => html.replace(/<[^>]+>/g, " ").replace(/&#x27;/g, 
 describe("quote editor markup", () => {
   it("unit sub-lines use unit labels, not raw keys; per-site recurring lines show the count", () => {
     const html = text(render(base));
-    expect(html).toContain("SNS-200 per device");
-    expect(html).toContain("CRATE per crate");
+    expect(html).toContain("SNS-200 One-time · per device");
+    expect(html).toContain("PLAN-M Monthly · per site");
+    expect(html).toContain("CRATE One-time · per crate");
     expect(html).not.toMatch(/SNS-200 device/);
     expect(html).toContain("₪90.00/month × 2 sites");
+  });
+
+  it("the items table fits a 1280px screen: five columns, the charge under the name, a wrapping product cell", () => {
+    const html = render(base);
+    const head = /<thead>(.*?)<\/thead>/.exec(html)![1];
+    expect([...head.matchAll(/<th /g)]).toHaveLength(5);
+    expect(head).not.toContain(">Charge<");
+    expect(html).toContain('class="sas-table qe-table" style="min-width:500px"');
+    expect(html).toContain('<td style="white-space:normal;min-width:160px">');
   });
 
   it("quantity inputs are named after their item", () => {
