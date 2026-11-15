@@ -4,7 +4,7 @@ import { SasRoot } from "@/components/sas/root";
 import { SideNavForPath } from "@/components/sas/side-nav-client";
 import { Banner } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { needsYouForRequest } from "@/lib/overview/service";
+import { needsYouCountForRequest } from "@/lib/overview/service";
 import { displayName, initials } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
 import { resumeAccountAction } from "@/app/sadmin/accounts/actions";
@@ -17,7 +17,7 @@ export default async function AccountLayout({ children, params }: { children: Re
   const { account: slug } = await params;
   const access = await requireAccount(slug);
   const { account, user, actingAs } = access;
-  const needsYouCount = (await needsYouForRequest(appDb, account.id)).length;
+  const needsYouCount = await needsYouCountForRequest(appDb, account.id);
 
   return (
     <SasRoot>

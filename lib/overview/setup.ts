@@ -4,26 +4,33 @@
  */
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { agentVersions, catalogVersions, knowledgeFacts, sellerAccounts } from "@/db/schema";
-import { currentLegal } from "@/lib/orders/settings";
+import { agentVersions, catalogVersions, knowledgeFacts, sellerAccounts, type SellerAccount } from "@/db/schema";
+import { currentLegalKeys } from "@/lib/orders/settings";
 
 /** Step ids of `SETUP_STEPS` in components/sas/nav.tsx. */
 export type SetupStepId = "company" | "sources" | "knowledge" | "catalog" | "playbook" | "order-form" | "follow-ups" | "go-live";
 
+/** The account columns setup progress reads. Pages pass the row they already loaded. */
+export type ProgressAccount = Pick<SellerAccount, "id" | "legalName" | "companyId" | "languages" | "status">;
+
 /**
  * Completed step ids. Sources and follow-ups have no data yet (P6, P8), so
- * they are never complete here.
+ * they are never complete here. Pass the already-loaded account row to save
+ * a query; an account id still works (the row is then selected here).
  */
-export async function setupProgress(db: Db, accountId: string): Promise<Set<SetupStepId>> {
-  const [[account], [fact], [catalog], [agent], legal] = await Promise.all([
-    db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
+export async function setupProgress(db: Db, accountOrId: string | ProgressAccount): Promise<Set<SetupStepId>> {
+  const accountId = typeof accountOrId === "string" ? accountOrId : accountOrId.id;
+  const [account, [fact], [catalog], [agent], legal] = await Promise.all([
+    typeof accountOrId === "string"
+      ? db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)).then(([a]) => a as ProgressAccount | undefined)
+      : accountOrId,
     db.select({ id: knowledgeFacts.id }).from(knowledgeFacts)
       .where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "approved"))).limit(1),
     db.select({ id: catalogVersions.id }).from(catalogVersions)
       .where(and(eq(catalogVersions.accountId, accountId), eq(catalogVersions.status, "published"))).limit(1),
     db.select({ id: agentVersions.id }).from(agentVersions)
       .where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))).limit(1),
-    currentLegal(db, accountId),
+    currentLegalKeys(db, accountId),
   ]);
   const done = new Set<SetupStepId>();
   if (!account) return done;

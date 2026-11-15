@@ -10,7 +10,7 @@
  * writes here are ordered so a partial failure leaves a recoverable state
  * (e.g. an account without an invite can be re-invited).
  */
-import { and, asc, desc, eq, inArray, isNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNull, like, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
   accountInvites, accountMembers, auditLog, sellerAccounts, users,
@@ -26,7 +26,11 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function uniqueSlug(db: Db, name: string): Promise<string> {
   const base = slugify(name);
-  const taken = await db.select({ slug: sellerAccounts.slug }).from(sellerAccounts);
+  // slugify only yields [a-z0-9-], so `base` has no LIKE wildcards.
+  const taken = await db
+    .select({ slug: sellerAccounts.slug })
+    .from(sellerAccounts)
+    .where(or(eq(sellerAccounts.slug, base), like(sellerAccounts.slug, `${base}-%`)));
   const set = new Set(taken.map((r) => r.slug));
   if (!set.has(base)) return base;
   for (let i = 2; ; i++) {
@@ -121,8 +125,15 @@ export async function renewInvite(db: Db, actor: Actor, accountId: string, invit
   return createInvite(db, actor, accountId, { email: old.email, name: old.inviteeName, isOwner: old.isOwner }, now);
 }
 
+/** The admin accounts list: only the columns it shows. */
 export async function listAccounts(db: Db) {
-  return db.select().from(sellerAccounts).orderBy(asc(sellerAccounts.tradeName));
+  return db
+    .select({
+      id: sellerAccounts.id, slug: sellerAccounts.slug, tradeName: sellerAccounts.tradeName, market: sellerAccounts.market,
+      languages: sellerAccounts.languages, plan: sellerAccounts.plan, status: sellerAccounts.status,
+    })
+    .from(sellerAccounts)
+    .orderBy(asc(sellerAccounts.tradeName));
 }
 
 export async function getAccountById(db: Db, id: string) {
@@ -206,13 +217,16 @@ export type AccountAccess = {
  * Everyone else gets null (the page then calls notFound()).
  */
 export async function resolveAccountAccess(db: Db, user: User, slug: string): Promise<AccountAccess | null> {
-  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.slug, slug));
-  if (!account) return null;
-  const [member] = await db
-    .select()
-    .from(accountMembers)
-    .where(and(eq(accountMembers.accountId, account.id), eq(accountMembers.userId, user.id)));
-  if (member) return { account, user, actingAs: false, role: member.role };
+  // One round trip: the account plus this user's membership row (if any).
+  const [row] = await db
+    .select({ account: sellerAccounts, memberRole: accountMembers.role })
+    .from(sellerAccounts)
+    .leftJoin(accountMembers, and(eq(accountMembers.accountId, sellerAccounts.id), eq(accountMembers.userId, user.id)))
+    .where(eq(sellerAccounts.slug, slug))
+    .limit(1);
+  if (!row) return null;
+  const { account, memberRole } = row;
+  if (memberRole) return { account, user, actingAs: false, role: memberRole };
   if (user.role === "super_admin") return { account, user, actingAs: true, role: "platform_admin" };
   return null;
 }

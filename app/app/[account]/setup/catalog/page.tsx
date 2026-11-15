@@ -22,7 +22,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const state = await catalogState(appDb, account.id);
+  const [state, progress] = await Promise.all([catalogState(appDb, account.id), setupProgress(appDb, account)]);
   const base = `/app/${account.slug}/setup/catalog`;
   const selectedId = one(sp.item);
   const selected = state.items.find((i) => i.id === selectedId);
@@ -58,7 +58,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
           </div>
         </div>
         <span className="sas-small">{t("catalog.intro")}</span>
-        <SetupSteps basePath={`/app/${account.slug}`} current="catalog" completed={await setupProgress(appDb, account.id)} />
+        <SetupSteps basePath={`/app/${account.slug}`} current="catalog" completed={progress} />
       </header>
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.published", { version: one(sp.published) })}</span></div> : null}

@@ -149,8 +149,11 @@ export async function createQuote(db: Db, accountId: string, actor: QuoteActor, 
           : []),
         q.update(leads).set({ lastActivityAt: now }).where(eq(leads.id, leadId)),
       ]);
-      const [quote] = await db.select().from(quotes).where(eq(quotes.id, quoteId));
-      const [version] = await db.select().from(quoteVersions).where(eq(quoteVersions.id, v.id));
+      // Re-read both rows (DB defaults such as updated_at) in one parallel round trip.
+      const [[quote], [version]] = await Promise.all([
+        db.select().from(quotes).where(eq(quotes.id, quoteId)),
+        db.select().from(quoteVersions).where(eq(quoteVersions.id, v.id)),
+      ]);
       if (actor.kind === "human" && actor.actingAs) {
         await writeAudit(db, { userId: actor.userId, actingAs: true }, { accountId, action: "quote.created", targetType: "quote", targetId: quoteId });
       }
@@ -225,8 +228,11 @@ export async function createQuoteVersion(
     }
     throw e;
   }
-  const quote = (await quoteOf(db, accountId, q.id))!;
-  const [version] = await db.select().from(quoteVersions).where(eq(quoteVersions.id, v.id));
+  const [quoteRow, [version]] = await Promise.all([
+    quoteOf(db, accountId, q.id),
+    db.select().from(quoteVersions).where(eq(quoteVersions.id, v.id)),
+  ]);
+  const quote = quoteRow!;
   if (actor.kind === "human") {
     await writeAudit(db, { userId: actor.userId, actingAs: actor.actingAs }, { accountId, action: "quote.versioned", targetType: "quote", targetId: q.id, details: { version: next } });
   }
@@ -265,8 +271,11 @@ export async function approveQuote(
     tx.insert(leadEvents).values({ accountId, leadId: q.leadId, type: "quote.approved", actor: "human", actorUserId: actor.userId, data: { quoteId: q.id, number: q.number, version: current.version, reasons: current.approvalReasons.map(approvalReasonText) } }),
   ]);
   await writeAudit(db, actor, { accountId, action: "quote.approved", targetType: "quote", targetId: q.id, details: { version: current.version } });
-  const quote = (await quoteOf(db, accountId, q.id))!;
-  const [version] = await db.select().from(quoteVersions).where(eq(quoteVersions.id, current.id));
+  const [quoteRow, [version]] = await Promise.all([
+    quoteOf(db, accountId, q.id),
+    db.select().from(quoteVersions).where(eq(quoteVersions.id, current.id)),
+  ]);
+  const quote = quoteRow!;
   return { ok: true, quote, version, reused: false };
 }
 
@@ -318,11 +327,14 @@ export async function countQuotes(db: Db, accountId: string) {
 export async function getQuote(db: Db, accountId: string, quoteId: string) {
   const q = await quoteOf(db, accountId, quoteId);
   if (!q) return null;
-  const [lead] = await db.select().from(leads).where(eq(leads.id, q.leadId));
-  const versions = await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, q.id)).orderBy(desc(quoteVersions.version));
-  const lines = versions.length
-    ? await db.select().from(quoteLines).where(inArray(quoteLines.quoteVersionId, versions.map((v) => v.id))).orderBy(asc(quoteLines.sortOrder))
-    : [];
+  // Lead, versions and their lines in one parallel round trip after the quote.
+  const [[lead], versions, lines] = await Promise.all([
+    db.select().from(leads).where(eq(leads.id, q.leadId)),
+    db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, q.id)).orderBy(desc(quoteVersions.version)),
+    db.select().from(quoteLines)
+      .where(inArray(quoteLines.quoteVersionId, db.select({ id: quoteVersions.id }).from(quoteVersions).where(eq(quoteVersions.quoteId, q.id))))
+      .orderBy(asc(quoteLines.sortOrder)),
+  ]);
   return {
     quote: q,
     lead,
@@ -338,13 +350,14 @@ export async function quotesForLead(db: Db, accountId: string, leadId: string) {
     .innerJoin(quoteVersions, eq(quoteVersions.quoteId, quotes.id))
     .where(and(eq(quotes.accountId, accountId), eq(quotes.leadId, leadId)))
     .orderBy(desc(quotes.createdAt), desc(quoteVersions.version));
-  const out: { quote: typeof quotes.$inferSelect; version: typeof quoteVersions.$inferSelect; older: (typeof quoteVersions.$inferSelect)[] }[] = [];
+  // Map keeps insertion order, so quotes stay newest first.
+  const byQuote = new Map<string, { quote: typeof quotes.$inferSelect; version: typeof quoteVersions.$inferSelect; older: (typeof quoteVersions.$inferSelect)[] }>();
   for (const r of rows) {
-    const cur = out.find((o) => o.quote.id === r.quote.id);
-    if (!cur) out.push({ quote: r.quote, version: r.version, older: [] });
+    const cur = byQuote.get(r.quote.id);
+    if (!cur) byQuote.set(r.quote.id, { quote: r.quote, version: r.version, older: [] });
     else cur.older.push(r.version);
   }
-  return out.map((o) => {
+  return [...byQuote.values()].map((o) => {
     const current = [o.version, ...o.older].find((v) => v.version === o.quote.currentVersion) ?? o.version;
     return { quote: o.quote, version: current, older: [o.version, ...o.older].filter((v) => v.version !== current.version) };
   });

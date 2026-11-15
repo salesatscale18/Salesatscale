@@ -5,7 +5,7 @@ import {
   agentVersions, auditLog, catalogVersions, knowledgeFacts, leadEvents, leads, orderForms, orders, quotes, quoteVersions,
   sellerAccounts, users, type User,
 } from "@/db/schema";
-import { needsYou, needsYouHref, overviewKpis, parsePeriod, periodRange, recentActivity } from "@/lib/overview/service";
+import { needsYou, needsYouCount, needsYouHref, overviewKpis, parsePeriod, periodRange, recentActivity } from "@/lib/overview/service";
 import { setupProgress } from "@/lib/overview/setup";
 import { listAuditLog, parseActionPrefix } from "@/lib/admin/activity";
 import { saveLegalSection } from "@/lib/orders/settings";
@@ -158,6 +158,22 @@ describe("overview, setup progress and admin activity", () => {
       const mine = (await needsYou(db, other, now)).filter((i) => i.leadName === "Both");
       expect(mine.map((i) => i.kind)).toEqual(["form_expiring"]);
     });
+
+    it("needsYouCount equals needsYou().length, at any time and for every account", async () => {
+      // Different clocks move forms across the expiring / long-unsigned boundaries.
+      for (const at of [now, ago(10), ago(29), new Date(now.getTime() + 20 * HOUR), new Date(now.getTime() + 6 * 24 * HOUR)]) {
+        for (const a of [acc, other]) {
+          expect(await needsYouCount(db, a, at)).toBe((await needsYou(db, a, at)).length);
+        }
+      }
+      expect(await needsYouCount(db, acc, now)).toBe(6);
+      expect(await needsYouCount(db, randomUUID(), now)).toBe(0);
+    });
+
+    it("needsYou items carry no form snapshot or full rows", async () => {
+      const items = await needsYou(db, acc, now);
+      expect(JSON.stringify(items)).not.toContain("snapshot");
+    });
   });
 
   describe("overviewKpis", () => {
@@ -205,6 +221,17 @@ describe("overview, setup progress and admin activity", () => {
   });
 
   describe("setupProgress", () => {
+    it("gives the same answer from the loaded account row as from its id", async () => {
+      const a = await mkAccount("progress-row", { legalName: "Row Ltd", companyId: "515", languages: ["en"] });
+      await saveLegalSection(db, a, me.id, { sectionKey: "terms", title: "Terms", language: "en", body: "x" });
+      const [row] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, a));
+      expect([...(await setupProgress(db, row))].sort()).toEqual([...(await setupProgress(db, a))].sort());
+      expect((await setupProgress(db, row)).has("order-form")).toBe(true);
+      // A removed (inactive latest version) section no longer counts.
+      await saveLegalSection(db, a, me.id, { sectionKey: "terms", title: "Terms", language: "en", body: "x", active: false });
+      expect((await setupProgress(db, row)).has("order-form")).toBe(false);
+    });
+
     it("marks each step from the account's data", async () => {
       const a = await mkAccount("setup", { languages: ["en", "he"] });
       expect([...(await setupProgress(db, a))]).toEqual([]);

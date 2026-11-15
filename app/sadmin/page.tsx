@@ -18,6 +18,8 @@ export const metadata: Metadata = {
 };
 
 const PAGE_SIZE = 50;
+/** The user list shows the newest users only; the heading shows the full count. */
+const USERS_LIMIT = 200;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const dateFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyle: "short", timeZone: "UTC" });
@@ -31,11 +33,12 @@ export default async function SuperAdminPage({ searchParams }: { searchParams: P
   const actionPrefix = parseActionPrefix(one(sp.action));
   const before = UUID.test(one(sp.before)) ? one(sp.before) : undefined;
 
-  const [log, accounts, statusCounts, allUsers] = await Promise.all([
+  const [log, accounts, statusCounts, allUsers, [{ n: userCount }]] = await Promise.all([
     listAuditLog(appDb, { accountId, actionPrefix, limit: PAGE_SIZE, before }),
     appDb.select({ id: sellerAccounts.id, tradeName: sellerAccounts.tradeName }).from(sellerAccounts).orderBy(asc(sellerAccounts.tradeName)),
     appDb.select({ status: sellerAccounts.status, n: count() }).from(sellerAccounts).groupBy(sellerAccounts.status),
-    appDb.select().from(users).orderBy(desc(users.createdAt)),
+    appDb.select().from(users).orderBy(desc(users.createdAt)).limit(USERS_LIMIT),
+    appDb.select({ n: count() }).from(users),
   ]);
   const byStatus = Object.fromEntries(statusCounts.map((r) => [r.status, r.n])) as Partial<Record<string, number>>;
   const total = statusCounts.reduce((s, r) => s + r.n, 0);
@@ -137,7 +140,7 @@ export default async function SuperAdminPage({ searchParams }: { searchParams: P
 
         <details className="sas-panel">
           <summary className="sas-panel__head" style={{ cursor: "pointer" }}>
-            <span className="sas-heading">{t("admin.activity.users", { count: allUsers.length })}</span>
+            <span className="sas-heading">{t("admin.activity.users", { count: userCount })}</span>
           </summary>
           <div style={{ overflowX: "auto" }}>
             <table className="sas-table">

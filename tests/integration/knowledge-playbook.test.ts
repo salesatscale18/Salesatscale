@@ -217,4 +217,24 @@ describe("playbook editor and knowledge", () => {
     expect(qs).toHaveLength(10);
     expect(qs[0].question).toBe("gap question 11");
   });
+
+  it("currentPlaybook: live first, else the draft, else none; scoped by account", async () => {
+    const { currentPlaybook, liveVersion, publishDraftVersion } = await import("@/lib/agent/service");
+    const p = parseCreateAccount({ tradeName: "Fresh", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "fresh@x.test" });
+    if (!p.ok) throw new Error();
+    const fresh = (await createAccount(db, actor, p.value)).account.id;
+    expect(await currentPlaybook(db, fresh)).toBeNull();
+    const draft = await ensureDraftVersion(db, fresh);
+    expect(await currentPlaybook(db, fresh)).toEqual(draft.playbook);
+    await publishDraftVersion(db, actor, fresh);
+    const live = await liveVersion(db, fresh);
+    await saveDraftPlaybook(db, fresh, { ...live!.playbook, maxDiscountBp: live!.playbook.maxDiscountBp + 100 });
+    // A draft exists again, but the team still works against the live version.
+    expect(await currentPlaybook(db, fresh)).toEqual(live!.playbook);
+    expect(await currentPlaybook(db, randomUUIDLike())).toBeNull();
+  });
 });
+
+function randomUUIDLike() {
+  return "00000000-0000-4000-8000-000000000000";
+}

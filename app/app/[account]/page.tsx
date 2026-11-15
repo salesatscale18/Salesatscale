@@ -60,7 +60,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     needsYouForRequest(appDb, account.id),
     overviewKpis(appDb, account.id, periodRange(period, now)),
     recentActivity(appDb, account.id, 10),
-    setupProgress(appDb, account.id),
+    setupProgress(appDb, account),
     liveVersion(appDb, account.id),
   ]);
   const money = (m: number) => formatMoney(m, account.currency);

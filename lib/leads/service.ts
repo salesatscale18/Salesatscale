@@ -200,14 +200,16 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
 export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, now = new Date()) {
   const owner = alias(users, "owner");
   const where = filterWhere(accountId, f, now);
-  const rows = await db
-    .select({ lead: leads, owner })
-    .from(leads)
-    .leftJoin(owner, eq(owner.id, leads.ownerUserId))
-    .where(where)
-    .orderBy(desc(leads.lastActivityAt), asc(leads.id))
-    .limit(Math.min(f.limit ?? 50, 500));
-  const [{ total }] = await db.select({ total: count() }).from(leads).where(where);
+  const [rows, [{ total }]] = await Promise.all([
+    db
+      .select({ lead: leads, owner })
+      .from(leads)
+      .leftJoin(owner, eq(owner.id, leads.ownerUserId))
+      .where(where)
+      .orderBy(desc(leads.lastActivityAt), asc(leads.id))
+      .limit(Math.min(f.limit ?? 50, 500)),
+    db.select({ total: count() }).from(leads).where(where),
+  ]);
   return { rows, total };
 }
 
@@ -251,13 +253,17 @@ export async function getLead(db: Db, accountId: string, leadId: string) {
   return row ?? null;
 }
 
+/** The lead timeline shows at most this many events, newest first. */
+export const LEAD_EVENTS_LIMIT = 200;
+
 export async function listLeadEvents(db: Db, accountId: string, leadId: string) {
   return db
     .select({ event: leadEvents, user: users })
     .from(leadEvents)
     .leftJoin(users, eq(users.id, leadEvents.actorUserId))
     .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId)))
-    .orderBy(desc(leadEvents.createdAt));
+    .orderBy(desc(leadEvents.createdAt))
+    .limit(LEAD_EVENTS_LIMIT);
 }
 
 export async function latestConsent(db: Db, accountId: string, leadId: string) {
