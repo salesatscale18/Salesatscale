@@ -82,6 +82,21 @@ export const STATUS = {
     template_rejected: { tone: "danger", icon: "x-circle" },
     disconnected: { tone: "danger", icon: "x-circle" },
   },
+  price_list: {
+    draft: { tone: "neutral", icon: "file-text" },
+    live: { tone: "success", icon: "check-circle" },
+  },
+  market: {
+    setting_up: { tone: "warning", icon: "list-checks" },
+    live: { tone: "success", icon: "check-circle" },
+    paused: { tone: "neutral", icon: "pause" },
+  },
+  // Knowledge suggested from sources and recorded calls (P8), waiting for the admin.
+  generated_suggestion: {
+    suggested: { tone: "agent", icon: "sparkles" },
+    accepted: { tone: "success", icon: "check-circle" },
+    rejected: { tone: "neutral", icon: "x-circle" },
+  },
 } as const satisfies Record<string, Record<string, StatusDef>>;
 
 export type StatusObject = keyof typeof STATUS;

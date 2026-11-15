@@ -18,6 +18,9 @@ const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   catalog_item: [["Active", "neutral"], ["Inactive", "neutral"], ["Price missing", "warning"]],
   intake_result: [["Created", "success"], ["Updated", "neutral"], ["Rejected", "danger"]],
   channel: [["Connected", "success"], ["Template pending", "warning"], ["Template rejected", "danger"], ["Disconnected", "danger"]],
+  price_list: [["Draft", "neutral"], ["Live", "success"]],
+  market: [["Setting up", "warning"], ["Live", "success"], ["Paused", "neutral"]],
+  generated_suggestion: [["Suggested", "agent"], ["Accepted", "success"], ["Rejected", "neutral"]],
 };
 
 describe("status language", () => {
