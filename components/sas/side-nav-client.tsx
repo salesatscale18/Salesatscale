@@ -22,5 +22,7 @@ export function SideNavForPath(props: {
       best = href.length;
     }
   }
+  // Markets live under Settings (its subnav links there).
+  if (!active && props.mode !== "admin" && pathname.startsWith(`${props.basePath}/markets`)) active = "settings";
   return <SideNav {...props} active={active} />;
 }
