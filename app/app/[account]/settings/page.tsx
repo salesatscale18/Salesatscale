@@ -119,7 +119,7 @@ async function UsersSection({ access, sp }: { access: AccountAccess; sp: Record<
   return (
     <>
       {sp.removed ? <Saved text={t("settings.users.removed")} /> : null}
-      {err ? <Failed text={t(err === "self" ? "settings.users.err.self" : err === "last_owner" ? "settings.users.err.last_owner" : "settings.users.err.not_found")} /> : null}
+      {err ? <Failed text={t(err === "self" ? "settings.users.err.self" : err === "last_owner" ? "settings.users.err.last_owner" : err === "owner_only" ? "settings.users.err.owner_only" : "settings.users.err.not_found")} /> : null}
       <section className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="usr-h">
         <h2 id="usr-h" className="sas-heading">{t("settings.users.title")}</h2>
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }} className="sas-stack-2">

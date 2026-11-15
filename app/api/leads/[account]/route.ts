@@ -74,6 +74,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
       return NextResponse.json({ error: "consent_required", message: "A new lead needs consent.source and consent.text." }, { status: 422 });
     }
     if (result.reason === "opted_out") return NextResponse.json({ error: "opted_out" }, { status: 409 });
+    if (result.reason === "account_paused") return NextResponse.json({ error: "account_paused" }, { status: 403 });
     return NextResponse.json({ error: "phone_conflict" }, { status: 409 });
   }
   await log(result.created ? "created" : "updated", null, name, result.lead.id);
