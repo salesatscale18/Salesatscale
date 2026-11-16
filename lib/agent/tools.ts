@@ -4,10 +4,11 @@
  * ({ ok: false, refused: true, rule, missing }) the agent reads and acts on.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leadEvents, leads, orderForms, orders, quotes, type Playbook, type SellerAccount } from "@/db/schema";
+import { conversations, leadEvents, leads, messages, orderForms, orders, quotes, type Playbook, type SellerAccount } from "@/db/schema";
+import { windowState } from "@/lib/channels/rules";
 import { optOutLead } from "@/lib/leads/service";
 import { checkFit } from "@/lib/catalog/fit";
 import { approvalReasonText, pricingErrorText } from "@/lib/catalog/pricing";
@@ -407,6 +408,14 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       : [];
     if (!q) return refuse("Quote not found for this buyer", { message: "Create a quote first with create_quote." });
     const [conv] = await ctx.db.select().from(conversations).where(eq(conversations.id, ctx.conversationId));
+    // WhatsApp allows free text only within 24 hours of the buyer's last message: no link that could not be sent.
+    if (conv?.channel === "whatsapp") {
+      const [b] = await ctx.db.select({ last: max(messages.createdAt) }).from(messages)
+        .where(and(eq(messages.accountId, ctx.accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer")));
+      if (!windowState(b?.last ?? null, new Date()).open) {
+        return refuse("WhatsApp window closed", { reason: "window_closed", message: "Do not send the link now. The team will follow up with an approved template." });
+      }
+    }
     const r = await createOrderForm(ctx.db, ctx.accountId, { kind: "agent" }, q.id, { language: conv?.language });
     if (!r.ok) {
       const rule = {

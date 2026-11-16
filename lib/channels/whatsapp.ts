@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, max, ne, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { agentVersions, channelConnections, consentRecords, conversations, leadEvents, leads, messages, sellerAccounts } from "@/db/schema";
+import { agentVersions, channelConnections, consentRecords, conversations, leadEvents, leads, messageTemplates, messages, sellerAccounts } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { approvedTemplate, connectionForMarket, connectionForTester } from "./connections";
 import { startTestConversation } from "@/lib/agent/service";
@@ -32,7 +32,7 @@ export type Delivery = { delivered: true } | { delivered: false; reason: string 
  */
 export function publicBaseUrl(env: Record<string, string | undefined> = process.env): string | null {
   const app = env.APP_URL?.trim().replace(/\/+$/, "");
-  if (app) return app;
+  if (app) return /^https?:\/\//i.test(app) ? app : `https://${app}`;
   const vercel = env.VERCEL_PROJECT_PRODUCTION_URL?.trim();
   return vercel ? `https://${vercel}` : null;
 }
@@ -99,6 +99,74 @@ export async function deliverText(
     db.update(channelConnections).set({ lastOutboundAt: now, lastError: null }).where(eq(channelConnections.id, connection.id)),
   ]);
   return { delivered: true };
+}
+
+// ---------------------------------------------------------------------------
+// A person sends an approved template (P6.6: outside the 24-hour window)
+// ---------------------------------------------------------------------------
+
+export type TemplateSendResult =
+  | { ok: true; messageId: string }
+  | { ok: false; reason: "not_found" | "closed" | "opted_out" | "test_lead" | "template_not_found" | "not_configured" | "no_connection" | "not_a_tester" | "provider_error"; detail?: string };
+
+/** The account's approved templates, for the inbox composer outside the window. */
+export async function approvedTemplates(db: Db, accountId: string) {
+  return db.select().from(messageTemplates)
+    .where(and(eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")))
+    .orderBy(messageTemplates.purpose, messageTemplates.language, messageTemplates.name);
+}
+
+/**
+ * A person sends one approved template on an existing WhatsApp conversation.
+ * Templates are the only messages WhatsApp allows outside the 24-hour window.
+ * The sent text is stored on the conversation with the template id.
+ */
+export async function sendTemplateMessage(
+  db: Db, transport: TwilioTransport | null, actor: Actor & { userId: string }, accountId: string, conversationId: string, templateId: string,
+  opts: { statusCallback?: string | null; now?: Date } = {},
+): Promise<TemplateSendResult> {
+  const now = opts.now ?? new Date();
+  const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
+    .innerJoin(leads, eq(leads.id, conversations.leadId))
+    .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId), eq(leads.accountId, accountId)));
+  if (!row || row.conv.channel !== "whatsapp") return { ok: false, reason: "not_found" };
+  const { conv, lead } = row;
+  if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
+  if (conv.status === "closed") return { ok: false, reason: "closed" };
+  if (conv.isTest ? !conv.channelAddress : lead.isTest) return { ok: false, reason: "test_lead" };
+  const [template] = await db.select().from(messageTemplates)
+    .where(and(eq(messageTemplates.id, templateId), eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")));
+  if (!template) return { ok: false, reason: "template_not_found" };
+  if (!transport) return { ok: false, reason: "not_configured" };
+  const to = conv.isTest ? conv.channelAddress! : lead.phone;
+  const connection = conv.isTest ? await connectionForTester(db, accountId, to) : await connectionForMarket(db, accountId, lead.marketId);
+  if (!connection) return { ok: false, reason: conv.isTest ? "not_a_tester" : "no_connection" };
+  const [account] = await db.select({ tradeName: sellerAccounts.tradeName }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const vars = templateVariables(lead, account);
+  const r = await transport.send({
+    to, from: connection.senderNumber, messagingServiceSid: connection.messagingServiceSid,
+    statusCallback: opts.statusCallback ?? null, contentSid: template.contentSid, contentVariables: vars,
+  });
+  if (!r.ok) {
+    await db.update(channelConnections).set({ lastError: `${r.code}: ${r.message}`.slice(0, 300) }).where(eq(channelConnections.id, connection.id));
+    return { ok: false, reason: "provider_error", detail: `${r.code}: ${r.message}` };
+  }
+  const messageId = randomUUID();
+  await atomic(db, (q) => [
+    q.insert(messages).values({
+      id: messageId, accountId, conversationId: conv.id, actor: "human", actorUserId: actor.userId, body: renderTemplate(template.body, vars),
+      language: template.language, channelMessageId: r.sid, deliveryStatus: r.status === "accepted" ? "queued" : r.status, templateId: template.id,
+    }),
+    q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
+    q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId))),
+    q.insert(leadEvents).values({
+      id: randomUUID(), accountId, leadId: lead.id, type: "conversation.human_reply", actor: "human", actorUserId: actor.userId,
+      data: { conversationId: conv.id, messageId, channel: conv.channel, template: template.name },
+    }),
+    q.update(channelConnections).set({ lastOutboundAt: now, lastError: null }).where(eq(channelConnections.id, connection.id)),
+  ]);
+  if (actor.actingAs) await writeAudit(db, actor, { accountId, action: "conversation.template_sent", targetType: "lead", targetId: lead.id, details: { conversationId: conv.id, template: template.name } });
+  return { ok: true, messageId };
 }
 
 // ---------------------------------------------------------------------------

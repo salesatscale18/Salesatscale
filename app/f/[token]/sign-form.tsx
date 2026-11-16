@@ -43,7 +43,7 @@ export function SignForm({ token, lang, fields, prefill, company }: {
         {fields.includes("signatory_role") ? (
           <label className="b-lbl" htmlFor="f-role">
             {tr("buyer.role")}
-            <input className="b-inp" id="f-role" name="signatory_role" autoComplete="organization-title" {...inv("signatory_role")} />
+            <input className="b-inp" id="f-role" name="signatory_role" defaultValue={prefill.signatory_role ?? ""} autoComplete="organization-title" {...inv("signatory_role")} />
             {err("signatory_role")}
           </label>
         ) : null}

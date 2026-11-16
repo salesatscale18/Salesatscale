@@ -255,8 +255,9 @@ describe("agent turns (scripted model)", () => {
       step(say("Here is your order form.")),
     ]);
     const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "Send me the form, I'm the owner" });
-    expect(r.status === "replied" && r.text).toBe("Here is your order form.");
     const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
+    // The model left the link out: it is added on its own line (lib/agent/links.ts).
+    expect(r.status === "replied" && r.text).toBe(`Here is your order form.\n${calls[4].result.link}`);
     expect(calls.map((x) => [x.name, x.outcome])).toEqual([
       ["update_deal_state", "ok"], ["create_quote", "ok"], ["send_order_form", "refused"], ["update_deal_state", "ok"], ["send_order_form", "ok"], ["check_payment", "ok"],
     ]);

@@ -16,6 +16,7 @@ import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
 import { readDealState } from "./service";
 import { runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
+import { linksOnOwnLine } from "./links";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -159,6 +160,11 @@ export async function runBuyerTurn(
   // After an opt-out the buyer gets the fixed reply, whatever the model wrote.
   if (optedOut) text = pick(OPT_OUT_REPLY, lang);
   if (!text) text = pick(HANDOFF_REPLY, lang);
+  // An order-form link the agent got this turn goes out on its own line (WhatsApp previews it), even if the model left it out.
+  const formLinks = optedOut ? [] : pending
+    .filter((p) => p.name === "send_order_form" && p.r.outcome === "ok" && typeof p.r.result.link === "string")
+    .map((p) => p.r.result.link as string);
+  if (formLinks.length) text = linksOnOwnLine(text, formLinks);
   const messageId = randomUUID();
   const now = new Date();
   await atomic(db, (q) => [

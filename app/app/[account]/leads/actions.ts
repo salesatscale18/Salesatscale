@@ -115,8 +115,12 @@ export async function verifyFieldAction(form: FormData) {
 // Conversation: take over, hand back, reply as a person (lead card and test lab)
 // ---------------------------------------------------------------------------
 
-/** Where to go after a conversation action: the lead card, or the test-lab chat. */
+/** Where to go after a conversation action: the lead card, the test-lab chat, or the conversations inbox. */
 function conversationBack(slug: string, from: string, conv: { id: string; leadId: string } | null, notice?: string) {
+  if (from === "inbox") {
+    const base = `/app/${slug}/conversations`;
+    return conv ? `${base}?c=${conv.id}${notice ? `&notice=${notice}` : ""}#thread` : base;
+  }
   if (from === "lab") {
     const base = `/app/${slug}/setup/test-lab`;
     return conv ? `${base}?c=${conv.id}${notice ? `&notice=${notice}` : ""}#end` : base;
@@ -128,6 +132,7 @@ function conversationBack(slug: string, from: string, conv: { id: string; leadId
 function revalidateConversation(slug: string, from: string, conv: { leadId: string }) {
   revalidatePath(`/app/${slug}/leads/${conv.leadId}`);
   if (from === "lab") revalidatePath(`/app/${slug}/setup/test-lab`);
+  if (from === "inbox") revalidatePath(`/app/${slug}/conversations`);
 }
 
 /** Access first, then the conversation, looked up inside the caller's account only. */

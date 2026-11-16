@@ -64,7 +64,7 @@ export function ConversationControls({
   slug, from, view, me, buyerName, leadOptedOut, notice,
 }: {
   slug: string;
-  from: "lead" | "lab";
+  from: "lead" | "lab" | "inbox";
   view: Pick<ConversationView, "conversation" | "takenOverBy" | "suggestedReply">;
   me: Person;
   buyerName: string;
@@ -133,8 +133,10 @@ export function ConversationControls({
 
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
-  slug, view, me, buyerName, leadOptedOut, notice, chatWindow,
+  slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead",
 }: {
+  /** Where the controls send the seller back to after an action. */
+  from?: "lead" | "inbox";
   /** WhatsApp only: the 24-hour window of an active conversation. */
   chatWindow?: WindowState | null;
   slug: string;
@@ -170,7 +172,7 @@ export function ConversationPanel({
           );
         })}
       </ChatThread>
-      <ConversationControls slug={slug} from="lead" view={view} me={me} buyerName={buyerName} leadOptedOut={leadOptedOut} notice={notice} />
+      <ConversationControls slug={slug} from={from} view={view} me={me} buyerName={buyerName} leadOptedOut={leadOptedOut} notice={notice} />
     </section>
   );
 }

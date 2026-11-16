@@ -34,8 +34,13 @@ export function formIdFromToken(token: string): string | null {
 
 export const hashToken = (token: string) => createHash("sha256").update(token).digest("hex");
 
-/** Absolute URL for buyer links (APP_URL, else the Vercel production host). */
-export function publicUrl(path: string): string {
-  const base = process.env.APP_URL?.trim() || (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : "http://localhost:3000");
-  return `${base.replace(/\/$/, "")}${path}`;
+/**
+ * Absolute URL for buyer links (APP_URL, else the Vercel production host).
+ * Always with a scheme: an APP_URL set as a bare host ("app.example.com")
+ * gets https://, so WhatsApp shows the link as a tappable link with a preview.
+ */
+export function publicUrl(path: string, env: Record<string, string | undefined> = process.env): string {
+  const raw = env.APP_URL?.trim() || (env.VERCEL_PROJECT_PRODUCTION_URL?.trim() ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL.trim()}` : "http://localhost:3000");
+  const base = /^https?:\/\//i.test(raw) ? raw : `https://${raw.replace(/^\/+/, "")}`;
+  return `${base.replace(/\/+$/, "")}${path.startsWith("/") ? path : `/${path}`}`;
 }
