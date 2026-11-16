@@ -10,6 +10,7 @@ import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, users } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
+import { AiBudgetError, budgetGuarded } from "@/lib/ai/usage";
 import { withHistoryCacheBreakpoint, type Block, type LlmClient } from "./llm";
 import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
@@ -98,16 +99,19 @@ export async function runBuyerTurn(
     callId, language: lang, memo,
   });
   const pending: { name: string; input: unknown; r: ToolResult }[] = [];
-  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, model: version.model };
+  const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, model: version.model };
+  // Every model call checks the platform AI budget first (AI_PLATFORM_MONTHLY_BUDGET_USD; no check when unset).
+  const model = budgetGuarded(db, llm);
   let text = "";
   let optedOut = false;
 
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const res = await llm.create({ model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: withHistoryCacheBreakpoint(history) });
+      const res = await model.create({ model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: withHistoryCacheBreakpoint(history) });
       usage.inputTokens += res.usage.inputTokens;
       usage.outputTokens += res.usage.outputTokens;
       usage.cacheReadTokens += res.usage.cacheReadTokens;
+      usage.cacheWriteTokens += res.usage.cacheWriteTokens ?? 0;
       usage.model = res.model;
 
       if (res.stopReason === "refusal") {
@@ -138,8 +142,17 @@ export async function runBuyerTurn(
       history.push({ role: "user", content: results });
     }
   } catch (e) {
+    if (e instanceof AiBudgetError) {
+      // No model call was made: a person takes over and the buyer gets no automated reply.
+      console.error("[agent] " + e.message);
+      await runTool("hand_off_to_human", { reason: "The platform's monthly AI budget is used up", summary: "", suggested_reply: "" }, ctx("budget"));
+      await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "system", body: "The agent did not reply: the platform's monthly AI budget is used up. A person needs to reply.", language: "en" });
+      return { status: "human" };
+    }
     console.error("[agent] turn failed", e);
-    await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "system", body: "The agent could not reply (model error). Try again.", language: "en" });
+    // Usage of the rounds that did run is kept on the system message, so it still counts toward spend.
+    const spent = usage.inputTokens || usage.outputTokens ? { usage } : {};
+    await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "system", body: "The agent could not reply (model error). Try again.", language: "en", ...spent });
     return { status: "error", error: e instanceof Error ? e.name : "error" };
   }
 

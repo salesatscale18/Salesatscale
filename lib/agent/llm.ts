@@ -26,7 +26,8 @@ export type LlmResponse = {
   content: Block[];
   stopReason: string | null;
   model: string;
-  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number };
+  /** `cacheWriteTokens`: 5-minute cache writes (the only TTL the agent uses). Optional for fakes. */
+  usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens?: number };
 };
 
 export interface LlmClient {
@@ -122,6 +123,7 @@ export class AnthropicLlm implements LlmClient {
         inputTokens: res.usage.input_tokens,
         outputTokens: res.usage.output_tokens,
         cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
+        cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
       },
     };
   }

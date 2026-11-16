@@ -8,6 +8,7 @@ import { getConversation, publishDraftVersion, rollbackTo, startTestConversation
 import { runBuyerTurn } from "@/lib/agent/turn";
 import { scenarioById } from "@/lib/agent/scenarios";
 import { isUuid } from "@/lib/security/ids";
+import { spendCapped } from "@/lib/ai/usage";
 import { rateLimit } from "@/lib/security/rate-limit";
 
 const path = (slug: string) => `/app/${slug}/setup/test-lab`;
@@ -34,6 +35,8 @@ export async function startChatAction(form: FormData) {
   const scenario = scenarioById(String(form.get("scenario") ?? ""));
   const wanted = scenario?.language ?? String(form.get("language"));
   const language = a.account.languages.includes(wanted) ? wanted : a.account.languages[0] ?? "en";
+  // At the monthly spend cap no new test chat starts (open chats keep replying).
+  if (await spendCapped(appDb, a.account.id)) redirect(`${path(a.account.slug)}?error=spend_cap`);
   const r = await startTestConversation(appDb, a.account.id, a.user.id, {
     language, scenario: scenario && scenario.language === language ? scenario.id : null, versionId: isUuid(form.get("versionId")) ? String(form.get("versionId")) : undefined,
   });

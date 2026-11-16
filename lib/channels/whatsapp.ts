@@ -19,6 +19,7 @@ import { approvedTemplate, connectionForMarket, connectionForTester } from "./co
 import { startTestConversation } from "@/lib/agent/service";
 import { maskCardNumbers } from "@/lib/agent/safety";
 import { runBuyerTurn } from "@/lib/agent/turn";
+import { spendCapped } from "@/lib/ai/usage";
 import type { LlmClient } from "@/lib/agent/llm";
 import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, windowState, type OpenerRefusal, type WindowState } from "./rules";
 import { whatsappAddressToE164, type TwilioTransport } from "./twilio";
@@ -112,7 +113,7 @@ export type OpenerResult =
 export async function openerFacts(db: Db, transport: TwilioTransport | null, accountId: string, leadId: string, now = new Date()) {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return null;
-  const [[account], [consent], connection, [live], [activeConv]] = await Promise.all([
+  const [[account], [consent], connection, [live], [activeConv], capped] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     db.select({ id: consentRecords.id }).from(consentRecords).where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId))).limit(1),
     connectionForMarket(db, accountId, lead.marketId),
@@ -120,6 +121,7 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
     db.select({ id: conversations.id }).from(conversations)
       .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, "whatsapp"), ne(conversations.status, "closed")))
       .limit(1),
+    spendCapped(db, accountId, now),
   ]);
   const template = await approvedTemplate(db, accountId, "opener", lead.language, account.languages);
   const refusal = openerRefusal({
@@ -131,6 +133,7 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
     hasApprovedOpener: !!template,
     hasLiveAgent: !!live,
     hasActiveWhatsappConversation: !!activeConv,
+    spendCapped: capped,
     now,
   });
   return { lead, account, connection, live: live ?? null, template, refusal };
@@ -188,7 +191,7 @@ export async function startWhatsAppConversation(
 export type InboundResult =
   | { kind: "stored"; accountId: string; conversationId: string; leadId: string; text: string }
   | { kind: "duplicate" }
-  | { kind: "ignored"; reason: "malformed" | "unknown_number" | "unknown_sender" | "opted_out" | "account_not_live" | "no_agent" };
+  | { kind: "ignored"; reason: "malformed" | "unknown_number" | "unknown_sender" | "opted_out" | "account_not_live" | "no_agent" | "spend_cap" };
 
 /** The text the agent sees for one inbound WhatsApp message, attachments described. */
 export function inboundText(params: Record<string, string>): string {
@@ -218,7 +221,8 @@ export async function receiveInbound(db: Db, params: Record<string, string>, now
 
   // A tester's phone: a test-lab chat on the draft agent, whatever leads exist for that phone.
   if (connection.testerNumbers.includes(from)) {
-    const conv = await testerConversation(db, accountId, from);
+    const conv = await testerConversation(db, accountId, from, now);
+    if (!conv) return { kind: "ignored", reason: "spend_cap" };
     return storeBuyerMessage(db, conv, sid, params, now, { accountId, conversationId: conv.id, leadId: conv.leadId });
   }
 
@@ -272,7 +276,7 @@ async function storeBuyerMessage(
  * The tester's open WhatsApp test-lab chat, or a new one on the draft agent
  * with a hidden test lead (fake number; the tester's phone lives on the conversation).
  */
-async function testerConversation(db: Db, accountId: string, phone: string) {
+async function testerConversation(db: Db, accountId: string, phone: string, now: Date) {
   const [open] = await db.select().from(conversations)
     .where(and(
       eq(conversations.accountId, accountId), eq(conversations.channel, "whatsapp"), eq(conversations.isTest, true),
@@ -280,6 +284,8 @@ async function testerConversation(db: Db, accountId: string, phone: string) {
     ))
     .orderBy(desc(conversations.createdAt)).limit(1);
   if (open) return open;
+  // At the monthly spend cap no new test chat starts; an open one (above) keeps replying.
+  if (await spendCapped(db, accountId, now)) return null;
   const [account] = await db.select({ languages: sellerAccounts.languages }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const started = await startTestConversation(db, accountId, null, { language: account?.languages[0] ?? "en", channel: "whatsapp", channelAddress: phone });
   const [conv] = await db.select().from(conversations).where(eq(conversations.id, started!.conversationId));

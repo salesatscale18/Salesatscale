@@ -12,10 +12,12 @@ import {
   type AgentVersion, type DealFieldValue, type Playbook,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
+import { modelFor } from "@/lib/ai/models";
 import { defaultPlaybook } from "./playbook";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
 
-export const DEFAULT_MODEL = process.env.AGENT_MODEL?.trim() || "claude-opus-5-5";
+/** The agent model for new versions: AGENT_MODEL, else the role default (lib/ai/models.ts). */
+export const DEFAULT_MODEL = modelFor("agent");
 
 // ---------------------------------------------------------------------------
 // Versions

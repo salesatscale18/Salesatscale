@@ -13,6 +13,7 @@ import { setupProgress } from "@/lib/overview/setup";
 import { AdminShell } from "../../admin-shell";
 import { enterAccountAction, pauseAccountAction, resumeAccountAction } from "../actions";
 import { InviteForm, RenewInviteButton } from "./invite-form";
+import { spendState, spendTexts, usdText } from "@/lib/ai/usage";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Account — Sales at Scale", robots: { index: false, follow: false } };
@@ -30,11 +31,14 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
   const account = await getAccountById(appDb, id);
   if (!account) notFound();
   const done = await setupProgress(appDb, account.id);
-  const [members, invites, audit] = await Promise.all([
+  const [members, invites, audit, spend] = await Promise.all([
     listMembers(appDb, account.id),
     listPendingInvites(appDb, account.id),
     listAccountAudit(appDb, account.id, 20),
+    spendState(appDb, account.id),
   ]);
+  const spendText = spend ? spendTexts(spend) : null;
+  const tokens = (n: number) => n.toLocaleString("en-US");
   const owner = members.find((m) => m.member.isOwner);
 
   return (
@@ -82,6 +86,36 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
               <dd>{regionName.of(account.market)} · {account.languages.map((l) => l.toUpperCase()).join(", ")} · {account.currency}</dd>
             </dl>
           </section>
+
+          {spend && spendText ? (
+            <section className="sas-panel" aria-labelledby="ai-h">
+              <div className="sas-panel__head"><h2 id="ai-h" className="sas-heading">{t("admin.accounts.ai_usage")}</h2></div>
+              <dl className="sas-panel__body sas-kv">
+                <dt>{t("admin.accounts.ai_usage.cost")}</dt>
+                <dd className="sas-num">
+                  ~{spendText.usd}
+                  {spend.costMinor !== null && spend.currency !== "USD" ? ` · ~${spendText.used}` : ""}
+                  {` / ${spendText.cap}`}
+                  {spendText.percent !== null ? ` (${spendText.percent}%)` : ""}
+                </dd>
+                <dt>{t("admin.accounts.ai_usage.state")}</dt>
+                <dd>{spend.costMinor === null ? t("admin.accounts.ai_usage.no_rate", { currency: spend.currency }) : t(`admin.accounts.ai_usage.state.${spend.state}`)}</dd>
+                <dt>{t("admin.accounts.ai_usage.input")}</dt><dd className="sas-num">{tokens(spend.usage.tokens.inputTokens)}</dd>
+                <dt>{t("admin.accounts.ai_usage.output")}</dt><dd className="sas-num">{tokens(spend.usage.tokens.outputTokens)}</dd>
+                <dt>{t("admin.accounts.ai_usage.cache_read")}</dt><dd className="sas-num">{tokens(spend.usage.tokens.cacheReadTokens)}</dd>
+                <dt>{t("admin.accounts.ai_usage.cache_write")}</dt><dd className="sas-num">{tokens(spend.usage.tokens.cacheWriteTokens)}</dd>
+                <dt>{t("admin.accounts.ai_usage.by_model")}</dt>
+                <dd>
+                  {spend.usage.byModel.length === 0 ? t("admin.accounts.ai_usage.empty") : spend.usage.byModel.map((m) => (
+                    <div key={m.model} className="sas-small sas-num"><code>{m.model || "?"}</code> · {m.costMicros === null ? "—" : `~${usdText(m.costMicros)}`}</div>
+                  ))}
+                </dd>
+              </dl>
+              {spend.usage.unpricedModels.length ? (
+                <p className="sas-panel__body sas-small" style={{ margin: 0 }}>{t("admin.accounts.ai_usage.unpriced", { models: spend.usage.unpricedModels.join(", ") })}</p>
+              ) : null}
+            </section>
+          ) : null}
 
           <section className="sas-panel" aria-labelledby="usr-h">
             <div className="sas-panel__head"><h2 id="usr-h" className="sas-heading">{t("admin.accounts.admins")}</h2></div>

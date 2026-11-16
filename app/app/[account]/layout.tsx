@@ -5,6 +5,8 @@ import { SideNavForPath } from "@/components/sas/side-nav-client";
 import { Banner } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { needsYouCountForRequest } from "@/lib/overview/service";
+import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
+import { Icon } from "@/components/sas/icon";
 import { displayName, initials } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
 import { resumeAccountAction } from "@/app/sadmin/accounts/actions";
@@ -17,7 +19,11 @@ export default async function AccountLayout({ children, params }: { children: Re
   const { account: slug } = await params;
   const access = await requireAccount(slug);
   const { account, user, actingAs } = access;
-  const needsYouCount = await needsYouCountForRequest(appDb, account.id);
+  const [listed, spend] = await Promise.all([needsYouCountForRequest(appDb, account.id), spendStateForRequest(appDb, account.id)]);
+  // The spend warning is one more "Needs you" item (shown at the top of the Overview list).
+  const spendAlert = spend && spend.state !== "ok" ? spend : null;
+  const needsYouCount = listed + (spendAlert ? 1 : 0);
+  const spendText = spendAlert ? spendTexts(spendAlert) : null;
 
   return (
     <SasRoot>
@@ -54,6 +60,17 @@ export default async function AccountLayout({ children, params }: { children: Re
             ) : (
               <Banner kind="paused">{t("access.paused.seller")}</Banner>
             )
+          ) : null}
+          {spendAlert && spendText ? (
+            <div className="sas-banner sas-banner--paused" role="status">
+              <Icon name="alert-triangle" />
+              <span className="sas-banner__text">
+                {spendAlert.state === "capped"
+                  ? t("spend.banner.capped", { used: spendText.used, cap: spendText.cap })
+                  : t("spend.banner.warn", { used: spendText.used, cap: spendText.cap, percent: spendText.percent ?? 80 })}
+              </span>
+              <a className="sas-btn sas-btn--secondary sas-btn--sm" href={`/app/${account.slug}/settings`}>{t("spend.banner.action")}</a>
+            </div>
           ) : null}
           {children}
         </div>

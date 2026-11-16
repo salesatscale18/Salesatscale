@@ -14,6 +14,7 @@ import {
   PERIODS, needsYouForRequest, needsYouHref, overviewKpis, parsePeriod, periodRange, recentActivity, type NeedsYouItem,
 } from "@/lib/overview/service";
 import { setupProgress } from "@/lib/overview/setup";
+import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 
@@ -56,13 +57,18 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const now = new Date();
   const period = parsePeriod(one(sp.period));
   const base = `/app/${account.slug}`;
-  const [items, kpis, activity, done, agent] = await Promise.all([
+  const [items, kpis, activity, done, agent, spend] = await Promise.all([
     needsYouForRequest(appDb, account.id),
     overviewKpis(appDb, account.id, periodRange(period, now)),
     recentActivity(appDb, account.id, 10),
     setupProgress(appDb, account),
     liveVersion(appDb, account.id),
+    spendStateForRequest(appDb, account.id),
   ]);
+  // The account's AI spend at 80% or more of the cap is a "Needs you" item of its own (not about a lead).
+  const spendAlert = spend && spend.state !== "ok" ? spend : null;
+  const spendText = spendAlert ? spendTexts(spendAlert) : null;
+  const needCount = items.length + (spendAlert ? 1 : 0);
   const money = (m: number) => formatMoney(m, account.currency);
 
   const funnel: { label: MessageKey; value: number; color: string }[] = [
@@ -114,7 +120,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 280px", minWidth: 0 }}>
           <h1 className="sas-title">{t(greetingKey(now, account.timezone), { name: user.firstName?.trim() || displayName(user) })}</h1>
           <span className="sas-small">
-            {account.tradeName} · {items.length === 0 ? t("overview.sub.none") : items.length === 1 ? t("overview.sub.one") : t("overview.sub.many", { count: items.length })}
+            {account.tradeName} · {needCount === 0 ? t("overview.sub.none") : needCount === 1 ? t("overview.sub.one") : t("overview.sub.many", { count: needCount })}
           </span>
         </div>
         {agent ? (
@@ -160,14 +166,28 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         <section className="sas-panel" aria-labelledby="needs-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
           <div className="sas-panel__head">
             <h2 id="needs-h" className="sas-heading">{t("overview.needs.title")}</h2>
-            {items.length ? (
-              <span className="sas-pill sas-pill--human"><Icon name="user" />{items.length === 1 ? t("overview.needs.count_one") : t("overview.needs.count", { count: items.length })}</span>
+            {needCount ? (
+              <span className="sas-pill sas-pill--human"><Icon name="user" />{needCount === 1 ? t("overview.needs.count_one") : t("overview.needs.count", { count: needCount })}</span>
             ) : null}
           </div>
-          {items.length === 0 ? (
+          {needCount === 0 ? (
             <p className="sas-panel__body sas-small" style={{ margin: 0 }}>{t("overview.needs.empty")}</p>
           ) : (
             <ul className="sas-list">
+              {spendAlert && spendText ? (
+                <li key="spend">
+                  <a className="sas-list__row" href={`${base}/settings`} style={{ alignItems: "flex-start" }}>
+                    <span className="sas-av" style={TONE_STYLE[spendAlert.state === "capped" ? "danger" : "warning"]} aria-hidden="true">
+                      <Icon name="alert-triangle" />
+                    </span>
+                    <span className="sas-list__main">
+                      <strong>{t(spendAlert.state === "capped" ? "overview.needs.spend_capped" : "overview.needs.spend_warn")}</strong>
+                      <span className="sas-small">{t("overview.needs.spend.detail", { used: spendText.used, cap: spendText.cap })}</span>
+                    </span>
+                    <span className={buttonClass("secondary", "sm")}>{t("overview.needs.spend.action")}</span>
+                  </a>
+                </li>
+              ) : null}
               {items.map((it) => {
                 const look = ITEM_LOOK[it.kind];
                 const text = itemText(it);

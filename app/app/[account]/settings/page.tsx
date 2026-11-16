@@ -18,6 +18,7 @@ import { IntakeKeyForm } from "./key-form";
 import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
 import { WhatsAppSection } from "./whatsapp";
+import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 
 async function baseUrl() {
   const configured = process.env.APP_URL?.replace(/\/+$/, "");
@@ -53,9 +54,21 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   const asked = one(sp.section);
   const section: Section = (SECTIONS as readonly string[]).includes(asked) ? (asked as Section) : "users";
   const href = (s: Section) => `/app/${account.slug}/settings?section=${s}`;
+  const spend = await spendStateForRequest(appDb, account.id);
+  const spendText = spend ? spendTexts(spend) : null;
   return (
     <main className="sas-shell__content">
       <h1 className="sas-title">{t("settings.title")}</h1>
+      {spend && spendText ? (
+        <section aria-label={t("admin.accounts.ai_usage")} className="sas-stack-2" style={{ gap: 2 }}>
+          <strong data-spend-state={spend.state}>
+            {spend.costMinor === null
+              ? t("settings.ai_usage.no_rate", { usd: spendText.usd, cap: spendText.cap, currency: spend.currency })
+              : t("settings.ai_usage", { used: spendText.used, cap: spendText.cap })}
+          </strong>
+          <span className="sas-small">{t("settings.ai_usage.note")}</span>
+        </section>
+      ) : null}
       <div className="sas-split">
         <nav aria-label={t("settings.sections")} className="sas-subnav">
           {SECTIONS.map((s) => (

@@ -32,7 +32,7 @@ export function renderTemplate(body: string, vars: Record<string, string>): stri
 
 export type OpenerRefusal =
   | "not_configured" | "test_lead" | "opted_out" | "no_consent" | "account_not_live" | "account_paused"
-  | "outside_contact_hours" | "no_connection" | "no_template" | "no_agent" | "already_started";
+  | "outside_contact_hours" | "no_connection" | "no_template" | "no_agent" | "already_started" | "spend_cap";
 
 export type OpenerFacts = {
   twilioConfigured: boolean;
@@ -43,6 +43,8 @@ export type OpenerFacts = {
   hasApprovedOpener: boolean;
   hasLiveAgent: boolean;
   hasActiveWhatsappConversation: boolean;
+  /** The account reached its monthly spend cap (lib/ai/usage.ts): no new conversations. */
+  spendCapped?: boolean;
   now: Date;
 };
 
@@ -58,6 +60,7 @@ export function openerRefusal(f: OpenerFacts): OpenerRefusal | null {
   if (f.hasActiveWhatsappConversation) return "already_started";
   if (f.account.status === "paused") return "account_paused";
   if (f.account.status !== "live") return "account_not_live";
+  if (f.spendCapped) return "spend_cap";
   if (!f.twilioConfigured) return "not_configured";
   if (!f.hasConnection) return "no_connection";
   if (!f.hasApprovedOpener) return "no_template";
