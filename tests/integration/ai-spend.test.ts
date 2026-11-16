@@ -208,7 +208,7 @@ describe("AI usage, spend cap and platform budget", () => {
     };
     const results = await checkModels(fake);
     expect(results).toEqual([
-      { role: "agent", model: OPUS, available: true, displayName: `Name of ${OPUS}`, contextWindow: 1_000_000, maxOutput: 128_000, error: null },
+      { role: "agent", model: "claude-sonnet-5-5", available: true, displayName: "Name of claude-sonnet-5-5", contextWindow: 1_000_000, maxOutput: 128_000, error: null },
       expect.objectContaining({ role: "pipeline", model: "claude-sonnet-5-5", available: true }),
       { role: "pipeline_light", model: "claude-haiku-5-5", available: false, displayName: null, contextWindow: null, maxOutput: null, error: "Model not found for this API key" },
     ]);
