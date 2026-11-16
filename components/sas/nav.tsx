@@ -23,6 +23,7 @@ export const SELLER_NAV: NavGroup[] = [
   {
     label: "nav.group.setup",
     items: [
+      { id: "sources", label: "nav.sources", icon: "upload", path: "/setup/sources" },
       { id: "knowledge", label: "nav.knowledge", icon: "book-open", path: "/setup/knowledge" },
       { id: "catalog", label: "nav.catalog", icon: "package", path: "/setup/catalog" },
       { id: "price-lists", label: "nav.price_lists", icon: "credit-card", path: "/setup/price-lists" },

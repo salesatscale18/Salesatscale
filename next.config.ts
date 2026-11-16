@@ -17,6 +17,8 @@ const securityHeaders = [
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  // Setup › Sources uploads files to a server action (10 MB per file; Vercel itself caps a request at 4.5 MB).
+  experimental: { serverActions: { bodySizeLimit: "10mb" } },
   async headers() {
     return [
       { source: "/:path*", headers: securityHeaders },

@@ -85,6 +85,13 @@
       "when": 1794827199796,
       "tag": "0011_whatsapp_channel",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1794852357327,
+      "tag": "0012_knowledge_sources",
+      "breakpoints": true
     }
   ]
 }
