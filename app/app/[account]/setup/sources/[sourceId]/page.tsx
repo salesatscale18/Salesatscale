@@ -7,6 +7,8 @@ import { exactTime, relativeTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { isUuid } from "@/lib/security/ids";
 import { getSource, listSections, listSourceFacts } from "@/lib/sources/service";
+import { customerNotes, latestSuggestions, locateEvidence, runData, suggestionsForSource, type PlaybookRunResult, type Suggestion } from "@/lib/pipeline/service";
+import { SuggestionItem } from "../../playbook/draft/suggestion";
 import { deleteSourceAction, rereadWebsiteAction } from "../actions";
 import { NoteForm, RefreshWhileProcessing } from "../forms";
 import { SourceBadge, fileSize, languageWords, sizeLine } from "../view";
@@ -19,8 +21,10 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
  * One source in full (the "see everything uploaded" view): every section of
  * the extracted text with its locator, its problems, and the facts found in
  * it. Notes are edited here; a call shows its transcript line by line
- * (canvas: CallReview, transcript half). Suggestions from a call come with
- * the analysis pipeline.
+ * (canvas: CallReview). A call's "Suggested from this call" panel lists the
+ * playbook suggestions whose evidence is in this call, grouped as in the
+ * design, with Accept / Edit / Remove, and what was kept back because it is
+ * about this customer only.
  */
 export default async function SourcePage({ params, searchParams }: { params: Promise<{ account: string; sourceId: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug, sourceId } = await params;
@@ -29,7 +33,23 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
   if (!isUuid(sourceId)) notFound();
   const source = await getSource(appDb, account.id, sourceId);
   if (!source) notFound();
-  const [sections, facts] = await Promise.all([listSections(appDb, account.id, source.id), listSourceFacts(appDb, account.id, source.id)]);
+  const isCall = source.kind === "call";
+  const [sections, facts, suggestions, notes, latest] = await Promise.all([
+    listSections(appDb, account.id, source.id), listSourceFacts(appDb, account.id, source.id),
+    isCall ? suggestionsForSource(appDb, account.id, source.id) : Promise.resolve([] as Suggestion[]),
+    isCall ? customerNotes(appDb, account.id, source.id) : Promise.resolve([]),
+    isCall ? latestSuggestions(appDb, account.id) : Promise.resolve(null),
+  ]);
+  const evidenceLinks = await locateEvidence(appDb, account.id, account.slug, suggestions.flatMap((x) => x.evidence));
+  const callsInCorpus = (latest?.run ? (runData(latest.run)?.result as PlaybookRunResult | undefined)?.callsInCorpus : 0) ?? 0;
+  const marked = new Set(suggestions.flatMap((x) => x.evidence.filter((e) => e.sourceId === source.id).map((e) => e.locator)));
+  const groups: { title: "sources.call.group.discovery" | "sources.call.group.objection" | "sources.call.group.pricing" | "sources.call.group.other"; kinds: string[] }[] = [
+    { title: "sources.call.group.discovery", kinds: ["field", "discovery_question"] },
+    { title: "sources.call.group.objection", kinds: ["objection"] },
+    { title: "sources.call.group.pricing", kinds: ["limit"] },
+    { title: "sources.call.group.other", kinds: ["goal", "tone", "never"] },
+  ];
+  const editId = one(sp.edit);
   const list = `/app/${account.slug}/setup/sources`;
   const here = `${list}/${source.id}`;
   const now = new Date();
@@ -130,7 +150,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
             {sections.length === 0 ? <div className="sas-panel__body sas-small">{t("sources.detail.no_text")}</div> : (
               <ol className="sas-transcript" aria-label={t("sources.call.transcript")}>
                 {sections.map((s) => (
-                  <li key={s.id} className="sas-transcript__line" id={`l-${s.position}`}>
+                  <li key={s.id} className="sas-transcript__line" id={`l-${s.position}`} style={marked.has(s.locator) ? { background: "var(--agent-soft)", boxShadow: "inset 3px 0 0 var(--agent)" } : undefined}>
                     <a className="sas-transcript__time" href={`#l-${s.position}`}>{s.locator}</a>
                     <span className="sas-transcript__who">{s.heading ?? ""}</span>
                     <span dir="auto" style={{ overflowWrap: "anywhere", minWidth: 0 }}>{s.text}</span>
@@ -163,11 +183,43 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
 
         <div className="sas-stack-6" style={{ flex: "1 1 320px", minWidth: 0 }}>
           {source.kind === "call" ? (
-            <section className="sas-panel" aria-labelledby="sg-h">
-              <div className="sas-panel__body sas-stack-2">
+            <section className="sas-panel" aria-labelledby="sg-h" style={{ overflow: "hidden" }}>
+              <div className="sas-panel__body sas-stack-2" style={{ paddingBlockEnd: suggestions.length || notes.length ? 4 : undefined }}>
                 <h2 id="sg-h" className="sas-heading">{t("sources.call.suggestions")}</h2>
-                <span className="sas-small">{t("sources.call.suggestions_soon")}</span>
+                {suggestions.length || notes.length ? (
+                  <span className="sas-small">{t("sources.call.suggestions_count", { n: suggestions.filter((x) => x.status === "suggested").length })}</span>
+                ) : <span className="sas-small">{t("sources.call.suggestions_soon")}</span>}
               </div>
+              {groups.map((g) => {
+                const list = suggestions.filter((x) => g.kinds.includes(x.kind) && x.status !== "rejected");
+                if (list.length === 0) return null;
+                return (
+                  <div key={g.title} id={`sg-${g.kinds[0]}`}>
+                    <h3 className="sas-small" style={{ margin: 0, padding: "12px 20px 4px", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{t(g.title)}</h3>
+                    <ul className="sas-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                      {list.map((x) => (
+                        <SuggestionItem
+                          key={x.id} s={x} slug={account.slug} back={`source:${source.id}`} editing={editId === x.id} links={evidenceLinks} calls={callsInCorpus}
+                          editHref={`${here}?edit=${x.id}#sg-${g.kinds[0]}`} cancelHref={`${here}#sg-${g.kinds[0]}`}
+                        />
+                      ))}
+                    </ul>
+                  </div>
+                );
+              })}
+              {notes.length ? (
+                <div>
+                  <h3 className="sas-small" style={{ margin: 0, padding: "12px 20px 4px", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{t("sources.call.group.customer")}</h3>
+                  <ul className="sas-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                    {notes.map((n, i) => (
+                      <li key={i} className="sas-small" style={{ padding: "10px 20px", overflowWrap: "anywhere" }}>
+                        {n.note} <a href={`#l-${sections.find((x) => x.locator === n.locator)?.position ?? 0}`}>{n.locator}</a>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
+              {suggestions.length ? <div style={{ padding: "12px 20px", borderBlockStart: "1px solid var(--line)" }}><a className="sas-small" href={`/app/${account.slug}/setup/playbook/draft`}>{t("sources.call.open_draft")}</a></div> : null}
             </section>
           ) : null}
           <section className="sas-panel" aria-labelledby="sf-h">

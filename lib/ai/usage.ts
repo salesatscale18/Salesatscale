@@ -2,7 +2,8 @@
  * AI usage and spend (mvp-plan: spend cap; implementation plan P9.5).
  *
  * Token usage is stored per agent message (`messages.usage`, summed over the
- * model calls of one buyer turn, with the model that answered). This module
+ * model calls of one buyer turn, with the model that answered) and per
+ * knowledge-pipeline run (`pipeline_runs.usage` with `pipeline_runs.model`). This module
  * rolls it up per calendar month (UTC), prices it with lib/ai/models.ts and
  * decides the account's spend state:
  * - ok: under 80% of the cap;
@@ -15,8 +16,7 @@
 import { cache } from "react";
 import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { messages, sellerAccounts } from "@/db/schema";
-import type { LlmClient, LlmRequest, LlmResponse } from "@/lib/agent/llm";
+import { messages, pipelineRuns, sellerAccounts } from "@/db/schema";
 import { formatMoney } from "@/lib/domain/money";
 import { estimateCostMicros, priceTable, usdMicrosToMinor, type TokenUsage } from "./models";
 
@@ -56,8 +56,28 @@ async function rollup(db: Db, accountId: string | null, now: Date): Promise<Usag
     .from(messages)
     .where(and(isNotNull(u), gte(messages.createdAt, from), accountId ? eq(messages.accountId, accountId) : undefined))
     .groupBy(sql`1`);
+  // Knowledge pipeline runs: one row per stage, usage { input, output, cacheRead, cacheWrite }.
+  const pu = pipelineRuns.usage;
+  const runRows = await db
+    .select({
+      model: sql<string>`coalesce(${pipelineRuns.model}, '')`,
+      calls: sql<string>`count(*)`,
+      input: sql<string>`coalesce(sum((${pu}->>'input')::bigint), 0)`,
+      output: sql<string>`coalesce(sum((${pu}->>'output')::bigint), 0)`,
+      cacheRead: sql<string>`coalesce(sum((${pu}->>'cacheRead')::bigint), 0)`,
+      cacheWrite: sql<string>`coalesce(sum((${pu}->>'cacheWrite')::bigint), 0)`,
+    })
+    .from(pipelineRuns)
+    .where(and(isNotNull(pu), gte(pipelineRuns.createdAt, from), accountId ? eq(pipelineRuns.accountId, accountId) : undefined))
+    .groupBy(sql`1`);
+  const merged = new Map<string, { model: string; calls: number; input: number; output: number; cacheRead: number; cacheWrite: number }>();
+  for (const r of [...rows, ...runRows]) {
+    const m = merged.get(r.model) ?? { model: r.model, calls: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+    m.calls += num(r.calls); m.input += num(r.input); m.output += num(r.output); m.cacheRead += num(r.cacheRead); m.cacheWrite += num(r.cacheWrite);
+    merged.set(r.model, m);
+  }
   const prices = priceTable();
-  const byModel: ModelUsage[] = rows.map((r) => {
+  const byModel: ModelUsage[] = [...merged.values()].map((r) => {
     const usage = { inputTokens: num(r.input), outputTokens: num(r.output), cacheReadTokens: num(r.cacheRead), cacheWriteTokens: num(r.cacheWrite) };
     return { model: r.model, calls: num(r.calls), ...usage, costMicros: estimateCostMicros(r.model, usage, prices) };
   });
@@ -160,14 +180,15 @@ export class AiBudgetError extends Error {
 }
 
 /**
- * Wraps a model client so every call first checks the platform budget and
- * throws AiBudgetError when it is used up. With the env var unset there is no
- * query and no guard. The check runs once per wrapper (one buyer turn).
+ * Wraps a model client (the agent's or the knowledge pipeline's) so every call
+ * first checks the platform budget and throws AiBudgetError when it is used
+ * up. With the env var unset there is no query and no guard. The check runs
+ * once per wrapper (one buyer turn, or one pipeline run).
  */
-export function budgetGuarded(db: Db, llm: LlmClient, now?: () => Date): LlmClient {
+export function budgetGuarded<Req, Res>(db: Db, llm: { create(req: Req): Promise<Res> }, now?: () => Date): { create(req: Req): Promise<Res> } {
   let checked: Promise<void> | null = null;
   return {
-    async create(req: LlmRequest): Promise<LlmResponse> {
+    async create(req: Req): Promise<Res> {
       checked ??= (async () => {
         if (platformBudgetMicros() === null) return;
         const b = await platformBudget(db, now?.() ?? new Date());
