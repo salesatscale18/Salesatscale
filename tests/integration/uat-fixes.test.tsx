@@ -180,7 +180,7 @@ describe("UAT round 2 fixes", () => {
       await saveLegalSection(db, acc.id, me.id, { sectionKey: "sales_terms", title: "תנאי מכירה", language: "he", body: "תנאים" });
       const html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: r.market.id })));
       expect(html).toContain("EUR");
-      expect(html).toContain("Available once WhatsApp is connected.");
+      expect(html).toContain("Connect a number in Settings › WhatsApp.");
       expect(html).toMatch(/data-legal-lang="en"[^]*?<bdi>Sales terms<\/bdi>/);
       expect(html).toMatch(/data-legal-lang="he"[^]*?<bdi>תנאי מכירה<\/bdi>/);
       // Pill and Override/Reset share one group on every setting row.

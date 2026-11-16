@@ -178,8 +178,6 @@ export function marketGoLiveChecks(f: GoLiveFacts): GoLiveCheck[] {
   ];
 }
 
-/** Shown to customers: never an internal phase code. */
-export const WHATSAPP_LATER = "Available once WhatsApp is connected.";
 
 /** True when every blocking check passes. */
 export function canGoLive(checks: GoLiveCheck[]): boolean {

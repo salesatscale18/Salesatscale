@@ -9,7 +9,7 @@ import { legalTitle } from "@/app/f/[token]/lines";
 import { defaultPlaybook, playbookRowsFromForm } from "@/lib/agent/playbook";
 import { CSV_TEMPLATE_HEADER, csvTemplate, csvToRawLeads, normalizePhone, parseCsv, parseLead } from "@/lib/leads/rules";
 import { headingTitle } from "@/lib/markets/legal";
-import { countryTimezone, marketGoLiveChecks, newMarketTimezone, WHATSAPP_LATER } from "@/lib/markets/rules";
+import { countryTimezone, marketGoLiveChecks, newMarketTimezone } from "@/lib/markets/rules";
 
 describe("phone numbers need a plausible national number", () => {
   it("refuses 12345 (was +97212345) and other too-short numbers", () => {
@@ -122,8 +122,8 @@ describe("no internal phase codes in customer-facing text", () => {
       settings: { languages: { value: ["en"], source: "account" }, paymentMethods: { value: { card: true, bankTransfer: false }, source: "account" }, bankDetails: { value: null, source: "account" } },
       livePriceList: null, legalLanguages: ["en"], whatsappNumber: null,
     });
-    expect(checks.find((c) => c.key === "whatsapp")!.detail).toBe("Available once WhatsApp is connected.");
-    expect(WHATSAPP_LATER).not.toMatch(/\bP\d+\b/);
+    expect(checks.find((c) => c.key === "whatsapp")!.detail).toBe("Connect a number in Settings › WhatsApp.");
+    expect(checks.find((c) => c.key === "whatsapp")!.detail).not.toMatch(/\bP\d+\b/);
   });
   it("no UI string names a phase (P1–P10)", () => {
     for (const f of ["en", "he"]) {
