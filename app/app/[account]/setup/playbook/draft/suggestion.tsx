@@ -172,7 +172,11 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
           <span style={{ flex: "1 1 200px", minWidth: 0 }}><EvidenceLine s={s} links={links} calls={calls} /></span>
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {s.status === "suggested" ? decide("accepted", limit ? t("draft.approve_rule") : t("draft.accept"), "secondary") : null}
-            {limit && decided ? null : (
+            {limit && decided ? (
+              preview?.kind === "setting" && preview.setting === "custom_pricing"
+                ? <a className="sas-small" href={`/app/${slug}/setup/price-lists`} data-limit-lives="price_list">{t("draft.limit.change_in_price_list", { name: preview.listName ?? "" })}</a>
+                : <a className="sas-small" href={`/app/${slug}/setup/playbook#pb-lim-h`} data-limit-lives="playbook">{t("draft.limit.change_in_playbook")}</a>
+            ) : (
               <>
                 {s.status !== "rejected" ? <a className={buttonClass("ghost", "sm")} href={editHref} aria-label={`${t("draft.edit")}: ${title.slice(0, 60)}`}>{t("draft.edit")}</a> : null}
                 {s.status !== "rejected" ? decide("rejected", t("draft.remove"), "ghost") : decide("suggested", t("draft.undo"), "ghost")}

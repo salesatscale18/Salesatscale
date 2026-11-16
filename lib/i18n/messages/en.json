@@ -1951,5 +1951,7 @@
   "playbook.exceptions": "Approved exceptions",
   "playbook.exceptions_hint": "Special terms you approved from your sources. The agent may offer them; a quote that uses one waits for your approval.",
   "playbook.exceptions_empty": "None yet. Approve them in the playbook draft.",
-  "playbook.exception_meta": "Approved {date}"
+  "playbook.exception_meta": "Approved {date}",
+  "draft.limit.change_in_playbook": "Change in Playbook › Limits",
+  "draft.limit.change_in_price_list": "Change in Price list {name}"
 }
