@@ -9,6 +9,9 @@ import { catalogAutoAdd, pricingContext } from "@/lib/quotes/pricing";
 import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
 import { QuoteEditor, type EditorItem } from "./editor";
+import { estimateDelivery, formatDeliveryShort } from "@/lib/delivery/eta";
+import { deliveryPlanFor } from "@/lib/delivery/plan";
+import { leadAfterSigning } from "@/lib/delivery/text";
 import { buildPreview, editorStart } from "./preview";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -45,6 +48,11 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
     return { sku: i.sku, name: i.name, unit: i.unit, unitCustom: i.unitCustom ?? null, sold: e !== undefined, charges };
   });
   const cv = current?.version;
+  // Delivery estimate for the quote's market, counted from today (before signing).
+  const plan = deliveryPlanFor(account, ctx.market);
+  const delivery = plan
+    ? { text: t("quote.editor.delivery", { range: formatDeliveryShort(estimateDelivery({ ...plan, from: new Date() })) }), lead: leadAfterSigning(plan.leadTime) }
+    : null;
   const initialPreview = catalog && priceList && from && cv
     ? await buildPreview(appDb, account, leadId, { lines: Object.entries(initialQty).map(([sku, qty]) => ({ sku, qty })), discountBp: cv.discountBp, sites: start.sites, removedByBuyer: initialRemoved }, from.quote.id)
     : undefined;
@@ -96,6 +104,8 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
           initialPreview={initialPreview}
           initialSites={start.sites ? String(start.sites) : ""}
           initialRemoved={initialRemoved}
+          delivery={delivery}
+          deliverySettingsHref={`/app/${account.slug}/setup/company#delivery`}
         />
       )}
     </main>

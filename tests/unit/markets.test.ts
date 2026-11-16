@@ -84,6 +84,8 @@ describe("effective settings", () => {
       paymentMethods: { card: true, bankTransfer: true },
       bankDetails: "Bank Leumi 123",
       holidays: [],
+      // No delivery lead time on the account: not set.
+      leadTime: null,
       currency: "ILS",
     });
   });

@@ -6,6 +6,7 @@ import type { AccountDefaults, SettingKey } from "@/lib/markets/settings";
 import { OVERRIDABLE, overrideProblem } from "@/lib/markets/settings";
 import { CALLING_CODES, countryName } from "@/lib/markets/rules";
 import { parseContactHours } from "@/lib/accounts/contact-hours";
+import { parseLeadTime } from "@/lib/delivery/eta";
 
 /** Reads one or all values of a form field. */
 export type FormReader = { get: (name: string) => string; getAll: (name: string) => string[] };
@@ -63,6 +64,13 @@ export function parseOverride<K extends SettingKey>(key: K, f: FormReader): Over
     case "holidays":
       value = [...new Set(f.get("holidays").split(/[\s,;]+/).map((d) => d.trim()).filter(Boolean))].sort();
       break;
+    case "leadTime": {
+      // An override is always a range; to follow the account again, Reset.
+      const r = parseLeadTime({ minDays: f.get("minDays"), maxDays: f.get("maxDays"), businessDays: f.get("businessDays") }, { required: true });
+      if (!r.ok) return { ok: false, error: r.error };
+      value = r.value;
+      break;
+    }
   }
   const problem = overrideProblem(key, value);
   return problem ? { ok: false, error: problem } : { ok: true, value: value as AccountDefaults[K] };

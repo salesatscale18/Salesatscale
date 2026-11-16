@@ -11,6 +11,9 @@ import { displayName } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
 import { saveCompanyAction } from "./actions";
+import { estimateDelivery, formatDeliveryShort, leadTimeOrNull, MAX_LEAD_DAYS } from "@/lib/delivery/eta";
+import { deliveryPlanFor } from "@/lib/delivery/plan";
+import { leadAfterSigning } from "@/lib/delivery/text";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const LANG_NAME: Record<string, string> = { en: "English", he: "עברית Hebrew" };
@@ -29,6 +32,10 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   // The agent name lives in the playbook draft (or the live version); read it, never create a draft here.
   const playbook = (versions.find((v) => v.status === "draft") ?? versions.find((v) => v.status === "live"))?.playbook ?? defaultPlaybook(account.tradeName, account.maxDiscountBp);
   const lowContrast = whiteContrast(settings.brandColor) < 4.5;
+  const lead = leadTimeOrNull(account.deliveryLeadTime);
+  // The example uses the account's own time zone and weekend (a market may differ).
+  const plan = deliveryPlanFor(account, { overrides: {}, countries: [] });
+  const example = plan ? `${formatDeliveryShort(estimateDelivery({ ...plan, from: new Date() }))} (${leadAfterSigning(plan.leadTime)})` : null;
 
   return (
     <main className="sas-shell__content">
@@ -69,6 +76,27 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                   <input className="sas-input" id="co-ad" name="address" defaultValue={account.address ?? ""} maxLength={300} />
                 </div>
               </div>
+            </div>
+          </section>
+
+          <section className="sas-panel" aria-labelledby="dlv-h" id="delivery" data-delivery-section="">
+            <div className="sas-panel__body sas-stack-4">
+              <h2 id="dlv-h" className="sas-heading">{t("company.delivery")}</h2>
+              <fieldset style={{ border: 0, padding: 0, margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }} aria-describedby="dlv-hint">
+                <legend className="sas-sr">{t("company.delivery.lead_time")}</legend>
+                <span className="sas-input-label" aria-hidden="true">{t("company.delivery.lead_time")}:</span>
+                <span>{t("company.delivery.from")}</span>
+                <input className="sas-input sas-num" type="number" name="minDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" defaultValue={lead ? lead.minDays : ""} aria-label={t("company.delivery.min_label")} style={{ width: 88 }} />
+                <span>{t("company.delivery.to")}</span>
+                <input className="sas-input sas-num" type="number" name="maxDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" defaultValue={lead ? lead.maxDays : ""} aria-label={t("company.delivery.max_label")} style={{ width: 88 }} />
+                <span>{t("company.delivery.days")}</span>
+              </fieldset>
+              <span className="sas-hint" id="dlv-hint">{t("company.delivery.hint")}</span>
+              <div className="sas-stack-2" style={{ gap: 2 }}>
+                <label className="sas-check"><input type="checkbox" name="businessDays" defaultChecked={lead ? lead.businessDays : true} aria-describedby="dlv-bd-hint" />{t("company.delivery.business")}</label>
+                <span className="sas-hint" id="dlv-bd-hint">{t("company.delivery.business_hint")}</span>
+              </div>
+              {example ? <span className="sas-small" data-delivery-example="">{t("company.delivery.example", { range: example })}</span> : null}
             </div>
           </section>
 

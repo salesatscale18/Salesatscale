@@ -10,6 +10,7 @@ import { ensureHomeMarket, getMarketView, listMarkets, type MarketView } from "@
 import { overriddenCount, type AccountDefaults, type EffectiveSettings, type SettingKey } from "@/lib/markets/settings";
 import { listPriceLists } from "@/lib/pricing/price-lists";
 import { LOCALES, t, type MessageKey } from "@/lib/i18n";
+import { leadTimeText, MAX_LEAD_DAYS, weekendFor } from "@/lib/delivery/eta";
 import type { LeadIntakeKey, Market } from "@/db/schema";
 import {
   addMarketAction, overrideSettingAction, resetSettingAction, setMarketStatusAction, setPriceListAction, updateWhereAction,
@@ -23,7 +24,12 @@ const langNames = (ls: string[]) => ls.map((l) => LANG_NAME[l] ?? l).join(", ");
 const GROUPS: { label: MessageKey; keys: SettingKey[] }[] = [
   { label: "markets.group.language", keys: ["languages", "timezone", "contactHours", "holidays"] },
   { label: "markets.group.money", keys: ["paymentMethods", "bankDetails"] },
+  { label: "markets.group.delivery", keys: ["leadTime"] },
 ];
+
+const DAY_SHORT = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
+/** "Friday, Saturday": the weekend business days skip in a market. */
+const weekendText = (days: number[]) => [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((d) => t(`settings.hours.day.${DAY_SHORT[d]}` as MessageKey)).join(", ");
 
 /** One setting's effective value in words. */
 function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): string {
@@ -37,6 +43,10 @@ function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): stri
     }
     case "bankDetails": return (value as string | null)?.trim() || t("markets.none");
     case "holidays": return (value as string[]).length ? (value as string[]).join(", ") : t("markets.none");
+    case "leadTime": {
+      const lt = value as AccountDefaults["leadTime"];
+      return lt ? leadTimeText(lt) : t("markets.lead_time_not_set");
+    }
   }
   return "";
 }
@@ -69,7 +79,7 @@ const Group = ({ children }: { children: ReactNode }) => (
 );
 
 /** The form that sets a market's own value for one setting, prefilled with the current effective value. */
-function OverrideForm({ slug, market, settingKey, settings, timezones }: { slug: string; market: Market; settingKey: SettingKey; settings: EffectiveSettings; timezones: string[] }) {
+function OverrideForm({ slug, market, settingKey, settings, timezones, weekend }: { slug: string; market: Market; settingKey: SettingKey; settings: EffectiveSettings; timezones: string[]; weekend: number[] }) {
   const v = settings[settingKey].value;
   let fields: ReactNode = null;
   switch (settingKey) {
@@ -128,6 +138,24 @@ function OverrideForm({ slug, market, settingKey, settings, timezones }: { slug:
         </>
       );
       break;
+    case "leadTime": {
+      const lt = v as AccountDefaults["leadTime"];
+      fields = (
+        <>
+          <fieldset style={{ border: 0, padding: 0, margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }}>
+            <legend className="sas-sr">{t("markets.setting.leadTime")}</legend>
+            <span>{t("markets.setting.leadTime")}: {t("company.delivery.from")}</span>
+            <input className="sas-input sas-num" type="number" name="minDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" required defaultValue={lt ? lt.minDays : ""} aria-label={t("company.delivery.min_label")} style={{ width: 88 }} />
+            <span>{t("company.delivery.to")}</span>
+            <input className="sas-input sas-num" type="number" name="maxDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" required defaultValue={lt ? lt.maxDays : ""} aria-label={t("company.delivery.max_label")} style={{ width: 88 }} />
+            <span>{t("company.delivery.days")}</span>
+          </fieldset>
+          <label className="sas-check"><input type="checkbox" name="businessDays" defaultChecked={lt ? lt.businessDays : true} />{t("company.delivery.business")}</label>
+          <span className="sas-hint">{t("markets.lead_time_weekend", { days: weekendText(weekend) })} {t("markets.lead_time_hint")}</span>
+        </>
+      );
+      break;
+    }
   }
   return (
     <form action={overrideSettingAction} className="sas-stack-2" style={{ padding: "4px 20px 14px", background: "var(--surface-sunken)" }} data-override-form={settingKey}>
@@ -379,7 +407,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                           <a className={buttonClass("ghost", "sm")} href={`${here}?m=${selected.id}&override=${k}#set-${k}`}>{t("markets.override")}</a>
                         )}
                       />
-                      {overriding === k ? <OverrideForm slug={account.slug} market={selected} settingKey={k} settings={view.settings} timezones={timezones} /> : null}
+                      {overriding === k ? <OverrideForm slug={account.slug} market={selected} settingKey={k} settings={view.settings} timezones={timezones} weekend={weekendFor(selected.countries, account.market)} /> : null}
                     </div>
                   );
                 })}

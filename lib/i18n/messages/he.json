@@ -101,5 +101,12 @@
   "buyer.recurring_total.year": "סה\"כ שנתי",
   "buyer.excl_vat": "המחירים לפני מע\"מ. המע\"מ נוסף בסיכומים.",
   "buyer.then_yearly": "ולאחר מכן שנתי, מההפעלה",
-  "buyer.recurring_consent_year": "לחייב {price} בכרטיס זה מדי שנה, החל מהפעלת השירות."
+  "buyer.recurring_consent_year": "לחייב {price} בכרטיס זה מדי שנה, החל מהפעלת השירות.",
+  "buyer.delivery.label": "מועד אספקה משוער: {range}",
+  "buyer.delivery.business": "{days} ימי עסקים ממועד החתימה",
+  "buyer.delivery.business_one": "יום עסקים אחד ממועד החתימה",
+  "buyer.delivery.calendar": "{days} ימים ממועד החתימה",
+  "buyer.delivery.calendar_one": "יום אחד ממועד החתימה",
+  "buyer.delivery.same_day": "ביום החתימה",
+  "buyer.delivery.signed_on": "{lead}, שנחתם ב־{date}"
 }

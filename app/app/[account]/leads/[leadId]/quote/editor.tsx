@@ -109,6 +109,10 @@ export function QuoteEditor(props: {
   initialSites?: string;
   /** SKUs of auto-added lines removed at the buyer's request (the version's removals). */
   initialRemoved?: string[];
+  /** "Estimated delivery if signed today: 3–9 Dec" and "5–10 business days after signing"; null when no lead time is set. */
+  delivery?: { text: string; lead: string } | null;
+  /** Where the lead time is set, shown when there is none. */
+  deliverySettingsHref?: string;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [preview, setPreview] = useState<QuotePreview>(props.initialPreview ?? { status: "empty" });
@@ -424,6 +428,15 @@ export function QuoteEditor(props: {
                 </div>
               ) : null}
             </>
+          ) : null}
+          {/* Shown with or without items: it depends on the market, not the lines. */}
+          {props.delivery ? (
+            <span className="sas-stack-2" style={{ gap: 0 }} data-delivery-estimate="">
+              <span className="sas-small" style={{ color: "var(--ink)" }}>{props.delivery.text}</span>
+              <span className="sas-small">{props.delivery.lead}</span>
+            </span>
+          ) : props.deliverySettingsHref ? (
+            <span className="sas-small" data-delivery-estimate="none">{t("quote.editor.delivery_none")} <a href={props.deliverySettingsHref}>{t("quote.editor.delivery_set")}</a></span>
           ) : null}
           <div className="sas-stack-2" style={{ borderTop: "1px solid var(--line)", paddingTop: 14 }}>
             <button type="submit" name="intent" value="send" className={buttonClass("primary")} style={{ justifyContent: "center" }} disabled={disabled} aria-describedby={actions.blocked ? "qe-blocked" : undefined}>
