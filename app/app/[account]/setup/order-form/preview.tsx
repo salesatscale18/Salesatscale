@@ -4,8 +4,11 @@ import { useState } from "react";
 import { dir, translator, type Locale } from "@/lib/i18n";
 
 /** Live mobile preview of the buyer page (canvas: OrderFormSetup, right column). Sample items only. */
-export function BuyerPreview({ seller, brand, languages, sections, fields }: {
+export function BuyerPreview({ seller, brand, languages, sections, fields, delivery, noDeliveryHint }: {
   seller: string; brand: string; languages: string[]; sections: Record<string, { title: string; version: number }[]>; fields: string[];
+  /** The delivery estimate per language as the buyer sees it before signing; null when no lead time is set. */
+  delivery?: Record<string, { label: string; lead: string }> | null;
+  noDeliveryHint?: string;
 }) {
   const langs = languages.filter((l): l is Locale => l === "en" || l === "he");
   const [lang, setLang] = useState<Locale>(langs[0] ?? "en");
@@ -30,6 +33,11 @@ export function BuyerPreview({ seller, brand, languages, sections, fields }: {
         <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ display: "flex", justifyContent: "space-between" }}><span>6 × Sample product</span><span className="sas-num" style={{ fontSize: 12 }}>₪3,540.00</span></div>
           <div style={{ display: "flex", justifyContent: "space-between", fontWeight: 700, borderTop: "1px solid var(--line)", paddingTop: 8 }}><span>{tr("buyer.due_today")}</span><span className="sas-num" style={{ fontSize: 12 }}>₪3,540.00</span></div>
+          {delivery?.[lang] ? (
+            <div data-delivery-preview="" style={{ display: "flex", flexDirection: "column", gap: 2 }}><b>{delivery[lang].label}</b><span style={{ color: "#566073", fontSize: 12 }}>{delivery[lang].lead}</span></div>
+          ) : noDeliveryHint ? (
+            <div data-delivery-preview-empty="" dir="ltr" style={{ color: "#566073", fontSize: 12 }}>{noDeliveryHint}</div>
+          ) : null}
           {fields.filter((f) => f !== "signatory_role").slice(0, 3).map((f) => (
             <div key={f} style={{ display: "flex", flexDirection: "column", gap: 2 }}><span style={{ fontSize: 11, fontWeight: 600 }}>{tr(`buyer.field.${f}` as "buyer.field.company_name")}</span><div style={{ height: 28, border: "1px solid var(--line-strong)", borderRadius: 6 }} /></div>
           ))}

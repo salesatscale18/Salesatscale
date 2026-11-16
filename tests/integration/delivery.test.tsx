@@ -24,6 +24,7 @@ vi.mock("next/navigation", () => ({
 
 const { saveCompanyAction } = await import("@/app/app/[account]/setup/company/actions");
 const { default: CompanyPage } = await import("@/app/app/[account]/setup/company/page");
+const { default: OrderFormSetupPage } = await import("@/app/app/[account]/setup/order-form/page");
 const { overrideSettingAction, resetSettingAction } = await import("@/app/app/[account]/markets/actions");
 const { default: MarketsPage } = await import("@/app/app/[account]/markets/page");
 const { default: BuyerFormPage } = await import("@/app/f/[token]/page");
@@ -110,6 +111,9 @@ describe("delivery ETA", () => {
     const html = await buyer(f.token);
     expect(html).not.toContain("Estimated delivery");
     expect(html).not.toContain("data-delivery");
+    const setupEmpty = renderToStaticMarkup(await OrderFormSetupPage(props(acc.slug)));
+    expect(setupEmpty).toContain("data-delivery-preview-empty");
+    expect(setupEmpty).toContain("No delivery estimate shown — set a lead time in Company › Delivery");
 
     const c = (await startTestConversation(db, acc.id, me.id, { language: "en" }))!;
     const draft = await ensureDraftVersion(db, acc.id);
@@ -131,6 +135,10 @@ describe("delivery ETA", () => {
     expect(await run(saveCompanyAction(company({ minDays: "5", maxDays: "10", businessDays: "on" })))).toEqual({ redirect: "/app/polar/setup/company?saved=1" });
     await refresh();
     expect(acc.deliveryLeadTime).toEqual({ minDays: 5, maxDays: 10, businessDays: true });
+    const setup = renderToStaticMarkup(await OrderFormSetupPage(props(acc.slug)));
+    expect(setup).toContain("data-delivery-preview");
+    expect(setup).not.toContain("data-delivery-preview-empty");
+    expect(setup).toMatch(/Estimated delivery: .*2\d{3}/);
     const audits = await db.select().from(auditLog).where(and(eq(auditLog.accountId, acc.id), eq(auditLog.action, "delivery_lead_time.saved")));
     expect(audits).toHaveLength(1);
     // Saving again unchanged writes no new audit entry.

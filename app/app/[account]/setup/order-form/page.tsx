@@ -1,11 +1,14 @@
 import { Button, buttonClass } from "@/components/sas/primitives";
+import { deliveryPlanFor } from "@/lib/delivery/plan";
+import { estimateDelivery, formatDeliveryBuyer } from "@/lib/delivery/eta";
+import { leadFromSigning } from "@/lib/delivery/text";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { currentLegal, getOrderFormSettings, REQUIRED_FIELDS } from "@/lib/orders/settings";
 import { ORDER_FORM_FIELDS } from "@/db/schema";
-import { t, type MessageKey } from "@/lib/i18n";
+import { t, translator, type Locale, type MessageKey } from "@/lib/i18n";
 import { removeSectionAction, saveMarketSectionAction, saveSectionAction, saveSettingsAction, starterAction } from "./actions";
 import { getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
 import { headingTitle, marketLegal, type EffectiveSection } from "@/lib/markets/legal";
@@ -32,6 +35,16 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
   const editLang = one(sp.lang) || account.languages[0];
   const editing = editKey ? legal.find((s) => s.sectionKey === editKey && s.language === editLang) ?? null : null;
   const editingTitle = editing?.title ?? legal.find((s) => s.sectionKey === editKey)?.title ?? "";
+  // Delivery estimate for the market the preview shows (home market by default), as buyers see it before signing.
+  const previewMarket = marketView?.market ?? marketList.find((m) => m.isHome) ?? null;
+  const plan = previewMarket ? deliveryPlanFor(account, previewMarket) : null;
+  const delivery = plan
+    ? Object.fromEntries(account.languages.filter((l) => l === "en" || l === "he").map((l) => {
+        const tr = translator(l as Locale);
+        const eta = estimateDelivery({ ...plan, from: new Date() });
+        return [l, { label: tr("buyer.delivery.label", { range: formatDeliveryBuyer(eta, l) }), lead: leadFromSigning(tr, plan.leadTime, l === "he") }];
+      }))
+    : null;
   const sectionsByLang = Object.fromEntries(account.languages.map((l) => [l, legal.filter((s) => s.language === l).map((s) => ({ title: s.title, version: s.version }))]));
 
   return (
@@ -183,7 +196,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
           </form>
         </div>
         <aside className="sas-split__side">
-          <BuyerPreview seller={account.tradeName} brand={settings.brandColor} languages={account.languages} sections={sectionsByLang} fields={settings.fields} />
+          <BuyerPreview seller={account.tradeName} brand={settings.brandColor} languages={account.languages} sections={sectionsByLang} fields={settings.fields} delivery={delivery} noDeliveryHint={t("ofs.preview_no_delivery")} />
         </aside>
       </div>
     </main>

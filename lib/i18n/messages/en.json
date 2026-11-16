@@ -1827,5 +1827,6 @@
   "quote.editor.delivery_none": "No delivery lead time set, so no delivery times are shown.",
   "quote.editor.delivery_set": "Set it in Company",
   "orders.col.delivery": "Est. delivery",
-  "orders.detail.delivery": "Est. delivery: {range}"
+  "orders.detail.delivery": "Est. delivery: {range}",
+  "ofs.preview_no_delivery": "No delivery estimate shown — set a lead time in Company › Delivery"
 }
