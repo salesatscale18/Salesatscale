@@ -5,7 +5,8 @@ import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import { isFactStatus, parseFactInput } from "@/lib/agent/knowledge";
-import { addFact, answerQuestion, approveAllSuggested, removeFact, setFactStatus, updateFact } from "@/lib/agent/service";
+import { addFact, answerQuestion, removeFact, setFactStatus, updateFact } from "@/lib/agent/service";
+import { approveAllSuggestedFacts, resolveContradiction } from "@/lib/pipeline/service";
 
 const str = (form: FormData, k: string) => String(form.get(k) ?? "");
 
@@ -57,8 +58,9 @@ export async function setFactStatusAction(form: FormData) {
 export async function approveAllAction(form: FormData) {
   const a = await requireAccount(str(form, "slug"));
   const topic = str(form, "filter");
-  if (!topic) back(a.account.slug, "");
-  const n = await approveAllSuggested(appDb, a.account.id, topic);
+  // No topic: every topic ("Approve all suggested" on All topics). Facts in an open contradiction wait for the seller's choice.
+  if (!topic && str(form, "scope") !== "all") back(a.account.slug, "");
+  const n = await approveAllSuggestedFacts(appDb, a.account.id, topic || undefined);
   await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action: "knowledge.approved_all", details: { topic, count: n } });
   back(a.account.slug, topic, { done: "approved_all", n: String(n) });
 }
@@ -85,4 +87,16 @@ export async function answerQuestionsAction(form: FormData) {
     if (await answerQuestion(appDb, actorOf(a), a.account.id, { question: question.slice(0, 300), answer, topic })) n++;
   }
   back(a.account.slug, filter, n ? { done: "answered", n: String(n) } : { error: "answer" });
+}
+
+/** A contradiction: the chosen side is approved and the others rejected, or a typed answer becomes the approved fact. */
+export async function resolveContradictionAction(form: FormData) {
+  const a = await requireAccount(str(form, "slug"));
+  const filter = str(form, "filter");
+  const choice = str(form, "choice");
+  if (!choice) back(a.account.slug, filter, { error: "choice" });
+  const ok = await resolveContradiction(appDb, actorOf(a), a.account.id, {
+    runId: str(form, "runId"), index: Number(str(form, "index")) || 0, choice, other: str(form, "other").slice(0, 1000),
+  });
+  back(a.account.slug, filter, ok ? { done: "resolved" } : { error: choice === "other" ? "other" : "missing" });
 }

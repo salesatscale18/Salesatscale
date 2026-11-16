@@ -28,6 +28,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
             <h1 className="sas-title">{t("playbook.title")}</h1>
             <span className="sas-pill"><Icon name="file-text" />{t("playbook.editing", { version: draft.version })}</span>
             <div className="sas-page-head__actions">
+              <a className={buttonClass("secondary")} href={`${base}/setup/playbook/draft`}><Icon name="sparkles" />{t("playbook.from_sources")}</a>
               <a className={buttonClass("secondary")} href={lab}><Icon name="flask-conical" />{t("playbook.test_in_lab")}</a>
               <button type="submit" form="pb-form" className={buttonClass("primary")}>{t("playbook.save")}</button>
             </div>

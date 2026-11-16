@@ -7,13 +7,20 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
 import { FILE_ACCEPT } from "@/lib/sources/files";
 import { failStaleSources, listSources } from "@/lib/sources/service";
+import { llmConfigured } from "@/lib/agent/llm";
+import { spendStateForRequest } from "@/lib/ai/usage";
+import { failStaleRuns, listRuns, planAnalysis, sourceAboutMap } from "@/lib/pipeline/service";
+import { AnalyzePanel } from "./analyze";
 import { TRANSCRIPT_ACCEPT } from "@/lib/sources/transcript";
 import { deleteSourceAction, rereadWebsiteAction } from "./actions";
 import { CallForm, NoteForm, RefreshWhileProcessing, UploadForm, WebsiteForm } from "./forms";
 import { SourceBadge, languageWords, sizeLine } from "./view";
 
-/** Server actions on this page read websites and files: give them up to a minute. */
-export const maxDuration = 60;
+/**
+ * Server actions on this page read websites and files, and "Analyze sources"
+ * runs two model calls after its response: give them up to five minutes.
+ */
+export const maxDuration = 300;
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -26,13 +33,18 @@ const DONE: Record<string, MessageKey> = {
  * note or add a call transcript, and see every source with its status and
  * problems. Text is read here; facts and the playbook draft come from it in
  * the next steps. Deleting asks for confirmation (?confirm=<id>).
+ * "Analyze sources" shows its estimate first and asks for a confirm click
+ * (?analyze=confirm); the About column comes from the latest analysis.
  */
 export default async function SourcesPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  await failStaleSources(appDb, account.id);
-  const [rows, progress] = await Promise.all([listSources(appDb, account.id), setupProgress(appDb, account)]);
+  await Promise.all([failStaleSources(appDb, account.id), failStaleRuns(appDb, account.id)]);
+  const [rows, progress, plan, runs, about, spend] = await Promise.all([
+    listSources(appDb, account.id), setupProgress(appDb, account), planAnalysis(appDb, account.id),
+    listRuns(appDb, account.id), sourceAboutMap(appDb, account.id), spendStateForRequest(appDb, account.id),
+  ]);
   const base = `/app/${account.slug}`;
   const page = `${base}/setup/sources`;
   const done = DONE[one(sp.done)];
@@ -80,6 +92,12 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
         <section className="sas-panel"><div className="sas-panel__body"><CallForm slug={account.slug} accept={TRANSCRIPT_ACCEPT} /></div></section>
       </div>
 
+      <AnalyzePanel
+        slug={account.slug} plan={plan} configured={llmConfigured()} capped={spend?.state === "capped"} runs={runs}
+        confirming={one(sp.analyze) === "confirm"} back="sources" here={page} error={one(sp.analyze_error) || undefined}
+        started={one(sp.analyzed) === "1"} title="pipeline.analyze"
+      />
+
       <section className="sas-panel" aria-labelledby="src-h" style={{ overflow: "hidden" }}>
         <div style={{ padding: "16px 20px" }}><h2 id="src-h" className="sas-heading">{t("sources.list.title", { count: rows.length })}</h2></div>
         {rows.length === 0 ? (
@@ -90,10 +108,11 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table className="sas-table" style={{ minWidth: 820 }}>
+            <table className="sas-table" style={{ minWidth: 960 }}>
               <thead><tr>
                 <th scope="col" style={{ paddingInlineStart: 20 }}>{t("sources.col.source")}</th>
                 <th scope="col">{t("sources.col.language")}</th>
+                <th scope="col">{t("sources.col.about")}</th>
                 <th scope="col">{t("sources.col.status")}</th>
                 <th scope="col">{t("sources.col.updated")}</th>
                 <th scope="col"><span className="sas-sr">{t("sources.col.actions")}</span></th>
@@ -111,6 +130,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                       </span>
                     </td>
                     <td>{languageWords(s.language)}</td>
+                    <td style={{ whiteSpace: "normal", minWidth: 120 }}>{about.get(s.id) ?? (s.textHash ? "—" : <span className="sas-small">{t("sources.about.pending")}</span>)}</td>
                     <td><StatusPill object="source" state={s.status} /></td>
                     <td className="sas-small sas-num" title={exactTime(s.updatedAt)}>{relativeTime(s.updatedAt, now)}</td>
                     <td style={{ textAlign: "end" }}>

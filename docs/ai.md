@@ -27,8 +27,21 @@ An agent version keeps the model it was created with; `AGENT_MODEL` only affects
 
 Each agent reply stores `messages.usage` (JSON): uncached input, output, cache read and cache write
 tokens summed over the model calls of that turn, plus the model that answered. A turn that fails
-after some calls stores its usage on the "could not reply" system message. Nothing else stores
-usage yet: the knowledge pipeline must write its own usage before its spend counts.
+after some calls stores its usage on the "could not reply" system message. The knowledge pipeline
+stores usage per stage in `pipeline_runs.usage` (`input`, `output`, `cacheRead`, `cacheWrite`) with
+the run's model and `cost_estimate_micros`; both count toward the spend cap and the platform budget.
+
+## Knowledge pipeline (`lib/pipeline`)
+
+- Stage 0 (no AI): one corpus document from the ready sources (by id, sections by position, each
+  tagged `<section source locator>`), an input hash (prompt versions, model, corpus, stage data) and
+  an estimate (chars/3.5 tokens). A finished run with the same hash is reused with no call.
+- Stage 1 (facts) and stage 2 (playbook) send the same tools, system and corpus block (5-minute cache
+  breakpoint), so stage 2 reads the cache. Output comes through two strict tools in one fixed tool
+  list, not `output_config.format`, because changing the output format between requests breaks the
+  cache. Prompts are versioned in `lib/pipeline/prompts/`.
+- Corpora over about 150K tokens: stage 1 per source on `pipeline_light`, stage 2 on a trimmed corpus.
+- Every run needs a confirm click after the estimate; tests use `ScriptedPipelineLlm`.
 
 `aiUsageThisMonth(db, accountId)` and `platformUsageThisMonth(db)` (`lib/ai/usage.ts`) roll this up
 per UTC calendar month.
