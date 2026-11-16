@@ -17,6 +17,7 @@ import { listMarkets } from "@/lib/markets/service";
 import { IntakeKeyForm } from "./key-form";
 import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
+import { WhatsAppSection } from "./whatsapp";
 
 async function baseUrl() {
   const configured = process.env.APP_URL?.replace(/\/+$/, "");
@@ -66,7 +67,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
           await IntakeSection({ account, sp })
         ) : (
           <div className="sas-split__main" style={{ flexBasis: 520 }}>
-            {section === "whatsapp" ? <WhatsAppSection /> : null}
+            {section === "whatsapp" ? await WhatsAppSection({ account, sp, baseUrl: await baseUrl() }) : null}
             {section === "payments" ? await PaymentsSection({ account }) : null}
             {section === "users" ? await UsersSection({ access, sp }) : null}
             {section === "notifications" ? <NotificationsSection account={account} saved={!!sp.saved} /> : null}
@@ -80,18 +81,6 @@ export default async function SettingsPage({ params, searchParams }: { params: P
 
 const Saved = ({ text }: { text: string }) => <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{text}</span></div>;
 const Failed = ({ text }: { text: string }) => <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{text}</span></div>;
-
-function WhatsAppSection() {
-  return (
-    <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="wa-h">
-      <div className="sas-page-head">
-        <h2 id="wa-h" className="sas-heading">{t("settings.whatsapp.title")}</h2>
-        <span className="sas-pill">{t("settings.later_badge")}</span>
-      </div>
-      <span className="sas-small">{t("settings.whatsapp.later")}</span>
-    </section>
-  );
-}
 
 async function PaymentsSection({ account }: { account: SellerAccount }) {
   const s = await getOrderFormSettings(appDb, account.id);

@@ -19,7 +19,9 @@ describe("goLiveChecks", () => {
     const r = goLiveChecks(ready);
     expect(r.ready).toBe(true);
     expect(r).toMatchObject({ passed: 7, total: 7 });
-    expect(r.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "later", blocking: false, fixPath: null });
+    expect(r.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "fail", blocking: false, fixPath: "/settings?section=whatsapp" });
+    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: false } }).checks.find((c) => c.id === "whatsapp")?.state).toBe("fail");
+    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: true } }).checks.find((c) => c.id === "whatsapp")?.state).toBe("pass");
   });
 
   it("needs legal name, company ID and support contact", () => {

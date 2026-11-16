@@ -104,12 +104,13 @@ describe("take over, hand back and replies from a person", () => {
     expect(JSON.stringify(llm.requests[0].messages)).toContain("[Danny from the team]: Hi, Danny here");
   });
 
-  it("other channels go through the delivery seam, which does not send until P6", async () => {
+  it("real channels deliver through the channel rules; unknown channels are not sent", async () => {
     const c = await newConv();
     await db.update(conversations).set({ channel: "whatsapp" }).where(eq(conversations.id, c.conversationId));
     await takeOver(db, actor(), acc, c.conversationId);
-    expect(await addHumanReply(db, actor(), acc, c.conversationId, "Hello")).toMatchObject({ ok: true, delivery: { delivered: false, reason: "channel not connected" } });
-    expect(await deliverHumanMessage("whatsapp", { accountId: acc, conversationId: c.conversationId, leadId: c.leadId, messageId: "x", body: "b" }))
+    // A test-lab lead is never contacted on a real channel; the reply stays saved with the reason.
+    expect(await addHumanReply(db, actor(), acc, c.conversationId, "Hello")).toMatchObject({ ok: true, delivery: { delivered: false, reason: "test_lead" } });
+    expect(await deliverHumanMessage(db, "sms", { accountId: acc, conversationId: c.conversationId, leadId: c.leadId, messageId: "x", body: "b" }, null))
       .toEqual({ delivered: false, reason: "channel not connected" });
   });
 

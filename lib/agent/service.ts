@@ -352,7 +352,8 @@ export function rankFacts<T extends { topic: string; statement: string }>(facts:
  * (is_test, never contacted or counted) with a test consent record.
  */
 export async function startTestConversation(
-  db: Db, accountId: string, userId: string, opts: { language: string; scenario?: string | null; versionId?: string },
+  db: Db, accountId: string, userId: string | null,
+  opts: { language: string; scenario?: string | null; versionId?: string; channel?: "testlab" | "whatsapp"; channelAddress?: string | null },
 ) {
   const version = opts.versionId
     ? (await db.select().from(agentVersions).where(and(eq(agentVersions.id, opts.versionId), eq(agentVersions.accountId, accountId))))[0]
@@ -363,8 +364,14 @@ export async function startTestConversation(
   // Unique fake number in the reserved +999 range: no real phone, never contacted.
   const phone = `+999${BigInt(`0x${randomBytes(5).toString("hex")}`).toString().padStart(12, "0").slice(0, 11)}`;
   await atomic(db, (q) => [
-    q.insert(leads).values({ id: leadId, accountId, fullName: "Test buyer", phone, language: opts.language, origin: "manual", sourceLabel: "Test lab", isTest: true, createdByUserId: userId }),
-    q.insert(conversations).values({ id: conversationId, accountId, leadId, channel: "testlab", isTest: true, agentVersionId: version.id, language: opts.language, scenario: opts.scenario ?? null, createdByUserId: userId }),
+    q.insert(leads).values({
+      id: leadId, accountId, fullName: opts.channel === "whatsapp" ? "WhatsApp tester" : "Test buyer", phone, language: opts.language,
+      origin: "manual", sourceLabel: opts.channel === "whatsapp" ? "Test lab · WhatsApp" : "Test lab", isTest: true, createdByUserId: userId,
+    }),
+    q.insert(conversations).values({
+      id: conversationId, accountId, leadId, channel: opts.channel ?? "testlab", channelAddress: opts.channelAddress ?? null, isTest: true,
+      agentVersionId: version.id, language: opts.language, scenario: opts.scenario ?? null, createdByUserId: userId,
+    }),
   ]);
   return { conversationId, leadId, version };
 }

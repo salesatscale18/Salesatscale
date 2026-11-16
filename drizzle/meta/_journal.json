@@ -78,6 +78,13 @@
       "when": 1794768444607,
       "tag": "0010_removed_auto_add",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1794827199796,
+      "tag": "0011_whatsapp_channel",
+      "breakpoints": true
     }
   ]
 }

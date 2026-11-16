@@ -11,6 +11,7 @@ import { publishedCatalog } from "@/lib/catalog/service";
 import { liveVersion } from "@/lib/agent/service";
 import { currentLegal, getOrderFormSettings } from "@/lib/orders/settings";
 import { writeAudit, type Actor } from "./audit";
+import { whatsappReadiness } from "@/lib/channels/connections";
 
 export type GoLiveInput = {
   company: { legalName: string | null; companyId: string | null; supportContact: string | null };
@@ -23,6 +24,8 @@ export type GoLiveInput = {
   legalLanguages: string[];
   payments: { card: boolean; bankTransfer: boolean; bankDetails: string | null };
   testConversations: number;
+  /** Active WhatsApp numbers and whether an opening template is approved (P6). */
+  whatsapp?: { numbers: number; approvedOpener: boolean };
 };
 
 export type GoLiveCheckId = "company" | "catalog" | "agent" | "knowledge" | "legal" | "payments" | "test_lab" | "whatsapp";
@@ -66,7 +69,14 @@ export function goLiveChecks(input: GoLiveInput): GoLiveResult {
       bankWithoutDetails: p.bankTransfer && !bankUsable ? 1 : 0,
     }),
     check("test_lab", input.testConversations > 0, "/setup/test-lab", { count: input.testConversations }),
-    { id: "whatsapp", state: "later", blocking: false, fixPath: null, data: {} },
+    // Shown, not blocking: an account can go live before its number is approved.
+    {
+      id: "whatsapp",
+      state: input.whatsapp && input.whatsapp.numbers > 0 && input.whatsapp.approvedOpener ? "pass" : "fail",
+      blocking: false,
+      fixPath: "/settings?section=whatsapp",
+      data: { numbers: input.whatsapp?.numbers ?? 0, opener: input.whatsapp?.approvedOpener ? 1 : 0 },
+    },
   ];
   const blocking = checks.filter((c) => c.blocking);
   const passed = blocking.filter((c) => c.state === "pass").length;
@@ -75,13 +85,14 @@ export function goLiveChecks(input: GoLiveInput): GoLiveResult {
 
 /** Gathers the checklist input from real data for one account. */
 export async function loadGoLiveInput(db: Db, account: SellerAccount): Promise<GoLiveInput> {
-  const [catalog, live, [{ facts }], legal, settings, [{ tests }]] = await Promise.all([
+  const [catalog, live, [{ facts }], legal, settings, [{ tests }], wa] = await Promise.all([
     publishedCatalog(db, account.id),
     liveVersion(db, account.id),
     db.select({ facts: count() }).from(knowledgeFacts).where(and(eq(knowledgeFacts.accountId, account.id), eq(knowledgeFacts.status, "approved"))),
     currentLegal(db, account.id),
     getOrderFormSettings(db, account.id),
     db.select({ tests: count() }).from(conversations).where(and(eq(conversations.accountId, account.id), eq(conversations.isTest, true))),
+    whatsappReadiness(db, account.id),
   ]);
   return {
     company: { legalName: account.legalName, companyId: account.companyId, supportContact: account.supportContact },
@@ -92,6 +103,7 @@ export async function loadGoLiveInput(db: Db, account: SellerAccount): Promise<G
     legalLanguages: [...new Set(legal.map((s) => s.language))],
     payments: { card: settings.card, bankTransfer: settings.bankTransfer, bankDetails: settings.bankDetails },
     testConversations: Number(tests),
+    whatsapp: { numbers: wa.connections.length, approvedOpener: wa.hasApprovedOpener },
   };
 }
 

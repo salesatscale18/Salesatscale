@@ -26,7 +26,13 @@ export type TurnResult =
 
 const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
 
-export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string }): Promise<TurnResult> {
+/**
+ * `buyerMessageStored`: a real channel (WhatsApp webhook) already stored the
+ * buyer's message, card-masked and deduplicated, before this turn runs.
+ */
+export async function runBuyerTurn(
+  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean },
+): Promise<TurnResult> {
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
   const lang = conv.language;
@@ -38,7 +44,9 @@ export async function runBuyerTurn(db: Db, llm: LlmClient, args: { accountId: st
     db.select().from(agentVersions).where(and(eq(agentVersions.id, conv.agentVersionId), eq(agentVersions.accountId, args.accountId))),
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, args.accountId)),
     readDealState(db, args.accountId, conv.leadId),
-    db.insert(messages).values({ id: randomUUID(), accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang }),
+    args.buyerMessageStored
+      ? Promise.resolve()
+      : db.insert(messages).values({ id: randomUUID(), accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang }),
   ]);
   if (!lead || !version || !account) return { status: "not_found" };
 

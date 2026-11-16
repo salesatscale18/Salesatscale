@@ -678,6 +678,11 @@ export const conversations = pgTable(
     language: text("language").notNull(),
     /** Scenario name for test-lab runs. */
     scenario: text("scenario"),
+    /**
+     * The buyer's address on the channel when it is not the lead's phone:
+     * WhatsApp test-lab chats with a tester's phone (the test lead keeps a fake number).
+     */
+    channelAddress: text("channel_address"),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { withTimezone: true })
@@ -710,9 +715,20 @@ export const messages = pgTable(
     agentVersionId: uuid("agent_version_id").references(() => agentVersions.id, { onDelete: "set null" }),
     /** Model usage for agent messages (cost reporting, P9). */
     usage: jsonb("usage").$type<{ inputTokens: number; outputTokens: number; cacheReadTokens: number; model: string }>(),
+    /** Provider id of the message on a real channel (Twilio message SID). Null in the test lab. */
+    channelMessageId: text("channel_message_id"),
+    /** Outgoing messages on a real channel: queued | sent | delivered | read | failed | undelivered | not_sent. */
+    deliveryStatus: text("delivery_status"),
+    /** Provider error code and text when the message failed or was not sent. */
+    deliveryError: text("delivery_error"),
+    /** The approved template this message was sent with (outside the 24-hour window). */
+    templateId: uuid("template_id").references((): AnyPgColumn => messageTemplates.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
-  (t) => [index("messages_conversation_created_idx").on(t.conversationId, t.createdAt)],
+  (t) => [
+    index("messages_conversation_created_idx").on(t.conversationId, t.createdAt),
+    uniqueIndex("messages_channel_message_id_uq").on(t.channelMessageId).where(sql`${t.channelMessageId} is not null`),
+  ],
 );
 
 export const toolOutcome = pgEnum("tool_outcome", ["ok", "refused", "failed"]);
@@ -1172,3 +1188,98 @@ export type PriceList = typeof priceLists.$inferSelect;
 export type PriceListStatus = (typeof priceListStatus.enumValues)[number];
 export type PriceListEntry = typeof priceListEntries.$inferSelect;
 export type ItemKind = (typeof itemKind.enumValues)[number];
+
+// ---------------------------------------------------------------------------
+// WhatsApp channel (implementation plan P6, migration M6). Provider: Twilio (D2).
+// The Twilio account SID and auth token live in env vars, never in the database.
+// ---------------------------------------------------------------------------
+
+export const channelConnectionStatus = pgEnum("channel_connection_status", ["active", "disabled"]);
+
+/**
+ * A seller's WhatsApp sender: a number registered as a WhatsApp sender in the
+ * platform's Twilio account. Inbound messages are routed to the account by the
+ * number they were sent to, so a number belongs to one account only.
+ */
+export const channelConnections = pgTable(
+  "channel_connections",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    /** "whatsapp" */
+    channel: text("channel").notNull().default("whatsapp"),
+    /** "twilio" */
+    provider: text("provider").notNull().default("twilio"),
+    /** Sender number, E.164 (e.g. +14155238886). */
+    senderNumber: text("sender_number").notNull(),
+    displayName: text("display_name"),
+    /** Optional Twilio Messaging Service SID (MG...); when set, sends go through it. */
+    messagingServiceSid: text("messaging_service_sid"),
+    /** The market this number serves. Null = every market without its own number. */
+    marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
+    status: channelConnectionStatus("status").notNull().default("active"),
+    /**
+     * Team phones (E.164) that may test the draft agent on this number. Their
+     * messages open test-lab conversations, never touch real leads, and work
+     * before the account is live.
+     */
+    testerNumbers: text("tester_numbers").array().notNull().default(sql`'{}'::text[]`),
+    lastInboundAt: timestamp("last_inbound_at", { withTimezone: true }),
+    lastOutboundAt: timestamp("last_outbound_at", { withTimezone: true }),
+    /** The latest send error, cleared by the next successful send. */
+    lastError: text("last_error"),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("channel_connections_channel_sender_uq").on(t.channel, t.senderNumber),
+    index("channel_connections_account_idx").on(t.accountId),
+  ],
+);
+
+export const templatePurpose = pgEnum("template_purpose", ["opener", "follow_up"]);
+export const templateStatus = pgEnum("template_status", ["pending", "approved", "rejected"]);
+
+/**
+ * WhatsApp message templates (Twilio Content templates, HX...). The only
+ * messages allowed outside the 24-hour window. Variables: {{1}} = the lead's
+ * first name, {{2}} = the seller's trade name.
+ */
+export const messageTemplates = pgTable(
+  "message_templates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    /** Twilio Content SID (HX...). */
+    contentSid: text("content_sid").notNull(),
+    name: text("name").notNull(),
+    language: text("language").notNull(),
+    purpose: templatePurpose("purpose").notNull(),
+    /** Template text with {{n}} placeholders, shown in the app and stored on sent messages. */
+    body: text("body").notNull(),
+    /** WhatsApp category, e.g. MARKETING or UTILITY. */
+    category: text("category"),
+    status: templateStatus("status").notNull().default("pending"),
+    rejectionReason: text("rejection_reason"),
+    statusCheckedAt: timestamp("status_checked_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex("message_templates_account_content_uq").on(t.accountId, t.contentSid),
+    index("message_templates_account_purpose_idx").on(t.accountId, t.purpose, t.language),
+  ],
+);
+
+export type ChannelConnection = typeof channelConnections.$inferSelect;
+export type MessageTemplate = typeof messageTemplates.$inferSelect;
+export type TemplatePurpose = (typeof templatePurpose.enumValues)[number];
+export type TemplateStatus = (typeof templateStatus.enumValues)[number];

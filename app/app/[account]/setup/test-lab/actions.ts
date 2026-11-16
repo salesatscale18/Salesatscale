@@ -46,7 +46,8 @@ export async function sendTestMessageAction(form: FormData) {
   const text = String(form.get("text") ?? "").trim();
   if (!isUuid(conversationId)) redirect(path(a.account.slug));
   const conv = await getConversation(appDb, a.account.id, conversationId);
-  if (!conv || !conv.isTest) redirect(path(a.account.slug));
+  // WhatsApp test chats are driven from the tester's phone, not from this composer.
+  if (!conv || !conv.isTest || conv.channel !== "testlab") redirect(path(a.account.slug));
   const back = `${path(a.account.slug)}?c=${conversationId}`;
   if (!text) redirect(back);
   // While a person handles the chat the model is not called, so no key is needed.

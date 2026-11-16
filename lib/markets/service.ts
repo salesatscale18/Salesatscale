@@ -7,6 +7,7 @@
  * is needed; the unique partial index markets_one_home_uq makes that safe
  * when several requests do it at once.
  */
+import { connectionForMarket } from "@/lib/channels/connections";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -204,11 +205,12 @@ export type MarketView = {
 export async function getMarketView(db: Db, accountId: string, marketId: string): Promise<MarketView | null> {
   const market = await getMarket(db, accountId, marketId);
   if (!market) return null;
-  const [[account], orderForm, legal, live] = await Promise.all([
+  const [[account], orderForm, legal, live, wa] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     getOrderFormSettings(db, accountId),
     marketLegal(db, accountId, market.id),
     market.priceListLineageId ? livePriceList(db, accountId, market.priceListLineageId) : Promise.resolve(null),
+    connectionForMarket(db, accountId, market.id),
   ]);
   if (!account) return null;
   const settings = effectiveSettings(accountDefaultsFrom(account, orderForm), market, live?.list ?? null);
@@ -217,7 +219,7 @@ export async function getMarketView(db: Db, accountId: string, marketId: string)
     settings,
     livePriceList: live ? { name: live.list.name } : null,
     legalLanguages: [...new Set(legal.map((s) => s.language))],
-    whatsappNumber: null,
+    whatsappNumber: wa?.senderNumber ?? null,
   });
   return {
     market,

@@ -213,12 +213,14 @@ describe("company, users, settings and go live", () => {
       // Fresh account: nothing set up.
       const fresh = await loadGoLive(db, (await getAccountById(db, other))!);
       expect(fresh.ready).toBe(false);
-      expect(fresh.checks.filter((c) => c.state === "fail").map((c) => c.id)).toEqual(["company", "catalog", "agent", "knowledge", "legal", "test_lab"]);
+      expect(fresh.checks.filter((c) => c.state === "fail" && c.blocking).map((c) => c.id)).toEqual(["company", "catalog", "agent", "knowledge", "legal", "test_lab"]);
       expect(fresh.checks.find((c) => c.id === "payments")!.state).toBe("pass"); // card is on by default
+      // No WhatsApp number yet: shown as failing, never blocking.
+      expect(fresh.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "fail", blocking: false, fixPath: "/settings?section=whatsapp" });
 
       // Polar: company, catalog and English legal text exist from earlier tests.
       let r = await loadGoLive(db, (await getAccountById(db, acc))!);
-      expect(r.checks.filter((c) => c.state === "fail").map((c) => c.id)).toEqual(["agent", "knowledge", "legal", "test_lab"]);
+      expect(r.checks.filter((c) => c.state === "fail" && c.blocking).map((c) => c.id)).toEqual(["agent", "knowledge", "legal", "test_lab"]);
       expect(r.checks.find((c) => c.id === "legal")!.data.missing).toBe("HE");
 
       const refused = await goLive(db, as(owner), acc);
@@ -234,7 +236,7 @@ describe("company, users, settings and go live", () => {
       await db.insert(orderFormSettings).values({ accountId: acc, fields: ["company_name"], card: false, bankTransfer: true, bankDetails: null })
         .onConflictDoUpdate({ target: orderFormSettings.accountId, set: { card: false, bankTransfer: true, bankDetails: null } });
       r = await loadGoLive(db, (await getAccountById(db, acc))!);
-      expect(r.checks.filter((c) => c.state === "fail").map((c) => c.id)).toEqual(["payments"]);
+      expect(r.checks.filter((c) => c.state === "fail" && c.blocking).map((c) => c.id)).toEqual(["payments"]);
       expect((await goLive(db, as(owner), acc)).ok).toBe(false);
 
       await db.update(orderFormSettings).set({ bankDetails: "Leumi 800/123456" }).where(eq(orderFormSettings.accountId, acc));

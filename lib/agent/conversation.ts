@@ -14,6 +14,8 @@ import { atomic } from "@/db/atomic";
 import { conversations, leadEvents, leads, messages, users, type Conversation, type LeadStatus } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { conversationMessages } from "./service";
+import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
+import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 
 /** Lead statuses a take-over or hand-back may move. Won, lost and booked meetings stay as they are. */
 const ACTIVE: ReadonlySet<LeadStatus> = new Set(["new", "waiting_for_reply", "agent_handling", "human_handling"]);
@@ -26,7 +28,7 @@ export type HumanReplyResult =
   | { ok: true; messageId: string; delivery: Delivery | null }
   | { ok: false; reason: "not_found" | "closed" | "opted_out" | "not_taken_over" | "empty" };
 
-export type Delivery = { delivered: true } | { delivered: false; reason: string };
+export type { Delivery };
 
 async function load(db: Db, accountId: string, conversationId: string) {
   const [row] = await db
@@ -90,15 +92,18 @@ export async function handBack(db: Db, actor: Actor, accountId: string, conversa
 }
 
 /**
- * Sends a person's message on a real channel. A seam until P6: no channel is
- * connected yet, so nothing is sent and the message stays saved in the app.
+ * Sends a person's message on the conversation's real channel. WhatsApp: free
+ * text, only inside the 24-hour window (P6.3); the message stays saved in the
+ * app either way, with the delivery outcome on it.
  */
 export async function deliverHumanMessage(
+  db: Db,
   channel: string,
-  _message: { accountId: string; conversationId: string; leadId: string; messageId: string; body: string },
+  message: { accountId: string; conversationId: string; leadId: string; messageId: string; body: string },
+  transport: TwilioTransport | null = defaultTransport(),
 ): Promise<Delivery> {
-  void channel;
-  return { delivered: false, reason: "channel not connected" };
+  if (channel !== "whatsapp") return { delivered: false, reason: "channel not connected" };
+  return deliverText(db, transport, message, { statusCallback: statusCallbackUrl(publicBaseUrl()) });
 }
 
 /** A person writes to the buyer. Only after taking the conversation over. */
@@ -127,7 +132,7 @@ export async function addHumanReply(
   // Test-lab chats have no channel: the message is only stored.
   const delivery = conv.channel === "testlab"
     ? null
-    : await deliverHumanMessage(conv.channel, { accountId, conversationId: conv.id, leadId: lead.id, messageId, body });
+    : await deliverHumanMessage(db, conv.channel, { accountId, conversationId: conv.id, leadId: lead.id, messageId, body });
   return { ok: true, messageId, delivery };
 }
 
