@@ -17,13 +17,13 @@ afterEach(() => {
 
 describe("model roles", () => {
   it("uses the defaults, overridable per role by env", () => {
-    expect(modelFor("agent", {})).toBe("claude-opus-5-5");
+    expect(modelFor("agent", {})).toBe("claude-sonnet-5-5");
     expect(modelFor("pipeline", {})).toBe("claude-sonnet-5-5");
     expect(modelFor("pipeline_light", {})).toBe("claude-haiku-5-5");
     expect(modelFor("agent", { AGENT_MODEL: " claude-sonnet-5-5 " })).toBe("claude-sonnet-5-5");
     expect(modelFor("pipeline", { PIPELINE_MODEL: "" })).toBe("claude-sonnet-5-5");
     expect(configuredModels({ PIPELINE_LIGHT_MODEL: "x" }).map((m) => [m.role, m.model, m.env])).toEqual([
-      ["agent", "claude-opus-5-5", "AGENT_MODEL"],
+      ["agent", "claude-sonnet-5-5", "AGENT_MODEL"],
       ["pipeline", "claude-sonnet-5-5", "PIPELINE_MODEL"],
       ["pipeline_light", "x", "PIPELINE_LIGHT_MODEL"],
     ]);

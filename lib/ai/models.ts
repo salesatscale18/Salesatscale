@@ -11,7 +11,7 @@ export type ModelRole = (typeof MODEL_ROLES)[number];
 /** Default model per role, and the env var that overrides it. */
 export const ROLE_DEFAULTS: Record<ModelRole, { model: string; env: string }> = {
   /** The sales agent in buyer conversations. */
-  agent: { model: "claude-opus-5-5", env: "AGENT_MODEL" },
+  agent: { model: "claude-sonnet-5-5", env: "AGENT_MODEL" },
   /** Turning knowledge sources into a playbook draft. */
   pipeline: { model: "claude-sonnet-5-5", env: "PIPELINE_MODEL" },
   /** Cheap bulk steps of the pipeline (extraction, classification). */

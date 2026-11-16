@@ -6,7 +6,7 @@ Every model call names a role. The role decides the model id (`lib/ai/models.ts`
 
 | Role | Used for | Default | Env override |
 |---|---|---|---|
-| `agent` | The sales agent in buyer chats (new agent versions) | `claude-opus-5-5` | `AGENT_MODEL` |
+| `agent` | The sales agent in buyer chats (new agent versions) | `claude-sonnet-5-5` (user decision 2026-11-16; Opus 5.5 by setting `AGENT_MODEL`) | `AGENT_MODEL` |
 | `pipeline` | Turning knowledge into a playbook draft | `claude-sonnet-5-5` | `PIPELINE_MODEL` |
 | `pipeline_light` | Cheap bulk steps of the pipeline | `claude-haiku-5-5` | `PIPELINE_LIGHT_MODEL` |
 

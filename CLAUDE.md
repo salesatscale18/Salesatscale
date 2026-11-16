@@ -33,8 +33,9 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
 - Ask the user directly (not in the team channel): what will run, why, roughly
   how many model calls, and the estimated cost. An approval covers that request
   only; it does not carry over to later runs or to other sessions.
-- Budget: development spend stays within the budget the user sets. Until the user
-  sets an amount it is **$0**, so every paid run needs approval. Going over the
+- Budget: development spend stays within the budget the user sets. Current budget
+  (user, 2026-11-16): **$5 per month**, to learn the real rates; the user will raise it
+  later. Each paid run still needs the user's approval with an estimate first. Going over the
   budget needs the user's explicit approval. Report the estimated spend of
   approved runs in your `[PUSHED]` / `[DONE]` post.
 - Default to the free path: tests use the scripted model (`ScriptedLlm`). Never
