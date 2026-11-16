@@ -1,4 +1,4 @@
-import { boolean, date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
+import { bigint, boolean, date, index, integer, jsonb, pgEnum, pgTable, primaryKey, text, timestamp, uniqueIndex, uuid, type AnyPgColumn } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const userRole = pgEnum("user_role", ["user", "admin", "super_admin"]);
@@ -41,6 +41,9 @@ export type NotificationEvent = (typeof NOTIFICATION_EVENTS)[number];
 /** Per-event channels the seller wants to be told on. Only email for now. */
 export type NotificationPrefs = Partial<Record<NotificationEvent, { email: boolean }>>;
 
+/** Delivery lead time range, e.g. 3 to 5 business days (account default; a market may override). */
+export type DeliveryLeadTime = { minDays: number; maxDays: number; businessDays: boolean };
+
 /** A seller account (tenant). Every seller-side table carries account_id. */
 export const sellerAccounts = pgTable(
   "seller_accounts",
@@ -75,6 +78,8 @@ export const sellerAccounts = pgTable(
     contactHours: jsonb("contact_hours").$type<ContactHours>(),
     /** Null = defaults (email on for every event). */
     notifications: jsonb("notifications").$type<NotificationPrefs>(),
+    /** Null = not set. Used for the delivery ETA on quotes and the order form. */
+    deliveryLeadTime: jsonb("delivery_lead_time").$type<DeliveryLeadTime>(),
     rollout: rolloutMode("rollout").notNull().default("test_only"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
@@ -630,6 +635,150 @@ export const agentVersions = pgTable(
   ],
 );
 
+// ---------------------------------------------------------------------------
+// Knowledge sources (mvp-plan 3.14, P8): what the seller uploads, as text.
+// ---------------------------------------------------------------------------
+
+export const sourceKind = pgEnum("source_kind", ["website", "file", "text", "call"]);
+export const sourceStatus = pgEnum("source_status", ["processing", "ready", "needs_input", "partly_failed", "failed"]);
+
+/** Where a source came from. Only the fields of its kind are set. Uploaded files are not kept, only their name and size. */
+export type SourceOrigin = {
+  /** website */
+  url?: string;
+  allowedPaths?: string[];
+  /** file (and call transcripts uploaded as a file) */
+  fileName?: string;
+  mime?: string;
+  size?: number;
+  /** call */
+  rep?: string;
+  durationSec?: number;
+  callDate?: string;
+  consentConfirmed?: boolean;
+  consentConfirmedAt?: string;
+};
+
+export type SourceStats = { pages?: number; pagesRead?: number; chars?: number; rows?: number; sections?: number };
+
+/** A problem found while reading a source, with what the seller can do about it. */
+export type SourceProblem = { where: string; message: string; fix: string };
+
+/** One uploaded or fetched source. The whole cleaned text is stored here (no blob storage). */
+export const sources = pgTable(
+  "sources",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    kind: sourceKind("kind").notNull(),
+    title: text("title").notNull(),
+    language: text("language"),
+    status: sourceStatus("status").notNull().default("processing"),
+    origin: jsonb("origin").$type<SourceOrigin>().notNull().default({}),
+    extractedText: text("extracted_text").notNull().default(""),
+    /** sha256 of extracted_text; null = needs (re-)analysis. */
+    textHash: text("text_hash"),
+    stats: jsonb("stats").$type<SourceStats>().notNull().default({}),
+    problems: jsonb("problems").$type<SourceProblem[]>().notNull().default([]),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("sources_account_created_idx").on(t.accountId, t.createdAt)],
+);
+
+/** A source split into sections (a page, a web page, a heading, a call turn), each with a locator. */
+export const sourceSections = pgTable(
+  "source_sections",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    sourceId: uuid("source_id")
+      .notNull()
+      .references(() => sources.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+    /** Where in the source, e.g. "p.5", "/faq", "06:12". */
+    locator: text("locator").notNull(),
+    heading: text("heading"),
+    text: text("text").notNull(),
+    tokenEstimate: integer("token_estimate").notNull().default(0),
+  },
+  (t) => [
+    uniqueIndex("source_sections_source_position_uq").on(t.sourceId, t.position),
+    index("source_sections_account_idx").on(t.accountId),
+  ],
+);
+
+export const pipelineRunKind = pgEnum("pipeline_run_kind", ["facts", "playbook"]);
+export const pipelineRunStatus = pgEnum("pipeline_run_status", ["queued", "running", "done", "failed"]);
+
+/** Token counts of one run. */
+export type PipelineUsage = { input: number; output: number; cacheRead: number; cacheWrite: number };
+
+/** One AI pipeline run over sources (facts or playbook draft). Written by the pipeline lane. */
+export const pipelineRuns = pgTable(
+  "pipeline_runs",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    kind: pipelineRunKind("kind").notNull(),
+    status: pipelineRunStatus("status").notNull().default("queued"),
+    model: text("model"),
+    sourceIds: uuid("source_ids").array().notNull().default(sql`'{}'::uuid[]`),
+    inputHash: text("input_hash"),
+    usage: jsonb("usage").$type<PipelineUsage>(),
+    costEstimateMicros: bigint("cost_estimate_micros", { mode: "number" }),
+    error: text("error"),
+    startedAt: timestamp("started_at", { withTimezone: true }),
+    finishedAt: timestamp("finished_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("pipeline_runs_account_created_idx").on(t.accountId, t.createdAt)],
+);
+
+export const playbookSuggestionKind = pgEnum("playbook_suggestion_kind", ["goal", "field", "objection", "limit", "tone", "never", "discovery_question"]);
+export const playbookSuggestionStatus = pgEnum("playbook_suggestion_status", ["suggested", "accepted", "edited", "rejected"]);
+
+/** Where a suggestion came from: a quote at a locator in a source. */
+export type SuggestionEvidence = { sourceId: string; locator: string; quote: string };
+
+/** A playbook item suggested from sources, waiting for the seller (accept, edit or reject). */
+export const playbookSuggestions = pgTable(
+  "playbook_suggestions",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    runId: uuid("run_id").references(() => pipelineRuns.id, { onDelete: "set null" }),
+    kind: playbookSuggestionKind("kind").notNull(),
+    payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+    evidence: jsonb("evidence").$type<SuggestionEvidence[]>().notNull().default([]),
+    status: playbookSuggestionStatus("status").notNull().default("suggested"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    decidedByUserId: uuid("decided_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    decidedAt: timestamp("decided_at", { withTimezone: true }),
+  },
+  (t) => [index("playbook_suggestions_account_status_idx").on(t.accountId, t.status)],
+);
+
+export type Source = typeof sources.$inferSelect;
+export type NewSource = typeof sources.$inferInsert;
+export type SourceSection = typeof sourceSections.$inferSelect;
+export type SourceKind = (typeof sourceKind.enumValues)[number];
+export type SourceStatus = (typeof sourceStatus.enumValues)[number];
+export type PipelineRun = typeof pipelineRuns.$inferSelect;
+export type PlaybookSuggestion = typeof playbookSuggestions.$inferSelect;
+
 export const factStatus = pgEnum("fact_status", ["suggested", "approved", "rejected"]);
 
 /** Approved facts the agent may state, each with where it came from. P8 adds extraction from sources. */
@@ -643,6 +792,11 @@ export const knowledgeFacts = pgTable(
     topic: text("topic").notNull(),
     statement: text("statement").notNull(),
     sourceLabel: text("source_label"),
+    /** The source this fact was found in (P8); null for facts added by hand. */
+    sourceId: uuid("source_id").references(() => sources.id, { onDelete: "set null" }),
+    /** Where in the source, e.g. "p.5" or "06:12". */
+    sourceLocator: text("source_locator"),
+    language: text("language"),
     status: factStatus("status").notNull().default("approved"),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -650,6 +804,7 @@ export const knowledgeFacts = pgTable(
   (t) => [
     index("knowledge_facts_account_idx").on(t.accountId, t.status),
     index("knowledge_facts_account_topic_idx").on(t.accountId, t.topic),
+    index("knowledge_facts_source_idx").on(t.sourceId),
   ],
 );
 
@@ -1070,6 +1225,8 @@ export type MarketOverrides = {
   bankDetails?: string | null;
   /** ISO dates (YYYY-MM-DD) when the agent starts no conversations. */
   holidays?: string[];
+  /** Delivery lead time in this market (type only; resolved by the delivery lane). */
+  leadTime?: DeliveryLeadTime;
 };
 
 /**

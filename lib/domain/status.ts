@@ -91,6 +91,14 @@ export const STATUS = {
     live: { tone: "success", icon: "check-circle" },
     paused: { tone: "neutral", icon: "pause" },
   },
+  // Knowledge sources (P8): reading a website, file, note or call transcript.
+  source: {
+    processing: { tone: "agent", icon: "refresh-cw" },
+    ready: { tone: "success", icon: "check-circle" },
+    needs_input: { tone: "warning", icon: "clock" },
+    partly_failed: { tone: "danger", icon: "alert-triangle" },
+    failed: { tone: "danger", icon: "x-circle" },
+  },
   // Knowledge suggested from sources and recorded calls (P8), waiting for the admin.
   generated_suggestion: {
     suggested: { tone: "agent", icon: "sparkles" },
