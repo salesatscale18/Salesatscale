@@ -11,7 +11,7 @@ import { and, count, desc, eq, inArray, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  catalogItems, catalogVersions, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
+  catalogItems, catalogVersions, dealStates, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
   type OrderForm, type OrderFormField, type OrderSnapshot, type RecurringPeriod, type UnitCustom,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -25,6 +25,7 @@ import { priceWithList } from "@/lib/pricing/engine";
 import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
 import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesOf } from "@/lib/quotes/pricing";
 import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
+import { orderFormPrefill } from "./prefill";
 import { getOrderFormSettings } from "./settings";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
 
@@ -91,7 +92,7 @@ export async function createOrderForm(
   // The quote's market decides languages, legal texts and payment methods.
   const market = await resolveMarket(db, accountId, v.marketId ?? q.quote.marketId ?? q.lead.marketId);
   const itemIds = [...new Set(cur.lines.map((l) => l.catalogItemId).filter((x): x is string => !!x))];
-  const [settings, sections, [list], [catalogVersion], units] = await Promise.all([
+  const [settings, sections, [list], [catalogVersion], units, [deal]] = await Promise.all([
     getOrderFormSettings(db, accountId),
     marketLegal(db, accountId, market.id),
     v.priceListId ? db.select().from(priceLists).where(and(eq(priceLists.id, v.priceListId), eq(priceLists.accountId, accountId))) : Promise.resolve([]),
@@ -99,6 +100,7 @@ export async function createOrderForm(
     itemIds.length
       ? db.select({ id: catalogItems.id, unitCustom: catalogItems.unitCustom }).from(catalogItems).where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, itemIds)))
       : Promise.resolve([]),
+    db.select({ fields: dealStates.fields }).from(dealStates).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, q.lead.id))),
   ]);
   const eff = effectiveSettings(accountDefaultsFrom(account, settings), market, list ?? null);
   const languages = eff.languages.value;
@@ -126,11 +128,8 @@ export async function createOrderForm(
     validUntil: v.validUntil.toISOString(),
     legal: legal.map((s) => ({ key: s.sectionKey, title: s.title, version: s.version, body: s.body })),
     fields: settings.fields,
-    prefill: {
-      ...(q.lead.company ? { company_name: q.lead.company } : {}),
-      ...(q.lead.email ? { invoice_email: q.lead.email } : {}),
-      signatory_name: q.lead.fullName,
-    },
+    // What the conversation learned fills the form (lib/orders/prefill.ts maps deal-state keys to fields).
+    prefill: orderFormPrefill(q.lead, deal?.fields),
     paymentMethods: eff.paymentMethods.value,
     bankDetails: eff.bankDetails.value,
     supportContact: account.supportContact ?? null,
