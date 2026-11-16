@@ -25,6 +25,7 @@ function detail(c: GoLiveCheck): string {
       return t("golive.check.payments.ok", { methods });
     }
     case "test_lab": return ok ? t("golive.check.test_lab.ok", { count: d.count }) : t("golive.check.test_lab.fail");
+    case "whatsapp": return ok ? t("golive.check.whatsapp.ok", { count: d.numbers }) : t(d.numbers ? "golive.check.whatsapp.no_opener" : "golive.check.whatsapp.fail");
     default: return "";
   }
 }
@@ -104,7 +105,8 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
                 </span>
                 {c.state === "fail" && c.fixPath ? (
                   <a className={buttonClass("secondary", "sm")} href={`${base}${c.fixPath}`}>{t(`golive.fix.${c.id}` as MessageKey)}</a>
-                ) : c.state === "later" ? (
+                ) : null}
+                {!c.blocking ? (
                   <span className="sas-pill">{t("golive.not_blocking")}</span>
                 ) : null}
               </li>

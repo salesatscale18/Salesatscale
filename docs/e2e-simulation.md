@@ -23,7 +23,7 @@ npm run test:sim
 
 - `E2E_EMAIL` must be a **super admin** (listed in `SUPER_ADMIN_EMAILS`) on a Clerk **development** instance. `+clerk_test` addresses accept the code `424242` on dev instances.
 - Each run creates its own seller account, "E2E Polar <run id>", with its own leads and orders. Run it only where test data is acceptable. Today that is production, which is used for development and testing until go-live (decision D9).
-- `E2E_AGENT=1` adds the live agent chat in the test lab. It calls the Anthropic API and costs money, so it is off by default.
+- `E2E_AGENT=1` adds the live agent chat in the test lab. It calls the Anthropic API and costs money, so it is off by default and needs the user's approval before every run (CLAUDE.md, "AI spend").
 - An HTML report is written to `playwright-report/simulation/`.
 
 ## What it covers

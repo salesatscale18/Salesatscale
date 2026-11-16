@@ -11,6 +11,9 @@ import { t, type Locale } from "@/lib/i18n";
 import { inviteMember, parseNotifications, removeMember, saveContactHours, saveNotifications } from "@/lib/accounts/company";
 import { parseContactHours } from "@/lib/accounts/contact-hours";
 import { renewInvite } from "@/lib/accounts/service";
+import { addConnection, addTemplate, refreshTemplateStatuses, removeConnection, removeTemplate, setConnectionStatus, setTesterNumbers } from "@/lib/channels/connections";
+import { defaultTransport } from "@/lib/channels/twilio";
+import { rateLimit } from "@/lib/security/rate-limit";
 
 // ---------------------------------------------------------------------------
 // Users, notifications, contact hours. Every action re-resolves access with
@@ -129,4 +132,77 @@ export async function checkSampleAction(_prev: SampleState, form: FormData): Pro
   if (p.result === "created") return { status: "checked", result: "created", text: t("settings.sample.created") };
   if (p.result === "updated") return { status: "checked", result: "updated", text: t("settings.sample.updated", { name: p.leadName }) };
   return { status: "checked", result: "rejected", text: t("settings.sample.rejected", { reason: p.reason }) };
+}
+
+// ---------------------------------------------------------------------------
+// WhatsApp (P6.8): numbers and templates. Same pattern: access first, then
+// only this account's id goes to the service.
+// ---------------------------------------------------------------------------
+
+const whatsappBack = (slug: string, q: string) => `${settingsPath(slug, "whatsapp")}&${q}`;
+
+export async function addWhatsappNumberAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const marketId = String(form.get("marketId") ?? "");
+  const r = await addConnection(appDb, actorOf(access), access.account, {
+    senderNumber: String(form.get("senderNumber") ?? ""),
+    displayName: String(form.get("displayName") ?? ""),
+    messagingServiceSid: String(form.get("messagingServiceSid") ?? ""),
+    marketId: isUuid(marketId) ? marketId : null,
+  });
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, r.ok ? "saved=number" : `error=${r.reason}`));
+}
+
+export async function setWhatsappNumberStatusAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const id = String(form.get("connectionId") ?? "");
+  const status = String(form.get("status") ?? "") === "disabled" ? "disabled" : "active";
+  const ok = isUuid(id) && (await setConnectionStatus(appDb, actorOf(access), access.account.id, id, status));
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, ok ? `saved=${status}` : "error=not_found"));
+}
+
+export async function removeWhatsappNumberAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const id = String(form.get("connectionId") ?? "");
+  const ok = isUuid(id) && (await removeConnection(appDb, actorOf(access), access.account.id, id));
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, ok ? "saved=removed" : "error=not_found"));
+}
+
+export async function setTesterNumbersAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const id = String(form.get("connectionId") ?? "");
+  const r = isUuid(id)
+    ? await setTesterNumbers(appDb, actorOf(access), access.account, id, String(form.get("testers") ?? ""))
+    : { ok: false as const, reason: "not_found" as const };
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, r.ok ? "saved=testers" : `error=${r.reason}`));
+}
+
+export async function addTemplateAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const purpose = String(form.get("purpose") ?? "") === "follow_up" ? "follow_up" : "opener";
+  // Each add calls Twilio: 30 per account per hour.
+  if (!(await rateLimit(appDb, `wa-template:${access.account.id}`, { limit: 30, windowSeconds: 3600 })).ok) redirect(whatsappBack(access.account.slug, "error=rate_limited"));
+  const r = await addTemplate(appDb, defaultTransport(), actorOf(access), access.account.id, { contentSid: String(form.get("contentSid") ?? ""), purpose });
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, r.ok ? "saved=template" : `error=${r.reason}`));
+}
+
+export async function refreshTemplatesAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  if (!(await rateLimit(appDb, `wa-refresh:${access.account.id}`, { limit: 30, windowSeconds: 3600 })).ok) redirect(whatsappBack(access.account.slug, "error=rate_limited"));
+  await refreshTemplateStatuses(appDb, defaultTransport(), access.account.id);
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, "saved=refreshed"));
+}
+
+export async function removeTemplateAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const id = String(form.get("templateId") ?? "");
+  const ok = isUuid(id) && (await removeTemplate(appDb, actorOf(access), access.account.id, id));
+  revalidatePath(`/app/${access.account.slug}`, "layout");
+  redirect(whatsappBack(access.account.slug, ok ? "saved=template_removed" : "error=not_found"));
 }

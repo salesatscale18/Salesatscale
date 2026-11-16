@@ -1,6 +1,8 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { startWhatsAppConversation, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
+import { defaultTransport } from "@/lib/channels/twilio";
 import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
@@ -150,11 +152,28 @@ export async function handBackAction(form: FormData) {
   redirect(conversationBack(access.account.slug, from, conv, r && !r.ok ? r.reason : undefined));
 }
 
+/** Start on WhatsApp: sends the approved opening template after re-checking every gate on the server. */
+export async function startWhatsAppAction(form: FormData) {
+  const access = await requireAccount(String(form.get("slug") ?? ""));
+  const leadId = String(form.get("leadId") ?? "");
+  const base = `/app/${access.account.slug}/leads`;
+  if (!UUID.test(leadId)) redirect(base);
+  const r = await startWhatsAppConversation(appDb, defaultTransport(), actorOf(access), access.account.id, leadId, {
+    statusCallback: statusCallbackUrl(publicBaseUrl()),
+  });
+  revalidatePath(`${base}/${leadId}`);
+  redirect(r.ok ? `${base}/${leadId}?notice=started#conversation` : `${base}/${leadId}?wa_error=${r.reason}`);
+}
+
 export async function humanReplyAction(form: FormData) {
   const { access, conv, from } = await conversationForm(form);
   const text = String(form.get("text") ?? "");
   const r = conv ? await addHumanReply(appDb, { ...actorOf(access), userId: access.user.id }, access.account.id, conv.id, text) : null;
-  const notice = !r ? undefined : !r.ok ? r.reason : r.delivery && !r.delivery.delivered ? "saved_not_sent" : undefined;
+  const notice = !r ? undefined
+    : !r.ok ? r.reason
+    : !r.delivery ? undefined
+    : r.delivery.delivered ? "sent"
+    : r.delivery.reason === "window_closed" ? "window_closed" : "saved_not_sent";
   if (conv) revalidateConversation(access.account.slug, from, conv);
   redirect(conversationBack(access.account.slug, from, conv, notice));
 }

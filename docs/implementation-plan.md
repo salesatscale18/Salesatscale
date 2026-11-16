@@ -351,7 +351,7 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 | # | Decision | Needed by | Recommendation / default |
 |---|---|---|---|
 | D1 | LLM provider and model for the agent | P4.2 | **Default applied:** Anthropic, `claude-opus-5-5` (override with `AGENT_MODEL`), effort medium, server-side refusal fallback on. Behind `LlmClient`; a scripted fake keeps tests deterministic. Needs `ANTHROPIC_API_KEY` in Vercel. |
-| D2 | WhatsApp: Meta Cloud API or a BSP; coexistence for the pilot number | P6.2 | User decides; check coexistence early with the pilot seller. |
+| D2 | WhatsApp: Meta Cloud API or a BSP; coexistence for the pilot number | P6.2 | **Decided (user, 2026-11-16): Twilio.** One platform Twilio account (`TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN` in Vercel); each seller's sender number and Content templates are added in Settings › WhatsApp. REST over `fetch`, no SDK. Coexistence for the pilot number still to check. Setup: `docs/whatsapp.md`. |
 | D3 | Payment provider for the pilot | P10.2 (fake provider until then) | User decides after confirming where the pilot seller is registered. |
 | D4 | E-signature level | P5.4 | Checkbox + typed name (as designed) unless the pilot seller requires a provider. |
 | D5 | Retention periods | P10.3 | User decides. |
@@ -416,7 +416,15 @@ Update the row in the same push that finishes the step.
 | PC.C | done | determined-hopper | pilot pass | 2026-11-13 | Lane C: Overview (Needs you queue, period numbers, setup progress, recent activity, sidebar badge); Admin · Activity feed (filters, paging); setup steps show completion |
 | PC.D | done | determined-hopper | pilot pass | 2026-11-13 | Lane D: lead-card conversation (take over, reply as a person, hand back; delivery seam for P6); test-lab scenarios with pass/fail checks |
 | PC.E | done | determined-hopper | pilot pass | 2026-11-13 | Playwright full-use-case simulation against a deployed site (`docs/e2e-simulation.md`, `npm run test:sim`) |
-| P6.1–P6.8 | todo | | | | M6; needs D2, D6 → Milestone B |
+| P6.1 | done | lucid-volta | M6 push | 2026-11-16 | M6 `0011_whatsapp_channel`: `channel_connections` (sender number, optional Messaging Service, market, tester phones), `message_templates` (Twilio Content SID, purpose, approval), delivery columns on `messages`, `conversations.channel_address`. No `jobs` table yet (P6.7, D6 open) |
+| P6.2 | done | lucid-volta | M6 push | 2026-11-16 | Twilio adapter (`lib/channels/twilio.ts`): send text/templates, Content API approval, `X-Twilio-Signature` check. Webhooks `/api/webhooks/whatsapp` (inbound, deduped on MessageSid, agent turn in `after()`) and `/status`. Media is described to the agent, not downloaded |
+| P6.3 | done | lucid-volta | M6 push | 2026-11-16 | 24-hour window enforced in `deliverText`; WindowTimer and delivery status on the lead card and test lab |
+| P6.4 | done | lucid-volta | M6 push | 2026-11-16 | Lead card "Start on WhatsApp": consent, not opted out, account Live, contact hours, number, approved opener, live agent; each gate tested. Rollout option (test_only/half) not applied yet |
+| P6.5 | done | lucid-volta | M6 push | 2026-11-16 | STOP over WhatsApp opts out at once, sends one confirmation, later messages ignored. No jobs to cancel yet |
+| P6.6 | partial | lucid-volta | M6 push | 2026-11-16 | Take over / hand back / reply as a person now send on WhatsApp (in window). Conversations inbox and template composer outside the window: todo |
+| P6.7 | todo | | | | Job runner; needs D6. Sends are synchronous today; failures are stored on the message and the number |
+| P6.8 | done | lucid-volta | M6 push | 2026-11-16 | Settings › WhatsApp: numbers (on/off, last in/out, last error), tester phones, templates with approval status and refresh, webhook URL. Go-live and market WhatsApp checks are real (still not blocking) |
+| P6.T | done | lucid-volta | M6 push | 2026-11-16 | Test lab on WhatsApp: tester phones chat with the draft agent from a real phone before go-live; hidden test lead, never a real lead |
 | P7.1–P7.5 | todo | | | | M7 |
 | P8.1–P8.7 | todo | | | | M8 |
 | P9.1–P9.5 | todo | | | | M9 |

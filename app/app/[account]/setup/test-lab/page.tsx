@@ -17,7 +17,11 @@ import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
-import { ConversationControls } from "../../leads/[leadId]/conversation";
+import { ConversationControls, deliveryLabel, windowTimerProps } from "../../leads/[leadId]/conversation";
+import { WindowTimer } from "@/components/sas/record";
+import { conversationWindow } from "@/lib/channels/whatsapp";
+import { listConnections } from "@/lib/channels/connections";
+import { twilioConfig } from "@/lib/channels/twilio";
 
 // A turn can take several model rounds.
 export const maxDuration = 300;
@@ -49,11 +53,15 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const isAdmin = user.role === "super_admin";
   const base = `/app/${account.slug}`;
   const lab = `${base}/setup/test-lab`;
-  const [versions, chats, conv] = await Promise.all([
+  const [versions, chats, conv, waNumbers] = await Promise.all([
     listVersions(appDb, account.id),
     listTestConversations(appDb, account.id),
     isUuid(one(sp.c)) ? getConversation(appDb, account.id, one(sp.c)) : Promise.resolve(null),
+    listConnections(appDb, account.id),
   ]);
+  const testerNumbers = waNumbers.filter((c) => c.status === "active" && c.testerNumbers.length > 0);
+  const onWhatsapp = conv?.channel === "whatsapp";
+  const waWindow = onWhatsapp && conv && conv.status !== "closed" ? await conversationWindow(appDb, account.id, conv.id) : null;
   const draft = versions.find((v) => v.status === "draft");
   const scenario = conv?.isTest ? scenarioById(conv.scenario) : null;
   const scenarios = SCENARIOS.filter((s) => account.languages.includes(s.language));
@@ -102,6 +110,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 <h2 id="lab-chat-h" className="sas-heading">{t("lab.chat_with", { version: convVersion.version })}</h2>
                 <StatusPill object="agent_version" state={convVersion.status} />
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · {exactTime(conv.createdAt)}</span>
+                {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
+                {waWindow ? <WindowTimer {...windowTimerProps(waWindow, new Date())} /> : null}
               </div>
               <ChatThread label={t("lab.chat_with", { version: convVersion.version })}>
                 {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("lab.chat_empty")}</p> : null}
@@ -132,7 +142,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                           })}
                         </ol>
                       ) : null}
-                      <ChatMessage actor={actor} who={t(`lab.who.${actor}` as MessageKey)} time={exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
+                      <ChatMessage
+                        actor={actor} who={t(`lab.who.${actor}` as MessageKey)}
+                        time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${exactTime(m.createdAt)} · ${deliveryLabel(m)}` : exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
                         {m.body}
                       </ChatMessage>
                       {isAdmin && usage?.inputTokens !== undefined ? (
@@ -156,10 +168,17 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 <div className="sas-alert" role="status" style={{ margin: 16 }}><Icon name="pause" /><span>{t("lab.closed")}</span></div>
               ) : (
                 <>
-                  <Composer
-                    slug={account.slug} conversationId={conv.id} dir={dir(locale)}
-                    initialText={scenario && thread.length === 0 ? scenario.opening : undefined}
-                  />
+                  {onWhatsapp ? (
+                    <p className="sas-small" role="status" style={{ margin: 0, padding: 16, borderBlockStart: "1px solid var(--line)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                      <Icon name="message-circle" />{t("lab.wa.reply_from_phone", { phone: conv.channelAddress ?? "" })}
+                      <a href={`${lab}?c=${conv.id}#end`}>{t("lab.wa.refresh")}</a>
+                    </p>
+                  ) : (
+                    <Composer
+                      slug={account.slug} conversationId={conv.id} dir={dir(locale)}
+                      initialText={scenario && thread.length === 0 ? scenario.opening : undefined}
+                    />
+                  )}
                   {view ? (
                     <ConversationControls
                       slug={account.slug} from="lab" view={view} me={user} buyerName={t("lab.who.buyer")}
@@ -197,6 +216,24 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               </div>
               <Button type="submit" variant="primary"><Icon name="plus" />{t("lab.start")}</Button>
             </form>
+          </section>
+
+          <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-wa-h">
+            <h2 id="lab-wa-h" className="sas-heading">{t("lab.wa.title")}</h2>
+            {testerNumbers.length === 0 ? (
+              <span className="sas-small">{t("lab.wa.none")} <a href={`${base}/settings?section=whatsapp`}>{t("lab.wa.setup")}</a></span>
+            ) : (
+              <>
+                <span className="sas-small">{t(twilioConfig() ? "lab.wa.how" : "lab.wa.not_configured")}</span>
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {testerNumbers.map((c) => (
+                    <li key={c.id} className="sas-small">
+                      {t("lab.wa.pair", { testers: c.testerNumbers.join(", "), number: c.senderNumber })}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </section>
         </div>
 
@@ -293,7 +330,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   return (
                     <li key={c.id}>
                       <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined}>
-                        {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}
+                        {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}{c.channel === "whatsapp" ? ` · ${t("conv.channel.whatsapp")}` : ""}
                       </a>{" "}
                       <span className="sas-small">{relativeTime(c.updatedAt)}</span>
                     </li>

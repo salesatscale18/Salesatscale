@@ -7,6 +7,32 @@ import { displayName } from "@/lib/auth/display";
 import { exactTime } from "@/lib/format";
 import { isLocale, messages, t, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
+import { WindowTimer } from "@/components/sas/record";
+import type { WindowState } from "@/lib/channels/rules";
+
+/** "18h 20m" until the window closes. */
+export function remainingText(closesAt: Date, now: Date): string {
+  const mins = Math.max(0, Math.floor((closesAt.getTime() - now.getTime()) / 60000));
+  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+}
+
+/** The 24-hour window as the WindowTimer shows it: closing in the last two hours. */
+export function windowTimerProps(w: WindowState, now: Date) {
+  if (!w.open || !w.closesAt) return { state: "closed" as const };
+  const closing = w.closesAt.getTime() - now.getTime() < 2 * 60 * 60 * 1000;
+  return { state: closing ? ("closing" as const) : ("open" as const), remaining: remainingText(w.closesAt, now) };
+}
+
+/** Delivery of a message sent on a real channel, as a short label after its time. */
+export function deliveryLabel(m: { deliveryStatus: string | null; deliveryError: string | null }): string | null {
+  if (!m.deliveryStatus) return null;
+  const label = maybe(`conv.delivery.${m.deliveryStatus}`) ?? m.deliveryStatus;
+  if (m.deliveryStatus === "not_sent" && m.deliveryError) {
+    const why = maybe(`conv.delivery.reason.${m.deliveryError}`) ?? m.deliveryError;
+    return `${label}: ${why}`;
+  }
+  return label;
+}
 
 type Person = { firstName: string | null; lastName: string | null; email: string | null };
 const firstName = (p: Person) => p.firstName || displayName(p);
@@ -60,8 +86,8 @@ export function ConversationControls({
   return (
     <div className="sas-stack-2" style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
       {noticeText ? (
-        <div className={`sas-alert ${notice === "saved_not_sent" ? "sas-alert--success" : "sas-alert--warning"}`} role="status">
-          <Icon name={notice === "saved_not_sent" ? "check-circle" : "alert-triangle"} /><span>{noticeText}</span>
+        <div className={`sas-alert ${notice === "sent" || notice === "started" ? "sas-alert--success" : "sas-alert--warning"}`} role="status">
+          <Icon name={notice === "sent" || notice === "started" ? "check-circle" : "alert-triangle"} /><span>{noticeText}</span>
         </div>
       ) : null}
       {c.status === "closed" || leadOptedOut ? (
@@ -87,7 +113,7 @@ export function ConversationControls({
             />
             {suggestedReply || c.channel !== "testlab" ? (
               <span id={`${replyId}-hint`} className="sas-small">
-                {[suggestedReply ? t("conv.suggested") : null, c.channel !== "testlab" ? t("conv.not_sent_hint") : null].filter(Boolean).join(" ")}
+                {[suggestedReply ? t("conv.suggested") : null, c.channel === "whatsapp" ? t("conv.whatsapp_hint") : c.channel !== "testlab" ? t("conv.not_sent_hint") : null].filter(Boolean).join(" ")}
               </span>
             ) : null}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
@@ -107,8 +133,10 @@ export function ConversationControls({
 
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
-  slug, view, me, buyerName, leadOptedOut, notice,
+  slug, view, me, buyerName, leadOptedOut, notice, chatWindow,
 }: {
+  /** WhatsApp only: the 24-hour window of an active conversation. */
+  chatWindow?: WindowState | null;
   slug: string;
   view: ConversationView;
   me: Person;
@@ -122,16 +150,18 @@ export function ConversationPanel({
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
         <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
         <span className="sas-chip">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>
+        {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
       </div>
       <ChatThread label={t("conv.label")}>
         {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
         {thread.map(({ message: m, calls }) => {
           const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
+          const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
           const who = actor === "buyer" ? buyerName : actor === "agent" ? t("conv.who.agent") : actor === "human" ? (author ? displayName(author) : t("conv.who.team")) : t("conv.who.system");
           return (
             <ChatMessage
-              key={m.id} actor={actor} who={who} time={exactTime(m.createdAt)}
+              key={m.id} actor={actor} who={who} time={delivery ? `${exactTime(m.createdAt)} · ${delivery}` : exactTime(m.createdAt)}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
               trace={actor === "agent" ? traceChips(calls) : undefined}
             >

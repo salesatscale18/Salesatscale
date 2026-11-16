@@ -125,13 +125,13 @@ export type GoLiveFacts = {
   livePriceList: { name: string } | null;
   /** Languages with at least one legal text that applies in this market. */
   legalLanguages: string[];
-  /** The market's WhatsApp number. Comes with the WhatsApp channel; always null for now. */
+  /** The active WhatsApp number this market sends from (its own, else the account default), or null. */
   whatsappNumber: string | null;
 };
 
 /**
  * The market's go-live checks (canvas: Markets, "Go-live checks · 3 of 5").
- * The WhatsApp check is shown but not blocking until the WhatsApp channel is connected.
+ * The WhatsApp check is shown but not blocking: a market can go live while its number waits for approval.
  */
 export function marketGoLiveChecks(f: GoLiveFacts): GoLiveCheck[] {
   const m = f.market;
@@ -173,7 +173,7 @@ export function marketGoLiveChecks(f: GoLiveFacts): GoLiveCheck[] {
       label: "WhatsApp number",
       ok: !!f.whatsappNumber,
       blocking: false,
-      detail: f.whatsappNumber ? null : WHATSAPP_LATER,
+      detail: f.whatsappNumber ? f.whatsappNumber : "Connect a number in Settings › WhatsApp.",
     },
   ];
 }

@@ -176,8 +176,10 @@ describe("go-live checks", () => {
       ["payment_methods", true, true],
       ["whatsapp", false, false],
     ]);
-    expect(checks[4].detail).toBe("Available once WhatsApp is connected.");
+    expect(checks[4].detail).toBe("Connect a number in Settings › WhatsApp.");
     expect(canGoLive(checks)).toBe(true);
+    const connected = marketGoLiveChecks(facts({ whatsappNumber: "+14155238886" }));
+    expect(connected[4]).toMatchObject({ ok: true, detail: "+14155238886" });
   });
 
   it("needs a live, assigned price list", () => {

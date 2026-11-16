@@ -14,6 +14,9 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
 import { ConversationPanel } from "./conversation";
 import { latestConversationForLead } from "@/lib/agent/conversation";
+import { WhatsAppStart } from "./whatsapp-start";
+import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
+import { defaultTransport } from "@/lib/channels/twilio";
 import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
 import { formatMoney } from "@/lib/domain/money";
 
@@ -43,6 +46,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "conversation.taken_over": "user",
   "conversation.handed_back": "sparkles",
   "conversation.human_reply": "message-square",
+  "conversation.started": "send",
 };
 
 /** Lead card (canvas: Main, LeadEmpty): the latest conversation with take over / hand back, deal state, quotes and timeline. */
@@ -59,7 +63,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -68,8 +72,12 @@ export default async function LeadCardPage({
     getDealState(appDb, account.id, leadId),
     latestConversationForLead(appDb, account.id, leadId),
     listMarkets(appDb, account.id),
+    openerFacts(appDb, defaultTransport(), account.id, leadId),
   ]);
   if (!row) notFound();
+  const waWindow = conversation?.conversation.channel === "whatsapp" && conversation.conversation.status !== "closed"
+    ? await conversationWindow(appDb, account.id, conversation.conversation.id)
+    : null;
   const { lead, owner, creator } = row;
   // A lead without a market belongs to the home market (listMarkets puts it first).
   const leadMarket = (row.market ? marketList.find((m) => m.id === row.market!.id) : null) ?? marketList[0];
@@ -125,8 +133,15 @@ export default async function LeadCardPage({
         </header>
         <div className="sas-lead__body">
           <div className="sas-lead__main">
+            {opener ? (
+              <WhatsAppStart
+                slug={account.slug} leadId={lead.id} refusal={opener.refusal} templateName={opener.template?.name ?? null}
+                buyerName={lead.fullName} error={typeof sp.wa_error === "string" ? sp.wa_error : undefined}
+              />
+            ) : null}
             {conversation ? (
               <ConversationPanel
+                chatWindow={waWindow}
                 slug={account.slug} view={conversation} me={me} buyerName={lead.fullName}
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
               />
