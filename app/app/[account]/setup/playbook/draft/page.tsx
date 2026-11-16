@@ -8,7 +8,7 @@ import { spendStateForRequest } from "@/lib/ai/usage";
 import { t, type MessageKey } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
 import {
-  failStaleRuns, latestSuggestions, listRuns, locateEvidence, planAnalysis, runData, type PlaybookRunResult, type Suggestion,
+  failStaleRuns, latestSuggestions, limitPreviews, listRuns, locateEvidence, planAnalysis, runData, type PlaybookRunResult, type Suggestion,
 } from "@/lib/pipeline/service";
 import type { SuggestionKind } from "@/lib/pipeline/validate";
 import { AnalyzePanel } from "../../sources/analyze";
@@ -34,7 +34,7 @@ const DONE: Record<string, MessageKey> = {
   accepted_all: "draft.done.accepted_all", saved: "draft.done.saved",
 };
 const ERRORS: Record<string, MessageKey> = {
-  missing: "draft.error.missing", required: "draft.error.required", too_long: "draft.error.too_long", discount: "draft.error.discount", none_accepted: "draft.error.none_accepted",
+  missing: "draft.error.missing", required: "draft.error.required", qty: "draft.error.qty", applied: "draft.error.applied", too_long: "draft.error.too_long", discount: "draft.error.discount", none_accepted: "draft.error.none_accepted",
 };
 
 /**
@@ -59,7 +59,10 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
   const editId = one(sp.edit);
   const done = DONE[one(sp.done)];
   const error = ERRORS[one(sp.error)];
-  const links = await locateEvidence(appDb, account.id, account.slug, items.flatMap((s) => s.evidence));
+  const [links, limits] = await Promise.all([
+    locateEvidence(appDb, account.id, account.slug, items.flatMap((s) => s.evidence)),
+    limitPreviews(appDb, account.id, items),
+  ]);
   const result = run ? (runData(run)?.result as PlaybookRunResult | undefined) : undefined;
   const calls = result?.callsInCorpus ?? 0;
   const live = items.filter((s) => s.status !== "rejected");
@@ -69,7 +72,7 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
 
   const item = (s: Suggestion) => (
     <SuggestionItem
-      key={s.id} s={s} slug={account.slug} back="draft" editing={editId === s.id} links={links} calls={calls}
+      key={s.id} s={s} slug={account.slug} back="draft" editing={editId === s.id} links={links} calls={calls} limit={limits.get(s.id)}
       editHref={`${here}?edit=${s.id}#sg-${s.kind === "discovery_question" ? "field" : s.kind}`} cancelHref={`${here}#sg-${s.kind === "discovery_question" ? "field" : s.kind}`}
     />
   );

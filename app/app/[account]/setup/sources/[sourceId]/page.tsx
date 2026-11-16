@@ -7,7 +7,7 @@ import { exactTime, relativeTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { isUuid } from "@/lib/security/ids";
 import { getSource, listSections, listSourceFacts } from "@/lib/sources/service";
-import { customerNotes, latestSuggestions, locateEvidence, runData, suggestionsForSource, type PlaybookRunResult, type Suggestion } from "@/lib/pipeline/service";
+import { customerNotes, latestSuggestions, limitPreviews, locateEvidence, runData, sourceDisplayStatus, suggestionsForSource, type PlaybookRunResult, type Suggestion } from "@/lib/pipeline/service";
 import { SuggestionItem } from "../../playbook/draft/suggestion";
 import { deleteSourceAction, rereadWebsiteAction } from "../actions";
 import { NoteForm, RefreshWhileProcessing } from "../forms";
@@ -40,7 +40,11 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
     isCall ? customerNotes(appDb, account.id, source.id) : Promise.resolve([]),
     isCall ? latestSuggestions(appDb, account.id) : Promise.resolve(null),
   ]);
-  const evidenceLinks = await locateEvidence(appDb, account.id, account.slug, suggestions.flatMap((x) => x.evidence));
+  const [evidenceLinks, limits] = await Promise.all([
+    locateEvidence(appDb, account.id, account.slug, suggestions.flatMap((x) => x.evidence)),
+    limitPreviews(appDb, account.id, suggestions),
+  ]);
+  const factCounts = { suggested: facts.filter((f) => f.status === "suggested").length, approved: facts.filter((f) => f.status === "approved").length };
   const callsInCorpus = (latest?.run ? (runData(latest.run)?.result as PlaybookRunResult | undefined)?.callsInCorpus : 0) ?? 0;
   const marked = new Set(suggestions.flatMap((x) => x.evidence.filter((e) => e.sourceId === source.id).map((e) => e.locator)));
   const groups: { title: "sources.call.group.discovery" | "sources.call.group.objection" | "sources.call.group.pricing" | "sources.call.group.other"; kinds: string[] }[] = [
@@ -97,7 +101,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
           ) : null}
         </div>
         <div className="sas-page-head__actions" style={{ alignItems: "center" }}>
-          <StatusPill object="source" state={source.status} />
+          <StatusPill object="source" state={sourceDisplayStatus(source.status, factCounts)} />
           {source.kind === "website" ? (
             <form action={rereadWebsiteAction}>{hidden}<button type="submit" className={buttonClass("secondary", "sm")} disabled={source.status === "processing"}>{t("sources.reread")}</button></form>
           ) : null}
@@ -199,7 +203,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
                     <ul className="sas-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
                       {list.map((x) => (
                         <SuggestionItem
-                          key={x.id} s={x} slug={account.slug} back={`source:${source.id}`} editing={editId === x.id} links={evidenceLinks} calls={callsInCorpus}
+                          key={x.id} s={x} slug={account.slug} back={`source:${source.id}`} editing={editId === x.id} links={evidenceLinks} calls={callsInCorpus} limit={limits.get(x.id)}
                           editHref={`${here}?edit=${x.id}#sg-${g.kinds[0]}`} cancelHref={`${here}#sg-${g.kinds[0]}`}
                         />
                       ))}

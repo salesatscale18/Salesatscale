@@ -41,6 +41,11 @@ the run's model and `cost_estimate_micros`; both count toward the spend cap and 
   list, not `output_config.format`, because changing the output format between requests breaks the
   cache. Prompts are versioned in `lib/pipeline/prompts/`.
 - Corpora over about 150K tokens: stage 1 per source on `pipeline_light`, stage 2 on a trimmed corpus.
+- Limits suggested from sources are never "Never" rules. On approval each either updates a setting
+  (discount without approval, an item's custom-pricing quantity in the price list's draft, the
+  meeting or hand-over triggers) or becomes an approved exception (`playbook.exceptions`): the agent
+  may offer it, and a quote that uses it (`create_quote` `exception`) waits for approval with the
+  reason "Exception: <text>".
 - Every run needs a confirm click after the estimate; tests use `ScriptedPipelineLlm`.
 
 `aiUsageThisMonth(db, accountId)` and `platformUsageThisMonth(db)` (`lib/ai/usage.ts`) roll this up

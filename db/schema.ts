@@ -478,7 +478,9 @@ export const quotes = pgTable(
 export type ApprovalReason =
   | { kind: "price_missing"; sku: string }
   | { kind: "custom_pricing_qty"; sku: string; qty: number; from: number }
-  | { kind: "discount_over_limit"; requestedBp: number; limitBp: number };
+  | { kind: "discount_over_limit"; requestedBp: number; limitBp: number }
+  /** The agent used an approved exception from the playbook (create_quote `exception`). */
+  | { kind: "exception"; id: string; text: string };
 
 /** One priced version of a quote. Versions are immutable once created. */
 export const quoteVersions = pgTable(
@@ -589,6 +591,20 @@ export type PlaybookField = {
   example?: string;
 };
 
+/**
+ * A limit from the seller's sources that no structured setting covers (e.g.
+ * "Installation is free from 3 sites"), approved by the seller. The agent may
+ * offer it; a quote that uses it waits for the seller's approval.
+ */
+export type PlaybookException = {
+  id: string;
+  text: string;
+  /** Where it was heard or read. */
+  evidence?: { sourceId: string; locator: string; quote: string };
+  approvedAt: string;
+  approvedBy: string | null;
+};
+
 export type Playbook = {
   agentName: string;
   goal: string;
@@ -601,6 +617,8 @@ export type Playbook = {
   offerMeetingWhen: string;
   handOffWhen: string;
   neverDo: string[];
+  /** Approved exceptions (optional: older playbooks have none). */
+  exceptions?: PlaybookException[];
 };
 
 /**

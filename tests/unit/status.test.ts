@@ -21,7 +21,8 @@ const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   price_list: [["Draft", "neutral"], ["Live", "success"]],
   market: [["Setting up", "warning"], ["Live", "success"], ["Paused", "neutral"]],
   generated_suggestion: [["Suggested", "agent"], ["Accepted", "success"], ["Rejected", "neutral"]],
-  source: [["Processing", "agent"], ["Ready for review", "neutral"], ["Needs input", "warning"], ["Partly failed", "danger"], ["Failed", "danger"]],
+  source: [["Processing", "agent"], ["Ready for review", "neutral"], ["Approved", "success"], ["Needs input", "warning"], ["Partly failed", "danger"], ["Failed", "danger"]],
+  analysis_run: [["Running", "agent"], ["Completed", "neutral"], ["Stopped at spend cap", "warning"], ["Failed", "danger"]],
 };
 
 describe("status language", () => {

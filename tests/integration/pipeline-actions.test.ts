@@ -30,6 +30,8 @@ vi.mock("next/navigation", () => ({
 const pipeline = await import("@/app/app/[account]/setup/sources/pipeline-actions");
 const draft = await import("@/app/app/[account]/setup/playbook/draft/actions");
 const knowledge = await import("@/app/app/[account]/setup/knowledge/actions");
+const playbookActions = await import("@/app/app/[account]/setup/playbook/actions");
+const PlaybookPage = (await import("@/app/app/[account]/setup/playbook/page")).default;
 const SourcesPage = (await import("@/app/app/[account]/setup/sources/page")).default;
 const DraftPage = (await import("@/app/app/[account]/setup/playbook/draft/page")).default;
 const KnowledgePage = (await import("@/app/app/[account]/setup/knowledge/page")).default;
@@ -136,7 +138,7 @@ describe("pipeline screens and actions", () => {
         goal: { text: "Sell monitoring to food businesses.", text_he: "", evidence: [ev(noteId, note.locator, "Warranty")] },
         fields: [{ key: "signatory_role", label: "Signatory role", label_he: "", stage: "before_order_form", example_question: "Who signs?", example_question_he: "", asked_in_calls: 1, evidence: [ev(callId, call[0].locator, "How do you check")] }],
         objections: [{ objection: "We already pay for an alarm company", objection_he: "יש לנו כבר חברת אזעקה", answer: "An alarm covers doors, not temperature.", answer_he: "", outcome: "meeting booked in 1 of 1 calls", evidence: [ev(callId, call[1].locator, "We already pay for an alarm company.")] }],
-        limits: [{ rule: "waive the installation fee for fewer than 3 sites", rule_he: "", max_discount_percent: 0, evidence: [ev(callId, call[2].locator, "waive the installation fee")] }],
+        limits: [{ rule: "Installation is free from 3 sites", rule_he: "", setting: "other", max_discount_percent: 0, sku: "", quantity: 0, condition: "", evidence: [ev(callId, call[2].locator, "waive the installation fee")] }],
         tone: { text: "Short and practical.", text_he: "", evidence: [ev(callId, call[0].locator, "How do you")] },
         never: [], discovery_questions: [],
       } }, usage: { inputTokens: 900, outputTokens: 3000, cacheReadTokens: 5000, cacheWriteTokens: 0 } }),
@@ -175,7 +177,8 @@ describe("pipeline screens and actions", () => {
     const dPage = await html(DraftPage(params));
     expect(dPage).toContain("Generated draft.");
     expect(dPage).toContain("0 of 5 suggestions reviewed");
-    expect(dPage).toContain("Never waive the installation fee for fewer than 3 sites");
+    expect(dPage).toContain("Installation is free from 3 sites");
+    expect(dPage).toContain("Approved exception, needs approval per quote");
     expect(dPage).toContain("Asked in 1 of 1 calls");
     expect(dPage).toContain("יש לנו כבר חברת אזעקה");
     const draftVersion = (await ensureDraftVersion(db, acc)).version;
@@ -190,12 +193,36 @@ describe("pipeline screens and actions", () => {
     expect(await go(draft.editSuggestionAction(form({ slug, back: "draft", id: id("objection"), kind: "objection", objection: "", answer: "x" })))).toContain(`edit=${id("objection")}&error=required`);
     expect(await go(draft.editSuggestionAction(form({ slug, back: "draft", id: id("objection"), kind: "objection", objection: "We have an alarm", answer: "Doors, not temperature." })))).toContain("done=edited");
     expect(await go(draft.acceptAllSuggestionsAction(form({ slug, kinds: "field,discovery_question" })))).toContain("done=accepted_all&n=1");
-    expect(await go(draft.saveSuggestionsAction(form({ slug })))).toBe(`/app/${slug}/setup/playbook/draft?done=saved&n=4&v=${draftVersion}`);
+    expect(await go(draft.saveSuggestionsAction(form({ slug })))).toBe(`/app/${slug}/setup/playbook/draft?done=saved&n=3&v=${draftVersion}`);
     const p = (await ensureDraftVersion(db, acc)).playbook;
     expect(p.fields.find((f) => f.key === "signatory_role")).toMatchObject({ stage: "before_order_form" });
-    expect(p.neverDo).toContain("waive the installation fee for fewer than 3 sites");
+    expect(p.neverDo).toEqual([]);
+    expect(p.exceptions?.map((x) => x.text)).toEqual(["Installation is free from 3 sites"]);
     expect(p.objections).toContainEqual(expect.objectContaining({ objection: "We have an alarm" }));
     const statuses = await db.select({ s: playbookSuggestions.status }).from(playbookSuggestions).where(eq(playbookSuggestions.accountId, acc));
     expect(statuses.map((x) => x.s).sort()).toEqual(["accepted", "accepted", "accepted", "edited", "rejected"]);
+
+    // The Playbook editor shows the exception in Limits; saving keeps it, removing it there deletes it.
+    const pbPage = await html(PlaybookPage(params));
+    expect(pbPage).toContain("Approved exceptions");
+    expect(pbPage).toContain("Installation is free from 3 sites");
+    const exId = p.exceptions![0].id;
+    const editorForm = (keep: boolean) => form({
+      slug, agentName: p.agentName, goal: p.goal, tone: p.tone, orderForm: "on", meeting: "on", maxDiscount: "5", offerMeetingWhen: "x", handOffWhen: "y",
+      exceptionsShown: "1", ...(keep ? { exceptionId: exId } : {}),
+    });
+    expect(await go(playbookActions.savePlaybookAction({ status: "idle" }, editorForm(true)))).toContain("saved=1");
+    expect((await ensureDraftVersion(db, acc)).playbook.exceptions?.map((x) => x.id)).toEqual([exId]);
+    expect(await go(playbookActions.savePlaybookAction({ status: "idle" }, editorForm(false)))).toContain("saved=1");
+    expect((await ensureDraftVersion(db, acc)).playbook.exceptions ?? []).toEqual([]);
+  });
+
+  it("run status pills and the Approved source status on the Sources page", async () => {
+    const page = await html(SourcesPage(params));
+    expect(page).toContain('data-status="analysis_run.completed"');
+    expect(page).toContain(">Completed<");
+    // Every fact of the note is reviewed and one approved: Approved; the call has none approved: Ready for review.
+    expect(page).toContain('data-status="source.approved"');
+    expect(page).toContain('data-status="source.ready"');
   });
 });

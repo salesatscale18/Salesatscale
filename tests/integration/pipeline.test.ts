@@ -113,7 +113,7 @@ describe("knowledge -> playbook pipeline", () => {
         { key: "nothing", label: "No evidence", label_he: "", stage: "helpful", example_question: "", example_question_he: "", asked_in_calls: 0, evidence: [] },
       ],
       objections: [{ objection: "We already pay for an alarm company", objection_he: "", answer: "An alarm covers doors, not temperature. Offer 15 minutes with the partner.", answer_he: "", outcome: "meeting booked in 1 of 1 calls", evidence: [ev(callId, callLocs[2], "we already pay for an alarm company")] }],
-      limits: [{ rule: "Never waive the installation fee for fewer than 3 sites", rule_he: "", max_discount_percent: 0, evidence: [ev(callId, callLocs[4], "waive the installation fee")] }],
+      limits: [{ rule: "Installation is free from 3 sites", rule_he: "", setting: "other", max_discount_percent: 0, sku: "", quantity: 0, condition: "", evidence: [ev(callId, callLocs[4], "waive the installation fee")] }],
       tone: { text: "Short and practical.", text_he: "", evidence: [ev(callId, callLocs[3], "Let's book 15 minutes")] },
       never: [{ rule: "promise a delivery date", rule_he: "", evidence: [ev(noteId, noteLoc, "SNS-200")] }],
       discovery_questions: [{ label: "Cost of the last failure", question: "What did the last failure cost you?", question_he: "", asked_in_calls: 1, evidence: [ev(callId, callLocs[1], "We lost about")] }],
@@ -243,7 +243,7 @@ describe("knowledge -> playbook pipeline", () => {
   });
 
   it("accept, edit and reject suggestions; save merges accepted ones into the draft and keeps field keys", async () => {
-    await ensureDraftVersion(db, acc);
+    const discountBefore = (await ensureDraftVersion(db, acc)).playbook.maxDiscountBp;
     const { items } = await latestSuggestions(db, acc);
     const by = (kind: string, pred: (p: Record<string, unknown>) => boolean = () => true) => items.find((s) => s.kind === kind && pred(s.payload as unknown as Record<string, unknown>))!;
     // Another account cannot decide this account's suggestion.
@@ -252,14 +252,19 @@ describe("knowledge -> playbook pipeline", () => {
     expect(await decideSuggestion(db, actor, acc, by("never").id, "rejected")).toMatchObject({ status: "rejected" });
     expect(await editSuggestion(db, actor, acc, by("objection").id, { objection: "We have an alarm", answer: "" })).toEqual({ ok: false, error: "required" });
     expect(await editSuggestion(db, actor, acc, by("objection").id, { objection: "We have an alarm company", answer: "Alarms cover doors, not temperature." })).toEqual({ ok: true });
-    expect(await editSuggestion(db, actor, acc, by("limit").id, { rule: "waive installation for fewer than 3 sites", maxDiscountPercent: "60" })).toEqual({ ok: false, error: "discount" });
-    expect(await editSuggestion(db, actor, acc, by("limit").id, { rule: "waive installation for fewer than 3 sites", maxDiscountPercent: "8" })).toEqual({ ok: true });
+    // A limit that maps to no setting becomes an approved exception, applied when approved.
+    expect(await editSuggestion(db, actor, acc, by("limit").id, { rule: "" })).toEqual({ ok: false, error: "required" });
+    expect(await editSuggestion(db, actor, acc, by("limit").id, { rule: "Installation is free from 3 sites in one order" })).toEqual({ ok: true });
+    expect(await editSuggestion(db, actor, acc, by("limit").id, { rule: "again" })).toEqual({ ok: false, error: "applied" });
+    expect((await ensureDraftVersion(db, acc)).playbook.exceptions).toEqual([
+      expect.objectContaining({ id: by("limit").id, text: "Installation is free from 3 sites in one order", approvedBy: me.id, evidence: expect.objectContaining({ sourceId: callId }) }),
+    ]);
     // Accept all fields; limits are never accepted in bulk.
     expect(await acceptAllSuggestions(db, actor, acc, ["field", "discovery_question", "limit"])).toBe(5);
     expect((await db.select().from(playbookSuggestions).where(eq(playbookSuggestions.id, by("limit").id)))[0].status).toBe("edited");
 
     const { version, merged } = await saveSuggestionsToDraft(db, actor, acc);
-    expect(merged).toBe(8);
+    expect(merged).toBe(7); // the limit was applied when approved, not merged
     const draft = await ensureDraftVersion(db, acc);
     expect(draft.version).toBe(version);
     const p = draft.playbook;
@@ -271,8 +276,10 @@ describe("knowledge -> playbook pipeline", () => {
     expect(p.fields.find((f) => f.key === "company_id")).toBeTruthy();
     expect(p.fields.find((f) => f.key === "cost_of_the_last_failure")).toMatchObject({ stage: "optional", example: "What did the last failure cost you?" });
     expect(p.objections).toContainEqual(expect.objectContaining({ objection: "We have an alarm company", answer: "Alarms cover doors, not temperature." }));
-    expect(p.neverDo).toEqual(["waive installation for fewer than 3 sites"]);
-    expect(p.maxDiscountBp).toBe(800);
+    // Limits never become "Never" rules, and an exception changes no setting.
+    expect(p.neverDo).toEqual([]);
+    expect(p.maxDiscountBp).toBe(discountBefore);
+    expect(p.exceptions?.map((x) => x.text)).toEqual(["Installation is free from 3 sites in one order"]);
     expect(p.tone).not.toBe("Short and practical."); // tone was not accepted
 
     // Saving again changes nothing.

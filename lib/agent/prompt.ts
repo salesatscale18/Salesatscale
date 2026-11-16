@@ -37,6 +37,8 @@ A conversation ends well with ${outcomes || "the buyer's question answered"}.
 - Offer a meeting when: ${p.offerMeetingWhen || "the buyer prefers to talk to a person"}.
 - Hand off to a person (hand_off_to_human) when: ${p.handOffWhen || "the buyer asks for a person"}.
 ${p.neverDo.map((n) => `- Never: ${n}`).join("\n")}
+- Approved exceptions: special terms the seller approved. Offer one only when it applies to the buyer, and only these; never invent other special terms. When a quote uses one, pass its id as create_quote exception: the quote then waits for the seller's approval.
+${(p.exceptions ?? []).map((x) => `  - [${x.id}] ${x.text}`).join("\n") || "  - (none)"}
 
 ## Platform rules (always)
 - Never ask for or accept payment card details in chat. Payment happens on a secure page.

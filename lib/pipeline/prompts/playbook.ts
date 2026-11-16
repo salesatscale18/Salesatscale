@@ -5,7 +5,7 @@
  */
 import { PLAYBOOK_TOOL } from "./system";
 
-export const PROMPT_VERSION = "playbook-v1";
+export const PROMPT_VERSION = "playbook-v2";
 
 /** Field keys the order form prefill reads (lib/orders/prefill.ts): suggest these exact keys for those details. */
 export const ORDER_FORM_KEYS: Record<string, string> = {
@@ -25,9 +25,9 @@ Base the playbook first on how the seller's reps actually sell in the recorded c
 - goal: who the agent sells to and what a win is: a signed order form with payment, or a meeting with the seller's team.
 - fields: what the agent must learn from the buyer to qualify, to price and to fill the order form. For an order-form detail use exactly the key listed under order_form_keys. Reuse the key of a field in the current playbook when it is the same field. asked_in_calls counts the call transcripts in which a rep asked it.
 - objections: the objection as buyers say it and the answer that worked; outcome counts what followed over the calls.
-- limits: every price, discount, free extra or special term heard in a call or written in a document, worded to follow "Never" (for example "waive the installation fee for fewer than 3 sites"). These are only suggestions; the seller approves each one.
+- limits: every price, discount, free extra or special term heard in a call or written in a document, and when reps offer a meeting or hand over to a person. Say which setting it is: discount_cap (with the percentage), custom_pricing_quantity (with the item's SKU and the quantity), offer_meeting or hand_off (with the condition), or other (for example "Installation is free from 3 sites"). These are only suggestions; the seller approves each one.
 - tone: how the reps talk, in one sentence.
-- never: what the agent must never say or do, worded to follow "Never".
+- never: real prohibitions only: what the agent must never say or do, worded to follow "Never". Prices, discounts and special terms belong in limits, not here.
 - discovery_questions: good open questions reps ask that are not already a field.
 - Leave out anything the current playbook already says with the same meaning. Use only items you can support with evidence from the corpus.`;
 

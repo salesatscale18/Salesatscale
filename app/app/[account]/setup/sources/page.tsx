@@ -10,7 +10,7 @@ import { FILE_ACCEPT } from "@/lib/sources/files";
 import { failStaleSources, listSources } from "@/lib/sources/service";
 import { llmConfigured } from "@/lib/agent/llm";
 import { spendStateForRequest } from "@/lib/ai/usage";
-import { failStaleRuns, listRuns, planAnalysis, sourceAboutMap } from "@/lib/pipeline/service";
+import { failStaleRuns, listRuns, planAnalysis, sourceAboutMap, sourceDisplayStatus, sourceFactCounts } from "@/lib/pipeline/service";
 import { AnalyzePanel } from "./analyze";
 import { TRANSCRIPT_ACCEPT } from "@/lib/sources/transcript";
 import { deleteSourceAction, rereadWebsiteAction } from "./actions";
@@ -42,9 +42,9 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
   await Promise.all([failStaleSources(appDb, account.id), failStaleRuns(appDb, account.id)]);
-  const [rows, progress, plan, runs, about, spend] = await Promise.all([
+  const [rows, progress, plan, runs, about, spend, factCounts] = await Promise.all([
     listSources(appDb, account.id), setupProgress(appDb, account), planAnalysis(appDb, account.id),
-    listRuns(appDb, account.id), sourceAboutMap(appDb, account.id), spendStateForRequest(appDb, account.id),
+    listRuns(appDb, account.id), sourceAboutMap(appDb, account.id), spendStateForRequest(appDb, account.id), sourceFactCounts(appDb, account.id),
   ]);
   const base = `/app/${account.slug}`;
   const page = `${base}/setup/sources`;
@@ -138,7 +138,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                     </td>
                     <td>{languageWords(s.language)}</td>
                     <td style={{ whiteSpace: "normal", minWidth: 120 }}>{about.get(s.id) ?? (s.textHash ? "—" : <span className="sas-small">{t("sources.about.pending")}</span>)}</td>
-                    <td><StatusPill object="source" state={s.status} /></td>
+                    <td><StatusPill object="source" state={sourceDisplayStatus(s.status, factCounts.get(s.id))} /></td>
                     <td className="sas-small sas-num" title={exactTime(s.updatedAt)}>{relativeTime(s.updatedAt, now)}</td>
                     <td style={{ textAlign: "end" }}>
                       {confirmId === s.id ? (

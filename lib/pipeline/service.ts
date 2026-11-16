@@ -18,12 +18,15 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, like, lt, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
-  agentVersions, catalogVersions, knowledgeFacts, pipelineRuns, playbookSuggestions, sourceSections, sources,
+  agentVersions, catalogVersions, knowledgeFacts, markets, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources,
   type PipelineRun, type Playbook, type PlaybookSuggestion,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX } from "@/lib/agent/knowledge";
 import { ensureDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
+import { defaultPlaybook } from "@/lib/agent/playbook";
+import { ensureDraft, entriesOf, listPriceLists, setEntry } from "@/lib/pricing/price-lists";
+import { applyLimitToPlaybook, effectiveSetting, limitPreview, type LimitContext, type LimitPreview } from "./limits";
 import { itemsOf } from "@/lib/catalog/service";
 import { estimateCostMicros, modelFor } from "@/lib/ai/models";
 import { AiBudgetError, budgetGuarded, spendState } from "@/lib/ai/usage";
@@ -38,8 +41,8 @@ import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, PROMPT_VERSION as FACT
 import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_VERSION, type PlaybookStageData } from "./prompts/playbook";
 import { FACTS_TOOL, PLAYBOOK_TOOL, PROMPT_VERSION as SYSTEM_VERSION } from "./prompts/system";
 import {
-  normalizeStatement, parseFactsOutput, parsePlaybookOutput,
-  type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type SourceAbout, type SuggestionPayload,
+  limitSetting, normalizeStatement, parseFactsOutput, parsePlaybookOutput,
+  type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout, type SuggestionPayload,
 } from "./validate";
 
 /** Sources that go into the corpus: read, with text (a partly failed source still has usable text). */
@@ -283,9 +286,20 @@ async function finishRun(db: Db, accountId: string, id: string, model: string, u
   }).where(runWhere(accountId, id));
 }
 
+/** Errors of runs stopped by a spend limit (shown as "Stopped at spend cap"). */
+export const BUDGET_STOP = "The platform's monthly AI budget is used up.";
+export const CAP_STOP = "Stopped: this month's AI spend cap is reached.";
+
+/** The status pill of a run (design system "Analysis run"). */
+export function runPillState(r: Pick<PipelineRun, "status" | "error">): "running" | "completed" | "stopped_cap" | "failed" {
+  if (r.status === "queued" || r.status === "running") return "running";
+  if (r.status === "done") return "completed";
+  return r.error === BUDGET_STOP || r.error === CAP_STOP ? "stopped_cap" : "failed";
+}
+
 /** Plain words for a failed call. */
 function failureText(e: unknown): string {
-  if (e instanceof AiBudgetError) return "The platform's monthly AI budget is used up.";
+  if (e instanceof AiBudgetError) return BUDGET_STOP;
   if (e instanceof StageError) return e.message;
   return "The AI request failed. Try again later.";
 }
@@ -408,7 +422,12 @@ export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: st
     }
   } else result.facts = { reused: true, added: 0, contradictions: 0, gaps: 0 };
 
-  // Stage 2: playbook suggestions
+  // Stage 2: playbook suggestions. Stage 1 may have used up the account's cap: stop then.
+  if (runs.playbookRunId && runs.factsRunId && (await spendState(db, accountId))?.state === "capped") {
+    await finishRun(db, accountId, runs.playbookRunId, plan.model, noUsage(), 0, undefined, CAP_STOP);
+    result.failed = CAP_STOP;
+    return result;
+  }
   if (runs.playbookRunId) {
     const id = runs.playbookRunId;
     const calls = plan.sources.filter((s) => s.kind === "call").length;
@@ -649,6 +668,13 @@ const suggestionWhere = (accountId: string, id: string) => and(eq(playbookSugges
 /** Accept or reject one suggestion. Null when it is not this account's. */
 export async function decideSuggestion(db: Db, actor: Actor, accountId: string, id: string, status: "accepted" | "rejected" | "suggested", now = new Date()) {
   if (!isUuid(id)) return null;
+  const [before] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
+  if (!before) return null;
+  if (before.kind === "limit") {
+    // An approved limit has changed a setting: it is final here (change the setting where it lives).
+    if (before.status === "accepted" || before.status === "edited") return before;
+    if (status === "accepted") await applyLimit(db, actor, accountId, before as Suggestion, now);
+  }
   const [row] = await db.update(playbookSuggestions)
     .set({ status, decidedByUserId: status === "suggested" ? null : actor.userId, decidedAt: status === "suggested" ? null : now })
     .where(suggestionWhere(accountId, id)).returning();
@@ -694,11 +720,28 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
     payload[f.name] = v;
   }
   if (kind === "field" && ["before_quote", "before_order_form", "optional"].includes(values.stage ?? "")) payload.stage = values.stage;
-  if (kind === "limit" && values.maxDiscountPercent !== undefined) {
-    const pct = values.maxDiscountPercent.trim() ? Number(values.maxDiscountPercent) : 0;
-    if (!Number.isFinite(pct) || pct < 0 || pct > 50) return { ok: false, error: "discount" };
-    payload.maxDiscountPercent = pct;
+  if (kind === "limit") {
+    if (row.status === "accepted" || row.status === "edited") return { ok: false, error: "applied" };
+    // The value of the setting the limit updates.
+    const setting = limitSetting(payload as unknown as LimitPayload);
+    if (setting === "discount") {
+      const pct = Number((values.maxDiscountPercent ?? "").trim());
+      if (!Number.isFinite(pct) || pct <= 0 || pct > 50) return { ok: false, error: "discount" };
+      payload.maxDiscountPercent = pct;
+    }
+    if (setting === "custom_pricing") {
+      const qty = Number((values.qty ?? "").trim());
+      if (!Number.isInteger(qty) || qty < 1 || qty > 100_000) return { ok: false, error: "qty" };
+      payload.qty = qty;
+    }
+    if (setting === "offer_meeting" || setting === "hand_off") {
+      const when = (values.when ?? "").replace(/\s+/g, " ").trim();
+      if (!when) return { ok: false, error: "required" };
+      if (when.length > 300) return { ok: false, error: "too_long" };
+      payload.when = when;
+    }
   }
+  if (kind === "limit") await applyLimit(db, actor, accountId, { ...row, payload } as Suggestion, now);
   await db.update(playbookSuggestions).set({ payload, status: "edited", decidedByUserId: actor.userId, decidedAt: now }).where(suggestionWhere(accountId, id));
   await writeAudit(db, actor, { accountId, action: "playbook.suggestion_edited", targetType: "playbook_suggestion", targetId: id, details: { kind } });
   return { ok: true };
@@ -711,7 +754,8 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
  */
 export async function saveSuggestionsToDraft(db: Db, actor: Actor, accountId: string): Promise<{ version: number; merged: number }> {
   const { items } = await latestSuggestions(db, accountId);
-  const chosen = items.filter((s) => s.status === "accepted" || s.status === "edited");
+  // Limits were applied when approved (applyLimit); everything else merges here.
+  const chosen = items.filter((s) => (s.status === "accepted" || s.status === "edited") && s.kind !== "limit");
   const draft = await ensureDraftVersion(db, accountId);
   if (chosen.length === 0) return { version: draft.version, merged: 0 };
   const ids = [...new Set(chosen.flatMap((s) => s.evidence.map((e) => e.sourceId)))].filter(isUuid);
@@ -726,4 +770,101 @@ export async function saveSuggestionsToDraft(db: Db, actor: Actor, accountId: st
   await saveDraftPlaybook(db, accountId, playbook, "Suggestions from your sources");
   await writeAudit(db, actor, { accountId, action: "playbook.suggestions_saved", targetType: "agent_version", targetId: draft.id, details: { version: draft.version, merged: chosen.length } });
   return { version: draft.version, merged: chosen.length };
+}
+
+// ---------------------------------------------------------------------------
+// Limits: preview and apply on approval (lib/pipeline/limits.ts)
+// ---------------------------------------------------------------------------
+
+/** Today's values the limits would change: the working playbook and the custom-pricing quantity per SKU. */
+export async function limitContext(db: Db, accountId: string, skus: string[]): Promise<LimitContext> {
+  const pb = await workingPlaybook(db, accountId)
+    ?? (await db.select({ name: sellerAccounts.tradeName, bp: sellerAccounts.maxDiscountBp }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId))
+      .then(([a]) => (a ? defaultPlaybook(a.name, a.bp) : null)));
+  const customPricing: LimitContext["customPricing"] = new Map();
+  const wanted = [...new Set(skus.map((x) => x.toUpperCase()))];
+  if (wanted.length) {
+    const [lists, ms] = await Promise.all([
+      listPriceLists(db, accountId),
+      db.select({ lineageId: markets.priceListLineageId, isHome: markets.isHome }).from(markets).where(eq(markets.accountId, accountId)),
+    ]);
+    // The home market's price list first, then the others.
+    const home = new Set(ms.filter((m) => m.isHome && m.lineageId).map((m) => m.lineageId!));
+    const ordered = [...lists.filter((l) => home.has(l.lineageId)), ...lists.filter((l) => !home.has(l.lineageId))];
+    for (const l of ordered) {
+      const entries = await entriesOf(db, accountId, l.shown.id);
+      for (const sku of wanted) {
+        const e = entries.find((x) => x.sku === sku);
+        if (e && !customPricing.has(sku)) customPricing.set(sku, { lineageId: l.lineageId, listName: l.shown.name, current: e.customPricingFromQty });
+      }
+    }
+  }
+  return {
+    maxDiscountBp: pb?.maxDiscountBp ?? 0, offerMeetingWhen: pb?.offerMeetingWhen ?? "", handOffWhen: pb?.handOffWhen ?? "", customPricing,
+  };
+}
+
+/** What approving each limit of the list changes, by suggestion id. */
+export async function limitPreviews(db: Db, accountId: string, items: Suggestion[]): Promise<Map<string, LimitPreview>> {
+  const limits = items.filter((s) => s.payload.kind === "limit") as (Suggestion & { payload: LimitPayload })[];
+  if (limits.length === 0) return new Map();
+  const ctx = await limitContext(db, accountId, limits.flatMap((s) => (s.payload.sku ? [s.payload.sku] : [])));
+  return new Map(limits.map((s) => [s.id, limitPreview(s.payload, ctx)]));
+}
+
+/**
+ * Applies an approved limit: the discount cap, meeting or hand-over triggers
+ * and exceptions go into the draft playbook; a custom-pricing quantity goes
+ * into the price list's draft for that item. Never touches neverDo.
+ */
+async function applyLimit(db: Db, actor: Actor, accountId: string, s: Suggestion, now: Date) {
+  const p = s.payload as LimitPayload;
+  const ctx = await limitContext(db, accountId, p.sku ? [p.sku] : []);
+  const setting = effectiveSetting(p, ctx);
+  if (setting === "custom_pricing") {
+    const target = ctx.customPricing.get(p.sku!)!;
+    const draft = await ensureDraft(db, actor, accountId, target.lineageId);
+    const entry = draft ? (await entriesOf(db, accountId, draft.id)).find((e) => e.sku === p.sku) : undefined;
+    if (draft && entry) {
+      await setEntry(db, actor, accountId, target.lineageId, {
+        sku: entry.sku, oneTimeCharged: entry.oneTimeCharged, oneTimeMinor: entry.oneTimeMinor, oneTimeTiers: entry.oneTimeTiers,
+        recurringCharged: entry.recurringCharged, recurringMinor: entry.recurringMinor, recurringPeriod: entry.recurringPeriod, recurringTiers: entry.recurringTiers,
+        customPricingFromQty: p.qty ?? null,
+      });
+    }
+  } else {
+    const draft = await ensureDraftVersion(db, accountId);
+    const e = s.evidence[0];
+    const next = applyLimitToPlaybook(draft.playbook, p, setting, {
+      id: s.id, approvedAt: now.toISOString(), approvedBy: actor.userId, ...(e ? { evidence: { sourceId: e.sourceId, locator: e.locator, quote: e.quote } } : {}),
+    });
+    await saveDraftPlaybook(db, accountId, next);
+  }
+  await writeAudit(db, actor, { accountId, action: "playbook.limit_applied", targetType: "playbook_suggestion", targetId: s.id, details: { setting, rule: p.rule.slice(0, 200) } });
+}
+
+// ---------------------------------------------------------------------------
+// Sources: "Approved" once every fact found in a source is reviewed
+// ---------------------------------------------------------------------------
+
+/** Per source: how many of its facts are still suggested and how many are approved. */
+export async function sourceFactCounts(db: Db, accountId: string): Promise<Map<string, { suggested: number; approved: number }>> {
+  const rows = await db
+    .select({ sourceId: knowledgeFacts.sourceId, status: knowledgeFacts.status, n: sql<string>`count(*)` })
+    .from(knowledgeFacts)
+    .where(and(eq(knowledgeFacts.accountId, accountId), isNotNull(knowledgeFacts.sourceId)))
+    .groupBy(knowledgeFacts.sourceId, knowledgeFacts.status);
+  const out = new Map<string, { suggested: number; approved: number }>();
+  for (const r of rows) {
+    const c = out.get(r.sourceId!) ?? { suggested: 0, approved: 0 };
+    if (r.status === "suggested") c.suggested += Number(r.n);
+    if (r.status === "approved") c.approved += Number(r.n);
+    out.set(r.sourceId!, c);
+  }
+  return out;
+}
+
+/** The status a source shows: "approved" instead of "ready" when its facts are all reviewed and one is approved. */
+export function sourceDisplayStatus<S extends string>(status: S, counts: { suggested: number; approved: number } | undefined): S | "approved" {
+  return status === "ready" && counts && counts.suggested === 0 && counts.approved > 0 ? "approved" : status;
 }

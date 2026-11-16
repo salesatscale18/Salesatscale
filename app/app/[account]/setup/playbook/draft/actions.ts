@@ -40,7 +40,11 @@ export async function editSuggestionAction(form: FormData) {
   const values: Record<string, string> = {};
   for (const f of EDITABLE[kind]) values[f.name] = str(form, f.name);
   if (kind === "field") values.stage = str(form, "stage");
-  if (kind === "limit") values.maxDiscountPercent = str(form, "maxDiscountPercent");
+  if (kind === "limit") {
+    values.maxDiscountPercent = str(form, "maxDiscountPercent");
+    values.qty = str(form, "qty");
+    values.when = str(form, "when");
+  }
   const res = await editSuggestion(appDb, actorOf(a), a.account.id, id, values);
   if (!res.ok) back(a.account.slug, to, { edit: id, error: res.error }, `#sg-${kind}`);
   back(a.account.slug, to, { done: "edited" }, `#sg-${kind}`);

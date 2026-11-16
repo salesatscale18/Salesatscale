@@ -51,6 +51,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
   const [fields, setFields] = useState<FieldRow[]>(() => p.fields.map((f, i) => ({ id: i, key: f.key, label: f.label, stage: f.stage, example: f.example ?? "", hint: f.hint ?? "" })));
   const [objections, setObjections] = useState<ObjectionRow[]>(() => p.objections.map((o, i) => ({ id: i, objection: o.objection, answer: o.answer, source: o.source ?? "" })));
   const [never, setNever] = useState<NeverRow[]>(() => p.neverDo.map((text, i) => ({ id: i, text })));
+  const [exceptions, setExceptions] = useState(() => p.exceptions ?? []);
 
   const err = (name: string) => (e[name] ? <span className="sas-error" id={`pb-${name}-error`}>{e[name]}</span> : null);
   const invalid = (name: string) => ({ "aria-invalid": e[name] ? (true as const) : undefined, "aria-describedby": e[name] ? `pb-${name}-error` : undefined });
@@ -220,6 +221,25 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
                 <label className="sas-input-label" htmlFor="pb-handOffWhen">{t("playbook.handoff_when")}</label>
                 <textarea className="sas-textarea" id="pb-handOffWhen" name="handOffWhen" rows={3} maxLength={500} defaultValue={v.handOffWhen} aria-describedby="pb-handOffWhen-hint" />
                 <span className="sas-hint" id="pb-handOffWhen-hint">{t("playbook.handoff_always")}</span>
+              </div>
+              <div className="sas-stack-2">
+                <input type="hidden" name="exceptionsShown" value="1" />
+                <span className="sas-input-label" id="pb-exc-h">{t("playbook.exceptions")}</span>
+                <span className="sas-hint">{t("playbook.exceptions_hint")}</span>
+                {exceptions.length === 0 ? <span className="sas-small">{t("playbook.exceptions_empty")}</span> : (
+                  <ul className="sas-stack-2" aria-labelledby="pb-exc-h" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                    {exceptions.map((x) => (
+                      <li key={x.id} style={{ display: "flex", gap: 4, alignItems: "flex-start", padding: "8px 10px", borderRadius: 8, background: "var(--warning-soft)" }}>
+                        <input type="hidden" name="exceptionId" value={x.id} />
+                        <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
+                          <span dir="auto">{x.text}</span>
+                          <span className="sas-small" style={{ display: "block" }}>{t("playbook.exception_meta", { date: x.approvedAt.slice(0, 10) })}</span>
+                        </span>
+                        <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setExceptions((rs) => rs.filter((r) => r.id !== x.id))} aria-label={t("playbook.row.remove", { what: x.text })}><Icon name="x" /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             </>
           ))}

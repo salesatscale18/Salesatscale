@@ -161,8 +161,40 @@ export type SuggestionPayload =
   | { kind: "field"; key: string; label: string; labelHe: string; stage: FieldStage; example: string; exampleHe: string; askedInCalls: number }
   | { kind: "discovery_question"; label: string; question: string; questionHe: string; askedInCalls: number }
   | { kind: "objection"; objection: string; objectionHe: string; answer: string; answerHe: string; outcome: string }
-  | { kind: "limit"; rule: string; ruleHe: string; maxDiscountPercent: number }
+  | LimitPayload
   | { kind: "never"; rule: string; ruleHe: string };
+
+/**
+ * Which structured setting a limit updates once approved, or "exception" (an
+ * approved exception the agent may offer, each quote using it needing approval).
+ */
+export type LimitSetting = "discount" | "custom_pricing" | "offer_meeting" | "hand_off" | "exception";
+export type LimitPayload = {
+  kind: "limit"; rule: string; ruleHe: string; maxDiscountPercent: number;
+  /** Missing on suggestions stored before limits had a setting: see limitSetting(). */
+  setting?: LimitSetting;
+  sku?: string;
+  qty?: number;
+  when?: string;
+};
+
+const SKU_RE = /^[A-Za-z0-9][A-Za-z0-9._-]{0,39}$/;
+
+/** The setting a limit maps to, from what the model said; anything incomplete is an exception. */
+export function classifyLimit(raw: { setting?: string; pct?: number; sku?: string; qty?: number; when?: string }): Pick<LimitPayload, "setting" | "sku" | "qty" | "when" | "maxDiscountPercent"> {
+  const pct = raw.pct && Number.isFinite(raw.pct) ? Math.round(Math.min(50, Math.max(0, raw.pct)) * 10) / 10 : 0;
+  if ((raw.setting === "discount_cap" || raw.setting === "discount") && pct > 0) return { setting: "discount", maxDiscountPercent: pct };
+  if ((raw.setting === "custom_pricing_quantity" || raw.setting === "custom_pricing") && raw.sku && SKU_RE.test(raw.sku) && raw.qty && raw.qty >= 1) {
+    return { setting: "custom_pricing", sku: raw.sku.toUpperCase(), qty: Math.min(100_000, Math.round(raw.qty)), maxDiscountPercent: 0 };
+  }
+  if ((raw.setting === "offer_meeting" || raw.setting === "hand_off") && raw.when?.trim()) return { setting: raw.setting, when: raw.when.trim().slice(0, 300), maxDiscountPercent: 0 };
+  return { setting: "exception", maxDiscountPercent: 0 };
+}
+
+/** A stored limit's setting (older suggestions: a percentage is the discount cap, anything else an exception). */
+export function limitSetting(p: LimitPayload): LimitSetting {
+  return p.setting ?? (p.maxDiscountPercent > 0 ? "discount" : "exception");
+}
 
 export type CleanSuggestion = { payload: SuggestionPayload; evidence: Evidence[] };
 
@@ -229,8 +261,11 @@ export function parsePlaybookOutput(input: unknown, index: CorpusIndex): { sugge
     const x = rec(l);
     const rule = ruleText(x.rule);
     if (!rule) continue;
-    const pct = typeof x.max_discount_percent === "number" && Number.isFinite(x.max_discount_percent) ? Math.min(50, Math.max(0, x.max_discount_percent)) : 0;
-    push(normalizeStatement(rule), { kind: "limit", rule, ruleHe: s(x.rule_he, 200), maxDiscountPercent: Math.round(pct * 10) / 10 }, x.evidence);
+    const c = classifyLimit({
+      setting: s(x.setting, 40), pct: typeof x.max_discount_percent === "number" ? x.max_discount_percent : 0,
+      sku: s(x.sku, 40), qty: typeof x.quantity === "number" ? x.quantity : 0, when: s(x.condition, 300),
+    });
+    push(normalizeStatement(rule), { kind: "limit", rule, ruleHe: s(x.rule_he, 200), ...c }, x.evidence);
   }
   for (const n of list(r.never)) {
     const x = rec(n);
