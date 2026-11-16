@@ -24,6 +24,24 @@ Drizzle ORM + `@neondatabase/serverless` (neon-http), deployed on Vercel.
   it must check `role === "super_admin"` server-side and call `notFound()` otherwise.
   Super admins come only from the `SUPER_ADMIN_EMAILS` env var.
 
+## AI spend (Anthropic API key) — user rule, 2026-11-16
+- Anything in development or testing that spends money on the Anthropic API
+  needs the user's explicit approval **before** it runs. That includes: chatting
+  with the agent in the test lab (by hand or via Playwright, in any environment),
+  `npm run test:sim` with `E2E_AGENT=1`, sending WhatsApp messages the agent will
+  answer, and any script or one-off call that uses `ANTHROPIC_API_KEY`.
+- Ask the user directly (not in the team channel): what will run, why, roughly
+  how many model calls, and the estimated cost. An approval covers that request
+  only; it does not carry over to later runs or to other sessions.
+- Budget: development spend stays within the budget the user sets. Until the user
+  sets an amount it is **$0**, so every paid run needs approval. Going over the
+  budget needs the user's explicit approval. Report the estimated spend of
+  approved runs in your `[PUSHED]` / `[DONE]` post.
+- Default to the free path: tests use the scripted model (`ScriptedLlm`). Never
+  add a test, CI step or script that calls the real API by default.
+- This rule covers development and testing. Real seller traffic in production
+  is governed by the account's spend cap; ask the user before changing that.
+
 ## Workflow (current stage: direct pushes to `main`, no PRs)
 - At this stage we push directly to `main`; do not open PRs. Do the work on a
   local branch or commits, then rebase onto the latest `origin/main` and push to `main`.

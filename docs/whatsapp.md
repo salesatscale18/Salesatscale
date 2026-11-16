@@ -48,6 +48,10 @@ Settings › WhatsApp:
 
 ## 4. Test the agent from a phone (test lab)
 
+Each message a tester sends makes the agent call the Anthropic API, which
+costs money. Claude sessions never send test messages without the user's
+approval (CLAUDE.md, "AI spend").
+
 Works before the account is live, with no lead and no template:
 
 1. A tester phone sends any message to the number.
