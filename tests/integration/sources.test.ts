@@ -111,7 +111,7 @@ describe("knowledge sources", () => {
       expect((await listSections(db, acc, d.id)).map((x) => x.locator)).toEqual(["Start", "Installation", "Warranty"]);
       const c = await addFile(db, actor, acc, { name: "prices.csv", type: "text/csv", bytes: fixture("prices.csv") });
       expect(c.status).toBe("needs_input");
-      expect(c.problems[0].fix).toBe("Map columns to import into the catalog");
+      expect(c.problems[0].fix).toBe("Add prices in Price lists instead");
     });
 
     it("refuses an unsupported file without creating a source", async () => {

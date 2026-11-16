@@ -1,4 +1,5 @@
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
+import { PRICE_LIST_FIX } from "@/lib/sources/files";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -107,6 +108,12 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                         <span style={{ minWidth: 0 }}>
                           <a href={`${page}/${s.id}`} style={{ display: "block", fontWeight: 600, overflowWrap: "anywhere" }} dir="auto">{s.title}</a>
                           <span className="sas-small">{t(`sources.kind.${s.kind}`)} · {sizeLine(s)}</span>
+                          {s.kind === "website" && (s.origin as { allowedPaths?: string[] }).allowedPaths?.length ? (
+                            <span style={{ display: "flex", flexWrap: "wrap", gap: 4, alignItems: "center", marginTop: 4 }} data-paths="">
+                              <span className="sas-small">{t("sources.paths_label")}</span>
+                              {(s.origin as { allowedPaths?: string[] }).allowedPaths!.map((pth) => <span key={pth} className="sas-chip sas-num" dir="ltr">{pth}</span>)}
+                            </span>
+                          ) : null}
                         </span>
                       </span>
                     </td>
@@ -148,7 +155,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                 </span>
                 <span style={{ flex: "1 1 300px", minWidth: 0, overflowWrap: "anywhere" }}>
                   <strong dir="auto">{s.title}</strong>{p.where && p.where !== "source" && p.where !== s.title ? <span className="sas-chip" style={{ marginInline: 6 }}>{p.where}</span> : ": "}
-                  {p.message} <span className="sas-small">{p.fix}</span>
+                  {p.message} <span className="sas-small">{p.fix === PRICE_LIST_FIX ? <a href={`/app/${account.slug}/setup/price-lists`}>{p.fix}</a> : p.fix}</span>
                 </span>
                 {s.kind === "website" ? (
                   <form action={rereadWebsiteAction}>

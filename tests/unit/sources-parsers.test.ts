@@ -40,7 +40,7 @@ describe("CSV and XLSX", () => {
     const r = parseCsvFile(new TextDecoder().decode(fixture("prices.csv")), "prices.csv");
     expect(r.sections).toEqual([{ locator: "rows 2–3", heading: null, text: "Product | Unit | Price\nSensor SNS-200 | sensor | 390\nGateway, hub | site | 1200" }]);
     expect(r.needsInput).toBe(true);
-    expect(r.problems).toEqual([expect.objectContaining({ where: "prices.csv", fix: "Map columns to import into the catalog" })]);
+    expect(r.problems).toEqual([expect.objectContaining({ where: "prices.csv", fix: "Add prices in Price lists instead" })]);
     expect(statusFor(r)).toBe("needs_input");
   });
 

@@ -4,8 +4,8 @@
  */
 import {
   Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
-  CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, MessageCircle,
-  MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
+  CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, MessageCircle,
+  MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
   Trophy, Upload, User, UserPlus, Wrench, X, type LucideIcon,
 } from "lucide-react";
 
@@ -49,6 +49,8 @@ const ICONS = {
   "shield-check": ShieldCheck,
   sliders: SlidersHorizontal,
   sparkles: Sparkles,
+  "scan-search": ScanSearch,
+  "circle-alert": CircleAlert,
   trophy: Trophy,
   upload: Upload,
   user: User,

@@ -8,6 +8,7 @@ import { exactTime } from "@/lib/format";
 import { isLocale, messages, t, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
+import { SuggestedReplyBox } from "./suggested-reply";
 import type { WindowState } from "@/lib/channels/rules";
 
 /** "18h 20m" until the window closes. */
@@ -106,14 +107,16 @@ export function ConversationControls({
             {hidden}
             <span className="sas-small" role="status" style={{ display: "flex", gap: 6, alignItems: "center" }}><Icon name="pause" />{status}</span>
             <label className="sas-input-label" htmlFor={replyId}>{t("conv.reply_as", { name: firstName(me) })}</label>
-            <textarea
-              className="sas-textarea" id={replyId} name="text" rows={3} required maxLength={4000}
-              defaultValue={suggestedReply ?? ""} dir="auto"
-              aria-describedby={suggestedReply || c.channel !== "testlab" ? `${replyId}-hint` : undefined}
+            <SuggestedReplyBox
+              id={replyId}
+              suggested={suggestedReply ?? null}
+              label={t("conv.suggested_label")}
+              clearLabel={t("conv.suggested_clear")}
+              describedBy={c.channel !== "testlab" ? `${replyId}-hint` : undefined}
             />
-            {suggestedReply || c.channel !== "testlab" ? (
+            {c.channel !== "testlab" ? (
               <span id={`${replyId}-hint`} className="sas-small">
-                {[suggestedReply ? t("conv.suggested") : null, c.channel === "whatsapp" ? t("conv.whatsapp_hint") : c.channel !== "testlab" ? t("conv.not_sent_hint") : null].filter(Boolean).join(" ")}
+                {c.channel === "whatsapp" ? t("conv.whatsapp_hint") : t("conv.not_sent_hint")}
               </span>
             ) : null}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>

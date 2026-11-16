@@ -127,10 +127,13 @@ export function parsePlainText(raw: string, markdown: boolean): ParseResult {
 
 const ROWS_PER_SECTION = 50;
 
+/** The fix shown for spreadsheet rows; the Sources pages link it to Price lists. */
+export const PRICE_LIST_FIX = "Add prices in Price lists instead";
+
 const mapColumns = (where: string): SourceProblem => ({
   where,
-  message: "We saved these rows as text. To use them as products or prices, map their columns first.",
-  fix: "Map columns to import into the catalog",
+  message: "We can't read prices from this sheet yet. The rows are saved as text the agent can learn from.",
+  fix: PRICE_LIST_FIX,
 });
 
 /** Rows as text sections, 50 rows each, with the header row repeated on top of every section. */

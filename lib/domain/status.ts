@@ -93,10 +93,10 @@ export const STATUS = {
   },
   // Knowledge sources (P8): reading a website, file, note or call transcript.
   source: {
-    processing: { tone: "agent", icon: "refresh-cw" },
-    ready: { tone: "success", icon: "check-circle" },
-    needs_input: { tone: "warning", icon: "clock" },
-    partly_failed: { tone: "danger", icon: "alert-triangle" },
+    processing: { tone: "agent", icon: "sparkles" },
+    ready: { tone: "neutral", icon: "scan-search" },
+    needs_input: { tone: "warning", icon: "alert-triangle" },
+    partly_failed: { tone: "danger", icon: "circle-alert" },
     failed: { tone: "danger", icon: "x-circle" },
   },
   // Knowledge suggested from sources and recorded calls (P8), waiting for the admin.

@@ -1790,5 +1790,9 @@
   "sources.detail.no_text": "No text was read from this source.",
   "sources.detail.facts": "Facts from this source · {count}",
   "sources.detail.facts_empty": "Facts appear here once this source is analysed.",
-  "sources.upload.too_much": "Upload at most 4 MB at a time. Choose fewer or smaller files."
+  "sources.upload.too_much": "Upload at most 4 MB at a time. Choose fewer or smaller files.",
+  "conv.suggested_label": "Suggested by the agent · edit before sending",
+  "conv.suggested_clear": "Clear",
+  "inbox.create_quote": "Create quote",
+  "sources.paths_label": "Reads only"
 }

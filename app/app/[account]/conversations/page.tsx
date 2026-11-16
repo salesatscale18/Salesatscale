@@ -196,7 +196,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                     <strong>{selected.lead.fullName}{selected.lead.company ? ` · ${selected.lead.company}` : ""}</strong>
                     <span className="sas-small">
                       {[selected.marketName || homeMarket, t(`lang.${selected.lead.language as "en" | "he"}`)].filter(Boolean).join(" · ")}
-                      {selected.conv.isTest ? null : <> · <a href={`/app/${account.slug}/leads/${selected.lead.id}`}>{t("inbox.open_lead")}</a></>}
+                      {selected.conv.isTest ? null : <> · <a href={`/app/${account.slug}/leads/${selected.lead.id}`}>{t("inbox.open_lead")}</a> · <a href={`/app/${account.slug}/leads/${selected.lead.id}/quote`} data-create-quote="">{t("inbox.create_quote")}</a></>}
                     </span>
                   </span>
                   <StatusPill object="lead" state={selected.lead.status} />

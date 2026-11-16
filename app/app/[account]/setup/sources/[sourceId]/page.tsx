@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { PRICE_LIST_FIX } from "@/lib/sources/files";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -106,7 +107,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
               {source.problems.map((p, i) => (
                 <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
                   {p.where && p.where !== "source" ? <span className="sas-chip">{p.where}</span> : null}
-                  <span style={{ flex: "1 1 260px", minWidth: 0 }}>{p.message} <span className="sas-small">{p.fix}</span></span>
+                  <span style={{ flex: "1 1 260px", minWidth: 0 }}>{p.message} <span className="sas-small">{p.fix === PRICE_LIST_FIX ? <a href={`/app/${account.slug}/setup/price-lists`}>{p.fix}</a> : p.fix}</span></span>
                 </li>
               ))}
             </ul>
