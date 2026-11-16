@@ -7,7 +7,10 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leadEvents, leads, messages, orderForms, orders, quotes, type Playbook, type SellerAccount } from "@/db/schema";
+import { conversations, leadEvents, leads, messages, orderForms, orders, quotes, sellerAccounts, type Market, type Playbook, type SellerAccount } from "@/db/schema";
+import { agentDeliveryText } from "@/lib/delivery/eta";
+import { deliveryPlanFor } from "@/lib/delivery/plan";
+import { resolveMarket } from "@/lib/markets/service";
 import { windowState } from "@/lib/channels/rules";
 import { optOutLead } from "@/lib/leads/service";
 import { checkFit } from "@/lib/catalog/fit";
@@ -194,6 +197,20 @@ function describeLine(l: EngineLine, money: (m: number, period?: "month" | "year
   return { sku: l.sku, name: l.name, qty: l.qty, charge, total, ...(l.autoAdded ? { added_automatically: true, buyer_can_remove: l.removable } : {}) };
 }
 
+/**
+ * The delivery estimate for the buyer's market, as one short string for the
+ * tool result ("estimate Thu 3 Dec – Wed 9 Dec (5–10 business days after
+ * signing, if signed today)"), or "not set: …" so the agent never invents one.
+ */
+async function deliveryOf(ctx: ToolContext, market: Market): Promise<string> {
+  let account = ctx.memo?.account;
+  if (!account || account.id !== ctx.accountId) {
+    [account] = await ctx.db.select().from(sellerAccounts).where(eq(sellerAccounts.id, ctx.accountId));
+    if (ctx.memo && account) ctx.memo.account = account;
+  }
+  return agentDeliveryText(account ? deliveryPlanFor(account, market) : null, new Date());
+}
+
 function factsOf(ctx: ToolContext) {
   if (!ctx.memo) return approvedFacts(ctx.db, ctx.accountId);
   return (ctx.memo.facts ??= approvedFacts(ctx.db, ctx.accountId));
@@ -290,6 +307,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         due_on_signing: r.complete ? money(r.oneTime.totalMinor) : "to be priced by the seller",
         recurring: r.recurring.totalMinor ? money(r.recurring.totalMinor, r.recurringPeriod ?? "month") : null,
         prices_include_tax: r.pricesIncludeTax,
+        delivery: await deliveryOf(ctx, p.market),
       },
     };
   }
@@ -369,6 +387,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     const v = r.version;
     const money = moneyIn(v.currency);
+    // The quote's market (the lead's): the memo's when it is that market, else read again.
+    const quoteMarket = preloaded && preloaded.context.market.id === v.marketId ? preloaded.context.market : await resolveMarket(ctx.db, ctx.accountId, v.marketId);
     const period = v.recurringPeriod === "year" ? "year" : "month";
     const awaiting = r.quote.status === "awaiting_approval";
     // Only lines that removable rules add can be removed; the rest stay on the quote.
@@ -390,6 +410,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         prices_include_tax: v.pricesIncludeTax,
         valid_until: v.validUntil.toISOString().slice(0, 10),
         approval_reasons: v.approvalReasons.map(approvalReasonText),
+        delivery: await deliveryOf(ctx, quoteMarket),
         message: awaiting
           ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them."
           : "Share the totals. When the buyer is ready, send the order form with send_order_form.",

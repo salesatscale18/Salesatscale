@@ -20,6 +20,8 @@ import { itemsOf, publishedCatalog } from "@/lib/catalog/service";
 import { marketLegal } from "@/lib/markets/legal";
 import { resolveMarket } from "@/lib/markets/service";
 import { accountDefaultsFrom, effectiveSettings } from "@/lib/markets/settings";
+import { localDate, type DeliveryPlan } from "@/lib/delivery/eta";
+import { freezePlan, planFromSettings } from "@/lib/delivery/plan";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { priceWithList } from "@/lib/pricing/engine";
 import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
@@ -52,6 +54,12 @@ export type FormSnapshot = Omit<OrderSnapshot, "lines"> & {
   taxRateBp?: number;
   /** The price list version the quote was priced from; missing on catalog-priced snapshots. */
   priceList?: { name: string; version: number } | null;
+  /**
+   * The market's delivery lead time, time zone, holidays and weekend when the
+   * form was made; the dates are computed on render from the signing date.
+   * Missing on older snapshots and null when no lead time was set: no estimate.
+   */
+  delivery?: DeliveryPlan | null;
 };
 
 /** The snapshot with the optional price-list fields typed. */
@@ -133,6 +141,7 @@ export async function createOrderForm(
     paymentMethods: eff.paymentMethods.value,
     bankDetails: eff.bankDetails.value,
     supportContact: account.supportContact ?? null,
+    delivery: freezePlan(planFromSettings(eff, market, account.market), localDate(now, eff.timezone.value)),
   };
 
   const id = randomUUID();

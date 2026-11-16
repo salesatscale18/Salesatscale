@@ -11,6 +11,7 @@ import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { acceptPriceAction, payBankAction, payCardAction } from "./actions";
 import { chargeLabel, legalTitle, moneyFor, OrderLines } from "./lines";
 import { SignForm } from "./sign-form";
+import { DeliveryRow } from "./delivery";
 import "./buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -156,6 +157,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           <section className="b-sec">
             <Lines s={s} tr={tr} lang={lang} />
             <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.paid_today")}{attempt ? ` · ${tr("buyer.card")}` : ` · ${tr("buyer.bank")}`}</span><span className="b-num">{money(s, order.amountDueMinor)}</span></div>
+            <DeliveryRow s={s} signedAt={form.signedAt ?? order.createdAt} tr={tr} lang={lang} />
           </section>
           <section className="b-sec b-noprint">
             <a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a>
@@ -182,6 +184,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         ) : null}
           <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 16 }}>{money(s, order.amountDueMinor)}</span></div>
           {order.recurringMinor > 0 ? <div className="b-row"><span>{tr(period === "year" ? "buyer.then_yearly" : "buyer.then_monthly")}</span><span className="b-num">{per(order.recurringMinor, period)}</span></div> : null}
+          <DeliveryRow s={s} signedAt={form.signedAt ?? order.createdAt} tr={tr} lang={lang} />
           {err ? <span className="b-err" role="alert">{err === "recurring_consent" ? tr("buyer.err.required") : tr("buyer.unavailable")}</span> : null}
           {paused && order.paymentStatus !== "bank_transfer_expected" ? null : cardOn && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
             <nav className="b-tabs" aria-label={tr("buyer.method")}>
@@ -301,6 +304,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
       <section className="b-sec" aria-labelledby="it-h">
         <h2 id="it-h" className="b-h2">{tr("buyer.ordering")}</h2>
         <Lines s={s} tr={tr} lang={lang} />
+        <DeliveryRow s={s} signedAt={null} tr={tr} lang={lang} />
         <span className="b-mut">{tr("buyer.change_hint")}</span>
       </section>
       <section className="b-sec b-terms" aria-labelledby="tm-h" style={{ gap: 0 }}>

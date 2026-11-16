@@ -8,7 +8,7 @@ import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
   accountMembers, orderFormSettings, sellerAccounts, users, NOTIFICATION_EVENTS,
-  type ContactHours, type NotificationEvent, type NotificationPrefs,
+  type ContactHours, type DeliveryLeadTime, type NotificationEvent, type NotificationPrefs,
 } from "@/db/schema";
 import { DEFAULT_FIELDS } from "@/lib/orders/settings";
 import { writeAudit, type Actor } from "./audit";
@@ -172,4 +172,10 @@ export async function saveNotifications(db: Db, actor: Actor, accountId: string,
 export async function saveContactHours(db: Db, actor: Actor, accountId: string, hours: ContactHours) {
   await db.update(sellerAccounts).set({ contactHours: hours }).where(eq(sellerAccounts.id, accountId));
   await writeAudit(db, actor, { accountId, action: "contact_hours.saved", targetType: "account", targetId: accountId });
+}
+
+/** Settings › Delivery: the account's default lead time (null = not set). Audited. */
+export async function saveDeliveryLeadTime(db: Db, actor: Actor, accountId: string, leadTime: DeliveryLeadTime | null) {
+  await db.update(sellerAccounts).set({ deliveryLeadTime: leadTime }).where(eq(sellerAccounts.id, accountId));
+  await writeAudit(db, actor, { accountId, action: "delivery_lead_time.saved", targetType: "account", targetId: accountId, details: { leadTime } });
 }

@@ -7,11 +7,13 @@ import { formatMoney } from "@/lib/domain/money";
 import { exactTime, relativeTime } from "@/lib/format";
 import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, type QuoteTab } from "@/lib/quotes/service";
 import { catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
-import { and, count, desc, eq, inArray, or } from "drizzle-orm";
+import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
 import { docStatusByQuote, formsForQuote, linkFor, listOrders, orderForQuote, orderLabel } from "@/lib/orders/service";
 import { CopyButton } from "@/components/sas/copy-button";
+import { estimateDelivery, formatDeliveryShort } from "@/lib/delivery/eta";
+import { frozenPlan } from "@/lib/delivery/plan";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,6 +25,22 @@ async function countOrders(accountId: string) {
 }
 
 const dateShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+
+/**
+ * The estimated delivery of each order: the lead time frozen on its order form,
+ * counted from the signing date. Only the snapshot's `delivery` part is read.
+ */
+async function deliveryByForm(accountId: string, formIds: string[]) {
+  const out = new Map<string, string>();
+  if (!formIds.length) return out;
+  const rows = await appDb.select({ id: orderForms.id, signedAt: orderForms.signedAt, delivery: sql<unknown>`${orderForms.snapshot}->'delivery'` })
+    .from(orderForms).where(and(eq(orderForms.accountId, accountId), inArray(orderForms.id, formIds)));
+  for (const r of rows) {
+    const plan = frozenPlan(r.delivery);
+    if (plan && r.signedAt) out.set(r.id, formatDeliveryShort(estimateDelivery({ ...plan, from: r.signedAt })));
+  }
+  return out;
+}
 
 /** Quotes and orders (P3.5, canvas: Orders). The order form and payment columns fill in P5. */
 export default async function OrdersPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -82,6 +100,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           : Promise.resolve([]),
       ])
     : [[], [], [], null, [], []];
+  const deliveries = await deliveryByForm(account.id, [...orderRows.map((r) => r.order.orderFormId), ...(signed ? [signed.order.orderFormId] : [])]);
   const nameById = new Map(people.map((u) => [u.id, displayName(u)]));
   const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
   const approver = nameOf(cur?.version.approvedByUserId ?? null);
@@ -119,11 +138,11 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           ) : (
             <section className="sas-panel" style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 640 }}>
+                <table className="sas-table" style={{ minWidth: 760 }}>
                   <thead><tr>
                     <th scope="col">{t("orders.col.order")}</th><th scope="col">{t("orders.col.lead")}</th>
                     <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
-                    <th scope="col">{t("orders.col.payment")}</th><th scope="col">{t("orders.col.signed")}</th>
+                    <th scope="col">{t("orders.col.payment")}</th><th scope="col">{t("orders.col.signed")}</th><th scope="col">{t("orders.col.delivery")}</th>
                   </tr></thead>
                   <tbody>
                     {orderRows.map(({ order, lead }) => (
@@ -134,6 +153,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                         <td className="sas-num" style={{ textAlign: "end" }}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
                         <td><StatusPill object="payment" state={order.paymentStatus} /></td>
                         <td className="sas-small" title={exactTime(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
+                        <td className="sas-small" data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -299,6 +319,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             {signed ? (
               <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: relativeTime(signed.order.paidAt, now) })}` : ""}</span>
             ) : <span className="sas-small">{t("orders.detail.payment_soon")}</span>}
+            {signed && deliveries.get(signed.order.orderFormId) ? <span className="sas-small" data-detail-delivery="">{t("orders.detail.delivery", { range: deliveries.get(signed.order.orderFormId)! })}</span> : null}
             {signed?.order.paymentStatus === "bank_transfer_expected" ? (
               <form action={markBankPaidAction}>
                 <input type="hidden" name="slug" value={account.slug} />
