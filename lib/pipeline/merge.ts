@@ -5,11 +5,10 @@
  * objection the seller already answered keeps the seller's answer. Merging
  * the same suggestions twice changes nothing.
  *
- * The Playbook type has no list of limits or discovery questions, so:
- * - a limit becomes a "Never …" rule (limits are worded to follow "Never"),
- *   and a percentage limit also sets the discount the agent may offer;
- * - a discovery question becomes a "helpful" (optional) field with the
- *   question as its example.
+ * A discovery question becomes a "helpful" (optional) field with the question
+ * as its example. Limits are never merged here: each one updates its setting
+ * or becomes an approved exception when the seller approves it (limits.ts),
+ * and "Never" keeps real prohibitions only.
  */
 import type { Playbook, PlaybookField } from "@/db/schema";
 import { fieldKey } from "@/lib/agent/playbook";
@@ -66,8 +65,7 @@ export function mergeSuggestions(p: Playbook, items: MergeItem[]): Playbook {
         }
         break;
       case "limit":
-        addNever(x.rule);
-        if (x.maxDiscountPercent > 0) out.maxDiscountBp = Math.round(Math.min(50, x.maxDiscountPercent) * 100);
+        // Applied on approval (lib/pipeline/limits.ts), never merged into neverDo.
         break;
       case "never":
         addNever(x.rule);

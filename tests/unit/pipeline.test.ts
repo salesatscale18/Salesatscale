@@ -8,10 +8,11 @@ import {
 } from "@/lib/pipeline/corpus";
 import { buildPipelineParams, type PipelineRequest } from "@/lib/pipeline/llm";
 import { mergeSuggestions } from "@/lib/pipeline/merge";
+import { addCondition, applyLimitToPlaybook } from "@/lib/pipeline/limits";
 import { FACTS_INSTRUCTION, PROMPT_VERSION as FACTS_V } from "@/lib/pipeline/prompts/facts";
 import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_V } from "@/lib/pipeline/prompts/playbook";
 import { PIPELINE_TOOLS, PROMPT_VERSION as SYSTEM_V, SYSTEM_PROMPT } from "@/lib/pipeline/prompts/system";
-import { cleanEvidence, normalizeStatement, parseFactsOutput, parsePlaybookOutput, type CorpusIndex } from "@/lib/pipeline/validate";
+import { classifyLimit, cleanEvidence, normalizeStatement, parseFactsOutput, parsePlaybookOutput, type CorpusIndex } from "@/lib/pipeline/validate";
 
 const A = "00000000-0000-4000-8000-00000000000a";
 const B = "00000000-0000-4000-8000-00000000000b";
@@ -163,14 +164,14 @@ describe("validation", () => {
         { key: "invoice_email", label: "Billing email", label_he: "", stage: "before_order_form", example_question: "", example_question_he: "", asked_in_calls: 0, evidence: [ev(A, "p.2")] },
       ],
       objections: [], discovery_questions: [],
-      limits: [{ rule: "Never: give more than 10% off", rule_he: "", max_discount_percent: 90, evidence: [ev(C, "07:11")] }],
+      limits: [{ rule: "Never: give more than 10% off", rule_he: "", setting: "discount_cap", max_discount_percent: 90, sku: "", quantity: 0, condition: "", evidence: [ev(C, "07:11")] }],
       never: [{ rule: "promise delivery dates", rule_he: "", evidence: [] }],
     }, index);
     expect(r.suggestions.map((s) => s.payload.kind)).toEqual(["goal", "field", "field", "limit"]);
     expect(r.dropped).toBe(3);
     expect(r.suggestions[1].payload).toMatchObject({ key: "invoice_email", askedInCalls: 2 });
     expect(r.suggestions[2].payload).toMatchObject({ key: "signatory_role", stage: "optional", askedInCalls: 0 });
-    expect(r.suggestions[3].payload).toMatchObject({ rule: "give more than 10% off", maxDiscountPercent: 50 });
+    expect(r.suggestions[3].payload).toMatchObject({ rule: "give more than 10% off", setting: "discount", maxDiscountPercent: 50 });
   });
 });
 
@@ -181,7 +182,7 @@ describe("merge into the draft playbook", () => {
     objections: [{ objection: "Too expensive", answer: "Seller answer" }], maxDiscountBp: 500, offerMeetingWhen: "", handOffWhen: "", neverDo: ["promise dates"],
   };
 
-  it("keeps existing keys, labels, stages and answers; adds new items; limits become never rules; idempotent", () => {
+  it("keeps existing keys, labels, stages and answers; adds new items; limits are never merged; idempotent", () => {
     const items = [
       { payload: { kind: "goal" as const, text: "New goal", textHe: "" } },
       { payload: { kind: "field" as const, key: "sites", label: "Locations", labelHe: "", stage: "optional" as const, example: "How many sites?", exampleHe: "", askedInCalls: 3 } },
@@ -200,9 +201,36 @@ describe("merge into the draft playbook", () => {
       { key: "last_failure", label: "Last failure", stage: "optional", example: "What did it cost?" },
     ]);
     expect(once.objections).toEqual([{ objection: "Too expensive", answer: "Seller answer" }, { objection: "We have an alarm", answer: "Doors, not temperature.", source: "Call 06:12" }]);
-    expect(once.neverDo).toEqual(["promise dates", "give more than 8% off"]);
-    expect(once.maxDiscountBp).toBe(800);
+    expect(once.neverDo).toEqual(["promise dates"]);
+    expect(once.maxDiscountBp).toBe(500);
     expect(mergeSuggestions(once, items)).toEqual(once);
     expect(base.fields).toHaveLength(1); // input not changed
+  });
+});
+
+describe("limits", () => {
+  it("classifies a limit by the setting it updates; anything incomplete is an approved exception", () => {
+    expect(classifyLimit({ setting: "discount_cap", pct: 7 })).toEqual({ setting: "discount", maxDiscountPercent: 7 });
+    expect(classifyLimit({ setting: "discount_cap", pct: 0 })).toMatchObject({ setting: "exception" });
+    expect(classifyLimit({ setting: "custom_pricing_quantity", sku: "sns-200", qty: 3 })).toMatchObject({ setting: "custom_pricing", sku: "SNS-200", qty: 3 });
+    expect(classifyLimit({ setting: "custom_pricing_quantity", sku: "", qty: 3 })).toMatchObject({ setting: "exception" });
+    expect(classifyLimit({ setting: "offer_meeting", when: "a partner must approve" })).toMatchObject({ setting: "offer_meeting", when: "a partner must approve" });
+    expect(classifyLimit({ setting: "hand_off", when: "" })).toMatchObject({ setting: "exception" });
+    expect(classifyLimit({ setting: "other", pct: 5 })).toMatchObject({ setting: "exception", maxDiscountPercent: 0 });
+  });
+
+  it("adds a condition once and applies to the playbook without touching Never", () => {
+    expect(addCondition("", "a partner must approve")).toBe("A partner must approve");
+    expect(addCondition("The buyer asks.", "a partner must approve")).toBe("The buyer asks. A partner must approve");
+    expect(addCondition("The buyer asks. A partner must approve", "a partner must approve")).toBe("The buyer asks. A partner must approve");
+    const pb: Playbook = { agentName: "A", goal: "g", tone: "t", outcomes: { orderForm: true, bankTransfer: true, meeting: true }, fields: [], objections: [], maxDiscountBp: 500, offerMeetingWhen: "", handOffWhen: "", neverDo: ["x"] };
+    const approval = { id: "e1", approvedAt: "2026-11-16T00:00:00.000Z", approvedBy: null };
+    const limit = { kind: "limit" as const, rule: "Free install from 3 sites", ruleHe: "", maxDiscountPercent: 0 };
+    const ex = applyLimitToPlaybook(pb, limit, "exception", approval);
+    expect(ex.exceptions).toEqual([{ ...approval, text: "Free install from 3 sites" }]);
+    expect(applyLimitToPlaybook(ex, limit, "exception", approval)).toBe(ex);
+    const d = applyLimitToPlaybook(pb, { ...limit, rule: "7%", maxDiscountPercent: 7, setting: "discount" }, "discount", approval);
+    expect(d.maxDiscountBp).toBe(700);
+    expect([ex.neverDo, d.neverDo]).toEqual([["x"], ["x"]]);
   });
 });

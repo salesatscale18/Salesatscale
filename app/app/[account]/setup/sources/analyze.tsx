@@ -5,11 +5,11 @@
  */
 import type { PipelineRun } from "@/db/schema";
 import { Icon } from "@/components/sas/icon";
-import { buttonClass } from "@/components/sas/primitives";
+import { buttonClass, StatusPill } from "@/components/sas/primitives";
 import { usdText } from "@/lib/ai/usage";
 import { exactTime, relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
-import { runData, type AnalysisPlan } from "@/lib/pipeline/service";
+import { runData, runPillState, type AnalysisPlan } from "@/lib/pipeline/service";
 import { analyzeAction } from "./pipeline-actions";
 import { RefreshWhileProcessing } from "./forms";
 
@@ -113,9 +113,7 @@ export function AnalyzePanel(s: AnalyzeState) {
                     <tr key={r.id}>
                       <td>{t(`pipeline.kind.${r.kind}`)}<span className="sas-small" style={{ display: "block" }}>{r.model}</span></td>
                       <td style={{ whiteSpace: "normal" }}>
-                        <span style={{ display: "inline-flex", gap: 6, alignItems: "center", color: r.status === "failed" ? "var(--danger)" : undefined }}>
-                          <Icon name={r.status === "done" ? "check-circle" : r.status === "failed" ? "x-circle" : "clock"} />{t(`pipeline.status.${r.status}`)}
-                        </span>
+                        <StatusPill object="analysis_run" state={runPillState(r)} />
                         {r.error ? <span className="sas-small" style={{ display: "block" }}>{r.error}</span> : null}
                       </td>
                       <td className="sas-small sas-num">

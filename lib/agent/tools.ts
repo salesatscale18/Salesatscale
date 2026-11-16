@@ -100,8 +100,12 @@ export const TOOL_DEFS: ToolDef[] = [
           items: { type: "string" },
           description: "SKUs of lines added automatically that the buyer explicitly asked to remove. Only lines marked buyer_can_remove are removed; null otherwise.",
         },
+        exception: {
+          type: ["string", "null"],
+          description: "The id of an approved exception from your instructions that this quote uses; null otherwise. The seller then approves the quote.",
+        },
       },
-      required: ["lines", "discount_percent", "sites", "remove_auto_added"],
+      required: ["lines", "discount_percent", "sites", "remove_auto_added", "exception"],
       additionalProperties: false,
     },
   },
@@ -353,9 +357,16 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       ? [...new Set(args.remove_auto_added.filter((s): s is string => typeof s === "string").map((s) => s.trim().toUpperCase()).filter(Boolean))].slice(0, 50)
       : [];
     // The memo's market, catalog and price list (read once per turn); createQuote ignores them if they are not this lead's.
+    // An approved exception must be one of this version's (the playbook the agent runs on).
+    const exceptionId = typeof args.exception === "string" && args.exception.trim() ? args.exception.trim() : null;
+    const exception = exceptionId ? (ctx.playbook.exceptions ?? []).find((x) => x.id === exceptionId) : undefined;
+    if (exceptionId && !exception) {
+      return refuse("Unknown exception", { valid_exceptions: (ctx.playbook.exceptions ?? []).map((x) => ({ id: x.id, text: x.text })), message: "Use only an approved exception from your instructions, or none." });
+    }
     const preloaded = ctx.memo ? { account: ctx.memo.account, context: await pricingOf(ctx) } : undefined;
     const r = await createQuote(ctx.db, ctx.accountId, { kind: "agent" }, ctx.leadId, {
       lines, discountBp: Math.round(pct * 100), sites, removedByBuyer: removeAsked, idempotencyKey: `tool:${ctx.callId}`, preloaded,
+      ...(exception ? { exception: { id: exception.id, text: exception.text } } : {}),
     });
     if (!r.ok) {
       if (r.reason === "fit") return refuse("Fit check failed", { problems: r.problems });

@@ -95,8 +95,17 @@ export const STATUS = {
   source: {
     processing: { tone: "agent", icon: "refresh-cw" },
     ready: { tone: "success", icon: "check-circle" },
+    // Every fact found in it is reviewed and at least one approved (computed on read, no column).
+    approved: { tone: "success", icon: "check" },
     needs_input: { tone: "warning", icon: "clock" },
     partly_failed: { tone: "danger", icon: "alert-triangle" },
+    failed: { tone: "danger", icon: "x-circle" },
+  },
+  // One "Analyze sources" run (knowledge pipeline).
+  analysis_run: {
+    running: { tone: "agent", icon: "sparkles" },
+    completed: { tone: "neutral", icon: "check" },
+    stopped_cap: { tone: "warning", icon: "pause" },
     failed: { tone: "danger", icon: "x-circle" },
   },
   // Knowledge suggested from sources and recorded calls (P8), waiting for the admin.

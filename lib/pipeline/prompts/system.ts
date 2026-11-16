@@ -16,7 +16,7 @@
  */
 import type Anthropic from "@anthropic-ai/sdk";
 
-export const PROMPT_VERSION = "system-v1";
+export const PROMPT_VERSION = "system-v2";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -115,11 +115,19 @@ const PLAYBOOK_SCHEMA = obj({
     evidence: EVIDENCE,
   }), "Objections with the answers that worked."),
   limits: arr(obj({
-    rule: str("A pricing or discount boundary, worded to follow the word Never, e.g. waive the installation fee for fewer than 3 sites."),
+    rule: str("The rule in plain words, e.g. Installation is free from 3 sites."),
     rule_he: str("Hebrew or empty."),
-    max_discount_percent: { type: "number", description: "The largest percentage discount the rule allows; 0 when the rule is not a percentage discount." },
+    setting: {
+      type: "string",
+      enum: ["discount_cap", "custom_pricing_quantity", "offer_meeting", "hand_off", "other"],
+      description: "discount_cap: the largest discount reps give without asking; custom_pricing_quantity: from what quantity of one item the price is set by hand; offer_meeting: when reps offer a meeting; hand_off: when a person must take over; other: any other special term.",
+    },
+    max_discount_percent: { type: "number", description: "discount_cap only: the percentage; otherwise 0." },
+    sku: str("custom_pricing_quantity only: the item's SKU from the catalog; otherwise empty."),
+    quantity: int("custom_pricing_quantity only: the quantity from which the price is set by hand; otherwise 0."),
+    condition: str("offer_meeting and hand_off only: when it applies, in English, one short sentence; otherwise empty."),
     evidence: EVIDENCE,
-  }), "Pricing, discounts, free extras and special terms heard or written. They need the seller's explicit approval."),
+  }), "Pricing, discounts, free extras, special terms and meeting or hand-over rules heard or written. They need the seller's explicit approval."),
   tone: obj({ text: str("One sentence on how the seller's reps talk."), text_he: str("Hebrew or empty."), evidence: EVIDENCE }),
   never: arr(obj({
     rule: str("Something the agent must never say or do, worded to follow the word Never."),

@@ -175,6 +175,7 @@ export function approvalReasonText(r: ApprovalReason & { charge?: "one_time" | "
     return `${r.sku} has no price in the catalog.`;
   }
   if (r.kind === "custom_pricing_qty") return `${r.qty} × ${r.sku} is at or above the custom-pricing quantity (${r.from}).`;
+  if (r.kind === "exception") return `Exception: ${r.text}`;
   return `Discount ${(r.requestedBp / 100).toFixed(1)}% is above the ${(r.limitBp / 100).toFixed(1)}% limit.`;
 }
 

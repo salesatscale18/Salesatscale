@@ -44,6 +44,12 @@ export type QuoteInput = {
   removedByBuyer?: string[];
   idempotencyKey?: string;
   changeNote?: string;
+  /**
+   * An approved exception from the playbook the quote uses (the agent's
+   * create_quote `exception`). The quote then waits for the seller's approval
+   * with the reason "Exception: <text>".
+   */
+  exception?: { id: string; text: string };
   /** Optional: rows the caller already loaded (see price()). */
   preloaded?: PricingPreload;
 };
@@ -111,6 +117,7 @@ async function price(db: Db, accountId: string, marketId: string | null, input: 
     removedByBuyer: removed,
   });
   if (!priced.ok) return { ok: false, reason: "pricing", errors: priced.errors };
+  if (input.exception) priced.approvalReasons.push({ kind: "exception", id: input.exception.id, text: input.exception.text.slice(0, 300) });
   // Fit rules see what will be quoted, including lines added automatically.
   const fit = checkFit(ctx.catalog.rules, requestLinesOf(priced.lines), input.sites);
   const wouldAdd = new Set(removed.length ? applyAutoAdd(rules, input.lines, input.sites).autoAdded.map((a) => a.sku) : []);
@@ -379,7 +386,14 @@ export async function approveQuote(
     }
     return createQuoteVersion(
       db, accountId, human, q.id,
-      { lines: requestLinesOf(lines), discountBp: current.discountBp, changeNote: "Priced and approved by the seller" },
+      {
+        lines: requestLinesOf(lines), discountBp: current.discountBp, changeNote: "Priced and approved by the seller",
+        // An approved exception the quote used stays recorded on the new version.
+        ...(() => {
+          const ex = current.approvalReasons.find((r) => r.kind === "exception");
+          return ex && ex.kind === "exception" ? { exception: { id: ex.id, text: ex.text } } : {};
+        })(),
+      },
       now, { ...customPricesOf(lines), ...given }, actor.userId,
     );
   }

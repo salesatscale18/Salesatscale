@@ -8,6 +8,8 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass, StatusPill } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { EvidenceLink, Suggestion } from "@/lib/pipeline/service";
+import type { LimitPreview } from "@/lib/pipeline/limits";
+import { limitSetting } from "@/lib/pipeline/validate";
 import { decideSuggestionAction, editSuggestionAction } from "./actions";
 
 const STAGE_KEY: Record<string, MessageKey> = {
@@ -22,7 +24,7 @@ export function suggestionText(s: Suggestion): { title: string; sub: string | nu
     case "field": return { title: p.label, sub: [t(STAGE_KEY[p.stage] ?? "playbook.stage.optional"), p.example ? `"${p.example}"` : null].filter(Boolean).join(" · "), he: p.exampleHe || p.labelHe || null };
     case "discovery_question": return { title: `"${p.question}"`, sub: p.label, he: p.questionHe || null };
     case "objection": return { title: `"${p.objection}"`, sub: p.answer, he: [p.objectionHe, p.answerHe].filter(Boolean).join(" — ") || null };
-    case "limit": return { title: t("draft.never_rule", { rule: p.rule }), sub: p.maxDiscountPercent > 0 ? t("draft.limit.discount", { pct: p.maxDiscountPercent }) : null, he: p.ruleHe || null };
+    case "limit": return { title: p.rule, sub: null, he: p.ruleHe || null };
     case "never": return { title: t("draft.never_rule", { rule: p.rule }), sub: null, he: p.ruleHe || null };
   }
 }
@@ -50,7 +52,34 @@ export function EvidenceLine({ s, links, calls }: { s: Suggestion; links: Map<st
   );
 }
 
-type ItemProps = { s: Suggestion; slug: string; back: string; editing: boolean; links: Map<string, EvidenceLink>; calls: number; editHref: string; cancelHref: string };
+type ItemProps = {
+  s: Suggestion; slug: string; back: string; editing: boolean; links: Map<string, EvidenceLink>; calls: number; editHref: string; cancelHref: string;
+  /** Limits: what approving changes. */
+  limit?: LimitPreview;
+};
+
+const SETTING_LABEL: Record<string, MessageKey> = {
+  discount: "draft.limit.setting.discount", custom_pricing: "draft.limit.setting.custom_pricing",
+  offer_meeting: "draft.limit.setting.offer_meeting", hand_off: "draft.limit.setting.hand_off",
+};
+
+/** "Updates setting: Discount without approval: 5% → 7%" or "Approved exception, needs approval per quote". */
+export function LimitNote({ preview, applied }: { preview: LimitPreview; applied: boolean }) {
+  if (preview.kind === "exception") {
+    return <span className="sas-small" style={{ display: "block", color: "var(--ink)" }}>{applied ? t("draft.limit.exception_applied") : t("draft.limit.exception")}</span>;
+  }
+  const label = t(SETTING_LABEL[preview.setting], { sku: preview.sku ?? "", list: preview.listName ?? "" });
+  // Numbers read best in the numeric font; conditions are sentences.
+  const num = preview.setting === "discount" || preview.setting === "custom_pricing" ? "sas-num" : undefined;
+  return (
+    <span className="sas-small" style={{ display: "block", color: "var(--ink)", overflowWrap: "anywhere" }}>
+      {/* Once applied, "before" is today's value: show only the setting as it is now. */}
+      {applied
+        ? <>{t("draft.limit.updated")} {label}: <strong className={num}>{preview.after}</strong></>
+        : <>{t("draft.limit.updates")} {label}: <span className={num}>{preview.before}</span> → <strong className={num}>{preview.after}</strong></>}
+    </span>
+  );
+}
 
 const hidden = (slug: string, back: string, id: string) => (
   <>
@@ -60,7 +89,7 @@ const hidden = (slug: string, back: string, id: string) => (
   </>
 );
 
-function EditForm({ s, slug, back, cancelHref }: Pick<ItemProps, "s" | "slug" | "back" | "cancelHref">) {
+function EditForm({ s, slug, back, cancelHref, limit }: Pick<ItemProps, "s" | "slug" | "back" | "cancelHref" | "limit">) {
   const p = s.payload as unknown as Record<string, unknown>;
   const field = (name: string, label: MessageKey, max: number, area = false) => (
     <div className="sas-input-group" key={name}>
@@ -90,14 +119,23 @@ function EditForm({ s, slug, back, cancelHref }: Pick<ItemProps, "s" | "slug" | 
       ) : null}
       {s.payload.kind === "discovery_question" ? <>{field("label", "draft.f.label", 60)}{field("question", "draft.f.question", 200)}</> : null}
       {s.payload.kind === "objection" ? <>{field("objection", "draft.f.objection", 200)}{field("answer", "draft.f.answer", 600, true)}</> : null}
-      {s.payload.kind === "limit" || s.payload.kind === "never" ? field("rule", "draft.f.rule", 200) : null}
-      {s.payload.kind === "limit" ? (
+      {s.payload.kind === "never" ? field("rule", "draft.f.rule", 200) : null}
+      {s.payload.kind === "limit" ? field("rule", "draft.f.limit_rule", 200) : null}
+      {s.payload.kind === "limit" && limitSetting(s.payload) === "discount" ? (
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor={`sg-e-${s.id}-pct`}>{t("draft.f.discount")}</label>
-          <input className="sas-input sas-num" id={`sg-e-${s.id}-pct`} name="maxDiscountPercent" type="number" min={0} max={50} step="0.1" defaultValue={String(s.payload.maxDiscountPercent || "")} style={{ maxWidth: 140 }} aria-describedby={`sg-e-${s.id}-pct-h`} />
+          <input className="sas-input sas-num" id={`sg-e-${s.id}-pct`} name="maxDiscountPercent" type="number" min={0.1} max={50} step="0.1" required defaultValue={String(s.payload.maxDiscountPercent || "")} style={{ maxWidth: 140 }} aria-describedby={`sg-e-${s.id}-pct-h`} />
           <span className="sas-hint" id={`sg-e-${s.id}-pct-h`}>{t("draft.f.discount_hint")}</span>
         </div>
       ) : null}
+      {s.payload.kind === "limit" && limit?.kind === "setting" && limit.setting === "custom_pricing" ? (
+        <div className="sas-input-group">
+          <label className="sas-input-label" htmlFor={`sg-e-${s.id}-qty`}>{t("draft.f.qty", { sku: limit.sku ?? "" })}</label>
+          <input className="sas-input sas-num" id={`sg-e-${s.id}-qty`} name="qty" type="number" min={1} max={100000} step={1} required defaultValue={String(s.payload.qty ?? "")} style={{ maxWidth: 140 }} />
+        </div>
+      ) : null}
+      {s.payload.kind === "limit" && (limitSetting(s.payload) === "offer_meeting" || limitSetting(s.payload) === "hand_off") ? field("when", "draft.f.when", 300) : null}
+      {s.payload.kind === "limit" && limit ? <LimitNote preview={limit} applied={false} /> : null}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <button type="submit" className={buttonClass("primary", "sm")}>{s.kind === "limit" ? t("draft.approve_rule") : t("draft.save_accept")}</button>
         <a className={buttonClass("ghost", "sm")} href={cancelHref}>{t("draft.cancel")}</a>
@@ -107,7 +145,7 @@ function EditForm({ s, slug, back, cancelHref }: Pick<ItemProps, "s" | "slug" | 
 }
 
 /** One suggestion row: text, status, evidence and actions. Limits use the warning style and "Approve rule". */
-export function SuggestionItem({ s, slug, back, editing, links, calls, editHref, cancelHref }: ItemProps) {
+export function SuggestionItem({ s, slug, back, editing, links, calls, editHref, cancelHref, limit: preview }: ItemProps) {
   const { title, sub, he } = suggestionText(s);
   const decided = s.status === "accepted" || s.status === "edited";
   const limit = s.kind === "limit";
@@ -120,7 +158,7 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
   );
   return (
     <li style={{ padding: "12px 20px", background: limit && !decided ? "var(--warning-soft)" : undefined }} className="sas-stack-2">
-      {editing ? <EditForm s={s} slug={slug} back={back} cancelHref={cancelHref} /> : (
+      {editing && !(limit && decided) ? <EditForm s={s} slug={slug} back={back} cancelHref={cancelHref} limit={preview} /> : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", alignItems: "center" }}>
           <span style={{ flex: "1 1 280px", minWidth: 0, overflowWrap: "anywhere" }}>
             <strong dir="auto">{title}</strong>{" "}
@@ -128,13 +166,18 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
             {s.status === "edited" ? <span className="sas-small"> · {t("draft.edited")}</span> : null}
             {sub ? <span className="sas-small" style={{ display: "block" }} dir="auto">{sub}</span> : null}
             {he ? <span className="sas-small" style={{ display: "block" }}><span>{t("draft.hebrew")}: </span><span lang="he" dir="rtl">{he}</span></span> : null}
+            {limit && preview ? <LimitNote preview={preview} applied={decided} /> : null}
             {limit && !decided ? <span className="sas-small" style={{ display: "block", color: "var(--ink)" }}><Icon name="alert-triangle" /> {t("draft.limit.warning")}</span> : null}
           </span>
           <span style={{ flex: "1 1 200px", minWidth: 0 }}><EvidenceLine s={s} links={links} calls={calls} /></span>
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {s.status === "suggested" ? decide("accepted", limit ? t("draft.approve_rule") : t("draft.accept"), "secondary") : null}
-            {s.status !== "rejected" ? <a className={buttonClass("ghost", "sm")} href={editHref} aria-label={`${t("draft.edit")}: ${title.slice(0, 60)}`}>{t("draft.edit")}</a> : null}
-            {s.status !== "rejected" ? decide("rejected", t("draft.remove"), "ghost") : decide("suggested", t("draft.undo"), "ghost")}
+            {limit && decided ? null : (
+              <>
+                {s.status !== "rejected" ? <a className={buttonClass("ghost", "sm")} href={editHref} aria-label={`${t("draft.edit")}: ${title.slice(0, 60)}`}>{t("draft.edit")}</a> : null}
+                {s.status !== "rejected" ? decide("rejected", t("draft.remove"), "ghost") : decide("suggested", t("draft.undo"), "ghost")}
+              </>
+            )}
           </span>
         </div>
       )}
