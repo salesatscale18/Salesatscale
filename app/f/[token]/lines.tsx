@@ -24,6 +24,11 @@ export function legalTitle(l: { key: string; title: string }, titles?: ReadonlyM
   return titles?.get(l.key)?.trim() || l.title;
 }
 
+/** "VAT 18%" when the snapshot froze the rate (older snapshots: "VAT"). */
+export function vatLabel(s: Pick<FormSnapshot, "taxRateBp">, tr: Tr) {
+  return s.taxRateBp ? `${tr("buyer.vat")} ${s.taxRateBp / 100}%` : tr("buyer.vat");
+}
+
 /** "One-time", "Monthly" or "Yearly". */
 export function chargeLabel(tr: Tr, charge: "one_time" | "recurring", period: Period | null | undefined) {
   if (charge === "one_time") return tr("buyer.charge.one_time");
@@ -42,6 +47,7 @@ export function OrderLines({ s, tr, lang }: { s: FormSnapshot; tr: Tr; lang: Loc
   const oneTime = s.lines.filter((l) => chargeOf(l) === "one_time");
   const recurring = s.lines.filter((l) => chargeOf(l) === "recurring");
   const plusTax = !s.pricesIncludeTax;
+  const vat = vatLabel(s, tr);
 
   const row = (l: SnapshotLine, i: number) => {
     const charge = chargeOf(l);
@@ -52,9 +58,9 @@ export function OrderLines({ s, tr, lang }: { s: FormSnapshot; tr: Tr; lang: Loc
     return (
       <div key={`${l.sku}-${charge}-${i}`} className="b-row" data-charge={charge}>
         <span>
-          <bdi>{l.qty} × {l.name}</bdi>
+          <bdi>{l.qty} × {l.plainName || l.name}</bdi>
           <span className="b-mut" style={{ display: "block" }}>
-            <bdi>{l.sku}</bdi> · {chargeLabel(tr, charge, p)}{included ? null : <> · <bdi>{each}</bdi></>}
+            {included ? null : <><bdi>{each}</bdi> · </>}<bdi>{l.sku}</bdi> · {chargeLabel(tr, charge, p)}
           </span>
         </span>
         <span className="b-num">{included ? tr("buyer.included") : money(l.lineTotalMinor, p)}</span>
@@ -71,23 +77,23 @@ export function OrderLines({ s, tr, lang }: { s: FormSnapshot; tr: Tr; lang: Loc
           {plusTax ? (
             <>
               <div className="b-row b-mut"><span>{tr("buyer.one_time_subtotal")}</span><span className="b-num">{money(s.oneTime.subtotalMinor - s.oneTime.discountMinor)}</span></div>
-              <div className="b-row b-mut"><span>{tr("buyer.vat")}</span><span className="b-num">{money(s.oneTime.taxMinor)}</span></div>
+              <div className="b-row b-mut"><span>{vat}</span><span className="b-num">{money(s.oneTime.taxMinor)}</span></div>
             </>
           ) : null}
           <div className="b-row b-row--total"><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 15 }}>{money(s.oneTime.totalMinor)}</span></div>
         </>
       ) : null}
-      {recurring.map(row)}
       {recurring.length > 0 ? (
-        <>
+        <div className="b-mo" data-recurring-block="">
+          {recurring.map(row)}
           {plusTax ? (
             <>
               <div className="b-row b-mut"><span>{tr(period === "year" ? "buyer.recurring_subtotal.year" : "buyer.recurring_subtotal.month")}</span><span className="b-num">{money(s.recurring.subtotalMinor, period)}</span></div>
-              <div className="b-row b-mut"><span>{tr("buyer.vat")}</span><span className="b-num">{money(s.recurring.taxMinor, period)}</span></div>
+              <div className="b-row b-mut"><span>{vat}</span><span className="b-num">{money(s.recurring.taxMinor, period)}</span></div>
             </>
           ) : null}
-          <div className="b-row b-row--total"><span>{tr(period === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span><span className="b-num">{money(s.recurring.totalMinor, period)}</span></div>
-        </>
+          <div className="b-row" style={{ fontWeight: 700 }}><span>{tr(period === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span><span className="b-num">{money(s.recurring.totalMinor, period)}</span></div>
+        </div>
       ) : null}
       <span className="b-mut">{plusTax ? tr("buyer.excl_vat") : tr("buyer.incl_vat")}</span>
     </>

@@ -5,6 +5,7 @@ import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
 import { loadForm, orderLabel, signatureFor, snapshotOf } from "@/lib/orders/service";
 import { OrderLines } from "../lines";
 import { DeliveryRow } from "../delivery";
+import { PreferenceRow } from "../steps";
 import { PrintButton } from "./print-button";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import "../buyer.css";
@@ -40,6 +41,7 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
         <section className="b-sec">
           <OrderLines s={s} tr={tr} lang={lang} />
           <DeliveryRow s={s} signedAt={view.form.signedAt ?? sig.signedAt} tr={tr} lang={lang} />
+          <PreferenceRow order={view.order} tr={tr} lang={lang} />
         </section>
         <section className="b-sec">
           <h2 className="b-h2">{tr("buyer.details")}</h2>

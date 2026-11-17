@@ -207,16 +207,23 @@ describe("UAT round 2 fixes", () => {
     const page = async (sp: Record<string, string> = {}) => renderToStaticMarkup(await BuyerFormPage({ params: Promise.resolve({ token }), searchParams: Promise.resolve(sp) }));
 
     it("shows the seller's support contact while reviewing and signing (was only after payment)", async () => {
-      const html = await page();
+      // P11: the signer's name is asked on step 2 of the order form.
+      const html = await page({ step: "2" });
       expect(html).toContain('name="full_name"');
       expect(html).toMatch(/data-support=""[^]*support@polar\.test · 03 555 0142/);
     });
 
     it("in Hebrew, legal titles come from the Hebrew version", async () => {
-      const html = await page({ lang: "he" });
+      // P11: the terms are on step 3, which needs the company details of step 2.
+      const { saveDraft } = await import("@/lib/orders/draft");
+      const { loadForm } = await import("@/lib/orders/service");
+      const view = await loadForm(db, token);
+      if (view?.state !== "open") throw new Error("not open");
+      await saveDraft(db, view.form.id, { step: 3, fields: { company_name: "Rina's Kitchen", company_id: "512345678", billing_address: "8 Dizengoff St", invoice_email: "rina@kitchen.test" }, fullName: "Rina Cohen", role: "Owner" });
+      const html = await page({ lang: "he", step: "3" });
       expect(html).toContain("<bdi>תנאי מכירה</bdi>");
       expect(html).not.toContain("<bdi>Sales terms</bdi>");
-      expect(await page({ lang: "en" })).toContain("<bdi>Sales terms</bdi>");
+      expect(await page({ lang: "en", step: "3" })).toContain("<bdi>Sales terms</bdi>");
     });
 
     it("the price-change screen shows before VAT / VAT / Due today, so the total adds up", async () => {

@@ -1086,6 +1086,30 @@ export type OrderSnapshot = {
 };
 
 /**
+ * The buyer's progress through the three-step order form (P11): what was
+ * entered so far and the step to resume at. Saved on Continue / Back; never
+ * a signature (the signature row is written only when step 3 completes).
+ */
+export type OrderFormDraft = {
+  /** The step to resume at (1 order, 2 company, 3 delivery, sign and pay). */
+  step: 1 | 2 | 3;
+  /** Company fields as typed (keys from ORDER_FORM_FIELDS). */
+  fields?: Partial<Record<OrderFormField, string>>;
+  fullName?: string;
+  role?: string;
+  /** Delivery address "same as billing" (step 3). */
+  deliverySame?: boolean;
+  /** Preferred delivery: as soon as possible, or a chosen business day (YYYY-MM-DD). */
+  delivery?: { kind: "asap" } | { kind: "date"; date: string | null };
+  /** The last sign attempt's agreement tick (only to show the error; never pre-ticked). */
+  agreed?: boolean;
+};
+
+/** The buyer's delivery preference frozen on an order: a preference, never a promise. */
+export const DELIVERY_PREFERENCES = ["asap", "date"] as const;
+export type DeliveryPreference = (typeof DELIVERY_PREFERENCES)[number];
+
+/**
  * A personal order-form link for one quote version. The token is shown once
  * and stored only as a hash. The snapshot is written at creation and never changed.
  */
@@ -1116,6 +1140,8 @@ export const orderForms = pgTable(
     marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     openedAt: timestamp("opened_at", { withTimezone: true }),
     signedAt: timestamp("signed_at", { withTimezone: true }),
+    /** The buyer's unsigned progress through the steps (null until the first Continue). */
+    draft: jsonb("draft").$type<OrderFormDraft>(),
     createdBy: text("created_by").notNull(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -1178,6 +1204,13 @@ export const orders = pgTable(
     amountDueMinor: integer("amount_due_minor").notNull(),
     recurringMinor: integer("recurring_minor").notNull(),
     recurringConsent: boolean("recurring_consent").notNull().default(false),
+    /**
+     * The buyer's delivery preference at signing: "asap" or "date" (then
+     * preferred_delivery_date). Null on orders signed before it was asked, or
+     * when the form had no delivery estimate. A preference, never a promise.
+     */
+    deliveryPreference: text("delivery_preference").$type<DeliveryPreference>(),
+    preferredDeliveryDate: date("preferred_delivery_date", { mode: "string" }),
     /** Null = the home market. */
     marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
     paidAt: timestamp("paid_at", { withTimezone: true }),
