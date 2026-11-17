@@ -138,5 +138,19 @@
   "buyer.sim.today_word": "היום",
   "buyer.sim.per_month": "/חודש",
   "buyer.sim.refused.account_paused": "הצ׳אט הושהה על ידי המוכר. ההודעה שלך לא נשלחה.",
-  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה שלך לא נשלחה."
+  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה שלך לא נשלחה.",
+  "buyer.quote.title": "הצעת מחיר {ref}",
+  "buyer.quote.per.month": "לחודש",
+  "buyer.quote.per.year": "לשנה",
+  "buyer.quote.plus": "{one_time}, ועוד {recurring}",
+  "buyer.quote.included": "כלול",
+  "buyer.quote.discount": "הנחה {rate}",
+  "buyer.quote.vat": "מע\"מ {rate}",
+  "buyer.quote.vat_included": "מע\"מ {rate} (כלול)",
+  "buyer.quote.incl_vat": "{amount} כולל מע\"מ",
+  "buyer.quote.today": "היום: {amount}",
+  "buyer.quote.then": "לאחר מכן: {amount}",
+  "buyer.quote.ongoing": "תשלום קבוע: {amount}",
+  "buyer.quote.valid_until": "בתוקף עד {date}",
+  "buyer.quote.delivery_by": "עד בערך {date}"
 }

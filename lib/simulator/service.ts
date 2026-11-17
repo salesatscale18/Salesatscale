@@ -18,7 +18,7 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, consentRecords, conversations, leadEvents, leads, messages, orderFormSettings, sellerAccounts, simulatorLinks, users,
+  agentVersions, consentRecords, conversations, leadEvents, leads, messages, orderFormSettings, sellerAccounts, simulatorLinks, toolCalls, users,
   type Lead, type SellerAccount,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -29,6 +29,7 @@ import { spendCapped } from "@/lib/ai/usage";
 import { listMarkets } from "@/lib/markets/service";
 import { loadForm } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
+import { appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { agentTyping, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
 import { chatTokenFor, hashToken, linkIdFromChatToken } from "./token";
@@ -335,6 +336,8 @@ export type BuyerMessage = {
   /** A person's first name above their bubble. */
   name: string | null;
   previews: LinkPreview[];
+  /** A message the app wrote (the quote message), shown with its bold lines; absent for ordinary messages. */
+  kind?: AppMessageKind;
 };
 
 export type BuyerChat = {
@@ -406,7 +409,12 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"]), eq(messages.deliveryStatus, "delivered")));
 
   const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
-  const previews = await linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now);
+  const [previews, calls] = await Promise.all([
+    linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
+    db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result }).from(toolCalls)
+      .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), eq(toolCalls.name, "create_quote"))),
+  ]);
+  const kinds = appMessageKinds(calls);
   return {
     typing: !ended && agentTyping(latest, last ?? null, ctx.account.status, now),
     closedAt,
@@ -419,6 +427,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
       status: m.actor === "buyer" ? (repliedAt && repliedAt >= m.createdAt ? "read" : "delivered") : null,
       name: m.actor === "human" ? (firstName || t("buyer.sim.team", undefined, lang)) : null,
       previews: m.actor === "buyer" ? [] : orderFormLinks(m.body).map((l) => previews.get(l.url)).filter((p): p is LinkPreview => !!p),
+      ...(kinds.has(m.id) ? { kind: kinds.get(m.id) } : {}),
     })),
   };
 }

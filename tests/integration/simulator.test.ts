@@ -321,6 +321,12 @@ describe("Buyer simulator", () => {
       expect(agent.previews).toHaveLength(1);
       expect(agent.previews[0]).toMatchObject({ seller: "Polar", ref: expect.stringMatching(/^Q-\d+ v1$/), oneTime: expect.stringContaining("₪"), recurring: null });
       expect(agent.body).toContain(agent.previews[0].url);
+      // The app's quote message (P11) came just before, as its own kind, delivered like any agent message.
+      const quote = chat.messages.at(-2)!;
+      expect(quote).toMatchObject({ from: "agent", kind: "quote", body: expect.stringMatching(/^\*Quote Q-\d+\*\n2 × Wireless fridge sensor \(SNS-200\)/) });
+      expect(agent).not.toHaveProperty("kind");
+      const [quoteRow] = await db.select().from(messages).where(eq(messages.id, quote.id));
+      expect(quoteRow.deliveryStatus).toBe("read");
       // The form behind the card opens (it is this account's live link).
       const formToken = agent.previews[0].url.split("/f/")[1];
       const { loadForm } = await import("@/lib/orders/service");

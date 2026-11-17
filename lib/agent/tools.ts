@@ -4,25 +4,27 @@
  * ({ ok: false, refused: true, rule, missing }) the agent reads and acts on.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, max } from "drizzle-orm";
+import { and, desc, eq, inArray, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leadEvents, leads, messages, orderForms, orders, quotes, sellerAccounts, type Market, type Playbook, type SellerAccount } from "@/db/schema";
-import { agentDeliveryText } from "@/lib/delivery/eta";
+import { catalogItems, conversations, leadEvents, leads, messages, orderForms, orders, quoteLines, quotes, sellerAccounts, type Market, type Playbook, type QuoteVersion, type SellerAccount } from "@/db/schema";
+import { agentDeliveryText, estimateDelivery } from "@/lib/delivery/eta";
 import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { resolveMarket } from "@/lib/markets/service";
 import { windowState } from "@/lib/channels/rules";
 import { optOutLead } from "@/lib/leads/service";
 import { checkFit } from "@/lib/catalog/fit";
-import { approvalReasonText, pricingErrorText } from "@/lib/catalog/pricing";
+import { approvalReasonText, pricingErrorText, type Totals } from "@/lib/catalog/pricing";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
 import { priceWithList, type EngineLine } from "@/lib/pricing/engine";
 import { catalogAutoAdd, engineItems, enginePriceList, pricingContext, requestLinesOf, type PricingContext } from "@/lib/quotes/pricing";
 import { createQuote } from "@/lib/quotes/service";
 import { createOrderForm } from "@/lib/orders/service";
+import { pricesAllowed } from "./core/facts";
 import type { ToolDef } from "./llm";
 import { missingFields } from "./playbook";
+import { deliveryByPhrase, percentText, quoteMessageText } from "./quote-message";
 import { OPT_OUT_REPLY } from "./safety";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
 
@@ -39,13 +41,13 @@ const lineSchema = {
 export const TOOL_DEFS: ToolDef[] = [
   {
     name: "search_catalog",
-    description: "Search the seller's catalog with the prices of the buyer's market. Returns products with SKU, unit, one-time and recurring price, and availability. Items marked sold_here=false are not sold in the buyer's market: never offer them. Use before recommending any product.",
+    description: "Search the seller's catalog for the buyer's market. Returns products with SKU, plain_name (what to call it in chat), value (what the buyer gets), unit and availability. Prices (one-time and recurring, with their VAT basis) come only once the buyer confirmed the recommendation or asked for the price; until then `prices` says they are withheld. Items marked sold_here=false are not sold in the buyer's market: never offer them. Use before recommending any product.",
     strict: true,
     input_schema: { type: "object", properties: { query: { type: "string", description: "Words to match; empty string lists everything." } }, required: ["query"], additionalProperties: false },
   },
   {
     name: "check_fit",
-    description: "Check a set of products against the seller's fit rules (what must be sold together, limits per unit) and price it for the buyer's market. Returns problems, advice, lines added automatically (such as setup fees) and the totals.",
+    description: "Check a set of products against the seller's fit rules (what must be sold together, limits per unit) for the buyer's market. Returns problems, advice, lines added automatically (such as setup fees) and the delivery estimate; line prices and totals (before VAT, VAT, including VAT) only once prices may be shown, else `prices` says they are withheld.",
     strict: true,
     input_schema: {
       type: "object",
@@ -90,7 +92,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "create_quote",
-    description: "Create a quote priced by the server from the price list of the buyer's market. Refused with the missing fields if the deal is not qualified yet, or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval.",
+    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields if the deal is not qualified yet, or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval.",
     strict: true,
     input_schema: {
       type: "object",
@@ -114,7 +116,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "send_order_form",
-    description: "Send the buyer the personal link to the seller's order form for a ready quote, to review, sign and pay. Refused with the missing fields if the deal is not ready for the order form, or if the quote waits for the seller's approval.",
+    description: "Send the buyer the personal link to the seller's order form for a ready quote, to fill in their company details, sign and pay. Do not ask for company or signer details in the chat: the buyer fills them in the form. Refused if the quote waits for the seller's approval, expired, or the buyer opted out.",
     strict: true,
     input_schema: { type: "object", properties: { quote: { type: "string", description: 'Quote number, e.g. "Q-1001".' } }, required: ["quote"], additionalProperties: false },
   },
@@ -194,11 +196,72 @@ const NO_PRICE_LIST = "No price list for this buyer's market";
 const NOT_SOLD = "Not sold in this buyer's market";
 const NO_PRICES_MESSAGE = "Tell the buyer you will confirm prices with the team. Do not guess prices.";
 
-/** A priced line in plain words for the model: "6 × SNS-200 one-time: ₪3,540.00". */
-function describeLine(l: EngineLine, money: (m: number, period?: "month" | "year") => string) {
+/** What `prices` says while lookups hold prices back (P11: no price before the recommendation is confirmed). */
+export const PRICES_WITHHELD = "withheld until the buyer confirms the recommendation or asks for the price";
+
+/** True once prices may reach the buyer: the recommendation is confirmed, the buyer asked, or a quote exists. Read each call (facts change mid-turn). */
+async function pricesOpen(ctx: ToolContext): Promise<boolean> {
+  const [deal, [quoted]] = await Promise.all([
+    readDealState(ctx.db, ctx.accountId, ctx.leadId),
+    ctx.db.select({ id: quotes.id }).from(quotes).where(and(eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId))).limit(1),
+  ]);
+  return pricesAllowed(deal?.fields, !!quoted);
+}
+
+/**
+ * What a price-list amount means for VAT. Line and unit prices are as the
+ * price list states them (before VAT unless it includes tax); totals always
+ * say which side of VAT they are on, so the model never mixes the two.
+ */
+function priceBasis(pricesIncludeTax: boolean, taxRateBp: number): string {
+  if (taxRateBp === 0) return "No VAT applies.";
+  return pricesIncludeTax
+    ? `Prices include VAT ${percentText(taxRateBp)}.`
+    : `Prices are before VAT; VAT ${percentText(taxRateBp)} is added on the quote.`;
+}
+
+/** The key a line amount goes under: its VAT basis is in the name. */
+const lineKey = (pricesIncludeTax: boolean, taxRateBp: number) => (taxRateBp === 0 ? "total" : pricesIncludeTax ? "total_including_vat" : "total_before_vat");
+
+/** A line in plain words for the model; without the amount while prices are withheld (key null). */
+function describeLine(l: EngineLine, money: (m: number, period?: "month" | "year") => string, plainName: string, key: string | null) {
   const charge = l.charge === "one_time" ? "one-time" : l.period === "year" ? "yearly" : "monthly";
   const total = l.priceSource === "not_charged" ? "included" : l.lineTotalMinor === null ? "priced by the seller" : money(l.lineTotalMinor, l.period ?? undefined);
-  return { sku: l.sku, name: l.name, qty: l.qty, charge, total, ...(l.autoAdded ? { added_automatically: true, buyer_can_remove: l.removable } : {}) };
+  return {
+    sku: l.sku, name: l.name, plain_name: plainName, qty: l.qty, charge, ...(key ? { [key]: total } : {}),
+    ...(l.autoAdded ? { added_automatically: true, buyer_can_remove: l.removable } : {}),
+  };
+}
+
+/**
+ * Totals with their VAT basis in every label (P11.2). The old result gave
+ * the VAT-inclusive total as "due_on_signing" next to "prices_include_tax:
+ * false", which the model read as list prices that did not add up.
+ */
+function totalsBreakdown(
+  t: { oneTime: Totals; recurring: Totals; period: "month" | "year"; taxRateBp: number; complete: boolean },
+  money: (m: number, period?: "month" | "year") => string,
+) {
+  const rec = t.recurring.totalMinor > 0;
+  return {
+    subtotal_before_vat: t.complete ? money(t.oneTime.totalMinor - t.oneTime.taxMinor) : "to be priced by the seller",
+    ...(t.oneTime.discountMinor > 0 ? { discount_already_taken_off: money(t.oneTime.discountMinor) } : {}),
+    vat_rate: t.taxRateBp > 0 ? percentText(t.taxRateBp) : "no VAT",
+    vat_amount: money(t.oneTime.taxMinor),
+    total_today_including_vat: t.complete ? money(t.oneTime.totalMinor) : "to be priced by the seller",
+    recurring_before_vat: rec ? money(t.recurring.totalMinor - t.recurring.taxMinor, t.period) : null,
+    recurring_vat_amount: rec ? money(t.recurring.taxMinor, t.period) : null,
+    recurring_total_including_vat: rec ? money(t.recurring.totalMinor, t.period) : null,
+  };
+}
+
+async function accountOf(ctx: ToolContext): Promise<SellerAccount | undefined> {
+  let account = ctx.memo?.account;
+  if (!account || account.id !== ctx.accountId) {
+    [account] = await ctx.db.select().from(sellerAccounts).where(eq(sellerAccounts.id, ctx.accountId));
+    if (ctx.memo && account) ctx.memo.account = account;
+  }
+  return account;
 }
 
 /**
@@ -207,11 +270,7 @@ function describeLine(l: EngineLine, money: (m: number, period?: "month" | "year
  * signing, if signed today)"), or "not set: …" so the agent never invents one.
  */
 async function deliveryOf(ctx: ToolContext, market: Market): Promise<string> {
-  let account = ctx.memo?.account;
-  if (!account || account.id !== ctx.accountId) {
-    [account] = await ctx.db.select().from(sellerAccounts).where(eq(sellerAccounts.id, ctx.accountId));
-    if (ctx.memo && account) ctx.memo.account = account;
-  }
+  const account = await accountOf(ctx);
   return agentDeliveryText(account ? deliveryPlanFor(account, market) : null, new Date());
 }
 
@@ -242,6 +301,44 @@ function asLines(v: unknown): Line[] | null {
   return out;
 }
 
+/**
+ * Writes the quote message into the conversation: an agent message the app
+ * wrote, whose kind comes from create_quote's `quote_message_id` (see
+ * lib/agent/app-message.ts). Real channels send it before the agent's reply
+ * (replyToBuyer). Returns the message id.
+ */
+async function sendQuoteMessage(ctx: ToolContext, number: number, v: QuoteVersion, timezone: string): Promise<string> {
+  const lines = await ctx.db.select().from(quoteLines)
+    .where(and(eq(quoteLines.accountId, ctx.accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder);
+  const ids = [...new Set(lines.map((l) => l.catalogItemId).filter((x): x is string => !!x))];
+  const items = ids.length
+    ? await ctx.db.select({ id: catalogItems.id, plainName: catalogItems.plainName, kind: catalogItems.kind })
+      .from(catalogItems).where(and(eq(catalogItems.accountId, ctx.accountId), inArray(catalogItems.id, ids)))
+    : [];
+  const itemOf = new Map(items.map((i) => [i.id, i]));
+  const language = ctx.language ?? "en";
+  const body = quoteMessageText({
+    number, currency: v.currency, pricesIncludeTax: v.pricesIncludeTax, taxRateBp: v.taxRateBp, discountBp: v.discountBp,
+    lines: lines.map((l) => {
+      const item = l.catalogItemId ? itemOf.get(l.catalogItemId) : undefined;
+      return {
+        sku: l.sku, name: item?.plainName?.trim() || l.name, qty: l.qty, charge: l.chargeType, lineTotalMinor: l.lineTotalMinor,
+        priceSource: l.priceSource, service: item?.kind === "service",
+      };
+    }),
+    oneTime: { subtotalMinor: v.oneTimeSubtotalMinor, discountMinor: v.oneTimeDiscountMinor, taxMinor: v.oneTimeTaxMinor, totalMinor: v.oneTimeTotalMinor },
+    recurring: { subtotalMinor: v.recurringSubtotalMinor, discountMinor: v.recurringDiscountMinor, taxMinor: v.recurringTaxMinor, totalMinor: v.recurringTotalMinor },
+    recurringPeriod: v.recurringPeriod === "year" ? "year" : v.recurringPeriod === "month" ? "month" : null,
+    validUntil: v.validUntil, timezone, language,
+  });
+  const id = randomUUID();
+  const at = new Date();
+  await ctx.db.insert(messages).values({ id, accountId: ctx.accountId, conversationId: ctx.conversationId, actor: "agent", body, language, createdAt: at });
+  // The agent's reply is stamped at the end of the turn: wait for the next millisecond so the quote always shows first.
+  while (Date.now() <= at.getTime()) await new Promise((r) => setTimeout(r, 1));
+  return id;
+}
+
 export async function runTool(name: string, input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const args = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   /** Money in a currency (the price list's), with the period for recurring amounts. */
@@ -252,32 +349,46 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     if (!p.catalog) return refuse("No published catalog yet", { message: "Tell the buyer you will check product details with the team." });
     if (!p.priceList) return refuse(NO_PRICE_LIST, { message: NO_PRICES_MESSAGE });
     const money = moneyIn(p.priceList.list.currency);
+    const open = await pricesOpen(ctx);
     const entryBySku = new Map(p.priceList.entries.map((e) => [e.sku, e]));
     const words = String(args.query ?? "").toLowerCase().split(/\s+/).filter(Boolean);
     const part = (charged: boolean, minor: number | null, period?: "month" | "year") =>
       !charged ? null : minor === null ? "priced by the seller on request" : money(minor, period);
     const items = p.catalog.items
       .filter((i) => i.active)
-      .filter((i) => words.length === 0 || words.some((w) => `${i.sku} ${i.name} ${i.description ?? ""} ${i.unit}`.toLowerCase().includes(w)))
+      .filter((i) => words.length === 0 || words.some((w) => `${i.sku} ${i.name} ${i.plainName ?? ""} ${i.valueLine ?? ""} ${i.description ?? ""} ${i.unit}`.toLowerCase().includes(w)))
       .slice(0, 20)
       .map((i) => {
         const e = entryBySku.get(i.sku);
+        const plain = i.plainName?.trim() || i.name;
         // Not in this market's price list: not sold here, which is not a price of 0.
-        if (!e) return { sku: i.sku, name: i.name, sold_here: false, note: "Not sold in this buyer's market. Do not offer it." };
+        if (!e) return { sku: i.sku, name: i.name, plain_name: plain, sold_here: false, note: "Not sold in this buyer's market. Do not offer it." };
         const period = e.recurringPeriod ?? "month";
         return {
-          sku: i.sku, name: i.name, kind: i.kind ?? "product", unit: i.unit, sold_here: true,
-          one_time_price: part(e.oneTimeCharged, e.oneTimeMinor),
-          recurring_price: part(e.recurringCharged, e.recurringMinor, period),
-          volume_prices: [
-            ...(e.oneTimeCharged ? e.oneTimeTiers.map((t) => `one-time from ${t.minQty}: ${money(t.priceMinor)}`) : []),
-            ...(e.recurringCharged ? e.recurringTiers.map((t) => `recurring from ${t.minQty}: ${money(t.priceMinor, period)}`) : []),
-          ],
-          ...(e.customPricingFromQty !== null ? { priced_by_seller_from_qty: e.customPricingFromQty } : {}),
-          availability: i.availabilityNote, description: i.description,
+          sku: i.sku, name: i.name, plain_name: plain, kind: i.kind ?? "product", unit: i.unit, sold_here: true,
+          ...(open
+            ? {
+                one_time_price: part(e.oneTimeCharged, e.oneTimeMinor),
+                recurring_price: part(e.recurringCharged, e.recurringMinor, period),
+                volume_prices: [
+                  ...(e.oneTimeCharged ? e.oneTimeTiers.map((t) => `one-time from ${t.minQty}: ${money(t.priceMinor)}`) : []),
+                  ...(e.recurringCharged ? e.recurringTiers.map((t) => `recurring from ${t.minQty}: ${money(t.priceMinor, period)}`) : []),
+                ],
+                ...(e.customPricingFromQty !== null ? { priced_by_seller_from_qty: e.customPricingFromQty } : {}),
+              }
+            : {}),
+          availability: i.availabilityNote, value: i.valueLine?.trim() || i.description,
+          // The description stays available when a value line takes its place as `value`.
+          ...(i.valueLine?.trim() && i.description ? { details: i.description } : {}),
         };
       });
-    return { outcome: "ok", result: { ok: true, items, currency: p.priceList.list.currency, prices_include_tax: p.priceList.list.pricesIncludeTax } };
+    const list = p.priceList.list;
+    return {
+      outcome: "ok",
+      result: open
+        ? { ok: true, items, currency: list.currency, prices_include_tax: list.pricesIncludeTax, price_basis: priceBasis(list.pricesIncludeTax, list.taxRateBp) }
+        : { ok: true, items, prices: PRICES_WITHHELD },
+    };
   }
 
   if (name === "check_fit") {
@@ -291,6 +402,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       return { outcome: "ok", result: { ok: fit.ok, problems: fit.problems, advice: fit.notes, prices: NO_PRICE_LIST } };
     }
     const money = moneyIn(p.priceList.list.currency);
+    const open = await pricesOpen(ctx);
     const r = priceWithList({
       items: engineItems(p.catalog), entries: p.priceList.entries, priceList: enginePriceList(p.priceList.list),
       lines, sites, discountBp: 0, maxDiscountBp: 10_000, autoAdd: catalogAutoAdd(p.catalog),
@@ -302,15 +414,19 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     // Fit rules see what will be quoted, including lines added automatically.
     const fit = checkFit(p.catalog.rules, requestLinesOf(r.lines), sites);
+    const plainOf = new Map(p.catalog.items.map((i) => [i.sku, i.plainName?.trim() || i.name]));
     return {
       outcome: "ok",
       result: {
         ok: fit.ok, problems: fit.problems, advice: fit.notes,
-        lines: r.lines.map((l) => describeLine(l, money)),
+        lines: r.lines.map((l) => describeLine(l, money, plainOf.get(l.sku) ?? l.name, open ? lineKey(r.pricesIncludeTax, r.taxRateBp) : null)),
         added_automatically: r.autoAdded,
-        due_on_signing: r.complete ? money(r.oneTime.totalMinor) : "to be priced by the seller",
-        recurring: r.recurring.totalMinor ? money(r.recurring.totalMinor, r.recurringPeriod ?? "month") : null,
-        prices_include_tax: r.pricesIncludeTax,
+        ...(open
+          ? {
+              price_basis: priceBasis(r.pricesIncludeTax, r.taxRateBp),
+              totals: totalsBreakdown({ oneTime: r.oneTime, recurring: r.recurring, period: r.recurringPeriod ?? "month", taxRateBp: r.taxRateBp, complete: r.complete }, money),
+            }
+          : { prices: PRICES_WITHHELD }),
         delivery: await deliveryOf(ctx, p.market),
       },
     };
@@ -404,6 +520,12 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const awaiting = r.quote.status === "awaiting_approval";
     // Only lines that removable rules add can be removed; the rest stay on the quote.
     const cannotRemove = removeAsked.filter((s) => !v.removedAutoAdd.includes(s));
+    const account = await accountOf(ctx);
+    const plan = account ? deliveryPlanFor(account, quoteMarket) : null;
+    const now = new Date();
+    // A ready quote goes to the buyer as the app's own message, in a fixed layout; the agent adds only the closing sentence.
+    // Awaiting approval: no message and no totals to promise (the agent says it is confirming the price with the team).
+    const quoteMessageId = !awaiting && !r.reused ? await sendQuoteMessage(ctx, r.quote.number, v, plan?.timezone ?? account?.timezone ?? "UTC") : null;
     return {
       outcome: "ok",
       result: {
@@ -414,26 +536,33 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
           ? { cannot_remove: cannotRemove, cannot_remove_message: `These lines cannot be removed and stay on the quote: ${cannotRemove.join(", ")}. Tell the buyer they are required.` }
           : {}),
         status: awaiting ? "awaiting_seller_approval" : "ready",
-        due_on_signing: awaiting && v.approvalReasons.some((x) => x.kind === "price_missing") ? "to be priced by the seller" : money(v.oneTimeTotalMinor),
-        // "monthly" stays for the trace (lib/agent/trace.ts); "recurring" also covers yearly prices.
-        monthly: v.recurringTotalMinor && period === "month" ? money(v.recurringTotalMinor, "month") : null,
-        recurring: v.recurringTotalMinor ? money(v.recurringTotalMinor, period) : null,
-        prices_include_tax: v.pricesIncludeTax,
+        price_basis: priceBasis(v.pricesIncludeTax, v.taxRateBp),
+        totals: awaiting
+          ? "not final: the seller must approve this quote first"
+          : totalsBreakdown({
+              oneTime: { subtotalMinor: v.oneTimeSubtotalMinor, discountMinor: v.oneTimeDiscountMinor, taxMinor: v.oneTimeTaxMinor, totalMinor: v.oneTimeTotalMinor },
+              recurring: { subtotalMinor: v.recurringSubtotalMinor, discountMinor: v.recurringDiscountMinor, taxMinor: v.recurringTaxMinor, totalMinor: v.recurringTotalMinor },
+              period, taxRateBp: v.taxRateBp, complete: true,
+            }, money),
         valid_until: v.validUntil.toISOString().slice(0, 10),
         approval_reasons: v.approvalReasons.map(approvalReasonText),
         delivery: await deliveryOf(ctx, quoteMarket),
+        // The close's phrase: "by about <last date of the estimate>" in the buyer's language, or "not set: …".
+        delivery_by: plan ? deliveryByPhrase(estimateDelivery({ ...plan, from: now }).latest, ctx.language ?? "en") : agentDeliveryText(null, now),
+        ...(quoteMessageId ? { quote_message_id: quoteMessageId } : {}),
         message: awaiting
-          ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them."
-          : "Share the totals. When the buyer is ready, send the order form with send_order_form.",
+          ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them. Do not give totals."
+          : "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.",
       },
     };
   }
 
   if (name === "send_order_form") {
     if (!ctx.playbook.outcomes.orderForm) return refuse("Order form is not offered by this seller", { message: "Offer a meeting or hand off instead." });
+    // "Before order form" fields (company and signer details) are filled in by the buyer in the form itself (P11.2).
     const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
-    const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_order_form");
-    if (missing.length) return refuse("Before-order-form fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these first." });
+    const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_quote");
+    if (missing.length) return refuse("Before-quote fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these first." });
     const number = Number(String(args.quote ?? "").replace(/^\s*Q-?/i, "").replace(/\s*v\d+$/i, ""));
     const [q] = Number.isInteger(number)
       ? await ctx.db.select().from(quotes).where(and(eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), eq(quotes.number, number)))
@@ -458,7 +587,13 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       }[r.reason];
       return refuse(rule, { message: r.reason === "quote_expired" ? "Create a new quote version with current prices." : "Tell the buyer the team will send the order form shortly, and hand off if needed." });
     }
-    return { outcome: "ok", result: { ok: true, link: r.url, valid_until: r.form.expiresAt.toISOString().slice(0, 10), message: "Send this link to the buyer with one short sentence. Do not ask for card details in the chat." } };
+    return {
+      outcome: "ok",
+      result: {
+        ok: true, link: r.url, valid_until: r.form.expiresAt.toISOString().slice(0, 10),
+        message: "Send this link to the buyer with one short sentence on what they do there: fill in their company details, sign and pay. Do not ask for company details or card details in the chat.",
+      },
+    };
   }
 
   if (name === "check_payment") {

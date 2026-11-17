@@ -145,15 +145,21 @@ describe("inbox, templates and the order-form link on WhatsApp", () => {
     const link = formCall.result.link as string;
     expect(link).toMatch(/^https:\/\/salesatscale\.example\/f\/[A-Za-z0-9_.-]+$/);
 
-    // Sent once, over WhatsApp, with the link alone on its own line (WhatsApp previews it).
-    expect(tw.sent).toHaveLength(1);
-    const body = (tw.sent[0] as { body: string }).body;
+    // The app's quote message goes out first (P11), then the reply, with the link alone on its own line (WhatsApp previews it).
+    expect(tw.sent).toHaveLength(2);
+    const quoteCall = calls.find((c) => c.name === "create_quote")!;
+    const [quoteMsg] = await db.select().from(messages).where(eq(messages.id, quoteCall.result.quote_message_id as string));
+    expect(tw.sent[0]).toMatchObject({ to: lead.phone, from: SENDER, body: quoteMsg.body });
+    expect(quoteMsg.body).toMatch(/^\*Quote Q-\d+\*\n2 × Wireless fridge sensor \(SNS-200\): ₪1,180\n/);
+    expect(quoteMsg.deliveryStatus).toBe("queued");
+    const body = (tw.sent[1] as { body: string }).body;
     expect(body.split("\n")).toContain(link);
     expect(body).toBe(`Here is your order form:\n${link}\nIt is valid for 7 days.`);
-    expect(tw.sent[0]).toMatchObject({ to: lead.phone, from: SENDER, statusCallback: "https://salesatscale.example/api/webhooks/whatsapp/status" });
+    expect(tw.sent[1]).toMatchObject({ to: lead.phone, from: SENDER, statusCallback: "https://salesatscale.example/api/webhooks/whatsapp/status" });
 
     // The stored message is what was sent; the status callback moves its delivery.
-    const [agentMsg] = await db.select().from(messages).where(and(eq(messages.conversationId, r.conversationId), eq(messages.actor, "agent")));
+    if (out.turn.status !== "replied") throw new Error();
+    const [agentMsg] = await db.select().from(messages).where(eq(messages.id, out.turn.messageId));
     expect(agentMsg).toMatchObject({ body, deliveryStatus: "queued" });
     expect(await applyStatusCallback(db, { MessageSid: agentMsg.channelMessageId!, MessageStatus: "delivered" })).toBe(true);
     expect((await db.select().from(messages).where(eq(messages.id, agentMsg.id)))[0].deliveryStatus).toBe("delivered");
@@ -186,7 +192,7 @@ describe("inbox, templates and the order-form link on WhatsApp", () => {
     const [call] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, r.conversationId), eq(toolCalls.name, "send_order_form")));
     const link = call.result.link as string;
     expect(link).toMatch(/^https?:\/\//);
-    expect((tw.sent[0] as { body: string }).body).toBe(`I sent you the order form.\n${link}`);
+    expect((tw.sent.at(-1) as { body: string }).body).toBe(`I sent you the order form.\n${link}`);
   });
 
   it("outside the 24-hour window the agent does not send the link, and the seller sees window_closed", async () => {

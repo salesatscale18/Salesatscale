@@ -3,6 +3,8 @@ import { Fragment } from "react";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
+import { MessageBody } from "@/components/sas/message-body";
+import { appMessageKinds } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { llmConfigured } from "@/lib/agent/llm";
@@ -75,6 +77,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     conv ? getDealState(appDb, account.id, conv.leadId) : null,
   ]);
   const thread = view?.thread ?? [];
+  // Messages the app wrote (the quote message) are known from the tool call that wrote them.
+  const kinds = appMessageKinds(thread.flatMap((x) => x.calls));
   const notice = one(sp.notice) || undefined;
   const convVersion = conv ? versions.find((v) => v.id === conv.agentVersionId) : undefined;
   const error = one(sp.error);
@@ -146,7 +150,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                       <ChatMessage
                         actor={actor} who={t(`lab.who.${actor}` as MessageKey)}
                         time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${exactTime(m.createdAt)} · ${deliveryLabel(m)}` : exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
-                        {m.body}
+                        <MessageBody body={m.body} kind={kinds.get(m.id)} />
                       </ChatMessage>
                       {isAdmin && usage?.inputTokens !== undefined ? (
                         <span className="sas-small sas-num" style={{ alignSelf: "flex-end" }}>{t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}</span>

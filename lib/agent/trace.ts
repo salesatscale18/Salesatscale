@@ -50,12 +50,20 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
       got = `Saved ${arr(result.saved).length}${kept.length ? `; kept verified: ${kept.join(", ")}` : ""}${placeholders.length ? `; not saved (no real value): ${placeholders.join(", ")}` : ""}`;
       break;
     }
-    case "create_quote":
+    case "create_quote": {
       sent = `${lines(input.lines)}${input.discount_percent ? `, ${str(input.discount_percent)}% discount` : ""}`;
-      got = result.quote
-        ? `${str(result.quote)}: ${str(result.due_on_signing)} due on signing${result.monthly ? ` + ${str(result.monthly)}` : ""}${result.status === "awaiting_seller_approval" ? " (awaiting your approval)" : ""}`
-        : "";
+      // Results since P11 carry labelled totals (none while awaiting approval); older ones due_on_signing and monthly.
+      const totals = result.totals && typeof result.totals === "object" ? (result.totals as Obj) : null;
+      const awaiting = result.status === "awaiting_seller_approval" ? " (awaiting your approval)" : "";
+      if (!result.quote) got = "";
+      else if (totals) {
+        const rec = totals.recurring_total_including_vat;
+        got = `${str(result.quote)}: ${str(totals.total_today_including_vat)} due on signing incl. VAT${rec ? ` + ${str(rec)}` : ""}${awaiting}`;
+      } else if (result.due_on_signing) {
+        got = `${str(result.quote)}: ${str(result.due_on_signing)} due on signing${result.monthly ? ` + ${str(result.monthly)}` : ""}${awaiting}`;
+      } else got = `${str(result.quote)}${awaiting}`;
       break;
+    }
     case "send_order_form":
       sent = str(input.quote);
       got = result.link ? `Link sent, valid until ${str(result.valid_until)}` : "";
