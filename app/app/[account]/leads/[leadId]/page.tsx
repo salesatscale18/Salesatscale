@@ -25,6 +25,8 @@ import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
+import { leadStage } from "@/lib/leads/stage";
+import { StageStepper } from "./stage";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -69,7 +71,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatToken, simFacts] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatToken, simFacts, stage] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -81,6 +83,7 @@ export default async function LeadCardPage({
     openerFacts(appDb, defaultTransport(), account.id, leadId),
     activeChatToken(appDb, account.id, leadId),
     simulatorOpenerFacts(appDb, account.id, leadId),
+    leadStage(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
@@ -147,6 +150,7 @@ export default async function LeadCardPage({
             </span>
           </div>
         </header>
+        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} />
         <div className="sas-lead__body">
           <div className="sas-lead__main">
             {opener ? (

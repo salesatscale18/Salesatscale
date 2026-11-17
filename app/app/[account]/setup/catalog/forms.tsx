@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useState, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
@@ -27,8 +27,103 @@ export type ItemDefaults = {
 
 const LANG_NAMES: Record<string, string> = { en: "English", he: "Hebrew", ar: "Arabic", ru: "Russian", fr: "French", de: "German", es: "Spanish", it: "Italian", nl: "Dutch" };
 
-/** Item editor (canvas: ProductEditor). Saves into the catalog draft; prices live in price lists. */
-export function ItemForm({ slug, d, unitLanguages }: { slug: string; d: ItemDefaults; unitLanguages: string[] }) {
+/** An open suggestion from the knowledge analysis for this item's agent texts. */
+export type ItemTextSuggestion = { id: string; plainName: string; valueLine: string };
+
+/** Lengths mirrored from lib/catalog/rules.ts (the server checks them again). */
+const PLAIN_MAX = 60;
+const VALUE_MAX = 140;
+const VALUE_STORED_MAX = 200;
+
+/** "SNS-200 Wireless sensor" -> "Wireless sensor": what the agent says when there is no chat name. */
+export function nameWithoutCode(name: string, sku: string): string {
+  const n = name.trim();
+  const s = sku.trim();
+  return s && n.toUpperCase().startsWith(s.toUpperCase()) ? n.slice(s.length).replace(/^[\s:·,-]+/, "") || n : n;
+}
+
+const TINT = { background: "var(--primary-soft)", color: "var(--primary)", borderRadius: 4, padding: "0 3px" } as const;
+
+/**
+ * "How the agent talks about it" (canvas: ProductChatName): the chat name and
+ * the value sentence with counters, a preview sentence, and an open
+ * suggestion that can be used here (saving the item then accepts it). A value
+ * sentence saved before the 140-character rule is kept until it is changed.
+ */
+function ChatWording({ d, suggestion, invalid, err, errors }: {
+  d: ItemDefaults; suggestion?: ItemTextSuggestion | null;
+  invalid: (k: "plainName" | "valueLine") => object; err: (k: "plainName" | "valueLine") => ReactNode; errors: Record<string, string | undefined>;
+}) {
+  const [plain, setPlain] = useState(d.plainName);
+  const [value, setValue] = useState(d.valueLine);
+  const [used, setUsed] = useState(false);
+  const valueMax = value === d.valueLine && d.valueLine.length > VALUE_MAX ? VALUE_STORED_MAX : VALUE_MAX;
+  const shownName = plain.trim() || nameWithoutCode(d.name, d.sku) || t("catalog.sounds.this_item");
+  const shownValue = value.trim() || d.description.trim();
+  return (
+    <section className="sas-stack-4" aria-labelledby="ci-chat-h" style={{ padding: 16, border: "1px solid var(--primary)", borderRadius: 12 }}>
+      <div className="sas-stack-2" style={{ gap: 2 }}>
+        <h3 id="ci-chat-h" className="sas-heading" style={{ display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
+          {t("catalog.chat.title")}
+          <span style={{ fontSize: 10, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--primary)", border: "1px solid var(--primary)", borderRadius: 4, padding: "0 4px", lineHeight: "16px" }}>{t("playbook.new")}</span>
+        </h3>
+        <span className="sas-small">{t("catalog.chat.hint")}</span>
+      </div>
+      {used && suggestion ? <input type="hidden" name="suggestionId" value={suggestion.id} /> : null}
+      <div className="sas-input-group">
+        <label className="sas-input-label" htmlFor="ci-plain">{t("catalog.edit.plain_name")}</label>
+        <input
+          className="sas-input" id="ci-plain" name="plainName" maxLength={PLAIN_MAX} value={plain} onChange={(ev) => setPlain(ev.target.value)} placeholder={t("catalog.edit.optional")}
+          {...invalid("plainName")} aria-describedby={errors.plainName ? "ci-plainName-error" : "ci-plain-hint ci-plain-count"}
+        />
+        <span className="sas-hint" id="ci-plain-hint">{t("catalog.edit.plain_name_hint")}</span>
+        <span className="sas-hint" id="ci-plain-count"><span className="sas-num">{plain.length}</span> {t("catalog.chat.of_chars", { max: PLAIN_MAX })}</span>
+        {err("plainName")}
+      </div>
+      <div className="sas-input-group">
+        <label className="sas-input-label" htmlFor="ci-value">{t("catalog.edit.value_line")}</label>
+        <textarea
+          className="sas-textarea" id="ci-value" name="valueLine" rows={2} maxLength={valueMax} value={value} onChange={(ev) => setValue(ev.target.value)} placeholder={t("catalog.edit.optional")}
+          {...invalid("valueLine")} aria-describedby={errors.valueLine ? "ci-valueLine-error" : "ci-value-hint ci-value-count"}
+        />
+        <span className="sas-hint" id="ci-value-hint">{t("catalog.edit.value_line_hint")}</span>
+        <span className="sas-hint" id="ci-value-count" style={value.length > VALUE_MAX ? { color: "var(--warning)" } : undefined}>
+          <span className="sas-num">{value.length}</span> {t("catalog.chat.of_chars", { max: VALUE_MAX })}
+          {value.length > VALUE_MAX ? ` ${t("catalog.chat.longer_kept")}` : ""}
+        </span>
+        {err("valueLine")}
+      </div>
+      <div className="sas-stack-2" style={{ padding: 12, borderRadius: 10, background: "var(--surface)" }} aria-labelledby="ci-sounds-h">
+        <strong id="ci-sounds-h" style={{ fontSize: 13 }}>{t("catalog.sounds.title")}</strong>
+        <div data-testid="how-it-sounds" style={{ alignSelf: "flex-start", maxWidth: "100%", background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 12, borderStartStartRadius: 4, padding: "8px 12px", overflowWrap: "anywhere" }}>
+          {t("catalog.sounds.before")} <span style={TINT}>{shownName}</span>{t("catalog.sounds.after")}
+          {shownValue ? <> <span style={TINT}>{shownValue}</span></> : null}
+        </div>
+        <span className="sas-small">{t("catalog.sounds.note")}</span>
+      </div>
+      {suggestion && !used ? (
+        <div className="sas-small" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", paddingBlockStart: 8, borderBlockStart: "1px solid var(--line)" }} data-testid="item-suggestion">
+          <span style={{ display: "inline-flex", alignItems: "center", height: 18, padding: "0 6px", borderRadius: 4, fontSize: 11, fontWeight: 600, border: "1px dashed var(--agent)", color: "var(--agent)" }}>{t("playbook.suggested")}</span>
+          <span style={{ flex: "1 1 240px", minWidth: 0, overflowWrap: "anywhere" }}>
+            {[suggestion.plainName && `"${suggestion.plainName}"`, suggestion.valueLine && `"${suggestion.valueLine}"`].filter(Boolean).join(" · ")}
+          </span>
+          <button
+            type="button" className={buttonClass("secondary", "sm")}
+            onClick={() => { if (suggestion.plainName) setPlain(suggestion.plainName); if (suggestion.valueLine) setValue(suggestion.valueLine.slice(0, VALUE_MAX)); setUsed(true); }}
+          >
+            {t("catalog.chat.use_suggestion")}
+          </button>
+          <span style={{ flexBasis: "100%" }}>{t("catalog.chat.suggestion_note")}</span>
+        </div>
+      ) : null}
+      {used ? <span className="sas-small">{t("catalog.chat.suggestion_used")}</span> : null}
+      <span className="sas-small">{t("catalog.chat.hebrew")}</span>
+    </section>
+  );
+}
+
+/** Item editor (canvas: ProductEditor, ProductChatName). Saves into the catalog draft; prices live in price lists. */
+export function ItemForm({ slug, d, unitLanguages, suggestion }: { slug: string; d: ItemDefaults; unitLanguages: string[]; suggestion?: ItemTextSuggestion | null }) {
   const [state, action, pending] = useActionState<ItemFormState, FormData>(saveItemAction, { status: "idle" });
   const [unit, setUnit] = useState(d.unit);
   const e = state.status === "error" ? state.errors : {};
@@ -62,18 +157,7 @@ export function ItemForm({ slug, d, unitLanguages }: { slug: string; d: ItemDefa
         <label className="sas-input-label" htmlFor="ci-desc">{t("catalog.edit.description")}</label>
         <textarea className="sas-textarea" id="ci-desc" name="description" rows={2} defaultValue={d.description} />
       </div>
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-plain">{t("catalog.edit.plain_name")}</label>
-        <input className="sas-input" id="ci-plain" name="plainName" maxLength={60} defaultValue={d.plainName} placeholder={t("catalog.edit.optional")} {...invalid("plainName")} aria-describedby={e.plainName ? "ci-plainName-error" : "ci-plain-hint"} />
-        <span className="sas-hint" id="ci-plain-hint">{t("catalog.edit.plain_name_hint")}</span>
-        {err("plainName")}
-      </div>
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-value">{t("catalog.edit.value_line")}</label>
-        <textarea className="sas-textarea" id="ci-value" name="valueLine" rows={2} maxLength={200} defaultValue={d.valueLine} placeholder={t("catalog.edit.optional")} {...invalid("valueLine")} aria-describedby={e.valueLine ? "ci-valueLine-error" : "ci-value-hint"} />
-        <span className="sas-hint" id="ci-value-hint">{t("catalog.edit.value_line_hint")}</span>
-        {err("valueLine")}
-      </div>
+      <ChatWording d={d} suggestion={suggestion} invalid={invalid} err={err} errors={e} />
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor="ci-unit">{t("catalog.edit.unit")}</label>
         <select className="sas-select" id="ci-unit" name="unit" value={unit} onChange={(ev) => setUnit(ev.target.value)} aria-describedby="ci-unit-hint" {...invalid("unit")}>

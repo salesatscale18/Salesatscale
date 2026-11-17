@@ -19,12 +19,14 @@ import { and, asc, desc, eq, inArray, isNotNull, like, lt, sql } from "drizzle-o
 import type { Db } from "@/db/types";
 import {
   agentVersions, catalogVersions, knowledgeFacts, markets, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources,
-  type PipelineRun, type Playbook, type PlaybookSuggestion,
+  type PipelineRun, type PlayKey, type Playbook, type PlaybookSuggestion,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX } from "@/lib/agent/knowledge";
 import { ensureDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
-import { defaultPlaybook, parsePlayCard } from "@/lib/agent/playbook";
+import { defaultPlaybook, OPENER_MAX, parsePlayCard } from "@/lib/agent/playbook";
+import { MAX_OPENER_TOPICS, writtenIn } from "@/lib/agent/core/opener";
+import { VALUE_LINE_INPUT_MAX } from "@/lib/catalog/rules";
 import { ensureDraft, entriesOf, listPriceLists, setEntry } from "@/lib/pricing/price-lists";
 import { applyLimitToPlaybook, effectiveSetting, limitPreview, type LimitContext, type LimitPreview } from "./limits";
 import { itemsOf, setDraftItemTexts } from "@/lib/catalog/service";
@@ -41,8 +43,8 @@ import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, PROMPT_VERSION as FACT
 import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_VERSION, type PlaybookStageData } from "./prompts/playbook";
 import { FACTS_TOOL, PLAYBOOK_TOOL, PROMPT_VERSION as SYSTEM_VERSION } from "./prompts/system";
 import {
-  limitSetting, normalizeStatement, parseFactsOutput, parsePlaybookOutput,
-  type CatalogItemPayload, type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout,
+  limitSetting, normalizeStatement, openerPayloadTopics, parseFactsOutput, parsePlaybookOutput,
+  type CatalogItemPayload, type OpenerPayload, type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout,
   type SuggestionKind, type SuggestionPayload,
 } from "./validate";
 
@@ -701,7 +703,69 @@ export async function suggestionsForSource(db: Db, accountId: string, sourceId: 
   return items.filter((s) => s.evidence.some((e) => e.sourceId === sourceId));
 }
 
-const suggestionWhere = (accountId: string, id: string) => and(eq(playbookSuggestions.accountId, accountId), eq(playbookSuggestions.id, id));
+/** Open (undecided) suggestions of the latest run per play: how many facts, and whether an own card is suggested. */
+export async function pendingPlaySuggestions(db: Db, accountId: string): Promise<Map<PlayKey, { facts: number; card: boolean }>> {
+  const { items } = await latestSuggestions(db, accountId);
+  const out = new Map<PlayKey, { facts: number; card: boolean }>();
+  for (const s of items) {
+    if (s.status !== "suggested" || (s.payload.kind !== "play_content" && s.payload.kind !== "play_card")) continue;
+    const c = out.get(s.payload.play) ?? { facts: 0, card: false };
+    if (s.payload.kind === "play_content") c.facts++;
+    else c.card = true;
+    out.set(s.payload.play, c);
+  }
+  return out;
+}
+
+/** The latest run's suggestions for one play (any status), for the play page. */
+export async function playSuggestions(db: Db, accountId: string, play: PlayKey): Promise<Suggestion[]> {
+  const { items } = await latestSuggestions(db, accountId);
+  return items.filter((s) => (s.payload.kind === "play_content" || s.payload.kind === "play_card") && s.payload.play === play);
+}
+
+/** The open catalog-item suggestion of the latest run for one SKU, if any (the item editor shows it). */
+export async function pendingCatalogSuggestion(db: Db, accountId: string, sku: string): Promise<(Suggestion & { payload: CatalogItemPayload }) | null> {
+  const { items } = await latestSuggestions(db, accountId);
+  const s = items.find((x) => x.status === "suggested" && x.payload.kind === "catalog_item" && x.payload.sku === sku.toUpperCase());
+  return (s as (Suggestion & { payload: CatalogItemPayload }) | undefined) ?? null;
+}
+
+/**
+ * The seller used a suggested item text on the item page and saved the item:
+ * the suggestion counts as accepted with changes ("edited") and is not
+ * applied again (the item save already wrote the texts). Only an open
+ * catalog-item suggestion of this account for that SKU.
+ */
+export async function acceptCatalogSuggestionFromItem(db: Db, actor: Actor, accountId: string, id: string, sku: string, now = new Date()): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const [raw] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
+  if (!raw) return false;
+  const s = asSuggestion(raw);
+  if (s.status !== "suggested" || s.payload.kind !== "catalog_item" || s.payload.sku !== sku.toUpperCase()) return false;
+  await db.update(playbookSuggestions).set({ status: "edited", decidedByUserId: actor.userId, decidedAt: now }).where(suggestionWhere(accountId, id));
+  await writeAudit(db, actor, { accountId, action: "playbook.suggestion_edited", targetType: "playbook_suggestion", targetId: id, details: { kind: s.kind, from: "catalog_item" } });
+  return true;
+}
+
+/**
+ * "Edit first" on a suggested own card: the seller edited it on the play page
+ * and saved it as their own card. The suggestion records the saved card and
+ * counts as accepted with changes, so a later "Save as agent draft" merges the
+ * same card. Only an open play-card suggestion of this account for that play.
+ */
+export async function adoptPlayCardSuggestion(db: Db, actor: Actor, accountId: string, id: string, play: PlayKey, card: { when: string; do: string[]; example: string; notThis: string }): Promise<boolean> {
+  if (!isUuid(id)) return false;
+  const [raw] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
+  if (!raw) return false;
+  const s = asSuggestion(raw);
+  if (s.status !== "suggested" || s.payload.kind !== "play_card" || s.payload.play !== play) return false;
+  const r = await editSuggestion(db, actor, accountId, id, { when: card.when, do: card.do.join("\n"), example: card.example, notThis: card.notThis });
+  return r.ok;
+}
+
+function suggestionWhere(accountId: string, id: string) {
+  return and(eq(playbookSuggestions.accountId, accountId), eq(playbookSuggestions.id, id));
+}
 
 /** Accept or reject one suggestion. Null when it is not this account's. */
 export async function decideSuggestion(db: Db, actor: Actor, accountId: string, id: string, status: "accepted" | "rejected" | "suggested", now = new Date()) {
@@ -755,11 +819,12 @@ export const EDITABLE: Record<SuggestionPayload["kind"], { name: string; max: nu
   limit: [{ name: "rule", max: 200, required: true }],
   never: [{ name: "rule", max: 200, required: true }],
   // P11. At least one opener input and one item text is required (checked in editSuggestion).
-  opener: [{ name: "leadsAskAbout", max: 120, required: false }, { name: "openingQuestion", max: 200, required: false }],
+  // The topics (one per line) are checked in editSuggestion.
+  opener: [{ name: "openingQuestion", max: 200, required: false }, { name: "openingQuestionHe", max: 200, required: false }],
   play_content: [{ name: "content", max: 600, required: true }],
   // The moves ("do", one per line) are checked with parsePlayCard.
   play_card: [{ name: "when", max: 200, required: true }, { name: "example", max: 300, required: true }, { name: "notThis", max: 300, required: true }],
-  catalog_item: [{ name: "plainName", max: 60, required: false }, { name: "valueLine", max: 200, required: false }],
+  catalog_item: [{ name: "plainName", max: 60, required: false }, { name: "valueLine", max: VALUE_LINE_INPUT_MAX, required: false }],
 };
 
 /** Saves an edited suggestion (status edited = accepted with changes). Field stages and limit percentages are edited too. */
@@ -778,7 +843,21 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
     payload[f.name] = v;
   }
   if (kind === "field" && ["before_quote", "before_order_form", "optional"].includes(values.stage ?? "")) payload.stage = values.stage;
-  if (kind === "opener" && !payload.leadsAskAbout && !payload.openingQuestion) return { ok: false, error: "required" };
+  if (kind === "opener") {
+    // Topics: one English topic per line; a topic kept as it was keeps its Hebrew version.
+    const before = openerPayloadTopics(row.payload as OpenerPayload);
+    const lines = (values.topics ?? "").split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).filter(Boolean);
+    if (lines.length > MAX_OPENER_TOPICS) return { ok: false, error: "topics" };
+    if (lines.some((l) => l.length > OPENER_MAX.leadsAskAbout)) return { ok: false, error: "too_long" };
+    if (lines.some((l) => !writtenIn(l, "en"))) return { ok: false, error: "language" };
+    const he = String(payload.openingQuestionHe ?? "");
+    if (he && !writtenIn(he, "he")) return { ok: false, error: "language" };
+    if (String(payload.openingQuestion ?? "") && !writtenIn(String(payload.openingQuestion), "en")) return { ok: false, error: "language" };
+    payload.topics = [...new Map(lines.map((en) => [en.toLowerCase(), { en, ...(before.find((b) => b.en === en)?.he ? { he: before.find((b) => b.en === en)!.he } : {}) }])).values()];
+    payload.leadsAskAbout = lines[0] ?? "";
+    if (!payload.openingQuestionHe || !payload.openingQuestion) delete payload.openingQuestionHe;
+    if (!payload.leadsAskAbout && !payload.openingQuestion) return { ok: false, error: "required" };
+  }
   if (kind === "catalog_item" && !payload.plainName && !payload.valueLine) return { ok: false, error: "required" };
   if (kind === "play_card") {
     const card = parsePlayCard({ when: String(payload.when), do: values.do ?? "", example: String(payload.example), notThis: String(payload.notThis) });

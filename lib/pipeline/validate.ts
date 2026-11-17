@@ -8,7 +8,8 @@
  */
 import type { PlayKey, SuggestionEvidence } from "@/db/schema";
 import { fieldKey, isPlayKey, OPENER_MAX, PLAY_CONTENT_MAX, parsePlayCard } from "@/lib/agent/playbook";
-import { PLAIN_NAME_MAX, VALUE_LINE_MAX } from "@/lib/catalog/rules";
+import { MAX_OPENER_TOPICS, writtenIn } from "@/lib/agent/core/opener";
+import { PLAIN_NAME_MAX, VALUE_LINE_INPUT_MAX } from "@/lib/catalog/rules";
 import { QUOTE_MAX } from "./prompts/system";
 
 export type Evidence = SuggestionEvidence;
@@ -172,8 +173,24 @@ export type SuggestionPayload =
   | { kind: "play_card"; play: PlayKey; when: string; do: string[]; example: string; notThis: string }
   | CatalogItemPayload;
 
-/** Opener inputs; an empty string leaves that input as it is. */
-export type OpenerPayload = { kind: "opener"; leadsAskAbout: string; openingQuestion: string };
+/**
+ * Opener inputs; an empty string leaves that input as it is. `topics` (up to
+ * 6, English with an optional Hebrew version) and `openingQuestionHe` are set
+ * on suggestions made since the Opening section has them; older suggestions
+ * have `leadsAskAbout` only (one English topic). `leadsAskAbout` is always the
+ * first topic, so older readers keep working.
+ */
+export type OpenerPayload = {
+  kind: "opener"; leadsAskAbout: string; openingQuestion: string;
+  topics?: { en: string; he?: string }[];
+  openingQuestionHe?: string;
+};
+
+/** A suggestion's topics, from a payload of either shape. */
+export function openerPayloadTopics(p: OpenerPayload): { en: string; he?: string }[] {
+  if (p.topics?.length) return p.topics.filter((x) => x.en.trim() || x.he?.trim());
+  return p.leadsAskAbout.trim() ? [{ en: p.leadsAskAbout.trim() }] : [];
+}
 /** An item's agent texts; an empty string leaves that text as it is. */
 export type CatalogItemPayload = { kind: "catalog_item"; sku: string; plainName: string; valueLine: string };
 
@@ -310,10 +327,30 @@ export function parsePlaybookOutput(input: unknown, index: CorpusIndex, known: {
   // P11: opener inputs, play facts and own cards, catalog item texts.
   if (r.opener !== undefined) {
     const x = rec(r.opener);
-    const leadsAskAbout = within(x.leads_ask_about, OPENER_MAX.leadsAskAbout);
-    const openingQuestion = within(x.opening_question, OPENER_MAX.openingQuestion);
-    if (leadsAskAbout || openingQuestion) push("opener", { kind: "opener", leadsAskAbout, openingQuestion }, x.evidence);
-    else if (s(x.leads_ask_about) || s(x.opening_question)) dropped++;
+    const hebrew = (v: string) => (v && writtenIn(v, "he") ? v : "");
+    const english = (v: string) => (v && writtenIn(v, "en") ? v : "");
+    const seen = new Set<string>();
+    const topics: { en: string; he?: string }[] = [];
+    for (const raw of list(x.topics)) {
+      const tp = rec(raw);
+      const en = english(within(tp.text, OPENER_MAX.leadsAskAbout));
+      const he = hebrew(within(tp.text_he, OPENER_MAX.leadsAskAbout));
+      if (!en || seen.has(normalizeStatement(en)) || topics.length >= MAX_OPENER_TOPICS) continue;
+      seen.add(normalizeStatement(en));
+      topics.push({ en, ...(he ? { he } : {}) });
+    }
+    const first = english(within(x.leads_ask_about, OPENER_MAX.leadsAskAbout));
+    // The single topic of the older tool shape is the first topic when the list does not have it.
+    if (first && !seen.has(normalizeStatement(first)) && topics.length < MAX_OPENER_TOPICS) topics.unshift({ en: first });
+    const leadsAskAbout = topics[0]?.en ?? "";
+    const openingQuestion = english(within(x.opening_question, OPENER_MAX.openingQuestion));
+    const openingQuestionHe = openingQuestion ? hebrew(within(x.opening_question_he, OPENER_MAX.openingQuestion)) : "";
+    if (leadsAskAbout || openingQuestion) {
+      push("opener", {
+        kind: "opener", leadsAskAbout, openingQuestion,
+        ...(topics.length ? { topics } : {}), ...(openingQuestionHe ? { openingQuestionHe } : {}),
+      }, x.evidence);
+    } else if (s(x.leads_ask_about) || s(x.opening_question) || list(x.topics).length) dropped++;
   }
   for (const c of list(r.play_content)) {
     const x = rec(c);
@@ -334,7 +371,7 @@ export function parsePlaybookOutput(input: unknown, index: CorpusIndex, known: {
     const x = rec(c);
     const sku = s(x.sku, 40).toUpperCase();
     const plainName = within(x.plain_name, PLAIN_NAME_MAX);
-    const valueLine = within(x.value_line, VALUE_LINE_MAX);
+    const valueLine = within(x.value_line, VALUE_LINE_INPUT_MAX);
     if (!known.skus?.has(sku) || (!plainName && !valueLine)) { dropped++; continue; }
     push(sku, { kind: "catalog_item", sku, plainName, valueLine }, x.evidence);
   }

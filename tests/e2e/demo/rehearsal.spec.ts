@@ -501,7 +501,7 @@ step("D3 Playbook: agent name and discount limit", async () => {
   note("playbook.discountBefore", await page.locator("#pb-maxDiscount").inputValue());
   await page.locator("#pb-agentName").fill("Maya");
   await page.locator("#pb-maxDiscount").fill("5");
-  await page.getByRole("button", { name: "Save draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).first().click();
   await expect(page.getByText(/^Draft saved/)).toBeVisible();
   await page.reload();
   await expect(page.locator("#pb-agentName")).toHaveValue("Maya");

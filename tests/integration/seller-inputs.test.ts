@@ -108,11 +108,14 @@ describe("P11 seller inputs", () => {
     const e: [string, string][] = [
       ["slug", "polar"], ["agentName", pb.agentName], ["goal", pb.goal], ["tone", pb.tone], ["maxDiscount", String(pb.maxDiscountBp / 100)],
       ["offerMeetingWhen", pb.offerMeetingWhen], ["handOffWhen", pb.handOffWhen], ["orderForm", "on"],
-      ["opener.leadsAskAbout", pb.opener?.leadsAskAbout ?? ""], ["opener.openingQuestion", pb.opener?.openingQuestion ?? ""],
+      ...(pb.opener?.topics ?? (pb.opener?.leadsAskAbout ? [{ en: pb.opener.leadsAskAbout }] : [])).flatMap((x, i) => [[`opener.topic.${i}.en`, x.en], [`opener.topic.${i}.he`, x.he ?? ""]] as [string, string][]),
+      ["opener.default", String(pb.opener?.defaultTopic ?? 0)],
+      ["opener.question.en", pb.opener?.question?.en ?? pb.opener?.openingQuestion ?? ""], ["opener.question.he", pb.opener?.question?.he ?? ""],
     ];
     pb.fields.forEach((f, i) => e.push([`field.${i}.key`, f.key], [`field.${i}.label`, f.label], [`field.${i}.stage`, f.stage], [`field.${i}.hint`, f.hint ?? ""], [`field.${i}.example`, f.example ?? ""]));
     for (const [k, v] of Object.entries(pb.plays ?? {})) {
-      e.push([`play.${k}.content`, v?.content ?? ""]);
+      if (v?.facts) v.facts.forEach((f, i) => e.push([`play.${k}.fact.${i}.text`, f.text], [`play.${k}.fact.${i}.source`, f.source ?? ""]));
+      else e.push([`play.${k}.content`, v?.content ?? ""]);
       if (v?.own) e.push([`play.${k}.own`, "1"], [`play.${k}.when`, v.own.when], [`play.${k}.do`, v.own.do.join("\n")], [`play.${k}.example`, v.own.example], [`play.${k}.notThis`, v.own.notThis]);
     }
     e.push(["play.need.content", ""], ["exceptionsShown", "1"], ...(pb.exceptions ?? []).map((x) => ["exceptionId", x.id] as [string, string]));
@@ -131,8 +134,9 @@ describe("P11 seller inputs", () => {
     });
     expect(await savePlaybookForm(db, acc, entries)).toEqual({ ok: true });
     const saved = (await ensureDraftVersion(db, acc)).playbook;
-    expect(saved.opener).toEqual({ leadsAskAbout: "fridge alerts", openingQuestion: "How do you check the fridges today?" });
-    expect(saved.plays).toEqual({ existing_solution: { content: "Alarms cover doors, not temperature." }, competitor: { own } });
+    // Written in the new shape (topics, default, question; facts list).
+    expect(saved.opener).toEqual({ topics: [{ en: "fridge alerts" }], defaultTopic: 0, question: { en: "How do you check the fridges today?" } });
+    expect(saved.plays).toEqual({ existing_solution: { facts: [{ text: "Alarms cover doors, not temperature." }] }, competitor: { own } });
     expect(saved.exceptions).toEqual([exception]);
     expect(saved.fields).toEqual(before.fields);
 
@@ -148,18 +152,18 @@ describe("P11 seller inputs", () => {
     // "Restore default": the card's toggle is no longer sent.
     const restored = formFor(saved).filter(([k]) => !k.startsWith("play.competitor."));
     expect(await savePlaybookForm(db, acc, restored)).toEqual({ ok: true });
-    expect((await ensureDraftVersion(db, acc)).playbook.plays).toEqual({ existing_solution: { content: "Alarms cover doors, not temperature." } });
+    expect((await ensureDraftVersion(db, acc)).playbook.plays).toEqual({ existing_solution: { facts: [{ text: "Alarms cover doors, not temperature." }] } });
   });
 
   it("refuses invalid inputs with errors keyed by input name and the sent values; nothing is saved", async () => {
     const before = (await ensureDraftVersion(db, acc)).playbook;
     const bad = [...formFor(before),
-      ["opener.openingQuestion", "x".repeat(201)], ["play.fit.own", "1"], ["play.fit.when", "w"], ["play.fit.do", "only one"], ["play.fit.example", "e"], ["play.fit.notThis", ""],
+      ["opener.question.en", "x".repeat(201)], ["play.fit.own", "1"], ["play.fit.when", "w"], ["play.fit.do", "only one"], ["play.fit.example", "e"], ["play.fit.notThis", ""],
     ] as [string, string][];
     const r = await savePlaybookForm(db, acc, bad);
     expect(r.ok).toBe(false);
     if (r.ok) return;
-    expect(Object.keys(r.errors).sort()).toEqual(["opener.openingQuestion", "play.fit.do", "play.fit.notThis"]);
+    expect(Object.keys(r.errors).sort()).toEqual(["opener.question.en", "play.fit.do", "play.fit.notThis"]);
     expect(r.values.plays?.fit?.own).toMatchObject({ when: "w", do: "only one" });
     expect((await ensureDraftVersion(db, acc)).playbook).toEqual(before);
   });
@@ -168,7 +172,7 @@ describe("P11 seller inputs", () => {
     const mine = (await ensureDraftVersion(db, acc)).playbook;
     const theirsBefore = (await ensureDraftVersion(db, other)).playbook;
     expect(await savePlaybookForm(db, other, formFor({ ...theirsBefore, opener: { openingQuestion: "Other question?" } }))).toEqual({ ok: true });
-    expect((await ensureDraftVersion(db, other)).playbook.opener).toEqual({ openingQuestion: "Other question?" });
+    expect((await ensureDraftVersion(db, other)).playbook.opener).toEqual({ topics: [], defaultTopic: 0, question: { en: "Other question?" } });
     expect((await ensureDraftVersion(db, acc)).playbook).toEqual(mine);
   });
 
@@ -254,10 +258,10 @@ describe("P11 seller inputs", () => {
     const saved = await saveSuggestionsToDraft(db, actor, acc);
     expect(saved.merged).toBe(3);
     const pb = (await ensureDraftVersion(db, acc)).playbook;
-    expect(pb.opener).toEqual({ leadsAskAbout: "fridge temperature alerts", openingQuestion: "How do you check the fridges today?" });
+    expect(pb.opener).toEqual({ topics: [{ en: "fridge temperature alerts" }], defaultTopic: 0, question: { en: "How do you check the fridges today?" } });
     expect(pb.plays).toEqual({
       existing_solution: {
-        content: "An alarm covers doors, not temperature.",
+        facts: [{ text: "An alarm covers doors, not temperature.", source: expect.any(String) }],
         own: { when: "They name an alarm company.", do: ["Credit the alarm.", "Name the gap.", "Offer the sensor."], example: "An alarm covers doors.", notThis: "Alarms are useless." },
       },
     });

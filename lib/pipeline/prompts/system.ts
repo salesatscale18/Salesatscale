@@ -17,7 +17,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { PLAY_KEYS } from "@/db/schema";
 
-export const PROMPT_VERSION = "system-v3";
+export const PROMPT_VERSION = "system-v4";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -145,10 +145,15 @@ const PLAYBOOK_SCHEMA = obj({
     evidence: EVIDENCE,
   }), "Good open questions reps ask that are not already a field."),
   opener: obj({
-    leads_ask_about: str("What leads usually ask about when they contact the seller, a few English words, at most 120 characters, e.g. monitoring fridge temperatures. Empty if unclear."),
+    leads_ask_about: str("The most common thing leads ask about when they contact the seller, a few English words that fit \"You asked about ...\", at most 120 characters, e.g. monitoring your fridge temperatures. Empty if unclear."),
+    topics: arr(obj({
+      text: str("A topic leads ask about, a few English words that fit \"You asked about ...\", at most 120 characters."),
+      text_he: str("The same topic in Hebrew, or empty."),
+    }), "Up to 6 topics leads ask about, the most common first (it repeats leads_ask_about)."),
     opening_question: str("One easy English question about the buyer's situation today, at most 200 characters, e.g. How do you check your fridge temperatures today? Empty if unclear."),
+    opening_question_he: str("The opening question in Hebrew, or empty."),
     evidence: EVIDENCE,
-  }, "The agent's first message: what the lead asked about and the opening question."),
+  }, "The agent's first message: what leads ask about and the opening question."),
   play_content: arr(obj({
     play: PLAY,
     content: str("The seller's facts for this situation, in English, at most 600 characters. Only what the evidence supports."),
@@ -165,7 +170,7 @@ const PLAYBOOK_SCHEMA = obj({
   catalog_items: arr(obj({
     sku: str("The item's SKU from the catalog, exactly."),
     plain_name: str("What a buyer would call the item in chat, plain English words, at most 60 characters, e.g. wireless fridge sensor. Empty to keep the current one."),
-    value_line: str("What the buyer gets from the item, one English sentence, at most 200 characters; an outcome, not features. Empty to keep the current one."),
+    value_line: str("What the buyer gets from the item, one English sentence, at most 140 characters; an outcome, not features. Empty to keep the current one."),
     evidence: EVIDENCE,
   }), "Plain names and one-sentence value lines for catalog items."),
 });

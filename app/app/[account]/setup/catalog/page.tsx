@@ -4,6 +4,7 @@ import { SetupSteps } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { catalogState } from "@/lib/catalog/service";
+import { pendingCatalogSuggestion } from "@/lib/pipeline/service";
 import { describeFitRule } from "@/lib/catalog/fit";
 import { unitLanguages } from "@/lib/catalog/rules";
 import { formatMoney } from "@/lib/domain/money";
@@ -53,6 +54,8 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
     : selectedId === "new"
       ? { itemId: "", sku: "", name: "", description: "", kind: "product", unit: "item", unitCustom: {}, availabilityNote: "", active: true, plainName: "", valueLine: "" }
       : null;
+  // An open suggestion for the selected item's agent texts (knowledge analysis): shown on the item, usable there.
+  const suggested = selected ? await pendingCatalogSuggestion(appDb, account.id, selected.sku) : null;
   // The selected item's prices in each price list (what the list's editor shows).
   const prices = selected
     ? await Promise.all(
@@ -154,7 +157,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
               </div>
               <a className={`${buttonClass("ghost", "sm")} sas-page-head__actions`} href={base} aria-label={t("lead.form.close")}><Icon name="x" /></a>
             </div>
-            <ItemForm slug={account.slug} d={defaults} unitLanguages={unitLanguages(account.languages)} />
+            <ItemForm slug={account.slug} d={defaults} unitLanguages={unitLanguages(account.languages)} suggestion={suggested ? { id: suggested.id, plainName: suggested.payload.plainName, valueLine: suggested.payload.valueLine } : null} />
             {selected ? (
               <section className="sas-stack-2" aria-labelledby="ip-h">
                 <h3 id="ip-h" className="sas-heading">{t("catalog.item_prices.title")}</h3>

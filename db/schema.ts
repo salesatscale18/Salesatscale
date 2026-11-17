@@ -637,14 +637,36 @@ export type Playbook = {
   neverDo: string[];
   /** Approved exceptions (optional: older playbooks have none). */
   exceptions?: PlaybookException[];
-  /** Opener inputs (P11): what leads usually ask about, and the first question. Both optional. */
-  opener?: { leadsAskAbout?: string; openingQuestion?: string };
   /**
-   * Per-situation sales plays (P11). `content` is the seller's facts for the
-   * default card; `own` is the seller's own card, used instead of the default.
+   * Opener inputs (P11): what leads usually ask about, and the first question. All optional.
+   * Written now: `topics` (up to 6, one the default) and `question`, each with an English and
+   * an optional Hebrew version. Read for older playbooks: `leadsAskAbout` and `openingQuestion`
+   * (one text each), used as the English default topic and question when the new parts are absent
+   * (lib/agent/core/opener.ts readOpener).
    */
-  plays?: Partial<Record<PlayKey, { content?: string; own?: PlayCard }>>;
+  opener?: {
+    topics?: OpenerText[];
+    /** Index into `topics`: the topic for leads that did not pick one. */
+    defaultTopic?: number;
+    question?: OpenerText;
+    /** Older playbooks only. */
+    leadsAskAbout?: string;
+    /** Older playbooks only. */
+    openingQuestion?: string;
+  };
+  /**
+   * Per-situation sales plays (P11). `facts` are the seller's facts for the
+   * play, each with an optional source; `own` is the seller's own card, used
+   * instead of the default. Older playbooks store the facts as one `content`
+   * text, read as a single fact (lib/agent/core/plays.ts playFacts).
+   */
+  plays?: Partial<Record<PlayKey, { facts?: PlayFact[]; content?: string; own?: PlayCard }>>;
 };
+
+/** A seller text with an English and an optional Hebrew version (P11 opener inputs). */
+export type OpenerText = { en: string; he?: string };
+/** One of the seller's facts for a sales play, with where it comes from (optional). */
+export type PlayFact = { text: string; source?: string };
 
 /** The selling situations the platform has a default play for (lib/agent/core/plays.ts). */
 export const PLAY_KEYS = [

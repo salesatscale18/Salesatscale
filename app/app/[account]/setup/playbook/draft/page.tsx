@@ -37,7 +37,7 @@ const DONE: Record<string, MessageKey> = {
   accepted_all: "draft.done.accepted_all", saved: "draft.done.saved",
 };
 const ERRORS: Record<string, MessageKey> = {
-  missing: "draft.error.missing", required: "draft.error.required", card: "draft.error.card", qty: "draft.error.qty", applied: "draft.error.applied", too_long: "draft.error.too_long", discount: "draft.error.discount", none_accepted: "draft.error.none_accepted",
+  missing: "draft.error.missing", required: "draft.error.required", card: "draft.error.card", topics: "draft.error.topics", language: "draft.error.language", qty: "draft.error.qty", applied: "draft.error.applied", too_long: "draft.error.too_long", discount: "draft.error.discount", none_accepted: "draft.error.none_accepted",
 };
 
 /**
@@ -131,7 +131,9 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
       ) : SECTIONS.map((sec) => {
         const list = live.filter((s) => sec.kinds.includes(s.kind));
         const removed = items.filter((s) => s.status === "rejected" && sec.kinds.includes(s.kind));
-        const open = list.filter((s) => s.status === "suggested").length;
+        // Sales plays: "Accept all facts"; a suggested own card replaces the default, so it is decided one by one.
+        const bulkKinds = sec.id === "play" ? (["play_content"] as SuggestionKind[]) : sec.kinds;
+        const open = list.filter((s) => s.status === "suggested" && bulkKinds.includes(s.kind)).length;
         if (list.length === 0 && removed.length === 0) return null;
         const isLimit = sec.id === "limit";
         return (
@@ -140,11 +142,12 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
               <h2 id={`sg-${sec.id}-h`} className="sas-heading" style={{ flex: 1, minWidth: 160 }}>{t(sec.title)}</h2>
               {isLimit ? <span className="sas-small">{t("draft.limit.section_hint")}</span> : null}
               {sec.id === "catalog" ? <span className="sas-small">{t("draft.catalog.section_hint")}</span> : null}
-              {!isLimit && open > 1 ? (
+              {sec.id === "play" ? <span className="sas-small">{t("draft.play.section_hint")}</span> : null}
+              {!isLimit && (open > 1 || (sec.id === "play" && open > 0)) ? (
                 <form action={acceptAllSuggestionsAction}>
                   <input type="hidden" name="slug" value={account.slug} />
-                  <input type="hidden" name="kinds" value={sec.kinds.join(",")} />
-                  <button type="submit" className={buttonClass("secondary", "sm")}>{t("draft.accept_all", { n: open })}</button>
+                  <input type="hidden" name="kinds" value={bulkKinds.join(",")} />
+                  <button type="submit" className={buttonClass("secondary", "sm")}>{sec.id === "play" ? t("draft.accept_all_facts", { n: open }) : t("draft.accept_all", { n: open })}</button>
                 </form>
               ) : null}
             </div>

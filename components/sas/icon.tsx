@@ -3,9 +3,9 @@
  * 12px in pills and tags, colored with currentColor. Decorative by default.
  */
 import {
-  Activity, Archive, BookOpen, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
+  Activity, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, MessageCircle,
-  MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, TriangleAlert,
+  MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
   Trophy, Upload, User, UserPlus, Wrench, X, type LucideIcon,
 } from "lucide-react";
 
@@ -14,6 +14,7 @@ const ICONS = {
   archive: Archive,
   "alert-triangle": TriangleAlert,
   "book-open": BookOpen,
+  bookmark: Bookmark,
   building: Building2,
   calendar: Calendar,
   "calendar-x": CalendarX,
@@ -42,6 +43,7 @@ const ICONS = {
   pen: Pen,
   plus: Plus,
   "refresh-cw": RefreshCw,
+  "rotate-ccw": RotateCcw,
   rocket: Rocket,
   search: Search,
   send: Send,
@@ -49,6 +51,7 @@ const ICONS = {
   "shield-check": ShieldCheck,
   sliders: SlidersHorizontal,
   sparkles: Sparkles,
+  store: Store,
   "scan-search": ScanSearch,
   "circle-alert": CircleAlert,
   trophy: Trophy,

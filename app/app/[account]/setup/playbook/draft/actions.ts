@@ -41,6 +41,7 @@ export async function editSuggestionAction(form: FormData) {
   for (const f of EDITABLE[kind]) values[f.name] = str(form, f.name);
   if (kind === "field") values.stage = str(form, "stage");
   if (kind === "play_card") values.do = String(form.get("do") ?? "");
+  if (kind === "opener") values.topics = String(form.get("topics") ?? "");
   if (kind === "limit") {
     values.maxDiscountPercent = str(form, "maxDiscountPercent");
     values.qty = str(form, "qty");

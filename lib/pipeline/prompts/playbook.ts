@@ -7,7 +7,7 @@ import { PLAY_KEYS } from "@/db/schema";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PLAYBOOK_TOOL } from "./system";
 
-export const PROMPT_VERSION = "playbook-v3";
+export const PROMPT_VERSION = "playbook-v4";
 
 /** Field keys the order form prefill reads (lib/orders/prefill.ts): suggest these exact keys for those details. */
 export const ORDER_FORM_KEYS: Record<string, string> = {
@@ -31,7 +31,7 @@ Base the playbook first on how the seller's reps actually sell in the recorded c
 - tone: how the reps talk, in one sentence.
 - never: real prohibitions only: what the agent must never say or do, worded to follow "Never". Prices, discounts and special terms belong in limits, not here.
 - discovery_questions: good open questions reps ask that are not already a field.
-- opener: what leads usually ask about when they reach out, and the easy question reps open with about the buyer's situation today.
+- opener: what leads usually ask about when they reach out (up to 6 topics, the most common first, each fitting "You asked about ..."), and the easy question reps open with about the buyer's situation today. Add Hebrew versions when the corpus or the seller sells in Hebrew.
 - play_content: for each play the corpus supports, the seller's facts for that situation, following the play's seller_hint (for example the gap common existing solutions leave, or the entry price and what drives the total). Facts only, no instructions to the agent. A price may come from a document or the website, never only from a call.
 - play_cards: only when call transcripts clearly show the reps' own way of handling a situation: when it applies, 2 to 5 moves in order, an example reply and a reply to avoid. Otherwise leave it out: the default card applies.
 - catalog_items: for each catalog SKU, the plain name a buyer would use in chat and one sentence on what the buyer gets. Leave out items whose current plain_name and value_line already say this.
