@@ -3,12 +3,12 @@ import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { listMembers } from "@/lib/accounts/service";
-import { whiteContrast } from "@/lib/accounts/company";
+import { LOCAL_NAME_LANGUAGES, TRADE_NAME_MAX, whiteContrast } from "@/lib/accounts/company";
 import { listVersions } from "@/lib/agent/service";
 import { defaultPlaybook } from "@/lib/agent/playbook";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { displayName } from "@/lib/auth/display";
-import { t } from "@/lib/i18n";
+import { dir, t } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
 import { saveCompanyAction } from "./actions";
 import { estimateDelivery, formatDeliveryShort, leadTimeOrNull, MAX_LEAD_DAYS } from "@/lib/delivery/eta";
@@ -17,6 +17,7 @@ import { leadAfterSigning } from "@/lib/delivery/text";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const LANG_NAME: Record<string, string> = { en: "English", he: "עברית Hebrew" };
+const LANGUAGE_LABEL: Record<string, string> = { he: "Hebrew" };
 
 function brandInitials(name: string) {
   return name.split(/\s+/).filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
@@ -32,6 +33,9 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   // The agent name lives in the playbook draft (or the live version); read it, never create a draft here.
   const playbook = (versions.find((v) => v.status === "draft") ?? versions.find((v) => v.status === "live"))?.playbook ?? defaultPlaybook(account.tradeName, account.maxDiscountBp);
   const lowContrast = whiteContrast(settings.brandColor) < 4.5;
+  // A trade name per buyer language the account sells in (English buyers see the trade name itself).
+  const localLanguages = LOCAL_NAME_LANGUAGES.filter((l) => account.languages.includes(l));
+  const heAgent = playbook.agentNameLocal?.he?.trim();
   const lead = leadTimeOrNull(account.deliveryLeadTime);
   // The example uses the account's own time zone and weekend (a market may differ).
   const plan = deliveryPlanFor(account, { overrides: {}, countries: [] });
@@ -63,6 +67,13 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                   <label className="sas-input-label" htmlFor="co-tn">{t("company.trade_name")}</label>
                   <input className="sas-input" id="co-tn" name="tradeName" defaultValue={account.tradeName} required maxLength={120} />
                 </div>
+                {localLanguages.map((l) => (
+                  <div key={l} className="sas-input-group" data-trade-name-local={l}>
+                    <label className="sas-input-label" htmlFor={`co-tn-${l}`}>{t("company.trade_name_local", { language: LANGUAGE_LABEL[l] ?? l })}</label>
+                    <input className="sas-input" id={`co-tn-${l}`} name={`tradeNameLocal.${l}`} lang={l} dir={dir(l)} defaultValue={account.tradeNameLocal?.[l] ?? ""} maxLength={TRADE_NAME_MAX} aria-describedby={`co-tn-${l}-hint`} />
+                    <span className="sas-hint" id={`co-tn-${l}-hint`}>{t("company.trade_name_local_hint", { tradeName: account.tradeName })}</span>
+                  </div>
+                ))}
                 <div className="sas-input-group">
                   <label className="sas-input-label" htmlFor="co-lg">{t("company.legal_name")}</label>
                   <input className="sas-input" id="co-lg" name="legalName" defaultValue={account.legalName ?? ""} maxLength={160} />
@@ -130,6 +141,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                 <span className="sas-input-label">{t("company.agent_name")}</span>
                 <span style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "center" }}>
                   <strong>{playbook.agentName}</strong>
+                  {heAgent ? <bdi lang="he" dir="rtl">{heAgent}</bdi> : null}
                   <a href={`${base}/setup/playbook`}>{t("company.agent_edit")}</a>
                 </span>
               </div>

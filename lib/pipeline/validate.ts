@@ -164,7 +164,8 @@ export type FieldStage = "before_quote" | "before_order_form" | "optional";
 export type SuggestionPayload =
   | { kind: "goal" | "tone"; text: string; textHe: string }
   | { kind: "field"; key: string; label: string; labelHe: string; stage: FieldStage; example: string; exampleHe: string; askedInCalls: number }
-  | { kind: "discovery_question"; label: string; question: string; questionHe: string; askedInCalls: number }
+  /** `stage`: the question's role the analysis suggested (decision 1); missing on older runs = helps the pitch. */
+  | { kind: "discovery_question"; label: string; question: string; questionHe: string; askedInCalls: number; stage?: FieldStage }
   | { kind: "objection"; objection: string; objectionHe: string; answer: string; answerHe: string; outcome: string }
   | LimitPayload
   | { kind: "never"; rule: string; ruleHe: string }
@@ -297,6 +298,8 @@ export function parsePlaybookOutput(input: unknown, index: CorpusIndex, known: {
     if (!question) continue;
     push(normalizeStatement(question), {
       kind: "discovery_question", label: s(x.label, 60) || question.slice(0, 60), question, questionHe: s(x.question_he, 200), askedInCalls: count(x.asked_in_calls),
+      // A discovery question is asked in chat: needed for the quote or helps the pitch, never an order-form field.
+      stage: s(x.role, 30) === "before_quote" ? "before_quote" : "optional",
     }, x.evidence);
   }
   for (const o of list(r.objections)) {

@@ -2,6 +2,7 @@
 import { PLAY_KEYS, type DealFieldValue, type OpenerText, type PlayCard, type PlayFact, type PlayKey, type Playbook, type PlaybookException, type PlaybookField } from "@/db/schema";
 import { isReservedFieldKey } from "./core/facts";
 import { MAX_OPENER_TOPICS, writtenIn } from "./core/opener";
+import { AGENT_GENDERS, type AgentGender } from "./core/names";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -33,6 +34,10 @@ const KEY_RE = /^[a-z0-9_]{1,40}$/;
 /** What the structured playbook editor submits (tests build it directly). */
 export type PlaybookRowsInput = {
   agentName: string;
+  /** The agent's name per buyer language (decision 2); undefined when the form did not show it (the stored one is kept). */
+  agentNameLocal?: { he: string };
+  /** "female" | "male" | "neutral"; undefined when the form did not show it (the stored one is kept). */
+  agentGender?: string;
   goal: string;
   tone: string;
   outcomes: Playbook["outcomes"];
@@ -161,6 +166,8 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
   if (opener) opener.topics = ordered(topics);
   return {
     agentName: scalar.agentName ?? "",
+    ...("agentNameLocal.he" in scalar ? { agentNameLocal: { he: scalar["agentNameLocal.he"] } } : {}),
+    ...("agentGender" in scalar ? { agentGender: scalar.agentGender } : {}),
     goal: scalar.goal ?? "",
     tone: scalar.tone ?? "",
     outcomes: { orderForm: scalar.orderForm === "on", bankTransfer: scalar.bankTransfer === "on", meeting: scalar.meeting === "on" },
@@ -269,6 +276,12 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   const agentName = input.agentName.trim();
   if (!agentName) errors.agentName = "Give the agent a name it uses to introduce itself.";
   else if (agentName.length > 60) errors.agentName = "Use 60 characters or fewer.";
+  // The Hebrew name is optional and must be written in Hebrew (the opener uses a name only in its own language).
+  const agentNameHe = oneLine(input.agentNameLocal?.he ?? "");
+  if (agentNameHe.length > 60) errors["agentNameLocal.he"] = "Use 60 characters or fewer.";
+  else if (agentNameHe && !writtenIn(agentNameHe, "he")) errors["agentNameLocal.he"] = "Write the Hebrew name in Hebrew, or leave it empty.";
+  const gender = input.agentGender?.trim() ?? "";
+  if (input.agentGender !== undefined && !(AGENT_GENDERS as readonly string[]).includes(gender)) errors.agentGender = "Choose female, male or neutral.";
   const goal = input.goal.trim();
   if (!goal) errors.goal = "Describe the sales goal in a sentence or two.";
   else if (goal.length > 1000) errors.goal = "Use 1,000 characters or fewer.";
@@ -354,6 +367,8 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
     ok: true,
     value: {
       agentName,
+      ...(agentNameHe ? { agentNameLocal: { he: agentNameHe } } : {}),
+      ...(input.agentGender !== undefined ? { agentGender: gender as AgentGender } : {}),
       goal,
       tone: input.tone.trim().slice(0, 300),
       outcomes: { orderForm: !!input.outcomes.orderForm, bankTransfer: !!input.outcomes.bankTransfer, meeting: !!input.outcomes.meeting },

@@ -99,6 +99,6 @@ export async function loadQuoteCards(
     reasonText: (r) => approvalReasonText(r as ApprovalReason),
   };
   return buildQuoteCards(inputs, data, {
-    seller: account.tradeName, brand: safeBrand(settings?.brandColor), timezone, now: opts.now ?? new Date(), audience: opts.audience,
+    seller: account.tradeName, sellerLocal: account.tradeNameLocal, brand: safeBrand(settings?.brandColor), timezone, now: opts.now ?? new Date(), audience: opts.audience,
   });
 }

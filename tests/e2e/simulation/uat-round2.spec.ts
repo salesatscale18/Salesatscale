@@ -427,7 +427,7 @@ test("B4 Playbook", async () => {
   // Then a valid row. The agent name is typed after the refused saves (see "B4 Edits survive a refused save").
   await page.locator("#pb-agentName").fill("Maya");
   await page.locator(`[id="pb-field.${n - 1}.label"]`).fill("Number of fridges");
-  await page.locator(`[id="pb-field.${n - 1}.stage"]`).selectOption({ label: "Before the recommendation" });
+  await page.locator(`[id="pb-field.${n - 1}.stage"]`).selectOption({ label: "Needed for the quote" });
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
   await page.getByRole("button", { name: "Add objection" }).click();
   const o = (await page.locator('input[id^="pb-objection."][id$=".objection"]').count()) - 1;

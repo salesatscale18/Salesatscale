@@ -20,6 +20,7 @@ import { linksOnOwnLine } from "./links";
 import { loadStageFacts } from "./core/stage-facts";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { plainChatText } from "./core/plain-text";
+import { buyerNames } from "./core/names";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -105,7 +106,7 @@ export async function runBuyerTurn(
   // the model through the update_deal_state tool result.
   const system: [string, string] = [
     stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }),
-    `${turnContext(version.playbook, deal, { stage: stageFacts, agentMessages, opener, catalog: catalog?.items.filter((i) => i.active) })}\nConversation language: ${lang}.`,
+    `${turnContext(version.playbook, deal, { stage: stageFacts, agentMessages, opener, catalog: catalog?.items.filter((i) => i.active), names: buyerNames(version.playbook, account, lang) })}\nConversation language: ${lang}.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({

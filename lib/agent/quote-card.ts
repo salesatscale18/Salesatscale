@@ -187,7 +187,7 @@ export type CardData = {
   reasonText: (r: CardVersion["approvalReasons"][number]) => string;
 };
 
-export type CardContext = { seller: string; brand: string; timezone: string; now: Date; audience: "buyer" | "seller" };
+export type CardContext = { seller: string; /** The seller's trade name per buyer language (decision 2); missing = `seller`. */ sellerLocal?: Partial<Record<string, string>> | null; brand: string; timezone: string; now: Date; audience: "buyer" | "seller" };
 
 /** Two decimals and the price list's currency sign; a minus sign (−) before negative amounts (discounts). */
 export const signedMoney = (minor: number, currency: string) => (minor < 0 ? `−${formatMoney(-minor, currency)}` : formatMoney(minor, currency));
@@ -261,9 +261,11 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   const lang = localeOf(r.input.language);
   const tr = (key: MessageKey, vars?: Record<string, string | number>) => t(key, vars, lang);
   const v = r.version;
+  // The seller's name in the card's language (decision 2).
+  const sellerName = ctx.sellerLocal?.[lang]?.trim() || ctx.seller;
   const base: QuoteCardView = {
     messageId: r.input.link.messageId, quoteId: r.quote.id, leadId: r.quote.leadId, state: r.state, lang, dir: dirOf(lang),
-    seller: ctx.seller, initials: initialsOf(ctx.seller), brand: ctx.brand,
+    seller: sellerName, initials: initialsOf(sellerName), brand: ctx.brand,
     label: tr("buyer.qcard.aria", { ref: `Q-${r.quote.number}` }), title: tr("buyer.qcard.your_quote"), ref: null, sub: null, headline: null, headlineName: null,
     lines: [], fold: null, more: null, rows: [], total: null, afterTotal: null, monthly: null,
     delivery: null, deliveryDate: null, firstCharge: null, validUntil: null, status: null, summary: null, sellerOnly: null, approval: null,
@@ -271,7 +273,7 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   if (r.state === "withdrawn" || !v) return { ...base, ref: `Q-${r.quote.number}`, status: tr("buyer.qcard.withdrawn") };
   if (r.state === "held") {
     // The buyer never sees a number while the seller decides.
-    const held: QuoteCardView = { ...base, label: tr("buyer.qcard.aria_held"), sub: tr("buyer.qcard.checking"), status: tr("buyer.qcard.held_text", { seller: ctx.seller }) };
+    const held: QuoteCardView = { ...base, label: tr("buyer.qcard.aria_held"), sub: tr("buyer.qcard.checking"), status: tr("buyer.qcard.held_text", { seller: sellerName }) };
     return ctx.audience === "seller" ? { ...held, approval: approvalOf(r.quote, v, data) } : held;
   }
 

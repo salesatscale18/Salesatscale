@@ -843,6 +843,8 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
     payload[f.name] = v;
   }
   if (kind === "field" && ["before_quote", "before_order_form", "optional"].includes(values.stage ?? "")) payload.stage = values.stage;
+  // A discovery question is asked in chat: its role is needed for the quote or helps the pitch.
+  if (kind === "discovery_question" && ["before_quote", "optional"].includes(values.stage ?? "")) payload.stage = values.stage;
   if (kind === "opener") {
     // Topics: one English topic per line; a topic kept as it was keeps its Hebrew version.
     const before = openerPayloadTopics(row.payload as OpenerPayload);

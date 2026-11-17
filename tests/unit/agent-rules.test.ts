@@ -144,14 +144,14 @@ describe("prompt", () => {
     expect(p).toContain("Polar Monitoring assistant");
     expect(p).toContain("automated agent");
     expect(p).toContain("Never ask for or accept payment card details");
-    expect(p).toContain("business_type: Business type (before quote)");
+    expect(p).toContain("business_type: Business type (needed for the quote)");
     expect(p).toContain("up to 7.0%");
     expect(p).not.toContain("Example question");
   });
   it("includes a field's example question when set", () => {
     const withExample = { ...pb, fields: [{ key: "sites", label: "Sites", stage: "before_quote" as const, example: "Are they all in one place?" }] };
     expect(stableSystemPrompt(withExample, { tradeName: "Polar", currency: "ILS", languages: ["en"] }))
-      .toContain('- sites: Sites (before quote). Example question: "Are they all in one place?"');
+      .toContain('- sites: Sites (needed for the quote). Example question: "Are they all in one place?"');
   });
   it("lists what is known and missing", () => {
     const ctx = turnContext(pb, { fields: { sites: { value: "2", provenance: "buyer", updatedAt: now } }, objections: [{ text: "price", handled: true }], nextStep: "ask business type" });

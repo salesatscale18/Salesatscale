@@ -155,7 +155,7 @@ export async function sendTemplateMessage(
   const [template] = await db.select().from(messageTemplates)
     .where(and(eq(messageTemplates.id, templateId), eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")));
   if (!template) return { ok: false, reason: "template_not_found" };
-  const [account] = await db.select({ tradeName: sellerAccounts.tradeName }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const [account] = await db.select({ tradeName: sellerAccounts.tradeName, tradeNameLocal: sellerAccounts.tradeNameLocal }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const vars = templateVariables(lead, account);
   let sent: { sid: string | null; status: string; connectionId: string | null } = { sid: null, status: "delivered", connectionId: null };
   if (!sim) {

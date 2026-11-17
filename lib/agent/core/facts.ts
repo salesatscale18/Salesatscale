@@ -18,3 +18,15 @@ export const priceAsked = (fields: Record<string, DealFieldValue> | null | undef
 export const pricesAllowed = (fields: Record<string, DealFieldValue> | null | undefined, quoted = false) => quoted || recommendationConfirmed(fields) || priceAsked(fields);
 /** Reserved keys are never shown as deal-state fields in the UI. */
 export const isReservedFieldKey = (key: string) => key.startsWith("_");
+
+/**
+ * How often the agent asked for a playbook field (P11 follow-up, decision 1):
+ * `_asked_<field key>` holds the count as a number, recorded through
+ * update_deal_state's `asked`. Reserved, so never shown as a field.
+ */
+export const ASKED_PREFIX = "_asked_";
+export const askedKey = (fieldKey: string) => `${ASKED_PREFIX}${fieldKey}`;
+export function askedCount(fields: Record<string, DealFieldValue> | null | undefined, fieldKey: string): number {
+  const n = Number(fields?.[askedKey(fieldKey)]?.value ?? 0);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}

@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
-import { loadForm, orderLabel, signatureFor, snapshotOf } from "@/lib/orders/service";
+import { displaySeller, loadForm, orderLabel, signatureFor, snapshotOf } from "@/lib/orders/service";
 import { OrderLines } from "../lines";
 import { DeliveryRow } from "../delivery";
 import { PreferenceRow } from "../steps";
@@ -37,7 +37,7 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
         {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <section className="b-sec">
           <h1 className="b-h1">{tr("buyer.document_title")}</h1>
-          <span>{s.seller.legalName ?? s.seller.tradeName} · <span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
+          <span>{s.seller.legalName ?? displaySeller(view.form, lang)} · <span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
         </section>
         <section className="b-sec">
           <OrderLines s={s} tr={tr} lang={lang} />

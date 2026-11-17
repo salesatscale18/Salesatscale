@@ -20,9 +20,13 @@ export function firstNameOf(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] || fullName.trim();
 }
 
-/** Template variables: {{1}} = lead first name, {{2}} = seller trade name. */
-export function templateVariables(lead: { fullName: string }, account: { tradeName: string }): Record<string, string> {
-  return { "1": firstNameOf(lead.fullName), "2": account.tradeName };
+/** Template variables: {{1}} = lead first name, {{2}} = seller trade name in the lead's language (the local name when set, decision 2). */
+export function templateVariables(
+  lead: { fullName: string; language?: string | null },
+  account: { tradeName: string; tradeNameLocal?: Partial<Record<string, string>> | null },
+): Record<string, string> {
+  const local = lead.language ? account.tradeNameLocal?.[lead.language]?.replace(/\s+/g, " ").trim() : "";
+  return { "1": firstNameOf(lead.fullName), "2": local || account.tradeName };
 }
 
 /** The template text with its variables filled in, as stored on the sent message. */

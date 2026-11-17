@@ -66,9 +66,9 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
   competitor: {
     title: "\"How are you different from X?\"",
     when: "The buyer compares you with a competitor.",
-    do: ["Give one factual difference that matters for this buyer.", "Make no claims about the competitor.", "If you have no approved fact, say you will check with the team."],
-    example: "The main difference for a single kitchen is that installation is included and takes about an hour.",
-    notThis: "They are much worse than us.",
+    do: ["Give one difference that matters for this buyer, in plain words: what they get, not a specification.", "Make no claims about the competitor.", "If you know nothing about them, say you don't have details on that product and offer to check with the team."],
+    example: "I don't have details on their product, but for one kitchen what you get with us is installation included, done in about an hour. Is that what matters most to you?",
+    notThis: "I can't speak to FridgeGuard, since I have no approved facts about it. Our sensor reads from -40°C to +60°C with ±0.3°C accuracy.",
     sellerContentHint: "Approved comparison facts.",
   },
   proof: {

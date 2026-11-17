@@ -6,6 +6,7 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type Locale, type MessageKey } from "@/lib/i18n";
 import { MAX_OPENER_TOPICS, textIn } from "@/lib/agent/core/opener";
+import { tg, type AgentGender } from "@/lib/agent/core/names";
 
 /** Limits mirrored from lib/agent/playbook.ts (OPENER_MAX; the server checks them again). */
 const TOPIC_MAX = 120;
@@ -43,7 +44,7 @@ function Template({ template, vars }: { template: string; vars: Record<string, s
 }
 
 /** The real opener for this language, as the lead would get it: seller parts tinted, fixed parts grey. */
-export function OpenerPreview({ lang, agent, company, topic, question }: { lang: Locale; agent: string; company: string; topic: OpenerText | undefined; question: OpenerText }) {
+export function OpenerPreview({ lang, agent, company, gender = "neutral", topic, question }: { lang: Locale; agent: string; company: string; gender?: AgentGender; topic: OpenerText | undefined; question: OpenerText }) {
   const interest = textIn(topic, lang).replace(/[.!?。]+$/u, "");
   const q = textIn(question, lang);
   return (
@@ -51,7 +52,7 @@ export function OpenerPreview({ lang, agent, company, topic, question }: { lang:
       lang={lang} dir={lang === "he" ? "rtl" : "ltr"} data-testid={`opener-preview-${lang}`}
       style={{ alignSelf: "flex-start", maxWidth: "100%", background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 12, borderStartStartRadius: 4, padding: "10px 12px", lineHeight: "21px", overflowWrap: "anywhere" }}
     >
-      <Template template={t("buyer.opener.intro", undefined, lang)} vars={{ name: t(SAMPLE_LEAD[lang]), agent, company }} />{" "}
+      <Template template={tg("buyer.opener.intro", gender, undefined, lang)} vars={{ name: t(SAMPLE_LEAD[lang]), agent, company }} />{" "}
       {interest ? <Template template={t("buyer.opener.asked_about", undefined, lang)} vars={{ interest }} /> : <span data-part="fixed" style={{ color: "var(--ink-muted)" }}>{t("buyer.opener.asked", undefined, lang)}</span>}{" "}
       {q ? <span data-part="seller" style={{ background: "var(--primary-soft)", color: "var(--primary)", borderRadius: 4, paddingInline: 3 }}>{q}</span> : <span data-part="fixed" style={{ color: "var(--ink-muted)" }}>{t("buyer.opener.question", undefined, lang)}</span>}
     </div>
@@ -65,7 +66,7 @@ export function OpenerPreview({ lang, agent, company, topic, question }: { lang:
  * always in the form (the tab only shows one), so a save keeps both.
  * Inputs: `opener.topic.<i>.en|he`, `opener.default` (row index), `opener.question.en|he`.
  */
-export function OpeningSection({ initial, agent, company, h }: { initial: OpeningValues; agent: string; company: string; h: Helpers }) {
+export function OpeningSection({ initial, agent, company, names, gender, h }: { initial: OpeningValues; agent: string; company: string; names?: Partial<Record<Locale, { agent: string; company: string }>>; gender?: AgentGender; h: Helpers }) {
   const errorIn = (lang: Locale) => Object.keys(h.errors).some((k) => k.startsWith("opener.") && k.endsWith(`.${lang}`));
   const [lang, setLang] = useState<Locale>(() => (errorIn("he") && !errorIn("en") ? "he" : "en"));
   const lastId = useRef(100);
@@ -157,7 +158,7 @@ export function OpeningSection({ initial, agent, company, h }: { initial: Openin
 
         <aside aria-labelledby="pb-op-pv-h" className="sas-stack-2" style={{ flex: "1 1 280px", minWidth: 0, padding: 16, borderRadius: 12, background: "var(--surface)" }}>
           <strong id="pb-op-pv-h" style={{ fontSize: 13 }}>{t("playbook.opening.preview")}</strong>
-          <OpenerPreview lang={lang} agent={agent} company={company} topic={defaultRow ? { en: defaultRow.en, he: defaultRow.he } : undefined} question={question} />
+          <OpenerPreview lang={lang} agent={names?.[lang]?.agent ?? agent} company={names?.[lang]?.company ?? company} gender={gender} topic={defaultRow ? { en: defaultRow.en, he: defaultRow.he } : undefined} question={question} />
           <span className="sas-small">{t("playbook.opening.preview_legend")}</span>
           {lang === "he" && !defaultRow?.he.trim() && !question.he.trim() ? <span className="sas-small">{t("playbook.opening.preview_he_fallback")}</span> : null}
           <span className="sas-small">{t("playbook.opening.preview_once")}</span>

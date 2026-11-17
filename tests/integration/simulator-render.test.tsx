@@ -226,7 +226,8 @@ describe("Buyer simulator screens", () => {
     save("chat-he", html, "buyer", "he");
     expect(html).toMatch(/<div class="c-root" lang="he" dir="ltr"/);
     expect(html).toContain("צ׳אט בדיקה.");
-    expect(html).toContain("Maya · עוזרת אוטומטית");
+    // No gender set: the neutral (slash) form.
+    expect(html).toContain("Maya · עוזר/ת אוטומטי/ת");
     expect(html).toMatch(/class="c-bar" dir="rtl"/);
     expect(html).toMatch(/class="c-banner" role="note" dir="rtl"/);
     expect(html).toMatch(/class="c-card" dir="rtl"/);

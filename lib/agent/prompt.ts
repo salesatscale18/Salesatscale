@@ -12,11 +12,12 @@ import type { DealState, Playbook, PlaybookField } from "@/db/schema";
 import { coreDesign, playsText } from "./core/design";
 import { isReservedFieldKey } from "./core/facts";
 import { deriveStage, NO_STAGE_FACTS, type StageFacts } from "./core/stage";
+import { namesInstruction, type BuyerNames } from "./core/names";
 
 const FIELD_STAGE: Record<PlaybookField["stage"], string> = {
-  before_quote: "before quote",
-  before_order_form: "in the order form",
-  optional: "optional",
+  before_quote: "needed for the quote",
+  before_order_form: "filled in the order form",
+  optional: "helps the pitch",
 };
 
 /** A seller's sentence placed before our own full stop: no doubled "..". */
@@ -49,10 +50,10 @@ A conversation ends well with ${outcomes || "the buyer's question answered"}.
 ### How to sell for this seller
 - Tone: ${noStop(p.tone) || "friendly and direct"}.
 - Answer in the buyer's language (${seller.languages.join(" or ")}). Product names and SKUs stay as they are.
-- Record what you learn with update_deal_state as soon as you learn it: provenance "buyer" when they said it, "inferred" when you concluded it. Ask only for fields marked "before quote", and only when the buyer has not given them yet.
-- Fields marked "in the order form" are filled in by the buyer in the order form. Record one when the buyer mentions it; do not ask for it in chat, unless send_order_form is refused and names it as missing.
+- Record what you learn with update_deal_state as soon as you learn it: provenance "buyer" when they said it, "inferred" when you concluded it. Ask only for fields marked "needed for the quote" or "helps the pitch", only when the buyer has not given them yet, and as often as their role allows (see "Questions").
+- Fields marked "filled in the order form" are filled in by the buyer in the order form. Record one when the buyer mentions it; do not ask for it in chat, unless send_order_form is refused and names it as missing.
 - Before recommending products, look them up with search_catalog; check combinations with check_fit before quoting.
-- Answer factual questions only from lookup_knowledge results or the catalog. If the information is not there, say you will check with the team; never guess specs, prices, warranty or delivery terms.
+- Answer factual questions only from lookup_knowledge results or the catalog. If the information is not there, say you don't have details on that and offer to check with the team; never guess specs, prices, warranty or delivery terms.
 - Delivery: check_fit and create_quote return a delivery estimate. Give delivery only from that estimate, as dates in the buyer's language, always with "about" or "estimated"; never promise an exact date. In the close, say "by about" and the last date of the estimated range (for example "by about 9 December"); when the buyer asks about delivery, give the range (for example "around 3–9 December"). If the buyer needs delivery before the range starts, do not agree: offer to check with the team and hand off with reason "delivery deadline". If it is not set, say you'll confirm the delivery time with the team and look the question up with lookup_knowledge so the seller sees it; never invent a time frame.
 - Prices come only from tools, from the price list of the buyer's market. Never state a price, total or discount you did not get from search_catalog, check_fit or create_quote.
 - An item can have a one-time price, a recurring price (per month or per year), or both. Say which is which. An item marked as not sold in the buyer's market is not available to them: do not offer it.
@@ -96,6 +97,8 @@ export type TurnExtra = {
   opener?: string | null;
   /** Published catalog items; those with a plain name are listed. */
   catalog?: PlainItem[] | null;
+  /** The agent's and the seller's names in the conversation language, with the agent's gender (lib/agent/core/names.ts). */
+  names?: BuyerNames | null;
 };
 
 const MAX_PLAIN_ITEMS = 30;
@@ -112,7 +115,8 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
   const plain = (extra.catalog ?? []).filter((i) => i.plainName?.trim()).slice(0, MAX_PLAIN_ITEMS);
   return [
     stage.instruction,
-    extra.opener ? `Your opening message, already sent: "${extra.opener}"\nDo not introduce yourself again.` : "",
+    extra.names ? namesInstruction(extra.names) : "",
+    extra.opener ?`Your opening message, already sent: "${extra.opener}"\nDo not introduce yourself again.` : "",
     `## Known so far\n${known}`,
     deal?.objections?.length ? `Objections so far: ${deal.objections.map((o) => `${o.text} (${o.handled ? "handled" : "open"})`).join("; ")}.` : "",
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",

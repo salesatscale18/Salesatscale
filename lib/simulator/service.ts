@@ -34,6 +34,8 @@ import { loadQuoteCards } from "@/lib/agent/quote-card-data";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { openerText } from "@/lib/agent/core/opener";
+import { buyerNames, type BuyerNames } from "@/lib/agent/core/names";
+import { displaySeller } from "@/lib/orders/service";
 import { agentTyping, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
 import { chatTokenFor, hashToken, linkIdFromChatToken } from "./token";
 
@@ -264,9 +266,11 @@ export async function startSimulatorConversation(db: Db, actor: Actor, accountId
   if (!live) return { ok: false, reason: "no_agent" };
   const lang: Locale = isLocale(lead.language) ? lead.language : "en";
   const vars = templateVariables(lead, account);
+  // Names in the lead's language, and the intro's grammar in the agent's gender (decision 2).
+  const names = buyerNames(live.playbook, account, lang);
   const body = template
     ? renderTemplate(template.body, vars)
-    : openerText({ name: vars["1"], agent: live.playbook.agentName || account.tradeName, company: account.tradeName, language: lang, opener: live.playbook.opener });
+    : openerText({ name: vars["1"], agent: names.agent, company: names.seller, gender: names.gender, language: lang, opener: live.playbook.opener });
   const conversationId = randomUUID();
   const messageId = randomUUID();
   await atomic(db, (q) => [
@@ -371,7 +375,7 @@ export async function linkPreviews(db: Db, accountId: string, bodies: string[], 
     if (!view || view.form.accountId !== accountId) return;
     const s = view.form.snapshot;
     out.set(l.url, {
-      url: l.url, seller: s.seller.tradeName, ref: `Q-${s.quote.number} v${s.quote.version}`,
+      url: l.url, seller: displaySeller(view.form, lang), ref: `Q-${s.quote.number} v${s.quote.version}`,
       oneTime: s.oneTime.totalMinor ? formatMoney(s.oneTime.totalMinor, s.currency) : null,
       recurring: s.recurring.totalMinor ? formatMoney(s.recurring.totalMinor, s.currency) : null,
     });
@@ -444,11 +448,15 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   };
 }
 
-/** The header's agent name: the live agent's playbook name, else "<trade name> assistant". */
-export async function chatAgentName(db: Db, accountId: string, tradeName: string): Promise<string> {
+/**
+ * The header's names in the lead's language: the live agent's name for that
+ * language (else its playbook name, else "<trade name> assistant"), the
+ * seller's local trade name, and the agent's gender for the Hebrew grammar.
+ */
+export async function chatNames(db: Db, account: Pick<SellerAccount, "id" | "tradeName" | "tradeNameLocal">, lang: string): Promise<BuyerNames> {
   const [live] = await db.select({ playbook: agentVersions.playbook }).from(agentVersions)
-    .where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live")));
-  return live?.playbook.agentName?.trim() || `${tradeName} assistant`;
+    .where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "live")));
+  return buyerNames(live?.playbook ?? null, account, lang);
 }
 
 // ---------------------------------------------------------------------------

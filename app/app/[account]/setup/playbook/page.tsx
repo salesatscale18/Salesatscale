@@ -51,7 +51,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <PlaybookToc playbookHref={here} playsHref={`${here}/plays`} />
           <div style={{ flex: "999 1 520px", minWidth: 0 }}>
             <PlaybookForm
-              slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName}
+              slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
               plays={{ total: plays.length, withFacts: plays.filter((x) => x.facts.length).length, own: counts.own, needsFacts: counts.needs, suggested: counts.suggested }}
               playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
             />

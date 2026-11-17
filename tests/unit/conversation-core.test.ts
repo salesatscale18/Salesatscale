@@ -67,7 +67,7 @@ describe("stage derivation", () => {
     // Confirmed, but the quote still needs a field: ask for exactly that.
     const missing = stageOf({ agentMessages: 3, fields: { sites: said("1"), ...confirmed } });
     expect(missing.stage).toBe("quote_close");
-    expect(missing.instruction).toContain("ask for what is still missing for a quote, in one short question");
+    expect(missing.instruction).toContain("ask for Business type in one short question");
     expect(missing.instruction).toContain("Still missing for a quote: Business type.");
     // A quote that waits for the seller's approval is not closed.
     const waiting = stageOf({ agentMessages: 4, fields: { ...known, ...confirmed }, quote: "awaiting_approval" });
@@ -217,8 +217,8 @@ describe("stable system prompt", () => {
     // The stage trigger replaces the old "when the buyer is ready" wording.
     expect(p).not.toContain("When the buyer is ready, call create_quote");
     // Company and signer details are filled in the order form, not asked in chat.
-    expect(p).toContain("- decision_maker: Decision maker (in the order form)");
-    expect(p).toContain('Fields marked "in the order form" are filled in by the buyer in the order form.');
+    expect(p).toContain("- decision_maker: Decision maker (filled in the order form)");
+    expect(p).toContain('Fields marked "filled in the order form" are filled in by the buyer in the order form.');
   });
 
   it("contains every play, with its when, moves, example and not-this", () => {
@@ -261,7 +261,7 @@ describe("stable system prompt", () => {
     const p = stableSystemPrompt(demo, { tradeName: "Polar Demo", currency: "ILS", languages: ["en", "he"] });
     expect(p).toContain("You are Maya, the automated sales agent for Polar Demo");
     expect(p).toContain("The buyer asked to hear from Polar Demo.");
-    expect(p).toContain("- company_id: Company ID (in the order form)");
+    expect(p).toContain("- company_id: Company ID (filled in the order form)");
     expect(p).toContain('- "We keep paper logs, that is enough." ->');
     // Seller sentences keep their own wording: no "Never: Never" and no doubled full stop.
     expect(p).toContain("\n- Never promise a discount above 5% without approval.\n");
@@ -333,7 +333,7 @@ describe("update_deal_state tool definition", () => {
     const schema = def.input_schema as unknown as { properties: Record<string, { type: unknown }>; required: string[]; additionalProperties: boolean };
     expect(def.strict).toBe(true);
     expect(schema.additionalProperties).toBe(false);
-    expect(schema.required).toEqual(["updates", "next_step", "objection", "recommendation_confirmed", "price_asked"]);
+    expect(schema.required).toEqual(["updates", "next_step", "objection", "recommendation_confirmed", "price_asked", "asked"]);
     expect(Object.keys(schema.properties)).toEqual(schema.required);
     expect(schema.properties.recommendation_confirmed.type).toEqual(["boolean", "null"]);
     expect(schema.properties.price_asked.type).toEqual(["boolean", "null"]);

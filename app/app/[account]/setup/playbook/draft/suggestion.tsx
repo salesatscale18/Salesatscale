@@ -25,7 +25,7 @@ export function suggestionText(s: Suggestion): { title: string; sub: string | nu
   switch (p.kind) {
     case "goal": case "tone": return { title: p.text, sub: null, he: p.textHe || null };
     case "field": return { title: p.label, sub: [t(STAGE_KEY[p.stage] ?? "playbook.stage.optional"), p.example ? `"${p.example}"` : null].filter(Boolean).join(" · "), he: p.exampleHe || p.labelHe || null };
-    case "discovery_question": return { title: `"${p.question}"`, sub: p.label, he: p.questionHe || null };
+    case "discovery_question": return { title: `"${p.question}"`, sub: [p.label, t(STAGE_KEY[p.stage ?? "optional"] ?? "playbook.stage.optional")].join(" · "), he: p.questionHe || null };
     case "objection": return { title: `"${p.objection}"`, sub: p.answer, he: [p.objectionHe, p.answerHe].filter(Boolean).join(" — ") || null };
     case "limit": return { title: p.rule, sub: null, he: p.ruleHe || null };
     case "never": return { title: t("draft.never_rule", { rule: p.rule }), sub: null, he: p.ruleHe || null };
@@ -151,7 +151,18 @@ function EditForm({ s, slug, back, cancelHref, limit }: Pick<ItemProps, "s" | "s
           </div>
         </>
       ) : null}
-      {s.payload.kind === "discovery_question" ? <>{field("label", "draft.f.label", 60)}{field("question", "draft.f.question", 200)}</> : null}
+      {s.payload.kind === "discovery_question" ? (
+        <>
+          {field("label", "draft.f.label", 60)}
+          {field("question", "draft.f.question", 200)}
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor={`sg-e-${s.id}-role`}>{t("draft.f.role")}</label>
+            <select className="sas-select" id={`sg-e-${s.id}-role`} name="stage" defaultValue={s.payload.stage ?? "optional"}>
+              {(["before_quote", "optional"] as const).map((v) => <option key={v} value={v}>{t(STAGE_KEY[v])}</option>)}
+            </select>
+          </div>
+        </>
+      ) : null}
       {s.payload.kind === "objection" ? <>{field("objection", "draft.f.objection", 200)}{field("answer", "draft.f.answer", 600, true)}</> : null}
       {s.payload.kind === "never" ? field("rule", "draft.f.rule", 200) : null}
       {s.payload.kind === "opener" ? (
