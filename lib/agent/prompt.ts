@@ -99,6 +99,10 @@ export type TurnExtra = {
   catalog?: PlainItem[] | null;
   /** The agent's and the seller's names in the conversation language, with the agent's gender (lib/agent/core/names.ts). */
   names?: BuyerNames | null;
+  /** The seller's local time now, for schedule_follow_up ("Tue 17 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)"). */
+  localNow?: string | null;
+  /** The follow-up already scheduled with this buyer (lib/follow-ups). */
+  followUp?: { dueLocal: string; topic: string | null } | null;
 };
 
 const MAX_PLAIN_ITEMS = 30;
@@ -120,6 +124,10 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     `## Known so far\n${known}`,
     deal?.objections?.length ? `Objections so far: ${deal.objections.map((o) => `${o.text} (${o.handled ? "handled" : "open"})`).join("; ")}.` : "",
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",
+    extra.followUp
+      ? `Follow-up scheduled: you write to the buyer on ${extra.followUp.dueLocal}${extra.followUp.topic ? ` about ${extra.followUp.topic}` : ""}. If the buyer asks for another time, call schedule_follow_up again.`
+      : "",
+    extra.localNow ? `Local time now: ${extra.localNow}` : "",
     plain.length
       ? `## Products in plain words\nSay the plain name to the buyer; the SKU is for tool calls and the quote only.\n${plain.map((i) => `- ${i.sku}: ${i.plainName!.trim()}${i.valueLine?.trim() ? ` - ${i.valueLine.trim()}` : ""}`).join("\n")}`
       : "",

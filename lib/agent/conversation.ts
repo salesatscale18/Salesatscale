@@ -19,6 +19,7 @@ import type { QuoteCardView } from "./quote-card";
 import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
 
 /** Lead statuses a take-over or hand-back may move. Won, lost and booked meetings stay as they are. */
 const ACTIVE: ReadonlySet<LeadStatus> = new Set(["new", "waiting_for_reply", "agent_handling", "human_handling"]);
@@ -65,6 +66,8 @@ export async function takeOver(db: Db, actor: Actor, accountId: string, conversa
       id: randomUUID(), accountId, leadId: lead.id, type: "conversation.taken_over", actor: "human", actorUserId: actor.userId,
       data: { conversationId: conv.id, channel: conv.channel },
     }),
+    // The banner says so: a person holds the chat, so the agent's agreed follow-up is cancelled.
+    cancelOnTakeOver(q, accountId, lead.id),
   ]);
   await auditIfActingAs(db, actor, accountId, "conversation.taken_over", conv.id, lead.id);
   return { ok: true, changed: true };

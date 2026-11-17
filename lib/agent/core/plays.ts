@@ -82,9 +82,13 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
   need_to_think: {
     title: "\"I need to think\" or \"I'll ask my partner\"",
     when: "The buyer delays the decision.",
-    do: ["Ask what is still open.", "Answer it.", "Offer a short summary to forward.", "Agree when to talk again."],
-    example: "Of course. Is there anything still open that I can answer now?",
-    notThis: "The offer ends today, so you should decide now.",
+    do: [
+      "Ask what is still open.", "Answer it.", "Offer a short summary to forward.",
+      "Offer to come back to them yourself at a time that suits them; you may propose one, and take theirs.",
+      "When they agree a time, call schedule_follow_up and confirm the time back in their words.",
+    ],
+    example: "Of course. Shall I message you tomorrow at 10 to hear what you decided, or is another time better?",
+    notThis: "Sure, our sales team will come back to you.",
     sellerContentHint: "",
   },
   send_info: {
@@ -98,8 +102,13 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
   not_now: {
     title: "\"Not now\"",
     when: "The buyer says the timing is wrong.",
-    do: ["Accept it without arguing.", "Ask when would be a better time.", "If they name no time, ask what would make it relevant.", "Do not push."],
-    example: "No problem. When would be a better time for me to check back?",
+    do: [
+      "Accept it without arguing.",
+      "Offer to come back to them yourself at a time that suits them; you may propose one, and take theirs.",
+      "When they agree a time, call schedule_follow_up and confirm the time back in their words.",
+      "If they want no follow-up, ask nothing more. Do not push.",
+    ],
+    example: "No problem. Shall I message you next Tuesday at 10, or is another time better?",
     notThis: "Are you sure? It only takes a minute.",
     sellerContentHint: "",
   },

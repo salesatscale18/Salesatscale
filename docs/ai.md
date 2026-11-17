@@ -51,6 +51,10 @@ the run's model and `cost_estimate_micros`; both count toward the spend cap and 
 `aiUsageThisMonth(db, accountId)` and `platformUsageThisMonth(db)` (`lib/ai/usage.ts`) roll this up
 per UTC calendar month.
 
+## Agreed follow-ups (no model call)
+
+When a buyer needs time, the agent agrees a time and calls `schedule_follow_up` (part of a normal turn). The platform scheduler (`/api/cron/follow-ups`, every 15 minutes) then sends a fixed template message in the buyer's language (EN/HE, `lib/follow-ups/rules.ts`) with no model call. The model runs again only if the buyer replies, as for any buyer message.
+
 ## Check model availability (free)
 
 Admin › Operations › AI shows whether `ANTHROPIC_API_KEY` is set and has a **Check models** button.
