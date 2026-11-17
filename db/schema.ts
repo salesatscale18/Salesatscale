@@ -637,7 +637,23 @@ export type Playbook = {
   neverDo: string[];
   /** Approved exceptions (optional: older playbooks have none). */
   exceptions?: PlaybookException[];
+  /** Opener inputs (P11): what leads usually ask about, and the first question. Both optional. */
+  opener?: { leadsAskAbout?: string; openingQuestion?: string };
+  /**
+   * Per-situation sales plays (P11). `content` is the seller's facts for the
+   * default card; `own` is the seller's own card, used instead of the default.
+   */
+  plays?: Partial<Record<PlayKey, { content?: string; own?: PlayCard }>>;
 };
+
+/** The selling situations the platform has a default play for (lib/agent/core/plays.ts). */
+export const PLAY_KEYS = [
+  "need", "fit", "value", "price_early", "too_expensive", "existing_solution", "competitor",
+  "proof", "need_to_think", "send_info", "not_now", "right_size", "handoff",
+] as const;
+export type PlayKey = (typeof PLAY_KEYS)[number];
+/** One play card: when it applies, the moves in order, a good reply and a reply to avoid. */
+export type PlayCard = { when: string; do: string[]; example: string; notThis: string };
 
 /**
  * A version of the seller's agent (mvp-plan 3.10): a frozen package of
