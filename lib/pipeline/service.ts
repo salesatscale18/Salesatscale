@@ -301,7 +301,21 @@ export function runPillState(r: Pick<PipelineRun, "status" | "error">): "running
 function failureText(e: unknown): string {
   if (e instanceof AiBudgetError) return BUDGET_STOP;
   if (e instanceof StageError) return e.message;
+  logAiFailure("pipeline", e);
   return "The AI request failed. Try again later.";
+}
+
+/**
+ * Logs why a model call failed (HTTP status, API error type and message, request id), never
+ * the request body or keys, so a failed run can be diagnosed from the runtime logs.
+ */
+export function logAiFailure(where: string, e: unknown) {
+  const err = e as { name?: string; status?: number; message?: string; requestID?: string; request_id?: string; error?: { error?: { type?: string; message?: string }; type?: string } };
+  const apiType = err.error?.error?.type ?? err.error?.type;
+  console.error(`[${where}] AI request failed`, JSON.stringify({
+    name: err.name, status: err.status, type: apiType, requestId: err.requestID ?? err.request_id,
+    message: String(err.error?.error?.message ?? err.message ?? e).slice(0, 600),
+  }));
 }
 class StageError extends Error {}
 
