@@ -4,6 +4,7 @@ import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
 import { MessageBody } from "@/components/sas/message-body";
+import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
 import { appMessageKinds } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -147,11 +148,15 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                           })}
                         </ol>
                       ) : null}
+                      {view?.quoteCards[m.id] ? (
+                        <QuoteCardMessage card={view.quoteCards[m.id]} time={exactTime(m.createdAt)} slug={null} approve={null} />
+                      ) : (
                       <ChatMessage
                         actor={actor} who={t(`lab.who.${actor}` as MessageKey)}
                         time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${exactTime(m.createdAt)} · ${deliveryLabel(m)}` : exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
                         <MessageBody body={m.body} kind={kinds.get(m.id)} />
                       </ChatMessage>
+                      )}
                       {isAdmin && usage?.inputTokens !== undefined ? (
                         <span className="sas-small sas-num" style={{ alignSelf: "flex-end" }}>{t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}</span>
                       ) : null}

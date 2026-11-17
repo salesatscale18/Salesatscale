@@ -3,13 +3,18 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { BuyerChat, BuyerMessage, LinkPreview } from "@/lib/simulator/service";
 import { boldSegments } from "@/lib/agent/app-message";
+import { QuoteCard } from "@/components/sas/quote-card";
+import { replyButtonsAfter } from "@/lib/agent/quote-replies";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string;
   closedBy: string; today: string; yesterday: string; openForm: string; formLabel: string; todayWord: string; perMonth: string;
   empty: string; notSent: string; messages: string; sent: string; delivered: string; read: string;
+  /** Reply buttons after the close ("Sounds good" / "Change something"). */
+  replyYes: string; replyChange: string; replies: string;
   refused: Record<string, string>;
 };
+
 
 /** A message on the page: from the server, or the buyer's own still on its way (pending). */
 type Shown = BuyerMessage & { pending?: "sending" | "confirmed" | "failed" };
@@ -74,6 +79,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
 }) {
   const [items, setItems] = useState<Shown[]>(initial.messages);
+  const [cards, setCards] = useState(initial.cards ?? {});
   const [typing, setTyping] = useState(initial.typing);
   const [ended, setEnded] = useState(initial.ended);
   const [closedAt, setClosedAt] = useState(initial.closedAt);
@@ -98,6 +104,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
       setTyping(data.typing);
       setEnded(data.ended);
       setClosedAt(data.closedAt);
+      // Every card comes back on every poll: an approved, replaced or expired quote changes in place.
+      setCards(data.cards ?? {});
       // Messages confirmed by the server before this poll started are now in its answer.
       setItems((cur) => {
         const known = new Set(cur.map((m) => m.id));
@@ -135,11 +143,12 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
 
-  const send = async () => {
-    const text = draft.trim();
+  /** Sends the draft, or a reply button's text (a normal buyer message: the agent answers as if it was typed). */
+  const send = async (quick?: string) => {
+    const text = (quick ?? draft).trim();
     if (!text || ended) return;
     const clientId = crypto.randomUUID();
-    setDraft("");
+    if (quick === undefined) setDraft("");
     setNotice(null);
     requestAnimationFrame(grow);
     setItems((cur) => [...cur, { id: clientId, from: "buyer", body: text, at: new Date().toISOString(), status: null, name: null, previews: [], pending: "sending" }]);
@@ -182,9 +191,20 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
     prevDay = dayKey(d);
     rows.push(<div key={key} className="c-date" role="separator" dir={dir} suppressHydrationWarning>{dateLabel(d)}</div>);
   };
+  const repliesAfter = ended || typing ? null : replyButtonsAfter(items, cards);
   items.forEach((m, i) => {
     const d = new Date(m.at);
     separator(d, `d-${m.id}`);
+    const card = cards[m.id];
+    if (card) {
+      // The app's quote message shows as the designed card; the stored text stays the fallback (and what WhatsApp sends).
+      rows.push(
+        <div key={m.id} className="c-msg c-msg--in c-msg--card">
+          <QuoteCard card={card} />
+        </div>,
+      );
+      return;
+    }
     const answered = items.slice(i + 1).some((n) => n.from !== "buyer" && !n.pending);
     const state = m.from !== "buyer" ? null : m.pending === "sending" || m.pending === "failed" ? "sent" : answered ? "read" : "delivered";
     const side = m.from === "buyer" ? "out" : "in";
@@ -207,6 +227,14 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
         {m.previews.map((p) => <Card key={p.url} p={p} s={strings} initials={initials} dir={dir} />)}
       </div>,
     );
+    if (m.id === repliesAfter) {
+      rows.push(
+        <div key={`r-${m.id}`} className="c-replies" role="group" aria-label={strings.replies} data-reply-buttons="">
+          <button type="button" className="c-reply" onClick={() => void send(strings.replyYes)}>{strings.replyYes}</button>
+          <button type="button" className="c-reply" onClick={() => void send(strings.replyChange)}>{strings.replyChange}</button>
+        </div>,
+      );
+    }
   });
   if (closedAt) {
     separator(new Date(closedAt), "d-closed");
@@ -229,7 +257,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
           <span className={`c-head__sub${showTyping ? " c-head__sub--typing" : ""}`}>{showTyping ? strings.typing : strings.automated}</span>
         </span>
       </header>
-      <div className="c-log" ref={logRef} role="log" aria-label={strings.messages}>
+      <div className="c-log" ref={logRef} role="log" aria-label={strings.messages} dir={dir}>
         {items.length === 0 && !closedAt ? <p className="c-empty" dir={dir}>{strings.empty}</p> : rows}
         {showTyping ? <div className="c-msg c-msg--in"><div className="c-bubble c-dots" role="status" aria-label={strings.typingLabel}><i /><i /><i /></div></div> : null}
       </div>

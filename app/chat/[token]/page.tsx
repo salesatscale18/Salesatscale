@@ -41,6 +41,9 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
     empty: tr("buyer.sim.empty"),
     notSent: tr("buyer.sim.not_sent"),
     messages: tr("buyer.sim.messages"),
+    replyYes: tr("buyer.qcard.reply_yes"),
+    replyChange: tr("buyer.qcard.reply_change"),
+    replies: tr("buyer.qcard.replies"),
     sent: tr("buyer.sim.status.sent"),
     delivered: tr("buyer.sim.status.delivered"),
     read: tr("buyer.sim.status.read"),
@@ -56,7 +59,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
   };
   const initials = ctx.account.tradeName.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
-    // The page layout never flips (UX spec); the chat parts take the lead's direction.
+    // The page frame never flips; the chat parts take the lead's direction, and in Hebrew the whole chat mirrors (board SimMobileHe).
     <div className="c-root" lang={lang} dir="ltr" style={{ ["--brand" as string]: ctx.brandColor, ["--bubble" as string]: buyerBubbleColor(ctx.brandColor) }}>
       <ChatClient
         token={token} lang={lang} seller={ctx.account.tradeName} initials={initials} strings={strings}
