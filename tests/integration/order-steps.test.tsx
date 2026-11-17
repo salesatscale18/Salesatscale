@@ -321,7 +321,8 @@ describe("order form in three steps", () => {
     expect(he).toContain("מהפנייה שלך");
     expect(he).toContain("מי חותם/ת");
     expect(tag(he, "company_id")).toMatch(/inputMode="numeric".*dir="ltr"/);
-    expect(he).toContain(`href="/f/${f.token}?lang=en&amp;step=2"`);
+    // The language switch submits the step form (UX sign-off G1): back to English on the same step.
+    expect(he).toContain('form="b-step-form" value="lang:en" lang="en" data-lang-switch="en" name="intent">EN</button>');
     const he1 = await page(f.token, { lang: "he" });
     expect(he1).toContain("ההזמנה שלך");
     expect(he1).toContain("המשך");
@@ -336,5 +337,44 @@ describe("order form in three steps", () => {
     expect(await post(f.token, 2, { ...company, company_name: "Changed", intent: "continue" })).toBe(`/f/${f.token}?lang=en`);
     expect(await draftOf(f.form.id)).toEqual(before);
     expect(await post("not-a-token", 2, { intent: "continue" })).toBe("/f/not-a-token?lang=en");
+  });
+
+  it("language switch (UX sign-off G1): a submit button of the step form that saves the step unchecked and reloads it in the other language", async () => {
+    const f = await newForm("0525550615");
+    await post(f.token, 1, { intent: "continue" });
+    let html = await page(f.token, { step: "2" });
+    // EN / HE are submit buttons of the step form; the hidden default button (Enter) comes first in tree order.
+    expect(html).toContain('<form id="b-step-form"');
+    expect(html).toMatch(/<button type="submit" form="b-step-form" value="continue" class="b-sr" tabindex="-1" aria-hidden="true" name="intent"><\/button><nav class="b-lang"[^>]*><button type="submit" form="b-step-form" value="lang:en" lang="en" aria-current="true" data-lang-switch="en" name="intent">EN<\/button><button type="submit" form="b-step-form" value="lang:he" lang="he" data-lang-switch="he" name="intent">/);
+    expect(html).not.toMatch(/<a href="\/f\/[^"]+\?lang=he/);
+    // Half-typed and invalid: saved as typed, no check, same step in Hebrew.
+    expect(await post(f.token, 2, { company_name: "Rina Kitchens", company_id: "", invoice_email: "rina@", intent: "lang:he" })).toBe(`/f/${f.token}?lang=he&step=2`);
+    expect(await draftOf(f.form.id)).toMatchObject({ step: 2, fields: { company_name: "Rina Kitchens", invoice_email: "rina@" } });
+    html = await page(f.token, { lang: "he", step: "2" });
+    expect(html).toContain('data-order-step="2"');
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain('value="Rina Kitchens"');
+    expect(html).not.toContain('aria-invalid="true"');
+    // Step 3 switches back, keeping the delivery choice and the address.
+    await post(f.token, 2, { ...company, intent: "continue" });
+    expect(await post(f.token, 3, { delivery_address: "Port 4, Haifa", delivery_when: "asap", intent: "lang:en" }, "he")).toBe(`/f/${f.token}?lang=en&step=3`);
+    html = await page(f.token, { step: "3" });
+    expect(html).toContain('value="Port 4, Haifa"');
+    expect(html).toMatch(/value="sign" class="b-sr"/);
+    // Unknown languages fall back to English; a signed form's page keeps plain links.
+    expect(await post(f.token, 3, { intent: "lang:xx" })).toBe(`/f/${f.token}?lang=en&step=3`);
+    await post(f.token, 3, { delivery_same: "on", delivery_when: "asap", agreed: "on", intent: "sign" });
+    html = await page(f.token);
+    expect(html).not.toContain("data-lang-switch");
+    expect(html).toMatch(/<a href="\/f\/[^"]+\?lang=he" lang="he">/);
+  });
+
+  it("step 3 says how to get a later delivery date (UX sign-off G2), in English and Hebrew", async () => {
+    const f = await newForm("0525550616");
+    await post(f.token, 2, { ...company, intent: "continue" });
+    const en = await page(f.token, { step: "3" });
+    expect(en).toContain('<span class="b-mut b-calnote" data-later-date="">Need a later date? Write to us in the chat.</span>');
+    expect(en.indexOf("data-later-date")).toBeGreaterThan(en.indexOf("data-delivery-choice"));
+    expect(await page(f.token, { step: "3", lang: "he" })).toContain("צריכים תאריך מאוחר יותר? כתבו לנו בצ׳אט.");
   });
 });

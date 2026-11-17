@@ -6,6 +6,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
 import { approveQuote, cancelQuote, getQuote } from "@/lib/quotes/service";
 import { createOrderForm, markBankTransferReceived } from "@/lib/orders/service";
+import { followUpAfterApproval } from "@/lib/agent/quote-approval";
 
 /** Ids come from the form: refuse anything that isn't a UUID before it reaches a query. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -36,6 +37,8 @@ export async function approveQuoteAction(form: FormData) {
     customs[`${m[1]}:${m[2]}`] = minor;
   }
   const r = await approveQuote(appDb, a.account.id, { userId: a.user.id, actingAs: a.actingAs }, quoteId, customs);
+  // A quote the agent held in a chat: the card there now shows it, and the buyer gets the app's close (as from the thread's panel).
+  if (r.ok) await followUpAfterApproval(appDb, a.account.id, quoteId);
   revalidatePath(`/app/${a.account.slug}/orders`);
   redirect(`/app/${a.account.slug}/orders?quote=${quoteId}${r.ok ? "&approved=1" : "&approve=" + r.reason}`);
 }

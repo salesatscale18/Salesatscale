@@ -327,16 +327,27 @@ function asLines(v: unknown): Line[] | null {
  * (replyToBuyer). Returns the message id.
  */
 async function sendQuoteMessage(ctx: ToolContext, number: number, v: QuoteVersion, timezone: string): Promise<string> {
-  const lines = await ctx.db.select().from(quoteLines)
-    .where(and(eq(quoteLines.accountId, ctx.accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder);
+  const language = ctx.language ?? "en";
+  const body = await quoteMessageBody(ctx.db, ctx.accountId, number, v, timezone, language);
+  const id = randomUUID();
+  const at = new Date();
+  await ctx.db.insert(messages).values({ id, accountId: ctx.accountId, conversationId: ctx.conversationId, actor: "agent", body, language, createdAt: at });
+  // The agent's reply is stamped at the end of the turn: wait for the next millisecond so the quote always shows first.
+  while (Date.now() <= at.getTime()) await new Promise((r) => setTimeout(r, 1));
+  return id;
+}
+
+/** The fixed-layout text of a quote version (the card's fallback and what WhatsApp sends). Also used after a seller approval. */
+export async function quoteMessageBody(db: Db, accountId: string, number: number, v: QuoteVersion, timezone: string, language: string): Promise<string> {
+  const lines = await db.select().from(quoteLines)
+    .where(and(eq(quoteLines.accountId, accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(quoteLines.sortOrder);
   const ids = [...new Set(lines.map((l) => l.catalogItemId).filter((x): x is string => !!x))];
   const items = ids.length
-    ? await ctx.db.select({ id: catalogItems.id, plainName: catalogItems.plainName, kind: catalogItems.kind })
-      .from(catalogItems).where(and(eq(catalogItems.accountId, ctx.accountId), inArray(catalogItems.id, ids)))
+    ? await db.select({ id: catalogItems.id, plainName: catalogItems.plainName, kind: catalogItems.kind })
+      .from(catalogItems).where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, ids)))
     : [];
   const itemOf = new Map(items.map((i) => [i.id, i]));
-  const language = ctx.language ?? "en";
-  const body = quoteMessageText({
+  return quoteMessageText({
     number, currency: v.currency, pricesIncludeTax: v.pricesIncludeTax, taxRateBp: v.taxRateBp, discountBp: v.discountBp,
     lines: lines.map((l) => {
       const item = l.catalogItemId ? itemOf.get(l.catalogItemId) : undefined;
@@ -350,12 +361,6 @@ async function sendQuoteMessage(ctx: ToolContext, number: number, v: QuoteVersio
     recurringPeriod: v.recurringPeriod === "year" ? "year" : v.recurringPeriod === "month" ? "month" : null,
     validUntil: v.validUntil, timezone, language,
   });
-  const id = randomUUID();
-  const at = new Date();
-  await ctx.db.insert(messages).values({ id, accountId: ctx.accountId, conversationId: ctx.conversationId, actor: "agent", body, language, createdAt: at });
-  // The agent's reply is stamped at the end of the turn: wait for the next millisecond so the quote always shows first.
-  while (Date.now() <= at.getTime()) await new Promise((r) => setTimeout(r, 1));
-  return id;
 }
 
 /**

@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode } from "react";
-import { CalendarX, Clock, FileText, Truck } from "lucide-react";
+import { CalendarX, Clock, FileText, FileX, Truck } from "lucide-react";
 import type { QuoteCardLine, QuoteCardRow, QuoteCardView } from "@/lib/agent/quote-card";
 import "./quote-card.css";
 
@@ -32,7 +32,7 @@ export function QuoteCard({ card, sellerOnly }: {
           </span>
         </span>
       </div>
-      {!collapsed && card.headline ? <div className="sas-qc__headline" dir="auto">{card.headline}</div> : null}
+      {!collapsed && card.headline ? <Headline card={card} /> : null}
       {!collapsed && (card.lines.length || card.total) ? (
         <div className="sas-qc__sec">
           {card.lines.slice(0, card.fold ?? undefined).map((l, i) => <Line key={i} l={l} />)}
@@ -62,6 +62,7 @@ export function QuoteCard({ card, sellerOnly }: {
         <div className={`sas-qc__status sas-qc__status--${card.state}`} role={card.state === "held" ? "status" : undefined}>
           {card.state === "held" ? <Clock className="sas-qc__ic sas-qc__ic--warn" aria-hidden="true" />
             : card.state === "expired" ? <CalendarX className="sas-qc__ic" aria-hidden="true" />
+            : card.state === "withdrawn" ? <FileX className="sas-qc__ic" aria-hidden="true" data-icon="file-x" />
             : <FileText className="sas-qc__ic" aria-hidden="true" />}
           <span>{card.status}{card.summary ? <> <Num>{card.summary}</Num></> : null}</span>
         </div>
@@ -88,10 +89,32 @@ export function QuoteCard({ card, sellerOnly }: {
 
 const Num = ({ children }: { children: ReactNode }) => <span className="sas-qc__num">{children}</span>;
 
+/**
+ * The headline. The agent's own takes its direction from its text; the
+ * fallback ("<item> and N more") keeps the card's direction with the item
+ * name isolated, so a Latin name in a Hebrew card does not reorder the line.
+ */
+function Headline({ card }: { card: QuoteCardView }) {
+  const text = card.headline ?? "";
+  const at = card.headlineName ? text.indexOf(card.headlineName) : -1;
+  if (at < 0) return <div className="sas-qc__headline" dir="auto"><bdi>{text}</bdi></div>;
+  return (
+    <div className="sas-qc__headline">
+      {text.slice(0, at)}<bdi>{card.headlineName}</bdi>{text.slice(at + card.headlineName!.length)}
+    </div>
+  );
+}
+
+/** "2 × Wireless sensor" (lib/agent/quote-card.ts lineView): the item name is isolated (<bdi>), so mixed-direction names are not reordered. */
+function LineLabel({ label }: { label: string }) {
+  const m = /^(\d+ × )(.+)$/s.exec(label);
+  return m ? <>{m[1]}<bdi>{m[2]}</bdi></> : <bdi>{label}</bdi>;
+}
+
 function Line({ l }: { l: QuoteCardLine }) {
   return (
     <div className="sas-qc__row">
-      <span>{l.label}{l.was ? <span className="sas-qc__chg">{l.was}</span> : null}</span>
+      <span><LineLabel label={l.label} />{l.was ? <span className="sas-qc__chg">{l.was}</span> : null}</span>
       <Num>{l.amount}</Num>
     </div>
   );

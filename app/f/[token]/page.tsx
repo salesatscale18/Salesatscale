@@ -35,10 +35,20 @@ function Alert({ color }: { color: string }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 22, height: 22, flex: "none", fill: "none", stroke: color, strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" }}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>;
 }
 
+/** The three-step form's id: the language switch in the header submits it. */
+const STEP_FORM = "b-step-form";
+
 function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number }) {
   const tr = translator(props.lang);
-  // On the steps, the language switch keeps the step; what was saved on Continue / Back stays filled in.
+  // On the steps, the language switch is a submit button of the step form (form="b-step-form"): it saves
+  // what the buyer typed on this step as the draft, without checking it, and reloads the same step in the
+  // other language. Elsewhere it stays a plain link.
   const stepQ = props.step ? `&step=${props.step}` : "";
+  const langSwitch = (l: Locale, label: string) => props.step ? (
+    <button type="submit" form={STEP_FORM} name="intent" value={`lang:${l}`} lang={l} aria-current={props.lang === l ? "true" : undefined} data-lang-switch={l}>{label}</button>
+  ) : (
+    <a href={`/f/${props.token}?lang=${l}${stepQ}`} lang={l} aria-current={props.lang === l ? "true" : undefined}>{label}</a>
+  );
   const initials = props.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
     <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={{ ["--brand" as string]: props.brand }}>
@@ -47,10 +57,14 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}>{props.seller}</b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
+          {/* The step form's default button (Enter in a field) must come before the switch's buttons in tree order. */}
+          {props.step && props.switcher !== false ? (
+            <button type="submit" form={STEP_FORM} name="intent" value={props.step === 3 ? "sign" : "continue"} className="b-sr" tabIndex={-1} aria-hidden="true" />
+          ) : null}
           {props.switcher !== false ? (
             <nav className="b-lang" aria-label={tr("buyer.language")}>
-              <a href={`/f/${props.token}?lang=en${stepQ}`} lang="en" aria-current={props.lang === "en" ? "true" : undefined}>EN</a>
-              <a href={`/f/${props.token}?lang=he${stepQ}`} lang="he" aria-current={props.lang === "he" ? "true" : undefined}>עב</a>
+              {langSwitch("en", "EN")}
+              {langSwitch("he", "עב")}
             </nav>
           ) : null}
         </header>
@@ -329,7 +343,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     <>
       {check.status === "unavailable" ? <div className="b-note b-note--warn" role="alert" style={{ margin: 20 }}><Alert color="var(--warn)" /><span>{tr("buyer.unavailable")}</span></div> : null}
       <div className="b-layout">
-        <form action={stepAction} className="b-main" noValidate data-order-step={step}>
+        <form id={STEP_FORM} action={stepAction} className="b-main" noValidate data-order-step={step}>
           {hidden}
           <input type="hidden" name="step" value={step} />
           {/* Enter in a field continues (or signs on step 3), never goes back: the first submit button is the default. */}

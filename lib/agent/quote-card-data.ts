@@ -1,6 +1,7 @@
 /**
  * Loads the quote cards of conversations (lib/agent/quote-card.ts): the
- * quote messages from create_quote's tool calls, then the quotes, versions,
+ * quote messages from create_quote's tool calls (and the cards the app sent
+ * after an approval), then the quotes, versions,
  * lines, item names and delivery dates they show. Scoped by account id
  * everywhere: a link to another account's quote shows nothing.
  */
@@ -13,6 +14,7 @@ import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { resolveMarket } from "@/lib/markets/service";
 import { safeBrand } from "@/lib/simulator/rules";
 import type { ApprovalReason } from "@/db/schema";
+import { APP_MESSAGE_CALL } from "./app-message";
 import { buildQuoteCards, quoteCardLinks, type CardData, type CardLine, type CardVersion, type QuoteCardView } from "./quote-card";
 
 export async function loadQuoteCards(
@@ -21,7 +23,7 @@ export async function loadQuoteCards(
   if (conversationIds.length === 0) return {};
   const calls = await db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result, conversationId: toolCalls.conversationId })
     .from(toolCalls)
-    .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, conversationIds), eq(toolCalls.name, "create_quote"), eq(toolCalls.outcome, "ok")));
+    .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, conversationIds), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL]), eq(toolCalls.outcome, "ok")));
   const links = quoteCardLinks(calls);
   if (links.length === 0) return {};
 

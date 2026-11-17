@@ -225,4 +225,31 @@ describe("pipeline screens and actions", () => {
     expect(page).toContain('data-status="source.approved"');
     expect(page).toContain('data-status="source.ready"');
   });
+
+  it("draft Sales plays (UX sign-off H1): 'Accept all facts (n)', Opening keeps its Suggested tag, a card with no call says where it came from", async () => {
+    const [note] = await listSections(db, acc, noteId);
+    const call = await listSections(db, acc, callId);
+    const run = crypto.randomUUID();
+    await db.insert(pipelineRuns).values({ id: run, accountId: acc, kind: "playbook", status: "done", createdAt: new Date(Date.now() + 60_000) });
+    const fromNote = [{ sourceId: noteId, locator: note.locator, quote: "Warranty" }];
+    const fromCall = [{ sourceId: callId, locator: call[1].locator, quote: "alarm" }];
+    const ins = (payload: Record<string, unknown>, evidence: { sourceId: string; locator: string; quote: string }[]) =>
+      db.insert(playbookSuggestions).values({ id: crypto.randomUUID(), accountId: acc, runId: run, kind: "discovery_question", payload, evidence });
+    await ins({ kind: "opener", topics: [{ en: "fridge alerts" }], openingQuestion: "How do you check them today?" }, fromNote);
+    await ins({ kind: "play_content", play: "existing_solution", content: "An alarm covers doors, not temperature." }, fromCall);
+    await ins({ kind: "play_content", play: "too_expensive", content: "A spoiled fridge costs more." }, fromNote);
+    await ins({ kind: "play_card", play: "too_expensive", when: "They say it is too much.", do: ["Agree.", "Compare."], example: "True.", notThis: "No." }, fromNote);
+    await ins({ kind: "play_card", play: "existing_solution", when: "They name an alarm.", do: ["Credit it.", "Name the gap."], example: "Doors, not temperature.", notThis: "Alarms are useless." }, fromCall);
+
+    const page = await html(DraftPage(params));
+    const plays = page.slice(page.indexOf('id="sg-play"'), page.indexOf("</section>", page.indexOf('id="sg-play"')));
+    // Facts only in the bulk action; the count stays readable after the words.
+    expect(plays).toContain(">Accept all facts (2)</button>");
+    // The card from the note says so; the card from a call shows the call instead.
+    expect(plays.match(/data-card-origin=""/g)).toHaveLength(1);
+    expect(plays).toMatch(/data-card-origin="">From your documents<\/span>/);
+    // Opening: the dashed Suggested tag stays until decided.
+    const opener = page.slice(page.indexOf('data-suggestion="opener"'));
+    expect(opener.slice(0, opener.indexOf("</li>"))).toContain(">Suggested<");
+  });
 });

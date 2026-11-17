@@ -2,7 +2,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
 import { MessageBody } from "@/components/sas/message-body";
-import { appMessageKinds } from "@/lib/agent/app-message";
+import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
 import type { ConversationView } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
 import { displayName } from "@/lib/auth/display";
@@ -47,7 +47,8 @@ const maybe = (key: string) => messages.en[key as MessageKey] ?? null;
 
 /** Trace chips for an agent message: the seller-readable label, plus Refused/Failed when the tool did not succeed. */
 export function traceChips(calls: ConversationView["thread"][number]["calls"]): TraceItem[] {
-  return calls.map((c) => ({
+  // The app's own messages (after a seller approval) are linked by an app_message row: no tool, no chip.
+  return calls.filter((c) => c.name !== APP_MESSAGE_CALL).map((c) => ({
     kind: c.name === "lookup_knowledge" ? "knowledge" : "tool",
     label: describeCall(c.name, c.input, c.result, c.outcome).label,
     outcome: c.outcome === "ok" ? undefined : c.outcome,
@@ -177,14 +178,16 @@ export function ConversationPanel({
           const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
-          const who = actor === "buyer" ? buyerName : actor === "agent" ? t("conv.who.agent") : actor === "human" ? (author ? displayName(author) : t("conv.who.team")) : t("conv.who.system");
+          const kind = kinds.get(m.id);
+          // Text the app wrote itself (the close after an approval) is "Sent by the app", not the agent.
+          const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author ? displayName(author) : t("conv.who.team")) : t("conv.who.system");
           return (
             <ChatMessage
               key={m.id} actor={actor} who={who} time={delivery ? `${exactTime(m.createdAt)} · ${delivery}` : exactTime(m.createdAt)}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
               trace={actor === "agent" ? traceChips(calls) : undefined}
             >
-              <MessageBody body={m.body} kind={kinds.get(m.id)} />
+              <MessageBody body={m.body} kind={kind} />
             </ChatMessage>
           );
         })}

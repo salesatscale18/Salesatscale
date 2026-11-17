@@ -12,6 +12,7 @@
  */
 import { formatMoney } from "@/lib/domain/money";
 import { dir as dirOf, isLocale, t, type Locale, type MessageKey } from "@/lib/i18n";
+import { APP_MESSAGE_CALL } from "./app-message";
 import { percentText, shortCalendarDate, shortDate } from "./quote-message";
 
 // ---------------------------------------------------------------------------
@@ -66,13 +67,14 @@ export type QuoteCardLink = {
 
 type CallLike = { name: string; outcome: string; conversationId?: string; result: Record<string, unknown> | null | undefined };
 
-/** Quote message links from the create_quote calls of conversations. */
+/** Quote message links from the create_quote calls of conversations, and the cards the app sent after an approval (app_message). */
 export function quoteCardLinks(calls: readonly CallLike[]): QuoteCardLink[] {
   const out: QuoteCardLink[] = [];
   for (const c of calls) {
     const r = c.result ?? {};
-    const id = r.quote_message_id;
-    if (c.name !== "create_quote" || c.outcome !== "ok" || typeof id !== "string") continue;
+    const app = c.name === APP_MESSAGE_CALL && r.kind === "quote";
+    const id = app ? r.message_id : r.quote_message_id;
+    if ((c.name !== "create_quote" && !app) || c.outcome !== "ok" || typeof id !== "string") continue;
     const m = /^Q-(\d+)\s+v(\d+)$/.exec(String(r.quote ?? ""));
     if (!m) continue;
     out.push({
@@ -81,7 +83,7 @@ export function quoteCardLinks(calls: readonly CallLike[]): QuoteCardLink[] {
       quoteId: typeof r.quote_id === "string" ? r.quote_id : null,
       number: Number(m[1]),
       version: typeof r.quote_version === "number" ? r.quote_version : Number(m[2]),
-      held: r.quote_held === true,
+      held: !app && r.quote_held === true,
       headline: validHeadline(r.headline),
     });
   }
@@ -116,6 +118,8 @@ export type QuoteCardView = {
   /** Under the title instead of seller · ref (the held placeholder). */
   sub: string | null;
   headline: string | null;
+  /** The item name inside the fallback headline ("<name> and N more"), isolated when shown so mixed-direction text keeps its order; null for the agent's own headline. */
+  headlineName: string | null;
   /** One-time lines; lines past `fold` are folded under `more`. */
   lines: QuoteCardLine[];
   fold: number | null;
@@ -127,6 +131,8 @@ export type QuoteCardView = {
   afterTotal: QuoteCardRow | null;
   monthly: { heading: string | null; lines: QuoteCardLine[]; rows: QuoteCardRow[]; total: QuoteCardRow; afterTotal: QuoteCardRow | null } | null;
   delivery: string | null;
+  /** The last date of that delivery estimate (YYYY-MM-DD), when the card shows it: the app's close after an approval says it too. */
+  deliveryDate: string | null;
   firstCharge: string | null;
   validUntil: string | null;
   /** The state line (held, replaced, expired, withdrawn) and, when replaced, the old totals. */
@@ -204,7 +210,8 @@ function itemNames(lines: CardLine[]): string[] {
   return [...seen.values()];
 }
 
-type Resolved = { input: CardInput; quote: CardQuote; version: CardVersion | null; state: QuoteCardState };
+/** `superseded`: a held placeholder after which the app sent the quote as a new card ("Send 5% instead"). */
+type Resolved = { input: CardInput; quote: CardQuote; version: CardVersion | null; state: QuoteCardState; superseded?: boolean };
 
 /**
  * Card models for quote messages, keyed by message id. `inputs` are in
@@ -216,19 +223,22 @@ type Resolved = { input: CardInput; quote: CardQuote; version: CardVersion | nul
 export function buildQuoteCards(inputs: CardInput[], data: CardData, ctx: CardContext): Record<string, QuoteCardView> {
   const quoteByNumber = new Map([...data.quotes.values()].map((q) => [q.number, q]));
   const resolved: Resolved[] = [];
-  for (const input of inputs) {
+  inputs.forEach((input, i) => {
     // Newer links name the quote; older ones only its number (always within the account's own quotes).
     const quote = input.link.quoteId ? data.quotes.get(input.link.quoteId) : quoteByNumber.get(input.link.number);
-    if (!quote) continue;
+    if (!quote) return;
     const versions = data.versions.get(quote.id) ?? [];
-    const wanted = input.link.held ? quote.currentVersion : input.link.version;
+    // A placeholder the app followed with a new card of the same quote stays a collapsed line (it never showed numbers).
+    const superseded = input.link.held && inputs.slice(i + 1).some((n) => !n.link.held && n.link.conversationId === input.link.conversationId && n.link.quoteId === quote.id);
+    const wanted = input.link.held && !superseded ? quote.currentVersion : input.link.version;
     const version = versions.find((v) => v.version === wanted) ?? null;
     let state: QuoteCardState = "sent";
     if (quote.status === "cancelled") state = "withdrawn";
+    else if (superseded) state = "replaced";
     else if (input.link.held && quote.status === "awaiting_approval") state = "held";
-    if (!version) state = state === "sent" ? "withdrawn" : state;
-    resolved.push({ input, quote, version, state });
-  }
+    if (!version) state = state === "sent" || superseded ? "withdrawn" : state;
+    resolved.push({ input, quote, version, state, superseded: superseded && state === "replaced" });
+  });
   // Newer cards (with numbers) collapse older ones of the same conversation.
   const priced = (r: Resolved) => r.state === "sent" && r.version !== null;
   for (let i = 0; i < resolved.length; i++) {
@@ -254,9 +264,9 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   const base: QuoteCardView = {
     messageId: r.input.link.messageId, quoteId: r.quote.id, leadId: r.quote.leadId, state: r.state, lang, dir: dirOf(lang),
     seller: ctx.seller, initials: initialsOf(ctx.seller), brand: ctx.brand,
-    label: tr("buyer.qcard.aria", { ref: `Q-${r.quote.number}` }), title: tr("buyer.qcard.your_quote"), ref: null, sub: null, headline: null,
+    label: tr("buyer.qcard.aria", { ref: `Q-${r.quote.number}` }), title: tr("buyer.qcard.your_quote"), ref: null, sub: null, headline: null, headlineName: null,
     lines: [], fold: null, more: null, rows: [], total: null, afterTotal: null, monthly: null,
-    delivery: null, firstCharge: null, validUntil: null, status: null, summary: null, sellerOnly: null, approval: null,
+    delivery: null, deliveryDate: null, firstCharge: null, validUntil: null, status: null, summary: null, sellerOnly: null, approval: null,
   };
   if (r.state === "withdrawn" || !v) return { ...base, ref: `Q-${r.quote.number}`, status: tr("buyer.qcard.withdrawn") };
   if (r.state === "held") {
@@ -276,7 +286,9 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   const sameQuoteNext = around.next && around.next.quote.id === r.quote.id;
   const showVersion = v.version > 1 || !!sameQuoteNext || versionsOfQuote.length > 1;
   const ref = showVersion ? `Q-${r.quote.number} v${v.version}` : `Q-${r.quote.number}`;
-  const headline = cardHeadline(r.input.link.headline, itemNames(lines), lang);
+  const names = itemNames(lines);
+  const headline = cardHeadline(r.input.link.headline, names, lang);
+  const headlineName = headline && !r.input.link.headline && names.length ? capFirst(names[0]) : null;
   const totalLabel = hasRecurring ? tr("buyer.qcard.today") : tr("buyer.qcard.total");
   const periodTotalLabel = tr(year ? "buyer.qcard.yearly" : "buyer.qcard.monthly");
   const seller = ctx.audience === "seller"
@@ -293,14 +305,14 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
       ...(hasOneTime || !hasRecurring ? [tr("buyer.qcard.sum_today", { amount: money(v.oneTimeTotalMinor) })] : []),
       ...(hasRecurring ? [tr(year ? "buyer.qcard.sum_year" : "buyer.qcard.sum_month", { amount: money(v.recurringTotalMinor) })] : []),
     ];
-    return { ...withRef, status, summary: parts.join(" · ") };
+    return { ...withRef, status, summary: r.superseded ? null : parts.join(" · ") };
   }
   if (r.state === "expired") {
     const total = hasOneTime || !hasRecurring
       ? { label: totalLabel, amount: money(v.oneTimeTotalMinor) }
       : { label: periodTotalLabel, amount: money(v.recurringTotalMinor) };
     return {
-      ...withRef, headline, total,
+      ...withRef, headline, headlineName, total,
       status: tr("buyer.qcard.expired", { date: shortDate(v.validUntil, ctx.timezone, lang) }),
     };
   }
@@ -341,6 +353,7 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
     ...withRef,
     title: around.previous ? tr("buyer.qcard.your_updated_quote") : tr("buyer.qcard.your_quote"),
     headline,
+    headlineName,
     lines: one ? shown : [],
     fold: one && folded ? 4 : null,
     more: one && folded ? tr("buyer.qcard.more", { count: folded }) : null,
@@ -357,6 +370,7 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
         }
       : null,
     delivery: one && ships && latest ? tr("buyer.qcard.delivery", { date: shortCalendarDate(latest, lang) }) : null,
+    deliveryDate: one && ships && latest ? latest : null,
     firstCharge: !one ? tr("buyer.qcard.first_charge") : null,
     validUntil: tr("buyer.qcard.valid_until", { date: shortDate(v.validUntil, ctx.timezone, lang) }),
   };

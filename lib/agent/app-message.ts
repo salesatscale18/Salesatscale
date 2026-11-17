@@ -5,9 +5,23 @@
  * no extra column is needed. The web chats render both kinds as the designed
  * quote card (lib/agent/quote-card.ts); the stored text stays the fallback and
  * what WhatsApp sends. "quote_held" is the placeholder of a quote waiting for
- * the seller's approval (no numbers; web chats only). Pure: safe in client components.
+ * the seller's approval (no numbers; web chats only).
+ *
+ * After a seller approves a held quote (lib/agent/quote-approval.ts), the app
+ * writes the next step itself, with no model turn: "quote_offer" ("The team
+ * can offer 5%…", before an in-limit card) and "quote_close" ("If this looks
+ * right, I'll send the order form now…"). Those, and a quote card the app
+ * sends then, are linked by an `app_message` row in tool_calls (no tool the
+ * model can call; left out of the trace). Pure: safe in client components.
  */
-export type AppMessageKind = "quote" | "quote_held";
+export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer";
+
+/** The tool_calls name of a message the app wrote outside a model turn. */
+export const APP_MESSAGE_CALL = "app_message";
+const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer"];
+
+/** Plain text the app wrote (not a quote card): shown as "Sent by the app" in seller views. */
+export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer";
 
 type CallLike = { name: string; outcome: string; result: Record<string, unknown> | null | undefined };
 
@@ -17,6 +31,9 @@ export function appMessageKinds(calls: readonly CallLike[]): Map<string, AppMess
   for (const c of calls) {
     const id = c.result?.quote_message_id;
     if (c.name === "create_quote" && c.outcome === "ok" && typeof id === "string") out.set(id, c.result?.quote_held === true ? "quote_held" : "quote");
+    const appId = c.result?.message_id;
+    const kind = c.result?.kind;
+    if (c.name === APP_MESSAGE_CALL && typeof appId === "string" && typeof kind === "string" && APP_KINDS.includes(kind)) out.set(appId, kind as AppMessageKind);
   }
   return out;
 }

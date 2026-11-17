@@ -29,7 +29,7 @@ import { spendCapped } from "@/lib/ai/usage";
 import { listMarkets } from "@/lib/markets/service";
 import { loadForm } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
-import { appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
+import { APP_MESSAGE_CALL, appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
 import { loadQuoteCards } from "@/lib/agent/quote-card-data";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
@@ -422,7 +422,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const [previews, calls, cards] = await Promise.all([
     linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
     db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result }).from(toolCalls)
-      .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), eq(toolCalls.name, "create_quote"))),
+      .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL]))),
     loadQuoteCards(db, accountId, ids, { audience: "buyer", now }),
   ]);
   const kinds = appMessageKinds(calls);

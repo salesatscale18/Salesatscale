@@ -5,7 +5,7 @@ import { Icon } from "@/components/sas/icon";
 import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
 import { MessageBody } from "@/components/sas/message-body";
 import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
-import { appMessageKinds } from "@/lib/agent/app-message";
+import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { llmConfigured } from "@/lib/agent/llm";
@@ -121,7 +121,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               </div>
               <ChatThread label={t("lab.chat_with", { version: convVersion.version })}>
                 {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("lab.chat_empty")}</p> : null}
-                {thread.map(({ message: m, calls }) => {
+                {thread.map(({ message: m, calls: allCalls }) => {
+                  // The app's own messages (after a seller approval) are linked by an app_message row: not a tool call.
+                  const calls = allCalls.filter((c) => c.name !== APP_MESSAGE_CALL);
                   const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
                   const trace: TraceItem[] = [];
                   const usage = m.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number } | null;
@@ -152,7 +154,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                         <QuoteCardMessage card={view.quoteCards[m.id]} time={exactTime(m.createdAt)} slug={null} approve={null} />
                       ) : (
                       <ChatMessage
-                        actor={actor} who={t(`lab.who.${actor}` as MessageKey)}
+                        actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
                         time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${exactTime(m.createdAt)} · ${deliveryLabel(m)}` : exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
                         <MessageBody body={m.body} kind={kinds.get(m.id)} />
                       </ChatMessage>

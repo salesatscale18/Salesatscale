@@ -11,8 +11,8 @@
 .b-logo { width: 44px; height: 44px; border-radius: 11px; background: var(--brand); color: #fff; display: grid; place-items: center; font-weight: 700; flex: none; }
 .b-head__name { flex: 1; display: flex; flex-direction: column; min-width: 0; }
 .b-lang { display: flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; font-size: 13px; }
-.b-lang a { padding: 4px 10px; color: var(--ink); text-decoration: none; }
-.b-lang a[aria-current="true"] { background: var(--ink); color: #fff; }
+.b-lang a, .b-lang button { padding: 4px 10px; color: var(--ink); text-decoration: none; border: 0; background: none; font: inherit; cursor: pointer; }
+.b-lang a[aria-current="true"], .b-lang button[aria-current="true"] { background: var(--ink); color: #fff; }
 .b-sec { display: flex; flex-direction: column; gap: 12px; padding: 20px; border-block-end: 8px solid var(--soft); }
 .b-sec:last-child { border-block-end: 0; }
 .b-hero { background: var(--ok-soft); gap: 6px; }
@@ -32,7 +32,7 @@
 .b-btn { min-height: 52px; border: 0; border-radius: 12px; background: var(--brand); color: #fff; font-family: inherit; font-size: 16px; font-weight: 600; cursor: pointer; width: 100%; display: flex; align-items: center; justify-content: center; text-decoration: none; padding: 0 16px; }
 .b-btn:disabled { opacity: .6; cursor: default; }
 .b-btn--2 { min-height: 48px; background: #fff; color: var(--ink); border: 1px solid #7d8697; font-size: 15px; }
-.b-btn:focus-visible, .b-inp:focus-visible, .b-lang a:focus-visible, .b-terms summary:focus-visible { outline: 2px solid #2357d0; outline-offset: 2px; }
+.b-btn:focus-visible, .b-inp:focus-visible, .b-lang a:focus-visible, .b-lang button:focus-visible, .b-terms summary:focus-visible { outline: 2px solid #2357d0; outline-offset: 2px; }
 .b-terms details { border-block-start: 1px solid var(--line); padding: 12px 0; }
 .b-terms summary { cursor: pointer; font-size: 14px; display: flex; justify-content: space-between; gap: 8px; }
 .b-terms pre { white-space: pre-wrap; font: inherit; font-size: 13px; line-height: 20px; color: var(--muted); margin: 10px 0 0; }

@@ -49,6 +49,20 @@ export function suggestionText(s: Suggestion): { title: string; sub: string | nu
   }
 }
 
+/**
+ * Where a suggested own card came from when no call backs it (board
+ * DraftPlays: cards normally come from the calls): "From your documents",
+ * "From your website", both, or "From your sources". Null when a call is among
+ * its evidence (the evidence line says which).
+ */
+export function cardOrigin(s: Pick<Suggestion, "evidence">, links: Map<string, EvidenceLink>): MessageKey | null {
+  const kinds = new Set(s.evidence.map((e) => links.get(`${e.sourceId}|${e.locator}`)?.kind ?? "unknown"));
+  if (kinds.has("call")) return null;
+  const docs = kinds.has("file") || kinds.has("text");
+  const site = kinds.has("website");
+  return docs && site ? "draft.play.from_docs_website" : docs ? "draft.play.from_docs" : site ? "draft.play.from_website" : "draft.play.from_sources";
+}
+
 /** "Asked in 9 of 12 calls · Call 05:52 · Spec.pdf p.2" */
 export function EvidenceLine({ s, links, calls }: { s: Suggestion; links: Map<string, EvidenceLink>; calls: number }) {
   const p = s.payload;
@@ -209,6 +223,7 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
   if (p.kind === "play_card" && !editing) {
     const d = DEFAULT_PLAYS[p.play];
     const playHref = `/app/${slug}/setup/playbook/plays/${p.play}`;
+    const origin = cardOrigin(s, links);
     return (
       <li style={{ padding: "14px 20px", background: s.status === "suggested" ? "var(--agent-soft)" : undefined }} className="sas-stack-2" data-suggestion="play_card">
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", alignItems: "flex-start" }}>
@@ -251,7 +266,10 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
               )}
             </span>
           </div>
-          <span style={{ flex: "1 1 180px", minWidth: 0 }}><EvidenceLine s={s} links={links} calls={calls} /></span>
+          <span className="sas-stack-2" style={{ flex: "1 1 180px", minWidth: 0, gap: 2 }}>
+            {origin ? <span className="sas-small" style={{ color: "var(--ink)" }} data-card-origin="">{t(origin)}</span> : null}
+            <EvidenceLine s={s} links={links} calls={calls} />
+          </span>
         </div>
       </li>
     );

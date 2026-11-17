@@ -223,6 +223,7 @@ export function DeliveryChoice({ s, values, choices, errors, lang, tr }: {
             </label>
             <Calendar choices={choices} selected={chosen} lang={lang} tr={tr} />
             <span className="b-mut b-calnote">{offered ? `${preferredDateText(chosen, lang)}. ` : ""}{tr("buyer.delivery.preference_note")}</span>
+            <span className="b-mut b-calnote" data-later-date="">{tr("buyer.delivery.later_date")}</span>
           </div>
           <FieldError id="e-delivery_date" text={err("delivery_date")} />
         </fieldset>

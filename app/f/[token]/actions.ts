@@ -31,7 +31,8 @@ const stepOf = (v: unknown): Step => (v === "2" ? 2 : v === "3" ? 3 : 1);
  * The three-step order form (P11). Every step posts here: the step's fields
  * are saved as the form's draft (never as a signature), then the buyer moves
  * on ("continue"), goes to an earlier step ("goto:N", also the progress bar
- * and "Change"), or signs ("sign", step 3). Errors come back as `check=1`:
+ * and "Change"), switches language on the same step ("lang:en" / "lang:he",
+ * saved without checks), or signs ("sign", step 3). Errors come back as `check=1`:
  * the page recomputes them from the saved draft, so no client code is needed.
  */
 export async function stepAction(form: FormData) {
@@ -47,6 +48,11 @@ export async function stepAction(form: FormData) {
   const s = snapshotOf(view.form);
   const target: Step = intent.startsWith("goto:") ? stepOf(intent.slice(5)) : intent === "continue" ? (posted === 1 ? 2 : 3) : posted;
   const draft = mergeDraft(s, view.form.draft, posted, form, target);
+  // The language switch (EN / HE): keep what was typed on this step as the draft, unchecked, and reload the same step.
+  if (intent.startsWith("lang:")) {
+    await saveDraft(appDb, view.form.id, draft);
+    redirect(back(token, intent.slice(5), `&step=${posted}`));
+  }
   // Step 3 needs a complete step 2: back to it with the errors shown.
   if (target === 3 && Object.keys(companyErrors(s, stepValues(s, draft))).length) {
     await saveDraft(appDb, view.form.id, { ...draft, step: 2 });

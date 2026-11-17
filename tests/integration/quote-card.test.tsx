@@ -179,10 +179,113 @@ describe("Quote card", () => {
     // Another account's admin cannot reach it.
     expect(await sendHeldQuoteInLimit(db, access(other), quoteId)).toEqual({ ok: false, reason: "quote_not_found" });
     expect(await run(sendInLimitAction(form({ slug: acc.slug, quoteId, back: "https://evil.test/x" })))).toEqual({ redirect: `/app/${acc.slug}/conversations?notice=quote_in_limit` });
-    const card = (await b.chat()).cards[id];
-    expect(card).toMatchObject({ state: "sent", ref: expect.stringMatching(/^Q-\d+ v2$/) });
+    // UX sign-off F4: the placeholder collapses (no numbers); "The team can offer 5%…", the new card, then the close.
+    const chat = await b.chat();
+    expect(chat.cards[id]).toMatchObject({ state: "replaced", summary: null, status: "Replaced by version 2 below." });
+    const after = chat.messages.slice(chat.messages.findIndex((m) => m.id === id) + 1);
+    expect(after.map((m) => m.kind)).toEqual(["quote_offer", "quote", "quote_close"]);
+    expect(after[0].body).toBe("The team can offer 5%. Here is your updated quote.");
+    const card = chat.cards[after[1].id];
+    expect(card).toMatchObject({ state: "sent", title: "Your updated quote", ref: expect.stringMatching(/^Q-\d+ v2$/) });
     expect(card.rows[0]).toEqual({ label: "Discount 5%", amount: "−₪104.50" });
+    expect(after[2].body).toMatch(/^If this looks right, I'll send the order form now and it can be with you by about \d{1,2} [A-Z][a-z]{2}\. Sounds good\?$/);
+    const page = render(await BuyerChatPage({ params: Promise.resolve({ token: b.token }) }));
+    save("buyer-in-limit-en", page, "buyer");
+    expect(page.match(/data-reply-buttons/g)).toHaveLength(1);
+    expect(page.indexOf("data-reply-buttons")).toBeGreaterThan(page.indexOf("I&#x27;ll send the order form now"));
   });
+
+  it("Approve and send: the close follows in the buyer's language with reply buttons, stored for the agent, 'Sent by the app' for the seller", async () => {
+    const b = await buyer();
+    const r = await b.quote({ discount_percent: 10 });
+    const id = String(r.result.quote_message_id);
+    await b.say("agent", "I'm checking the discount with the team.");
+    await b.say("buyer", "ok, thanks");
+    expect(await approveHeldQuote(db, access(), String(r.result.quote_id))).toMatchObject({ ok: true });
+
+    const chat = await b.chat();
+    expect(chat.cards[id]).toMatchObject({ state: "sent" });
+    const last = chat.messages.at(-1)!;
+    // In place: the card is the placeholder; the close is the only new message, after the buyer's.
+    expect(chat.messages.filter((m) => m.kind === "quote" || m.kind === "quote_held")).toHaveLength(1);
+    expect(last).toMatchObject({ from: "agent", kind: "quote_close" });
+    expect(last.body).toBe(`If this looks right, I'll send the order form now and it can be with you ${chat.cards[id].delivery!.replace("Delivery ", "")}. Sounds good?`);
+    // The agent sees it in its history: an agent message of this conversation, delivered on the simulator (read once the chat loaded it).
+    const [row] = await db.select().from(messages).where(eq(messages.id, last.id));
+    expect(row).toMatchObject({ actor: "agent", conversationId: b.conversationId, language: "en", deliveryStatus: "read" });
+    const page = render(await BuyerChatPage({ params: Promise.resolve({ token: b.token }) }));
+    save("buyer-approved-close-en", page, "buyer");
+    expect(page.match(/data-reply-buttons/g)).toHaveLength(1);
+    expect(page).toContain('data-kind="quote_close"');
+    // A second approval changes nothing (the quote is no longer held).
+    expect(await approveHeldQuote(db, access(), String(r.result.quote_id))).toMatchObject({ ok: false, reason: "quote_closed" });
+    expect((await b.chat()).messages).toHaveLength(chat.messages.length);
+
+    // Seller: "Sent by the app", no trace chip for the app's own message.
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
+    const view = await conversationView(db, acc.id, conv);
+    const html = render(ConversationPanel({ slug: acc.slug, view, me, buyerName: "Rina Cohen", leadOptedOut: false }));
+    save("seller-approved-close", html, "seller");
+    const closeAt = html.indexOf("I&#x27;ll send the order form now");
+    expect(html.lastIndexOf("Sent by the app", closeAt)).toBeGreaterThan(html.lastIndexOf("ok, thanks", closeAt));
+    expect(html).not.toContain("app_message");
+  });
+
+  it("Hebrew: the close and the in-limit line in Hebrew", async () => {
+    const b = await buyer("he");
+    const r = await b.quote({ discount_percent: 10 });
+    expect(await sendHeldQuoteInLimit(db, access(), String(r.result.quote_id))).toMatchObject({ ok: true });
+    const msgs = (await b.chat()).messages;
+    expect(msgs.at(-3)!.body).toBe("הצוות יכול להציע 5%. הנה ההצעה המעודכנת.");
+    expect(msgs.at(-1)!.body).toMatch(/^אם זה נראה לך נכון, אשלח עכשיו את טופס ההזמנה, וההזמנה יכולה להגיע אליך עד בערך .+\. מתאים\?$/);
+  });
+
+  it("no delivery line on the card: the close without a date; Quotes and orders screen approval sends it too", async () => {
+    const b = await buyer();
+    const r = await b.quote({ lines: [{ sku: "MON-1", qty: 2 }], sites: null, discount_percent: 10 });
+    expect(r.result).toMatchObject({ quote_held: true });
+    const { approveQuoteAction } = await import("@/app/app/[account]/orders/actions");
+    const out = await run(approveQuoteAction(form({ slug: acc.slug, quoteId: String(r.result.quote_id) })));
+    expect(out).toEqual({ redirect: `/app/${acc.slug}/orders?quote=${r.result.quote_id}&approved=1` });
+    const last = (await b.chat()).messages.at(-1)!;
+    expect(last).toMatchObject({ kind: "quote_close", body: "If this looks right, I'll send the order form now. Sounds good?" });
+  });
+
+  it("WhatsApp: the quote as text and the close go through the send path; nothing when the 24-hour window is closed", async () => {
+    const wa = async (lastBuyerAt: Date) => {
+      const b = await buyer();
+      await db.update(conversations).set({ channel: "whatsapp" }).where(eq(conversations.id, b.conversationId));
+      await db.insert(messages).values({ accountId: acc.id, conversationId: b.conversationId, actor: "buyer", body: "10% off?", language: "en", createdAt: lastBuyerAt });
+      const r = await b.quote({ discount_percent: 10 });
+      // WhatsApp gets no placeholder.
+      expect(r.result.quote_message_id).toBeUndefined();
+      return { b, quoteId: String(r.result.quote_id) };
+    };
+    const open = await wa(new Date());
+    const before = await db.select().from(messages).where(eq(messages.conversationId, open.b.conversationId));
+    const { followUpApprovedQuote } = await import("@/lib/agent/quote-approval");
+    await approveQuote(open.quoteId);
+    const rows = (await db.select().from(messages).where(eq(messages.conversationId, open.b.conversationId))).filter((m) => !before.some((x) => x.id === m.id));
+    rows.sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime());
+    expect(rows).toHaveLength(2);
+    expect(rows[0].body).toMatch(/^\*Quote Q-\d+\*/);
+    expect(rows[1].body).toMatch(/^If this looks right, I'll send the order form now and it can be with you by about /);
+    // The existing send rules decided: a simulated buyer has no phone, so not sent to the provider.
+    expect(rows.map((m) => [m.deliveryStatus, m.deliveryError])).toEqual([["not_sent", "simulated_lead"], ["not_sent", "simulated_lead"]]);
+    // The seller's thread shows the text quote as the card, then the close.
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, open.b.conversationId));
+    expect((await conversationView(db, acc.id, conv)).quoteCards[rows[0].id]).toMatchObject({ state: "sent" });
+
+    const closed = await wa(new Date(Date.now() - 25 * 3_600_000));
+    const n = (await db.select().from(messages).where(eq(messages.conversationId, closed.b.conversationId))).length;
+    expect(await approveHeldQuote(db, access(), closed.quoteId)).toMatchObject({ ok: true });
+    expect(await db.select().from(messages).where(eq(messages.conversationId, closed.b.conversationId))).toHaveLength(n);
+    // Called directly it says why.
+    expect(await followUpApprovedQuote(db, acc.id, closed.quoteId)).toEqual({ sent: false, reason: "window_closed" });
+    // Another account's quote id finds nothing.
+    expect(await followUpApprovedQuote(db, other.id, open.quoteId)).toEqual({ sent: false, reason: "no_conversation" });
+  });
+  const approveQuote = async (quoteId: string) => expect(await approveHeldQuote(db, access(), quoteId, null)).toMatchObject({ ok: true });
 
   it("a new quote collapses the old card to one muted line; the new one is 'Your updated quote' with changed lines", async () => {
     const b = await buyer();

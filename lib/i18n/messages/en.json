@@ -2143,7 +2143,7 @@
   "buyer.qcard.sum_month": "{amount}/month",
   "buyer.qcard.sum_year": "{amount}/year",
   "buyer.qcard.expired": "Expired on {date}. Write here and we'll send an updated quote.",
-  "buyer.qcard.withdrawn": "This quote was withdrawn. Write here if you still need one.",
+  "buyer.qcard.withdrawn": "Withdrawn. Write here if you still need a quote.",
   "buyer.qcard.reply_yes": "Sounds good",
   "buyer.qcard.reply_change": "Change something",
   "buyer.qcard.replies": "Quick replies",
@@ -2376,5 +2376,13 @@
   "lead.stage.objection.next": "The agent handles it with a play, checks it settled it, then returns to the same point.",
   "lead.stage.human.wait": "A person from your team is handling the chat.",
   "lead.stage.human.next": "The stage is frozen until the agent is handed back.",
-  "lead.stage.chip.ended": "{step} · ended"
+  "lead.stage.chip.ended": "{step} · ended",
+  "buyer.app.offer": "The team can offer {n}. Here is your updated quote.",
+  "buyer.app.close": "If this looks right, I'll send the order form now. Sounds good?",
+  "buyer.app.close_by": "If this looks right, I'll send the order form now and it can be with you {by}. Sounds good?",
+  "buyer.delivery.later_date": "Need a later date? Write to us in the chat.",
+  "draft.play.from_docs": "From your documents",
+  "draft.play.from_website": "From your website",
+  "draft.play.from_docs_website": "From your documents and website",
+  "draft.play.from_sources": "From your sources"
 }

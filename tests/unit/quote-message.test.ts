@@ -129,7 +129,13 @@ describe("the app's quote message (P11.2)", () => {
       { name: "create_quote", outcome: "ok", result: { quote_message_id: "m1" } },
       { name: "create_quote", outcome: "ok", result: { status: "awaiting_seller_approval" } },
       { name: "search_catalog", outcome: "ok", result: { quote_message_id: "m2" } },
+      // The app's own messages after a seller approval (UX sign-off F4).
+      { name: "app_message", outcome: "ok", result: { message_id: "m3", kind: "quote_offer" } },
+      { name: "app_message", outcome: "ok", result: { message_id: "m4", kind: "quote" } },
+      { name: "app_message", outcome: "ok", result: { message_id: "m5", kind: "quote_close" } },
+      { name: "app_message", outcome: "ok", result: { message_id: "m6", kind: "anything" } },
+      { name: "search_catalog", outcome: "ok", result: { message_id: "m7", kind: "quote_close" } },
     ]);
-    expect([...kinds]).toEqual([["m1", "quote"]]);
+    expect([...kinds]).toEqual([["m1", "quote"], ["m3", "quote_offer"], ["m4", "quote"], ["m5", "quote_close"]]);
   });
 });

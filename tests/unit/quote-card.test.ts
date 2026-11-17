@@ -208,7 +208,14 @@ describe("card states", () => {
 
   it("withdrawn (cancelled) and Hebrew", () => {
     expect(cards([{ ...q1, status: "cancelled" }], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)]).m1)
-      .toMatchObject({ state: "withdrawn", status: "This quote was withdrawn. Write here if you still need one.", lines: [] });
+      .toMatchObject({ state: "withdrawn", status: "Withdrawn. Write here if you still need a quote.", lines: [] });
+    // UX sign-off F2: the collapsed line says "Withdrawn" with a file-x icon (Hebrew too).
+    const gone = cards([{ ...q1, status: "cancelled" }], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)]).m1;
+    const goneHtml = renderToStaticMarkup(createElement(QuoteCard, { card: gone }));
+    expect(goneHtml).toContain('data-icon="file-x"');
+    expect(goneHtml).toContain("lucide-file-x");
+    expect(goneHtml).not.toContain("lucide-file-text");
+    expect(cards([{ ...q1, status: "cancelled" }], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { language: "he" }).m1.status).toMatch(/^בוטלה\./);
     const he = cards([q1], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { language: "he" }).m1;
     expect(he).toMatchObject({ dir: "rtl", lang: "he", title: "ההצעה שלך", label: "הצעת מחיר Q-1001", total: { label: "לתשלום היום" }, monthly: { heading: "ואז בכל חודש", total: { label: "לחודש" } } });
     expect(he.rows[1].label).toBe("מע״מ 18%");
@@ -228,6 +235,53 @@ describe("card states", () => {
   });
 });
 
+describe("mixed-direction text (UX sign-off F6)", () => {
+  it("item names and the fallback headline are isolated so a Latin name in a Hebrew card keeps its order", () => {
+    const lines = { v1: [line("SNS-200", "Polar sensor", 2, "one_time", 118_000), line("GW-10", "רכזת", 1, "one_time", 66_000), line("SVC-INST", "התקנה", 1, "one_time", 25_000, true)] };
+    const he = cards([q1], [standard.v], lines, [link("m1", "q1", 1001, 1)], { language: "he" }).m1;
+    expect(he).toMatchObject({ headline: "Polar sensor ועוד 2", headlineName: "Polar sensor" });
+    const html = renderToStaticMarkup(createElement(QuoteCard, { card: he }));
+    // The fallback headline keeps the card's direction (no dir="auto"); only the name is isolated.
+    expect(html).toContain('<div class="sas-qc__headline"><bdi>Polar sensor</bdi> ועוד 2</div>');
+    expect(html).toContain("<span>2 × <bdi>Polar sensor</bdi></span>");
+    expect(html).toContain("<span><bdi>התקנה</bdi></span>");
+    // The agent's own headline takes its direction from its text.
+    const own = cards([q1], [standard.v], lines, [link("m1", "q1", 1001, 1, { headline: "2 Polar sensors for your kitchen" })], { language: "he" }).m1;
+    expect(own.headlineName).toBeNull();
+    expect(renderToStaticMarkup(createElement(QuoteCard, { card: own }))).toContain('<div class="sas-qc__headline" dir="auto"><bdi>2 Polar sensors for your kitchen</bdi></div>');
+  });
+});
+
+describe("cards the app sends after an approval (UX sign-off F4)", () => {
+  it("app_message links are cards; a held placeholder followed by one collapses with no numbers", () => {
+    const calls = [
+      { name: "create_quote", outcome: "ok", conversationId: "c1", result: { quote: "Q-1001 v1", quote_id: "q1", quote_version: 1, quote_message_id: "m1", quote_held: true } },
+      { name: "app_message", outcome: "ok", conversationId: "c1", result: { message_id: "m2", kind: "quote_offer" } },
+      { name: "app_message", outcome: "ok", conversationId: "c1", result: { message_id: "m3", kind: "quote", quote: "Q-1001 v2", quote_id: "q1", quote_version: 2, quote_held: true } },
+    ];
+    const links = quoteCardLinks(calls);
+    expect(links).toEqual([
+      { messageId: "m1", conversationId: "c1", quoteId: "q1", number: 1001, version: 1, held: true, headline: null },
+      { messageId: "m3", conversationId: "c1", quoteId: "q1", number: 1001, version: 2, held: false, headline: null },
+    ]);
+    const v1 = version("v1", "q1", 1, { oneTimeSubtotalMinor: 708_000, oneTimeDiscountMinor: 70_800, oneTimeTaxMinor: 114_696, oneTimeTotalMinor: 751_896 }, { discountBp: 1000 });
+    const v2 = version("v2", "q1", 2, { oneTimeSubtotalMinor: 708_000, oneTimeDiscountMinor: 35_400, oneTimeTaxMinor: 121_068, oneTimeTotalMinor: 793_668 }, { discountBp: 500 });
+    const lines = { v1: [line("SNS-200", "wireless fridge sensor", 12, "one_time", 708_000)], v2: [line("SNS-200", "wireless fridge sensor", 12, "one_time", 708_000)] };
+    const out = cards([{ ...q1, currentVersion: 2 }], [v1, v2], lines, links);
+    expect(out.m1).toMatchObject({ state: "replaced", status: "Replaced by version 2 below.", summary: null, ref: "Q-1001 v1" });
+    // The buyer never saw the held numbers: none on the collapsed line either.
+    expect(JSON.stringify({ ...out.m1, label: "", ref: "" })).not.toMatch(/₪/);
+    expect(out.m3).toMatchObject({ state: "sent", title: "Your updated quote", ref: "Q-1001 v2", deliveryDate: "2026-12-01", delivery: "Delivery by about 1 Dec" });
+    expect(out.m3.rows[0]).toEqual({ label: "Discount 5%", amount: "−₪354.00" });
+  });
+
+  it("the delivery date is given only when the card shows a delivery line", () => {
+    expect(cards([q1], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)]).m1.deliveryDate).toBe("2026-12-01");
+    const services = { v1: [line("SVC-INST", "Installation", 1, "one_time", 25_000, true)] };
+    expect(cards([q1], [standard.v], services, [link("m1", "q1", 1001, 1)]).m1).toMatchObject({ delivery: null, deliveryDate: null });
+  });
+});
+
 describe("reply buttons", () => {
   const sent = { m2: { state: "sent" } };
   it("go under the latest agent message after a current card, until the buyer replies", () => {
@@ -240,5 +294,13 @@ describe("reply buttons", () => {
     expect(replyButtonsAfter(base, { m2: { state: "expired" } })).toBeNull();
     expect(replyButtonsAfter(base, {})).toBeNull();
     expect(replyButtonsAfter([...base, { id: "m6", from: "human" }], sent)).toBeNull();
+  });
+
+  it("go under the app's close after an approval, even with buyer messages since the placeholder (F4)", () => {
+    const thread = [{ id: "m2", from: "agent" }, { id: "m3", from: "agent" }, { id: "m4", from: "buyer" }, { id: "m5", from: "agent", kind: "quote_close" }];
+    expect(replyButtonsAfter(thread, sent)).toBe("m5");
+    expect(replyButtonsAfter([...thread, { id: "m6", from: "buyer" }], sent)).toBeNull();
+    expect(replyButtonsAfter(thread, { m2: { state: "replaced" } })).toBeNull();
+    expect(replyButtonsAfter(thread, {})).toBeNull();
   });
 });

@@ -187,7 +187,7 @@
   "buyer.qcard.sum_month": "{amount} לחודש",
   "buyer.qcard.sum_year": "{amount} לשנה",
   "buyer.qcard.expired": "פג תוקף ב־{date}. כתבו כאן ונשלח הצעה מעודכנת.",
-  "buyer.qcard.withdrawn": "ההצעה בוטלה. כתבו כאן אם עדיין צריך הצעה.",
+  "buyer.qcard.withdrawn": "בוטלה. כתבו כאן אם עדיין צריך הצעה.",
   "buyer.qcard.reply_yes": "מתאים",
   "buyer.qcard.reply_change": "לשנות משהו",
   "buyer.qcard.replies": "תשובות מהירות",
@@ -235,5 +235,9 @@
   "buyer.test_mode": "מצב בדיקה.",
   "buyer.test_mode_body": "העמוד הבא הוא תשלום לדוגמה. לא נגבה כסף.",
   "buyer.sign_pay_amount": "חתימה ותשלום {amount}",
-  "buyer.then_amount": "לאחר מכן {amount}."
+  "buyer.then_amount": "לאחר מכן {amount}.",
+  "buyer.app.offer": "הצוות יכול להציע {n}. הנה ההצעה המעודכנת.",
+  "buyer.app.close": "אם זה נראה לך נכון, אשלח עכשיו את טופס ההזמנה. מתאים?",
+  "buyer.app.close_by": "אם זה נראה לך נכון, אשלח עכשיו את טופס ההזמנה, וההזמנה יכולה להגיע אליך {by}. מתאים?",
+  "buyer.delivery.later_date": "צריכים תאריך מאוחר יותר? כתבו לנו בצ׳אט."
 }
