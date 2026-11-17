@@ -92,6 +92,17 @@ export function buildRequestParams(req: LlmRequest): Anthropic.Beta.MessageCreat
   };
 }
 
+/** The API's 400 for strict tool schemas whose compiled grammar is too large. */
+export function isGrammarTooLarge(e: unknown): boolean {
+  const err = e as { status?: number; message?: string; error?: { error?: { message?: string } } };
+  return err?.status === 400 && /compiled grammar is too large/i.test(String(err.error?.error?.message ?? err.message ?? ""));
+}
+
+/** The same request with `strict` removed from every tool (pure, for tests). */
+export function withoutStrict<T extends { tools?: unknown[] }>(params: T): T {
+  return { ...params, tools: params.tools?.map((t) => { const { strict: _s, ...rest } = t as { strict?: boolean }; void _s; return rest; }) };
+}
+
 /** Counts cache_control breakpoints in a request (system, tools and messages). */
 export function countCacheBreakpoints(params: Pick<Anthropic.Beta.MessageCreateParamsNonStreaming, "system" | "tools" | "messages">): number {
   const has = (b: unknown) => !!(b && typeof b === "object" && (b as { cache_control?: unknown }).cache_control);
@@ -114,7 +125,17 @@ export class AnthropicLlm implements LlmClient {
     this.client = client ?? new Anthropic();
   }
   async create(req: LlmRequest): Promise<LlmResponse> {
-    const res = await this.client.beta.messages.create(buildRequestParams(req));
+    const params = buildRequestParams(req);
+    let res: Anthropic.Beta.BetaMessage;
+    try {
+      res = await this.client.beta.messages.create(params);
+    } catch (e) {
+      // A 400 costs nothing. If the strict tool schemas ever compile too large, send the
+      // same request once without `strict` (tool inputs are checked in code anyway).
+      if (!isGrammarTooLarge(e)) throw e;
+      console.warn("[agent] strict tool grammar too large; retrying without strict");
+      res = await this.client.beta.messages.create(withoutStrict(params));
+    }
     return {
       content: res.content as unknown as Block[],
       stopReason: res.stop_reason,

@@ -107,9 +107,9 @@ describe("request layout", () => {
     expect(one).toMatchObject({ fallbacks: "default", betas: ["server-side-fallback-2026-07-01"], stream: true });
   });
 
-  it("the stable prompt has no dates, ids or account data, and the tools are strict", () => {
+  it("the stable prompt has no dates, ids or account data, and the tools are not strict (grammar too large on the API)", () => {
     expect(SYSTEM_PROMPT).not.toMatch(/\d{4}-\d{2}-\d{2}|[0-9a-f]{8}-[0-9a-f]{4}/);
-    expect(PIPELINE_TOOLS.map((t) => [t.name, t.strict])).toEqual([["record_facts", true], ["record_playbook", true]]);
+    expect(PIPELINE_TOOLS.map((t) => [t.name, t.strict])).toEqual([["record_facts", undefined], ["record_playbook", undefined]]);
     expect(PLAYBOOK_V).toMatch(/^playbook-v\d+$/);
     // Without a later reader the corpus is not cached; the light model gets no fallbacks.
     const solo = buildPipelineParams({ ...req("x"), cacheCorpus: false, fallbacks: false, model: "claude-haiku-5-5" });

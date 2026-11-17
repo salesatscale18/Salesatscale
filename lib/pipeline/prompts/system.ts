@@ -143,18 +143,21 @@ const PLAYBOOK_SCHEMA = obj({
   }), "Good open questions reps ask that are not already a field."),
 });
 
-/** The fixed tool list both stages send (same order, same bytes). */
+/**
+ * The fixed tool list both stages send (same order, same bytes). Not `strict`:
+ * the two result schemas together compile to a grammar larger than the API
+ * accepts (400 "The compiled grammar is too large"). lib/pipeline/validate.ts
+ * checks every result in code instead (evidence, shapes, lengths).
+ */
 export const PIPELINE_TOOLS: Anthropic.Beta.BetaTool[] = [
   {
     name: FACTS_TOOL,
     description: "Records the knowledge found in the corpus: facts, contradictions, unanswered buyer questions, what each source is about, and statements kept back because they are about one customer.",
-    strict: true,
     input_schema: FACTS_SCHEMA as Anthropic.Beta.BetaTool["input_schema"],
   },
   {
     name: PLAYBOOK_TOOL,
     description: "Records the suggested playbook draft: goal, fields to learn, objections and answers, limits, tone, things never to do and discovery questions.",
-    strict: true,
     input_schema: PLAYBOOK_SCHEMA as Anthropic.Beta.BetaTool["input_schema"],
   },
 ];
