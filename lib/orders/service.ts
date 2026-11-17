@@ -21,13 +21,15 @@ import { marketLegal } from "@/lib/markets/legal";
 import { resolveMarket } from "@/lib/markets/service";
 import { accountDefaultsFrom, effectiveSettings } from "@/lib/markets/settings";
 import { localDate, type DeliveryPlan } from "@/lib/delivery/eta";
-import { freezePlan, planFromSettings } from "@/lib/delivery/plan";
+import { freezePlan, frozenPlan, planFromSettings } from "@/lib/delivery/plan";
+import { checkDeliveryChoice } from "@/lib/delivery/choice";
+import { carriedDraft, fieldErrors } from "./draft";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { priceWithList } from "@/lib/pricing/engine";
 import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
 import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesOf } from "@/lib/quotes/pricing";
 import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
-import { orderFormPrefill } from "./prefill";
+import { orderFormPrefillWithSources, type PrefillKey, type PrefillSource } from "./prefill";
 import { getOrderFormSettings } from "./settings";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
 
@@ -46,6 +48,8 @@ export type SnapshotLine = OrderSnapshot["lines"][number] & {
   unitCustom?: UnitCustom | null;
   /** "list" | "tier" | "custom" | "not_charged" */
   priceSource?: string;
+  /** The catalog's plain name for buyers (P11); missing on older snapshots or when the item has none. */
+  plainName?: string | null;
 };
 export type FormSnapshot = Omit<OrderSnapshot, "lines"> & {
   lines: SnapshotLine[];
@@ -60,6 +64,8 @@ export type FormSnapshot = Omit<OrderSnapshot, "lines"> & {
    * Missing on older snapshots and null when no lead time was set: no estimate.
    */
   delivery?: DeliveryPlan | null;
+  /** Where each prefilled value came from ("From your chat" tags); missing on older snapshots. */
+  prefillSource?: Partial<Record<PrefillKey, PrefillSource>>;
 };
 
 /** The snapshot with the optional price-list fields typed. */
@@ -106,7 +112,7 @@ export async function createOrderForm(
     v.priceListId ? db.select().from(priceLists).where(and(eq(priceLists.id, v.priceListId), eq(priceLists.accountId, accountId))) : Promise.resolve([]),
     db.select({ version: catalogVersions.version }).from(catalogVersions).where(and(eq(catalogVersions.id, v.catalogVersionId), eq(catalogVersions.accountId, accountId))),
     itemIds.length
-      ? db.select({ id: catalogItems.id, unitCustom: catalogItems.unitCustom }).from(catalogItems).where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, itemIds)))
+      ? db.select({ id: catalogItems.id, unitCustom: catalogItems.unitCustom, plainName: catalogItems.plainName }).from(catalogItems).where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, itemIds)))
       : Promise.resolve([]),
     db.select({ fields: dealStates.fields }).from(dealStates).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, q.lead.id))),
   ]);
@@ -116,11 +122,14 @@ export async function createOrderForm(
   const legal = sections.filter((s) => s.language === language);
   if (legal.length === 0) return { ok: false, reason: "no_legal" };
   const unitCustomOf = new Map(units.map((u) => [u.id, u.unitCustom ?? null]));
+  const plainNameOf = new Map(units.map((u) => [u.id, u.plainName?.trim() || null]));
+  const prefill = orderFormPrefillWithSources(q.lead, deal?.fields);
 
   const lines: SnapshotLine[] = cur.lines.map((l) => ({
     sku: l.sku, name: l.name, qty: l.qty, unitPriceMinor: l.unitPriceMinor!, lineTotalMinor: l.lineTotalMinor!, recurring: l.chargeType === "recurring",
     charge: l.chargeType, period: l.chargeType === "recurring" ? ((l.period as RecurringPeriod | null) ?? "month") : null,
     unit: l.unit, unitCustom: l.catalogItemId ? unitCustomOf.get(l.catalogItemId) ?? null : null, priceSource: l.priceSource,
+    plainName: l.catalogItemId ? plainNameOf.get(l.catalogItemId) ?? null : null,
   }));
   const snapshot: FormSnapshot = {
     seller: { tradeName: account.tradeName, legalName: account.legalName, brandColor: settings.brandColor },
@@ -137,7 +146,8 @@ export async function createOrderForm(
     legal: legal.map((s) => ({ key: s.sectionKey, title: s.title, version: s.version, body: s.body })),
     fields: settings.fields,
     // What the conversation learned fills the form (lib/orders/prefill.ts maps deal-state keys to fields).
-    prefill: orderFormPrefill(q.lead, deal?.fields),
+    prefill: prefill.values,
+    prefillSource: prefill.sources,
     paymentMethods: eff.paymentMethods.value,
     bankDetails: eff.bankDetails.value,
     supportContact: account.supportContact ?? null,
@@ -146,12 +156,17 @@ export async function createOrderForm(
 
   const id = randomUUID();
   const token = tokenFor(id);
+  // A new version of the same quote restarts at step 1 with the company details the buyer already typed.
+  const [previous] = await db.select({ draft: orderForms.draft }).from(orderForms)
+    .where(and(eq(orderForms.accountId, accountId), eq(orderForms.quoteId, quoteId), inArray(orderForms.status, ["sent", "opened"])))
+    .orderBy(desc(orderForms.createdAt)).limit(1);
+  const draft = carriedDraft(previous?.draft ?? null);
   const expiresAt = new Date(Math.min(now.getTime() + settings.linkValidDays * DAY_MS, v.validUntil.getTime()));
   await atomic(db, (tx) => [
     tx.update(orderForms).set({ status: "link_expired", supersededById: id })
       .where(and(eq(orderForms.accountId, accountId), eq(orderForms.quoteId, quoteId), inArray(orderForms.status, ["sent", "opened"]))),
     tx.insert(orderForms).values({
-      id, accountId, leadId: q.lead.id, quoteId, quoteVersionId: v.id, tokenHash: hashToken(token), language, snapshot: snapshot as OrderSnapshot, expiresAt, marketId: market.id,
+      id, accountId, leadId: q.lead.id, quoteId, quoteVersionId: v.id, tokenHash: hashToken(token), language, snapshot: snapshot as OrderSnapshot, expiresAt, marketId: market.id, draft,
       createdBy: actor.kind, createdByUserId: actor.kind === "human" ? actor.userId : null, createdAt: now,
     }),
     tx.update(quotes).set({ status: "sent" }).where(and(eq(quotes.id, quoteId), eq(quotes.accountId, accountId))),
@@ -381,22 +396,16 @@ export async function acceptNewPrice(db: Db, token: string, now = new Date()): P
 // Sign
 // ---------------------------------------------------------------------------
 
-export type SignInput = { fields: Partial<Record<OrderFormField, string>>; fullName: string; role: string; agreed: boolean };
-export type SignErrors = Partial<Record<OrderFormField | "full_name" | "agreed", "required" | "invalid">>;
+export type SignInput = {
+  fields: Partial<Record<OrderFormField, string>>; fullName: string; role: string; agreed: boolean;
+  /** The preferred delivery date (step 3). Missing = as soon as possible. Ignored when the form has no delivery estimate. */
+  delivery?: { kind: "asap" } | { kind: "date"; date: string | null } | null;
+};
+export type SignErrors = Partial<Record<OrderFormField | "full_name" | "agreed" | "delivery_date", "required" | "invalid">>;
 
-const OPTIONAL: OrderFormField[] = ["po_number"];
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
+/** Every check before signing: the buyer's fields (lib/orders/draft.ts) and the agreement. */
 export function validateSignature(snapshot: OrderSnapshot, input: SignInput): SignErrors {
-  const e: SignErrors = {};
-  for (const f of snapshot.fields) {
-    if (f === "signatory_role") continue;
-    const v = (input.fields[f] ?? "").trim();
-    if (!v && !OPTIONAL.includes(f)) e[f] = "required";
-    else if (v && f === "invoice_email" && !EMAIL.test(v)) e[f] = "invalid";
-  }
-  if (snapshot.fields.includes("signatory_role") && !input.role.trim()) e.signatory_role = "required";
-  if (input.fullName.trim().length < 2) e.full_name = "required";
+  const e: SignErrors = fieldErrors(snapshot.fields, input.fields, input.fullName, input.role, { withDelivery: true });
   if (!input.agreed) e.agreed = "required";
   return e;
 }
@@ -411,7 +420,11 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
   if (!view || view.state !== "open") return { ok: false, reason: "not_open" };
   const form = view.form;
   const errors = validateSignature(form.snapshot, input);
+  // The preferred delivery date: a business day offered now (from the earliest estimate on), or as soon as possible.
+  const choice = checkDeliveryChoice(frozenPlan(snapshotOf(form).delivery), input.delivery, now);
+  if (!choice.ok) errors.delivery_date = choice.error;
   if (Object.keys(errors).length) return { ok: false, reason: "invalid", errors };
+  const delivery = choice.ok ? choice.value : null;
   const [check, paused] = await Promise.all([priceCheck(db, form), accountPaused(db, form.accountId)]);
   if (paused) return { ok: false, reason: "unavailable" };
   if (check.status !== "same") return { ok: false, reason: check.status === "changed" ? "price_changed" : "unavailable" };
@@ -420,7 +433,7 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
   for (const f of form.snapshot.fields) if (f !== "signatory_role") buyerFields[f] = (input.fields[f] ?? "").trim().slice(0, 300);
   const legalVersions = form.snapshot.legal.map((l) => ({ key: l.key, version: l.version }));
   const documentHash = createHash("sha256")
-    .update(JSON.stringify({ snapshot: form.snapshot, buyerFields, fullName: input.fullName.trim(), role: input.role.trim(), signedAt: now.toISOString() }))
+    .update(JSON.stringify({ snapshot: form.snapshot, buyerFields, fullName: input.fullName.trim(), role: input.role.trim(), signedAt: now.toISOString(), ...(delivery ? { delivery } : {}) }))
     .digest("hex");
   const orderId = randomUUID();
   const s = form.snapshot;
@@ -437,10 +450,14 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
         tx.insert(orders).values({
           id: orderId, accountId: form.accountId, leadId: form.leadId, quoteId: form.quoteId, orderFormId: form.id, number: (top ?? 10_000) + 1,
           currency: s.currency, amountDueMinor: s.oneTime.totalMinor, recurringMinor: s.recurring.totalMinor, marketId: form.marketId, createdAt: now,
+          deliveryPreference: delivery?.kind ?? null, preferredDeliveryDate: delivery?.kind === "date" ? delivery.date : null,
         }),
         tx.insert(leadEvents).values({
           accountId: form.accountId, leadId: form.leadId, type: "order_form.signed", actor: "buyer",
-          data: { quoteId: form.quoteId, number: s.quote.number, version: s.quote.version, orderId, signedBy: input.fullName.trim().slice(0, 120) },
+          data: {
+            quoteId: form.quoteId, number: s.quote.number, version: s.quote.version, orderId, signedBy: input.fullName.trim().slice(0, 120),
+            ...(delivery ? { deliveryPreference: delivery.kind, ...(delivery.kind === "date" ? { preferredDeliveryDate: delivery.date } : {}) } : {}),
+          },
         }),
         tx.update(leads).set({ lastActivityAt: now }).where(eq(leads.id, form.leadId)),
       ]);

@@ -199,7 +199,8 @@ describe("P11 tools: prices, the quote message and the order form", () => {
     expect(sent).toMatchObject({ outcome: "ok", result: { ok: true, link: expect.stringMatching(/\/f\//) } });
     const token = String(sent.result.link).split("/f/")[1];
 
-    const html = renderToStaticMarkup(await BuyerFormPage({ params: Promise.resolve({ token }), searchParams: Promise.resolve({}) }));
+    // P11: company and signer fields are step 2 of the order form.
+    const html = renderToStaticMarkup(await BuyerFormPage({ params: Promise.resolve({ token }), searchParams: Promise.resolve({ step: "2" }) }));
     const input = (name: string) => html.match(new RegExp(`<input[^>]*name="${name}"[^>]*>`))?.[0] ?? "";
     for (const name of ["company_name", "company_id", "billing_address", "invoice_email", "full_name", "signatory_role"]) {
       expect(input(name), name).not.toBe("");

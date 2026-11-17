@@ -8,9 +8,14 @@ import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
 import { attemptCount, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor, snapshotOf, type FormSnapshot } from "@/lib/orders/service";
 import { marketLegal } from "@/lib/markets/legal";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
-import { acceptPriceAction, payBankAction, payCardAction } from "./actions";
+import { acceptPriceAction, payBankAction, payCardAction, stepAction } from "./actions";
 import { chargeLabel, legalTitle, moneyFor, OrderLines } from "./lines";
-import { SignForm } from "./sign-form";
+import { SubmitButton } from "./submit-button";
+import { CompanyStep, DeliveryChoice, ErrorSummary, PreferenceRow, Progress, SigningAs, Summary } from "./steps";
+import { companyErrors, fieldErrors, resolveStep, signedFields, stepValues, type StepErrors } from "@/lib/orders/draft";
+import { checkDeliveryChoice, deliveryChoices } from "@/lib/delivery/choice";
+import { frozenPlan } from "@/lib/delivery/plan";
+import { activeChatToken } from "@/lib/simulator/service";
 import { DeliveryRow } from "./delivery";
 import "./buyer.css";
 
@@ -30,20 +35,22 @@ function Alert({ color }: { color: string }) {
   return <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 22, height: 22, flex: "none", fill: "none", stroke: color, strokeWidth: 2.2, strokeLinecap: "round", strokeLinejoin: "round" }}><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" /><path d="M12 9v4" /><path d="M12 17h.01" /></svg>;
 }
 
-function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean }) {
+function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number }) {
   const tr = translator(props.lang);
+  // On the steps, the language switch keeps the step; what was saved on Continue / Back stays filled in.
+  const stepQ = props.step ? `&step=${props.step}` : "";
   const initials = props.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
     <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={{ ["--brand" as string]: props.brand }}>
-      <div className="b-page">
+      <div className={props.step ? "b-page b-page--wide" : "b-page"}>
         {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}>{props.seller}</b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
           {props.switcher !== false ? (
             <nav className="b-lang" aria-label={tr("buyer.language")}>
-              <a href={`/f/${props.token}?lang=en`} lang="en" aria-current={props.lang === "en" ? "true" : undefined}>EN</a>
-              <a href={`/f/${props.token}?lang=he`} lang="he" aria-current={props.lang === "he" ? "true" : undefined}>עב</a>
+              <a href={`/f/${props.token}?lang=en${stepQ}`} lang="en" aria-current={props.lang === "en" ? "true" : undefined}>EN</a>
+              <a href={`/f/${props.token}?lang=he${stepQ}`} lang="he" aria-current={props.lang === "he" ? "true" : undefined}>עב</a>
             </nav>
           ) : null}
         </header>
@@ -95,8 +102,8 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const paused = account.status === "paused";
   const date = (d: Date | string) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: account.timezone }).format(new Date(d));
   const time = (d: Date) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { hour: "2-digit", minute: "2-digit", timeZone: account.timezone }).format(d);
-  const shell = (sub: string | undefined, children: ReactNode) => (
-    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={s.seller.tradeName} sub={sub}>{children}</Shell>
+  const shell = (sub: string | undefined, children: ReactNode, step?: number) => (
+    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={s.seller.tradeName} sub={sub} step={step}>{children}</Shell>
   );
   const quoteRef = `Q-${s.quote.number} v${s.quote.version}`;
   // Older snapshots have no supportContact: show nothing then.
@@ -158,6 +165,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             <Lines s={s} tr={tr} lang={lang} />
             <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.paid_today")}{attempt ? ` · ${tr("buyer.card")}` : ` · ${tr("buyer.bank")}`}</span><span className="b-num">{money(s, order.amountDueMinor)}</span></div>
             <DeliveryRow s={s} signedAt={form.signedAt ?? order.createdAt} tr={tr} lang={lang} />
+            <PreferenceRow order={order} tr={tr} lang={lang} />
           </section>
           <section className="b-sec b-noprint">
             <a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a>
@@ -185,6 +193,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 16 }}>{money(s, order.amountDueMinor)}</span></div>
           {order.recurringMinor > 0 ? <div className="b-row"><span>{tr(period === "year" ? "buyer.then_yearly" : "buyer.then_monthly")}</span><span className="b-num">{per(order.recurringMinor, period)}</span></div> : null}
           <DeliveryRow s={s} signedAt={form.signedAt ?? order.createdAt} tr={tr} lang={lang} />
+            <PreferenceRow order={order} tr={tr} lang={lang} />
           {err ? <span className="b-err" role="alert">{err === "recurring_consent" ? tr("buyer.err.required") : tr("buyer.unavailable")}</span> : null}
           {paused && order.paymentStatus !== "bank_transfer_expected" ? null : cardOn && s.paymentMethods.bankTransfer && order.paymentStatus !== "bank_transfer_expected" ? (
             <nav className="b-tabs" aria-label={tr("buyer.method")}>
@@ -294,32 +303,126 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const titles = lang !== form.language
     ? new Map((await marketLegal(appDb, form.accountId, form.marketId ?? null)).filter((x) => x.language === lang).map((x) => [x.sectionKey, x.title]))
     : null;
+  // The order form in three steps (P11; canvas: OrderStep1–3, OrderDeskHe).
+  const draft = form.draft ?? null;
+  const step = resolveStep(one(sp.step), s, draft);
+  const values = stepValues(s, draft);
+  const checking = one(sp.check) === "1";
+  const now = new Date();
+  const plan = frozenPlan(s.delivery);
+  const choices = plan ? deliveryChoices(plan, now) : null;
+  const chatToken = step === 1 ? await activeChatToken(appDb, form.accountId, form.leadId) : null;
+  let errors: StepErrors = {};
+  if (checking && step === 2) errors = companyErrors(s, values);
+  if (checking && step === 3) {
+    const all = fieldErrors(s.fields, signedFields(s, values), values.fullName, values.role, { withDelivery: true });
+    if (all.delivery_address) errors.delivery_address = all.delivery_address;
+    const c = checkDeliveryChoice(plan, values.delivery, now);
+    if (!c.ok) errors.delivery_date = c.error;
+    if (draft?.agreed === false) errors.agreed = "required";
+  }
+  const formErr = step === 3 && one(sp.err) ? one(sp.err) : "";
+  const signable = check.status === "same";
+  const company = values.fields.company_name || s.prefill.company_name || "";
+  const per2 = moneyFor(s, tr);
   return shell(`${tr("buyer.order_form")} · ${quoteRef}`, (
     <>
-      <div className="b-sec b-hero">
-        <h1 className="b-h1">{tr("buyer.hi", { name: (s.prefill.signatory_name ?? "").split(" ")[0] })}</h1>
-        <span className="b-mut">{tr("buyer.prepared", { date: date(s.validUntil) })}</span>
-      </div>
       {check.status === "unavailable" ? <div className="b-note b-note--warn" role="alert" style={{ margin: 20 }}><Alert color="var(--warn)" /><span>{tr("buyer.unavailable")}</span></div> : null}
-      <section className="b-sec" aria-labelledby="it-h">
-        <h2 id="it-h" className="b-h2">{tr("buyer.ordering")}</h2>
-        <Lines s={s} tr={tr} lang={lang} />
-        <DeliveryRow s={s} signedAt={null} tr={tr} lang={lang} />
-        <span className="b-mut">{tr("buyer.change_hint")}</span>
-      </section>
-      <section className="b-sec b-terms" aria-labelledby="tm-h" style={{ gap: 0 }}>
-        <h2 id="tm-h" className="b-h2" style={{ paddingBottom: 8 }}>{tr("buyer.terms")}</h2>
-        {s.legal.map((l) => (
-          <details key={l.key}>
-            <summary><span><bdi>{legalTitle(l, titles)}</bdi> <span className="b-mut">{tr("buyer.version", { version: l.version })}</span></span><span aria-hidden="true">›</span></summary>
-            <pre>{l.body}</pre>
-          </details>
-        ))}
-      </section>
-      {check.status === "same" ? (
-        <SignForm token={token} lang={lang} fields={s.fields} prefill={s.prefill as Record<string, string>} company={s.prefill.company_name ?? ""} />
-      ) : null}
+      <div className="b-layout">
+        <form action={stepAction} className="b-main" noValidate data-order-step={step}>
+          {hidden}
+          <input type="hidden" name="step" value={step} />
+          {/* Enter in a field continues (or signs on step 3), never goes back: the first submit button is the default. */}
+          <button type="submit" name="intent" value={step === 3 ? "sign" : "continue"} className="b-sr" tabIndex={-1} aria-hidden="true" />
+          <Progress step={step} tr={tr} />
+          {step === 1 ? (
+            <>
+              <div className="b-sec b-hero">
+                <h1 className="b-h1">{tr("buyer.hi", { name: (values.fullName || s.prefill.signatory_name || "").split(" ")[0] })}</h1>
+                <span className="b-mut">{tr("buyer.prepared", { date: date(s.validUntil) })}</span>
+              </div>
+              <section className="b-sec" aria-labelledby="it-h">
+                <h2 id="it-h" className="b-h2">{tr("buyer.ordering")}</h2>
+                <Lines s={s} tr={tr} lang={lang} />
+              </section>
+              {plan ? (
+                <section className="b-sec" aria-labelledby="dl-h">
+                  <h2 id="dl-h" className="b-h2">{tr("buyer.delivery.title")}</h2>
+                  <DeliveryRow s={s} signedAt={null} tr={tr} lang={lang} now={now} />
+                  <span className="b-mut">{tr("buyer.delivery.later_hint")}</span>
+                </section>
+              ) : null}
+              <section className="b-sec" style={{ borderBlockEnd: 0 }}>
+                {chatToken ? (
+                  <>
+                    <a className="b-link" href={`/chat/${chatToken}`} data-change-chat="">{tr("buyer.change_chat")}</a>
+                    <span className="b-mut">{tr("buyer.change_chat_note")}</span>
+                  </>
+                ) : <span className="b-mut">{tr("buyer.change_hint")}</span>}
+              </section>
+              <div className="b-cta">
+                <SubmitButton name="intent" value="continue" label={tr("buyer.continue")} pendingLabel={tr("buyer.continue")} />
+              </div>
+            </>
+          ) : step === 2 ? (
+            <>
+              <CompanyStep s={s} values={values} errors={errors} tr={tr} />
+              <div className="b-cta">
+                <SubmitButton name="intent" value="continue" label={tr("buyer.continue")} pendingLabel={tr("buyer.continue")} />
+                <button type="submit" name="intent" value="goto:1" className="b-btn b-btn--2">{tr("buyer.back")}</button>
+              </div>
+            </>
+          ) : (
+            <>
+              {Object.keys(errors).length || formErr ? (
+                <div style={{ padding: "16px 20px 0" }}>
+                  {formErr ? <span className="b-err" role="alert">{tr("buyer.err.not_open")}</span> : <ErrorSummary count={Object.keys(errors).length} tr={tr} />}
+                </div>
+              ) : null}
+              <DeliveryChoice s={s} values={values} choices={choices} errors={errors} lang={lang} tr={tr} />
+              <section className="b-sec b-terms" aria-labelledby="tm-h" style={{ gap: 0 }}>
+                <h2 id="tm-h" className="b-h2" style={{ paddingBottom: 8 }}>{tr("buyer.terms")}</h2>
+                {s.legal.map((l) => (
+                  <details key={l.key}>
+                    <summary><span><bdi>{legalTitle(l, titles)}</bdi> <span className="b-mut">{tr("buyer.version", { version: l.version })}</span></span><span aria-hidden="true">›</span></summary>
+                    <pre>{l.body}</pre>
+                  </details>
+                ))}
+              </section>
+              <section className="b-sec" aria-labelledby="sg-h" style={{ borderBlockEnd: 0 }}>
+                <h2 id="sg-h" className="b-h2">{tr("buyer.sign_pay")}</h2>
+                <SigningAs
+                  name={[values.fullName, s.fields.includes("signatory_role") ? values.role : ""].filter((x) => x.trim()).join(", ")}
+                  company={company || tr("buyer.agree_fallback")} tr={tr}
+                  change={<button type="submit" name="intent" value="goto:2" className="b-linkbtn b-link">{tr("buyer.change")}</button>}
+                />
+                <label className="b-check">
+                  <input type="checkbox" name="agreed" {...(errors.agreed ? { "aria-invalid": true as const, "aria-describedby": "e-agreed" } : {})} />
+                  <span>{tr("buyer.agree", { company: company || tr("buyer.agree_fallback") })}</span>
+                </label>
+                {errors.agreed ? <span className="b-err" id="e-agreed">{tr("buyer.err.agreed")}</span> : null}
+                {fakePaymentsEnabled() ? (
+                  <div className="b-test" role="note"><span><b>{tr("buyer.test_mode")}</b> {tr("buyer.test_mode_body")}</span></div>
+                ) : null}
+              </section>
+              <div className="b-cta b-cta--sign">
+                {signable ? (
+                  <SubmitButton
+                    name="intent" value="sign" pendingLabel={tr("buyer.signing")}
+                    label={s.oneTime.totalMinor > 0 ? tr("buyer.sign_pay_amount", { amount: money(s, s.oneTime.totalMinor) }) : tr("buyer.sign_and_pay")}
+                  />
+                ) : null}
+                <button type="submit" name="intent" value="goto:2" className="b-btn b-btn--2">{tr("buyer.back")}</button>
+              </div>
+              <span className="b-mut" style={{ textAlign: "center", padding: "0 20px 16px", display: "block" }}>
+                {s.recurring.totalMinor > 0 ? `${tr("buyer.then_amount", { amount: per2(s.recurring.totalMinor, period) })} ` : ""}{tr("buyer.sign_note")}
+              </span>
+            </>
+          )}
+        </form>
+        <Summary s={s} tr={tr} lang={lang} eta={choices?.eta ?? null} validUntil={date(s.validUntil)} />
+      </div>
       {help}
     </>
-  ));
+  ), step);
 }

@@ -142,7 +142,7 @@ describe("hardening: rate limits, body size, rejected provider events", () => {
     expect(await redirectOf(buyer.payBankAction(form({ token, lang: "en" })))).toBe(`/f/${token}?lang=en&err=rate_limited`);
     expect(await redirectOf(buyer.payCardAction(form({ token, lang: "he" })))).toBe(`/f/${token}?lang=he&err=rate_limited`);
     expect(await redirectOf(buyer.acceptPriceAction(form({ token, lang: "en" })))).toBe(`/f/${token}?lang=en&err=rate_limited`);
-    expect(await buyer.signAction({ status: "idle" }, form({ token, lang: "en" }))).toEqual({ status: "error", errors: {}, formError: "unavailable" });
+    expect(await redirectOf(buyer.stepAction(form({ token, lang: "en", step: "3", intent: "sign" })))).toBe(`/f/${token}?lang=en&step=3&err=rate_limited`);
     // Another link has its own budget.
     expect(await redirectOf(buyer.payBankAction(form({ token: "tok_other", lang: "en" })))).not.toContain("rate_limited");
     const keys = (await db.select().from(rateLimits)).map((r) => r.key);

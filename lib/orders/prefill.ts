@@ -44,16 +44,37 @@ export function orderFormPrefill(
   lead: { fullName: string; company: string | null; email: string | null },
   deal: Record<string, DealFieldValue> | null | undefined,
 ): Prefill {
+  return orderFormPrefillWithSources(lead, deal).values;
+}
+
+/** Where a prefilled value came from: the conversation, or the buyer's own request (the website lead form). */
+export type PrefillSource = "chat" | "request";
+
+/**
+ * The prefill plus where each value came from (the order form's small
+ * "From your chat" / "From your request" tags). A value from the lead record
+ * counts as the buyer's request only when the lead came from the website
+ * form (origin "webhook"); a seller's own import or entry gets no tag.
+ */
+export function orderFormPrefillWithSources(
+  lead: { fullName: string; company: string | null; email: string | null; origin?: string | null },
+  deal: Record<string, DealFieldValue> | null | undefined,
+): { values: Prefill; sources: Partial<Record<PrefillKey, PrefillSource>> } {
   const fromLead: Prefill = {
     ...(lead.company?.trim() ? { company_name: lead.company.trim() } : {}),
     ...(lead.email?.trim() ? { invoice_email: lead.email.trim() } : {}),
     ...(lead.fullName.trim() ? { signatory_name: lead.fullName.trim() } : {}),
   };
-  const out: Prefill = {};
+  const values: Prefill = {};
+  const sources: Partial<Record<PrefillKey, PrefillSource>> = {};
   for (const field of Object.keys(DEAL_KEYS_FOR_FIELD) as PrefillKey[]) {
     const d = deal ? dealValueFor(field, deal) : null;
-    const value = d && d.provenance !== "inferred" ? d.value : fromLead[field] ?? d?.value;
-    if (value?.trim()) out[field] = value.trim().slice(0, 300);
+    const useDeal = d !== null && (d.provenance !== "inferred" || !fromLead[field]);
+    const value = useDeal ? d.value : fromLead[field];
+    if (!value?.trim()) continue;
+    values[field] = value.trim().slice(0, 300);
+    if (useDeal) sources[field] = "chat";
+    else if (lead.origin === "webhook") sources[field] = "request";
   }
-  return out;
+  return { values, sources };
 }

@@ -25,6 +25,8 @@ async function countOrders(accountId: string) {
 }
 
 const dateShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
+/** The buyer's preferred delivery date (a calendar date): "Thu 3 Dec 2026". */
+const preferredDate = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
 /**
  * The estimated delivery of each order: the lead time frozen on its order form,
@@ -320,6 +322,13 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: relativeTime(signed.order.paidAt, now) })}` : ""}</span>
             ) : <span className="sas-small">{t("orders.detail.payment_soon")}</span>}
             {signed && deliveries.get(signed.order.orderFormId) ? <span className="sas-small" data-detail-delivery="">{t("orders.detail.delivery", { range: deliveries.get(signed.order.orderFormId)! })}</span> : null}
+            {signed?.order.deliveryPreference ? (
+              <span className="sas-small" data-detail-delivery-pref={signed.order.preferredDeliveryDate ?? "asap"}>
+                {signed.order.deliveryPreference === "date" && signed.order.preferredDeliveryDate
+                  ? t("orders.detail.delivery_pref.date", { date: preferredDate.format(new Date(`${signed.order.preferredDeliveryDate}T00:00:00Z`)) })
+                  : t("orders.detail.delivery_pref.asap")}
+              </span>
+            ) : null}
             {signed?.order.paymentStatus === "bank_transfer_expected" ? (
               <form action={markBankPaidAction}>
                 <input type="hidden" name="slug" value={account.slug} />
