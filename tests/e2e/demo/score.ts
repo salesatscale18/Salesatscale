@@ -255,9 +255,14 @@ export const CHECKS: Check[] = [
     id: "quote_vat",
     label: "The quote message shows VAT",
     run: ({ t }) => {
-      const quotes = t.filter(isQuote);
+      // A replaced, withdrawn or expired card collapses to one line without VAT by design; only live quotes count.
+      const quotes = t.filter(isQuote).filter((q) => !/Replaced by|Withdrawn|Expired on|הוחלפה|בוטלה|פג תוקף/.test(q.text));
       if (quotes.length === 0) return na("no quote");
-      const bad = quotes.find((q) => !q.text.split("\n").some((l) => /VAT|מע["״]מ/.test(l) && MONEY.test(l)));
+      // The text quote has label and amount on one line; the designed card (P11 wave 2) has them on two rows.
+      const bad = quotes.find((q) => {
+        const lines = q.text.split("\n");
+        return !lines.some((l, i) => /VAT|מע["״]מ/.test(l) && (MONEY.test(l) || MONEY.test(lines[i + 1] ?? "")));
+      });
       return bad ? fail("no VAT line with an amount") : pass();
     },
   },

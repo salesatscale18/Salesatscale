@@ -259,7 +259,10 @@ async function readChat(p: Page): Promise<Transcript> {
         text = (c.textContent ?? "").trim();
       }
       const card = el.querySelector(".c-card__text");
-      const quote = bubble?.dataset.kind === "quote";
+      // The designed quote card (P11 wave 2) has no bubble: read the card itself, one line per row.
+      const qc = el.querySelector<HTMLElement>('[data-kind="quote"], [data-kind="quote_held"]');
+      if (qc && !bubble) text = (qc.innerText ?? qc.textContent ?? "").replace(/\n{2,}/g, "\n").trim();
+      const quote = bubble?.dataset.kind === "quote" || !!qc;
       const actor = el.classList.contains("c-msg--out") ? "buyer" : quote ? "app" : el.querySelector(".c-who") ? "human" : "agent";
       out.push({
         actor, text, kind: quote ? "quote" : card ? "order_form" : "text",
