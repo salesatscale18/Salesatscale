@@ -85,3 +85,50 @@ counts as $0.
 
 Tests never call the real API: the agent uses `ScriptedLlm`, the availability check a fake
 `models.retrieve`.
+
+## Scored test rounds (`tests/e2e/demo/scored-round.spec.ts`)
+
+Nine scripted test buyers (`tests/e2e/demo/buyers.ts`: straight, has a solution, price first, too
+expensive, changes quantity, Hebrew, sceptic, think it over, competitor) talk to the real agent
+through the buyer simulator (`/chat/<token>`) on a deployed site. Each buyer is a new simulated
+buyer on a demo account, added through Leads › Add simulated buyer. The buyer's replies are fixed
+steps that react a little to what the agent says. No model plays the buyer, and a buyer sends at
+most 10 messages. Each conversation is scored in code against the checklist in
+`tests/e2e/demo/score.ts`, with no model grading.
+
+**Paid.** Every buyer message starts one agent turn, and each turn makes a few model calls. Under
+the CLAUDE.md AI spend rule, each run needs the user's approval first, with what will run, how many
+buyer messages and the estimated cost. Before asking:
+
+- **Count the buyer messages.** A full round of nine is about 42 buyer messages if the agent
+  follows the target flow (the dry round sends 42), more if it asks extra questions. The hard limit
+  is 90.
+- **Estimate the cost per turn.** At the table prices this is roughly $0.02–0.05 on Sonnet 5.5.
+  Check it against `messages.usage` from a one-buyer run first (`SCORED_ROUND_BUYERS=1`).
+
+Flags:
+
+| Flag | Effect |
+|---|---|
+| `SCORED_ROUND_PAID=1` | Required for the paid round. Without it every test is skipped. It is never set in CI, and the spec also skips when `CI` is set. |
+| `SCORED_ROUND_DRY=1` | Free. Runs the same scripts and scorer against a fake agent (`fake-agent.ts`), with no browser and no network. Takes precedence over `PAID`. The same dry round runs in `npm test` (`tests/unit/scored-round.test.ts`). |
+| `SCORED_ROUND_BUYERS=1,2,6` | Runs only these buyers. The default is all nine. |
+| `SCORED_ROUND_ACCOUNT=<slug>` | Reuses that account. Without it, a new demo account is created from /sadmin (free). |
+| `SCORED_ROUND_STATE`, `SCORED_ROUND_TURN_MS`, `SCORED_ROUND_QUIET_MS` | Set the state file, the hard timeout per turn (default 180 s), and the quiet time after the reply (default 10 s). |
+
+```
+SCORED_ROUND_PAID=1 E2E_BASE_URL=https://salesatscale18.vercel.app E2E_EMAIL=... E2E_PASSWORD=... \
+  npx playwright test -c tests/e2e/demo/playwright.config.ts scored-round --workers=1 --trace off
+```
+
+**Resuming a run.** The state file is `test-results/scored-round-state.json`. Each step is
+recorded before its message is sent. If a run stops, a re-run skips the buyers that already
+finished. A buyer that was cut off mid-conversation is not continued: its chat is read back for
+free and scored as "interrupted". A paid turn is never retried. Delete the state file to start a
+new round.
+
+**Results.** They go to `test-results/scored-round/<timestamp>/`:
+
+- `buyer-<id>-<key>.json` and `.md`: the transcript and its score, one pair per buyer.
+- `scored-round-summary.md` and `.json`: score and failed checks per buyer, plus the number of
+  buyer messages sent.
