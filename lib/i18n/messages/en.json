@@ -1953,5 +1953,15 @@
   "playbook.exceptions_empty": "None yet. Approve them in the playbook draft.",
   "playbook.exception_meta": "Approved {date}",
   "draft.limit.change_in_playbook": "Change in Playbook › Limits",
-  "draft.limit.change_in_price_list": "Change in Price list {name}"
+  "draft.limit.change_in_price_list": "Change in Price list {name}",
+  "admin.demo.create": "Create demo account",
+  "admin.demo.create_hint": "A complete, live Polar Demo account in seconds, with fictional data. No AI cost.",
+  "admin.demo.created": "Demo account created and live.",
+  "admin.demo.created_list": "Company details and delivery time · catalog with {items} items and 2 rules · price list (ILS, without VAT) · order form with sample terms in English and Hebrew · {sources} sources and {facts} approved facts · playbook for Maya, live · one test chat · {leads} leads with fictional numbers that are never contacted.",
+  "admin.demo.failed": "The demo account could not be created. Nothing was sent. If a half-made demo account is listed, it is paused.",
+  "admin.demo.badge": "Demo account",
+  "admin.demo.remove": "Delete demo account",
+  "admin.demo.remove_hint": "Pauses this demo account for good: nothing is sent or answered from it. Accounts are not hard-deleted, so its data stays for the audit log.",
+  "admin.demo.removed": "Demo account deleted: it is paused and marked as removed.",
+  "admin.demo.removed_badge": "Removed demo"
 }

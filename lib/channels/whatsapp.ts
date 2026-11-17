@@ -23,6 +23,7 @@ import { spendCapped } from "@/lib/ai/usage";
 import type { LlmClient } from "@/lib/agent/llm";
 import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, windowState, type OpenerRefusal, type WindowState } from "./rules";
 import { whatsappAddressToE164, type TwilioTransport } from "./twilio";
+import { isFictionalDemoLead } from "@/lib/demo/phones";
 
 export type Delivery = { delivered: true } | { delivered: false; reason: string };
 
@@ -76,7 +77,7 @@ export async function deliverText(
   if (!row || row.conv.channel !== "whatsapp") return { delivered: false, reason: "not_whatsapp" };
   // Test-lab chats only ever reach a tester's phone, re-checked against the number's tester list at send time.
   const tester = row.conv.isTest;
-  if (tester ? !row.conv.channelAddress : row.lead.isTest) return fail("test_lead");
+  if (tester ? !row.conv.channelAddress : row.lead.isTest || isFictionalDemoLead(row.lead)) return fail("test_lead");
   if (row.lead.status === "opted_out" && !opts.optOutConfirmation) return fail("opted_out");
   if (!transport) return fail("not_configured");
   const window = await conversationWindow(db, m.accountId, m.conversationId, now);
@@ -133,7 +134,7 @@ export async function sendTemplateMessage(
   const { conv, lead } = row;
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   if (conv.status === "closed") return { ok: false, reason: "closed" };
-  if (conv.isTest ? !conv.channelAddress : lead.isTest) return { ok: false, reason: "test_lead" };
+  if (conv.isTest ? !conv.channelAddress : lead.isTest || isFictionalDemoLead(lead)) return { ok: false, reason: "test_lead" };
   const [template] = await db.select().from(messageTemplates)
     .where(and(eq(messageTemplates.id, templateId), eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")));
   if (!template) return { ok: false, reason: "template_not_found" };
@@ -194,7 +195,8 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
   const template = await approvedTemplate(db, accountId, "opener", lead.language, account.languages);
   const refusal = openerRefusal({
     twilioConfigured: !!transport,
-    lead: { isTest: lead.isTest, status: lead.status },
+    // A demo lead's number is fictional (lib/demo/phones.ts): never contacted, like a test lead.
+    lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status },
     hasConsent: !!consent,
     account: { status: account.status, contactHours: account.contactHours, timezone: account.timezone },
     hasConnection: !!connection,

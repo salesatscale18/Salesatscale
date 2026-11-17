@@ -220,13 +220,18 @@ export async function getFact(db: Db, accountId: string, factId: string) {
 /** Facts typed by a person are approved; `suggested` is for facts found by the system (P8) and tests. */
 export async function addFact(
   db: Db, actor: Actor, accountId: string,
-  f: { topic: string; statement: string; sourceLabel?: string | null; status?: FactStatus },
+  f: {
+    topic: string; statement: string; sourceLabel?: string | null; status?: FactStatus;
+    /** Where the fact was found: a source of this account and the locator in it (e.g. "note", "01:58"). */
+    sourceId?: string | null; sourceLocator?: string | null; language?: string | null;
+  },
 ) {
   const [row] = await db
     .insert(knowledgeFacts)
     .values({
       accountId, topic: f.topic.trim().slice(0, 60) || "General", statement: f.statement.trim().slice(0, 1000),
       sourceLabel: f.sourceLabel?.trim().slice(0, 200) || null, status: f.status ?? "approved", createdByUserId: actor.userId,
+      sourceId: f.sourceId ?? null, sourceLocator: f.sourceLocator?.trim().slice(0, 120) || null, language: f.language ?? null,
     })
     .returning();
   return row;

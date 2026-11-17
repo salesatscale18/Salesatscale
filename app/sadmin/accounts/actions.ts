@@ -8,6 +8,7 @@ import { isUuid } from "@/lib/security/ids";
 import { writeAudit } from "@/lib/accounts/audit";
 import { parseCreateAccount, type FieldErrors } from "@/lib/accounts/rules";
 import { createAccount, createInvite, getAccountById, pauseAccount, renewInvite, resumeAccount } from "@/lib/accounts/service";
+import { createDemoAccount, removeDemoAccount } from "@/lib/demo/seed";
 
 // Every action re-checks super_admin on the server: actions are public endpoints.
 
@@ -107,4 +108,41 @@ export async function enterAccountAction(form: FormData) {
     targetId: account.id,
   });
   redirect(`/app/${account.slug}`);
+}
+
+/**
+ * "Create demo account": seeds a complete, live Polar Demo account (no AI
+ * call) and opens it with a note of what was created. The owner invite goes to
+ * the signed-in super admin. Super admin is checked here and again in the seed.
+ */
+export async function createDemoAccountAction() {
+  const me = await requireSuperAdmin();
+  let r: Awaited<ReturnType<typeof createDemoAccount>>;
+  try {
+    // A super admin without an email gets the invite on a reserved .example address (never delivered).
+    r = await createDemoAccount(appDb, me, { ownerEmail: me.email ?? "owner@polar-demo.example" });
+  } catch (e) {
+    // notFound/redirect are not called inside the try, so only seed errors land here.
+    console.error("[demo] create failed", e instanceof Error ? e.message : e);
+    revalidatePath("/sadmin/accounts");
+    redirect("/sadmin/accounts?demo=failed");
+  }
+  if (!r.ok) notFound();
+  const s = r.summary;
+  revalidatePath("/sadmin/accounts");
+  redirect(`/sadmin/accounts/${s.accountId}?demo=created&items=3&sources=${s.sources}&facts=${s.facts}&leads=${s.leads}`);
+}
+
+/** "Delete demo account": only accounts the seed created; they are paused, not hard-deleted. */
+export async function removeDemoAccountAction(form: FormData) {
+  const me = await requireSuperAdmin();
+  const id = String(form.get("accountId") ?? "");
+  if (!isUuid(id)) notFound();
+  const r = await removeDemoAccount(appDb, me, id);
+  if (!r.ok) notFound();
+  const row = await getAccountById(appDb, id);
+  revalidatePath("/sadmin/accounts");
+  revalidatePath(`/sadmin/accounts/${id}`);
+  if (row) revalidatePath(`/app/${row.slug}`, "layout");
+  redirect(`/sadmin/accounts/${id}?demo=removed`);
 }

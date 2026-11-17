@@ -11,7 +11,8 @@ import { Icon } from "@/components/sas/icon";
 import { SETUP_STEPS } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
 import { AdminShell } from "../../admin-shell";
-import { enterAccountAction, pauseAccountAction, resumeAccountAction } from "../actions";
+import { enterAccountAction, pauseAccountAction, removeDemoAccountAction, resumeAccountAction } from "../actions";
+import { demoAccountMarks } from "@/lib/demo/seed";
 import { InviteForm, RenewInviteButton } from "./invite-form";
 import { spendState, spendTexts, usdText } from "@/lib/ai/usage";
 
@@ -24,13 +25,22 @@ const timeFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeStyl
 const regionName = new Intl.DisplayNames(["en"], { type: "region" });
 
 /** Canvas: AdminAccounts (account detail). */
-export default async function AccountDetailPage({ params }: { params: Promise<{ id: string }> }) {
+export default async function AccountDetailPage({
+  params, searchParams,
+}: { params: Promise<{ id: string }>; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const me = await requireSuperAdmin();
   const { id } = await params;
+  const sp = (await searchParams) ?? {};
   if (!UUID.test(id)) notFound();
   const account = await getAccountById(appDb, id);
   if (!account) notFound();
   const done = await setupProgress(appDb, account.id);
+  const demo = (await demoAccountMarks(appDb, [account.id])).get(account.id) ?? null;
+  // Counts in the success note come from the URL: only small whole numbers are shown.
+  const n = (k: string) => {
+    const v = Number(typeof sp[k] === "string" ? sp[k] : "");
+    return Number.isInteger(v) && v >= 0 && v < 1000 ? v : 0;
+  };
   const [members, invites, audit, spend] = await Promise.all([
     listMembers(appDb, account.id),
     listPendingInvites(appDb, account.id),
@@ -73,6 +83,31 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
             </form>
           </div>
         </header>
+
+        {sp.demo === "created" && demo ? (
+          <div className="sas-alert sas-alert--success" role="status">
+            <Icon name="check-circle" />
+            <span className="sas-stack-2">
+              <strong>{t("admin.demo.created")}</strong>
+              <span>{t("admin.demo.created_list", { items: n("items"), sources: n("sources"), facts: n("facts"), leads: n("leads") })}</span>
+            </span>
+          </div>
+        ) : null}
+        {sp.demo === "removed" && demo === "removed" ? (
+          <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("admin.demo.removed")}</span></div>
+        ) : null}
+        {demo === "demo" ? (
+          <section className="sas-panel" aria-labelledby="demo-h">
+            <div className="sas-panel__head">
+              <h2 id="demo-h" className="sas-heading">{t("admin.demo.badge")}</h2>
+            </div>
+            <form action={removeDemoAccountAction} className="sas-panel__body sas-stack-2">
+              <input type="hidden" name="accountId" value={account.id} />
+              <span className="sas-small">{t("admin.demo.remove_hint")}</span>
+              <div><Button type="submit" size="sm" variant="danger" icon="x-circle">{t("admin.demo.remove")}</Button></div>
+            </form>
+          </section>
+        ) : null}
 
         <div className="sas-grid-2">
           <section className="sas-panel" aria-labelledby="lim-h">
@@ -172,7 +207,7 @@ export default async function AccountDetailPage({ params }: { params: Promise<{ 
                   <span className="sas-list__main">
                     <span>
                       <strong>{actor ? displayName(actor) : "System"}</strong>
-                      {entry.actingAs ? ` ${t("admin.accounts.acting_note")}` : ""} · <code>{entry.action}</code>
+                      {entry.actingAs ? ` ${t("admin.accounts.acting_note")}` : ""} · <code style={{ overflowWrap: "anywhere" }}>{entry.action}</code>
                     </span>
                   </span>
                 </li>
