@@ -6,6 +6,27 @@
 
 export const SIMULATOR_CHANNEL = "simulator";
 
+/** A chat link stops working this many days after its last activity (user decision, 17 Nov). */
+export const CHAT_LINK_IDLE_DAYS = 14;
+
+/** Per-link limits on buyer messages (each one can start a paid agent turn). */
+export const CHAT_RATE_PER_MINUTE = 20;
+export const CHAT_RATE_PER_DAY = 100;
+
+/**
+ * When a chat link expires: CHAT_LINK_IDLE_DAYS after the latest anchor. The
+ * anchors are the link's creation, the last message from the buyer or a person
+ * on the seller's team, the latest simulator conversation's start, and the due
+ * date of a scheduled or sent follow-up, so a link never expires before a
+ * call-back the agent agreed with the buyer. Automatic agent messages are not
+ * anchors: an agent nudging a silent buyer must not keep a link alive forever.
+ */
+export function chatLinkExpiresAt(anchors: readonly (Date | null | undefined)[]): Date {
+  const latest = Math.max(...anchors.filter((d): d is Date => d instanceof Date).map((d) => d.getTime()));
+  if (!Number.isFinite(latest)) return new Date(0);
+  return new Date(latest + CHAT_LINK_IDLE_DAYS * 86_400_000);
+}
+
 /** Placeholder `leads.phone` of a simulated buyer: never a dialable number (lib/leads/rules normalizePhone refuses it). */
 export const SIM_PHONE_PREFIX = "sim:";
 

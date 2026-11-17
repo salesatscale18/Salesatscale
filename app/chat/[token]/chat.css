@@ -90,3 +90,7 @@
   padding: 5px 12px; border-radius: 999px; cursor: pointer; }
 .c-reply:hover { background: var(--surface); }
 .c-reply:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+/* Expired link (14 days without messages): who it belongs to and what to do next. */
+.c-expired__title { margin: 0 0 6px; font-size: 16px; line-height: 22px; font-weight: 700; color: var(--ink); }
+.c-expired__body { margin: 0; }

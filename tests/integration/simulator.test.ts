@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
-  agentVersions, auditLog, consentRecords, conversations, leads, markets, messageTemplates, messages, sellerAccounts, simulatorLinks, users, type User,
+  agentVersions, auditLog, consentRecords, conversations, followUps, leads, markets, messageTemplates, messages, sellerAccounts, simulatorLinks, users, type User,
 } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
@@ -23,7 +23,7 @@ import { overviewKpis, recentActivity } from "@/lib/overview/service";
 import { saveLegalSection } from "@/lib/orders/settings";
 import { tokenFor } from "@/lib/orders/token";
 import {
-  activeChatToken, buyerChat, createSimulatedBuyer, ensureChatLink, receiveSimulatorInbound, resetChatLink, resolveChatToken,
+  activeChatToken, buyerChat, chatLinkStatus, createSimulatedBuyer, resolveChatLink, ensureChatLink, receiveSimulatorInbound, resetChatLink, resolveChatToken,
   nextSimBuyerRef, setSimulateWhatsappRules, setSimulatorSettings, simulatorOpenerFacts, startSimulatorConversation, type ChatContext,
 } from "@/lib/simulator/service";
 import { chatTokenFor, hashToken, linkIdFromChatToken } from "@/lib/simulator/token";
@@ -465,5 +465,51 @@ describe("Buyer simulator", () => {
     expect(audits.at(-1)?.details).toEqual({ allowSimulatedBuyers: false, simulateWhatsappRules: false });
     await setSimulatorSettings(db, actor(), acc, { allowSimulatedBuyers: true });
     expect((await simBuyer(acc, "Allowed again")).lead.buyerRef).toBe(next);
+  });
+
+  it("a link expires 14 days after the last buyer or team message; agent messages do not; a scheduled follow-up keeps it alive", async () => {
+    const DAY = 86_400_000;
+    const at = (days: number) => new Date(Date.now() + days * DAY);
+    const { lead, token } = await simBuyer(acc, "Expiry Test");
+    const state = async (days: number) => (await resolveChatLink(db, token, at(days)))?.state;
+
+    // No conversation yet: 14 days from the link's creation.
+    expect(await state(13)).toBe("live");
+    expect(await state(15)).toBe("expired");
+    expect(await resolveChatToken(db, token, at(15))).toBeNull();
+    expect(await chatLinkStatus(db, acc, lead.id, at(15))).toMatchObject({ token, expired: true });
+    expect(await chatLinkStatus(db, acc, lead.id, at(1))).toMatchObject({ token, expired: false });
+
+    const [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, acc), eq(agentVersions.status, "live")));
+    const conversationId = randomUUID();
+    await db.insert(conversations).values({ id: conversationId, accountId: acc, leadId: lead.id, channel: "simulator", agentVersionId: live.id, language: "en", status: "open" });
+    const msg = (actor: "buyer" | "agent" | "human", days: number) =>
+      db.insert(messages).values({ accountId: acc, conversationId, actor, body: `${actor} at ${days}`, language: "en", createdAt: at(days) });
+
+    // An automatic agent message does not keep the link alive.
+    await msg("agent", 10);
+    expect(await state(15)).toBe("expired");
+    // A buyer message restarts the 14 days, and so does a person on the seller's team.
+    await msg("buyer", 10);
+    expect(await state(23)).toBe("live");
+    expect(await state(25)).toBe("expired");
+    await msg("human", 20);
+    expect(await state(33)).toBe("live");
+    expect(await state(35)).toBe("expired");
+
+    // A cancelled follow-up does not count; a scheduled one keeps the link alive past its due date.
+    await db.insert(followUps).values({ accountId: acc, leadId: lead.id, conversationId, dueAt: at(60), language: "en", status: "cancelled" });
+    expect(await state(40)).toBe("expired");
+    await db.insert(followUps).values({ accountId: acc, leadId: lead.id, conversationId, dueAt: at(60), language: "en" });
+    expect(await state(40)).toBe("live");
+    expect(await state(73)).toBe("live");
+    expect(await state(75)).toBe("expired");
+
+    // Another account's view of the lead has no link at all.
+    expect(await chatLinkStatus(db, other, lead.id)).toBeNull();
+    // Reset: the old link is gone (404, not "expired"); the new one is live.
+    const reset = await resetChatLink(db, actor(), acc, lead.id);
+    expect(await resolveChatLink(db, token, at(75))).toBeNull();
+    expect((await resolveChatLink(db, reset!.token))?.state).toBe("live");
   });
 });

@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
 import { and, eq } from "drizzle-orm";
-import { agentVersions, conversations, leads, messages, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
+import { agentVersions, conversations, leads, messages, rateLimits, sellerAccounts, simulatorLinks, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -44,7 +44,8 @@ const { default: OverviewPage } = await import("@/app/app/[account]/page");
 const { addSimulatedBuyerAction, resetChatLinkAction, startSimulatorAction, createChatLinkAction } = await import("@/app/app/[account]/leads/simulator-actions");
 const { saveSimulatorSettingsAction } = await import("@/app/app/[account]/settings/simulator-actions");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
-const { activeChatToken, receiveSimulatorInbound, resolveChatToken } = await import("@/lib/simulator/service");
+const { activeChatToken, createSimulatedBuyer, receiveSimulatorInbound, resolveChatToken } = await import("@/lib/simulator/service");
+const { hashKey } = await import("@/lib/security/rate-limit");
 const { chatTokenFor } = await import("@/lib/simulator/token");
 const { createQuote } = await import("@/lib/quotes/service");
 const { createOrderForm } = await import("@/lib/orders/service");
@@ -261,5 +262,52 @@ describe("Buyer simulator screens", () => {
     expect(on).toContain("Including simulated data.");
     expect(on).toContain("2 simulated leads, 2 quotes and 0 orders are counted below.");
     expect(on).toContain("incl. 2 simulated");
+  });
+
+  it("expired link: the buyer page and API say so, the lead card offers Reset; the daily limit refuses the 101st message", async () => {
+    const sim = await createSimulatedBuyer(db, { userId: me.id, actingAs: false }, acc, { fullName: "Idle Buyer", company: "Old Co", language: "en", country: "IL" });
+    if (!sim.ok) throw new Error();
+    const { lead, token: idle } = sim;
+    // No messages and a link made 15 days ago: 14 idle days are over.
+    await db.update(simulatorLinks).set({ createdAt: new Date(Date.now() - 15 * 86_400_000) }).where(eq(simulatorLinks.leadId, lead.id));
+
+    const page = render(await BuyerChatPage({ params: Promise.resolve({ token: idle }) }));
+    save("chat-expired", page, "buyer");
+    expect(page).toContain("This chat link has expired");
+    expect(page).toContain("Ask the seller for a new link.");
+    expect(page).toContain("Polar Demo");
+    expect(page).not.toContain('aria-label="Send"');
+    const get = await GET(new Request(`http://x/chat/${idle}/messages`), { params: Promise.resolve({ token: idle }) });
+    expect(get.status).toBe(410);
+    holder.after = [];
+    const post = await POST(new Request(`http://x/chat/${idle}/messages`, { method: "POST", body: JSON.stringify({ text: "hello?", clientId: randomUUID() }) }), { params: Promise.resolve({ token: idle }) });
+    expect(post.status).toBe(410);
+    expect(await post.json()).toEqual({ ok: false, reason: "expired" });
+    expect(holder.after).toHaveLength(0);
+
+    const card = render(await LeadCardPage({ params: Promise.resolve({ account: acc.slug, leadId: lead.id }), searchParams: Promise.resolve({}) }));
+    save("lead-card-expired", card, "seller");
+    expect(card).toContain("data-link-expired");
+    expect(card).toContain("Reset it and send the buyer the new link.");
+    expect(card).toContain("Reset link");
+    expect(card).not.toContain(`/chat/${idle}`);
+    expect(card).not.toContain(">Start conversation<");
+
+    // Reset gives a live link again, with its expiry date shown.
+    expect(await run(resetChatLinkAction(form({ slug: acc.slug, leadId: lead.id })))).toMatchObject({ redirect: expect.stringContaining("sim=reset") });
+    const fresh = (await activeChatToken(db, acc.id, lead.id))!;
+    const after = render(await LeadCardPage({ params: Promise.resolve({ account: acc.slug, leadId: lead.id }), searchParams: Promise.resolve({}) }));
+    expect(after).toContain(`/chat/${fresh}`);
+    expect(after).toContain("Link works until");
+    expect(after).not.toContain("data-link-expired");
+
+    // 100 messages a day per link: the next one is refused before any agent turn.
+    const day = 86_400_000;
+    await db.insert(rateLimits).values({ key: `chat-day:${hashKey(fresh)}`, windowStart: new Date(Math.floor(Date.now() / day) * day), count: 100 });
+    holder.after = [];
+    const capped = await POST(new Request(`http://x/chat/${fresh}/messages`, { method: "POST", body: JSON.stringify({ text: "one more", clientId: randomUUID() }) }), { params: Promise.resolve({ token: fresh }) });
+    expect(capped.status).toBe(429);
+    expect(await capped.json()).toEqual({ ok: false, reason: "daily_limit" });
+    expect(holder.after).toHaveLength(0);
   });
 });

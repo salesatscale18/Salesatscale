@@ -255,5 +255,9 @@
   "buyer.followup.intro_neutral": "היי {name}, כאן {agent} {company}.",
   "buyer.followup.asked_topic": "ביקשת שאחזור אליך היום לגבי {topic}.",
   "buyer.followup.asked": "ביקשת שאחזור אליך היום.",
-  "buyer.followup.good_time": "זה זמן טוב לדבר?"
+  "buyer.followup.good_time": "זה זמן טוב לדבר?",
+  "buyer.sim.expired_title": "תוקף הקישור לצ׳אט פג",
+  "buyer.sim.expired_body": "קישורים מפסיקים לעבוד אחרי 14 יום בלי הודעות. בקשו מהמוכר קישור חדש.",
+  "buyer.sim.refused.expired": "תוקף הקישור לצ׳אט פג. בקשו מהמוכר קישור חדש.",
+  "buyer.sim.refused.daily_limit": "הצ׳אט הגיע למגבלת ההודעות היומית. נסו שוב מחר."
 }

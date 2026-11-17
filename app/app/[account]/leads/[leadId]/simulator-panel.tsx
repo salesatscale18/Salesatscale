@@ -11,15 +11,20 @@ const maybe = (key: string) => (t(key as MessageKey) as string | undefined) ?? n
  * Lead card › Buyer chat simulator (artboard SimSeller): Start conversation
  * (the agent's opening message on the simulator channel), Open buyer chat,
  * Copy link, Reset link. Every action re-checks access and gates on the server.
+ * A link idle for 14 days shows "Expired": only Reset link is offered then.
  */
 export function SimulatorPanel({
-  slug, leadId, simulated, url, refusal, rules, notice, error,
+  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error,
 }: {
   slug: string;
   leadId: string;
   simulated: boolean;
   /** The chat link, or null when the lead has none yet. */
   url: string | null;
+  /** The link went 14 days without messages (lib/simulator/rules chatLinkExpiresAt). */
+  expired?: boolean;
+  /** When a live link expires, formatted in the account's timezone. */
+  expiresAt?: string | null;
   refusal: SimOpenerRefusal | null;
   rules: boolean;
   notice?: string;
@@ -33,9 +38,9 @@ export function SimulatorPanel({
   );
   const noticeText = notice ? maybe(`sim.notice.${notice}`) : null;
   const errorText = error ? maybe(`sim.start.refused.${error}`) ?? maybe(`wa.start.refused.${error}`) ?? t("sim.start.refused.not_found") : null;
-  const canStart = !!url && refusal === null;
+  const canStart = !!url && !expired && refusal === null;
   // Why Start is not offered, unless it simply already ran (the conversation shows below).
-  const why = url && refusal && refusal !== "already_started" && refusal !== "test_lead" ? refusal : null;
+  const why = url && !expired && refusal && refusal !== "already_started" && refusal !== "test_lead" ? refusal : null;
   return (
     <section id="simulator" aria-labelledby="sim-h" className="sas-panel sas-stack-2" style={{ margin: 16, padding: "16px 20px", borderStyle: "dashed", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -51,7 +56,15 @@ export function SimulatorPanel({
             <button type="submit" className={buttonClass("primary", "sm")}>{t("sim.start.button")}</button>
           </form>
         ) : null}
-        {url ? (
+        {url && expired ? (
+          <>
+            <span className="sas-pill sas-pill--warning" data-link-expired=""><Icon name="clock" />{t("sim.expired")}</span>
+            <form action={resetChatLinkAction}>
+              {hidden}
+              <button type="submit" className={buttonClass("primary", "sm")}>{t("sim.reset")}</button>
+            </form>
+          </>
+        ) : url ? (
           <>
             <a className={buttonClass("secondary", "sm")} href={url} target="_blank" rel="noopener noreferrer" data-chat-link="">{t("sim.open")}</a>
             <CopyButton value={url} label={t("sim.copy")} />
@@ -67,6 +80,8 @@ export function SimulatorPanel({
           </form>
         )}
       </div>
+      {url && expired ? <span className="sas-small" role="status">{t("sim.expired_help")}</span> : null}
+      {url && !expired && expiresAt ? <span className="sas-small">{t("sim.expires", { date: expiresAt })}</span> : null}
       {why ? (
         <p className="sas-small" role="status" style={{ margin: 0, display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
           <Icon name="pause" />{maybe(`sim.start.refused.${why}`) ?? maybe(`wa.start.refused.${why}`) ?? why}
