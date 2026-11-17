@@ -19,6 +19,10 @@ export type CatalogItemInput = {
   availabilityNote: string | null;
   kind?: ItemKind | null;
   unitCustom?: UnitCustom | null;
+  /** What the agent calls the item in chat (P11); null = the name. */
+  plainName?: string | null;
+  /** One sentence on what the buyer gets (P11); null = the description. */
+  valueLine?: string | null;
   /** Legacy price columns, no longer edited. */
   chargeType?: "one_time" | "recurring";
   period?: string | null;
@@ -31,9 +35,15 @@ export type CatalogItemInput = {
 export type CatalogItemEdit = Required<Pick<CatalogItemInput, "sku" | "name" | "description" | "unit" | "active" | "availabilityNote">> & {
   kind: ItemKind;
   unitCustom: UnitCustom | null;
+  plainName: string | null;
+  valueLine: string | null;
 };
 
-export type ItemEditErrors = Partial<Record<"sku" | "name" | "kind" | "unit" | "unitCustom", string>>;
+export type ItemEditErrors = Partial<Record<"sku" | "name" | "kind" | "unit" | "unitCustom" | "plainName" | "valueLine", string>>;
+
+/** Lengths of the two agent-facing texts of an item (P11). */
+export const PLAIN_NAME_MAX = 60;
+export const VALUE_LINE_MAX = 200;
 
 export type CatalogItemErrors = Partial<Record<"sku" | "name" | "unit" | "price" | "tiers" | "customPricingFromQty", string>>;
 
@@ -147,6 +157,10 @@ export function parseItemEdit(raw: Record<string, unknown>, languages: readonly 
     unitCustom = parseUnitCustom(forms);
     if (!unitCustom) errors.unitCustom = "Enter the singular and the plural, up to 30 characters each, for every language.";
   } else if (!isUnitKey(unit)) errors.unit = "Choose a unit from the list.";
+  const plainName = s(raw.plainName).replace(/\s+/g, " ");
+  if (plainName.length > PLAIN_NAME_MAX) errors.plainName = `Use ${PLAIN_NAME_MAX} characters or fewer.`;
+  const valueLine = s(raw.valueLine).replace(/\s+/g, " ");
+  if (valueLine.length > VALUE_LINE_MAX) errors.valueLine = `Use ${VALUE_LINE_MAX} characters or fewer.`;
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {
     ok: true,
@@ -157,6 +171,8 @@ export function parseItemEdit(raw: Record<string, unknown>, languages: readonly 
       kind: kind!,
       unit,
       unitCustom,
+      plainName: plainName || null,
+      valueLine: valueLine || null,
       active: raw.active === undefined ? true : raw.active === true || raw.active === "on" || raw.active === "yes",
       availabilityNote: s(raw.availabilityNote).slice(0, 120) || null,
     },

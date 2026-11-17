@@ -9,6 +9,8 @@ import { buttonClass, StatusPill } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { EvidenceLink, Suggestion } from "@/lib/pipeline/service";
 import type { LimitPreview } from "@/lib/pipeline/limits";
+import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
+import { APPLIED_ON_APPROVAL } from "@/lib/pipeline/service";
 import { limitSetting } from "@/lib/pipeline/validate";
 import { decideSuggestionAction, editSuggestionAction } from "./actions";
 
@@ -26,6 +28,18 @@ export function suggestionText(s: Suggestion): { title: string; sub: string | nu
     case "objection": return { title: `"${p.objection}"`, sub: p.answer, he: [p.objectionHe, p.answerHe].filter(Boolean).join(" — ") || null };
     case "limit": return { title: p.rule, sub: null, he: p.ruleHe || null };
     case "never": return { title: t("draft.never_rule", { rule: p.rule }), sub: null, he: p.ruleHe || null };
+    case "opener": return {
+      title: p.openingQuestion ? `"${p.openingQuestion}"` : p.leadsAskAbout,
+      sub: p.openingQuestion && p.leadsAskAbout ? t("draft.opener.asks_about", { text: p.leadsAskAbout }) : null, he: null,
+    };
+    case "play_content": return { title: p.content, sub: t("draft.play.facts_for", { play: DEFAULT_PLAYS[p.play]?.title ?? p.play }), he: null };
+    case "play_card": return {
+      title: t("draft.play.own_card", { play: DEFAULT_PLAYS[p.play]?.title ?? p.play }),
+      sub: [p.when, p.do.map((m, i) => `${i + 1}. ${m}`).join(" "), `"${p.example}"`, t("draft.play.not_this", { text: p.notThis })].join(" · "), he: null,
+    };
+    case "catalog_item": return {
+      title: [p.sku, p.plainName].filter(Boolean).join(" · "), sub: p.valueLine || null, he: null,
+    };
   }
 }
 
@@ -120,6 +134,21 @@ function EditForm({ s, slug, back, cancelHref, limit }: Pick<ItemProps, "s" | "s
       {s.payload.kind === "discovery_question" ? <>{field("label", "draft.f.label", 60)}{field("question", "draft.f.question", 200)}</> : null}
       {s.payload.kind === "objection" ? <>{field("objection", "draft.f.objection", 200)}{field("answer", "draft.f.answer", 600, true)}</> : null}
       {s.payload.kind === "never" ? field("rule", "draft.f.rule", 200) : null}
+      {s.payload.kind === "opener" ? <>{field("leadsAskAbout", "draft.f.leads_ask_about", 120)}{field("openingQuestion", "draft.f.opening_question", 200)}</> : null}
+      {s.payload.kind === "play_content" ? field("content", "draft.f.play_content", 600, true) : null}
+      {s.payload.kind === "play_card" ? (
+        <>
+          {field("when", "draft.f.play_when", 200)}
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor={`sg-e-${s.id}-do`}>{t("draft.f.play_do")}</label>
+            <textarea className="sas-textarea" id={`sg-e-${s.id}-do`} name="do" rows={4} maxLength={1100} defaultValue={s.payload.do.join("\n")} aria-describedby={`sg-e-${s.id}-do-h`} />
+            <span className="sas-hint" id={`sg-e-${s.id}-do-h`}>{t("playbook.play.do_hint")}</span>
+          </div>
+          {field("example", "draft.f.play_example", 300, true)}
+          {field("notThis", "draft.f.play_not_this", 300, true)}
+        </>
+      ) : null}
+      {s.payload.kind === "catalog_item" ? <>{field("plainName", "catalog.edit.plain_name", 60)}{field("valueLine", "catalog.edit.value_line", 200, true)}</> : null}
       {s.payload.kind === "limit" ? field("rule", "draft.f.limit_rule", 200) : null}
       {s.payload.kind === "limit" && limitSetting(s.payload) === "discount" ? (
         <div className="sas-input-group">
@@ -137,7 +166,7 @@ function EditForm({ s, slug, back, cancelHref, limit }: Pick<ItemProps, "s" | "s
       {s.payload.kind === "limit" && (limitSetting(s.payload) === "offer_meeting" || limitSetting(s.payload) === "hand_off") ? field("when", "draft.f.when", 300) : null}
       {s.payload.kind === "limit" && limit ? <LimitNote preview={limit} applied={false} /> : null}
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        <button type="submit" className={buttonClass("primary", "sm")}>{s.kind === "limit" ? t("draft.approve_rule") : t("draft.save_accept")}</button>
+        <button type="submit" className={buttonClass("primary", "sm")}>{s.kind === "limit" ? t("draft.approve_rule") : s.kind === "catalog_item" ? t("draft.catalog.save_apply") : t("draft.save_accept")}</button>
         <a className={buttonClass("ghost", "sm")} href={cancelHref}>{t("draft.cancel")}</a>
       </div>
     </form>
@@ -149,6 +178,8 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
   const { title, sub, he } = suggestionText(s);
   const decided = s.status === "accepted" || s.status === "edited";
   const limit = s.kind === "limit";
+  // Limits and catalog item texts are applied on approval and final here.
+  const final = APPLIED_ON_APPROVAL.has(s.kind);
   const decide = (status: "accepted" | "rejected" | "suggested", label: string, variant: "secondary" | "ghost") => (
     <form action={decideSuggestionAction}>
       {hidden(slug, back, s.id)}
@@ -158,7 +189,7 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
   );
   return (
     <li style={{ padding: "12px 20px", background: limit && !decided ? "var(--warning-soft)" : undefined }} className="sas-stack-2">
-      {editing && !(limit && decided) ? <EditForm s={s} slug={slug} back={back} cancelHref={cancelHref} limit={preview} /> : (
+      {editing && !(final && decided) ? <EditForm s={s} slug={slug} back={back} cancelHref={cancelHref} limit={preview} /> : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", alignItems: "center" }}>
           <span style={{ flex: "1 1 280px", minWidth: 0, overflowWrap: "anywhere" }}>
             <strong dir="auto">{title}</strong>{" "}
@@ -172,7 +203,9 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
           <span style={{ flex: "1 1 200px", minWidth: 0 }}><EvidenceLine s={s} links={links} calls={calls} /></span>
           <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
             {s.status === "suggested" ? decide("accepted", limit ? t("draft.approve_rule") : t("draft.accept"), "secondary") : null}
-            {limit && decided ? (
+            {s.kind === "catalog_item" && decided ? (
+              <a className="sas-small" href={`/app/${slug}/setup/catalog`} data-applied="catalog">{t("draft.catalog.change_in_catalog")}</a>
+            ) : limit && decided ? (
               preview?.kind === "setting" && preview.setting === "custom_pricing"
                 ? <a className="sas-small" href={`/app/${slug}/setup/price-lists`} data-limit-lives="price_list">{t("draft.limit.change_in_price_list", { name: preview.listName ?? "" })}</a>
                 : <a className="sas-small" href={`/app/${slug}/setup/playbook#pb-lim-h`} data-limit-lives="playbook">{t("draft.limit.change_in_playbook")}</a>

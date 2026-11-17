@@ -3,7 +3,7 @@ import type { Playbook } from "@/db/schema";
 import { DEFAULT_PRICES, estimateCostMicros } from "@/lib/ai/models";
 import { countCacheBreakpoints } from "@/lib/agent/llm";
 import {
-  assembleCorpus, estimateAnalysis, factsOutputTokens, inputHash, INSTRUCTION_TOKENS, PLAYBOOK_OUTPUT_TOKENS, PREFIX_TOKENS, sourceChunks,
+  assembleCorpus, estimateAnalysis, factsOutputTokens, inputHash, INSTRUCTION_TOKENS, PLAYBOOK_INSTRUCTION_TOKENS, PLAYBOOK_OUTPUT_TOKENS, PREFIX_TOKENS, sourceChunks,
   THINKING_TOKENS, tokensOf, trimCorpus, type CorpusSource,
 } from "@/lib/pipeline/corpus";
 import { buildPipelineParams, type PipelineRequest } from "@/lib/pipeline/llm";
@@ -65,7 +65,7 @@ describe("stage 0: corpus", () => {
     expect(f.usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS + 50_000, inputTokens: INSTRUCTION_TOKENS, outputTokens: factsOutputTokens(50_000), cacheReadTokens: 0 });
     expect(factsOutputTokens(50_000)).toBe(THINKING_TOKENS + 1_000 + 4_000);
     expect(p.usage).toMatchObject({ cacheReadTokens: PREFIX_TOKENS + 50_000, cacheWriteTokens: 0, outputTokens: PLAYBOOK_OUTPUT_TOKENS });
-    expect(p.usage.inputTokens).toBe(INSTRUCTION_TOKENS + 1_500 + Math.ceil((factsOutputTokens(50_000) - THINKING_TOKENS) * 0.6));
+    expect(p.usage.inputTokens).toBe(PLAYBOOK_INSTRUCTION_TOKENS + 1_500 + Math.ceil((factsOutputTokens(50_000) - THINKING_TOKENS) * 0.6));
     // Sonnet 5.5: $2 in, $10 out, $0.10 cache read, $2.50 cache write per MTok.
     const expected = (PREFIX_TOKENS + 50_000) * 2.5 + INSTRUCTION_TOKENS * 2 + factsOutputTokens(50_000) * 10
       + (PREFIX_TOKENS + 50_000) * 0.1 + p.usage.inputTokens * 2 + PLAYBOOK_OUTPUT_TOKENS * 10;
@@ -79,7 +79,7 @@ describe("stage 0: corpus", () => {
     // One stage alone: no corpus cache, only the small system prefix is written.
     const only = estimateAnalysis({ corpusTokens: 50_000, runFacts: false, runPlaybook: true, dataTokens: 1_500, model: "claude-sonnet-5-5", lightModel: "claude-haiku-5-5", prices: DEFAULT_PRICES });
     expect(only.stages.map((s) => s.stage)).toEqual(["playbook"]);
-    expect(only.stages[0].usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS, cacheReadTokens: 0, inputTokens: 50_000 + INSTRUCTION_TOKENS + 1_500 });
+    expect(only.stages[0].usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS, cacheReadTokens: 0, inputTokens: 50_000 + PLAYBOOK_INSTRUCTION_TOKENS + 1_500 });
     expect(estimateAnalysis({ corpusTokens: 50_000, runFacts: false, runPlaybook: false, dataTokens: 0, model: "x", lightModel: "y" })).toEqual({ stages: [], tokens: 0, costMicros: 0 });
 
     // Large corpus: light model per chunk, system prefix read after the first call.

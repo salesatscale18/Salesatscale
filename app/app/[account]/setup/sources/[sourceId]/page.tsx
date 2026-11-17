@@ -51,7 +51,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
     { title: "sources.call.group.discovery", kinds: ["field", "discovery_question"] },
     { title: "sources.call.group.objection", kinds: ["objection"] },
     { title: "sources.call.group.pricing", kinds: ["limit"] },
-    { title: "sources.call.group.other", kinds: ["goal", "tone", "never"] },
+    { title: "sources.call.group.other", kinds: ["goal", "tone", "never", "opener", "play_content", "play_card", "catalog_item"] },
   ];
   const editId = one(sp.edit);
   const list = `/app/${account.slug}/setup/sources`;

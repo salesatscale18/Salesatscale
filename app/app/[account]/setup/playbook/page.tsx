@@ -6,7 +6,10 @@ import { Banner } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
 import { t } from "@/lib/i18n";
+import { PLAY_KEYS } from "@/db/schema";
+import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PlaybookForm } from "./form";
+import type { PlayDefault } from "./plays";
 
 /** Setup · Playbook (canvas: Playbook). Always edits the draft version (created from the live one when missing). */
 export default async function PlaybookPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -16,6 +19,10 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
   const [draft, live, progress] = await Promise.all([ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), setupProgress(appDb, account)]);
   const base = `/app/${account.slug}`;
   const lab = `${base}/setup/test-lab`;
+  const plays: PlayDefault[] = PLAY_KEYS.map((key) => {
+    const d = DEFAULT_PLAYS[key];
+    return { key, title: d.title, when: d.when, do: d.do, example: d.example, notThis: d.notThis, sellerContentHint: d.sellerContentHint };
+  });
   return (
     <>
       <Banner kind="test">
@@ -37,7 +44,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <SetupSteps basePath={base} current="playbook" completed={progress} />
         </header>
         {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.saved")}</span></div> : null}
-        <PlaybookForm slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} key={JSON.stringify(draft.playbook)} />
+        <PlaybookForm slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} plays={plays} key={JSON.stringify(draft.playbook)} />
       </main>
     </>
   );

@@ -10,7 +10,7 @@
  * or becomes an approved exception when the seller approves it (limits.ts),
  * and "Never" keeps real prohibitions only.
  */
-import type { Playbook, PlaybookField } from "@/db/schema";
+import type { PlayKey, Playbook, PlaybookField } from "@/db/schema";
 import { fieldKey } from "@/lib/agent/playbook";
 import { normalizeStatement, type SuggestionPayload } from "./validate";
 
@@ -28,6 +28,12 @@ export function mergeSuggestions(p: Playbook, items: MergeItem[]): Playbook {
     fields: p.fields.map((f) => ({ ...f })),
     objections: p.objections.map((o) => ({ ...o })),
     neverDo: [...p.neverDo],
+    ...(p.opener ? { opener: { ...p.opener } } : {}),
+    ...(p.plays ? { plays: Object.fromEntries(Object.entries(p.plays).map(([k, v]) => [k, { ...v }])) } : {}),
+  };
+  const play = (key: PlayKey) => {
+    out.plays ??= {};
+    return (out.plays[key] ??= {});
   };
   const addField = (f: PlaybookField) => {
     const existing = out.fields.find((x) => x.key === f.key || same(x.label, f.label));
@@ -69,6 +75,23 @@ export function mergeSuggestions(p: Playbook, items: MergeItem[]): Playbook {
         break;
       case "never":
         addNever(x.rule);
+        break;
+      // P11: the seller approved these, so they replace what is there (an empty text keeps the current one).
+      case "opener": {
+        const next = { ...out.opener };
+        if (x.leadsAskAbout.trim()) next.leadsAskAbout = x.leadsAskAbout.trim().slice(0, 120);
+        if (x.openingQuestion.trim()) next.openingQuestion = x.openingQuestion.trim().slice(0, 200);
+        if (next.leadsAskAbout || next.openingQuestion) out.opener = next;
+        break;
+      }
+      case "play_content":
+        if (x.content.trim()) play(x.play).content = x.content.trim().slice(0, 600);
+        break;
+      case "play_card":
+        play(x.play).own = { when: x.when, do: [...x.do], example: x.example, notThis: x.notThis };
+        break;
+      case "catalog_item":
+        // Applied to the catalog draft on approval (lib/pipeline/service.ts), not part of the playbook.
         break;
     }
   }

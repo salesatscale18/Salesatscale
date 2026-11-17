@@ -24,7 +24,7 @@ function itemDefaults(i: CatalogItem): ItemDefaults {
     // An old free-text unit opens as a custom unit with that text.
     unit: known ? i.unit : CUSTOM_UNIT,
     unitCustom: known ? (i.unitCustom ?? {}) : { en: { one: i.unit, other: i.unit } },
-    availabilityNote: i.availabilityNote ?? "", active: i.active,
+    availabilityNote: i.availabilityNote ?? "", active: i.active, plainName: i.plainName ?? "", valueLine: i.valueLine ?? "",
   };
 }
 
@@ -51,7 +51,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
   const defaults: ItemDefaults | null = selected
     ? itemDefaults(selected)
     : selectedId === "new"
-      ? { itemId: "", sku: "", name: "", description: "", kind: "product", unit: "item", unitCustom: {}, availabilityNote: "", active: true }
+      ? { itemId: "", sku: "", name: "", description: "", kind: "product", unit: "item", unitCustom: {}, availabilityNote: "", active: true, plainName: "", valueLine: "" }
       : null;
   // The selected item's prices in each price list (what the list's editor shows).
   const prices = selected
@@ -110,7 +110,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                   <tbody>
                     {state.items.map((i) => (
                       <tr key={i.id} className={i.id === selectedId ? "sas-row--selected" : undefined}>
-                        <td><a className="sas-row-link" href={`${base}?item=${i.id}`} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a></td>
+                        <td><a className="sas-row-link" href={`${base}?item=${i.id}`} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a>{i.plainName ? <span className="sas-small" style={{ display: "block" }}>{t("catalog.in_chat", { name: i.plainName })}</span> : null}</td>
                         <td className="sas-num">{i.sku}</td>
                         <td>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · {t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}</td>
                         <td><StatusPill object="catalog_item" state={i.active ? "active" : "inactive"} /></td>

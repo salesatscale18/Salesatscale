@@ -146,6 +146,15 @@ describe("catalog editor without prices", () => {
     await expect(publishAction(form({ slug: accB.slug }))).rejects.toMatchObject({ url: "/app/beta/setup/catalog?publish=no_active_items" });
   });
 
+  it("saves the name the agent uses in chat and the value line, checked on the server (P11)", async () => {
+    const tooLong = await save(accA, { sku: "SNS-200", name: "Wireless fridge sensor", kind: "product", unit: "device", plainName: "x".repeat(61), valueLine: "y".repeat(201) });
+    expect(tooLong).toMatchObject({ status: "error", errors: { plainName: expect.any(String), valueLine: expect.any(String) } });
+    const r = await save(accA, { sku: "SNS-200", name: "Wireless fridge sensor", kind: "product", unit: "device", plainName: " wireless fridge sensor ", valueLine: "An alert the moment a fridge warms up." });
+    expect(r).toMatchObject({ redirect: expect.stringContaining("saved=1") });
+    const item = (await catalogState(db, accA.id)).items.find((i) => i.sku === "SNS-200")!;
+    expect(item).toMatchObject({ plainName: "wireless fridge sensor", valueLine: "An alert the moment a fridge warms up." });
+  });
+
   it("never touches another account's catalog", async () => {
     expect(await db.select().from(catalogItems).where(eq(catalogItems.accountId, accB.id))).toEqual([]);
     expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accB.id)))[0].slug).toBe("beta");
