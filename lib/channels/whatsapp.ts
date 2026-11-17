@@ -327,16 +327,18 @@ export async function receiveInbound(db: Db, params: Record<string, string>, now
  * not live yet are ignored; the lead's open (or person-held) conversation on
  * the channel takes the message, else a new one starts on the live agent.
  * STOP and a person holding the chat are handled by runBuyerTurn.
+ * `allowBeforeGoLive`: only simulated buyers on the simulator channel (tests
+ * that must work while the account is still being set up); never WhatsApp.
  */
 export async function inboundConversation(
-  db: Db, lead: Lead, channel: string,
+  db: Db, lead: Lead, channel: string, opts: { allowBeforeGoLive?: boolean } = {},
 ): Promise<{ ok: true; conv: Conversation } | { ok: false; reason: "opted_out" | "account_not_live" | "no_agent" }> {
   const accountId = lead.accountId;
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   // Before go-live nothing reaches real leads (testers above are the way to try it). A paused account
   // still stores the message; runBuyerTurn then sends nothing automated.
   const [account] = await db.select({ status: sellerAccounts.status }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
-  if (account?.status === "setting_up") return { ok: false, reason: "account_not_live" };
+  if (account?.status === "setting_up" && !opts.allowBeforeGoLive) return { ok: false, reason: "account_not_live" };
 
   let [conv] = await db.select().from(conversations)
     .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, lead.id), eq(conversations.channel, channel), eq(conversations.isTest, false), inArray(conversations.status, ["open", "human"])))
@@ -351,9 +353,11 @@ export async function inboundConversation(
 }
 
 /** Stores one inbound message from a real lead after `inboundConversation`'s checks. `channelMessageId` deduplicates retries. */
-export async function receiveLeadMessage(db: Db, lead: Lead, channel: string, channelMessageId: string, text: string, now: Date): Promise<InboundResult> {
+export async function receiveLeadMessage(
+  db: Db, lead: Lead, channel: string, channelMessageId: string, text: string, now: Date, opts: { allowBeforeGoLive?: boolean } = {},
+): Promise<InboundResult> {
   const accountId = lead.accountId;
-  const gate = await inboundConversation(db, lead, channel);
+  const gate = await inboundConversation(db, lead, channel, opts);
   if (!gate.ok) return { kind: "ignored", reason: gate.reason };
   const conv = gate.conv;
   const result = await storeBuyerText(db, conv, channelMessageId, text, now, { accountId, conversationId: conv.id, leadId: lead.id });

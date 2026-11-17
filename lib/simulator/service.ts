@@ -185,7 +185,26 @@ export async function resolveChatToken(db: Db, token: string): Promise<ChatConte
 // Start conversation (the agent's opening message)
 // ---------------------------------------------------------------------------
 
-export type SimOpenerRefusal = Exclude<OpenerRefusal, "not_configured" | "no_connection" | "simulated_lead">;
+export type SimOpenerRefusal = Exclude<OpenerRefusal, "not_configured" | "no_connection" | "simulated_lead"> | "simulated_disabled";
+
+/**
+ * Simulated buyers (buyer ID set) are tests: they work before go-live (lead
+ * decision, 17 Nov), but "Allow simulated buyers" off and a paused account
+ * block them. A published (live) agent version is still required, checked by
+ * the callers. Null for real leads, which keep the WhatsApp gates unchanged.
+ */
+export function simulatedBuyerGate(
+  lead: { buyerRef?: string | null; phone: string }, account: { status: string; allowSimulatedBuyers: boolean },
+): "simulated_disabled" | "account_paused" | null {
+  if (!isSimulatedLead(lead)) return null;
+  if (!account.allowSimulatedBuyers) return "simulated_disabled";
+  if (account.status === "paused") return "account_paused";
+  return null;
+}
+
+/** The account status the gates see: a simulated buyer counts a setting-up account as live (no go-live needed for tests). */
+const gateStatus = (lead: { buyerRef?: string | null; phone: string }, status: string) =>
+  isSimulatedLead(lead) && status === "setting_up" ? "live" : status;
 
 /**
  * Whether the agent may open a simulated conversation, and with what. With
@@ -207,11 +226,12 @@ export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: st
   ]);
   const rules = account.simulateWhatsappRules;
   const template = await approvedTemplate(db, accountId, "opener", lead.language, account.languages);
-  let refusal = openerRefusal({
+  const blocked = simulatedBuyerGate(lead, account);
+  let refusal: SimOpenerRefusal | OpenerRefusal | null = blocked ?? openerRefusal({
     twilioConfigured: true,
     lead: { isTest: lead.isTest, status: lead.status },
     hasConsent: !!consent,
-    account: { status: account.status, contactHours: account.contactHours, timezone: account.timezone },
+    account: { status: gateStatus(lead, account.status), contactHours: account.contactHours, timezone: account.timezone },
     hasConnection: true,
     hasApprovedOpener: rules ? !!template : true,
     hasLiveAgent: !!live,
@@ -268,7 +288,7 @@ export async function startSimulatorConversation(db: Db, actor: Actor, accountId
 // Buyer side: send and read
 // ---------------------------------------------------------------------------
 
-export type SimInboundResult = InboundResult | { kind: "ignored"; reason: "empty" };
+export type SimInboundResult = InboundResult | { kind: "ignored"; reason: "empty" | "simulated_disabled" | "account_paused" };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -285,8 +305,20 @@ export async function receiveSimulatorInbound(db: Db, ctx: Pick<ChatContext, "le
   // Re-read the lead: it may have opted out since the page loaded.
   const lead = await realLead(db, ctx.lead.accountId, ctx.lead.id);
   if (!lead) return { kind: "ignored", reason: "unknown_sender" };
+  const simulated = isSimulatedLead(lead);
+  if (simulated && lead.status !== "opted_out") {
+    const [[account], [live]] = await Promise.all([
+      db.select({ status: sellerAccounts.status, allowSimulatedBuyers: sellerAccounts.allowSimulatedBuyers }).from(sellerAccounts).where(eq(sellerAccounts.id, lead.accountId)),
+      db.select({ id: agentVersions.id }).from(agentVersions).where(and(eq(agentVersions.accountId, lead.accountId), eq(agentVersions.status, "live"))),
+    ]);
+    const blocked = account ? simulatedBuyerGate(lead, account) : null;
+    if (blocked) return { kind: "ignored", reason: blocked };
+    // Before go-live too, a simulated chat runs only on a published agent version.
+    if (!live) return { kind: "ignored", reason: "no_agent" };
+  }
   if (lead.status !== "opted_out" && (await spendCapped(db, lead.accountId, now))) return { kind: "ignored", reason: "spend_cap" };
-  return receiveLeadMessage(db, lead, SIMULATOR_CHANNEL, `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now);
+  // Simulated buyers skip the not-live gate (tests during setup); real leads keep it.
+  return receiveLeadMessage(db, lead, SIMULATOR_CHANNEL, `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now, { allowBeforeGoLive: simulated });
 }
 
 /** An order-form link card: the client lays it out per language, with amounts and IDs isolated left-to-right. */

@@ -2031,5 +2031,11 @@
   "overview.sim_banner": "{leads} simulated leads, {quotes} quotes and {orders} orders are counted below.",
   "overview.incl_simulated": "incl. {count} simulated",
   "inbox.open_buyer_chat": "Open buyer chat",
-  "lead.event.conversation.started_sim": "Started in the simulated chat"
+  "lead.event.conversation.started_sim": "Started in the simulated chat",
+  "buyer.sim.refused.account_paused": "This chat is paused by the seller. Your message was not sent.",
+  "buyer.sim.refused.simulated_disabled": "Simulated chats are turned off. Your message was not sent.",
+  "sim.start.refused.simulated_disabled": "Simulated buyers are turned off in Settings › Simulation.",
+  "sim.start.refused.no_agent": "Publish the agent first: simulated chats run on the published agent version, also before go-live.",
+  "sim.start.fix_publish": "Open the playbook",
+  "sim.start.fix_settings": "Open Settings › Simulation"
 }

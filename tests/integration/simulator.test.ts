@@ -207,9 +207,56 @@ describe("Buyer simulator", () => {
     expect((await simulatorOpenerFacts(db, acc, lead.id))?.refusal).toBe("opted_out");
   });
 
-  it("ignores messages before go-live, without a live agent and at the spend cap; a person holding the chat gets no agent reply", async () => {
-    const setup = await simBuyer(notLive, "Early Buyer");
-    expect(await receiveSimulatorInbound(db, await ctxFor(setup.token), "hi", randomUUID())).toEqual({ kind: "ignored", reason: "account_not_live" });
+  it("simulated buyers work before go-live on a published agent; no version, paused or switched off blocks them; real leads keep the not-live gate", async () => {
+    expect((await accountRow(notLive)).status).toBe("setting_up");
+    // Not live + published version: the message is taken and Start conversation works.
+    const early = await simBuyer(notLive, "Early Buyer");
+    const r = await receiveSimulatorInbound(db, await ctxFor(early.token), "hi", randomUUID());
+    expect(r.kind).toBe("stored");
+    if (r.kind !== "stored") throw new Error();
+    const out = await replyToBuyer(db, new ScriptedLlm([step(say("Hello!"))]), null, r);
+    expect(out).toMatchObject({ turn: { status: "replied" }, delivery: { delivered: true } });
+    const starter = await simBuyer(notLive, "Early Starter");
+    expect((await simulatorOpenerFacts(db, notLive, starter.lead.id))?.refusal).toBeNull();
+    expect(await startSimulatorConversation(db, actor(), notLive, starter.lead.id)).toMatchObject({ ok: true });
+
+    // Not live + no published version: no_agent, for messages and for Start.
+    const p = parseCreateAccount({ tradeName: "Draft Only", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "draft@x.test" });
+    if (!p.ok) throw new Error();
+    const draftOnly = (await createAccount(db, actor(), p.value)).account.id;
+    await ensureDraftVersion(db, draftOnly);
+    const unpublished = await simBuyer(draftOnly, "No Version");
+    expect(await receiveSimulatorInbound(db, await ctxFor(unpublished.token), "hi", randomUUID())).toEqual({ kind: "ignored", reason: "no_agent" });
+    expect(await startSimulatorConversation(db, actor(), draftOnly, unpublished.lead.id)).toEqual({ ok: false, reason: "no_agent" });
+
+    // Paused blocks everything (paused is not "not live yet").
+    await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, notLive));
+    const pausedBuyer = await simBuyer(notLive, "Paused Buyer");
+    expect(await receiveSimulatorInbound(db, await ctxFor(early.token), "still there?", randomUUID())).toEqual({ kind: "ignored", reason: "account_paused" });
+    expect(await startSimulatorConversation(db, actor(), notLive, pausedBuyer.lead.id)).toEqual({ ok: false, reason: "account_paused" });
+    await db.update(sellerAccounts).set({ status: "setting_up" }).where(eq(sellerAccounts.id, notLive));
+
+    // "Allow simulated buyers" off blocks everything.
+    await setSimulatorSettings(db, actor(), notLive, { allowSimulatedBuyers: false });
+    expect(await receiveSimulatorInbound(db, await ctxFor(early.token), "hello?", randomUUID())).toEqual({ kind: "ignored", reason: "simulated_disabled" });
+    expect(await startSimulatorConversation(db, actor(), notLive, pausedBuyer.lead.id)).toEqual({ ok: false, reason: "simulated_disabled" });
+    await setSimulatorSettings(db, actor(), notLive, { allowSimulatedBuyers: true });
+
+    // Real leads keep the not-live gate: on WhatsApp, and when rehearsed on the simulator channel.
+    await addConnection(db, actor(), { id: notLive, market: "IL" }, { senderNumber: "+14155230000", displayName: "Setup", messagingServiceSid: "", marketId: null });
+    const real = await upsertLead(db, notLive, actor(), {
+      fullName: "Real Early", company: null, email: null, phone: "+972501118888", language: "en", sourceLabel: null, sourceRef: null,
+      consent: { wording: "ok", source: "Form", capturedAt: new Date(), ip: null, pageUrl: null },
+    }, "manual");
+    if (!real.ok) throw new Error();
+    expect(await receiveInbound(db, { From: "whatsapp:+972501118888", To: "whatsapp:+14155230000", MessageSid: `SM${"2".repeat(32)}`, Body: "hi" }))
+      .toEqual({ kind: "ignored", reason: "account_not_live" });
+    const realLink = await ensureChatLink(db, actor(), notLive, real.lead.id);
+    expect(await receiveSimulatorInbound(db, await ctxFor(realLink!.token), "hi", randomUUID())).toEqual({ kind: "ignored", reason: "account_not_live" });
+    expect((await simulatorOpenerFacts(db, notLive, real.lead.id))?.refusal).toBe("account_not_live");
+  });
+
+  it("ignores messages without a live agent and at the spend cap; a person holding the chat gets no agent reply", async () => {
 
     const noAgent = await simBuyer(other, "No Agent");
     await db.update(agentVersions).set({ status: "retired" }).where(and(eq(agentVersions.accountId, other), eq(agentVersions.status, "live")));

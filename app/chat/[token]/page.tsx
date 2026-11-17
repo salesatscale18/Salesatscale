@@ -50,6 +50,8 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
       no_agent: tr("buyer.sim.refused.no_agent"),
       spend_cap: tr("buyer.sim.refused.spend_cap"),
       rate_limited: tr("buyer.sim.refused.rate_limited"),
+      account_paused: tr("buyer.sim.refused.account_paused"),
+      simulated_disabled: tr("buyer.sim.refused.simulated_disabled"),
     },
   };
   const initials = ctx.account.tradeName.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();

@@ -72,6 +72,8 @@ export function SimulatorPanel({
           <Icon name="pause" />{maybe(`sim.start.refused.${why}`) ?? maybe(`wa.start.refused.${why}`) ?? why}
           {why === "no_template" ? <a href={`/app/${slug}/settings?section=whatsapp`}>{t("wa.start.fix")}</a> : null}
           {why === "account_not_live" ? <a href={`/app/${slug}/setup/go-live`}>{t("wa.start.fix_golive")}</a> : null}
+          {why === "no_agent" ? <a href={`/app/${slug}/setup/playbook`}>{t("sim.start.fix_publish")}</a> : null}
+          {why === "simulated_disabled" ? <a href={`/app/${slug}/settings?section=simulation`}>{t("sim.start.fix_settings")}</a> : null}
           {why === "outside_contact_hours" ? <a href={`/app/${slug}/settings?section=hours`}>{t("wa.start.fix_hours")}</a> : null}
         </p>
       ) : null}

@@ -136,5 +136,7 @@
   "buyer.sim.closed_by": "השיחה נסגרה על ידי {seller}",
   "buyer.sim.form_label": "טופס הזמנה",
   "buyer.sim.today_word": "היום",
-  "buyer.sim.per_month": "/חודש"
+  "buyer.sim.per_month": "/חודש",
+  "buyer.sim.refused.account_paused": "המוכר השהה את הצ׳אט. ההודעה לא נשלחה.",
+  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה לא נשלחה."
 }
