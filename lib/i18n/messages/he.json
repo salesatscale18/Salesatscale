@@ -138,5 +138,9 @@
   "buyer.sim.today_word": "היום",
   "buyer.sim.per_month": "/חודש",
   "buyer.sim.refused.account_paused": "הצ׳אט הושהה על ידי המוכר. ההודעה שלך לא נשלחה.",
-  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה שלך לא נשלחה."
+  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה שלך לא נשלחה.",
+  "buyer.opener.intro": "היי {name}, כאן {agent}, העוזר/ת האוטומטי/ת של {company}.",
+  "buyer.opener.asked_about": "פנית אלינו בנושא {interest}.",
+  "buyer.opener.asked": "ביקשת שניצור קשר.",
+  "buyer.opener.question": "איך אפשר לעזור?"
 }

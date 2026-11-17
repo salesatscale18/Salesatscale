@@ -143,7 +143,7 @@ const LEADS = [
   { fullName: "Maya Demo", company: "Bakery Demo Ramat Gan", email: "maya@bakery-demo.example", language: "en" },
 ];
 
-function playbookInput(transcriptId: string, at: Date, actorId: string) {
+export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
   const parsed = parsePlaybookRows({
     agentName: "Maya",
     goal: "Help restaurants and cafés that asked to hear from Polar Demo protect their fridges: find out how they check temperatures today and how many sites they have, quote sensors, gateways and installation from the price list, and send the order form when they are ready.",
@@ -183,6 +183,8 @@ function playbookInput(transcriptId: string, at: Date, actorId: string) {
   if (!parsed.ok) throw new Error(`Demo playbook is invalid: ${JSON.stringify(parsed.errors)}`);
   return {
     ...parsed.value,
+    // Opener inputs (P11). One language per input: Hebrew leads get the general opener wording.
+    opener: { leadsAskAbout: "monitoring your fridge temperatures", openingQuestion: "How do you check them today?" },
     exceptions: [{
       id: crypto.randomUUID(),
       text: "Installation is free from 3 sites",
@@ -335,7 +337,7 @@ async function fill(db: Db, user: DemoActor, created: { id: string; tradeName: s
   ]);
 
   // 7. Playbook → draft, a test chat on it (no message: free), then publish as the live version.
-  await saveDraftPlaybook(db, accountId, playbookInput(src.transcriptId, now, user.id), "Demo seed");
+  await saveDraftPlaybook(db, accountId, demoPlaybook(src.transcriptId, now, user.id), "Demo seed");
   const test = await startTestConversation(db, accountId, user.id, { language: "en" });
   if (!test) throw new Error("Demo seed: test conversation not started");
   const agentVersion = await publishDraftVersion(db, actor, accountId, now);

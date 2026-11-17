@@ -24,7 +24,10 @@ import { createOrderForm } from "@/lib/orders/service";
 import type { ToolDef } from "./llm";
 import { missingFields } from "./playbook";
 import { OPT_OUT_REPLY } from "./safety";
+import { isReservedFieldKey } from "./core/facts";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
+import { deriveStage } from "./core/stage";
+import { loadStageFacts } from "./core/stage-facts";
 
 const lineSchema = {
   type: "array",
@@ -62,7 +65,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "update_deal_state",
-    description: "Record what you learned about the deal. Keys must be deal-state field keys from your instructions. provenance: buyer = the buyer said it; inferred = you concluded it.",
+    description: "Record what you learned about the deal, and the two facts that move the conversation forward. Keys must be deal-state field keys from your instructions. provenance: buyer = the buyer said it; inferred = you concluded it. The result tells you the stage you are in now.",
     strict: true,
     input_schema: {
       type: "object",
@@ -83,8 +86,16 @@ export const TOOL_DEFS: ToolDef[] = [
           required: ["text", "handled"],
           additionalProperties: false,
         },
+        recommendation_confirmed: {
+          type: ["boolean", "null"],
+          description: "true when the buyer said your recommended set sounds right, or asked you to send the quote or the order form. false when the buyer said it does not fit. null when nothing changed.",
+        },
+        price_asked: {
+          type: ["boolean", "null"],
+          description: "true when the buyer asked for the price before confirming a recommendation. null otherwise.",
+        },
       },
-      required: ["updates", "next_step", "objection"],
+      required: ["updates", "next_step", "objection", "recommendation_confirmed", "price_asked"],
       additionalProperties: false,
     },
   },
@@ -161,6 +172,8 @@ export type ToolContext = {
   language?: string;
   /** Per-turn memo shared by every call of one turn, so the same rows are not reloaded on each call. */
   memo?: TurnMemo;
+  /** Agent messages already in the conversation, for the stage returned by update_deal_state. */
+  agentMessages?: number;
 };
 
 /** Data read once per turn. Create one per turn (never share across turns). */
@@ -330,16 +343,25 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   if (name === "update_deal_state") {
     const updates = Array.isArray(args.updates) ? (args.updates as { key: string; value: string; provenance: "buyer" | "inferred" }[]) : [];
     const objection = args.objection && typeof args.objection === "object" ? (args.objection as { text: string; handled: boolean }) : null;
+    // The two conversation facts (P11) are explicit inputs, stored under reserved keys as said by the buyer.
+    const facts = {
+      ...(typeof args.recommendation_confirmed === "boolean" ? { recommendationConfirmed: args.recommendation_confirmed } : {}),
+      ...(typeof args.price_asked === "boolean" ? { priceAsked: args.price_asked } : {}),
+    };
+    const factsSet = Object.keys(facts).length > 0;
     const r = await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, updates, {
       nextStep: typeof args.next_step === "string" ? args.next_step : undefined,
       objection,
+      facts,
     });
-    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length) {
-      return refuse("Unknown deal-state fields", { unknown: r.unknown, valid_keys: ctx.playbook.fields.map((f) => f.key) });
+    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length && !factsSet) {
+      return refuse("Unknown deal-state fields", { unknown: r.unknown, valid_keys: ctx.playbook.fields.filter((f) => !isReservedFieldKey(f.key)).map((f) => f.key) });
     }
-    // The deal-state context in the system prompt is fixed for the turn; what is still needed now comes back here.
-    const stillQuote = missingFields(ctx.playbook, r.fields, "before_quote").map((f) => f.label);
-    const stillForm = missingFields(ctx.playbook, r.fields, "before_order_form").filter((f) => f.stage === "before_order_form").map((f) => f.label);
+    // The stage in the system prompt is fixed for the turn; the stage as it is now comes back here.
+    const stage = deriveStage({
+      ...(await loadStageFacts(ctx.db, ctx.accountId, ctx.leadId)),
+      playbook: ctx.playbook, fields: r.fields, objections: r.objections, agentMessages: ctx.agentMessages ?? 1,
+    });
     return {
       outcome: "ok",
       result: {
@@ -347,8 +369,9 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         ...(r.placeholder.length
           ? { rejected_placeholder: r.placeholder, message: "Not saved: these need a real answer from the buyer, not a placeholder. Ask for them." }
           : {}),
-        still_needed_before_quote: stillQuote,
-        still_needed_before_order_form: stillForm,
+        ...(factsSet ? { recorded: Object.keys(facts).map((k) => (k === "recommendationConfirmed" ? "recommendation_confirmed" : "price_asked")) } : {}),
+        still_needed_before_quote: stage.missingForQuote,
+        stage: stage.instruction,
       },
     };
   }

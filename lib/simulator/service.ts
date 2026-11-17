@@ -30,6 +30,7 @@ import { listMarkets } from "@/lib/markets/service";
 import { loadForm } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
 import { isLocale, t, type Locale } from "@/lib/i18n";
+import { openerText } from "@/lib/agent/core/opener";
 import { agentTyping, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
 import { chatTokenFor, hashToken, linkIdFromChatToken } from "./token";
 
@@ -248,8 +249,9 @@ export type SimStartResult = { ok: true; conversationId: string; messageId: stri
 /**
  * Start conversation: the agent sends its opening message on the simulator
  * channel. The text is the approved opening template when there is one for the
- * lead's language (required with WhatsApp rules on), else a fixed opener from
- * the playbook's agent name. No model call.
+ * lead's language (required with WhatsApp rules on), else the fixed opener
+ * (lib/agent/core/opener.ts): the agent's name, what leads ask about and the
+ * seller's opening question, from the playbook. No model call.
  */
 export async function startSimulatorConversation(db: Db, actor: Actor, accountId: string, leadId: string, now = new Date()): Promise<SimStartResult> {
   const facts = await simulatorOpenerFacts(db, accountId, leadId, now);
@@ -261,7 +263,7 @@ export async function startSimulatorConversation(db: Db, actor: Actor, accountId
   const vars = templateVariables(lead, account);
   const body = template
     ? renderTemplate(template.body, vars)
-    : t("buyer.sim.opener", { name: vars["1"], agent: live.playbook.agentName || account.tradeName, company: account.tradeName }, lang);
+    : openerText({ name: vars["1"], agent: live.playbook.agentName || account.tradeName, company: account.tradeName, language: lang, opener: live.playbook.opener });
   const conversationId = randomUUID();
   const messageId = randomUUID();
   await atomic(db, (q) => [

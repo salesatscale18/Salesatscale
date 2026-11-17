@@ -156,7 +156,7 @@ describe("prompt", () => {
   it("lists what is known and missing", () => {
     const ctx = turnContext(pb, { fields: { sites: { value: "2", provenance: "buyer", updatedAt: now } }, objections: [{ text: "price", handled: true }], nextStep: "ask business type" });
     expect(ctx).toContain("- Number of sites: 2 (buyer)");
-    expect(ctx).toContain("Still needed before a quote: Business type.");
+    expect(ctx).toContain("Still missing for a quote: Business type.");
     expect(ctx).toContain("price (handled)");
   });
 });

@@ -188,7 +188,8 @@ export function missingFields(playbook: Playbook, fields: Record<string, DealFie
 /** Derived stage for reporting (mvp-plan 3.1): not a gate the agent passes through. */
 export function derivedStage(playbook: Playbook, fields: Record<string, DealFieldValue>, quoted: boolean): "new" | "qualified" | "quoted" {
   if (quoted) return "quoted";
-  const anyKnown = Object.values(fields).some((f) => f.value.trim());
+  // Reserved keys (leading underscore: conversation facts, lib/agent/core/facts.ts) are not learned fields.
+  const anyKnown = Object.entries(fields).some(([key, f]) => !key.startsWith("_") && f.value.trim());
   if (anyKnown && missingFields(playbook, fields, "before_quote").length === 0) return "qualified";
   return "new";
 }

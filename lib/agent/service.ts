@@ -14,6 +14,7 @@ import {
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { modelFor } from "@/lib/ai/models";
 import { defaultPlaybook } from "./playbook";
+import { isReservedFieldKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "./core/facts";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
 
 /** The agent model for new versions: AGENT_MODEL, else the role default (lib/ai/models.ts). */
@@ -143,7 +144,12 @@ const PLACEHOLDERS = new Set(["n/a", "na", "n.a", "none", "unknown", "tbd", "×œ×
  */
 export async function applyAgentUpdates(
   db: Db, accountId: string, leadId: string, playbook: Playbook, updates: FieldUpdate[],
-  extra: { nextStep?: string | null; objection?: { text: string; handled: boolean } | null } = {}, now = new Date(),
+  extra: {
+    nextStep?: string | null;
+    objection?: { text: string; handled: boolean } | null;
+    /** The conversation facts (P11), stored under reserved keys with provenance "buyer". */
+    facts?: { recommendationConfirmed?: boolean; priceAsked?: boolean };
+  } = {}, now = new Date(),
 ) {
   const state = await ensureDealState(db, accountId, leadId);
   const stageOf = new Map(playbook.fields.map((f) => [f.key, f.stage]));
@@ -153,12 +159,16 @@ export async function applyAgentUpdates(
   const verified: string[] = [];
   const placeholder: string[] = [];
   for (const u of updates) {
-    const stage = stageOf.get(u.key);
+    // Reserved keys are written only through `extra.facts`, never as a field update.
+    const stage = isReservedFieldKey(String(u.key)) ? undefined : stageOf.get(u.key);
     if (!stage) { unknown.push(u.key); continue; }
     if (fields[u.key]?.provenance === "verified") { verified.push(u.key); continue; }
     if ((stage === "before_quote" || stage === "before_order_form") && isPlaceholderValue(String(u.value ?? ""))) { placeholder.push(u.key); continue; }
     fields[u.key] = { value: u.value.slice(0, 300), provenance: u.provenance, updatedAt: now.toISOString() };
     applied.push(u.key);
+  }
+  for (const [key, v] of [[RECOMMENDATION_CONFIRMED_KEY, extra.facts?.recommendationConfirmed], [PRICE_ASKED_KEY, extra.facts?.priceAsked]] as const) {
+    if (typeof v === "boolean") fields[key] = { value: v ? "yes" : "no", provenance: "buyer", updatedAt: now.toISOString() };
   }
   const objections = extra.objection
     ? [...state.objections.filter((o) => o.text !== extra.objection!.text), { text: extra.objection.text.slice(0, 200), handled: extra.objection.handled }]
@@ -167,11 +177,13 @@ export async function applyAgentUpdates(
     .update(dealStates)
     .set({ fields, objections, nextStep: extra.nextStep === undefined ? state.nextStep : extra.nextStep?.slice(0, 200) ?? null })
     .where(eq(dealStates.id, state.id));
-  return { applied, unknown, verified, placeholder, fields };
+  return { applied, unknown, verified, placeholder, fields, objections };
 }
 
 /** A person edits a field: it becomes Verified, and the change is logged (canvas: Main). */
 export async function verifyField(db: Db, actor: Actor, accountId: string, leadId: string, key: string, value: string, now = new Date()) {
+  // Reserved keys hold conversation facts, not fields a person edits.
+  if (isReservedFieldKey(key)) return false;
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return false;
   const state = await ensureDealState(db, accountId, leadId);

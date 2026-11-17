@@ -17,6 +17,8 @@ import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } f
 import { readDealState } from "./service";
 import { runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
 import { linksOnOwnLine } from "./links";
+import { loadStageFacts } from "./core/stage-facts";
+import { publishedCatalog } from "@/lib/catalog/service";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -75,10 +77,20 @@ export async function runBuyerTurn(
   }
 
   // History: text only. Deal state in the system prompt carries what was learned.
-  const recent = (
-    await db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
-      .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY)
-  ).reverse();
+  // The stage facts (quote, order form, payment) and the published catalog are read alongside;
+  // the catalog is shared with this turn's tools through the memo.
+  const catalogRead = publishedCatalog(db, args.accountId);
+  const [recentDesc, stageFacts, catalog] = await Promise.all([
+    db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
+      .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
+    loadStageFacts(db, args.accountId, conv.leadId),
+    catalogRead.catch(() => null),
+  ]);
+  const recent = recentDesc.reverse();
+  const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
+  // The model's history must start with the buyer, so a fixed opener (the conversation's first
+  // message, sent as the agent) is dropped below: the per-turn context tells the agent what it said.
+  const opener = recent.length < HISTORY && recent[0]?.m.actor === "agent" ? recent[0].m.body : null;
   const history: Anthropic.Beta.BetaMessageParam[] = [];
   for (const { m, u } of recent) {
     if (m.actor === "buyer") history.push({ role: "user", content: m.body });
@@ -92,12 +104,12 @@ export async function runBuyerTurn(
   // the model through the update_deal_state tool result.
   const system: [string, string] = [
     stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }),
-    `${turnContext(version.playbook, deal)}\nConversation language: ${lang}.`,
+    `${turnContext(version.playbook, deal, { stage: stageFacts, agentMessages, opener, catalog: catalog?.items.filter((i) => i.active) })}\nConversation language: ${lang}.`,
   ];
-  const memo: TurnMemo = { account };
+  const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({
     db, accountId: args.accountId, conversationId: conv.id, leadId: lead.id, playbook: version.playbook, currency: account.currency,
-    callId, language: lang, memo,
+    callId, language: lang, memo, agentMessages,
   });
   const pending: { name: string; input: unknown; r: ToolResult }[] = [];
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, model: version.model };

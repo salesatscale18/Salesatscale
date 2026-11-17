@@ -85,7 +85,7 @@ describe("agent turns (scripted model)", () => {
     // system[1] (deal-state context) is computed once per turn: identical in every round.
     expect(llm.requests).toHaveLength(3);
     expect(new Set(llm.requests.map((q) => q.system[1])).size).toBe(1);
-    expect(llm.requests[0].system[1]).toContain("Still needed before a quote: Business type, Number of sites.");
+    expect(llm.requests[0].system[1]).toContain("Still missing for a quote: Business type, Number of sites.");
     // One cache breakpoint on the last history block of every request, none earlier.
     for (const q of llm.requests) {
       const blocks = q.messages.flatMap((m) => (Array.isArray(m.content) ? m.content : [])) as { cache_control?: unknown }[];
