@@ -297,7 +297,14 @@ test("B2b Price list", async ({ browser }) => {
     if (p.oneTime !== undefined) {
       await ot.check();
       await page.locator("#pe-ot").fill(p.oneTime);
-      if (p.tiers) await page.locator("#pe-ott").fill(p.tiers);
+      if (p.tiers) {
+        // Structured tier editor (price-list item panel): Add tier, then quantity and unit price.
+        const [from, price] = p.tiers.split(":").map((x) => x.trim());
+        const block = page.locator("#ot-block");
+        await block.getByRole("button", { name: "Add tier" }).click();
+        await block.locator('input[data-tier="qty"]').last().fill(from);
+        await block.locator('input[data-tier="price"]').last().fill(price);
+      }
     } else await ot.uncheck();
     const rc = page.locator('input[name="recurringCharged"]');
     if (p.monthly) {
@@ -573,7 +580,7 @@ test("M1 Home market", async ({ browser }) => {
   await expect(d.locator("[data-check]").first()).toBeVisible();
   // Every setting reads "Same as account default".
   await expect(d.locator('[data-source="market"]')).toHaveCount(0);
-  await expect(d.locator('[data-setting] [data-source="account"]')).toHaveCount(6);
+  await expect(d.locator('[data-setting] [data-source="account"]')).toHaveCount(7); // + Delivery › Lead time
   await noHorizontalScroll(page);
   await shot(page, "M1");
   await phoneCheck(browser, page.url());
@@ -823,12 +830,12 @@ test("D1 Quote with a fit fix", async ({ browser }) => {
   const inst = page.locator('tr[data-auto-added="true"]', { hasText: "INST-1" });
   await expect(inst).toContainText("Added automatically");
   await expect(inst).toContainText("2");
-  await expect(page.getByText("One-time subtotal")).toBeVisible();
+  await expect(page.getByText("One-time items").first()).toBeVisible();
   await expect(page.getByText("Due on signing")).toBeVisible();
   await expect(page.locator(".sas-kv dt", { hasText: /^Monthly( total)?$/ })).toBeVisible(); // checklist says "Monthly total"; the editor says "Monthly"
   await noHorizontalScroll(page);
   await shot(page, "D1");
-  await page.getByRole("button", { name: "Create quote" }).click();
+  await page.getByRole("button", { name: "Save as draft" }).click();
   await page.waitForURL(/\/orders\?quote=/);
   S.quotes.en = new URL(page.url()).searchParams.get("quote")!;
   await phoneCheck(browser, `${S.leads.en}/quote`);
@@ -867,7 +874,7 @@ test("D2 Discount above the limit", async () => {
   await page.locator("#q-sites").fill("1");
   await page.locator("#q-disc").fill("15");
   await expect(page.locator(".sas-alert--warning", { hasText: "Needs approval" })).toBeVisible();
-  const submit = page.getByRole("button", { name: "Create and approve" });
+  const submit = page.getByRole("button", { name: "Approve and send" });
   await expect(submit).toBeEnabled();
   await submit.click();
   await page.waitForURL(/\/orders\?quote=/);
@@ -1030,7 +1037,7 @@ test("E5 Price changes after sending", async ({ browser }) => {
   await page.locator('[id="q-SNS-200"]').fill("1");
   await page.locator("#qe-add").selectOption("GW-10");
   await page.locator("#q-sites").fill("1");
-  await page.getByRole("button", { name: "Create quote" }).click();
+  await page.getByRole("button", { name: "Save as draft" }).click();
   await page.waitForURL(/\/orders\?quote=/);
   S.links.dana = await sendForm();
   await page.goto(`${S.priceList}?sku=GW-10`);
