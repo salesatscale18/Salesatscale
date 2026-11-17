@@ -2,7 +2,8 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
 import { isLocale, translator, type Locale } from "@/lib/i18n";
-import { buyerChat, chatAgentName, resolveChatToken } from "@/lib/simulator/service";
+import { buyerChat, chatNames, resolveChatToken } from "@/lib/simulator/service";
+import { tg } from "@/lib/agent/core/names";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
 import { ChatClient, type ChatStrings } from "./chat-client";
 import "./chat.css";
@@ -20,13 +21,14 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
   if (!ctx) notFound();
   const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
   const tr = translator(lang);
-  const [chat, agentName] = await Promise.all([buyerChat(appDb, ctx), chatAgentName(appDb, ctx.account.id, ctx.account.tradeName)]);
+  // The agent's and the seller's names in the lead's language; the Hebrew texts about the agent follow its gender (decision 2).
+  const [chat, names] = await Promise.all([buyerChat(appDb, ctx), chatNames(appDb, ctx.account, lang)]);
   const strings: ChatStrings = {
     bannerLead: tr("buyer.sim.banner_lead"),
     banner: tr("buyer.sim.banner"),
-    automated: tr("buyer.sim.automated", { agent: agentName }),
-    typing: tr("buyer.sim.typing"),
-    typingLabel: tr("buyer.sim.typing_label", { agent: agentName }),
+    automated: tg("buyer.sim.automated", names.gender, { agent: names.agent }, lang),
+    typing: tg("buyer.sim.typing", names.gender, undefined, lang),
+    typingLabel: tg("buyer.sim.typing_label", names.gender, { agent: names.agent }, lang),
     // Kept with its {seller} placeholder: the client isolates the name so it never mixes with the time in Hebrew.
     closedBy: tr("buyer.sim.closed_by"),
     formLabel: tr("buyer.sim.form_label"),
@@ -57,12 +59,12 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
       simulated_disabled: tr("buyer.sim.refused.simulated_disabled"),
     },
   };
-  const initials = ctx.account.tradeName.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  const initials = names.seller.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
     // The page frame never flips; the chat parts take the lead's direction, and in Hebrew the whole chat mirrors (board SimMobileHe).
     <div className="c-root" lang={lang} dir="ltr" style={{ ...brandVars(ctx.brandColor), ["--bubble" as string]: buyerBubbleColor(ctx.brandColor) }}>
       <ChatClient
-        token={token} lang={lang} seller={ctx.account.tradeName} initials={initials} strings={strings}
+        token={token} lang={lang} seller={names.seller} initials={initials} strings={strings}
         initial={chat}
       />
     </div>

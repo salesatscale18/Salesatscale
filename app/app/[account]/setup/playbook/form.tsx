@@ -6,6 +6,7 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import { readOpener } from "@/lib/agent/core/opener";
+import { AGENT_GENDERS, agentGenderOf } from "@/lib/agent/core/names";
 import { savePlaybookAction, type PlaybookFormState } from "./actions";
 import { OpeningSection, type OpeningValues } from "./opening";
 
@@ -18,7 +19,13 @@ const STAGE_LABEL: Record<PlaybookField["stage"], MessageKey> = {
   before_order_form: "playbook.stage.before_order_form",
   optional: "playbook.stage.optional",
 };
-/** The main list asks before the recommendation or "helpful"; order-form fields have their own row. */
+/** One line of help per question role (decision 1). */
+const STAGE_HELP: Record<PlaybookField["stage"], MessageKey> = {
+  before_quote: "playbook.stage.before_quote_help",
+  before_order_form: "playbook.stage.before_order_form_help",
+  optional: "playbook.stage.optional_help",
+};
+/** The main list holds the questions asked in chat (needed for the quote, helps the pitch); order-form fields have their own row. */
 const MAIN_STAGES: PlaybookField["stage"][] = ["before_quote", "optional"];
 /** Recommended most questions before the recommendation (the agent asks 3 at most in stage Understand). */
 const RECOMMENDED_BEFORE = 3;
@@ -39,7 +46,10 @@ function moveIn<T>(rows: T[], i: number, by: -1 | 1, same: (r: T) => boolean): T
 export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
   const sent = state.status === "error" ? state.values : null;
   return {
-    goal: sent?.goal ?? p.goal, agentName: sent?.agentName ?? p.agentName, tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
+    goal: sent?.goal ?? p.goal, agentName: sent?.agentName ?? p.agentName,
+    agentNameHe: sent ? sent.agentNameLocal?.he ?? "" : p.agentNameLocal?.he ?? "",
+    agentGender: sent?.agentGender ?? p.agentGender ?? "neutral",
+    tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
     maxDiscount: sent?.maxDiscount ?? String(p.maxDiscountBp / 100), offerMeetingWhen: sent?.offerMeetingWhen ?? p.offerMeetingWhen, handOffWhen: sent?.handOffWhen ?? p.handOffWhen,
   };
 }
@@ -66,8 +76,8 @@ export type PlaysSummary = { total: number; withFacts: number; own: number; need
  * deal-state values. Sales plays have their own pages (the form does not send
  * them, so the stored plays are kept).
  */
-export function PlaybookForm({ slug, p, draftVersion, labHref, company, plays, playsHref, orderFormHref }: {
-  slug: string; p: Playbook; draftVersion: number; labHref: string; company: string; plays: PlaysSummary; playsHref: string; orderFormHref: string;
+export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref }: {
+  slug: string; p: Playbook; draftVersion: number; labHref: string; company: string; companyLocal?: Partial<Record<string, string>> | null; plays: PlaysSummary; playsHref: string; orderFormHref: string;
 }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
@@ -189,6 +199,20 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, plays, p
               {err("agentName")}
             </div>
             <div className="sas-input-group">
+              <label className="sas-input-label" htmlFor="pb-agentNameHe">{t("playbook.agent_name_he")}</label>
+              <input className="sas-input" id="pb-agentNameHe" name="agentNameLocal.he" lang="he" dir="rtl" maxLength={60} defaultValue={v.agentNameHe} {...invalid("agentNameLocal.he")} aria-describedby={e["agentNameLocal.he"] ? "pb-agentNameLocal.he-error" : "pb-agentNameHe-hint"} />
+              <span className="sas-hint" id="pb-agentNameHe-hint">{t("playbook.agent_name_he_hint")}</span>
+              {err("agentNameLocal.he")}
+            </div>
+            <div className="sas-input-group">
+              <label className="sas-input-label" htmlFor="pb-agentGender">{t("playbook.agent_gender")}</label>
+              <select className="sas-select" id="pb-agentGender" name="agentGender" defaultValue={v.agentGender} {...invalid("agentGender")} aria-describedby={e.agentGender ? "pb-agentGender-error" : "pb-agentGender-hint"}>
+                {AGENT_GENDERS.map((g) => <option key={g} value={g}>{t(`playbook.agent_gender.${g}`)}</option>)}
+              </select>
+              <span className="sas-hint" id="pb-agentGender-hint">{t("playbook.agent_gender_hint")}</span>
+              {err("agentGender")}
+            </div>
+            <div className="sas-input-group">
               <label className="sas-input-label" htmlFor="pb-tone">{t("playbook.tone")}</label>
               <input className="sas-input" id="pb-tone" name="tone" maxLength={300} defaultValue={v.tone} />
             </div>
@@ -197,7 +221,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, plays, p
       ))}
 
       {panel("pb-opener-h", "playbook.opener", null, null, (
-        <OpeningSection initial={openingValues(p, state)} agent={p.agentName || company} company={company} h={{ err, invalid, errors: e }} />
+        <OpeningSection initial={openingValues(p, state)} agent={p.agentName || company} company={company} names={{ en: { agent: p.agentName || company, company }, he: { agent: p.agentNameLocal?.he || p.agentName || company, company: companyLocal?.he?.trim() || company } }} gender={agentGenderOf(p)} h={{ err, invalid, errors: e }} />
       ), isNew)}
 
       {panel("pb-fields-h", "playbook.fields", "playbook.fields_hint", (
@@ -209,6 +233,11 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, plays, p
           {before > RECOMMENDED_BEFORE ? (
             <div className="sas-alert sas-alert--warning" role="status"><Icon name="alert-triangle" /><span>{t("playbook.fields.too_many", { n: before, max: RECOMMENDED_BEFORE })}</span></div>
           ) : null}
+          <ul className="sas-stack-2" data-testid="field-roles" aria-label={t("playbook.field.roles")} style={{ listStyle: "none", margin: 0, padding: 0, gap: 4 }}>
+            {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
+              <li key={s} className="sas-small" data-role={s}><strong style={{ color: "var(--ink)" }}>{t(STAGE_LABEL[s])}</strong>: {t(STAGE_HELP[s])}</li>
+            ))}
+          </ul>
           {mainFields.length === 0 ? <span className="sas-small">{t("playbook.fields_empty")}</span> : fieldTable(mainFields, MAIN_STAGES, isMain)}
           <div className="sas-stack-2" data-testid="order-form-fields" style={{ borderBlockStart: "1px solid var(--line)", paddingBlockStart: 12 }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "flex-start" }}>

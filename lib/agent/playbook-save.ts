@@ -53,12 +53,17 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   const shown = entries.some(([k, v]) => k === "exceptionsShown" && v === "1");
   const kept = new Set(entries.filter(([k]) => k === "exceptionId").map(([, v]) => v));
   const exceptions = shown ? stored.filter((x) => kept.has(x.id)) : stored;
-  const { exceptions: _x, opener, plays, ...rest } = parsed.value;
+  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, ...rest } = parsed.value;
   void _x;
   const keepOpener = input.opener === undefined ? current.opener : opener;
   const keepPlays = input.plays === undefined ? current.plays : plays;
+  // The agent's local names and gender (decision 2): a form without them keeps what is stored.
+  const keepNames = input.agentNameLocal === undefined ? current.agentNameLocal : agentNameLocal;
+  const keepGender = input.agentGender === undefined ? current.agentGender : agentGender;
   await saveDraftPlaybook(db, accountId, {
     ...rest,
+    ...(keepNames && Object.keys(keepNames).length ? { agentNameLocal: keepNames } : {}),
+    ...(keepGender ? { agentGender: keepGender } : {}),
     ...(exceptions.length ? { exceptions } : {}),
     ...(keepOpener ? { opener: keepOpener } : {}),
     ...(keepPlays ? { plays: keepPlays } : {}),

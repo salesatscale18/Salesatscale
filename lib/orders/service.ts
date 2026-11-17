@@ -66,10 +66,18 @@ export type FormSnapshot = Omit<OrderSnapshot, "lines"> & {
   delivery?: DeliveryPlan | null;
   /** Where each prefilled value came from ("From your chat" tags); missing on older snapshots. */
   prefillSource?: Partial<Record<PrefillKey, PrefillSource>>;
+  /** The seller's trade name per buyer language when the form was made (`seller_accounts.trade_name_local`); missing = `seller.tradeName`. */
+  sellerNames?: Partial<Record<string, string>>;
 };
 
 /** The snapshot with the optional price-list fields typed. */
 export const snapshotOf = (form: Pick<OrderForm, "snapshot">) => form.snapshot as FormSnapshot;
+
+/** The seller's name a buyer reading the form in this language sees (decision 2): the local trade name, else the trade name. */
+export function displaySeller(form: Pick<OrderForm, "snapshot">, lang: string): string {
+  const s = snapshotOf(form);
+  return s.sellerNames?.[lang]?.trim() || s.seller.tradeName;
+}
 export const chargeOf = (l: Pick<SnapshotLine, "charge" | "recurring">): "one_time" | "recurring" => l.charge ?? (l.recurring ? "recurring" : "one_time");
 
 export type FormActor = { kind: "human"; userId: string; actingAs: boolean } | { kind: "agent" };
@@ -124,6 +132,8 @@ export async function createOrderForm(
   const unitCustomOf = new Map(units.map((u) => [u.id, u.unitCustom ?? null]));
   const plainNameOf = new Map(units.map((u) => [u.id, u.plainName?.trim() || null]));
   const prefill = orderFormPrefillWithSources(q.lead, deal?.fields);
+  const localNames = Object.entries(account.tradeNameLocal ?? {}).filter((e): e is [string, string] => typeof e[1] === "string" && !!e[1].trim());
+  const sellerNames = localNames.length ? Object.fromEntries(localNames.map(([l, n]) => [l, n.trim()])) : null;
 
   const lines: SnapshotLine[] = cur.lines.map((l) => ({
     sku: l.sku, name: l.name, qty: l.qty, unitPriceMinor: l.unitPriceMinor!, lineTotalMinor: l.lineTotalMinor!, recurring: l.chargeType === "recurring",
@@ -133,6 +143,7 @@ export async function createOrderForm(
   }));
   const snapshot: FormSnapshot = {
     seller: { tradeName: account.tradeName, legalName: account.legalName, brandColor: settings.brandColor },
+    ...(sellerNames ? { sellerNames } : {}),
     quote: { number: q.quote.number, version: v.version, catalogVersion: catalogVersion?.version ?? 0 },
     currency: v.currency,
     pricesIncludeTax: v.pricesIncludeTax,

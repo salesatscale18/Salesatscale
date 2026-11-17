@@ -185,12 +185,15 @@ const LEADS = [
 export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
   const parsed = parsePlaybookRows({
     agentName: "Maya",
+    agentNameLocal: { he: "מאיה" },
+    agentGender: "female",
     goal: "Help restaurants and cafés that asked to hear from Polar Demo protect their fridges: find out how they check temperatures today and how many sites they have, quote sensors, gateways and installation from the price list, and send the order form when they are ready.",
     tone: "Warm, short and practical. One question at a time. Plain words, no pressure.",
     outcomes: { orderForm: true, bankTransfer: true, meeting: true },
     fields: [
       { key: "sites", label: "Number of sites", stage: "before_quote", hint: "Whole number", example: "How many sites (kitchens or branches) would you like to monitor?" },
-      { key: "current_monitoring", label: "How they check fridges today", stage: "before_quote", example: "How do you check your fridge temperatures today?" },
+      // Helps the pitch (decision 1): asked at most once, never repeated.
+      { key: "current_monitoring", label: "How they check fridges today", stage: "optional", example: "How do you check your fridge temperatures today?" },
       { key: "company_name", label: "Company name", stage: "before_order_form" },
       { key: "company_id", label: "Company ID", stage: "before_order_form" },
       { key: "billing_address", label: "Billing address", stage: "before_order_form" },
@@ -237,6 +240,18 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
 /** Throws (with the service's reason) when a service refused a step. */
 function must<R extends { ok: boolean }>(r: R, what: string): asserts r is Extract<R, { ok: true }> {
   if (!r.ok) throw new Error(`Demo seed: ${what} failed: ${JSON.stringify(r)}`);
+}
+
+/** The demo's Hebrew trade name (decision 2). */
+export const DEMO_NAME_PREFIX_HE = "פולאר דמו";
+
+/**
+ * The Hebrew trade name of a demo account: "פולאר דמו" with the same
+ * timestamp suffix as the English name. A custom name (not starting with
+ * "Polar Demo") gets none: Hebrew buyers then see the English name.
+ */
+export function demoNameHe(tradeName: string): string | null {
+  return tradeName.startsWith(DEMO_NAME_PREFIX) ? `${DEMO_NAME_PREFIX_HE}${tradeName.slice(DEMO_NAME_PREFIX.length)}`.slice(0, 120) : null;
 }
 
 /** "Polar Demo 2026-11-17 14:05:09" (UTC). */
@@ -300,7 +315,7 @@ async function fill(db: Db, user: DemoActor, created: { id: string; tradeName: s
     // 2. Company details and delivery lead time.
     (async () => {
       const company = parseCompany({
-        tradeName: created.tradeName, legalName: "Polar Demo Ltd", companyId: "515550142",
+        tradeName: created.tradeName, "tradeNameLocal.he": demoNameHe(created.tradeName) ?? "", legalName: "Polar Demo Ltd", companyId: "515550142",
         address: "12 HaMelacha St, Tel Aviv", supportContact: "support@polar-demo.example · 03 555 0142", brandColor: "#0e6fb8",
       });
       if (!company.ok) throw new Error(`Demo seed: company is invalid: ${JSON.stringify(company.errors)}`);

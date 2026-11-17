@@ -11,6 +11,8 @@ import {
   type ContactHours, type DeliveryLeadTime, type NotificationEvent, type NotificationPrefs,
 } from "@/db/schema";
 import { DEFAULT_FIELDS } from "@/lib/orders/settings";
+import { writtenIn } from "@/lib/agent/core/opener";
+import { LOCALES, type Locale } from "@/lib/i18n";
 import { writeAudit, type Actor } from "./audit";
 import { createInvite } from "./service";
 
@@ -18,8 +20,17 @@ import { createInvite } from "./service";
 // Company
 // ---------------------------------------------------------------------------
 
+/** Buyer languages that can have their own trade name (English buyers see the trade name itself). */
+export const LOCAL_NAME_LANGUAGES: readonly Locale[] = LOCALES.filter((l) => l !== "en");
+export const TRADE_NAME_MAX = 120;
+
 export type CompanyInput = {
   tradeName: string;
+  /**
+   * The trade name per buyer language (decision 2), from `tradeNameLocal.<lang>`
+   * inputs; "" clears a language. Undefined when the form showed none (stored names are kept).
+   */
+  tradeNameLocal?: Partial<Record<Locale, string>>;
   legalName: string | null;
   companyId: string | null;
   address: string | null;
@@ -28,7 +39,8 @@ export type CompanyInput = {
   brandColor: string;
 };
 
-export type CompanyErrors = Partial<Record<keyof CompanyInput, string>>;
+/** Keyed by input name: `tradeName`, `tradeNameLocal.he`, … */
+export type CompanyErrors = Partial<Record<keyof CompanyInput | `tradeNameLocal.${string}`, string>>;
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -36,8 +48,17 @@ export function parseCompany(raw: Record<string, string>): { ok: true; value: Co
   const s = (k: string, max: number) => (raw[k] ?? "").trim().slice(0, max);
   const opt = (k: string, max: number) => s(k, max) || null;
   const errors: CompanyErrors = {};
-  const tradeName = s("tradeName", 120);
+  const tradeName = s("tradeName", TRADE_NAME_MAX);
   if (!tradeName) errors.tradeName = "Enter the trade name buyers know you by.";
+  let tradeNameLocal: CompanyInput["tradeNameLocal"];
+  for (const lang of LOCAL_NAME_LANGUAGES) {
+    const k = `tradeNameLocal.${lang}`;
+    if (!(k in raw)) continue;
+    const v = (raw[k] ?? "").replace(/\s+/g, " ").trim();
+    if (v.length > TRADE_NAME_MAX) errors[`tradeNameLocal.${lang}`] = `Use ${TRADE_NAME_MAX} characters or fewer.`;
+    else if (v && !writtenIn(v, lang)) errors[`tradeNameLocal.${lang}`] = "Write the Hebrew trade name in Hebrew letters, or leave it empty.";
+    (tradeNameLocal ??= {})[lang] = v;
+  }
   const color = s("brandColor", 7);
   if (!/^#[0-9a-fA-F]{6}$/.test(color)) errors.brandColor = "Brand color must look like #0f6b5a.";
   const rep = s("salesRepUserId", 36);
@@ -47,6 +68,7 @@ export function parseCompany(raw: Record<string, string>): { ok: true; value: Co
     ok: true,
     value: {
       tradeName,
+      ...(tradeNameLocal ? { tradeNameLocal } : {}),
       legalName: opt("legalName", 160),
       companyId: opt("companyId", 40),
       address: opt("address", 300),
@@ -72,16 +94,25 @@ export async function saveCompany(db: Db, actor: Actor, accountId: string, v: Co
   if (v.salesRepUserId && !(await isMember(db, accountId, v.salesRepUserId))) {
     return { ok: false, errors: { salesRepUserId: "Choose a member of this account." } };
   }
+  // Local trade names: the languages sent replace the stored ones ("" clears one); the others are kept.
+  let local: Partial<Record<string, string>> | null | undefined;
+  if (v.tradeNameLocal) {
+    const [cur] = await db.select({ tradeNameLocal: sellerAccounts.tradeNameLocal }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+    const merged: Partial<Record<string, string>> = { ...(cur?.tradeNameLocal ?? {}), ...v.tradeNameLocal };
+    for (const [k, n] of Object.entries(merged)) if (!n?.trim()) delete merged[k];
+    local = Object.keys(merged).length ? merged : null;
+  }
   await atomic(db, (q) => [
     q.update(sellerAccounts).set({
       tradeName: v.tradeName, legalName: v.legalName, companyId: v.companyId, address: v.address,
       supportContact: v.supportContact, salesRepUserId: v.salesRepUserId,
+      ...(local !== undefined ? { tradeNameLocal: local } : {}),
     }).where(eq(sellerAccounts.id, accountId)),
     q.insert(orderFormSettings).values({ accountId, fields: DEFAULT_FIELDS, brandColor: v.brandColor })
       .onConflictDoUpdate({ target: orderFormSettings.accountId, set: { brandColor: v.brandColor } }),
   ]);
   if (actor.actingAs) {
-    await writeAudit(db, actor, { accountId, action: "company.saved", targetType: "account", targetId: accountId, details: { tradeName: v.tradeName, brandColor: v.brandColor } });
+    await writeAudit(db, actor, { accountId, action: "company.saved", targetType: "account", targetId: accountId, details: { tradeName: v.tradeName, brandColor: v.brandColor, ...(local !== undefined ? { tradeNameLocal: local } : {}) } });
   }
   return { ok: true };
 }

@@ -17,7 +17,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { PLAY_KEYS } from "@/db/schema";
 
-export const PROMPT_VERSION = "system-v4";
+export const PROMPT_VERSION = "system-v5";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -94,7 +94,8 @@ const FACTS_SCHEMA = obj({
 
 const PLAY = { type: "string", enum: [...PLAY_KEYS], description: "The play key, one of the keys listed under plays in the task." };
 
-const STAGE = { type: "string", enum: ["before_quote", "before_order_form", "helpful"], description: "before_quote: needed to price; before_order_form: needed for the binding order form; helpful: useful, not required." };
+const STAGE = { type: "string", enum: ["before_quote", "before_order_form", "helpful"], description: "The question's role. before_quote: needed for the quote (the quote cannot be made without it, e.g. number of sites or items); helpful: helps the pitch (e.g. how they handle it today, current supplier); before_order_form: filled in the order form (company and signer details)." };
+const ROLE = { type: "string", enum: ["before_quote", "helpful"], description: "The question's role. before_quote: needed for the quote (the quote cannot be made without the answer); helpful: helps the pitch." };
 
 /** Stage 2 output: the playbook draft, item by item. */
 const PLAYBOOK_SCHEMA = obj({
@@ -141,9 +142,10 @@ const PLAYBOOK_SCHEMA = obj({
     label: str("Short English label of what the question learns, e.g. Cost of the last failure."),
     question: str("The open question, in English."),
     question_he: str("Hebrew or empty."),
+    role: ROLE,
     asked_in_calls: int("In how many call transcripts this was asked; 0 if not from calls."),
     evidence: EVIDENCE,
-  }), "Good open questions reps ask that are not already a field."),
+  }), "Good open questions reps ask that are not already a field, each with its role."),
   opener: obj({
     leads_ask_about: str("The most common thing leads ask about when they contact the seller, a few English words that fit \"You asked about ...\", at most 120 characters, e.g. monitoring your fridge temperatures. Empty if unclear."),
     topics: arr(obj({

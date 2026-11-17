@@ -13,6 +13,7 @@
  */
 import type { OpenerText, Playbook } from "@/db/schema";
 import { t, type Locale } from "@/lib/i18n";
+import { tg, type AgentGender } from "./names";
 
 const HEBREW = /[֐-׿]/;
 
@@ -66,9 +67,12 @@ export function textIn(x: OpenerText | null | undefined, lang: Locale): string {
 export type OpenerInput = {
   /** The lead's first name. */
   name: string;
-  /** The agent's name, else the seller's trade name. */
+  /** The agent's name in the lead's language (lib/agent/core/names.ts), else the seller's trade name. */
   agent: string;
+  /** The seller's name in the lead's language. */
   company: string;
+  /** The grammar the intro uses for the agent (Hebrew); missing = neutral. */
+  gender?: AgentGender;
   language: Locale;
   opener?: Playbook["opener"];
   /** What this lead asked about, when the lead record carries it. Wins over the playbook's default topic. */
@@ -85,7 +89,7 @@ export function openerParts(o: OpenerInput): { intro: string; interest: string; 
   const fromLead = picked ? textIn(picked, lang) : asked && writtenIn(asked, lang) ? asked : "";
   const interest = (fromLead || textIn(inputs.topics[inputs.defaultTopic], lang)).replace(/[.!?。]+$/u, "");
   return {
-    intro: t("buyer.opener.intro", { name: o.name, agent: o.agent, company: o.company }, lang),
+    intro: tg("buyer.opener.intro", o.gender ?? "neutral", { name: o.name, agent: o.agent, company: o.company }, lang),
     interest: interest ? t("buyer.opener.asked_about", { interest }, lang) : t("buyer.opener.asked", undefined, lang),
     question: textIn(inputs.question, lang) || t("buyer.opener.question", undefined, lang),
   };

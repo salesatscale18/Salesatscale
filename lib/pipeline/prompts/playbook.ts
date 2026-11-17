@@ -7,7 +7,7 @@ import { PLAY_KEYS } from "@/db/schema";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PLAYBOOK_TOOL } from "./system";
 
-export const PROMPT_VERSION = "playbook-v4";
+export const PROMPT_VERSION = "playbook-v5";
 
 /** Field keys the order form prefill reads (lib/orders/prefill.ts): suggest these exact keys for those details. */
 export const ORDER_FORM_KEYS: Record<string, string> = {
@@ -25,12 +25,12 @@ export const PLAYBOOK_INSTRUCTION = `Task: draft the sales agent's playbook from
 Below this task you get, as JSON: the facts found so far (approved and suggested), a summary of the catalog, the current playbook, the order-form field keys, and the selling situations (plays) the agent has a default card for.
 Base the playbook first on how the seller's reps actually sell in the recorded calls, then on documents and the website.
 - goal: who the agent sells to and what a win is: a signed order form with payment, or a meeting with the seller's team.
-- fields: what the agent must learn from the buyer to qualify, to price and to fill the order form. For an order-form detail use exactly the key listed under order_form_keys. Reuse the key of a field in the current playbook when it is the same field. asked_in_calls counts the call transcripts in which a rep asked it.
+- fields: what the agent must learn from the buyer to qualify, to price and to fill the order form, each with its role (stage): before_quote = needed for the quote (the quote cannot be made without it, e.g. the number of sites or items); helpful = helps the pitch (e.g. how they handle it today, the current supplier); before_order_form = filled in the order form (company and signer details). For an order-form detail use exactly the key listed under order_form_keys. Reuse the key of a field in the current playbook when it is the same field. asked_in_calls counts the call transcripts in which a rep asked it.
 - objections: the objection as buyers say it and the answer that worked; outcome counts what followed over the calls.
 - limits: every price, discount, free extra or special term heard in a call or written in a document, and when reps offer a meeting or hand over to a person. Say which setting it is: discount_cap (with the percentage), custom_pricing_quantity (with the item's SKU and the quantity), offer_meeting or hand_off (with the condition), or other (for example "Installation is free from 3 sites"). These are only suggestions; the seller approves each one.
 - tone: how the reps talk, in one sentence.
 - never: real prohibitions only: what the agent must never say or do, worded to follow "Never". Prices, discounts and special terms belong in limits, not here.
-- discovery_questions: good open questions reps ask that are not already a field.
+- discovery_questions: good open questions reps ask that are not already a field, each with its role: before_quote when the quote cannot be made without the answer, else helpful.
 - opener: what leads usually ask about when they reach out (up to 6 topics, the most common first, each fitting "You asked about ..."), and the easy question reps open with about the buyer's situation today. Add Hebrew versions when the corpus or the seller sells in Hebrew.
 - play_content: for each play the corpus supports, the seller's facts for that situation, following the play's seller_hint (for example the gap common existing solutions leave, or the entry price and what drives the total). Facts only, no instructions to the agent. A price may come from a document or the website, never only from a call.
 - play_cards: only when call transcripts clearly show the reps' own way of handling a situation: when it applies, 2 to 5 moves in order, an example reply and a reply to avoid. Otherwise leave it out: the default card applies.

@@ -65,7 +65,7 @@ export function mergeSuggestions(p: Playbook, items: MergeItem[]): Playbook {
         addField({ key: x.key, label: x.label.slice(0, 60), stage: x.stage, ...(x.example ? { example: x.example.slice(0, 200) } : {}) });
         break;
       case "discovery_question":
-        addField({ key: fieldKey(x.label), label: x.label.slice(0, 60), stage: "optional", example: x.question.slice(0, 200) });
+        addField({ key: fieldKey(x.label), label: x.label.slice(0, 60), stage: x.stage === "before_quote" ? "before_quote" : "optional", example: x.question.slice(0, 200) });
         break;
       case "objection":
         if (out.objections.length < MAX_OBJECTIONS && !out.objections.some((o) => same(o.objection, x.objection))) {

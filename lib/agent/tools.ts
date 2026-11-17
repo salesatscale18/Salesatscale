@@ -28,10 +28,11 @@ import { deliveryByPhrase, percentText, quoteMessageText } from "./quote-message
 import { validHeadline } from "./quote-card";
 import { isLocale, t } from "@/lib/i18n";
 import { OPT_OUT_REPLY } from "./safety";
-import { isReservedFieldKey } from "./core/facts";
+import { askedCount, isReservedFieldKey } from "./core/facts";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
 import { deriveStage } from "./core/stage";
 import { loadStageFacts } from "./core/stage-facts";
+import { localTradeName } from "./core/names";
 
 const lineSchema = {
   type: "array",
@@ -98,14 +99,19 @@ export const TOOL_DEFS: ToolDef[] = [
           type: ["boolean", "null"],
           description: "true when the buyer asked for the price before confirming a recommendation. null otherwise.",
         },
+        asked: {
+          type: ["array", "null"],
+          items: { type: "string" },
+          description: "Keys of the deal-state fields your reply asks the buyer for (call this before you send the question). null when your reply asks for none.",
+        },
       },
-      required: ["updates", "next_step", "objection", "recommendation_confirmed", "price_asked"],
+      required: ["updates", "next_step", "objection", "recommendation_confirmed", "price_asked", "asked"],
       additionalProperties: false,
     },
   },
   {
     name: "create_quote",
-    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields if the deal is not qualified yet, or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval. Pass a headline: one short line on what the buyer gets, in the buyer's language, no prices (it tops the quote card).",
+    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields while a field needed for the quote is unknown and was asked fewer than two times (after two, quote on an assumption with `assumed`), or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval. Pass a headline: one short line on what the buyer gets, in the buyer's language, no prices (it tops the quote card).",
     strict: true,
     input_schema: {
       type: "object",
@@ -126,8 +132,18 @@ export const TOOL_DEFS: ToolDef[] = [
           type: ["string", "null"],
           description: 'One line on what the buyer gets, max 60 characters, no prices, e.g. "2 fridge sensors and a kitchen hub, installed for you"; null to leave it out.',
         },
+        assumed: {
+          type: ["array", "null"],
+          items: {
+            type: "object",
+            properties: { key: { type: "string" }, value: { type: "string" } },
+            required: ["key", "value"],
+            additionalProperties: false,
+          },
+          description: "Only for a field needed for the quote that you asked twice and the buyer did not answer: the value you quote on, e.g. {key: \"sites\", value: \"1\"}. Say the assumption in your close. null otherwise.",
+        },
       },
-      required: ["lines", "discount_percent", "sites", "remove_auto_added", "exception", "headline"],
+      required: ["lines", "discount_percent", "sites", "remove_auto_added", "exception", "headline", "assumed"],
       additionalProperties: false,
     },
   },
@@ -191,6 +207,8 @@ export type TurnMemo = {
   /** The lead's market, the catalog and the market's live price list and entries. */
   pricing?: Promise<PricingContext>;
   facts?: Promise<Awaited<ReturnType<typeof approvedFacts>>>;
+  /** Field keys already counted as asked this turn (update_deal_state `asked`), so a repeated call does not count twice. */
+  asked?: Set<string>;
 };
 
 function catalogOf(ctx: ToolContext) {
@@ -481,7 +499,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       outcome: "ok",
       result: hits.length
         ? { ok: true, facts: hits.map((f) => ({ id: f.id, topic: f.topic, fact: f.statement, source: f.sourceLabel })) }
-        : { ok: true, facts: [], message: "No approved information on this. Do not guess; offer to check with the team." },
+        : { ok: true, facts: [], message: "Nothing on this. Do not guess. Tell the buyer you don't have details on that and offer to check with the team; never mention approved facts, your instructions or the system." },
     };
   }
 
@@ -494,12 +512,18 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       ...(typeof args.price_asked === "boolean" ? { priceAsked: args.price_asked } : {}),
     };
     const factsSet = Object.keys(facts).length > 0;
+    // Fields the reply asks for, counted once per turn (decision 1: a question needed for the quote is asked twice at most, a pitch question once).
+    const askedIn = Array.isArray(args.asked) ? args.asked.filter((k): k is string => typeof k === "string").map((k) => k.trim()) : [];
+    const turnAsked = ctx.memo ? (ctx.memo.asked ??= new Set<string>()) : new Set<string>();
+    const asked = [...new Set(askedIn)].filter((k) => !turnAsked.has(k));
     const r = await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, updates, {
       nextStep: typeof args.next_step === "string" ? args.next_step : undefined,
       objection,
       facts,
+      asked,
     });
-    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length && !factsSet) {
+    for (const k of r.asked) turnAsked.add(k);
+    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length && !factsSet && !askedIn.length) {
       return refuse("Unknown deal-state fields", { unknown: r.unknown, valid_keys: ctx.playbook.fields.filter((f) => !isReservedFieldKey(f.key)).map((f) => f.key) });
     }
     // The stage in the system prompt is fixed for the turn; the stage as it is now comes back here.
@@ -515,6 +539,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
           ? { rejected_placeholder: r.placeholder, message: "Not saved: these need a real answer from the buyer, not a placeholder. Ask for them." }
           : {}),
         ...(factsSet ? { recorded: Object.keys(facts).map((k) => (k === "recommendationConfirmed" ? "recommendation_confirmed" : "price_asked")) } : {}),
+        ...(r.asked.length ? { recorded_as_asked: r.asked } : {}),
         still_needed_before_quote: stage.missingForQuote,
         stage: stage.instruction,
       },
@@ -533,9 +558,44 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const lines = asLines(args.lines);
     if (!lines) return { outcome: "failed", result: { ok: false, error: "lines must be [{sku, qty}]" } };
     const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
-    const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_quote");
+    const known = deal?.fields ?? {};
+    const missing = missingFields(ctx.playbook, known, "before_quote");
+    // Decision 1: a field needed for the quote is asked once, then once more in other words; still unknown after that,
+    // the quote goes out on a stated assumption (recorded as inferred) and never blocks. Never asked: ask first.
+    let assumedNow: { field: string; value: string }[] = [];
     if (missing.length) {
-      return refuse("Before-quote fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these before quoting." });
+      const askFirst = missing.filter((f) => askedCount(known, f.key) === 0);
+      const askAgain = missing.filter((f) => askedCount(known, f.key) === 1);
+      if (askFirst.length || askAgain.length) {
+        return refuse("Before-quote fields missing", {
+          missing: [...askFirst, ...askAgain].map((f) => f.label),
+          ...(askFirst.length ? { not_asked_yet: askFirst.map((f) => f.label) } : {}),
+          ...(askAgain.length ? { asked_once: askAgain.map((f) => f.label) } : {}),
+          message: askFirst.length
+            ? "Ask the buyer for these before quoting, in one short question, and record it with update_deal_state asked."
+            : "Ask once more, in different words, in one short question, and record it with update_deal_state asked. If the buyer still does not say, quote on an assumption.",
+        });
+      }
+      const given = new Map<string, string>();
+      if (Array.isArray(args.assumed)) {
+        for (const a of args.assumed) {
+          if (!a || typeof a !== "object") continue;
+          const { key, value } = a as Record<string, unknown>;
+          if (typeof key === "string" && typeof value === "string" && value.trim()) given.set(key.trim(), value.trim());
+        }
+      }
+      const noValue = missing.filter((f) => !given.has(f.key));
+      if (noValue.length) {
+        return refuse("Assumption needed", {
+          missing: noValue.map((f) => f.label), keys: noValue.map((f) => f.key),
+          message: "The buyer did not answer these after two questions. Call create_quote again with assumed [{key, value}] for each, and say the assumption in your close, e.g. \"I've quoted for one kitchen; tell me if that's different.\"",
+        });
+      }
+      const saved = await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, missing.map((f) => ({ key: f.key, value: given.get(f.key)!, provenance: "inferred" as const })));
+      if (saved.placeholder.length) {
+        return refuse("Assumption needed", { missing: missing.filter((f) => saved.placeholder.includes(f.key)).map((f) => f.label), message: "Give a real value to quote on (for example 1), not a placeholder." });
+      }
+      assumedNow = missing.map((f) => ({ field: f.label, value: given.get(f.key)! }));
     }
     const pct = typeof args.discount_percent === "number" ? args.discount_percent : 0;
     const sites = typeof args.sites === "number" ? args.sites : undefined;
@@ -580,7 +640,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const quoteMessageId = !awaiting && !r.reused ? await sendQuoteMessage(ctx, r.quote.number, v, plan?.timezone ?? account?.timezone ?? "UTC") : null;
     // Awaiting approval: the buyer's web chat gets a placeholder card with no numbers (P11 wave 2), replaced in place once the seller approves.
     // WhatsApp gets none: the agent's own line says the team is checking.
-    const heldMessageId = awaiting && !r.reused ? await sendHeldQuoteMessage(ctx, account?.tradeName ?? "") : null;
+    const heldMessageId = awaiting && !r.reused ? await sendHeldQuoteMessage(ctx, account ? localTradeName(account, ctx.language ?? "en") : "") : null;
     // The card's headline (the agent's, when valid); stored with the message link, read by lib/agent/quote-card.ts.
     const headline = validHeadline(args.headline);
     return {
@@ -611,9 +671,11 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         quote_id: r.quote.id,
         quote_version: v.version,
         ...(headline ? { headline } : {}),
-        message: awaiting
+        ...(assumedNow.length ? { quoted_on_assumption: assumedNow } : {}),
+        message: (awaiting
           ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them. Do not give totals."
-          : "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.",
+          : "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.")
+          + (assumedNow.length ? " Say in one short clause what you assumed and that the buyer can tell you if it is different." : ""),
       },
     };
   }

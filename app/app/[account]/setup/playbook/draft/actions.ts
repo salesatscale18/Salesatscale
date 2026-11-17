@@ -39,7 +39,7 @@ export async function editSuggestionAction(form: FormData) {
   if (!KINDS.includes(kind)) back(a.account.slug, to, { error: "missing" });
   const values: Record<string, string> = {};
   for (const f of EDITABLE[kind]) values[f.name] = str(form, f.name);
-  if (kind === "field") values.stage = str(form, "stage");
+  if (kind === "field" || kind === "discovery_question") values.stage = str(form, "stage");
   if (kind === "play_card") values.do = String(form.get("do") ?? "");
   if (kind === "opener") values.topics = String(form.get("topics") ?? "");
   if (kind === "limit") {

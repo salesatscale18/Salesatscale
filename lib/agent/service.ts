@@ -14,7 +14,7 @@ import {
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { modelFor } from "@/lib/ai/models";
 import { defaultPlaybook } from "./playbook";
-import { isReservedFieldKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "./core/facts";
+import { askedCount, askedKey, isReservedFieldKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "./core/facts";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
 
 /** The agent model for new versions: AGENT_MODEL, else the role default (lib/ai/models.ts). */
@@ -149,6 +149,8 @@ export async function applyAgentUpdates(
     objection?: { text: string; handled: boolean } | null;
     /** The conversation facts (P11), stored under reserved keys with provenance "buyer". */
     facts?: { recommendationConfirmed?: boolean; priceAsked?: boolean };
+    /** Playbook field keys the agent asks for in this message: each one's `_asked_<key>` count goes up by one (unknown and reserved keys are ignored). */
+    asked?: string[];
   } = {}, now = new Date(),
 ) {
   const state = await ensureDealState(db, accountId, leadId);
@@ -170,6 +172,12 @@ export async function applyAgentUpdates(
   for (const [key, v] of [[RECOMMENDATION_CONFIRMED_KEY, extra.facts?.recommendationConfirmed], [PRICE_ASKED_KEY, extra.facts?.priceAsked]] as const) {
     if (typeof v === "boolean") fields[key] = { value: v ? "yes" : "no", provenance: "buyer", updatedAt: now.toISOString() };
   }
+  const asked: string[] = [];
+  for (const k of new Set(extra.asked ?? [])) {
+    if (typeof k !== "string" || isReservedFieldKey(k) || !stageOf.has(k)) continue;
+    fields[askedKey(k)] = { value: String(askedCount(fields, k) + 1), provenance: "inferred", updatedAt: now.toISOString() };
+    asked.push(k);
+  }
   const objections = extra.objection
     ? [...state.objections.filter((o) => o.text !== extra.objection!.text), { text: extra.objection.text.slice(0, 200), handled: extra.objection.handled }]
     : state.objections;
@@ -177,7 +185,7 @@ export async function applyAgentUpdates(
     .update(dealStates)
     .set({ fields, objections, nextStep: extra.nextStep === undefined ? state.nextStep : extra.nextStep?.slice(0, 200) ?? null })
     .where(eq(dealStates.id, state.id));
-  return { applied, unknown, verified, placeholder, fields, objections };
+  return { applied, unknown, verified, placeholder, asked, fields, objections };
 }
 
 /** A person edits a field: it becomes Verified, and the change is logged (canvas: Main). */

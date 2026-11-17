@@ -8,8 +8,8 @@
  * turn ("quote_close"); "order_form" is the turn that waits for the buyer's
  * yes to the close and then sends the link.
  */
-import type { DealFieldValue, Playbook } from "@/db/schema";
-import { isReservedFieldKey, priceAsked, pricesAllowed, recommendationConfirmed } from "./facts";
+import type { DealFieldValue, Playbook, PlaybookField } from "@/db/schema";
+import { askedCount, isReservedFieldKey, priceAsked, pricesAllowed, recommendationConfirmed } from "./facts";
 
 export type Stage = "open" | "understand" | "recommend" | "quote_close" | "order_form" | "after";
 
@@ -62,8 +62,31 @@ export function missingForQuote(playbook: Pick<Playbook, "fields">, fields: Reco
   return playbook.fields.filter((f) => f.stage === "before_quote" && !isReservedFieldKey(f.key) && !fields?.[f.key]?.value?.trim());
 }
 
+/** How often a field was asked, in words for the stage block. */
+const timesText = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} times`);
+
+/**
+ * Questions asked and not answered yet, with what the field's role allows
+ * next (decision 1): needed for the quote = once more in other words, then
+ * quote on a stated assumption; helps the pitch = never again.
+ */
+export function askedNotAnswered(playbook: Pick<Playbook, "fields">, fields: Record<string, DealFieldValue> | null | undefined): string[] {
+  return playbook.fields
+    .filter((f) => f.stage !== "before_order_form" && !isReservedFieldKey(f.key) && !fields?.[f.key]?.value?.trim() && askedCount(fields, f.key) > 0)
+    .map((f) => {
+      const n = askedCount(fields, f.key);
+      const next = f.stage === "optional"
+        ? "helps the pitch: do not ask it again"
+        : n === 1
+          ? "needed for the quote: ask once more, in different words, just before the quote"
+          : "needed for the quote: do not ask again; quote on a stated assumption";
+      return `${f.label} (asked ${timesText(n)}; ${next})`;
+    });
+}
+
 export function deriveStage(input: StageInput): StageResult {
-  const missing = missingForQuote(input.playbook, input.fields).map((f) => f.label);
+  const missingFields = missingForQuote(input.playbook, input.fields);
+  const missing = missingFields.map((f) => f.label);
   const quoted = input.quote !== "none";
   const allowed = pricesAllowed(input.fields, quoted);
   const confirmed = recommendationConfirmed(input.fields);
@@ -83,9 +106,11 @@ export function deriveStage(input: StageInput): StageResult {
   else if (missing.length === 0 ? questionsAsked >= 1 : questionsAsked >= MAX_UNDERSTAND_QUESTIONS) stage = "recommend";
   else stage = "understand";
 
-  const lines = [`## Stage now: ${STAGE_TITLE[stage]}`, ...stageLines(stage, { ...input, missing, confirmed, asked, questionsAsked })];
+  const lines = [`## Stage now: ${STAGE_TITLE[stage]}`, ...stageLines(stage, { ...input, missing, missingFields, confirmed, asked, questionsAsked })];
   if (stage === "open" || stage === "understand" || stage === "recommend" || (stage === "quote_close" && input.quote === "none")) {
     lines.push(`Still missing for a quote: ${missing.length ? missing.join(", ") : "nothing"}.`);
+    const unanswered = askedNotAnswered(input.playbook, input.fields);
+    if (unanswered.length) lines.push(`Asked and not answered: ${unanswered.join("; ")}.`);
   }
   lines.push(allowed
     ? "Prices: allowed. Take every number from the tools."
@@ -96,7 +121,21 @@ export function deriveStage(input: StageInput): StageResult {
   return { stage, paused: open.length > 0, missingForQuote: missing, pricesAllowed: allowed, instruction: lines.join("\n") };
 }
 
-type Detail = StageInput & { missing: string[]; confirmed: boolean; asked: boolean; questionsAsked: number };
+type Detail = StageInput & { missing: string[]; missingFields: PlaybookField[]; confirmed: boolean; asked: boolean; questionsAsked: number };
+
+/** What to do about the fields still missing for the quote, by how often each was asked. */
+function missingForQuoteLine(d: Detail): string {
+  const by = (pick: (n: number) => boolean) => d.missingFields.filter((f) => pick(askedCount(d.fields, f.key))).map((f) => f.label);
+  const first = by((n) => n === 0);
+  const again = by((n) => n === 1);
+  const assume = by((n) => n >= 2);
+  const parts = [
+    first.length ? `ask for ${first.join(", ")} in one short question` : "",
+    again.length ? `ask once more for ${again.join(", ")}, in different words` : "",
+    assume.length ? `quote on an assumption for ${assume.join(", ")} (create_quote with assumed) and say it in the close, e.g. "I've quoted for one kitchen; tell me if that's different"` : "",
+  ].filter(Boolean);
+  return `Do: ${parts.join("; then ")}. As soon as nothing is left to ask, call create_quote. Never hold the quote back for a question the buyer skipped twice.`;
+}
 
 function stageLines(stage: Stage, d: Detail): string[] {
   const meetingOrHandOff = d.playbook.outcomes.meeting ? "offer a meeting" : "hand off to a person";
@@ -111,13 +150,14 @@ function stageLines(stage: Stage, d: Detail): string[] {
       if (d.asked) {
         return [
           "The buyer asked the price, so skip ahead.",
-          "Do: answer the price now with a number or range from search_catalog, say in a few words what it depends on, then ask only what the quote cannot be made without. Drop every other question.",
+          "Do: answer the price now with a number or range from search_catalog, say in a few words what it depends on, then ask only what the quote cannot be made without. Drop every question that only helps the pitch.",
           "Moves on when: nothing is missing for a quote. Then make the quote.",
         ];
       }
       const left = Math.max(1, MAX_UNDERSTAND_QUESTIONS - d.questionsAsked);
       return [
         `Do: react to the buyer's last answer, then ask one question that changes which products you recommend. You have ${left} question${left === 1 ? "" : "s"} left before you must recommend.`,
+        "Ask the questions needed for the quote first. A question that helps the pitch is asked at most once: never repeat it, and drop it when the buyer skips it or shows a buying signal. Record each question with update_deal_state asked.",
         "Moves on when: you know enough to recommend one set. If you already do, recommend now (stage 3) and ask nothing more.",
       ];
     }
@@ -139,7 +179,7 @@ function stageLines(stage: Stage, d: Detail): string[] {
       return [
         d.confirmed ? "The buyer confirmed the recommendation." : "The buyer asked the price and nothing is missing for a quote.",
         d.missing.length
-          ? "Do: ask for what is still missing for a quote, in one short question. As soon as you have it, call create_quote."
+          ? missingForQuoteLine(d)
           : "Do: call create_quote now (check_fit first). Do not ask whether to prepare a quote. If you do not yet know which items or how many, ask that one question first.",
         "With the quote, close in the same message: a short lead-in, then offer to send the order form now, with the delivery phrase from the result.",
         "Moves on when: the quote is sent.",

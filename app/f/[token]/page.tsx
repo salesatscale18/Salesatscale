@@ -5,7 +5,7 @@ import { sellerAccounts, type OrderSnapshot } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
 import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
-import { attemptCount, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor, snapshotOf, type FormSnapshot } from "@/lib/orders/service";
+import { attemptCount, displaySeller, lastAttempt, loadForm, markOpened, orderLabel, priceCheck, signatureFor, snapshotOf, type FormSnapshot } from "@/lib/orders/service";
 import { marketLegal } from "@/lib/markets/legal";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { acceptPriceAction, payBankAction, payCardAction, stepAction } from "./actions";
@@ -118,7 +118,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const date = (d: Date | string) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: account.timezone }).format(new Date(d));
   const time = (d: Date) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { hour: "2-digit", minute: "2-digit", timeZone: account.timezone }).format(d);
   const shell = (sub: string | undefined, children: ReactNode, step?: number) => (
-    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={s.seller.tradeName} sub={sub} step={step}>{children}</Shell>
+    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step}>{children}</Shell>
   );
   const quoteRef = `Q-${s.quote.number} v${s.quote.version}`;
   // Older snapshots have no supportContact: show nothing then.
@@ -184,7 +184,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           </section>
           <section className="b-sec b-noprint">
             <a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a>
-            <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: s.seller.tradeName })}</span>
+            <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: displaySeller(form, lang) })}</span>
             <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.questions")}</span>
             {support(true)}
           </section>
@@ -225,7 +225,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
               ) : null}
               <button type="submit" name="outcome" value="succeeded" className="b-btn">{tr("buyer.simulate_ok")}</button>
               <button type="submit" name="outcome" value="failed" className="b-btn b-btn--2">{tr("buyer.simulate_fail")}</button>
-              <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: s.seller.tradeName })}</span>
+              <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: displaySeller(form, lang) })}</span>
             </form>
           ) : order.paymentStatus === "bank_transfer_expected" ? (
             <div className="b-note b-note--warn" style={{ flexDirection: "column", gap: 6 }}>
