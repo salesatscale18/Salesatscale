@@ -10,7 +10,7 @@ import { setupProgress } from "@/lib/overview/setup";
 import {
   failStaleRuns, latestSuggestions, limitPreviews, listRuns, locateEvidence, planAnalysis, runData, type PlaybookRunResult, type Suggestion,
 } from "@/lib/pipeline/service";
-import type { SuggestionKind } from "@/lib/pipeline/validate";
+import { suggestionSection, type SuggestionKind } from "@/lib/pipeline/validate";
 import { AnalyzePanel } from "../../sources/analyze";
 import { acceptAllSuggestionsAction, saveSuggestionsAction } from "./actions";
 import { SuggestionItem } from "./suggestion";
@@ -22,11 +22,14 @@ const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) 
 
 const SECTIONS: { id: string; title: MessageKey; kinds: SuggestionKind[] }[] = [
   { id: "goal", title: "draft.section.goal", kinds: ["goal"] },
+  { id: "opener", title: "draft.section.opener", kinds: ["opener"] },
   { id: "field", title: "draft.section.fields", kinds: ["field", "discovery_question"] },
   { id: "objection", title: "draft.section.objections", kinds: ["objection"] },
   { id: "limit", title: "draft.section.limits", kinds: ["limit"] },
   { id: "tone", title: "draft.section.tone", kinds: ["tone"] },
   { id: "never", title: "draft.section.never", kinds: ["never"] },
+  { id: "play", title: "draft.section.plays", kinds: ["play_content", "play_card"] },
+  { id: "catalog", title: "draft.section.catalog", kinds: ["catalog_item"] },
 ];
 
 const DONE: Record<string, MessageKey> = {
@@ -34,7 +37,7 @@ const DONE: Record<string, MessageKey> = {
   accepted_all: "draft.done.accepted_all", saved: "draft.done.saved",
 };
 const ERRORS: Record<string, MessageKey> = {
-  missing: "draft.error.missing", required: "draft.error.required", qty: "draft.error.qty", applied: "draft.error.applied", too_long: "draft.error.too_long", discount: "draft.error.discount", none_accepted: "draft.error.none_accepted",
+  missing: "draft.error.missing", required: "draft.error.required", card: "draft.error.card", qty: "draft.error.qty", applied: "draft.error.applied", too_long: "draft.error.too_long", discount: "draft.error.discount", none_accepted: "draft.error.none_accepted",
 };
 
 /**
@@ -73,7 +76,7 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
   const item = (s: Suggestion) => (
     <SuggestionItem
       key={s.id} s={s} slug={account.slug} back="draft" editing={editId === s.id} links={links} calls={calls} limit={limits.get(s.id)}
-      editHref={`${here}?edit=${s.id}#sg-${s.kind === "discovery_question" ? "field" : s.kind}`} cancelHref={`${here}#sg-${s.kind === "discovery_question" ? "field" : s.kind}`}
+      editHref={`${here}?edit=${s.id}#sg-${suggestionSection(s.kind)}`} cancelHref={`${here}#sg-${suggestionSection(s.kind)}`}
     />
   );
 
@@ -126,8 +129,8 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
           </div>
         </section>
       ) : SECTIONS.map((sec) => {
-        const list = live.filter((s) => sec.kinds.includes(s.kind as SuggestionKind));
-        const removed = items.filter((s) => s.status === "rejected" && sec.kinds.includes(s.kind as SuggestionKind));
+        const list = live.filter((s) => sec.kinds.includes(s.kind));
+        const removed = items.filter((s) => s.status === "rejected" && sec.kinds.includes(s.kind));
         const open = list.filter((s) => s.status === "suggested").length;
         if (list.length === 0 && removed.length === 0) return null;
         const isLimit = sec.id === "limit";
@@ -136,6 +139,7 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
             <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10, padding: "14px 20px", borderBlockEnd: "1px solid var(--line)" }}>
               <h2 id={`sg-${sec.id}-h`} className="sas-heading" style={{ flex: 1, minWidth: 160 }}>{t(sec.title)}</h2>
               {isLimit ? <span className="sas-small">{t("draft.limit.section_hint")}</span> : null}
+              {sec.id === "catalog" ? <span className="sas-small">{t("draft.catalog.section_hint")}</span> : null}
               {!isLimit && open > 1 ? (
                 <form action={acceptAllSuggestionsAction}>
                   <input type="hidden" name="slug" value={account.slug} />

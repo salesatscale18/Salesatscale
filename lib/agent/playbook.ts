@@ -1,5 +1,5 @@
 /** Playbook rules (pure; unit-tested). The playbook is data the seller edits; nothing here is category-specific. */
-import type { DealFieldValue, Playbook, PlaybookField } from "@/db/schema";
+import { PLAY_KEYS, type DealFieldValue, type PlayCard, type PlayKey, type Playbook, type PlaybookException, type PlaybookField } from "@/db/schema";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -41,7 +41,52 @@ export type PlaybookRowsInput = {
   offerMeetingWhen: string;
   handOffWhen: string;
   neverDo: string[];
+  /** Opener inputs (P11). Undefined when the form did not show them (the stored ones are kept). */
+  opener?: { leadsAskAbout: string; openingQuestion: string };
+  /**
+   * Sales plays by play key (P11). `own` is the seller's own card, with the
+   * moves as text, one per line; null or missing means the default card.
+   * Undefined when the form did not show the plays (the stored ones are kept).
+   */
+  plays?: Partial<Record<string, PlayRowInput>>;
+  /** Approved exceptions are never typed in the editor; they pass through unchanged. */
+  exceptions?: PlaybookException[];
 };
+
+export type PlayRowInput = { content?: string; own?: { when: string; do: string; example: string; notThis: string } | null };
+
+/** Lengths of the seller inputs added in P11 (editor, validation and the knowledge analysis). */
+export const OPENER_MAX = { leadsAskAbout: 120, openingQuestion: 200 } as const;
+export const PLAY_CONTENT_MAX = 600;
+export const PLAY_CARD_MAX = { when: 200, move: 200, example: 300, notThis: 300 } as const;
+export const PLAY_MOVES = { min: 2, max: 5 } as const;
+
+export const isPlayKey = (k: string): k is PlayKey => (PLAY_KEYS as readonly string[]).includes(k);
+
+/** "One move\nper line" -> the moves, trimmed, blank lines dropped. */
+export const playMoves = (text: string): string[] => text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+
+/**
+ * Checks one own play card. Errors are keyed by the card's part (`when`, `do`,
+ * `example`, `notThis`); the editor prefixes them with `play.<key>.`.
+ */
+export function parsePlayCard(raw: { when: string; do: string | string[]; example: string; notThis: string }): { ok: true; value: PlayCard } | { ok: false; errors: Record<string, string> } {
+  const errors: Record<string, string> = {};
+  const when = raw.when.trim();
+  const moves = Array.isArray(raw.do) ? raw.do.map((m) => m.trim()).filter(Boolean) : playMoves(raw.do);
+  const example = raw.example.trim();
+  const notThis = raw.notThis.trim();
+  if (!when) errors.when = "Say when this play applies.";
+  else if (when.length > PLAY_CARD_MAX.when) errors.when = `Use ${PLAY_CARD_MAX.when} characters or fewer.`;
+  if (moves.length < PLAY_MOVES.min || moves.length > PLAY_MOVES.max) errors.do = `Write ${PLAY_MOVES.min} to ${PLAY_MOVES.max} moves, one per line.`;
+  else if (moves.some((m) => m.length > PLAY_CARD_MAX.move)) errors.do = `Keep each move to ${PLAY_CARD_MAX.move} characters or fewer.`;
+  if (!example) errors.example = "Write an example of a good reply.";
+  else if (example.length > PLAY_CARD_MAX.example) errors.example = `Use ${PLAY_CARD_MAX.example} characters or fewer.`;
+  if (!notThis) errors.notThis = "Write a reply the agent should avoid.";
+  else if (notThis.length > PLAY_CARD_MAX.notThis) errors.notThis = `Use ${PLAY_CARD_MAX.notThis} characters or fewer.`;
+  if (Object.keys(errors).length) return { ok: false, errors };
+  return { ok: true, value: { when, do: moves, example, notThis } };
+}
 
 export type PlaybookErrors = Record<string, string>;
 
@@ -54,6 +99,8 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
   const scalar: Record<string, string> = {};
   const rows: Record<"field" | "objection", Map<number, Record<string, string>>> = { field: new Map(), objection: new Map() };
   const never = new Map<number, string>();
+  let opener: PlaybookRowsInput["opener"];
+  const plays = new Map<string, Record<string, string>>();
   for (const [name, value] of entries) {
     const m = name.match(/^(field|objection)\.(\d{1,3})\.(\w+)$/);
     if (m) {
@@ -64,6 +111,10 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
     }
     const n = name.match(/^never\.(\d{1,3})$/);
     if (n) { never.set(Number(n[1]), value); continue; }
+    const o = name.match(/^opener\.(leadsAskAbout|openingQuestion)$/);
+    if (o) { opener = { ...(opener ?? { leadsAskAbout: "", openingQuestion: "" }), [o[1]]: value }; continue; }
+    const pl = name.match(/^play\.([a-z_]{1,40})\.(content|own|when|do|example|notThis)$/);
+    if (pl) { plays.set(pl[1], { ...(plays.get(pl[1]) ?? {}), [pl[2]]: value }); continue; }
     scalar[name] = value;
   }
   const ordered = <T,>(m: Map<number, T>) => [...m.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
@@ -78,6 +129,13 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
     offerMeetingWhen: scalar.offerMeetingWhen ?? "",
     handOffWhen: scalar.handOffWhen ?? "",
     neverDo: ordered(never),
+    ...(opener ? { opener } : {}),
+    ...(plays.size ? {
+      plays: Object.fromEntries([...plays].map(([k, r]) => [k, {
+        content: r.content ?? "",
+        own: r.own === "1" ? { when: r.when ?? "", do: r.do ?? "", example: r.example ?? "", notThis: r.notThis ?? "" } : null,
+      }])),
+    } : {}),
   };
 }
 
@@ -161,6 +219,35 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   });
   if (neverDo.length > 20) errors.never = "Use 20 rules or fewer.";
 
+  let opener: Playbook["opener"];
+  if (input.opener) {
+    const leadsAskAbout = input.opener.leadsAskAbout.trim();
+    const openingQuestion = input.opener.openingQuestion.trim();
+    if (leadsAskAbout.length > OPENER_MAX.leadsAskAbout) errors["opener.leadsAskAbout"] = `Use ${OPENER_MAX.leadsAskAbout} characters or fewer.`;
+    if (openingQuestion.length > OPENER_MAX.openingQuestion) errors["opener.openingQuestion"] = `Use ${OPENER_MAX.openingQuestion} characters or fewer.`;
+    if (leadsAskAbout || openingQuestion) opener = { ...(leadsAskAbout ? { leadsAskAbout } : {}), ...(openingQuestion ? { openingQuestion } : {}) };
+  }
+
+  let plays: Playbook["plays"];
+  if (input.plays) {
+    const out: NonNullable<Playbook["plays"]> = {};
+    // In PLAY_KEYS order; unknown keys are ignored.
+    for (const key of PLAY_KEYS) {
+      const r = input.plays[key];
+      if (!r) continue;
+      const content = r.content?.trim() ?? "";
+      if (content.length > PLAY_CONTENT_MAX) errors[`play.${key}.content`] = `Use ${PLAY_CONTENT_MAX} characters or fewer.`;
+      let own: PlayCard | undefined;
+      if (r.own) {
+        const card = parsePlayCard(r.own);
+        if (card.ok) own = card.value;
+        else for (const [part, msg] of Object.entries(card.errors)) errors[`play.${key}.${part}`] = msg;
+      }
+      if (content || own) out[key] = { ...(content ? { content } : {}), ...(own ? { own } : {}) };
+    }
+    if (Object.keys(out).length) plays = out;
+  }
+
   if (Object.keys(errors).length) return { ok: false, errors };
   return {
     ok: true,
@@ -175,6 +262,9 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
       offerMeetingWhen: input.offerMeetingWhen.trim().slice(0, 500),
       handOffWhen: input.handOffWhen.trim().slice(0, 500),
       neverDo,
+      ...(input.exceptions?.length ? { exceptions: input.exceptions } : {}),
+      ...(opener ? { opener } : {}),
+      ...(plays ? { plays } : {}),
     },
   };
 }

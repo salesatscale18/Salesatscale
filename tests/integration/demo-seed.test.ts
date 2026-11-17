@@ -106,6 +106,9 @@ describe("one-click demo account", () => {
     ]);
     expect(cat.rules).toEqual([{ kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true }]);
     expect(cat.autoAdd).toEqual([{ kind: "auto_add", sku: "INST-1", whenAnyOf: ["GW-10"], qty: "sites", removable: true }]);
+    // P11: what the agent calls each item in chat, and what the buyer gets.
+    expect(cat.items.map((i) => [i.sku, i.plainName])).toEqual([["SNS-200", "wireless fridge sensor"], ["GW-10", "kitchen hub"], ["INST-1", "installation"]]);
+    for (const i of cat.items) expect(i.valueLine?.length).toBeGreaterThan(10);
 
     const [summary] = await listPriceLists(db, accountId);
     const live = (await livePriceList(db, accountId, summary.lineageId))!;
@@ -162,6 +165,11 @@ describe("one-click demo account", () => {
     expect(pb.neverDo.length).toBeGreaterThan(0);
     expect(pb.exceptions).toHaveLength(1);
     expect(pb.exceptions![0]).toMatchObject({ text: "Installation is free from 3 sites", evidence: { locator: "01:58" } });
+    // P11: a little seller content for two plays, from facts in the seed; default cards (no own card).
+    expect(Object.keys(pb.plays ?? {}).sort()).toEqual(["existing_solution", "price_early"]);
+    expect(pb.plays!.existing_solution!.content).toMatch(/alarm company covers doors, not temperature/);
+    expect(pb.plays!.price_early!.content).toMatch(/590 ILS.*550 ILS each from 10 sensors/);
+    expect(Object.values(pb.plays!).some((x) => x?.own)).toBe(false);
 
     const tests = await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.isTest, true)));
     expect(tests).toHaveLength(1);

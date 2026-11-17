@@ -3,9 +3,11 @@
  * followed by the run's data (facts, catalog summary, current playbook) as
  * JSON with a fixed key order. Bump PROMPT_VERSION on any change.
  */
+import { PLAY_KEYS } from "@/db/schema";
+import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PLAYBOOK_TOOL } from "./system";
 
-export const PROMPT_VERSION = "playbook-v2";
+export const PROMPT_VERSION = "playbook-v3";
 
 /** Field keys the order form prefill reads (lib/orders/prefill.ts): suggest these exact keys for those details. */
 export const ORDER_FORM_KEYS: Record<string, string> = {
@@ -20,7 +22,7 @@ export const ORDER_FORM_KEYS: Record<string, string> = {
 };
 
 export const PLAYBOOK_INSTRUCTION = `Task: draft the sales agent's playbook from the corpus above. Call ${PLAYBOOK_TOOL} once.
-Below this task you get, as JSON: the facts found so far (approved and suggested), a summary of the catalog, the current playbook, and the order-form field keys.
+Below this task you get, as JSON: the facts found so far (approved and suggested), a summary of the catalog, the current playbook, the order-form field keys, and the selling situations (plays) the agent has a default card for.
 Base the playbook first on how the seller's reps actually sell in the recorded calls, then on documents and the website.
 - goal: who the agent sells to and what a win is: a signed order form with payment, or a meeting with the seller's team.
 - fields: what the agent must learn from the buyer to qualify, to price and to fill the order form. For an order-form detail use exactly the key listed under order_form_keys. Reuse the key of a field in the current playbook when it is the same field. asked_in_calls counts the call transcripts in which a rep asked it.
@@ -29,11 +31,15 @@ Base the playbook first on how the seller's reps actually sell in the recorded c
 - tone: how the reps talk, in one sentence.
 - never: real prohibitions only: what the agent must never say or do, worded to follow "Never". Prices, discounts and special terms belong in limits, not here.
 - discovery_questions: good open questions reps ask that are not already a field.
+- opener: what leads usually ask about when they reach out, and the easy question reps open with about the buyer's situation today.
+- play_content: for each play the corpus supports, the seller's facts for that situation, following the play's seller_hint (for example the gap common existing solutions leave, or the entry price and what drives the total). Facts only, no instructions to the agent. A price may come from a document or the website, never only from a call.
+- play_cards: only when call transcripts clearly show the reps' own way of handling a situation: when it applies, 2 to 5 moves in order, an example reply and a reply to avoid. Otherwise leave it out: the default card applies.
+- catalog_items: for each catalog SKU, the plain name a buyer would use in chat and one sentence on what the buyer gets. Leave out items whose current plain_name and value_line already say this.
 - Leave out anything the current playbook already says with the same meaning. Use only items you can support with evidence from the corpus.`;
 
 export type PlaybookStageData = {
   facts: { topic: string; statement: string; status: string }[];
-  catalog: { sku: string; name: string; kind: string; unit: string; charge: string }[];
+  catalog: { sku: string; name: string; kind: string; unit: string; charge: string; plainName?: string | null; valueLine?: string | null }[];
   playbook: unknown;
   calls: number;
 };
@@ -44,8 +50,9 @@ export function playbookInstruction(data: PlaybookStageData): string {
     calls_in_corpus: data.calls,
     order_form_keys: ORDER_FORM_KEYS,
     facts: data.facts.map((f) => ({ topic: f.topic, statement: f.statement, status: f.status })),
-    catalog: data.catalog.map((c) => ({ sku: c.sku, name: c.name, kind: c.kind, unit: c.unit, charge: c.charge })),
+    catalog: data.catalog.map((c) => ({ sku: c.sku, name: c.name, kind: c.kind, unit: c.unit, charge: c.charge, plain_name: c.plainName ?? "", value_line: c.valueLine ?? "" })),
     current_playbook: data.playbook,
+    plays: PLAY_KEYS.map((k) => ({ play: k, title: DEFAULT_PLAYS[k].title, when: DEFAULT_PLAYS[k].when, seller_hint: DEFAULT_PLAYS[k].sellerContentHint })),
   });
   return `${PLAYBOOK_INSTRUCTION}\n\n<data>\n${json}\n</data>`;
 }

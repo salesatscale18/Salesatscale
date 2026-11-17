@@ -112,7 +112,7 @@ export type CatalogState = {
 };
 
 const itemKey = (i: CatalogItem) =>
-  JSON.stringify([i.name, i.description, i.chargeType, i.period, i.unit, i.priceMinor, i.volumeTiers, i.customPricingFromQty, i.active, i.availabilityNote, i.kind, i.unitCustom]);
+  JSON.stringify([i.name, i.description, i.chargeType, i.period, i.unit, i.priceMinor, i.volumeTiers, i.customPricingFromQty, i.active, i.availabilityNote, i.kind, i.unitCustom, i.plainName, i.valueLine]);
 
 export async function catalogState(db: Db, accountId: string): Promise<CatalogState> {
   const [published, draft] = await Promise.all([versionByStatus(db, accountId, "published"), versionByStatus(db, accountId, "draft")]);
@@ -173,6 +173,25 @@ export async function draftItemIdFor(db: Db, accountId: string, itemId: string):
     .from(catalogItems)
     .where(and(eq(catalogItems.catalogVersionId, draft.id), eq(catalogItems.sku, item.sku)));
   return copy?.id ?? null;
+}
+
+/**
+ * Sets an item's agent texts (plain name, value line) in the draft, found by
+ * SKU (P11: an approved suggestion from the knowledge analysis). An empty or
+ * missing text leaves that column as it is. False when the draft has no item
+ * with that SKU.
+ */
+export async function setDraftItemTexts(db: Db, accountId: string, sku: string, texts: { plainName?: string; valueLine?: string }): Promise<boolean> {
+  const draft = await ensureDraft(db, accountId);
+  const set = {
+    ...(texts.plainName?.trim() ? { plainName: texts.plainName.trim() } : {}),
+    ...(texts.valueLine?.trim() ? { valueLine: texts.valueLine.trim() } : {}),
+  };
+  const [item] = await db.select({ id: catalogItems.id }).from(catalogItems)
+    .where(and(eq(catalogItems.accountId, accountId), eq(catalogItems.catalogVersionId, draft.id), eq(catalogItems.sku, sku.toUpperCase())));
+  if (!item) return false;
+  if (Object.keys(set).length) await db.update(catalogItems).set(set).where(and(eq(catalogItems.id, item.id), eq(catalogItems.accountId, accountId)));
+  return true;
 }
 
 export async function removeDraftItem(db: Db, accountId: string, itemId: string) {

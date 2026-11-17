@@ -6,8 +6,9 @@
  * - prices or discounts heard only in calls are never facts;
  * - duplicates are dropped (normalised statement).
  */
-import type { SuggestionEvidence } from "@/db/schema";
-import { fieldKey } from "@/lib/agent/playbook";
+import type { PlayKey, SuggestionEvidence } from "@/db/schema";
+import { fieldKey, isPlayKey, OPENER_MAX, PLAY_CONTENT_MAX, parsePlayCard } from "@/lib/agent/playbook";
+import { PLAIN_NAME_MAX, VALUE_LINE_MAX } from "@/lib/catalog/rules";
 import { QUOTE_MAX } from "./prompts/system";
 
 export type Evidence = SuggestionEvidence;
@@ -153,7 +154,10 @@ export function parseFactsOutput(input: unknown, index: CorpusIndex): FactsResul
 // Playbook suggestions
 // ---------------------------------------------------------------------------
 
-export type SuggestionKind = "goal" | "field" | "objection" | "limit" | "tone" | "never" | "discovery_question";
+export type SuggestionKind =
+  | "goal" | "field" | "objection" | "limit" | "tone" | "never" | "discovery_question"
+  // P11 seller inputs: the opener, a play's seller facts, a play's own card, an item's plain name and value line.
+  | "opener" | "play_content" | "play_card" | "catalog_item";
 export type FieldStage = "before_quote" | "before_order_form" | "optional";
 
 export type SuggestionPayload =
@@ -162,7 +166,16 @@ export type SuggestionPayload =
   | { kind: "discovery_question"; label: string; question: string; questionHe: string; askedInCalls: number }
   | { kind: "objection"; objection: string; objectionHe: string; answer: string; answerHe: string; outcome: string }
   | LimitPayload
-  | { kind: "never"; rule: string; ruleHe: string };
+  | { kind: "never"; rule: string; ruleHe: string }
+  | OpenerPayload
+  | { kind: "play_content"; play: PlayKey; content: string }
+  | { kind: "play_card"; play: PlayKey; when: string; do: string[]; example: string; notThis: string }
+  | CatalogItemPayload;
+
+/** Opener inputs; an empty string leaves that input as it is. */
+export type OpenerPayload = { kind: "opener"; leadsAskAbout: string; openingQuestion: string };
+/** An item's agent texts; an empty string leaves that text as it is. */
+export type CatalogItemPayload = { kind: "catalog_item"; sku: string; plainName: string; valueLine: string };
 
 /**
  * Which structured setting a limit updates once approved, or "exception" (an
@@ -198,6 +211,16 @@ export function limitSetting(p: LimitPayload): LimitSetting {
 
 export type CleanSuggestion = { payload: SuggestionPayload; evidence: Evidence[] };
 
+/** The review page's section (and anchor) a kind is listed in. */
+export function suggestionSection(kind: SuggestionKind): string {
+  switch (kind) {
+    case "discovery_question": return "field";
+    case "play_content": case "play_card": return "play";
+    case "catalog_item": return "catalog";
+    default: return kind;
+  }
+}
+
 const KEY_RE = /^[a-z0-9_]{1,40}$/;
 const STAGE_MAP: Record<string, FieldStage> = { before_quote: "before_quote", before_order_form: "before_order_form", helpful: "optional", optional: "optional" };
 const count = (v: unknown) => (typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.min(999, Math.round(v)) : 0);
@@ -210,8 +233,19 @@ export function suggestionKey(raw: unknown, label: string): string {
   return KEY_RE.test(k) ? k : fieldKey(label);
 }
 
-/** Reads record_playbook input into suggestions. Items without valid evidence are dropped. */
-export function parsePlaybookOutput(input: unknown, index: CorpusIndex): { suggestions: CleanSuggestion[]; dropped: number } {
+/** A text within `max` characters, or "" when missing or too long (never cut mid-sentence). */
+const within = (v: unknown, max: number) => {
+  const x = s(v, 5000);
+  return x.length <= max ? x : "";
+};
+
+/**
+ * Reads record_playbook input into suggestions. Items without valid evidence
+ * are dropped. P11 items are checked in code too: lengths, known play keys,
+ * own cards with 2 to 5 moves, catalog SKUs from `known.skus` (none given: no
+ * catalog suggestions), and no play facts that are prices heard only in calls.
+ */
+export function parsePlaybookOutput(input: unknown, index: CorpusIndex, known: { skus?: ReadonlySet<string> } = {}): { suggestions: CleanSuggestion[]; dropped: number } {
   const r = rec(input);
   const out: CleanSuggestion[] = [];
   let dropped = 0;
@@ -271,6 +305,38 @@ export function parsePlaybookOutput(input: unknown, index: CorpusIndex): { sugge
     const x = rec(n);
     const rule = ruleText(x.rule);
     if (rule) push(normalizeStatement(rule), { kind: "never", rule, ruleHe: s(x.rule_he, 200) }, x.evidence);
+  }
+
+  // P11: opener inputs, play facts and own cards, catalog item texts.
+  if (r.opener !== undefined) {
+    const x = rec(r.opener);
+    const leadsAskAbout = within(x.leads_ask_about, OPENER_MAX.leadsAskAbout);
+    const openingQuestion = within(x.opening_question, OPENER_MAX.openingQuestion);
+    if (leadsAskAbout || openingQuestion) push("opener", { kind: "opener", leadsAskAbout, openingQuestion }, x.evidence);
+    else if (s(x.leads_ask_about) || s(x.opening_question)) dropped++;
+  }
+  for (const c of list(r.play_content)) {
+    const x = rec(c);
+    const play = s(x.play, 40);
+    const content = within(x.content, PLAY_CONTENT_MAX);
+    if (!isPlayKey(play) || !content) { dropped++; continue; }
+    if (isPricingHeardInCalls(content, cleanEvidence(x.evidence, index), index)) { dropped++; continue; }
+    push(play, { kind: "play_content", play, content }, x.evidence);
+  }
+  for (const c of list(r.play_cards)) {
+    const x = rec(c);
+    const play = s(x.play, 40);
+    const card = parsePlayCard({ when: s(x.when, 5000), do: list(x.moves).map((m) => s(m, 5000)), example: s(x.example, 5000), notThis: s(x.not_this, 5000) });
+    if (!isPlayKey(play) || !card.ok) { dropped++; continue; }
+    push(play, { kind: "play_card", play, ...card.value }, x.evidence);
+  }
+  for (const c of list(r.catalog_items)) {
+    const x = rec(c);
+    const sku = s(x.sku, 40).toUpperCase();
+    const plainName = within(x.plain_name, PLAIN_NAME_MAX);
+    const valueLine = within(x.value_line, VALUE_LINE_MAX);
+    if (!known.skus?.has(sku) || (!plainName && !valueLine)) { dropped++; continue; }
+    push(sku, { kind: "catalog_item", sku, plainName, valueLine }, x.evidence);
   }
   return { suggestions: out, dropped };
 }

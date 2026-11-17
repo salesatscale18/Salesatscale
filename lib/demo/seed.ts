@@ -105,11 +105,31 @@ const TRANSCRIPT = `00:00 Rep: Hi Dana, this is Avi from Polar Demo. Thanks for 
 02:18 Buyer: Send me the order form and I'll talk to my partner.
 02:22 Rep: Will do. Thanks, Dana.`;
 
+/** `plainName` and `valueLine` are what the agent says in chat (P11); the SKU and name stay on quotes. */
 const ITEMS = [
-  { sku: "SNS-200", name: "Wireless fridge sensor", kind: "product", unit: "device", description: "Measures -40°C to +60°C, ±0.3°C. One per fridge or freezer." },
-  { sku: "GW-10", name: "Site gateway", kind: "product", unit: "site", description: "Connects up to 30 sensors within about 50 m. One per site." },
-  { sku: "INST-1", name: "Installation", kind: "service", unit: "site", description: "About 1 hour per site." },
+  {
+    sku: "SNS-200", name: "Wireless fridge sensor", kind: "product", unit: "device", description: "Measures -40°C to +60°C, ±0.3°C. One per fridge or freezer.",
+    plainName: "wireless fridge sensor", valueLine: "You get a WhatsApp alert the moment a fridge or freezer leaves its range, also at night and on weekends.",
+  },
+  {
+    sku: "GW-10", name: "Site gateway", kind: "product", unit: "site", description: "Connects up to 30 sensors within about 50 m. One per site.",
+    plainName: "kitchen hub", valueLine: "One small hub connects every sensor in the kitchen to your alerts and the daily temperature log.",
+  },
+  {
+    sku: "INST-1", name: "Installation", kind: "service", unit: "site", description: "About 1 hour per site.",
+    plainName: "installation", valueLine: "We set it all up for you in about an hour per site.",
+  },
 ] as const;
+
+/** A little seller content for two plays (P11), from facts already in this seed. */
+const PLAYS = {
+  existing_solution: {
+    content: "Paper logs miss nights and weekends, and a shift can forget to fill them in. An alarm company covers doors, not temperature: it will not tell you a fridge is at 9 degrees. Our sensors check day and night and alert by WhatsApp, SMS and email.",
+  },
+  price_early: {
+    content: "Prices are in ILS without VAT (18%). A sensor is 590 ILS, or 550 ILS each from 10 sensors. Each site needs one hub (660 ILS plus 90 ILS a month for monitoring) and installation (250 ILS per site). The total depends on the number of fridges and sites.",
+  },
+};
 
 const RULES = [
   { kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true },
@@ -174,6 +194,7 @@ function playbookInput(transcriptId: string, at: Date, actorId: string) {
     maxDiscount: "5",
     offerMeetingWhen: "The buyer has more than 10 sites, asks to talk to a person, or needs a partner's approval.",
     handOffWhen: "The buyer asks for a person, is upset, or asks something the approved knowledge does not answer.",
+    plays: PLAYS,
     neverDo: [
       "Never promise a discount above 5% without approval.",
       "Never promise food-safety or legal compliance beyond what the approved knowledge says.",

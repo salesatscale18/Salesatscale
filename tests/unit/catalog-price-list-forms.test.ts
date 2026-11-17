@@ -9,7 +9,7 @@ describe("item editor without prices", () => {
   it("keeps kind and a unit from the pick list, and no price fields", () => {
     const r = parseItemEdit(ok, ["he"]);
     expect(r.ok && r.value).toEqual({
-      sku: "SVC-INST", name: "Installation", description: "On-site setup", kind: "service", unit: "site", unitCustom: null, active: true, availabilityNote: null,
+      sku: "SVC-INST", name: "Installation", description: "On-site setup", kind: "service", unit: "site", unitCustom: null, active: true, availabilityNote: null, plainName: null, valueLine: null,
     });
     expect(r.ok && "priceMinor" in r.value).toBe(false);
   });

@@ -15,8 +15,9 @@
  * on Sonnet 5.5.
  */
 import type Anthropic from "@anthropic-ai/sdk";
+import { PLAY_KEYS } from "@/db/schema";
 
-export const PROMPT_VERSION = "system-v2";
+export const PROMPT_VERSION = "system-v3";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -91,6 +92,8 @@ const FACTS_SCHEMA = obj({
   }), "Statements about one customer that were kept out of the facts."),
 });
 
+const PLAY = { type: "string", enum: [...PLAY_KEYS], description: "The play key, one of the keys listed under plays in the task." };
+
 const STAGE = { type: "string", enum: ["before_quote", "before_order_form", "helpful"], description: "before_quote: needed to price; before_order_form: needed for the binding order form; helpful: useful, not required." };
 
 /** Stage 2 output: the playbook draft, item by item. */
@@ -141,6 +144,30 @@ const PLAYBOOK_SCHEMA = obj({
     asked_in_calls: int("In how many call transcripts this was asked; 0 if not from calls."),
     evidence: EVIDENCE,
   }), "Good open questions reps ask that are not already a field."),
+  opener: obj({
+    leads_ask_about: str("What leads usually ask about when they contact the seller, a few English words, at most 120 characters, e.g. monitoring fridge temperatures. Empty if unclear."),
+    opening_question: str("One easy English question about the buyer's situation today, at most 200 characters, e.g. How do you check your fridge temperatures today? Empty if unclear."),
+    evidence: EVIDENCE,
+  }, "The agent's first message: what the lead asked about and the opening question."),
+  play_content: arr(obj({
+    play: PLAY,
+    content: str("The seller's facts for this situation, in English, at most 600 characters. Only what the evidence supports."),
+    evidence: EVIDENCE,
+  }), "Per selling situation (play), the seller's facts the agent may use. Only plays the corpus supports."),
+  play_cards: arr(obj({
+    play: PLAY,
+    when: str("When the seller's way applies, one English sentence, at most 200 characters."),
+    moves: arr({ type: "string", description: "One move, a short English sentence, at most 200 characters." }, "2 to 5 moves, in the order the reps make them."),
+    example: str("A good reply in the reps' style, in English, at most 300 characters."),
+    not_this: str("A reply to avoid, in English, at most 300 characters."),
+    evidence: EVIDENCE,
+  }), "The seller's own way of handling a situation, only when call transcripts clearly show it. Usually empty."),
+  catalog_items: arr(obj({
+    sku: str("The item's SKU from the catalog, exactly."),
+    plain_name: str("What a buyer would call the item in chat, plain English words, at most 60 characters, e.g. wireless fridge sensor. Empty to keep the current one."),
+    value_line: str("What the buyer gets from the item, one English sentence, at most 200 characters; an outcome, not features. Empty to keep the current one."),
+    evidence: EVIDENCE,
+  }), "Plain names and one-sentence value lines for catalog items."),
 });
 
 /**
@@ -157,7 +184,7 @@ export const PIPELINE_TOOLS: Anthropic.Beta.BetaTool[] = [
   },
   {
     name: PLAYBOOK_TOOL,
-    description: "Records the suggested playbook draft: goal, fields to learn, objections and answers, limits, tone, things never to do and discovery questions.",
+    description: "Records the suggested playbook draft: goal, fields to learn, objections and answers, limits, tone, things never to do, discovery questions, the opener, sales play facts and own cards, and plain names and value lines for catalog items.",
     input_schema: PLAYBOOK_SCHEMA as Anthropic.Beta.BetaTool["input_schema"],
   },
 ];

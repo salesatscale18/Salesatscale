@@ -6,6 +6,7 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import { savePlaybookAction, type PlaybookFormState } from "./actions";
+import { PlaysList, type PlayDefault } from "./plays";
 
 type FieldRow = { id: number; key: string; label: string; stage: PlaybookField["stage"]; example: string; hint: string };
 type ObjectionRow = { id: number; objection: string; answer: string; source: string };
@@ -33,6 +34,7 @@ export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
   return {
     goal: sent?.goal ?? p.goal, agentName: sent?.agentName ?? p.agentName, tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
     maxDiscount: sent?.maxDiscount ?? String(p.maxDiscountBp / 100), offerMeetingWhen: sent?.offerMeetingWhen ?? p.offerMeetingWhen, handOffWhen: sent?.handOffWhen ?? p.handOffWhen,
+    leadsAskAbout: sent?.opener?.leadsAskAbout ?? p.opener?.leadsAskAbout ?? "", openingQuestion: sent?.opener?.openingQuestion ?? p.opener?.openingQuestion ?? "",
   };
 }
 
@@ -42,7 +44,7 @@ export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
  * validates everything again (parsePlaybookRows). Existing fields carry their
  * key in a hidden input, so renaming a label keeps the deal-state values.
  */
-export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string; p: Playbook; draftVersion: number; labHref: string }) {
+export function PlaybookForm({ slug, p, draftVersion, labHref, plays }: { slug: string; p: Playbook; draftVersion: number; labHref: string; plays: PlayDefault[] }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
   const v = playbookFormValues(p, state);
@@ -112,6 +114,23 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
                 </div>
               </div>
             </>
+          ))}
+
+          {panel("pb-opener-h", "playbook.opener", "playbook.opener_hint", null, (
+            <div className="sas-grid-2" style={{ gap: 12 }}>
+              <div className="sas-input-group">
+                <label className="sas-input-label" htmlFor="pb-opener.leadsAskAbout">{t("playbook.opener.leads_ask")}</label>
+                <input className="sas-input" id="pb-opener.leadsAskAbout" name="opener.leadsAskAbout" maxLength={120} defaultValue={v.leadsAskAbout} {...invalid("opener.leadsAskAbout")} aria-describedby={e["opener.leadsAskAbout"] ? "pb-opener.leadsAskAbout-error" : "pb-opener.leadsAskAbout-hint"} />
+                <span className="sas-hint" id="pb-opener.leadsAskAbout-hint">{t("playbook.opener.leads_ask_hint")}</span>
+                {err("opener.leadsAskAbout")}
+              </div>
+              <div className="sas-input-group">
+                <label className="sas-input-label" htmlFor="pb-opener.openingQuestion">{t("playbook.opener.question")}</label>
+                <input className="sas-input" id="pb-opener.openingQuestion" name="opener.openingQuestion" maxLength={200} defaultValue={v.openingQuestion} {...invalid("opener.openingQuestion")} aria-describedby={e["opener.openingQuestion"] ? "pb-opener.openingQuestion-error" : "pb-opener.openingQuestion-hint"} />
+                <span className="sas-hint" id="pb-opener.openingQuestion-hint">{t("playbook.opener.question_hint")}</span>
+                {err("opener.openingQuestion")}
+              </div>
+            </div>
           ))}
 
           {panel("pb-fields-h", "playbook.fields", "playbook.fields_hint", (
@@ -199,6 +218,10 @@ export function PlaybookForm({ slug, p, draftVersion, labHref }: { slug: string;
             </ul>
           ))}
           {err("objections")}
+
+          {panel("pb-plays-h", "playbook.plays", "playbook.plays_hint", null, (
+            <PlaysList defaults={plays} stored={p.plays} sent={state.status === "error" ? state.values.plays : undefined} h={{ err, invalid, errors: e }} />
+          ))}
         </div>
 
         <aside className="sas-split__side sas-stack-6">

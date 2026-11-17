@@ -19,6 +19,10 @@ export type ItemDefaults = {
   unitCustom: Record<string, { one: string; other: string }>;
   availabilityNote: string;
   active: boolean;
+  /** What the agent calls the item in chat (P11). */
+  plainName: string;
+  /** What the buyer gets, in one sentence (P11). */
+  valueLine: string;
 };
 
 const LANG_NAMES: Record<string, string> = { en: "English", he: "Hebrew", ar: "Arabic", ru: "Russian", fr: "French", de: "German", es: "Spanish", it: "Italian", nl: "Dutch" };
@@ -57,6 +61,18 @@ export function ItemForm({ slug, d, unitLanguages }: { slug: string; d: ItemDefa
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor="ci-desc">{t("catalog.edit.description")}</label>
         <textarea className="sas-textarea" id="ci-desc" name="description" rows={2} defaultValue={d.description} />
+      </div>
+      <div className="sas-input-group">
+        <label className="sas-input-label" htmlFor="ci-plain">{t("catalog.edit.plain_name")}</label>
+        <input className="sas-input" id="ci-plain" name="plainName" maxLength={60} defaultValue={d.plainName} placeholder={t("catalog.edit.optional")} {...invalid("plainName")} aria-describedby={e.plainName ? "ci-plainName-error" : "ci-plain-hint"} />
+        <span className="sas-hint" id="ci-plain-hint">{t("catalog.edit.plain_name_hint")}</span>
+        {err("plainName")}
+      </div>
+      <div className="sas-input-group">
+        <label className="sas-input-label" htmlFor="ci-value">{t("catalog.edit.value_line")}</label>
+        <textarea className="sas-textarea" id="ci-value" name="valueLine" rows={2} maxLength={200} defaultValue={d.valueLine} placeholder={t("catalog.edit.optional")} {...invalid("valueLine")} aria-describedby={e.valueLine ? "ci-valueLine-error" : "ci-value-hint"} />
+        <span className="sas-hint" id="ci-value-hint">{t("catalog.edit.value_line_hint")}</span>
+        {err("valueLine")}
       </div>
       <div className="sas-input-group">
         <label className="sas-input-label" htmlFor="ci-unit">{t("catalog.edit.unit")}</label>

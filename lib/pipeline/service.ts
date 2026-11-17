@@ -24,10 +24,10 @@ import {
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX } from "@/lib/agent/knowledge";
 import { ensureDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
-import { defaultPlaybook } from "@/lib/agent/playbook";
+import { defaultPlaybook, parsePlayCard } from "@/lib/agent/playbook";
 import { ensureDraft, entriesOf, listPriceLists, setEntry } from "@/lib/pricing/price-lists";
 import { applyLimitToPlaybook, effectiveSetting, limitPreview, type LimitContext, type LimitPreview } from "./limits";
-import { itemsOf } from "@/lib/catalog/service";
+import { itemsOf, setDraftItemTexts } from "@/lib/catalog/service";
 import { estimateCostMicros, modelFor } from "@/lib/ai/models";
 import { AiBudgetError, budgetGuarded, spendState } from "@/lib/ai/usage";
 import { isUuid } from "@/lib/security/ids";
@@ -42,7 +42,8 @@ import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_VERSION, type PlaybookS
 import { FACTS_TOOL, PLAYBOOK_TOOL, PROMPT_VERSION as SYSTEM_VERSION } from "./prompts/system";
 import {
   limitSetting, normalizeStatement, parseFactsOutput, parsePlaybookOutput,
-  type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout, type SuggestionPayload,
+  type CatalogItemPayload, type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout,
+  type SuggestionKind, type SuggestionPayload,
 } from "./validate";
 
 /** Sources that go into the corpus: read, with text (a partly failed source still has usable text). */
@@ -142,6 +143,7 @@ export async function playbookStageData(db: Db, accountId: string, callsInCorpus
     facts,
     catalog: items.filter((i) => i.active).map((i) => ({
       sku: i.sku, name: i.name, kind: i.kind ?? "product", unit: i.unit, charge: i.chargeType === "recurring" ? `recurring per ${i.period ?? "month"}` : "one-time",
+      plainName: i.plainName, valueLine: i.valueLine,
     })),
     playbook: await workingPlaybook(db, accountId),
     calls: callsInCorpus,
@@ -461,12 +463,12 @@ export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: st
           model: plan.model, effort: EFFORT, corpus, cacheCorpus: bothRun && !plan.large, instruction: playbookInstruction(data), maxTokens: MAX_TOKENS, fallbacks: true,
         }, PLAYBOOK_TOOL).catch((e) => { usage = usageOf(e); throw e; });
         usage = res.usage;
-        const parsed = parsePlaybookOutput(res.tool!.input, index);
+        const parsed = parsePlaybookOutput(res.tool!.input, index, { skus: new Set(data.catalog.map((c) => c.sku)) });
         if (parsed.suggestions.length) {
           // created_at one millisecond apart keeps the model's order (lists sort by it).
           const at = Date.now();
           await db.insert(playbookSuggestions).values(parsed.suggestions.map((s, i) => ({
-            id: randomUUID(), accountId, runId: id, kind: s.payload.kind, payload: s.payload as unknown as Record<string, unknown>, evidence: s.evidence,
+            id: randomUUID(), accountId, runId: id, kind: storedKind(s.payload.kind), payload: s.payload as unknown as Record<string, unknown>, evidence: s.evidence,
             createdAt: new Date(at + i),
           })));
         }
@@ -657,7 +659,29 @@ export async function locateEvidence(db: Db, accountId: string, slug: string, pa
 // Playbook suggestions: review and merge
 // ---------------------------------------------------------------------------
 
-export type Suggestion = Omit<PlaybookSuggestion, "payload"> & { payload: SuggestionPayload };
+export type Suggestion = Omit<PlaybookSuggestion, "payload" | "kind"> & { kind: SuggestionKind; payload: SuggestionPayload };
+
+/**
+ * The P11 kinds (opener, play facts, own play card, catalog item texts) are
+ * not values of the `playbook_suggestion_kind` enum yet (this lane adds no
+ * migration). They are stored with STORED_AS in the kind column and told
+ * apart by `payload.kind`; every reader goes through `suggestionKind`. Once a
+ * migration adds the values, storedKind can return the kind itself.
+ */
+const P11_KINDS = new Set<SuggestionKind>(["opener", "play_content", "play_card", "catalog_item"]);
+const STORED_AS = "discovery_question" as const;
+type DbKind = PlaybookSuggestion["kind"];
+export function storedKind(kind: SuggestionKind): DbKind {
+  return P11_KINDS.has(kind) ? STORED_AS : (kind as DbKind);
+}
+/** A stored row's real kind. */
+export function suggestionKind(row: { kind: string; payload: unknown }): SuggestionKind {
+  const p = (row.payload ?? {}) as { kind?: unknown };
+  return typeof p.kind === "string" && P11_KINDS.has(p.kind as SuggestionKind) ? (p.kind as SuggestionKind) : (row.kind as SuggestionKind);
+}
+const asSuggestion = (row: PlaybookSuggestion): Suggestion => ({ ...row, kind: suggestionKind(row) } as Suggestion);
+/** Kinds applied the moment they are approved (and final then): limits, and catalog item texts (into the catalog draft). */
+export const APPLIED_ON_APPROVAL: ReadonlySet<SuggestionKind> = new Set(["limit", "catalog_item"]);
 
 /** The latest finished playbook run and its suggestions (rejected ones included), in kind order. */
 export async function latestSuggestions(db: Db, accountId: string): Promise<{ run: PipelineRun | null; items: Suggestion[] }> {
@@ -668,7 +692,7 @@ export async function latestSuggestions(db: Db, accountId: string): Promise<{ ru
   const items = await db.select().from(playbookSuggestions)
     .where(and(eq(playbookSuggestions.accountId, accountId), eq(playbookSuggestions.runId, run.id)))
     .orderBy(asc(playbookSuggestions.createdAt), asc(playbookSuggestions.id));
-  return { run, items: items as Suggestion[] };
+  return { run, items: items.map(asSuggestion) };
 }
 
 /** Suggestions of the latest run whose evidence comes from one source (a call's suggestions panel). */
@@ -682,28 +706,40 @@ const suggestionWhere = (accountId: string, id: string) => and(eq(playbookSugges
 /** Accept or reject one suggestion. Null when it is not this account's. */
 export async function decideSuggestion(db: Db, actor: Actor, accountId: string, id: string, status: "accepted" | "rejected" | "suggested", now = new Date()) {
   if (!isUuid(id)) return null;
-  const [before] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
-  if (!before) return null;
-  if (before.kind === "limit") {
-    // An approved limit has changed a setting: it is final here (change the setting where it lives).
+  const [raw] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
+  if (!raw) return null;
+  const before = asSuggestion(raw);
+  if (APPLIED_ON_APPROVAL.has(before.kind)) {
+    // An approved limit has changed a setting, approved item texts the catalog draft: final here (change it where it lives).
     if (before.status === "accepted" || before.status === "edited") return before;
-    if (status === "accepted") await applyLimit(db, actor, accountId, before as Suggestion, now);
+    if (status === "accepted" && before.kind === "limit") await applyLimit(db, actor, accountId, before, now);
+    if (status === "accepted" && before.kind === "catalog_item" && !(await applyCatalogItem(db, actor, accountId, before))) return null;
   }
   const [row] = await db.update(playbookSuggestions)
     .set({ status, decidedByUserId: status === "suggested" ? null : actor.userId, decidedAt: status === "suggested" ? null : now })
     .where(suggestionWhere(accountId, id)).returning();
-  if (row) await writeAudit(db, actor, { accountId, action: `playbook.suggestion_${status}`, targetType: "playbook_suggestion", targetId: id, details: { kind: row.kind } });
-  return row ?? null;
+  if (row) await writeAudit(db, actor, { accountId, action: `playbook.suggestion_${status}`, targetType: "playbook_suggestion", targetId: id, details: { kind: before.kind } });
+  return row ? asSuggestion(row) : null;
 }
 
-/** Accepts every open suggestion of the latest run, of one kind group. Limits are never accepted in bulk. */
+/**
+ * Accepts every open suggestion of the latest run, of one kind group. Limits
+ * are never accepted in bulk; catalog item texts are applied one by one.
+ */
 export async function acceptAllSuggestions(db: Db, actor: Actor, accountId: string, kinds: SuggestionPayload["kind"][], now = new Date()): Promise<number> {
-  const { run } = await latestSuggestions(db, accountId);
+  const { run, items } = await latestSuggestions(db, accountId);
   const allowed = kinds.filter((k) => k !== "limit");
   if (!run || allowed.length === 0) return 0;
+  const ids: string[] = [];
+  for (const s of items) {
+    if (s.status !== "suggested" || !(allowed as SuggestionKind[]).includes(s.kind)) continue;
+    if (s.kind === "catalog_item" && !(await applyCatalogItem(db, actor, accountId, s))) continue;
+    ids.push(s.id);
+  }
+  if (ids.length === 0) return 0;
   const rows = await db.update(playbookSuggestions)
     .set({ status: "accepted", decidedByUserId: actor.userId, decidedAt: now })
-    .where(and(eq(playbookSuggestions.accountId, accountId), eq(playbookSuggestions.runId, run.id), eq(playbookSuggestions.status, "suggested"), inArray(playbookSuggestions.kind, allowed)))
+    .where(and(eq(playbookSuggestions.accountId, accountId), eq(playbookSuggestions.runId, run.id), eq(playbookSuggestions.status, "suggested"), inArray(playbookSuggestions.id, ids)))
     .returning({ id: playbookSuggestions.id });
   if (rows.length) await writeAudit(db, actor, { accountId, action: "playbook.suggestions_accepted", targetType: "pipeline_run", targetId: run.id, details: { n: rows.length, kinds: allowed } });
   return rows.length;
@@ -718,15 +754,23 @@ export const EDITABLE: Record<SuggestionPayload["kind"], { name: string; max: nu
   objection: [{ name: "objection", max: 200, required: true }, { name: "answer", max: 600, required: true }],
   limit: [{ name: "rule", max: 200, required: true }],
   never: [{ name: "rule", max: 200, required: true }],
+  // P11. At least one opener input and one item text is required (checked in editSuggestion).
+  opener: [{ name: "leadsAskAbout", max: 120, required: false }, { name: "openingQuestion", max: 200, required: false }],
+  play_content: [{ name: "content", max: 600, required: true }],
+  // The moves ("do", one per line) are checked with parsePlayCard.
+  play_card: [{ name: "when", max: 200, required: true }, { name: "example", max: 300, required: true }, { name: "notThis", max: 300, required: true }],
+  catalog_item: [{ name: "plainName", max: 60, required: false }, { name: "valueLine", max: 200, required: false }],
 };
 
 /** Saves an edited suggestion (status edited = accepted with changes). Field stages and limit percentages are edited too. */
 export async function editSuggestion(db: Db, actor: Actor, accountId: string, id: string, values: Record<string, string>, now = new Date()): Promise<{ ok: true } | { ok: false; error: string }> {
   if (!isUuid(id)) return { ok: false, error: "missing" };
-  const [row] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
-  if (!row) return { ok: false, error: "missing" };
+  const [raw] = await db.select().from(playbookSuggestions).where(suggestionWhere(accountId, id));
+  if (!raw) return { ok: false, error: "missing" };
+  const row = asSuggestion(raw);
   const payload = { ...(row.payload as unknown as Record<string, unknown>) };
-  const kind = row.kind as SuggestionPayload["kind"];
+  const kind = row.kind;
+  if (kind === "catalog_item" && (row.status === "accepted" || row.status === "edited")) return { ok: false, error: "applied" };
   for (const f of EDITABLE[kind]) {
     const v = (values[f.name] ?? "").replace(/\s+/g, " ").trim();
     if (f.required && !v) return { ok: false, error: "required" };
@@ -734,6 +778,13 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
     payload[f.name] = v;
   }
   if (kind === "field" && ["before_quote", "before_order_form", "optional"].includes(values.stage ?? "")) payload.stage = values.stage;
+  if (kind === "opener" && !payload.leadsAskAbout && !payload.openingQuestion) return { ok: false, error: "required" };
+  if (kind === "catalog_item" && !payload.plainName && !payload.valueLine) return { ok: false, error: "required" };
+  if (kind === "play_card") {
+    const card = parsePlayCard({ when: String(payload.when), do: values.do ?? "", example: String(payload.example), notThis: String(payload.notThis) });
+    if (!card.ok) return { ok: false, error: "card" };
+    payload.do = card.value.do;
+  }
   if (kind === "limit") {
     if (row.status === "accepted" || row.status === "edited") return { ok: false, error: "applied" };
     // The value of the setting the limit updates.
@@ -756,6 +807,7 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
     }
   }
   if (kind === "limit") await applyLimit(db, actor, accountId, { ...row, payload } as Suggestion, now);
+  if (kind === "catalog_item" && !(await applyCatalogItem(db, actor, accountId, { ...row, payload } as Suggestion))) return { ok: false, error: "missing" };
   await db.update(playbookSuggestions).set({ payload, status: "edited", decidedByUserId: actor.userId, decidedAt: now }).where(suggestionWhere(accountId, id));
   await writeAudit(db, actor, { accountId, action: "playbook.suggestion_edited", targetType: "playbook_suggestion", targetId: id, details: { kind } });
   return { ok: true };
@@ -768,8 +820,8 @@ export async function editSuggestion(db: Db, actor: Actor, accountId: string, id
  */
 export async function saveSuggestionsToDraft(db: Db, actor: Actor, accountId: string): Promise<{ version: number; merged: number }> {
   const { items } = await latestSuggestions(db, accountId);
-  // Limits were applied when approved (applyLimit); everything else merges here.
-  const chosen = items.filter((s) => (s.status === "accepted" || s.status === "edited") && s.kind !== "limit");
+  // Limits and catalog item texts were applied when approved; everything else merges here.
+  const chosen = items.filter((s) => (s.status === "accepted" || s.status === "edited") && !APPLIED_ON_APPROVAL.has(s.kind));
   const draft = await ensureDraftVersion(db, accountId);
   if (chosen.length === 0) return { version: draft.version, merged: 0 };
   const ids = [...new Set(chosen.flatMap((s) => s.evidence.map((e) => e.sourceId)))].filter(isUuid);
@@ -855,6 +907,17 @@ async function applyLimit(db: Db, actor: Actor, accountId: string, s: Suggestion
     await saveDraftPlaybook(db, accountId, next);
   }
   await writeAudit(db, actor, { accountId, action: "playbook.limit_applied", targetType: "playbook_suggestion", targetId: s.id, details: { setting, rule: p.rule.slice(0, 200) } });
+}
+
+/**
+ * Applies approved item texts (P11): the plain name and value line go into the
+ * catalog draft's item with that SKU. False when the SKU is no longer in the catalog.
+ */
+async function applyCatalogItem(db: Db, actor: Actor, accountId: string, s: Suggestion): Promise<boolean> {
+  const p = s.payload as CatalogItemPayload;
+  const ok = await setDraftItemTexts(db, accountId, p.sku, { plainName: p.plainName, valueLine: p.valueLine });
+  if (ok) await writeAudit(db, actor, { accountId, action: "catalog.item_texts_applied", targetType: "playbook_suggestion", targetId: s.id, details: { sku: p.sku } });
+  return ok;
 }
 
 // ---------------------------------------------------------------------------
