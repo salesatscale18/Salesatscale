@@ -33,11 +33,12 @@ describe("playbook: opener and sales plays", () => {
       // Card parts without the toggle (a restored default whose inputs lingered) are ignored.
       ["play.fit.when", "x"],
     ]);
-    expect(input.opener).toEqual({ leadsAskAbout: "fridge alerts", openingQuestion: "How do you check today?" });
+    // The older form names are read as the English default topic and question; the new shape is written.
+    expect(input.opener).toEqual({ topics: [{ en: "fridge alerts", he: "" }], defaultTopic: "0", question: { en: "How do you check today?", he: "" } });
     const v = ok(input);
-    expect(v.opener).toEqual({ leadsAskAbout: "fridge alerts", openingQuestion: "How do you check today?" });
+    expect(v.opener).toEqual({ topics: [{ en: "fridge alerts" }], defaultTopic: 0, question: { en: "How do you check today?" } });
     expect(v.plays).toEqual({
-      existing_solution: { content: "Alarms cover doors." },
+      existing_solution: { facts: [{ text: "Alarms cover doors." }] },
       competitor: { own: { when: card.when, do: ["Ask what they compare.", "Give one fact."], example: card.example, notThis: card.notThis } },
     });
     // A form without opener or play inputs leaves them undefined (the action keeps the stored ones).
@@ -51,18 +52,18 @@ describe("playbook: opener and sales plays", () => {
     const exceptions = [{ id: "x1", text: "Free install from 3 sites", approvedAt: "2026-11-01T00:00:00.000Z", approvedBy: "u" }];
     const v = ok(rows({
       exceptions,
-      opener: { leadsAskAbout: "  ", openingQuestion: "How many fridges?" },
+      opener: { topics: [{ en: "  ", he: "" }], defaultTopic: "0", question: { en: "How many fridges?", he: "" } },
       plays: { need: { content: "  " }, bogus: { content: "x" }, value: { content: "One spoiled load costs more.", own: null } },
     }));
     expect(v.exceptions).toEqual(exceptions);
-    expect(v.opener).toEqual({ openingQuestion: "How many fridges?" });
-    expect(v.plays).toEqual({ value: { content: "One spoiled load costs more." } });
-    expect(ok(rows({ opener: { leadsAskAbout: "", openingQuestion: "" }, plays: { need: { content: "" } } }))).not.toHaveProperty("opener");
+    expect(v.opener).toEqual({ topics: [], defaultTopic: 0, question: { en: "How many fridges?" } });
+    expect(v.plays).toEqual({ value: { facts: [{ text: "One spoiled load costs more." }] } });
+    expect(ok(rows({ opener: { topics: [{ en: "", he: "" }], defaultTopic: "0", question: { en: "", he: "" } }, plays: { need: { content: "" } } }))).not.toHaveProperty("opener");
   });
 
   it.each([
-    [{ opener: { leadsAskAbout: "x".repeat(121), openingQuestion: "" } }, "opener.leadsAskAbout"],
-    [{ opener: { leadsAskAbout: "", openingQuestion: "x".repeat(201) } }, "opener.openingQuestion"],
+    [{ opener: { topics: [{ en: "x".repeat(121), he: "" }], defaultTopic: "0", question: { en: "", he: "" } } }, "opener.topic.0.en"],
+    [{ opener: { topics: [], defaultTopic: "0", question: { en: "x".repeat(201), he: "" } } }, "opener.question.en"],
     [{ plays: { need: { content: "x".repeat(601) } } }, "play.need.content"],
     [{ plays: { fit: { own: { ...card, when: "" } } } }, "play.fit.when"],
     [{ plays: { fit: { own: { ...card, do: "Only one move" } } } }, "play.fit.do"],
@@ -76,7 +77,7 @@ describe("playbook: opener and sales plays", () => {
 
   it("accepts the limits exactly: 120/200 opener, 600 content, 2 and 5 moves", () => {
     const v = ok(rows({
-      opener: { leadsAskAbout: "x".repeat(120), openingQuestion: "y".repeat(200) },
+      opener: { topics: [{ en: "x".repeat(120), he: "א".repeat(120) }], defaultTopic: "0", question: { en: "y".repeat(200), he: "ש".repeat(200) } },
       plays: { need: { content: "z".repeat(600) }, fit: { own: { ...card, do: "1\n2\n3\n4\n5" } }, value: { own: card } },
     }));
     expect(v.plays?.fit?.own?.do).toHaveLength(5);
@@ -92,10 +93,18 @@ describe("catalog item: plain name and value line", () => {
     expect(parseItemEdit({ ...base, plainName: "  fridge   sensor ", valueLine: " An alert the moment it warms up. " }, ["en"]))
       .toMatchObject({ ok: true, value: { plainName: "fridge sensor", valueLine: "An alert the moment it warms up." } });
   });
-  it("are limited to 60 and 200 characters", () => {
-    expect(parseItemEdit({ ...base, plainName: "x".repeat(60), valueLine: "y".repeat(200) }, ["en"]).ok).toBe(true);
-    const r = parseItemEdit({ ...base, plainName: "x".repeat(61), valueLine: "y".repeat(201) }, ["en"]);
+  it("are limited to 60 and 140 characters for new wording", () => {
+    expect(parseItemEdit({ ...base, plainName: "x".repeat(60), valueLine: "y".repeat(140) }, ["en"]).ok).toBe(true);
+    const r = parseItemEdit({ ...base, plainName: "x".repeat(61), valueLine: "y".repeat(141) }, ["en"]);
     expect(!r.ok && r.errors).toEqual({ plainName: expect.any(String), valueLine: expect.any(String) });
+  });
+  it("keeps a longer value line saved before the 140 rule when it is unchanged; a changed one must fit 140", () => {
+    const old = "y".repeat(180);
+    expect(parseItemEdit({ ...base, valueLine: old }, ["en"], { valueLine: old })).toMatchObject({ ok: true, value: { valueLine: old } });
+    expect(parseItemEdit({ ...base, valueLine: `${old}z` }, ["en"], { valueLine: old }).ok).toBe(false);
+    expect(parseItemEdit({ ...base, valueLine: "y".repeat(201) }, ["en"], { valueLine: "y".repeat(201) }).ok).toBe(false);
+    // Not the stored text: the 140 rule applies.
+    expect(parseItemEdit({ ...base, valueLine: old }, ["en"], { valueLine: "other" }).ok).toBe(false);
   });
 });
 
@@ -134,7 +143,7 @@ describe("knowledge analysis: P11 suggestions", () => {
     }, index, { skus });
     const p = r.suggestions.map((s) => s.payload);
     expect(p).toEqual([
-      { kind: "opener", leadsAskAbout: "fridge alerts", openingQuestion: "" },
+      { kind: "opener", leadsAskAbout: "fridge alerts", openingQuestion: "", topics: [{ en: "fridge alerts" }] },
       { kind: "play_content", play: "existing_solution", content: "Alarms cover doors, not temperature." },
       { kind: "play_content", play: "price_early", content: "A sensor is ₪590." },
       { kind: "play_card", play: "competitor", when: "They compare.", do: ["Ask what they compare.", "Give one fact."], example: "What do you compare?", notThis: "They are worse." },
@@ -164,21 +173,23 @@ describe("knowledge analysis: P11 suggestions", () => {
       agentName: "A", goal: "G", tone: "T", outcomes: { orderForm: true, bankTransfer: true, meeting: true }, fields: [], objections: [],
       maxDiscountBp: 0, offerMeetingWhen: "", handOffWhen: "", neverDo: [],
       opener: { leadsAskAbout: "old topic", openingQuestion: "Old question?" },
-      plays: { need: { content: "Seller text" }, fit: { content: "Keep me" } },
+      plays: { need: { content: "Seller text" }, fit: { facts: [{ text: "Keep me" }] } },
     };
     const own = { when: "w", do: ["a", "b"], example: "e", notThis: "n" };
-    const items: { payload: SuggestionPayload }[] = [
+    const items: { payload: SuggestionPayload; source?: string }[] = [
       { payload: { kind: "opener", leadsAskAbout: "", openingQuestion: "How do you check today?" } },
-      { payload: { kind: "play_content", play: "need", content: "New facts" } },
+      { payload: { kind: "play_content", play: "need", content: "New facts" }, source: "Spec p.1" },
       { payload: { kind: "play_card", play: "fit", ...own } },
       { payload: { kind: "catalog_item", sku: "SNS-200", plainName: "s", valueLine: "" } },
     ];
     const once = mergeSuggestions(base, items);
-    expect(once.opener).toEqual({ leadsAskAbout: "old topic", openingQuestion: "How do you check today?" });
-    expect(once.plays).toEqual({ need: { content: "New facts" }, fit: { content: "Keep me", own } });
+    // An older opener is read (old topic as the English default) and written in the new shape.
+    expect(once.opener).toEqual({ topics: [{ en: "old topic" }], defaultTopic: 0, question: { en: "How do you check today?" } });
+    // A suggested fact is added to the play's facts with its source; the older single text stays as the first fact.
+    expect(once.plays).toEqual({ need: { facts: [{ text: "Seller text" }, { text: "New facts", source: "Spec p.1" }] }, fit: { facts: [{ text: "Keep me" }], own } });
     expect(mergeSuggestions(once, items)).toEqual(once);
     // The input playbook is not changed.
-    expect(base.plays).toEqual({ need: { content: "Seller text" }, fit: { content: "Keep me" } });
+    expect(base.plays).toEqual({ need: { content: "Seller text" }, fit: { facts: [{ text: "Keep me" }] } });
     expect(suggestionSection("play_card")).toBe("play");
     expect(suggestionSection("catalog_item")).toBe("catalog");
     expect(suggestionSection("discovery_question")).toBe("field");

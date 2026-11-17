@@ -11,8 +11,10 @@
  * and "Never" keeps real prohibitions only.
  */
 import type { PlayKey, Playbook, PlaybookField } from "@/db/schema";
-import { fieldKey } from "@/lib/agent/playbook";
-import { normalizeStatement, type SuggestionPayload } from "./validate";
+import { fieldKey, PLAY_FACTS_MAX } from "@/lib/agent/playbook";
+import { MAX_OPENER_TOPICS, readOpener } from "@/lib/agent/core/opener";
+import { playFacts } from "@/lib/agent/core/plays";
+import { normalizeStatement, openerPayloadTopics, type SuggestionPayload } from "./validate";
 
 export const MAX_FIELDS = 30;
 export const MAX_OBJECTIONS = 30;
@@ -29,7 +31,7 @@ export function mergeSuggestions(p: Playbook, items: MergeItem[]): Playbook {
     objections: p.objections.map((o) => ({ ...o })),
     neverDo: [...p.neverDo],
     ...(p.opener ? { opener: { ...p.opener } } : {}),
-    ...(p.plays ? { plays: Object.fromEntries(Object.entries(p.plays).map(([k, v]) => [k, { ...v }])) } : {}),
+    ...(p.plays ? { plays: Object.fromEntries(Object.entries(p.plays).map(([k, v]) => [k, { ...v, ...(v?.facts ? { facts: v.facts.map((f) => ({ ...f })) } : {}) }])) } : {}),
   };
   const play = (key: PlayKey) => {
     out.plays ??= {};
@@ -77,16 +79,31 @@ export function mergeSuggestions(p: Playbook, items: MergeItem[]): Playbook {
         addNever(x.rule);
         break;
       // P11: the seller approved these, so they replace what is there (an empty text keeps the current one).
+      // The opener is written in the current shape (topics, default topic, question); an older one is read first.
       case "opener": {
-        const next = { ...out.opener };
-        if (x.leadsAskAbout.trim()) next.leadsAskAbout = x.leadsAskAbout.trim().slice(0, 120);
-        if (x.openingQuestion.trim()) next.openingQuestion = x.openingQuestion.trim().slice(0, 200);
-        if (next.leadsAskAbout || next.openingQuestion) out.opener = next;
+        const now = readOpener(out.opener);
+        const topics = openerPayloadTopics(x).map((tp) => ({ en: tp.en.trim().slice(0, 120), ...(tp.he?.trim() ? { he: tp.he.trim().slice(0, 120) } : {}) }));
+        // The default stays on the same topic when the new list still has it.
+        const wasDefault = now.topics[now.defaultTopic];
+        const nextTopics = topics.length ? topics.slice(0, MAX_OPENER_TOPICS) : now.topics;
+        const keep = wasDefault ? nextTopics.findIndex((tp) => same(tp.en || tp.he || "", wasDefault.en || wasDefault.he || "")) : -1;
+        const question = x.openingQuestion.trim()
+          ? { en: x.openingQuestion.trim().slice(0, 200), ...(x.openingQuestionHe?.trim() ? { he: x.openingQuestionHe.trim().slice(0, 200) } : {}) }
+          : now.question;
+        if (nextTopics.length || question) out.opener = { topics: nextTopics, defaultTopic: keep >= 0 ? keep : 0, ...(question ? { question } : {}) };
         break;
       }
-      case "play_content":
-        if (x.content.trim()) play(x.play).content = x.content.trim().slice(0, 600);
+      // A suggested fact is added to the play's facts (with where it came from), unless it is there already.
+      case "play_content": {
+        const text = x.content.trim().slice(0, 600);
+        if (!text) break;
+        const p = play(x.play);
+        const facts = playFacts(p);
+        if (!facts.some((f) => same(f.text, text)) && facts.length < PLAY_FACTS_MAX) facts.push({ text, ...(source ? { source: source.slice(0, 120) } : {}) });
+        delete p.content;
+        p.facts = facts;
         break;
+      }
       case "play_card":
         play(x.play).own = { when: x.when, do: [...x.do], example: x.example, notThis: x.notThis };
         break;

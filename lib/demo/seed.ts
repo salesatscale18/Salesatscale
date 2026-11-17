@@ -121,14 +121,33 @@ const ITEMS = [
   },
 ] as const;
 
-/** A little seller content for two plays (P11), from facts already in this seed. */
+/** A little seller content for two plays (P11), from facts already in this seed. Each fact says where it comes from. */
 const PLAYS = {
   existing_solution: {
-    content: "Paper logs miss nights and weekends, and a shift can forget to fill them in. An alarm company covers doors, not temperature: it will not tell you a fridge is at 9 degrees. Our sensors check day and night and alert by WhatsApp, SMS and email.",
+    facts: [
+      { text: "Paper logs miss nights and weekends, and a shift can forget to fill them in.", source: "Discovery call 00:19" },
+      { text: "An alarm company covers doors, not temperature: it will not tell you a fridge is at 9 degrees. Our sensors check day and night and alert by WhatsApp, SMS and email.", source: "Polar Demo product sheet" },
+    ],
   },
   price_early: {
-    content: "Prices are in ILS without VAT (18%). A sensor is 590 ILS, or 550 ILS each from 10 sensors. Each site needs one hub (660 ILS plus 90 ILS a month for monitoring) and installation (250 ILS per site). The total depends on the number of fridges and sites.",
+    facts: [
+      { text: "Prices are in ILS without VAT (18%). A sensor is 590 ILS, or 550 ILS each from 10 sensors. Each site needs one hub (660 ILS plus 90 ILS a month for monitoring) and installation (250 ILS per site). The total depends on the number of fridges and sites.", source: "Israel price list" },
+    ],
   },
+};
+
+/**
+ * Opener inputs (P11): the topics leads ask about (the first is the default)
+ * and the opening question, each in English and Hebrew.
+ */
+const OPENER = {
+  topics: [
+    { en: "monitoring your fridge temperatures", he: "ניטור הטמפרטורות במקררים שלך" },
+    { en: "automatic temperature logs for health inspections", he: "יומן טמפרטורות אוטומטי לביקורת של משרד הבריאות" },
+    { en: "monitoring a cold room", he: "ניטור של חדר קירור" },
+  ],
+  defaultTopic: "0",
+  question: { en: "How do you check them today?", he: "איך אתם בודקים אותן היום?" },
 };
 
 const RULES = [
@@ -195,6 +214,7 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
     offerMeetingWhen: "The buyer has more than 10 sites, asks to talk to a person, or needs a partner's approval.",
     handOffWhen: "The buyer asks for a person, is upset, or asks something the approved knowledge does not answer.",
     plays: PLAYS,
+    opener: OPENER,
     neverDo: [
       "Never promise a discount above 5% without approval.",
       "Never promise food-safety or legal compliance beyond what the approved knowledge says.",
@@ -204,8 +224,6 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
   if (!parsed.ok) throw new Error(`Demo playbook is invalid: ${JSON.stringify(parsed.errors)}`);
   return {
     ...parsed.value,
-    // Opener inputs (P11). One language per input: Hebrew leads get the general opener wording.
-    opener: { leadsAskAbout: "monitoring your fridge temperatures", openingQuestion: "How do you check them today?" },
     exceptions: [{
       id: crypto.randomUUID(),
       text: "Installation is free from 3 sites",

@@ -163,6 +163,13 @@ export async function saveDraftItem(db: Db, accountId: string, input: CatalogIte
  * Editing a published item means editing its copy in the draft. Resolves an
  * item id from the shown version to the matching draft item (same SKU).
  */
+/** An item's agent texts as stored (any catalog version of this account), or null. */
+export async function itemTexts(db: Db, accountId: string, itemId: string): Promise<{ plainName: string | null; valueLine: string | null } | null> {
+  const [row] = await db.select({ plainName: catalogItems.plainName, valueLine: catalogItems.valueLine }).from(catalogItems)
+    .where(and(eq(catalogItems.id, itemId), eq(catalogItems.accountId, accountId)));
+  return row ?? null;
+}
+
 export async function draftItemIdFor(db: Db, accountId: string, itemId: string): Promise<string | null> {
   const [item] = await db.select().from(catalogItems).where(and(eq(catalogItems.id, itemId), eq(catalogItems.accountId, accountId)));
   if (!item) return null;

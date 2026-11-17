@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
+import { effectivePlay } from "@/lib/agent/core/plays";
+import { readOpener } from "@/lib/agent/core/opener";
 import {
   accountInvites, agentVersions, auditLog, consentRecords, conversations, knowledgeFacts, leads, pipelineRuns, quoteLines, sellerAccounts, sources, users,
   type User,
@@ -167,8 +169,13 @@ describe("one-click demo account", () => {
     expect(pb.exceptions![0]).toMatchObject({ text: "Installation is free from 3 sites", evidence: { locator: "01:58" } });
     // P11: a little seller content for two plays, from facts in the seed; default cards (no own card).
     expect(Object.keys(pb.plays ?? {}).sort()).toEqual(["existing_solution", "price_early"]);
-    expect(pb.plays!.existing_solution!.content).toMatch(/alarm company covers doors, not temperature/);
-    expect(pb.plays!.price_early!.content).toMatch(/590 ILS.*550 ILS each from 10 sensors/);
+    // Stored as a facts list, each with its source; the agent reads them joined (effectivePlay).
+    expect(pb.plays!.existing_solution!.facts!.map((f) => f.source)).toEqual(["Discovery call 00:19", "Polar Demo product sheet"]);
+    expect(effectivePlay(pb, "existing_solution").content).toMatch(/alarm company covers doors, not temperature/);
+    expect(effectivePlay(pb, "price_early").content).toMatch(/590 ILS.*550 ILS each from 10 sensors/);
+    // Opener inputs in English and Hebrew; the first topic is the default.
+    expect(readOpener(pb.opener)).toMatchObject({ defaultTopic: 0, question: { en: "How do you check them today?", he: "איך אתם בודקים אותן היום?" } });
+    expect(readOpener(pb.opener).topics.every((x) => x.en && x.he)).toBe(true);
     expect(Object.values(pb.plays!).some((x) => x?.own)).toBe(false);
 
     const tests = await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.isTest, true)));

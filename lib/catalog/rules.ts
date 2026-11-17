@@ -43,7 +43,10 @@ export type ItemEditErrors = Partial<Record<"sku" | "name" | "kind" | "unit" | "
 
 /** Lengths of the two agent-facing texts of an item (P11). */
 export const PLAIN_NAME_MAX = 60;
+/** The longest value line stored (items saved before the 140-character rule may be this long). */
 export const VALUE_LINE_MAX = 200;
+/** The longest value line a seller (or a suggestion) writes now: one sentence. */
+export const VALUE_LINE_INPUT_MAX = 140;
 
 export type CatalogItemErrors = Partial<Record<"sku" | "name" | "unit" | "price" | "tiers" | "customPricingFromQty", string>>;
 
@@ -141,7 +144,11 @@ export function parseCatalogItem(raw: Record<string, unknown>, currency: string)
  * "custom"; a custom unit needs a singular and a plural for English and for
  * each selling language, sent as `unitOne_<lang>` and `unitOther_<lang>`.
  */
-export function parseItemEdit(raw: Record<string, unknown>, languages: readonly string[]): { ok: true; value: CatalogItemEdit } | { ok: false; errors: ItemEditErrors } {
+export function parseItemEdit(
+  raw: Record<string, unknown>, languages: readonly string[],
+  /** The item as stored, when editing one: its value line may stay longer than new input allows. */
+  previous?: { valueLine?: string | null } | null,
+): { ok: true; value: CatalogItemEdit } | { ok: false; errors: ItemEditErrors } {
   const errors: ItemEditErrors = {};
   const sku = s(raw.sku).toUpperCase();
   if (!SKU.test(sku)) errors.sku = "Use 1–40 letters, digits, dots, dashes or underscores.";
@@ -160,7 +167,10 @@ export function parseItemEdit(raw: Record<string, unknown>, languages: readonly 
   const plainName = s(raw.plainName).replace(/\s+/g, " ");
   if (plainName.length > PLAIN_NAME_MAX) errors.plainName = `Use ${PLAIN_NAME_MAX} characters or fewer.`;
   const valueLine = s(raw.valueLine).replace(/\s+/g, " ");
-  if (valueLine.length > VALUE_LINE_MAX) errors.valueLine = `Use ${VALUE_LINE_MAX} characters or fewer.`;
+  // New wording is one sentence (140); a longer line saved before that rule is kept as it is.
+  const unchanged = !!previous?.valueLine && valueLine === previous.valueLine.replace(/\s+/g, " ").trim();
+  const max = unchanged ? VALUE_LINE_MAX : VALUE_LINE_INPUT_MAX;
+  if (valueLine.length > max) errors.valueLine = `Use ${max} characters or fewer.`;
   if (Object.keys(errors).length > 0) return { ok: false, errors };
   return {
     ok: true,

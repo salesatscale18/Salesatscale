@@ -11,7 +11,8 @@ import type { EvidenceLink, Suggestion } from "@/lib/pipeline/service";
 import type { LimitPreview } from "@/lib/pipeline/limits";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { APPLIED_ON_APPROVAL } from "@/lib/pipeline/service";
-import { limitSetting } from "@/lib/pipeline/validate";
+import { limitSetting, openerPayloadTopics } from "@/lib/pipeline/validate";
+import { VALUE_LINE_INPUT_MAX } from "@/lib/catalog/rules";
 import { decideSuggestionAction, editSuggestionAction } from "./actions";
 
 const STAGE_KEY: Record<string, MessageKey> = {
@@ -28,17 +29,22 @@ export function suggestionText(s: Suggestion): { title: string; sub: string | nu
     case "objection": return { title: `"${p.objection}"`, sub: p.answer, he: [p.objectionHe, p.answerHe].filter(Boolean).join(" — ") || null };
     case "limit": return { title: p.rule, sub: null, he: p.ruleHe || null };
     case "never": return { title: t("draft.never_rule", { rule: p.rule }), sub: null, he: p.ruleHe || null };
-    case "opener": return {
-      title: p.openingQuestion ? `"${p.openingQuestion}"` : p.leadsAskAbout,
-      sub: p.openingQuestion && p.leadsAskAbout ? t("draft.opener.asks_about", { text: p.leadsAskAbout }) : null, he: null,
-    };
-    case "play_content": return { title: p.content, sub: t("draft.play.facts_for", { play: DEFAULT_PLAYS[p.play]?.title ?? p.play }), he: null };
+    case "opener": {
+      const topics = openerPayloadTopics(p);
+      return {
+        title: topics.length ? t("draft.opener.topics") : t("draft.f.opening_question"),
+        sub: topics.length ? topics.map((x) => x.en).join(" · ") : `"${p.openingQuestion}"`,
+        he: [topics.map((x) => x.he).filter(Boolean).join(" · "), p.openingQuestionHe ?? ""].filter(Boolean).join(" — ") || null,
+      };
+    }
+    case "play_content": return { title: p.content, sub: null, he: null };
     case "play_card": return {
       title: t("draft.play.own_card", { play: DEFAULT_PLAYS[p.play]?.title ?? p.play }),
       sub: [p.when, p.do.map((m, i) => `${i + 1}. ${m}`).join(" "), `"${p.example}"`, t("draft.play.not_this", { text: p.notThis })].join(" · "), he: null,
     };
     case "catalog_item": return {
-      title: [p.sku, p.plainName].filter(Boolean).join(" · "), sub: p.valueLine || null, he: null,
+      title: p.plainName ? t("draft.catalog.names", { sku: p.sku, name: p.plainName }) : p.sku,
+      sub: p.valueLine ? t("draft.catalog.value", { text: p.valueLine }) : null, he: null,
     };
   }
 }
@@ -134,7 +140,17 @@ function EditForm({ s, slug, back, cancelHref, limit }: Pick<ItemProps, "s" | "s
       {s.payload.kind === "discovery_question" ? <>{field("label", "draft.f.label", 60)}{field("question", "draft.f.question", 200)}</> : null}
       {s.payload.kind === "objection" ? <>{field("objection", "draft.f.objection", 200)}{field("answer", "draft.f.answer", 600, true)}</> : null}
       {s.payload.kind === "never" ? field("rule", "draft.f.rule", 200) : null}
-      {s.payload.kind === "opener" ? <>{field("leadsAskAbout", "draft.f.leads_ask_about", 120)}{field("openingQuestion", "draft.f.opening_question", 200)}</> : null}
+      {s.payload.kind === "opener" ? (
+        <>
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor={`sg-e-${s.id}-topics`}>{t("draft.f.topics")}</label>
+            <textarea className="sas-textarea" id={`sg-e-${s.id}-topics`} name="topics" rows={4} maxLength={6 * 121} defaultValue={openerPayloadTopics(s.payload).map((x) => x.en).join("\n")} aria-describedby={`sg-e-${s.id}-topics-h`} />
+            <span className="sas-hint" id={`sg-e-${s.id}-topics-h`}>{t("draft.f.topics_hint")}</span>
+          </div>
+          {field("openingQuestion", "draft.f.opening_question", 200)}
+          {field("openingQuestionHe", "draft.f.opening_question_he", 200)}
+        </>
+      ) : null}
       {s.payload.kind === "play_content" ? field("content", "draft.f.play_content", 600, true) : null}
       {s.payload.kind === "play_card" ? (
         <>
@@ -148,7 +164,7 @@ function EditForm({ s, slug, back, cancelHref, limit }: Pick<ItemProps, "s" | "s
           {field("notThis", "draft.f.play_not_this", 300, true)}
         </>
       ) : null}
-      {s.payload.kind === "catalog_item" ? <>{field("plainName", "catalog.edit.plain_name", 60)}{field("valueLine", "catalog.edit.value_line", 200, true)}</> : null}
+      {s.payload.kind === "catalog_item" ? <>{field("plainName", "catalog.edit.plain_name", 60)}{field("valueLine", "catalog.edit.value_line", VALUE_LINE_INPUT_MAX, true)}</> : null}
       {s.payload.kind === "limit" ? field("rule", "draft.f.limit_rule", 200) : null}
       {s.payload.kind === "limit" && limitSetting(s.payload) === "discount" ? (
         <div className="sas-input-group">
@@ -187,15 +203,75 @@ export function SuggestionItem({ s, slug, back, editing, links, calls, editHref,
       <button type="submit" className={buttonClass(variant, "sm")} aria-label={`${label}: ${title.slice(0, 60)}`}>{label}</button>
     </form>
   );
+  const p = s.payload;
+  const pill = <StatusPill object="generated_suggestion" state={decided ? "accepted" : s.status === "rejected" ? "rejected" : "suggested"} />;
+  // A suggested own card (canvas: DraftPlays): the default next to the suggested card, with its own three actions.
+  if (p.kind === "play_card" && !editing) {
+    const d = DEFAULT_PLAYS[p.play];
+    const playHref = `/app/${slug}/setup/playbook/plays/${p.play}`;
+    return (
+      <li style={{ padding: "14px 20px", background: s.status === "suggested" ? "var(--agent-soft)" : undefined }} className="sas-stack-2" data-suggestion="play_card">
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", alignItems: "flex-start" }}>
+          <div className="sas-stack-2" style={{ flex: "999 1 420px", minWidth: 0, gap: 4 }}>
+            <span className="sas-small">{t("draft.play.kicker_card", { play: d?.title ?? p.play })}</span>
+            <span><strong>{t("draft.play.suggested_card")}</strong> {pill}{s.status === "edited" ? <span className="sas-small"> · {t("draft.edited")}</span> : null}</span>
+            <span className="sas-small" style={{ color: "var(--ink)" }}>{t("draft.play.replaces")}</span>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 220px), 1fr))", gap: 12, marginTop: 8, alignItems: "start" }}>
+              <div className="sas-stack-2" style={{ gap: 6, padding: 12, borderRadius: 10, background: "var(--surface-raised)", border: "1px solid var(--line)", fontSize: 13, lineHeight: "18px", minWidth: 0 }}>
+                <span className="sas-label">{t("playbook.play.default_card")}</span>
+                <span style={{ overflowWrap: "anywhere" }}>{d ? d.do.join(" → ") : ""}</span>
+                <a href={playHref} style={{ fontSize: 12 }}>{t("draft.play.open_default")}</a>
+              </div>
+              <div className="sas-stack-2" style={{ gap: 6, padding: 12, borderRadius: 10, background: "var(--surface-raised)", border: "1px dashed var(--agent)", fontSize: 13, lineHeight: "18px", minWidth: 0, overflowWrap: "anywhere" }}>
+                <span className="sas-label" style={{ color: "var(--agent)" }}>{t("draft.play.suggested_card")}</span>
+                <span><strong>{t("playbook.play.when")}:</strong> {p.when}</span>
+                <span><strong>{t("playbook.play.do")}:</strong></span>
+                <ol style={{ margin: 0, paddingInlineStart: 18 }}>{p.do.map((m, i) => <li key={i}>{m}</li>)}</ol>
+                <span><strong>{t("playbook.play.example")}:</strong></span>
+                <span style={{ padding: "6px 10px", borderRadius: 8, background: "var(--agent-soft)" }}>{p.example}</span>
+                <span><strong>{t("playbook.play.not_this")}:</strong> &ldquo;{p.notThis}&rdquo;</span>
+              </div>
+            </div>
+            <span style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+              {s.status === "suggested" ? (
+                <>
+                  <form action={decideSuggestionAction}>
+                    {hidden(slug, back, s.id)}
+                    <input type="hidden" name="status" value="accepted" />
+                    <button type="submit" className={buttonClass("primary", "sm")}>{t("draft.play.use_as_own")}</button>
+                  </form>
+                  <a className={buttonClass("secondary", "sm")} href={`${playHref}?from=${s.id}`}>{t("draft.play.edit_first")}</a>
+                  {decide("rejected", t("draft.play.keep_default"), "ghost")}
+                </>
+              ) : s.status === "rejected" ? decide("suggested", t("draft.undo"), "ghost") : (
+                <>
+                  <a className={buttonClass("ghost", "sm")} href={editHref}>{t("draft.edit")}</a>
+                  {decide("rejected", t("draft.play.keep_default"), "ghost")}
+                </>
+              )}
+            </span>
+          </div>
+          <span style={{ flex: "1 1 180px", minWidth: 0 }}><EvidenceLine s={s} links={links} calls={calls} /></span>
+        </div>
+      </li>
+    );
+  }
   return (
-    <li style={{ padding: "12px 20px", background: limit && !decided ? "var(--warning-soft)" : undefined }} className="sas-stack-2">
+    <li style={{ padding: "12px 20px", background: limit && !decided ? "var(--warning-soft)" : undefined }} className="sas-stack-2" data-suggestion={p.kind}>
       {editing && !(final && decided) ? <EditForm s={s} slug={slug} back={back} cancelHref={cancelHref} limit={preview} /> : (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px", alignItems: "center" }}>
           <span style={{ flex: "1 1 280px", minWidth: 0, overflowWrap: "anywhere" }}>
+            {p.kind === "play_content" ? <span className="sas-small" style={{ display: "block" }}>{t("draft.play.kicker_fact", { play: DEFAULT_PLAYS[p.play]?.title ?? p.play })}</span> : null}
             <strong dir="auto">{title}</strong>{" "}
-            <StatusPill object="generated_suggestion" state={decided ? "accepted" : s.status === "rejected" ? "rejected" : "suggested"} />
+            {pill}
             {s.status === "edited" ? <span className="sas-small"> · {t("draft.edited")}</span> : null}
             {sub ? <span className="sas-small" style={{ display: "block" }} dir="auto">{sub}</span> : null}
+            {p.kind === "opener" && p.openingQuestion && openerPayloadTopics(p).length ? (
+              <span style={{ display: "block", marginBlockStart: 6 }}>
+                <strong>{t("draft.f.opening_question")}</strong>
+                <span className="sas-small" style={{ display: "block" }}>&ldquo;{p.openingQuestion}&rdquo;</span>
+              </span>
+            ) : null}
             {he ? <span className="sas-small" style={{ display: "block" }}><span>{t("draft.hebrew")}: </span><span lang="he" dir="rtl">{he}</span></span> : null}
             {limit && preview ? <LimitNote preview={preview} applied={decided} /> : null}
             {limit && !decided ? <span className="sas-small" style={{ display: "block", color: "var(--ink)" }}><Icon name="alert-triangle" /> {t("draft.limit.warning")}</span> : null}

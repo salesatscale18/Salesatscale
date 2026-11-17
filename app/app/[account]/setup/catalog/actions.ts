@@ -7,8 +7,9 @@ import { writeAudit } from "@/lib/accounts/audit";
 import { parseFitRule } from "@/lib/catalog/fit";
 import { parseItemEdit, type ItemEditErrors } from "@/lib/catalog/rules";
 import {
-  addDraftRule, catalogState, discardDraft, draftItemIdFor, publishDraft, removeDraftItem, removeDraftRule, saveDraftItem,
+  addDraftRule, catalogState, discardDraft, draftItemIdFor, itemTexts, publishDraft, removeDraftItem, removeDraftRule, saveDraftItem,
 } from "@/lib/catalog/service";
+import { acceptCatalogSuggestionFromItem } from "@/lib/pipeline/service";
 import { parseAutoAddRule } from "@/lib/pricing/auto-add";
 import { isUuid } from "@/lib/security/ids";
 
@@ -30,15 +31,20 @@ export async function saveItemAction(_prev: ItemFormState, form: FormData): Prom
   const a = await access(form);
   const raw = Object.fromEntries([...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : ""]));
   raw.active = form.get("active") === "on" ? "on" : "off";
-  const parsed = parseItemEdit(raw, a.account.languages);
-  if (!parsed.ok) return { status: "error", errors: parsed.errors };
   const shownId = String(form.get("itemId") ?? "");
   if (shownId && !isUuid(shownId)) return { status: "error", errors: {}, formError: "not_found" };
+  // The shown item as stored: a value line saved before the 140-character rule stays valid unchanged.
+  const previous = shownId ? await itemTexts(appDb, a.account.id, shownId) : null;
+  const parsed = parseItemEdit(raw, a.account.languages, previous);
+  if (!parsed.ok) return { status: "error", errors: parsed.errors };
   const draftId = shownId ? await draftItemIdFor(appDb, a.account.id, shownId) : undefined;
   if (shownId && !draftId) return { status: "error", errors: {}, formError: "not_found" };
   const r = await saveDraftItem(appDb, a.account.id, parsed.value, draftId ?? undefined);
   if (!r.ok) return { status: "error", errors: r.reason === "sku_taken" ? { sku: "taken" } : {}, formError: r.reason };
   await auditActing(a, "catalog.item_saved", { sku: r.item.sku });
+  // "Use the suggestion" on the item counts as accepting it (editing accepts, as in the playbook draft).
+  const suggestionId = String(form.get("suggestionId") ?? "");
+  if (suggestionId && isUuid(suggestionId)) await acceptCatalogSuggestionFromItem(appDb, actorOf(a), a.account.id, suggestionId, r.item.sku);
   revalidatePath(path(a.account.slug));
   redirect(`${path(a.account.slug)}?item=${r.item.id}&saved=1`);
 }

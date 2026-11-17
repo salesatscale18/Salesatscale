@@ -1,10 +1,11 @@
 /**
  * Default sales plays (P11): one short card per selling situation, the same
  * for every seller. A seller's own card (`Playbook.plays[key].own`) replaces
- * the default for that seller; `content` adds the seller's facts to the card.
+ * the default for that seller; the seller's facts (`facts`, or an older
+ * `content` text) are added to the card.
  * Wording is owned by the conversation-core lane; the shape is shared.
  */
-import { PLAY_KEYS, type PlayCard, type PlayKey, type Playbook } from "@/db/schema";
+import { PLAY_KEYS, type PlayCard, type PlayFact, type PlayKey, type Playbook } from "@/db/schema";
 
 export type DefaultPlay = PlayCard & {
   /** Shown to the seller in the playbook editor. */
@@ -120,11 +121,37 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
   },
 };
 
-/** The card the agent uses for a situation: the seller's own card when set, else the default. */
+type StoredPlay = NonNullable<Playbook["plays"]>[PlayKey];
+
+/**
+ * The seller's facts for a play, from a playbook of either shape: the `facts`
+ * list, or an older single `content` text read as one fact. Blank facts are dropped.
+ */
+export function playFacts(p: StoredPlay | null | undefined): PlayFact[] {
+  if (p?.facts !== undefined) {
+    return p.facts
+      .map((f) => ({ text: f.text?.trim() ?? "", source: f.source?.trim() ?? "" }))
+      .filter((f) => f.text)
+      .map((f) => ({ text: f.text, ...(f.source ? { source: f.source } : {}) }));
+  }
+  const content = p?.content?.trim() ?? "";
+  return content ? [{ text: content }] : [];
+}
+
+/**
+ * The facts as one text for the prompt. One fact is used as written (an older
+ * `content` text reads exactly as before); several are joined as sentences.
+ */
+export function factsText(facts: PlayFact[]): string {
+  if (facts.length <= 1) return facts[0]?.text ?? "";
+  return facts.map((f) => (/[.!?。:;]$/u.test(f.text) ? f.text : `${f.text}.`)).join(" ");
+}
+
+/** The card the agent uses for a situation: the seller's own card when set, else the default. `content` is the seller's facts as one text. */
 export function effectivePlay(playbook: Pick<Playbook, "plays">, key: PlayKey): { card: PlayCard; own: boolean; content: string } {
   const p = playbook.plays?.[key];
   const own = p?.own;
-  return { card: own ?? DEFAULT_PLAYS[key], own: !!own, content: p?.content?.trim() ?? "" };
+  return { card: own ?? DEFAULT_PLAYS[key], own: !!own, content: factsText(playFacts(p)) };
 }
 
 export const allPlayKeys = (): readonly PlayKey[] => PLAY_KEYS;

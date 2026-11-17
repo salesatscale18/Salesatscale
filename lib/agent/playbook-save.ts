@@ -4,10 +4,38 @@
  * by account id.
  */
 import type { Db } from "@/db/types";
-import { parsePlaybookRows, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput } from "./playbook";
+import type { Playbook } from "@/db/schema";
+import { isPlayKey, parsePlaybookRows, parsePlayRow, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput, type PlayRowInput } from "./playbook";
 import { ensureDraftVersion, saveDraftPlaybook } from "./service";
 
 export type PlaybookFormSave = { ok: true } | { ok: false; errors: PlaybookErrors; values: PlaybookRowsInput };
+
+export type PlayFormSave = { ok: true } | { ok: false; errors: PlaybookErrors; values: PlayRowInput };
+
+/**
+ * Saves one sales play from its page into the account's draft: the seller's
+ * facts and the own card (`play.<key>.fact.<i>.text|source`, `play.<key>.own`
+ * and the card parts). `restore` drops the own card (back to the default
+ * card) and keeps the facts as sent. The other plays and the rest of the
+ * playbook are left as stored. Unknown play keys are refused.
+ */
+export async function savePlayForm(db: Db, accountId: string, key: string, entries: [string, string][], opts: { restore?: boolean } = {}): Promise<PlayFormSave> {
+  if (!isPlayKey(key)) return { ok: false, errors: { play: "Unknown play." }, values: {} };
+  const prefix = `play.${key}.`;
+  const sent = playbookRowsFromForm(entries.filter(([k]) => k.startsWith(prefix))).plays?.[key] ?? { facts: [] };
+  const row: PlayRowInput = { ...sent, ...(opts.restore ? { own: null } : {}) };
+  const errors: PlaybookErrors = {};
+  const play = parsePlayRow(key, row, errors);
+  if (Object.keys(errors).length) return { ok: false, errors, values: row };
+  const current = (await ensureDraftVersion(db, accountId)).playbook;
+  const plays: NonNullable<Playbook["plays"]> = { ...(current.plays ?? {}) };
+  if (play) plays[key] = play;
+  else delete plays[key];
+  const { plays: _old, ...rest } = current;
+  void _old;
+  await saveDraftPlaybook(db, accountId, { ...rest, ...(Object.keys(plays).length ? { plays } : {}) });
+  return { ok: true };
+}
 
 /**
  * Parses the editor's form entries and saves them into the account's draft.

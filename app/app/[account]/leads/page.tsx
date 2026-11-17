@@ -11,10 +11,14 @@ import { AddSimBuyerForm } from "./add-sim-buyer-form";
 import { countryName } from "@/lib/markets/rules";
 import { SimulatedChip } from "./simulated-chip";
 import { nextSimBuyerRef } from "@/lib/simulator/service";
+import { leadStages, STAGE_STEPS, type LeadStageView, type StageStep } from "@/lib/leads/stage";
+import { StageChip, STEP_LABEL } from "./[leadId]/stage";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const PERIODS = [7, 30, 90] as const;
+/** With a stage filter, the stage is worked out for at most this many of the most recent matching leads. */
+const STAGE_FILTER_SCAN = 500;
 
 /** Canvas: Leads, ListStates. Filters live in the URL so views can be shared and reloaded. */
 export default async function LeadsPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Search> }) {
@@ -35,7 +39,9 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     sinceDays: (PERIODS as readonly number[]).includes(days) ? days : undefined,
     limit: Math.min(Math.max(Number(one(sp.limit)) || 50, 50), 500),
   };
-  const filtered = !!(filters.q || filters.sourceLabel || filters.language || filters.sinceDays);
+  const stageRaw = one(sp.stage);
+  const stageFilter = (STAGE_STEPS as readonly string[]).includes(stageRaw) ? (stageRaw as StageStep) : undefined;
+  const filtered = !!(filters.q || filters.sourceLabel || filters.language || filters.sinceDays || stageFilter);
   const showAdd = one(sp.add) === "1";
   const showSim = one(sp.add) === "sim" && account.allowSimulatedBuyers;
 
@@ -43,7 +49,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     const p = new URLSearchParams();
     const cur: Record<string, string | undefined> = {
       view: view === "all" ? undefined : view, q: filters.q, source: filters.sourceLabel, language: filters.language,
-      days: filters.sinceDays ? String(filters.sinceDays) : undefined,
+      days: filters.sinceDays ? String(filters.sinceDays) : undefined, stage: stageFilter,
     };
     for (const [k, v] of Object.entries({ ...cur, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
@@ -51,16 +57,24 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   };
 
   let data: Awaited<ReturnType<typeof listLeads>> | null = null;
+  let stages = new Map<string, LeadStageView>();
   let counts: Record<LeadView, number> | null = null;
   let sources: string[] = [];
   let marketList: { id: string; name: string; countries: string[] }[] = [];
   try {
     [data, counts, sources, marketList] = await Promise.all([
-      listLeads(appDb, account.id, filters),
+      listLeads(appDb, account.id, stageFilter ? { ...filters, limit: STAGE_FILTER_SCAN } : filters),
       countLeadsByView(appDb, account.id),
       listSourceLabels(appDb, account.id),
       listMarkets(appDb, account.id),
     ]);
+    // Stages for the listed leads in a fixed number of queries (lib/leads/stage.ts). With a stage
+    // filter, the most recent matching leads are read first, then filtered by stage.
+    stages = await leadStages(appDb, account.id, data.rows.map((r) => r.lead.id));
+    if (stageFilter) {
+      const match = data.rows.filter((r) => stages.get(r.lead.id)?.step === stageFilter);
+      data = { rows: match.slice(0, filters.limit ?? 50), total: match.length };
+    }
   } catch (e) {
     console.error("[leads] list failed", e);
   }
@@ -129,6 +143,13 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                 </select>
               </label>
               <label className="sas-filter">
+                <span className="sas-sr">{t("leads.filter.stage")}</span>
+                <select className="sas-select" name="stage" defaultValue={stageFilter ?? ""}>
+                  <option value="">{t("leads.filter.stage")}: {t("leads.filter.any")}</option>
+                  {STAGE_STEPS.map((s) => <option key={s} value={s}>{t(STEP_LABEL[s])}</option>)}
+                </select>
+              </label>
+              <label className="sas-filter">
                 <span className="sas-sr">{t("leads.filter.period")}</span>
                 <select className="sas-select" name="days" defaultValue={filters.sinceDays ? String(filters.sinceDays) : ""}>
                   <option value="">{t("leads.filter.period")}: {t("leads.filter.any")}</option>
@@ -147,11 +168,12 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             ) : (
               <section className="sas-panel" style={{ overflow: "hidden" }}>
                 <div style={{ overflowX: "auto" }}>
-                  <table className="sas-table" style={{ minWidth: 820 }}>
+                  <table className="sas-table" style={{ minWidth: 940 }}>
                     <thead>
                       <tr>
                         <th scope="col">{t("leads.col.lead")}</th>
                         <th scope="col">{t("leads.col.status")}</th>
+                        <th scope="col">{t("leads.col.stage")}</th>
                         <th scope="col">{t("leads.col.market")}</th>
                         <th scope="col">{t("leads.col.owner")}</th>
                         <th scope="col">{t("leads.col.source")}</th>
@@ -168,6 +190,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                             </a>
                           </td>
                           <td><StatusPill object="lead" state={lead.status} /></td>
+                          <td>{stages.get(lead.id) ? <StageChip v={stages.get(lead.id)!} /> : <span className="sas-small">—</span>}</td>
                           <td><span className="sas-chip" data-market={market?.id ?? "home"}>{market?.name ?? homeName}</span></td>
                           <td>{owner ? <span className="sas-owner sas-owner--human">{displayName(owner)}</span> : lead.status === "opted_out" ? <span className="sas-small">—</span> : <span className="sas-owner sas-owner--agent">{t("leads.owner.agent")}</span>}</td>
                           <td className="sas-small">{lead.sourceLabel ?? t(`lead.origin.${lead.origin}`)}</td>

@@ -252,7 +252,12 @@ describe("stable system prompt", () => {
 
   it("Polar Demo: the demo playbook gives the staged prompt with its opener inputs", () => {
     const demo = demoPlaybook("00000000-0000-4000-8000-000000000001", new Date(at), "00000000-0000-4000-8000-000000000002");
-    expect(demo.opener).toEqual({ leadsAskAbout: "monitoring your fridge temperatures", openingQuestion: "How do you check them today?" });
+    expect(demo.opener).toMatchObject({
+      topics: expect.arrayContaining([{ en: "monitoring your fridge temperatures", he: "ניטור הטמפרטורות במקררים שלך" }]),
+      defaultTopic: 0, question: { en: "How do you check them today?", he: "איך אתם בודקים אותן היום?" },
+    });
+    expect(openerText({ name: "רינה", agent: demo.agentName, company: "Polar Demo", language: "he", opener: demo.opener }))
+      .toBe("היי רינה, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. פנית אלינו בנושא ניטור הטמפרטורות במקררים שלך. איך אתם בודקים אותן היום?");
     const p = stableSystemPrompt(demo, { tradeName: "Polar Demo", currency: "ILS", languages: ["en", "he"] });
     expect(p).toContain("You are Maya, the automated sales agent for Polar Demo");
     expect(p).toContain("The buyer asked to hear from Polar Demo.");

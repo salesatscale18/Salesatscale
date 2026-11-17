@@ -188,7 +188,7 @@ test("3. Company, knowledge, playbook and agent version", async () => {
 
   await page.goto(`${appBase}/setup/playbook`);
   await page.locator("#pb-maxDiscount").fill("10");
-  await page.getByRole("button", { name: "Save draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).first().click();
   await expect(page.getByText(/Draft saved/)).toBeVisible();
 
   await page.goto(`${appBase}/setup/test-lab`);

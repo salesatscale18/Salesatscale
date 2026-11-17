@@ -417,24 +417,24 @@ test("B4 Playbook", async () => {
   const rows = page.locator('input[id^="pb-field."][id$=".label"]');
   const n = await rows.count();
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
-  await page.getByRole("button", { name: "Save draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).first().click();
   await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toHaveText("Give this field a name, or remove the row.");
   // A duplicate label shows an error on that row.
   const first = await page.locator('[id="pb-field.0.label"]').inputValue();
   await page.locator(`[id="pb-field.${n - 1}.label"]`).fill(first);
-  await page.getByRole("button", { name: "Save draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).first().click();
   await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toContainText("appears twice");
   // Then a valid row. The agent name is typed after the refused saves (see "B4 Edits survive a refused save").
   await page.locator("#pb-agentName").fill("Maya");
   await page.locator(`[id="pb-field.${n - 1}.label"]`).fill("Number of fridges");
-  await page.locator(`[id="pb-field.${n - 1}.stage"]`).selectOption({ label: "Before quote" });
+  await page.locator(`[id="pb-field.${n - 1}.stage"]`).selectOption({ label: "Before the recommendation" });
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
   await page.getByRole("button", { name: "Add objection" }).click();
   const o = (await page.locator('input[id^="pb-objection."][id$=".objection"]').count()) - 1;
   await page.locator(`[id="pb-objection.${o}.objection"]`).fill("It is too expensive");
   await page.locator(`[id="pb-objection.${o}.answer"]`).fill("One spoiled fridge costs more than a year of monitoring.");
   await page.locator("#pb-maxDiscount").fill("10");
-  await page.getByRole("button", { name: "Save draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).first().click();
   await expect(page.getByText(/^Draft saved/)).toBeVisible();
   // Rows keep their order.
   await page.reload();
@@ -453,7 +453,7 @@ test("B4 Edits survive a refused save", async () => {
   await page.getByRole("button", { name: "Add field" }).click();
   const n = await page.locator('input[id^="pb-field."][id$=".label"]').count();
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("Only an example");
-  await page.getByRole("button", { name: "Save draft" }).first().click();
+  await page.getByRole("button", { name: "Save to draft" }).first().click();
   await expect(page.locator(`[id="pb-field.${n - 1}.label-error"]`)).toBeVisible();
   await expect(page.locator("#pb-agentName")).toHaveValue("Noa", { timeout: 5000 });
 });
