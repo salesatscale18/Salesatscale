@@ -20,6 +20,8 @@ import { linksOnOwnLine } from "./links";
 import { loadStageFacts } from "./core/stage-facts";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { plainChatText } from "./core/plain-text";
+import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
+import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -81,11 +83,12 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
     catalogRead.catch(() => null),
+    scheduledFollowUp(db, args.accountId, conv.leadId),
   ]);
   const recent = recentDesc.reverse();
   const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
@@ -105,7 +108,12 @@ export async function runBuyerTurn(
   // the model through the update_deal_state tool result.
   const system: [string, string] = [
     stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }),
-    `${turnContext(version.playbook, deal, { stage: stageFacts, agentMessages, opener, catalog: catalog?.items.filter((i) => i.active) })}\nConversation language: ${lang}.`,
+    `${turnContext(version.playbook, deal, {
+      stage: stageFacts, agentMessages, opener, catalog: catalog?.items.filter((i) => i.active),
+      // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
+      followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, account.timezone), topic: followUp.topic } : null,
+      localNow: localNowLine(new Date(), account.timezone),
+    })}\nConversation language: ${lang}.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({

@@ -6,8 +6,9 @@
 import { cache } from "react";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
+import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import {
-  leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
+  followUps, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
   type ApprovalReason, type LeadEvent, type User,
 } from "@/db/schema";
 
@@ -24,6 +25,7 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "payment_failed"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   | { kind: "form_unsigned"; quoteId: string; formId: string; quoteNumber: number; openedAt: Date }
   | { kind: "form_expiring"; quoteId: string; formId: string; quoteNumber: number; expiresAt: Date }
+  | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
 );
 
 export type NeedsYouKind = NeedsYouItem["kind"];
@@ -58,7 +60,7 @@ const openFormWhere = (accountId: string, now: Date) =>
 
 /** The "Needs you" queue for one account, newest first. Selects only the columns it shows (never the form snapshot). */
 export async function needsYou(db: Db, accountId: string, now: Date): Promise<NeedsYouItem[]> {
-  const [approvals, handed, orderRows, formRows] = await Promise.all([
+  const [approvals, handed, orderRows, formRows, failedRows] = await Promise.all([
     db
       .select({
         ...leadCols,
@@ -94,6 +96,8 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       .innerJoin(leads, eq(leads.id, orderForms.leadId))
       .innerJoin(quotes, eq(quotes.id, orderForms.quoteId))
       .where(openFormWhere(accountId, now)),
+    // An agreed follow-up that could not be sent (lib/follow-ups): someone should write to the buyer.
+    failedFollowUps(db, accountId, now),
   ]);
 
   const items: NeedsYouItem[] = [];
@@ -124,6 +128,13 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       items.push({ ...base, kind: "form_unsigned", id: `form:${f.id}`, at: new Date(f.openedAt.getTime() + UNSIGNED_AFTER_MS), openedAt: f.openedAt });
     }
   }
+  for (const r of failedRows) {
+    const f = r.followUp;
+    items.push({
+      leadId: f.leadId, leadName: r.leadName, company: r.company, kind: "follow_up_failed", id: `follow_up:${f.id}`, at: f.updatedAt,
+      followUpId: f.id, dueAt: f.dueAt, reason: f.reason,
+    });
+  }
   return items.sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id));
 }
 
@@ -138,7 +149,7 @@ export const needsYouForRequest = cache((db: Db, accountId: string) => needsYou(
 export async function needsYouCount(db: Db, accountId: string, now: Date): Promise<number> {
   const expiringBy = new Date(now.getTime() + EXPIRING_WITHIN_MS);
   const openedBefore = new Date(now.getTime() - UNSIGNED_AFTER_MS);
-  const [[a], [h], [o], [f]] = await Promise.all([
+  const [[a], [h], [o], [f], [u]] = await Promise.all([
     db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
       .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
       .where(approvalWhere(accountId)),
@@ -156,8 +167,9 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
           ),
         ),
       ),
+    db.select({ n: count() }).from(followUps).innerJoin(leads, eq(leads.id, followUps.leadId)).where(failedFollowUpWhere(accountId, now)),
   ]);
-  return a.n + h.n + o.n + f.n;
+  return a.n + h.n + o.n + f.n + u.n;
 }
 
 /** needsYouCount at the current time, cached per request (the nav badge in the layout). */
@@ -167,6 +179,7 @@ export const needsYouCountForRequest = cache((db: Db, accountId: string) => need
 export function needsYouHref(base: string, item: NeedsYouItem): string {
   switch (item.kind) {
     case "human_handling":
+    case "follow_up_failed":
       return `${base}/leads/${item.leadId}`;
     case "quote_approval":
       return `${base}/orders?tab=approval&quote=${item.quoteId}`;

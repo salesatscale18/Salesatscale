@@ -27,6 +27,8 @@ import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
 import { leadStage } from "@/lib/leads/stage";
 import { StageStepper } from "./stage";
+import { FollowUpPanel } from "./follow-up";
+import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -55,6 +57,10 @@ const EVENT_ICON: Record<string, IconName> = {
   "conversation.handed_back": "sparkles",
   "conversation.human_reply": "message-square",
   "conversation.started": "send",
+  "follow_up.scheduled": "clock",
+  "follow_up.sent": "send",
+  "follow_up.cancelled": "x-circle",
+  "follow_up.failed": "alert-triangle",
 };
 
 /** Lead card (canvas: Main, LeadEmpty): the latest conversation with take over / hand back, deal state, quotes and timeline. */
@@ -67,11 +73,12 @@ export default async function LeadCardPage({
 }) {
   const { account: slug, leadId } = await params;
   const sp = await searchParams;
-  const { account, user: me } = await requireAccount(slug);
+  const access = await requireAccount(slug);
+  const { account, user: me } = access;
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatToken, simFacts, stage] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatToken, simFacts, stage, followUp] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -84,6 +91,7 @@ export default async function LeadCardPage({
     activeChatToken(appDb, account.id, leadId),
     simulatorOpenerFacts(appDb, account.id, leadId),
     leadStage(appDb, account.id, leadId),
+    leadFollowUp(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
@@ -216,6 +224,10 @@ export default async function LeadCardPage({
             </div>
           </div>
           <aside className="sas-lead__side">
+            <FollowUpPanel
+              slug={account.slug} followUp={followUp} timezone={account.timezone}
+              canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"}
+            />
             <section aria-labelledby="lm-h" className="sas-stack-2" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
               <h2 id="lm-h" className="sas-group-label" style={{ padding: "16px 0 0" }}>{t("lead.card.market")}</h2>
               {sp.market ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lead.card.market_saved")}</span></div> : null}

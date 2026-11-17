@@ -239,5 +239,11 @@
   "buyer.app.offer": "הצוות יכול להציע {n}. הנה ההצעה המעודכנת.",
   "buyer.app.close": "אם זה נראה לך נכון, אשלח עכשיו את טופס ההזמנה. מתאים?",
   "buyer.app.close_by": "אם זה נראה לך נכון, אשלח עכשיו את טופס ההזמנה, וההזמנה יכולה להגיע אליך {by}. מתאים?",
-  "buyer.delivery.later_date": "צריכים תאריך מאוחר יותר? כתבו לנו בצ׳אט."
+  "buyer.delivery.later_date": "צריכים תאריך מאוחר יותר? כתבו לנו בצ׳אט.",
+  "buyer.followup.intro_female": "היי {name}, זו {agent} {company}.",
+  "buyer.followup.intro_male": "היי {name}, זה {agent} {company}.",
+  "buyer.followup.intro_neutral": "היי {name}, כאן {agent} {company}.",
+  "buyer.followup.asked_topic": "ביקשת שאחזור אליך היום לגבי {topic}.",
+  "buyer.followup.asked": "ביקשת שאחזור אליך היום.",
+  "buyer.followup.good_time": "זה זמן טוב לדבר?"
 }

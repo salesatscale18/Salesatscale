@@ -12,16 +12,18 @@
  * can offer 5%…", before an in-limit card) and "quote_close" ("If this looks
  * right, I'll send the order form now…"). Those, and a quote card the app
  * sends then, are linked by an `app_message` row in tool_calls (no tool the
- * model can call; left out of the trace). Pure: safe in client components.
+ * model can call; left out of the trace). "follow_up" is the agreed follow-up
+ * the platform scheduler sends (lib/follow-ups/scheduler.ts). Pure: safe in
+ * client components.
  */
-export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer";
+export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up";
 
 /** The tool_calls name of a message the app wrote outside a model turn. */
 export const APP_MESSAGE_CALL = "app_message";
-const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer"];
+const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up"];
 
 /** Plain text the app wrote (not a quote card): shown as "Sent by the app" in seller views. */
-export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer";
+export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer" || k === "follow_up";
 
 type CallLike = { name: string; outcome: string; result: Record<string, unknown> | null | undefined };
 

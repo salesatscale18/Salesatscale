@@ -371,7 +371,7 @@ From `docs/mvp-plan.md` section 7, plus technical choices this plan needs. A rec
 | D3 | Payment provider for the pilot | P10.2 (fake provider until then) | User decides after confirming where the pilot seller is registered. |
 | D4 | E-signature level | P5.4 | Checkbox + typed name (as designed) unless the pilot seller requires a provider. |
 | D5 | Retention periods | P10.3 | User decides. |
-| D6 | Background job runner | P6.7 | DB `jobs` table + Vercel Cron every minute (needs a Vercel plan with per-minute cron); alternative: a managed queue. |
+| D6 | Background job runner | P6.7 | **Decided (user, 2026-11-17): Vercel Cron (Pro), one platform route every 15 minutes.** `vercel.json` calls `GET /api/cron/follow-ups` (`*/15 * * * *`), authorized by `Authorization: Bearer ${CRON_SECRET}` (set `CRON_SECRET` in Vercel Production). First job: agreed follow-ups (`lib/follow-ups/scheduler.ts`), locked per row so two runs never send twice. Further jobs join the same route or get their own. |
 | D7 | File storage | P5.7 / P8.3 | Vercel Blob (private). |
 | D8 | Email for notifications, confirmations and invite links | P1.4 / P5.8 / P7.5 | A transactional email API (e.g. Resend). |
 | D9 | Preview database | Before the pilot seller's real data (P8/P10) | **Decided (user, 2026-11-12): deferred.** We push straight to live while there is no real data. Add a separate Neon branch for Preview before the first real seller data, so Preview builds of unfinished code can't touch it. |

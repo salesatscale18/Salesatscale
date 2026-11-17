@@ -32,6 +32,7 @@ import { isReservedFieldKey } from "./core/facts";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
 import { deriveStage } from "./core/stage";
 import { loadStageFacts } from "./core/stage-facts";
+import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
 
 const lineSchema = {
   type: "array",
@@ -151,6 +152,20 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: { reason: { type: "string", description: "What the buyer said, short." } },
       required: ["reason"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "schedule_follow_up",
+    description: "Schedule the time you agreed with the buyer to come back to them yourself (when they need time to think or it is not a good moment). The app writes to the buyer at that time. One per buyer: a new call replaces the earlier time. Refused outside 15 minutes to 30 days ahead; outside contact hours it returns the nearest allowed time to offer the buyer instead.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        due_at: { type: "string", description: 'The agreed time as an ISO date-time with the offset of the seller\'s time zone, e.g. "2026-11-18T10:00:00+02:00". Use "Local time now" from your context.' },
+        topic: { type: "string", description: 'What to come back about, short, in the buyer\'s words, e.g. "the quote for the second kitchen".' },
+      },
+      required: ["due_at", "topic"],
       additionalProperties: false,
     },
   },
@@ -664,6 +679,22 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       return { outcome: "ok", result: { ok: true, signed: false, order_form: f ? f.status : "not sent" } };
     }
     return { outcome: "ok", result: { ok: true, signed: true, payment: o.paymentStatus, message: o.paymentStatus === "paid" ? "Thank the buyer; the order is confirmed." : "Payment is not confirmed yet. Never say it is paid until the status is paid." } };
+  }
+
+  if (name === "schedule_follow_up") {
+    const r = await scheduleFollowUp(
+      ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId, language: ctx.language ?? "en" },
+      { due_at: args.due_at, topic: args.topic },
+    );
+    if (!r.ok) return refuse(r.rule, r.extra);
+    await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, [], { nextStep: followUpNextStep(r.dueLocal, r.followUp.topic) });
+    return {
+      outcome: "ok",
+      result: {
+        ok: true, due_local: r.dueLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
+        message: "Scheduled. Confirm the time back to the buyer in their own wording and language (for example \"tomorrow at 10\"), in one short sentence. You will write to them yourself at that time.",
+      },
+    };
   }
 
   if (name === "hand_off_to_human") {

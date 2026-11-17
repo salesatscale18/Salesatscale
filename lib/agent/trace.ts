@@ -17,6 +17,7 @@ export const TRACE_LABEL: Record<string, string> = {
   send_order_form: "order_form.send",
   check_payment: "payment.check",
   record_opt_out: "lead.opt_out",
+  schedule_follow_up: "follow_up.schedule",
 };
 
 export type TraceLine = { label: string; sent: string; got: string; missing: string[] };
@@ -79,6 +80,10 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
     case "record_opt_out":
       sent = str(input.reason) || "Buyer asked not to be contacted";
       got = "Opted out; the chat is closed";
+      break;
+    case "schedule_follow_up":
+      sent = `${str(input.due_at)}${input.topic ? `: ${str(input.topic)}` : ""}`;
+      got = result.due_local ? `Follow-up set for ${str(result.due_local)}` : "";
       break;
     default:
       sent = "";

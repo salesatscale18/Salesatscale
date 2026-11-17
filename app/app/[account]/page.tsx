@@ -15,6 +15,7 @@ import {
 } from "@/lib/overview/service";
 import { setupProgress } from "@/lib/overview/setup";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
+import { formatDueLocal, reasonText } from "@/lib/follow-ups/rules";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 /** "?period=7&sim=1": 30 days and simulated buyers left out are the defaults. */
@@ -31,6 +32,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "quote.created": "file-text", "quote.versioned": "file-text", "quote.approved": "check-circle", "quote.cancelled": "file-x",
   "handoff.requested": "user", "deal.verified": "shield-check", "order_form.sent": "send", "order_form.opened": "eye",
   "order_form.signed": "pen", "payment.bank_transfer": "clock", "payment.failed": "x-circle", "order.paid": "credit-card",
+  "follow_up.scheduled": "clock", "follow_up.sent": "send", "follow_up.cancelled": "x-circle", "follow_up.failed": "alert-triangle",
 };
 
 const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | "warning" | "danger" | "neutral" }> = {
@@ -40,6 +42,7 @@ const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | 
   payment_failed: { icon: "x-circle", tone: "danger" },
   form_unsigned: { icon: "pen", tone: "neutral" },
   form_expiring: { icon: "clock", tone: "warning" },
+  follow_up_failed: { icon: "alert-triangle", tone: "danger" },
 };
 
 const TONE_STYLE = {
@@ -114,6 +117,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         return { title: t("overview.needs.form_unsigned"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_unsigned.detail", { when: relativeTime(it.openedAt, now) })}` };
       case "form_expiring":
         return { title: t("overview.needs.form_expiring"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_expiring.detail", { hours: Math.max(1, Math.ceil((it.expiresAt.getTime() - now.getTime()) / 3_600_000)) })}` };
+      case "follow_up_failed":
+        return { title: t("overview.needs.follow_up_failed", { name: it.leadName }), detail: [it.company, formatDueLocal(it.dueAt, account.timezone), reasonText(it.reason)].filter(Boolean).join(" · ") };
     }
   };
 
