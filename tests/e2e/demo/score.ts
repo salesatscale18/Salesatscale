@@ -314,12 +314,17 @@ export const CHECKS: Check[] = [
   },
   {
     id: "short_messages",
-    label: "At most 3 sentences and one question per message (two once)",
+    label: "At most 3 sentences (the recommendation 4) and one question per message (two once)",
     run: ({ t }) => {
       let twoQuestions = 0;
-      for (const m of t.filter(isAgent)) {
+      // The recommendation (the last agent message before the first quote, ending with a question) has four parts by design.
+      const firstQuote = t.findIndex(isQuote);
+      let rec = -1;
+      for (let i = (firstQuote < 0 ? t.length : firstQuote) - 1; i >= 0; i--) if (isAgent(t[i])) { rec = t[i].text.trim().endsWith("?") ? i : -1; break; }
+      for (const [i, m] of t.entries()) {
+        if (!isAgent(m)) continue;
         const n = sentences(m.text).length;
-        if (n > 3) return fail(`${n} sentences: ${quoteOf(m.text)}`);
+        if (n > (i === rec ? 4 : 3)) return fail(`${n} sentences: ${quoteOf(m.text)}`);
         const q = questionMarks(m.text);
         if (q > 2) return fail(`${q} questions: ${quoteOf(m.text)}`);
         if (q === 2 && ++twoQuestions > 1) return fail(`two questions in a message more than once: ${quoteOf(m.text)}`);

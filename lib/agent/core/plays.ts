@@ -42,7 +42,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
   price_early: {
     title: "Price asked early",
     when: "The buyer asks the price before you have recommended a set.",
-    do: ["Answer at once with a real number or range.", "Say in a few words what it depends on.", "Ask the one question that makes it exact."],
+    do: ["Answer at once with a real number or range, in one or two plain sentences, no list.", "Say in a few words what it depends on.", "Ask the one question that makes it exact."],
     example: "A sensor is <price> one-time and the hub is <price> a month, so the total depends on the number of fridges. How many do you want covered?",
     notThis: "Before we talk price, let me understand your needs.",
     sellerContentHint: "The entry price and what drives the total.",

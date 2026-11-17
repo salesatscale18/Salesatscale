@@ -19,6 +19,7 @@ import { runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } 
 import { linksOnOwnLine } from "./links";
 import { loadStageFacts } from "./core/stage-facts";
 import { publishedCatalog } from "@/lib/catalog/service";
+import { plainChatText } from "./core/plain-text";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -136,7 +137,7 @@ export async function runBuyerTurn(
       const uses = res.content.filter((b): b is Extract<Block, { type: "tool_use" }> => b.type === "tool_use" && typeof (b as { id?: unknown }).id === "string");
       history.push({ role: "assistant", content: res.content as Anthropic.Beta.BetaContentBlockParam[] });
       if (uses.length === 0 || round === MAX_TOOL_ROUNDS) {
-        text = res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n").trim();
+        text = plainChatText(res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n"));
         break;
       }
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];

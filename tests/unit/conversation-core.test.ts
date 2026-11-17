@@ -385,3 +385,11 @@ describe("fixed opener", () => {
     }
   });
 });
+
+describe("plain chat text (scored round, 17 Nov)", () => {
+  it("strips Markdown marks the buyer would see literally, keeps words and dashes", async () => {
+    const { plainChatText } = await import("@/lib/agent/core/plain-text");
+    expect(plainChatText("For 2 fridges:\n\n\n- **Sensors:** 2 × ₪590\n* **Hub:** ₪660\n## Total")).toBe("For 2 fridges:\n\n- Sensors: 2 × ₪590\n- Hub: ₪660\nTotal");
+    expect(plainChatText("2 × 3 = 6, a*b stays")).toBe("2 × 3 = 6, a*b stays");
+  });
+});
