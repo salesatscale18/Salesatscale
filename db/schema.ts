@@ -430,6 +430,10 @@ export const catalogItems = pgTable(
     kind: itemKind("kind"),
     /** Custom unit names per language, used when `unit` is "custom" (lib/pricing/units.ts). */
     unitCustom: jsonb("unit_custom").$type<UnitCustom>(),
+    /** What the agent calls the item in chat ("wireless fridge sensor"); the SKU and name stay for the quote. Null = use `name`. */
+    plainName: text("plain_name"),
+    /** One sentence on what the buyer gets from the item. Null = the agent uses `description`. */
+    valueLine: text("value_line"),
   },
   (t) => [
     uniqueIndex("catalog_items_version_sku_uq").on(t.catalogVersionId, t.sku),
