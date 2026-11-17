@@ -116,7 +116,7 @@ const COMPANY_DETAIL = [
 ];
 
 /** System talk the buyer should never see. Hebrew "מערכת" is left out: it is the ordinary word for a product set. */
-const SYSTEM_TALK = /\btools?\b|\bcatalog(?:ue)?\b|\bsystem\b|appears? to include|\bdatabase\b|\bmy instructions\b|\bfunction call|קטלוג|הכלי\b/i;
+const SYSTEM_TALK = /\btools?\b|\bcatalog(?:ue)?\b|\bsystem\b|appears? to include|\bdatabase\b|\bmy instructions\b|\bfunction call|approved (?:facts|information|info|answers?)|קטלוג|הכלי\b|מידע מאושר|עובדות מאושרות/i;
 
 /** Banned superlatives (credibility rule: specific beats superlative). */
 const SUPERLATIVE = /\b(?:best|amazing|perfect|leading)\b|הכי טוב|הטוב ביותר|מושלם|מדהים|מוביל/i;
@@ -125,12 +125,12 @@ const SUPERLATIVE = /\b(?:best|amazing|perfect|leading)\b|הכי טוב|הטוב
 const INTRO = /(?:\b[Tt]his is|\bI am|\bI'm|\b[Mm]y name is)\s+\p{Lu}|automated assistant|העוזר(?:\/ת)? האוטומטי|העוזרת האוטומטית|כאן \p{L}+, העוזר/u;
 
 /** Product words of the demo set in plain language: a recommendation names the set. */
-const PRODUCT_WORDS = [/sensor|חיישן/i, /hub|gateway|רכזת|מרכזת|שער/i, /install|התקנ/i];
+const PRODUCT_WORDS = [/sensor|חיישן/i, /hub|gateway|רכזת|מרכזת|שער|האב/i, /install|התקנ|מותקן|להתקין/i];
 
 const DISCOUNT = /discount|% off|\boff the price|reduce the price|lower the price|cheaper|הנחה|להוריד (?:את )?המחיר/i;
 const URGENCY = /today only|only today|limited time|limited offer|hurry|last chance|act now|don't wait|do not wait|before (?:it'?s|they'?re) gone|only \d+ left|running out|offer ends|רק היום|מבצע מוגבל|מהר|לפני שייגמר|הזדמנות אחרונה/i;
-const ASKS_WHAT_IS_OPEN = /what(?:'s| is)? (?:still )?(?:open|unclear|missing)|what would help|anything (?:i can|to) |any question|what questions|what (?:do you|would you) (?:want|need) to (?:know|check)|which part|what part|מה (?:עוד )?(?:פתוח|לא ברור|חסר)|יש (?:לך|לכם)? ?שאל|מה יעזור|משהו ש/i;
-const DISCLAIMER = /can'?t speak|cannot speak|can'?t comment|don'?t know (?:their|them|it|much)|not familiar|no information|לא מכיר|לא יכול(?:ה)? להתייחס|אין לי מידע/i;
+const ASKS_WHAT_IS_OPEN = /what(?:'s| is)? (?:still )?(?:open|unclear|missing)|what would help|anything (?:i can|to) |anything (?:still )?open|any question|what questions|what (?:do you|would you) (?:want|need) to (?:know|check)|which part|what part|מה (?:עוד )?(?:פתוח|לא ברור|חסר)|יש (?:לך|לכם)? ?שאל|מה יעזור|משהו ש/i;
+const DISCLAIMER = /can'?t speak|cannot speak|can'?t compare|cannot compare|can'?t comment|don'?t know (?:their|them|it|much)|not familiar|no information|לא מכיר|לא יכול(?:ה)? להתייחס|אין לי מידע/i;
 
 // ───────────────────────── Buyers the play checks know ─────────────────────────
 
@@ -392,7 +392,8 @@ export const CHECKS: Check[] = [
       const rest = t.slice(r.at + 1).filter(isAgent);
       const urgent = rest.find((m) => URGENCY.test(m.text));
       if (urgent) return fail(`urgency: ${quoteOf(urgent.text)}`);
-      const asks = r.turn.some((m) => endsWithQuestion(m.text) && ASKS_WHAT_IS_OPEN.test(m.text));
+      // The question may be followed by an offer ("…can answer now? I can also set up a call."): any question sentence counts.
+      const asks = r.turn.some((m) => sentences(m.text).some((x) => /[?？]\s*$/.test(x) && ASKS_WHAT_IS_OPEN.test(x)));
       return asks ? pass() : fail(`does not ask what is still open: ${quoteOf(r.turn.map((m) => m.text).join(" "))}`);
     },
   },
