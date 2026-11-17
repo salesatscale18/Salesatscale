@@ -80,3 +80,19 @@ describe("buyer simulator rules", () => {
     expect(parseSimBuyer({ fullName: "Rina", company: "", language: "he", country: "" }, ["en"])).toMatchObject({ ok: false, errors: { language: expect.any(String) } });
   });
 });
+
+describe("UX sign-off fixes", () => {
+  it("the fixed opener says the agent is automated, in EN and HE", async () => {
+    const { messages } = await import("@/lib/i18n");
+    expect(messages.en["buyer.sim.opener"]).toContain("the automated assistant of {company}");
+    expect((messages as unknown as Record<string, Record<string, string>>).he?.["buyer.sim.opener"] ?? "").toContain("האוטומטי");
+  });
+
+  it("no ghost typing: a system note after the buyer's message (a failed agent turn) stops it", async () => {
+    const { agentTyping } = await import("@/lib/simulator/rules");
+    const now = new Date("2026-11-17T10:00:30Z");
+    const at = new Date("2026-11-17T10:00:00Z");
+    expect(agentTyping({ status: "open" }, { actor: "buyer", createdAt: at }, "live", now)).toBe(true);
+    expect(agentTyping({ status: "open" }, { actor: "system", createdAt: at }, "live", now)).toBe(false);
+  });
+});

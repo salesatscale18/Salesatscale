@@ -75,7 +75,7 @@ describe("one-click demo account", () => {
     if (!r.ok) throw new Error("refused");
     const s = r.summary;
     accountId = s.accountId;
-    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 3, facts: 10, legalSections: 4, leads: 3, simulatedBuyers: 0, live: true });
+    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 3, facts: 10, legalSections: 4, leads: 3, simulatedBuyers: 2, live: true });
     expect(s.tradeName).toBe("Polar Demo 2026-11-17 10:00:00");
 
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
@@ -171,7 +171,10 @@ describe("one-click demo account", () => {
   });
 
   it("has three consented leads with fictional numbers that are never contacted", async () => {
-    const rows = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)));
+    const all = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)));
+    // Plus two simulated buyers (buyer IDs, no phone), which the simulator tests cover.
+    expect(all.filter((l) => l.buyerRef).map((l) => l.buyerRef).sort()).toEqual(["SIM-0001", "SIM-0002"]);
+    const rows = all.filter((l) => !l.buyerRef);
     expect(rows).toHaveLength(3);
     for (const l of rows) {
       expect(l.phone).toMatch(DEMO_PHONE_RANGE);
@@ -212,7 +215,7 @@ describe("one-click demo account", () => {
     for (const id of [a.summary.accountId, b.summary.accountId]) {
       const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
       expect(acc.status).toBe("live");
-      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(3);
+      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(5);
     }
   });
 

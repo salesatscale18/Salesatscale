@@ -1985,7 +1985,7 @@
   "buyer.sim.refused.spend_cap": "The seller reached a monthly limit. Your message was not sent.",
   "buyer.sim.refused.rate_limited": "Too many messages. Wait a minute and try again.",
   "buyer.sim.team": "Team",
-  "buyer.sim.opener": "Hi {name}, this is {agent} from {company}. You asked to hear from us. How can I help?",
+  "buyer.sim.opener": "Hi {name}, this is {agent}, the automated assistant of {company}. You asked to hear from us. How can I help?",
   "sim.chip": "Simulated",
   "sim.add": "Add simulated buyer",
   "sim.form.title": "Add simulated buyer",

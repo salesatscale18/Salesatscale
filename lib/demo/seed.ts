@@ -35,6 +35,7 @@ import { publishPriceList, setEntry, type EntryInput } from "@/lib/pricing/price
 import { addCall, addNote } from "@/lib/sources/service";
 import { sha256 } from "@/lib/sources/text";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
+import { createSimulatedBuyer } from "@/lib/simulator/service";
 
 /** Every demo account's trade name starts with this (the audit entry `demo.created` is the real marker). */
 export const DEMO_NAME_PREFIX = "Polar Demo";
@@ -202,11 +203,13 @@ export function demoName(now: Date): string {
   return `${DEMO_NAME_PREFIX} ${now.toISOString().slice(0, 19).replace("T", " ")}`;
 }
 
-/**
- * Whether `simulated buyers` can be seeded: the buyer-simulator lane adds
- * leads.buyer_ref. Not on main yet, so none are created.
- */
-export const SIMULATED_BUYERS_SUPPORTED = false;
+/** Simulated buyers are seeded too (buyer simulator, migration 0013), so a rehearsal can start from the buyer chat. */
+export const SIMULATED_BUYERS_SUPPORTED = true;
+
+const SIM_BUYERS = [
+  { fullName: "Rina Cohen", company: "Rina's Kitchen", language: "en", country: "IL" },
+  { fullName: "יוסי לוי", company: "קפה יוסי", language: "he", country: "IL" },
+];
 
 // ---------------------------------------------------------------------------
 // Seed
@@ -355,6 +358,18 @@ async function fill(db: Db, user: DemoActor, created: { id: string; tradeName: s
     leadCount++;
   }
 
+  // 10. Simulated buyers (buyer IDs, no phone; chat at /chat/<token>, never WhatsApp).
+  let simCount = 0;
+  if (SIMULATED_BUYERS_SUPPORTED) {
+    const acc = await getAccountById(db, accountId);
+    if (!acc) throw new Error("Demo seed: account vanished");
+    for (const b of SIM_BUYERS) {
+      const r = await createSimulatedBuyer(db, actor, acc, b, now);
+      if (!r.ok) throw new Error(`Demo seed: simulated buyer ${b.fullName} not saved: ${JSON.stringify(r.errors)}`);
+      simCount++;
+    }
+  }
+
   return {
     catalogVersion: catalog,
     priceListVersion: priceList,
@@ -363,7 +378,7 @@ async function fill(db: Db, user: DemoActor, created: { id: string; tradeName: s
     facts: src.facts,
     legalSections: legalCount,
     leads: leadCount,
-    simulatedBuyers: 0,
+    simulatedBuyers: simCount,
     testConversationId: test.conversationId,
     live: live.ok,
   };

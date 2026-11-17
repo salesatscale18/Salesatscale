@@ -130,13 +130,13 @@
   "buyer.sim.refused.spend_cap": "המוכר הגיע למגבלה חודשית. ההודעה לא נשלחה.",
   "buyer.sim.refused.rate_limited": "יותר מדי הודעות. המתינו דקה ונסו שוב.",
   "buyer.sim.team": "צוות",
-  "buyer.sim.opener": "היי {name}, כאן {agent} מ{company}. ביקשת שניצור קשר. איך אפשר לעזור?",
+  "buyer.sim.opener": "היי {name}, כאן {agent}, העוזר/ת האוטומטי/ת של {company}. ביקשת שניצור קשר. איך אפשר לעזור?",
   "buyer.sim.banner_lead": "צ׳אט בדיקה.",
   "buyer.sim.typing_label": "{agent} מקלידה",
   "buyer.sim.closed_by": "השיחה נסגרה על ידי {seller}",
   "buyer.sim.form_label": "טופס הזמנה",
   "buyer.sim.today_word": "היום",
   "buyer.sim.per_month": "/חודש",
-  "buyer.sim.refused.account_paused": "המוכר השהה את הצ׳אט. ההודעה לא נשלחה.",
-  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה לא נשלחה."
+  "buyer.sim.refused.account_paused": "הצ׳אט הושהה על ידי המוכר. ההודעה שלך לא נשלחה.",
+  "buyer.sim.refused.simulated_disabled": "צ׳אטים מדומים כבויים. ההודעה שלך לא נשלחה."
 }

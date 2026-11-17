@@ -397,8 +397,9 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const [lastReply] = await db.select({ at: sql<unknown>`max(${messages.createdAt})` }).from(messages)
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"])));
   const repliedAt = lastReply?.at == null ? null : lastReply.at instanceof Date ? lastReply.at : new Date(String(lastReply.at));
+  // System notes count here: a failed agent turn leaves one, so "typing…" stops at once (UX: no ghost typing).
   const [last] = await db.select({ actor: messages.actor, createdAt: messages.createdAt }).from(messages)
-    .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, latest!.id), inArray(messages.actor, ["buyer", "agent", "human"])))
+    .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, latest!.id), inArray(messages.actor, ["buyer", "agent", "human", "system"])))
     .orderBy(desc(messages.createdAt)).limit(1);
 
   await db.update(messages).set({ deliveryStatus: "read" })
