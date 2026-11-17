@@ -406,14 +406,16 @@ step("P1 Analyze sources (PAID, once)", async () => {
     S.analysis.runs = rows;
     save();
     const running = await visible(page.getByText("Analyzing your sources.", { exact: false }), 1000);
-    const bad = rows.find((r) => /Failed|Stopped at spend cap/.test(r));
+    // Only the newest analysis (its two stage rows, listed first) counts; older failed runs stay in the list.
+    const latest = rows.slice(0, 2);
+    const bad = latest.find((r) => /Failed|Stopped at spend cap/.test(r));
     if (bad) {
       S.analysis.error = bad;
       S.analysis.finished = true;
       await shot("P1-failed");
       throw new Error(`Analysis failed: ${bad}`);
     }
-    if (!running && rows.length > 0 && rows.every((r) => /Completed/.test(r))) break;
+    if (!running && latest.length > 0 && latest.every((r) => /Completed/.test(r))) break;
     if (Date.now() > until) {
       await shot("P1-timeout");
       throw new Error(`Analysis still not finished after 10 minutes: ${rows.join(" | ")}`);
