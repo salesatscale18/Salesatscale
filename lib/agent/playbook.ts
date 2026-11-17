@@ -1,5 +1,6 @@
 /** Playbook rules (pure; unit-tested). The playbook is data the seller edits; nothing here is category-specific. */
 import { PLAY_KEYS, type DealFieldValue, type PlayCard, type PlayKey, type Playbook, type PlaybookException, type PlaybookField } from "@/db/schema";
+import { isReservedFieldKey } from "./core/facts";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -164,7 +165,7 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   // Existing keys first, so a new row never takes the key of a row below it.
   const used = new Set<string>();
   for (const r of fieldRows) {
-    if (r.key && KEY_RE.test(r.key) && !used.has(r.key)) used.add(r.key);
+    if (r.key && KEY_RE.test(r.key) && !isReservedFieldKey(r.key) && !used.has(r.key)) used.add(r.key);
     else r.key = "";
   }
   const labels = new Set<string>();

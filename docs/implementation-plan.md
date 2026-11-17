@@ -445,7 +445,12 @@ Update the row in the same push that finishes the step.
 | P8.1–P8.7 | todo | | | | M8 |
 | P9.1–P9.5 | todo | | | | M9 |
 | P10.1–P10.6 | todo | | | | Pilot |
-| P11.0–P11.6 | todo | | | | Conversation design; spec approved by the user 2026-11-17 |
+| P11.0 | done | determined-hopper | P11 push | 2026-11-17 | Migration `0014_catalog_plain_value`; playbook `opener` and `plays` types; reserved conversation facts |
+| P11.1 | done | determined-hopper | P11 push | 2026-11-17 | Stage derivation, core design text, 13 default plays, per-turn stage block, fixed opener (EN/HE). Lead's own interest: todo (no lead field yet) |
+| P11.2 | done | determined-hopper | P11 push | 2026-11-17 | Prices withheld until confirmed or asked; app-written quote message with labelled VAT; `delivery_by`; `send_order_form` no longer waits for company fields |
+| P11.3 | done | determined-hopper | P11 push | 2026-11-17 | Order form already collected and required the company and signer fields; tests added; editor label "Filled in the order form" |
+| P11.4 | done | determined-hopper | P11 push | 2026-11-17 | Catalog plain name and value line; playbook Opening and Sales plays (own card, restore default); analysis drafts them as suggestions. New suggestion kinds are stored under `payload.kind` (enum values: todo with the next migration) |
+| P11.5–P11.6 | todo | | | | Scoring harness, then one paid round after the user's approval |
 
 Phase rows are split into one row per step when the phase starts.
 

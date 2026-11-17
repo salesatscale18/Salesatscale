@@ -184,3 +184,16 @@ describe("knowledge analysis: P11 suggestions", () => {
     expect(suggestionSection("discovery_question")).toBe("field");
   });
 });
+
+describe("reserved deal-state keys", () => {
+  it("a posted field key with a leading underscore is replaced by a key made from the label", async () => {
+    const { parsePlaybookRows } = await import("@/lib/agent/playbook");
+    const res = parsePlaybookRows({
+      agentName: "Maya", goal: "Sell", tone: "", outcomes: { orderForm: true, bankTransfer: false, meeting: false },
+      fields: [{ key: "_price_asked", label: "Sites", stage: "before_quote" }],
+      objections: [], maxDiscount: "0", offerMeetingWhen: "", handOffWhen: "", neverDo: [],
+    } as never);
+    expect(res.ok).toBe(true);
+    if (res.ok) expect(res.value.fields.map((f) => f.key)).toEqual(["sites"]);
+  });
+});
