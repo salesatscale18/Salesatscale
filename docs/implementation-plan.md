@@ -304,12 +304,12 @@ Spec: "Core conversation design: step 1 spec" (user-approved 2026-11-17). The ag
 | Step | What | Migration | Tests |
 |---|---|---|---|
 | P11.0 | Schema: plain name and value sentence on catalog items; opener inputs (what leads ask about, opening question) and play seller content on the playbook; company details saved from the order form if not stored today | yes (one) | Integration |
-| P11.1 | Conversation core in `lib/agent`: core design text (7 stages, rules in every stage, credibility rules), default plays as cards (when / do / example / not this), stage derived in code each turn and named in the per-turn context, "buyer confirmed the recommendation" fact, opener with the lead's interest and one introduction | no | Unit: every stage, skip, step back, objection pause; prompt snapshot |
+| P11.1 | Conversation core in `lib/agent`: core design text (7 stages, rules in every stage, credibility rules), default plays as cards (when / do / example / not this), a seller's own card for a situation (suggested from their knowledge or calls and approved, or written by hand) replaces the default card for that seller, stage derived in code each turn and named in the per-turn context, "buyer confirmed the recommendation" fact, opener with the lead's interest and one introduction | no | Unit: every stage, skip, step back, objection pause; prompt snapshot |
 | P11.2 | Tools: lookups return no prices until the recommendation is confirmed or the buyer asks; the app writes the quote message in a fixed layout (EN/HE) with VAT as a labelled amount; "by about <last date>" delivery phrase; `send_order_form` no longer waits for company and signer fields | no | Unit + integration |
 | P11.3 | Order form: company and signer fields in the form, prefilled from the chat, required before signing. Playbook editor: "needed before the order form" becomes "filled in the order form" | no | Integration + buyer-page tests |
 | P11.4 | Seller inputs: edit the new inputs in Catalog and Playbook; the knowledge analysis drafts them (and play seller content) as suggestions in the same run | no | Unit + integration (ScriptedLlm) |
 | P11.5 | Scoring harness: nine test buyers and a checklist score per conversation. Paid: runs only with an explicit flag and the user's approval per run (CLAUDE.md AI spend rule) | no | Free self-test with ScriptedLlm |
-| P11.6 | Paid round 1, tune core and plays; paid round 2 including a smaller-model comparison. Each run needs the user's approval with an estimate | no | Scores recorded in `docs/ai.md` |
+| P11.6 | One paid test round on Sonnet 5.5, then review the results with the user and decide on the next. Each run needs the user's approval with an estimate. No smaller-model test for now | no | Scores recorded in `docs/ai.md` |
 
 Exit criteria: the Rina case runs in 8 agent messages or fewer with no early price, no company questions in chat and no system talk; all nine test buyers pass the checklist.
 
