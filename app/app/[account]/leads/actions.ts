@@ -177,7 +177,7 @@ export async function humanReplyAction(form: FormData) {
   const notice = !r ? undefined
     : !r.ok ? r.reason
     : !r.delivery ? undefined
-    : r.delivery.delivered ? "sent"
+    : r.delivery.delivered ? (conv?.channel === "simulator" ? "sent_sim" : "sent")
     : r.delivery.reason === "window_closed" ? "window_closed" : "saved_not_sent";
   if (conv) revalidateConversation(access.account.slug, from, conv);
   redirect(conversationBack(access.account.slug, from, conv, notice));

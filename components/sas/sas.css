@@ -133,6 +133,7 @@
 .sas-msg__trace { display: flex; flex-wrap: wrap; gap: 4px; }
 .sas-chip { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding-inline: 6px; border-radius: var(--radius-sm); font: 500 11px/16px var(--font-mono); background: var(--surface-raised); color: var(--ink-muted); border: 1px solid var(--line); }
 .sas-chip .sas-ico { width: 12px; height: 12px; }
+.sas-channel-pill .sas-ico { width: 12px; height: 12px; }
 
 /* Timeline */
 .sas-tl { list-style: none; margin: 0; padding: var(--space-4); display: flex; flex-direction: column; }
@@ -420,3 +421,12 @@ h2.sas-group-label { margin: 0; }
   .sas-inbox:not(.sas-inbox--thread) .sas-inbox__thread { display: none; }
   .sas-inbox__back { display: inline-flex; }
 }
+
+/* Switch (Settings › Simulation, artboard SimSettings): a checkbox with role="switch". */
+.sas-switch-row { display: flex; gap: 14px; align-items: flex-start; cursor: pointer; }
+.sas-switch { appearance: none; -webkit-appearance: none; position: relative; width: 40px; height: 22px; margin: 0; flex: none; border-radius: 999px; background: var(--line-strong); cursor: pointer; transition: background .15s; }
+.sas-switch::after { content: ""; position: absolute; top: 3px; inset-inline-start: 3px; width: 16px; height: 16px; border-radius: 999px; background: #fff; transition: inset-inline-start .15s; }
+.sas-switch:checked { background: var(--primary); }
+.sas-switch:checked::after { inset-inline-start: 21px; }
+.sas-switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { .sas-switch, .sas-switch::after { transition: none; } }

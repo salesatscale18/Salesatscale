@@ -1,6 +1,6 @@
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
-import { MetricTile, Timeline, type TimelineItem } from "@/components/sas/record";
+import { Banner, MetricTile, Timeline, type TimelineItem } from "@/components/sas/record";
 import { SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { displayName } from "@/lib/auth/display";
@@ -17,6 +17,14 @@ import { setupProgress } from "@/lib/overview/setup";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
+/** "?period=7&sim=1": 30 days and simulated buyers left out are the defaults. */
+const overviewQuery = (period: number, sim: boolean) => {
+  const q = new URLSearchParams();
+  if (period !== 30) q.set("period", String(period));
+  if (sim) q.set("sim", "1");
+  const s = q.toString();
+  return s ? `?${s}` : "";
+};
 
 const EVENT_ICON: Record<string, IconName> = {
   "lead.created": "user-plus", "lead.updated": "file-text", "consent.recorded": "shield-check", "lead.opted_out": "x-circle",
@@ -56,11 +64,16 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const { account, user } = await requireAccount(slug);
   const now = new Date();
   const period = parsePeriod(one(sp.period));
+  // Simulated buyers (buyer simulator) are left out of the numbers unless asked for, like test chats.
+  const includeSimulated = one(sp.sim) === "1";
   const base = `/app/${account.slug}`;
-  const [items, kpis, activity, done, agent, spend] = await Promise.all([
+  const range = periodRange(period, now);
+  const [items, kpis, realKpis, activity, done, agent, spend] = await Promise.all([
     needsYouForRequest(appDb, account.id),
-    overviewKpis(appDb, account.id, periodRange(period, now)),
-    recentActivity(appDb, account.id, 10),
+    overviewKpis(appDb, account.id, range, { includeSimulated }),
+    // With simulated data included, the real-only numbers give the "incl. N simulated" lines.
+    includeSimulated ? overviewKpis(appDb, account.id, range) : Promise.resolve(null),
+    recentActivity(appDb, account.id, 10, { includeSimulated }),
     setupProgress(appDb, account),
     liveVersion(appDb, account.id),
     spendStateForRequest(appDb, account.id),
@@ -70,6 +83,13 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const spendText = spendAlert ? spendTexts(spendAlert) : null;
   const needCount = items.length + (spendAlert ? 1 : 0);
   const money = (m: number) => formatMoney(m, account.currency);
+  const sim = realKpis ? {
+    leads: kpis.newLeads - realKpis.newLeads, quotes: kpis.quotesCreated - realKpis.quotesCreated, signed: kpis.formsSigned - realKpis.formsSigned,
+    paid: kpis.paidOrders - realKpis.paidOrders, revenue: kpis.paidRevenueMinor - realKpis.paidRevenueMinor,
+  } : null;
+  /** The tile's own sub-line, plus "incl. N simulated" while simulated data is included. */
+  const withSim = (delta: string | undefined, n: number | string | null) =>
+    sim && n !== null ? [delta, t("overview.incl_simulated", { count: n })].filter(Boolean).join(" · ") : delta;
 
   const funnel: { label: MessageKey; value: number; color: string }[] = [
     { label: "overview.funnel.leads", value: kpis.newLeads, color: "#c9d7f5" },
@@ -101,7 +121,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: EVENT_ICON[event.type] ?? "cog",
-    title: t(`lead.event.${event.type}` as MessageKey),
+    // A conversation started on the buyer simulator is not a WhatsApp start.
+    title: t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey),
     detail: (
       <>
         <a href={`${base}/leads/${lead.id}`}>{lead.fullName}</a>
@@ -129,22 +150,36 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         {account.status !== "live" ? <StatusPill object="account" state={account.status} /> : null}
         <nav aria-label={t("overview.period")} className="sas-tabs">
           {PERIODS.map((d) => (
-            <a key={d} className="sas-tab" href={d === 30 ? base : `${base}?period=${d}`} aria-current={d === period ? "page" : undefined}>
+            <a key={d} className="sas-tab" href={`${base}${overviewQuery(d, includeSimulated)}`} aria-current={d === period ? "page" : undefined}>
               {t(`overview.period.${d}`)}
             </a>
           ))}
         </nav>
+        <a
+          href={`${base}${overviewQuery(period, !includeSimulated)}`} role="checkbox" aria-checked={includeSimulated}
+          data-include-simulated={includeSimulated ? "1" : "0"}
+          style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}
+        >
+          <span aria-hidden="true" style={{
+            width: 18, height: 18, borderRadius: 4, display: "grid", placeItems: "center", color: "var(--on-primary)",
+            border: `1.5px solid ${includeSimulated ? "var(--primary)" : "var(--line-strong)"}`, background: includeSimulated ? "var(--primary)" : "transparent",
+          }}>{includeSimulated ? <Icon name="check" /> : null}</span>
+          {t("overview.include_simulated")}
+        </a>
       </header>
 
+      {sim ? (
+        <Banner kind="test"><strong>{t("overview.sim_banner_lead")}</strong> {t("overview.sim_banner", { leads: sim.leads, quotes: sim.quotes, orders: sim.paid })}</Banner>
+      ) : null}
       <section aria-label={t("overview.kpis")} className="sas-metrics">
-        <MetricTile label={t("overview.kpi.leads")} value={kpis.newLeads} delta={t("overview.kpi.leads_delta")} />
-        <MetricTile label={t("overview.kpi.quotes")} value={kpis.quotesCreated} />
-        <MetricTile label={t("overview.kpi.signed")} value={kpis.formsSigned} delta={t("overview.kpi.signed_delta", { count: kpis.formsSent })} />
-        <MetricTile label={t("overview.kpi.paid")} value={kpis.paidOrders} />
+        <MetricTile label={t("overview.kpi.leads")} value={kpis.newLeads} delta={withSim(t("overview.kpi.leads_delta"), sim?.leads ?? null)} />
+        <MetricTile label={t("overview.kpi.quotes")} value={kpis.quotesCreated} delta={withSim(undefined, sim?.quotes ?? null)} />
+        <MetricTile label={t("overview.kpi.signed")} value={kpis.formsSigned} delta={withSim(t("overview.kpi.signed_delta", { count: kpis.formsSent }), sim?.signed ?? null)} />
+        <MetricTile label={t("overview.kpi.paid")} value={kpis.paidOrders} delta={withSim(undefined, sim?.paid ?? null)} />
         <MetricTile
           label={t("overview.kpi.revenue")}
           value={money(kpis.paidRevenueMinor)}
-          delta={kpis.paidRecurringMinor ? t("overview.kpi.revenue_recurring", { amount: formatMoney(kpis.paidRecurringMinor, account.currency, { period: "month" }) }) : t("overview.kpi.revenue_delta")}
+          delta={withSim(kpis.paidRecurringMinor ? t("overview.kpi.revenue_recurring", { amount: formatMoney(kpis.paidRecurringMinor, account.currency, { period: "month" }) }) : t("overview.kpi.revenue_delta"), sim ? money(sim.revenue) : null)}
         />
       </section>
 

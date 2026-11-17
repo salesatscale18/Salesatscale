@@ -21,7 +21,7 @@ export function WhatsAppStart({
   buyerName: string;
   error?: string;
 }) {
-  if (refusal === "already_started" || refusal === "test_lead" || refusal === "opted_out") return null;
+  if (refusal === "already_started" || refusal === "test_lead" || refusal === "opted_out" || refusal === "simulated_lead") return null;
   const errorText = error ? (t(`wa.start.refused.${error}` as MessageKey) || t("wa.start.refused.provider_error")) : null;
   return (
     <section aria-labelledby="wa-start-h" className="sas-stack-2" style={{ padding: 16, borderBlockEnd: "1px solid var(--line)" }}>

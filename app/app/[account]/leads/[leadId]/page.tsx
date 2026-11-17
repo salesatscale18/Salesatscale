@@ -19,6 +19,12 @@ import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
 import { formatMoney } from "@/lib/domain/money";
+import { activeChatToken, simulatorOpenerFacts } from "@/lib/simulator/service";
+import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { chatPath } from "@/lib/simulator/token";
+import { publicUrl } from "@/lib/orders/token";
+import { SimulatorPanel } from "./simulator-panel";
+import { SimulatedChip } from "../simulated-chip";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -63,7 +69,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatToken, simFacts] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -73,12 +79,17 @@ export default async function LeadCardPage({
     latestConversationForLead(appDb, account.id, leadId),
     listMarkets(appDb, account.id),
     openerFacts(appDb, defaultTransport(), account.id, leadId),
+    activeChatToken(appDb, account.id, leadId),
+    simulatorOpenerFacts(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
-  const waWindow = conversation?.conversation.channel === "whatsapp" && conversation.conversation.status !== "closed"
+  // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
+  const windowed = conversation?.conversation.channel === "whatsapp" || (conversation?.conversation.channel === SIMULATOR_CHANNEL && account.simulateWhatsappRules);
+  const waWindow = conversation && windowed && conversation.conversation.status !== "closed"
     ? await conversationWindow(appDb, account.id, conversation.conversation.id)
     : null;
   const { lead, owner, creator } = row;
+  const simulated = isSimulatedLead(lead);
   // A lead without a market belongs to the home market (listMarkets puts it first).
   const leadMarket = (row.market ? marketList.find((m) => m.id === row.market!.id) : null) ?? marketList[0];
   const now = new Date();
@@ -88,7 +99,8 @@ export default async function LeadCardPage({
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: EVENT_ICON[event.type] ?? "cog",
-    title: t(`lead.event.${event.type}` as MessageKey),
+    // A conversation started on the buyer simulator is not a WhatsApp start.
+    title: t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey),
     detail:
       event.type.startsWith("quote.") || event.type.startsWith("order_form.")
         ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${displayName(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
@@ -120,10 +132,14 @@ export default async function LeadCardPage({
           <div className="sas-stack-2" style={{ gap: 2, flex: 1, minWidth: 0 }}>
             <div className="sas-page-head" style={{ gap: 8 }}>
               <h1 className="sas-title">{lead.fullName}{lead.company ? ` · ${lead.company}` : ""}</h1>
+              {simulated ? <SimulatedChip /> : null}
               <StatusPill object="lead" state={lead.status} />
             </div>
             <span className="sas-small">
-              {t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}
+              {/* A simulated buyer has a buyer ID, not a phone (the placeholder is never shown or formatted as one). */}
+              {simulated
+                ? <span data-testid="buyer-ref">{t("sim.header", { id: "" })}<span className="sas-num" dir="ltr">{lead.buyerRef ?? lead.phone.replace(/^sim:/, "")}</span> · {t(`lang.${lead.language as "en" | "he"}`)} ·{" "}</span>
+                : <>{t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}</>}
               {leadMarket ? <span data-testid="lead-market">{t("lead.card.market_line", { market: leadMarket.name })} · </span> : null}
               {creator
                 ? t("lead.card.added", { source, who: displayName(creator), when: relativeTime(lead.createdAt, now) })
@@ -137,6 +153,13 @@ export default async function LeadCardPage({
               <WhatsAppStart
                 slug={account.slug} leadId={lead.id} refusal={opener.refusal} templateName={opener.template?.name ?? null}
                 buyerName={lead.fullName} error={typeof sp.wa_error === "string" ? sp.wa_error : undefined}
+              />
+            ) : null}
+            {lead.status !== "opted_out" || chatToken ? (
+              <SimulatorPanel
+                slug={account.slug} leadId={lead.id} simulated={simulated}
+                url={chatToken ? publicUrl(chatPath(chatToken)) : null} refusal={simFacts?.refusal ?? null} rules={account.simulateWhatsappRules}
+                notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined}
               />
             ) : null}
             {conversation ? (

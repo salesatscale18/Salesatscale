@@ -212,7 +212,7 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
   if (q) {
     const like = `%${escapeLike(q)}%`;
     const digits = q.replace(/\D/g, "");
-    const conds = [ilike(leads.fullName, like), ilike(leads.company, like)];
+    const conds = [ilike(leads.fullName, like), ilike(leads.company, like), ilike(leads.buyerRef, like)];
     if (digits.length >= 3) conds.push(ilike(leads.phone, `%${digits}%`));
     parts.push(or(...conds)!);
   }

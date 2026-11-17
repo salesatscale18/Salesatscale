@@ -74,6 +74,26 @@ which gate is missing. When the buyer replies, the agent continues within the
 
 Before go-live, messages from real leads are ignored.
 
+## Buyer simulator (before WhatsApp Business)
+
+A WhatsApp-like web chat at `/chat/<token>` runs the same agent and sales flow
+without WhatsApp (conversation channel `simulator`). Nothing is ever sent to
+Twilio or a real phone.
+
+- **Leads › Add simulated buyer:** a lead with a buyer ID (`SIM-0001`) instead
+  of a phone (`leads.phone` holds the non-dialable placeholder `sim:SIM-0001`),
+  consent recorded as "Simulated buyer for testing", market from the country.
+- **Lead card › Buyer chat simulator:** Start conversation (the agent's opening
+  message, no model call), Open buyer chat, Copy link (for a tester), Reset link
+  (the old link stops working). Any real lead can rehearse here too, on a
+  separate conversation.
+- The buyer's message takes the WhatsApp inbound checks (opted out, account not
+  live, no live agent, STOP, a person holding the chat) plus the spend cap.
+  Each buyer message runs a live-agent turn, which costs money (CLAUDE.md, "AI spend").
+- **Settings › Simulation:** "Simulate WhatsApp rules" (off) applies the 24-hour
+  window and template rules to simulated chats; "Allow simulated buyers" (on).
+- The Overview leaves simulated buyers out unless "Include simulated" is on.
+
 ## Not done yet
 
 - Conversations inbox, and sending a template by hand outside the window (P6.6).

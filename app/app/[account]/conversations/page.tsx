@@ -14,6 +14,11 @@ import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
 import { ConversationPanel, windowTimerProps } from "../leads/[leadId]/conversation";
 import { sendTemplateAction } from "./actions";
 import { AutoRefresh } from "./auto-refresh";
+import { SimulatedChip, WhatsAppChip } from "../leads/simulated-chip";
+import { activeChatToken } from "@/lib/simulator/service";
+import { chatPath } from "@/lib/simulator/token";
+import { publicUrl } from "@/lib/orders/token";
+import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -59,7 +64,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
   try {
     let marketList: { name: string }[];
     [list, selected, marketList] = await Promise.all([
-      listInbox(appDb, account.id, { filter, q, page, now }),
+      listInbox(appDb, account.id, { filter, q, page, now, simulateRules: account.simulateWhatsappRules }),
       selectedId ? inboxConversation(appDb, account.id, selectedId) : Promise.resolve(null),
       listMarkets(appDb, account.id),
     ]);
@@ -73,16 +78,18 @@ export default async function ConversationsPage({ params, searchParams }: { para
   const thread = selected
     ? await (async () => {
       const { conv, lead } = selected!;
-      const whatsapp = conv.channel === "whatsapp";
-      const [view, deal, playbook, chatWindow, templates, handoff] = await Promise.all([
+      // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on: the 24-hour window and template-only composer.
+      const whatsapp = conv.channel === "whatsapp" || (conv.channel === SIMULATOR_CHANNEL && account.simulateWhatsappRules);
+      const [view, deal, playbook, chatWindow, templates, handoff, chatToken] = await Promise.all([
         conversationView(appDb, account.id, conv),
         getDealState(appDb, account.id, lead.id),
         currentPlaybook(appDb, account.id),
         whatsapp && conv.status !== "closed" ? conversationWindow(appDb, account.id, conv.id, now) : Promise.resolve(null),
         whatsapp ? approvedTemplates(appDb, account.id) : Promise.resolve([]),
         conv.status === "human" ? latestHandoff(appDb, account.id, lead.id) : Promise.resolve(null),
+        conv.channel === SIMULATOR_CHANNEL ? activeChatToken(appDb, account.id, lead.id) : Promise.resolve(null),
       ]);
-      return { view, deal, playbook, chatWindow, templates, handoff };
+      return { view, deal, playbook, chatWindow, templates, handoff, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
     })()
     : null;
 
@@ -157,7 +164,8 @@ export default async function ConversationsPage({ params, searchParams }: { para
                               <span className="sas-inbox__meta">
                                 {r.group === "needs_you" ? <span className="sas-inbox__badge"><Icon name="user" />{r.takenOverByUserId ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff")}</span> : null}
                                 <StatusPill object="lead" state={r.lead.status} />
-                                <span className="sas-chip">{r.isTest ? t("inbox.channel.test") : maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>
+                                {r.isTest ? null : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : null}
+                                {!r.isTest && (r.channel === SIMULATOR_CHANNEL || r.channel === "whatsapp") ? null : <span className="sas-chip">{r.isTest ? t("inbox.channel.test") : maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
                                 {r.marketName || homeMarket ? <span className="sas-chip">{r.marketName || homeMarket}</span> : null}
                                 {r.window ? <WindowTimer {...windowTimerProps(r.window, now)} /> : null}
                               </span>
@@ -193,15 +201,20 @@ export default async function ConversationsPage({ params, searchParams }: { para
                 <header className="sas-inbox__thread-head">
                   <a className={`${buttonClass("ghost", "sm")} sas-inbox__back`} href={qs({ c: undefined })}>{t("inbox.back")}</a>
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
-                    <strong>{selected.lead.fullName}{selected.lead.company ? ` · ${selected.lead.company}` : ""}</strong>
+                    <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong>{selected.lead.fullName}{selected.lead.company ? ` · ${selected.lead.company}` : ""}</strong>
+                      {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : null}
+                    </span>
                     <span className="sas-small">
-                      {[selected.marketName || homeMarket, t(`lang.${selected.lead.language as "en" | "he"}`)].filter(Boolean).join(" · ")}
+                      {[selected.lead.buyerRef, selected.marketName || homeMarket, t(`lang.${selected.lead.language as "en" | "he"}`)].filter(Boolean).join(" · ")}
                       {selected.conv.isTest ? null : <> · <a href={`/app/${account.slug}/leads/${selected.lead.id}`}>{t("inbox.open_lead")}</a> · <a href={`/app/${account.slug}/leads/${selected.lead.id}/quote`} data-create-quote="">{t("inbox.create_quote")}</a></>}
                     </span>
                   </span>
+                  {thread.chatUrl ? <a className={buttonClass("secondary", "sm")} href={thread.chatUrl} target="_blank" rel="noopener noreferrer" data-chat-link="">{t("inbox.open_buyer_chat")}</a> : null}
                   <StatusPill object="lead" state={selected.lead.status} />
                 </header>
                 {selected.conv.isTest ? <Banner kind="test">{t("inbox.test_banner")}</Banner> : null}
+                {selected.conv.channel === SIMULATOR_CHANNEL ? <Banner kind="test">{t("sim.inbox_banner")}</Banner> : null}
                 {selected.conv.status === "human" ? (
                   <Banner kind="takeover">
                     {thread.view.takenOverBy ? t("inbox.banner.held") : t("inbox.banner.handoff")}
