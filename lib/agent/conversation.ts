@@ -14,6 +14,8 @@ import { atomic } from "@/db/atomic";
 import { conversations, leadEvents, leads, messages, users, type Conversation, type LeadStatus } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { conversationMessages } from "./service";
+import { loadQuoteCards } from "./quote-card-data";
+import type { QuoteCardView } from "./quote-card";
 import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
@@ -157,6 +159,8 @@ export type ConversationView = {
   /** Names of the people who wrote messages, by user id. */
   authors: Record<string, { firstName: string | null; lastName: string | null; email: string | null }>;
   suggestedReply: string | null;
+  /** Quote messages as designed cards (seller view), by message id. */
+  quoteCards: Record<string, QuoteCardView>;
 };
 
 /** The lead's most recent conversation with its messages and tool calls, or null when there is none. */
@@ -173,9 +177,10 @@ export async function latestConversationForLead(db: Db, accountId: string, leadI
 
 export async function conversationView(db: Db, accountId: string, conv: Conversation): Promise<ConversationView> {
   // Messages (with their tool calls) and the suggested reply load in parallel.
-  const [thread, suggested] = await Promise.all([
+  const [thread, suggested, quoteCards] = await Promise.all([
     conversationMessages(db, accountId, conv.id),
     conv.status === "human" ? latestSuggestedReply(db, accountId, conv.leadId) : Promise.resolve(null),
+    loadQuoteCards(db, accountId, [conv.id], { audience: "seller" }),
   ]);
   const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId)].filter((x): x is string => !!x))];
   const people = ids.length
@@ -190,5 +195,6 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
     thread,
     authors,
     suggestedReply: suggested && !answered ? suggested.text : null,
+    quoteCards,
   };
 }

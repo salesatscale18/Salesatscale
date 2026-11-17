@@ -1,0 +1,71 @@
+/* Quote card (boards QuoteChat, QuoteStates, QuoteSeller). Used in the buyer
+   chat (.c-root tokens) and the seller app (.sas-app tokens): each colour reads
+   the seller app's token, then the buyer chat's, then the design-system value.
+   --qc-brand is the seller's brand colour (set on the card). Logical properties
+   only, so the card mirrors under dir="rtl". */
+.sas-qc {
+  --qc-raised: var(--surface-raised, var(--raised, #ffffff));
+  --qc-line: var(--line, #dde1e8);
+  --qc-muted: var(--ink-muted, var(--muted, #566073));
+  --qc-ink: var(--ink, #0f1420);
+  --qc-grey: var(--line-strong, #7d8697);
+  --qc-soft: var(--surface, #f5f6f8);
+  --qc-warn: var(--warning, #a15c07);
+  width: 300px; max-width: 100%; background: var(--qc-raised); color: var(--qc-ink); border: 1px solid var(--qc-line);
+  border-radius: 14px; border-start-start-radius: 4px; overflow: hidden; font-size: 13px; line-height: 18px; text-align: start;
+  white-space: normal;
+}
+.sas-qc__num { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
+.sas-qc__top { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--qc-brand, #0f6b5a); color: #fff; }
+.sas-qc__logo { width: 30px; height: 30px; border-radius: 8px; background: #fff; color: var(--qc-brand, #0f6b5a); display: grid; place-items: center;
+  font-weight: 700; font-size: 11px; flex: none; }
+.sas-qc__titles { display: flex; flex-direction: column; min-width: 0; }
+.sas-qc__title { font-size: 14px; line-height: 18px; }
+.sas-qc__sub { font-size: 12px; line-height: 16px; opacity: .9; }
+.sas-qc__headline { padding: 12px 12px 4px; font-size: 15px; line-height: 20px; font-weight: 700; }
+.sas-qc__sec { padding: 6px 12px; display: flex; flex-direction: column; gap: 4px; }
+.sas-qc__sec--inner { padding: 4px 0 0; }
+.sas-qc__headline + .sas-qc__sec, .sas-qc__top + .sas-qc__sec { padding-block-start: 10px; }
+.sas-qc__row { display: flex; justify-content: space-between; gap: 10px; }
+.sas-qc__row > span:first-child { min-width: 0; overflow-wrap: anywhere; }
+.sas-qc__row--muted { color: var(--qc-muted); }
+.sas-qc__row--first { padding-block-start: 4px; border-block-start: 1px solid var(--qc-line); }
+.sas-qc__total { display: flex; justify-content: space-between; gap: 10px; font-weight: 700; font-size: 15px; line-height: 20px;
+  padding-block-start: 6px; border-block-start: 1px solid var(--qc-line); }
+.sas-qc__chg { display: inline-block; font-size: 11px; line-height: 16px; font-weight: 600; padding: 0 6px; border-radius: 4px;
+  background: var(--primary-soft, #e8effc); color: var(--primary, #2357d0); margin-inline-start: 6px; }
+.sas-qc__more summary { cursor: pointer; color: var(--qc-brand, #0f6b5a); font-weight: 600; padding-block-start: 4px; list-style: none; }
+.sas-qc__more summary::-webkit-details-marker { display: none; }
+.sas-qc__more[open] summary { display: none; }
+.sas-qc__more summary:focus-visible { outline: 2px solid var(--focus-ring, var(--focus, #2357d0)); outline-offset: 2px; border-radius: 4px; }
+.sas-qc__monthly { margin: 6px 12px; padding: 8px 10px; border-radius: 10px; background: color-mix(in srgb, var(--qc-brand, #0f6b5a) 8%, var(--qc-raised));
+  display: flex; flex-direction: column; gap: 2px; }
+.sas-qc__mhead { font-size: 12px; line-height: 16px; font-weight: 600; color: var(--qc-muted); }
+.sas-qc__mtotal { font-weight: 700; }
+.sas-qc__foot { display: flex; flex-direction: column; gap: 4px; padding: 8px 12px 10px; border-block-start: 1px solid var(--qc-line); margin-block-start: 6px;
+  color: var(--qc-muted); font-size: 12px; line-height: 16px; }
+.sas-qc__foot span { display: flex; gap: 6px; align-items: center; }
+.sas-qc__ic { width: 14px; height: 14px; flex: none; }
+.sas-qc[dir="rtl"] .sas-qc__ic--truck { transform: scaleX(-1); }
+.sas-qc__ic--warn { color: var(--qc-warn); }
+.sas-qc__status { display: flex; gap: 6px; align-items: flex-start; padding: 10px 12px; border-block-start: 1px solid var(--qc-line); background: var(--qc-soft); }
+.sas-qc__status .sas-qc__ic { margin-block-start: 2px; color: var(--qc-muted); }
+.sas-qc__status--held { background: var(--qc-raised); border-block-start: 0; }
+.sas-qc__status--held .sas-qc__ic { color: var(--qc-warn); }
+/* Held: neutral header, brand only on the logo. */
+.sas-qc--held .sas-qc__top { background: var(--surface-sunken, var(--sunken, #eceef2)); color: var(--qc-ink); }
+.sas-qc--held .sas-qc__logo { background: var(--qc-brand, #0f6b5a); color: #fff; }
+.sas-qc--held .sas-qc__sub { color: var(--qc-muted); opacity: 1; }
+/* Replaced, expired, withdrawn: dimmed. */
+.sas-qc--dim .sas-qc__top { background: var(--qc-grey); }
+.sas-qc--dim .sas-qc__logo { color: var(--qc-grey); }
+.sas-qc--dim .sas-qc__headline, .sas-qc--dim .sas-qc__sec { opacity: .6; }
+.sas-qc__seller { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; background: var(--qc-soft);
+  border-block-start: 1px dashed var(--qc-grey); font-size: 12px; line-height: 16px; color: var(--qc-muted); }
+.sas-qc__seller-text { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+.sas-qc__seller a { color: var(--primary, #2357d0); font-weight: 600; }
+/* Seller thread: approval panel under a held quote (board QuoteSeller). */
+.sas-qc-approval { width: 360px; max-width: 100%; box-sizing: border-box; border: 1px solid var(--warning, #a15c07); border-radius: 10px;
+  background: var(--warning-soft, #fdf1dc); padding: 14px; display: flex; flex-direction: column; gap: 10px; font-size: 13px; line-height: 18px; }
+.sas-qc-approval__row { display: flex; justify-content: space-between; gap: 10px; }
+.sas-qc-approval form { margin: 0; }

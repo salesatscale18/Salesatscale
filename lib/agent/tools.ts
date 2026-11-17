@@ -25,6 +25,8 @@ import { pricesAllowed } from "./core/facts";
 import type { ToolDef } from "./llm";
 import { missingFields } from "./playbook";
 import { deliveryByPhrase, percentText, quoteMessageText } from "./quote-message";
+import { validHeadline } from "./quote-card";
+import { isLocale, t } from "@/lib/i18n";
 import { OPT_OUT_REPLY } from "./safety";
 import { isReservedFieldKey } from "./core/facts";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
@@ -103,7 +105,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "create_quote",
-    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields if the deal is not qualified yet, or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval.",
+    description: "Create a quote priced by the server from the price list of the buyer's market. When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it. Refused with the missing fields if the deal is not qualified yet, or if an item is not sold in the buyer's market. A discount (one-time charges only) above your limit goes to the seller for approval. Pass a headline: one short line on what the buyer gets, in the buyer's language, no prices (it tops the quote card).",
     strict: true,
     input_schema: {
       type: "object",
@@ -120,8 +122,12 @@ export const TOOL_DEFS: ToolDef[] = [
           type: ["string", "null"],
           description: "The id of an approved exception from your instructions that this quote uses; null otherwise. The seller then approves the quote.",
         },
+        headline: {
+          type: ["string", "null"],
+          description: 'One line on what the buyer gets, max 60 characters, no prices, e.g. "2 fridge sensors and a kitchen hub, installed for you"; null to leave it out.',
+        },
       },
-      required: ["lines", "discount_percent", "sites", "remove_auto_added", "exception"],
+      required: ["lines", "discount_percent", "sites", "remove_auto_added", "exception", "headline"],
       additionalProperties: false,
     },
   },
@@ -352,6 +358,24 @@ async function sendQuoteMessage(ctx: ToolContext, number: number, v: QuoteVersio
   return id;
 }
 
+/**
+ * The held quote's placeholder (no numbers) in the buyer's web chat. Not on
+ * WhatsApp, where the agent's own line says the team is checking. Returns the
+ * message id, or null when none is written.
+ */
+async function sendHeldQuoteMessage(ctx: ToolContext, seller: string): Promise<string | null> {
+  const [conv] = await ctx.db.select({ channel: conversations.channel }).from(conversations)
+    .where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId)));
+  if (!conv || conv.channel === "whatsapp") return null;
+  const language = ctx.language ?? "en";
+  const body = t("buyer.qcard.held_text", { seller }, isLocale(language) ? language : "en");
+  const id = randomUUID();
+  const at = new Date();
+  await ctx.db.insert(messages).values({ id, accountId: ctx.accountId, conversationId: ctx.conversationId, actor: "agent", body, language, createdAt: at });
+  while (Date.now() <= at.getTime()) await new Promise((r) => setTimeout(r, 1));
+  return id;
+}
+
 export async function runTool(name: string, input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const args = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   /** Money in a currency (the price list's), with the period for recurring amounts. */
@@ -549,6 +573,11 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     // A ready quote goes to the buyer as the app's own message, in a fixed layout; the agent adds only the closing sentence.
     // Awaiting approval: no message and no totals to promise (the agent says it is confirming the price with the team).
     const quoteMessageId = !awaiting && !r.reused ? await sendQuoteMessage(ctx, r.quote.number, v, plan?.timezone ?? account?.timezone ?? "UTC") : null;
+    // Awaiting approval: the buyer's web chat gets a placeholder card with no numbers (P11 wave 2), replaced in place once the seller approves.
+    // WhatsApp gets none: the agent's own line says the team is checking.
+    const heldMessageId = awaiting && !r.reused ? await sendHeldQuoteMessage(ctx, account?.tradeName ?? "") : null;
+    // The card's headline (the agent's, when valid); stored with the message link, read by lib/agent/quote-card.ts.
+    const headline = validHeadline(args.headline);
     return {
       outcome: "ok",
       result: {
@@ -573,6 +602,10 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         // The close's phrase: "by about <last date of the estimate>" in the buyer's language, or "not set: …".
         delivery_by: plan ? deliveryByPhrase(estimateDelivery({ ...plan, from: now }).latest, ctx.language ?? "en") : agentDeliveryText(null, now),
         ...(quoteMessageId ? { quote_message_id: quoteMessageId } : {}),
+        ...(heldMessageId ? { quote_message_id: heldMessageId, quote_held: true } : {}),
+        quote_id: r.quote.id,
+        quote_version: v.version,
+        ...(headline ? { headline } : {}),
         message: awaiting
           ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them. Do not give totals."
           : "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.",

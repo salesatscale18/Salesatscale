@@ -348,7 +348,7 @@ describe("agent turns (scripted model)", () => {
     ]);
     await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "just quote" });
     expect((await getDealState(db, acc, c.leadId))?.fields ?? {}).toEqual({});
-    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId)).orderBy(toolCalls.sequence);
     expect(calls.map((x) => [x.name, x.outcome, x.rule])).toEqual([["update_deal_state", "ok", null], ["create_quote", "refused", "Before-quote fields missing"]]);
     expect(await db.select().from(quotes).where(eq(quotes.leadId, c.leadId))).toEqual([]);
   });

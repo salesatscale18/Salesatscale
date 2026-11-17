@@ -170,9 +170,12 @@ describe("P11 tools: prices, the quote message and the order form", () => {
     await runTool("update_deal_state", qualify, ctx("u3"));
     const r = await runTool("create_quote", { ...quoteInput, discount_percent: 15 }, ctx("q-wait"));
     expect(r.result).toMatchObject({ status: "awaiting_seller_approval", totals: "not final: the seller must approve this quote first" });
-    expect(r.result).not.toHaveProperty("quote_message_id");
     expect(String(r.result.message)).toContain("confirming the price with the team");
-    expect(await db.select().from(messages).where(eq(messages.conversationId, c.conversationId))).toEqual([]);
+    // P11 wave 2: the web chat gets a placeholder card instead (no numbers), linked as a held quote message.
+    expect(r.result).toMatchObject({ quote_held: true });
+    const rows = await db.select().from(messages).where(eq(messages.conversationId, c.conversationId));
+    expect(rows.map((m) => m.id)).toEqual([r.result.quote_message_id]);
+    expect(rows[0].body).not.toMatch(/\d/);
   });
 
   it("without a delivery lead time the result says it is not set", async () => {

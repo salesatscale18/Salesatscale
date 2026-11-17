@@ -11,6 +11,7 @@ import { isLocale, messages, t, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
 import { SuggestedReplyBox } from "./suggested-reply";
+import { QuoteCardMessage } from "./quote-card-message";
 import type { WindowState } from "@/lib/channels/rules";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { SimulatedChip } from "../simulated-chip";
@@ -85,7 +86,7 @@ export function ConversationControls({
     </>
   );
   const noticeText = notice ? maybe(`conv.notice.${notice}`) : null;
-  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim";
+  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim" || notice === "quote_approved" || notice === "quote_in_limit";
   const status = conversationStatusText(view, leadOptedOut);
   const replyId = `reply-${from}`;
 
@@ -167,6 +168,12 @@ export function ConversationPanel({
       <ChatThread label={t("conv.label")}>
         {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
         {thread.map(({ message: m, calls }) => {
+          // The quote message the app wrote shows as the card the buyer saw (the stored text is the fallback).
+          const card = view.quoteCards?.[m.id];
+          if (card) {
+            const back = from === "inbox" ? `/app/${slug}/conversations?c=${c.id}` : `/app/${slug}/leads/${c.leadId}#conversation`;
+            return <QuoteCardMessage key={m.id} card={card} time={exactTime(m.createdAt)} slug={slug} approve={{ back }} />;
+          }
           const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;

@@ -30,6 +30,8 @@ import { listMarkets } from "@/lib/markets/service";
 import { loadForm } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
 import { appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
+import { loadQuoteCards } from "@/lib/agent/quote-card-data";
+import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { openerText } from "@/lib/agent/core/opener";
 import { agentTyping, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
@@ -350,6 +352,12 @@ export type BuyerChat = {
   ended: boolean;
   /** When the latest conversation was closed (shown as a system note), or null. */
   closedAt: string | null;
+  /**
+   * Quote messages as designed cards, by message id: every card of the chat on
+   * every poll (not only newer ones), so a card changes in place (approved,
+   * replaced by a newer version, expired).
+   */
+  cards: Record<string, QuoteCardView>;
 };
 
 const CHAT_LIMIT = 200;
@@ -386,7 +394,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const latest = convs.at(-1) ?? null;
   const ended = lead?.status === "opted_out" || latest?.status === "closed";
   const closedAt = latest?.status === "closed" ? latest.updatedAt.toISOString() : null;
-  if (convs.length === 0) return { messages: [], typing: false, ended, closedAt };
+  if (convs.length === 0) return { messages: [], typing: false, ended, closedAt, cards: {} };
   const ids = convs.map((c) => c.id);
   const scope = and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["buyer", "agent", "human"]));
 
@@ -411,16 +419,18 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"]), eq(messages.deliveryStatus, "delivered")));
 
   const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
-  const [previews, calls] = await Promise.all([
+  const [previews, calls, cards] = await Promise.all([
     linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
     db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result }).from(toolCalls)
       .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), eq(toolCalls.name, "create_quote"))),
+    loadQuoteCards(db, accountId, ids, { audience: "buyer", now }),
   ]);
   const kinds = appMessageKinds(calls);
   return {
     typing: !ended && agentTyping(latest, last ?? null, ctx.account.status, now),
     closedAt,
     ended,
+    cards,
     messages: rows.map(({ m, firstName }) => ({
       id: m.id,
       from: m.actor as BuyerMessage["from"],
