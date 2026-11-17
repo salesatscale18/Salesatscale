@@ -450,7 +450,9 @@ Update the row in the same push that finishes the step.
 | P11.2 | done | determined-hopper | P11 push | 2026-11-17 | Prices withheld until confirmed or asked; app-written quote message with labelled VAT; `delivery_by`; `send_order_form` no longer waits for company fields |
 | P11.3 | done | determined-hopper | P11 push | 2026-11-17 | Order form already collected and required the company and signer fields; tests added; editor label "Filled in the order form" |
 | P11.4 | done | determined-hopper | P11 push | 2026-11-17 | Catalog plain name and value line; playbook Opening and Sales plays (own card, restore default); analysis drafts them as suggestions. New suggestion kinds are stored under `payload.kind` (enum values: todo with the next migration) |
-| P11.5–P11.6 | todo | | | | Scoring harness, then one paid round after the user's approval |
+| P11.5 | done | determined-hopper | wave 2 push | 2026-11-17 | Scored test rounds: nine scripted buyers, checklist scorer, paid flag `SCORED_ROUND_PAID=1` (see `docs/ai.md`) |
+| P11.6 | blocked | | | | One paid round: waits for the user's approval and the test login |
+| P11 wave 2 | done | determined-hopper | wave 2 push | 2026-11-17 | From the UX boards: quote card in the chats (states, headline, seller strip, approval panel, app close after approval, reply buttons, RTL chat); order form in three steps with preferred delivery date (migration `0015_order_delivery_choice`); Playbook Opening (topics EN/HE) and Sales plays pages; catalog chat wording; lead stage stepper and Leads Stage column. Todo: WhatsApp quote image, stage markers in the thread, chat from the lead page |
 
 Phase rows are split into one row per step when the phase starts.
 
