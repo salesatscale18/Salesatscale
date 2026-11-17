@@ -51,6 +51,8 @@ export const sellerAccounts = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     slug: text("slug").notNull().unique(),
     tradeName: text("trade_name").notNull(),
+    /** Optional trade name per buyer language, e.g. { he: "פולאר" }. Empty for a language = use `tradeName` (P11 follow-up). */
+    tradeNameLocal: jsonb("trade_name_local").$type<Partial<Record<string, string>>>(),
     legalName: text("legal_name"),
     companyId: text("company_id"),
     /** ISO 3166-1 alpha-2 market, e.g. "IL". */
@@ -625,6 +627,10 @@ export type PlaybookException = {
 
 export type Playbook = {
   agentName: string;
+  /** The agent's name per buyer language, e.g. { he: "מאיה" }. Missing = `agentName` (P11 follow-up). */
+  agentNameLocal?: Partial<Record<string, string>>;
+  /** Grammatical gender the agent uses for itself (Hebrew and other gendered languages). Missing = "neutral". */
+  agentGender?: "female" | "male" | "neutral";
   goal: string;
   tone: string;
   outcomes: { orderForm: boolean; bankTransfer: boolean; meeting: boolean };
@@ -1576,3 +1582,51 @@ export const simulatorLinks = pgTable(
 );
 
 export type SimulatorLink = typeof simulatorLinks.$inferSelect;
+
+
+// ---------------------------------------------------------------------------
+// Follow-ups (P11 follow-up, decision D6: one platform scheduler, Vercel Cron)
+// ---------------------------------------------------------------------------
+
+export const followUpStatus = pgEnum("follow_up_status", ["scheduled", "sent", "cancelled", "failed"]);
+
+/**
+ * A time the agent agreed with the buyer to come back. One platform-wide
+ * scheduler (app/api/cron/follow-ups) sends due rows as a fixed template
+ * message (no model call), within the account's contact hours.
+ */
+export const followUps = pgTable(
+  "follow_ups",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    dueAt: timestamp("due_at", { withTimezone: true }).notNull(),
+    /** What the buyer and agent agreed to talk about, in the buyer's words where possible. */
+    topic: text("topic"),
+    language: text("language").notNull(),
+    status: followUpStatus("status").notNull().default("scheduled"),
+    /** Why it was cancelled or failed (buyer replied first, opted out, paid, outside window…). */
+    reason: text("reason"),
+    sentMessageId: uuid("sent_message_id"),
+    attempts: integer("attempts").notNull().default(0),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    index("follow_ups_due_idx").on(t.status, t.dueAt),
+    index("follow_ups_lead_idx").on(t.accountId, t.leadId),
+  ],
+);
+
+export type FollowUp = typeof followUps.$inferSelect;
