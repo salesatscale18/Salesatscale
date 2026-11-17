@@ -8,6 +8,7 @@ import { DeliveryRow } from "../delivery";
 import { PreferenceRow } from "../steps";
 import { PrintButton } from "./print-button";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
+import { brandVars } from "@/lib/simulator/rules";
 import "../buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -31,7 +32,7 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
   const tr = translator(lang);
   const date = new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { dateStyle: "long", timeStyle: "short", timeZone: "UTC" }).format(sig.signedAt) + " UTC";
   return (
-    <div className="b-root" lang={lang} dir={dir(lang)} style={{ ["--brand" as string]: s.seller.brandColor }}>
+    <div className="b-root" lang={lang} dir={dir(lang)} style={brandVars(s.seller.brandColor)}>
       <div className="b-page">
         {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <section className="b-sec">

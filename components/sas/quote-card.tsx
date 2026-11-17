@@ -1,6 +1,7 @@
 import type { CSSProperties, ReactNode } from "react";
 import { CalendarX, Clock, FileText, FileX, Truck } from "lucide-react";
 import type { QuoteCardLine, QuoteCardRow, QuoteCardView } from "@/lib/agent/quote-card";
+import { brandVars } from "@/lib/simulator/rules";
 import "./quote-card.css";
 
 /**
@@ -15,7 +16,7 @@ export function QuoteCard({ card, sellerOnly }: {
   /** Seller view: the dashed "Only you see this" strip (product codes, price list, Open quote). */
   sellerOnly?: { label: string; openLabel: string; openHref: string | null } | null;
 }) {
-  const style = { ["--qc-brand" as string]: card.brand } as CSSProperties;
+  const style = brandVars(card.brand, "--qc-brand") as CSSProperties;
   const collapsed = card.state === "replaced" || card.state === "withdrawn";
   const dim = card.state === "replaced" || card.state === "expired" || card.state === "withdrawn";
   return (

@@ -17,6 +17,7 @@ import { checkDeliveryChoice, deliveryChoices } from "@/lib/delivery/choice";
 import { frozenPlan } from "@/lib/delivery/plan";
 import { activeChatToken } from "@/lib/simulator/service";
 import { DeliveryRow } from "./delivery";
+import { brandVars } from "@/lib/simulator/rules";
 import "./buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -51,7 +52,7 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
   );
   const initials = props.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
-    <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={{ ["--brand" as string]: props.brand }}>
+    <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={brandVars(props.brand)}>
       <div className={props.step ? "b-page b-page--wide" : "b-page"}>
         {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head">
@@ -171,7 +172,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
       return shell(undefined, (
         <>
           <div className="b-center" style={{ background: "var(--ok-soft)" }}>
-            <span className="b-badge" style={{ background: "var(--brand)" }}><Check color="#fff" size={28} /></span>
+            <span className="b-badge" style={{ background: "var(--brand)" }}><Check color="var(--brand-on, #fff)" size={28} /></span>
             <h1 className="b-h1">{tr("buyer.paid_title")}</h1>
             <span className="b-mut">{tr("buyer.paid_body", { name: (sig?.fullName ?? "").split(" ")[0], order: label })}</span>
           </div>
@@ -197,7 +198,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     return shell(tr("buyer.step_pay"), (
       <>
         <section className="b-sec">
-          <div className="b-note b-note--ok" style={{ padding: "10px 12px", alignItems: "center" }}><Check color="var(--brand)" />{failed ? tr("buyer.order_saved") : tr("buyer.signed_by", { name: sig?.fullName ?? "", time: sig ? time(sig.signedAt) : "" })}</div>
+          <div className="b-note b-note--ok" style={{ padding: "10px 12px", alignItems: "center" }}><Check color="var(--brand-text, var(--brand))" />{failed ? tr("buyer.order_saved") : tr("buyer.signed_by", { name: sig?.fullName ?? "", time: sig ? time(sig.signedAt) : "" })}</div>
           {failed ? (
           <div className="b-note b-note--danger" role="alert" style={{ margin: 0 }}>
             <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 22, height: 22, flex: "none", fill: "none", stroke: "var(--danger)", strokeWidth: 2.2 }}><circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" /></svg>

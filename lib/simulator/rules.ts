@@ -90,3 +90,20 @@ export function buyerBubbleColor(brand: string | null | undefined): string {
 export function safeBrand(brand: string | null | undefined, fallback = "#0f6b5a"): string {
   return brand && HEX.test(brand) ? brand : fallback;
 }
+
+/**
+ * Text colours that stay readable with any seller brand colour (UX, P11 wave 2):
+ * `onBrand` is the text on a brand fill (white, or ink when white falls under
+ * 4.5:1); `brandText` is brand-coloured text on white (the brand, or ink when
+ * the brand falls under 4.5:1 against white).
+ */
+export function brandTextColors(brand: string | null | undefined): { brand: string; onBrand: string; brandText: string } {
+  const b = safeBrand(brand);
+  const ok = contrastRatio(b, "#ffffff") >= 4.5;
+  return { brand: b, onBrand: ok ? "#ffffff" : INK, brandText: ok ? b : INK };
+}
+/** CSS custom properties for a brand-coloured root (`prefix` is "--brand" or "--qc-brand"). */
+export function brandVars(brand: string | null | undefined, prefix = "--brand"): Record<string, string> {
+  const c = brandTextColors(brand);
+  return { [prefix]: c.brand, [`${prefix}-on`]: c.onBrand, [`${prefix}-text`]: c.brandText };
+}

@@ -96,3 +96,19 @@ describe("UX sign-off fixes", () => {
     expect(agentTyping({ status: "open" }, { actor: "system", createdAt: at }, "live", now)).toBe(false);
   });
 });
+
+describe("brand colour contrast (UX, P11 wave 2)", () => {
+  it("keeps white text and brand-coloured text for a dark brand", async () => {
+    const { brandTextColors } = await import("@/lib/simulator/rules");
+    expect(brandTextColors("#0f6b5a")).toEqual({ brand: "#0f6b5a", onBrand: "#ffffff", brandText: "#0f6b5a" });
+  });
+  it("switches to ink on a light brand, on fills and for brand-coloured text", async () => {
+    const { brandTextColors, brandVars } = await import("@/lib/simulator/rules");
+    expect(brandTextColors("#f5c400")).toEqual({ brand: "#f5c400", onBrand: "#0f1420", brandText: "#0f1420" });
+    expect(brandVars("#f5c400", "--qc-brand")).toEqual({ "--qc-brand": "#f5c400", "--qc-brand-on": "#0f1420", "--qc-brand-text": "#0f1420" });
+  });
+  it("falls back to the default brand for an unsafe value", async () => {
+    const { brandVars } = await import("@/lib/simulator/rules");
+    expect(brandVars("red; x")["--brand"]).toBe("#0f6b5a");
+  });
+});

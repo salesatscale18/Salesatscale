@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
 import { isLocale, translator, type Locale } from "@/lib/i18n";
 import { buyerChat, chatAgentName, resolveChatToken } from "@/lib/simulator/service";
-import { buyerBubbleColor } from "@/lib/simulator/rules";
+import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
 import { ChatClient, type ChatStrings } from "./chat-client";
 import "./chat.css";
 
@@ -60,7 +60,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
   const initials = ctx.account.tradeName.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   return (
     // The page frame never flips; the chat parts take the lead's direction, and in Hebrew the whole chat mirrors (board SimMobileHe).
-    <div className="c-root" lang={lang} dir="ltr" style={{ ["--brand" as string]: ctx.brandColor, ["--bubble" as string]: buyerBubbleColor(ctx.brandColor) }}>
+    <div className="c-root" lang={lang} dir="ltr" style={{ ...brandVars(ctx.brandColor), ["--bubble" as string]: buyerBubbleColor(ctx.brandColor) }}>
       <ChatClient
         token={token} lang={lang} seller={ctx.account.tradeName} initials={initials} strings={strings}
         initial={chat}
