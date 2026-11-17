@@ -3,8 +3,12 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 // Routes that require a signed-in user. Role checks happen server-side in the
 // pages themselves (see app/sadmin/page.tsx, lib/auth/account.ts) — this only enforces sign-in.
 const isProtectedRoute = createRouteMatcher(["/sadmin(.*)", "/app(.*)", "/invite(.*)"]);
+// Public buyer pages, login-free: the personal token in the link is the credential
+// (order form /f/<token>, buyer simulator chat /chat/<token>). Never protected here.
+const isPublicBuyerRoute = createRouteMatcher(["/f/(.*)", "/chat/(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
+  if (isPublicBuyerRoute(req)) return;
   if (isProtectedRoute(req)) {
     await auth.protect();
   }

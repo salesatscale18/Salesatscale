@@ -16,6 +16,7 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { conversationMessages } from "./service";
 import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
+import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 
 /** Lead statuses a take-over or hand-back may move. Won, lost and booked meetings stay as they are. */
 const ACTIVE: ReadonlySet<LeadStatus> = new Set(["new", "waiting_for_reply", "agent_handling", "human_handling"]);
@@ -102,7 +103,8 @@ export async function deliverHumanMessage(
   message: { accountId: string; conversationId: string; leadId: string; messageId: string; body: string },
   transport: TwilioTransport | null = defaultTransport(),
 ): Promise<Delivery> {
-  if (channel !== "whatsapp") return { delivered: false, reason: "channel not connected" };
+  // The buyer simulator delivers by writing to the conversation (deliverText's simulator branch, no provider).
+  if (channel !== "whatsapp" && channel !== SIMULATOR_CHANNEL) return { delivered: false, reason: "channel not connected" };
   return deliverText(db, transport, message, { statusCallback: statusCallbackUrl(publicBaseUrl()) });
 }
 

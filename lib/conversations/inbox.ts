@@ -8,6 +8,7 @@ import { and, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { conversations, leadEvents, leads, markets, messages, type LeadStatus } from "@/db/schema";
 import { windowState, type WindowState } from "@/lib/channels/rules";
+import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 
 export const INBOX_FILTERS = ["all", "needs_you", "agent", "human", "closed", "test"] as const;
 export type InboxFilter = (typeof INBOX_FILTERS)[number];
@@ -59,7 +60,7 @@ function searchSql(q: string | undefined): SQL | undefined {
   if (!s) return undefined;
   const like = `%${escapeLike(s)}%`;
   const digits = s.replace(/\D/g, "");
-  const conds = [ilike(leads.fullName, like), ilike(leads.company, like)];
+  const conds = [ilike(leads.fullName, like), ilike(leads.company, like), ilike(leads.buyerRef, like)];
   if (digits.length >= 3) conds.push(ilike(leads.phone, `%${digits}%`));
   return or(...conds);
 }
@@ -78,7 +79,7 @@ export type InboxRow = {
   lastBody: string | null;
   lastAt: Date;
   group: InboxGroup;
-  /** WhatsApp conversations still in play; null otherwise. */
+  /** WhatsApp conversations (and simulated ones with WhatsApp rules on) still in play; null otherwise. */
   window: WindowState | null;
 };
 
@@ -91,7 +92,7 @@ const toDate = (v: unknown): Date | null => (v === null || v === undefined ? nul
  * filter (search applied). Three queries in one parallel batch.
  */
 export async function listInbox(
-  db: Db, accountId: string, opts: { filter?: InboxFilter; q?: string; page?: number; now?: Date } = {},
+  db: Db, accountId: string, opts: { filter?: InboxFilter; q?: string; page?: number; now?: Date; simulateRules?: boolean } = {},
 ): Promise<InboxList> {
   const filter = opts.filter ?? "all";
   const now = opts.now ?? new Date();
@@ -135,7 +136,7 @@ export async function listInbox(
         conversationId: r.conversationId, channel: r.channel, isTest: r.isTest, status: r.status, takenOverByUserId: r.takenOverByUserId,
         lead: r.lead, marketName: r.marketName, lastActor: r.lastActor, lastUserId: r.lastUserId, lastBody: r.lastBody, lastAt: lastAtDate,
         group: inboxGroup({ status: r.status, takenOverByUserId: r.takenOverByUserId, lastActor: r.lastActor }),
-        window: r.channel === "whatsapp" && r.status !== "closed" ? windowState(toDate(r.lastBuyerAt), now) : null,
+        window: (r.channel === "whatsapp" || (r.channel === SIMULATOR_CHANNEL && !!opts.simulateRules)) && r.status !== "closed" ? windowState(toDate(r.lastBuyerAt), now) : null,
       };
     }),
   };

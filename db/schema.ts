@@ -80,6 +80,13 @@ export const sellerAccounts = pgTable(
     notifications: jsonb("notifications").$type<NotificationPrefs>(),
     /** Null = not set. Used for the delivery ETA on quotes and the order form. */
     deliveryLeadTime: jsonb("delivery_lead_time").$type<DeliveryLeadTime>(),
+    /**
+     * Buyer simulator (channel "simulator"): when true, simulated chats follow
+     * WhatsApp's 24-hour window and opener-template rules. Off by default.
+     */
+    simulateWhatsappRules: boolean("simulate_whatsapp_rules").notNull().default(false),
+    /** Buyer simulator: "Add simulated buyer" is offered (and allowed on the server). On by default. */
+    allowSimulatedBuyers: boolean("allow_simulated_buyers").notNull().default(true),
     rollout: rolloutMode("rollout").notNull().default("test_only"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
@@ -217,6 +224,12 @@ export const leads = pgTable(
     isTest: boolean("is_test").notNull().default(false),
     /** Market assigned at intake (mvp-plan 3.13). Null = the home market. */
     marketId: uuid("market_id").references((): AnyPgColumn => markets.id, { onDelete: "set null" }),
+    /**
+     * Simulated buyers (buyer simulator): the buyer ID, e.g. "SIM-0001". Such a
+     * lead has a non-dialable `phone` placeholder ("sim:SIM-0001") and is never
+     * sent anything on WhatsApp. Null for every real lead.
+     */
+    buyerRef: text("buyer_ref"),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -228,6 +241,7 @@ export const leads = pgTable(
   (t) => [
     uniqueIndex("leads_account_phone_uq").on(t.accountId, t.phone),
     uniqueIndex("leads_account_source_ref_uq").on(t.accountId, t.sourceRef).where(sql`${t.sourceRef} is not null`),
+    uniqueIndex("leads_account_buyer_ref_uq").on(t.accountId, t.buyerRef).where(sql`${t.buyerRef} is not null`),
     index("leads_account_status_idx").on(t.accountId, t.status),
     index("leads_account_activity_idx").on(t.accountId, t.lastActivityAt),
     index("leads_account_created_idx").on(t.accountId, t.createdAt),
@@ -1458,3 +1472,32 @@ export type ChannelConnection = typeof channelConnections.$inferSelect;
 export type MessageTemplate = typeof messageTemplates.$inferSelect;
 export type TemplatePurpose = (typeof templatePurpose.enumValues)[number];
 export type TemplateStatus = (typeof templateStatus.enumValues)[number];
+
+/**
+ * Buyer simulator links (`/chat/<token>`): a login-free, WhatsApp-like chat
+ * page for one lead. The token is "<link id>.<HMAC>" (lib/simulator/token.ts);
+ * only its sha256 is stored. Reset revokes the row and issues a new one, so the
+ * old link stops working at once. At most one active link per lead.
+ */
+export const simulatorLinks = pgTable(
+  "simulator_links",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull().unique(),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("simulator_links_account_lead_idx").on(t.accountId, t.leadId),
+    uniqueIndex("simulator_links_one_active_uq").on(t.leadId).where(sql`${t.revokedAt} is null`),
+  ],
+);
+
+export type SimulatorLink = typeof simulatorLinks.$inferSelect;

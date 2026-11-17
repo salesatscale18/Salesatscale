@@ -10,6 +10,8 @@ import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
 import { SuggestedReplyBox } from "./suggested-reply";
 import type { WindowState } from "@/lib/channels/rules";
+import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { SimulatedChip } from "../simulated-chip";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -81,14 +83,15 @@ export function ConversationControls({
     </>
   );
   const noticeText = notice ? maybe(`conv.notice.${notice}`) : null;
+  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim";
   const status = conversationStatusText(view, leadOptedOut);
   const replyId = `reply-${from}`;
 
   return (
     <div className="sas-stack-2" style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
       {noticeText ? (
-        <div className={`sas-alert ${notice === "sent" || notice === "started" ? "sas-alert--success" : "sas-alert--warning"}`} role="status">
-          <Icon name={notice === "sent" || notice === "started" ? "check-circle" : "alert-triangle"} /><span>{noticeText}</span>
+        <div className={`sas-alert ${success ? "sas-alert--success" : "sas-alert--warning"}`} role="status">
+          <Icon name={success ? "check-circle" : "alert-triangle"} /><span>{noticeText}</span>
         </div>
       ) : null}
       {c.status === "closed" || leadOptedOut ? (
@@ -116,7 +119,7 @@ export function ConversationControls({
             />
             {c.channel !== "testlab" ? (
               <span id={`${replyId}-hint`} className="sas-small">
-                {c.channel === "whatsapp" ? t("conv.whatsapp_hint") : t("conv.not_sent_hint")}
+                {c.channel === "whatsapp" ? t("conv.whatsapp_hint") : c.channel === SIMULATOR_CHANNEL ? t("sim.reply_hint") : t("conv.not_sent_hint")}
               </span>
             ) : null}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
@@ -154,7 +157,7 @@ export function ConversationPanel({
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
         <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
-        <span className="sas-chip">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>
+        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : <span className="sas-chip">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
         {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
       </div>
       <ChatThread label={t("conv.label")}>

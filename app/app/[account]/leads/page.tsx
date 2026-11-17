@@ -7,6 +7,10 @@ import { relativeTime } from "@/lib/format";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { listMarkets } from "@/lib/markets/service";
 import { AddLeadForm } from "./add-lead-form";
+import { AddSimBuyerForm } from "./add-sim-buyer-form";
+import { countryName } from "@/lib/markets/rules";
+import { SimulatedChip } from "./simulated-chip";
+import { nextSimBuyerRef } from "@/lib/simulator/service";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -33,6 +37,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   };
   const filtered = !!(filters.q || filters.sourceLabel || filters.language || filters.sinceDays);
   const showAdd = one(sp.add) === "1";
+  const showSim = one(sp.add) === "sim" && account.allowSimulatedBuyers;
 
   const qs = (patch: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
@@ -48,7 +53,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   let data: Awaited<ReturnType<typeof listLeads>> | null = null;
   let counts: Record<LeadView, number> | null = null;
   let sources: string[] = [];
-  let marketList: { id: string; name: string }[] = [];
+  let marketList: { id: string; name: string; countries: string[] }[] = [];
   try {
     [data, counts, sources, marketList] = await Promise.all([
       listLeads(appDb, account.id, filters),
@@ -64,12 +69,13 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   const homeName = marketList[0]?.name ?? "";
 
   return (
-    <div className={showAdd ? "sas-with-panel" : undefined}>
+    <div className={showAdd || showSim ? "sas-with-panel" : undefined}>
       <main className="sas-shell__content">
         <header className="sas-page-head">
           <h1 className="sas-title">{t("leads.title")}</h1>
           <div className="sas-page-head__actions">
             <a className={buttonClass("secondary")} href={`${base}/import`}><Icon name="upload" />{t("leads.import")}</a>
+            {account.allowSimulatedBuyers ? <a className={buttonClass("secondary")} href={qs({ add: "sim" })}><Icon name="flask-conical" />{t("sim.add")}</a> : null}
             <a className={buttonClass("primary")} href={qs({ add: "1" })}><Icon name="user-plus" />{t("leads.add")}</a>
           </div>
         </header>
@@ -157,8 +163,8 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                         <tr key={lead.id}>
                           <td>
                             <a className="sas-row-link" href={`${base}/${lead.id}`}>
-                              <strong>{lead.fullName}</strong>
-                              <span className="sas-small">{[lead.company, lead.language.toUpperCase()].filter(Boolean).join(" · ")}</span>
+                              <strong>{lead.fullName}{lead.buyerRef ? <> <SimulatedChip /></> : null}</strong>
+                              <span className="sas-small">{[lead.buyerRef, lead.company, lead.language.toUpperCase()].filter(Boolean).join(" · ")}</span>
                             </a>
                           </td>
                           <td><StatusPill object="lead" state={lead.status} /></td>
@@ -180,6 +186,12 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
           </>
         )}
       </main>
+      {showSim ? (
+        <AddSimBuyerForm
+          slug={account.slug} languages={account.languages as Locale[]} closeHref={qs({})} nextRef={showSim ? await nextSimBuyerRef(appDb, account.id) : ""}
+          countries={marketList.flatMap((m) => m.countries.map((c) => ({ code: c, label: countryName(c) === m.name ? countryName(c) : `${countryName(c)} · ${m.name}` })))}
+        />
+      ) : null}
       {showAdd ? <AddLeadForm slug={account.slug} languages={account.languages as Locale[]} markets={marketList.map((m) => ({ id: m.id, name: m.name }))} closeHref={qs({})} /> : null}
     </div>
   );

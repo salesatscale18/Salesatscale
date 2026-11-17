@@ -24,6 +24,8 @@ import type { LlmClient } from "@/lib/agent/llm";
 import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, windowState, type OpenerRefusal, type WindowState } from "./rules";
 import { whatsappAddressToE164, type TwilioTransport } from "./twilio";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
+import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import type { Conversation, Lead } from "@/db/schema";
 
 export type Delivery = { delivered: true } | { delivered: false; reason: string };
 
@@ -71,13 +73,25 @@ export async function deliverText(
     await markNotSent(db, m.accountId, m.messageId, reason);
     return { delivered: false, reason };
   };
-  const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
+  const [row] = await db.select({ conv: conversations, lead: leads, simulateRules: sellerAccounts.simulateWhatsappRules }).from(conversations)
     .innerJoin(leads, eq(leads.id, conversations.leadId))
+    .innerJoin(sellerAccounts, eq(sellerAccounts.id, conversations.accountId))
     .where(and(eq(conversations.id, m.conversationId), eq(conversations.accountId, m.accountId), eq(leads.accountId, m.accountId)));
+  // Buyer simulator: no provider. The message is already in the conversation, which is
+  // what the buyer page shows; it counts as delivered at once ("read" when the page loads it).
+  if (row?.conv.channel === SIMULATOR_CHANNEL) {
+    if (row.lead.status === "opted_out" && !opts.optOutConfirmation) return fail("opted_out");
+    if (row.simulateRules && !(await conversationWindow(db, m.accountId, m.conversationId, now)).open) return fail("window_closed");
+    await db.update(messages).set({ deliveryStatus: "delivered", deliveryError: null })
+      .where(and(eq(messages.id, m.messageId), eq(messages.accountId, m.accountId)));
+    return { delivered: true };
+  }
   if (!row || row.conv.channel !== "whatsapp") return { delivered: false, reason: "not_whatsapp" };
   // Test-lab chats only ever reach a tester's phone, re-checked against the number's tester list at send time.
   const tester = row.conv.isTest;
   if (tester ? !row.conv.channelAddress : row.lead.isTest || isFictionalDemoLead(row.lead)) return fail("test_lead");
+  // A simulated buyer has no phone: never sent to the provider.
+  if (!tester && isSimulatedLead(row.lead)) return fail("simulated_lead");
   if (row.lead.status === "opted_out" && !opts.optOutConfirmation) return fail("opted_out");
   if (!transport) return fail("not_configured");
   const window = await conversationWindow(db, m.accountId, m.conversationId, now);
@@ -130,33 +144,40 @@ export async function sendTemplateMessage(
   const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
     .innerJoin(leads, eq(leads.id, conversations.leadId))
     .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId), eq(leads.accountId, accountId)));
-  if (!row || row.conv.channel !== "whatsapp") return { ok: false, reason: "not_found" };
+  // Buyer simulator: the same template rule, delivered to the buyer page instead of Twilio.
+  const sim = row?.conv.channel === SIMULATOR_CHANNEL;
+  if (!row || (row.conv.channel !== "whatsapp" && !sim)) return { ok: false, reason: "not_found" };
   const { conv, lead } = row;
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   if (conv.status === "closed") return { ok: false, reason: "closed" };
-  if (conv.isTest ? !conv.channelAddress : lead.isTest || isFictionalDemoLead(lead)) return { ok: false, reason: "test_lead" };
+  if (!sim && (conv.isTest ? !conv.channelAddress : lead.isTest || isSimulatedLead(lead) || isFictionalDemoLead(lead))) return { ok: false, reason: "test_lead" };
   const [template] = await db.select().from(messageTemplates)
     .where(and(eq(messageTemplates.id, templateId), eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")));
   if (!template) return { ok: false, reason: "template_not_found" };
-  if (!transport) return { ok: false, reason: "not_configured" };
-  const to = conv.isTest ? conv.channelAddress! : lead.phone;
-  const connection = conv.isTest ? await connectionForTester(db, accountId, to) : await connectionForMarket(db, accountId, lead.marketId);
-  if (!connection) return { ok: false, reason: conv.isTest ? "not_a_tester" : "no_connection" };
   const [account] = await db.select({ tradeName: sellerAccounts.tradeName }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const vars = templateVariables(lead, account);
-  const r = await transport.send({
-    to, from: connection.senderNumber, messagingServiceSid: connection.messagingServiceSid,
-    statusCallback: opts.statusCallback ?? null, contentSid: template.contentSid, contentVariables: vars,
-  });
-  if (!r.ok) {
-    await db.update(channelConnections).set({ lastError: `${r.code}: ${r.message}`.slice(0, 300) }).where(eq(channelConnections.id, connection.id));
-    return { ok: false, reason: "provider_error", detail: `${r.code}: ${r.message}` };
+  let sent: { sid: string | null; status: string; connectionId: string | null } = { sid: null, status: "delivered", connectionId: null };
+  if (!sim) {
+    if (!transport) return { ok: false, reason: "not_configured" };
+    const to = conv.isTest ? conv.channelAddress! : lead.phone;
+    const connection = conv.isTest ? await connectionForTester(db, accountId, to) : await connectionForMarket(db, accountId, lead.marketId);
+    if (!connection) return { ok: false, reason: conv.isTest ? "not_a_tester" : "no_connection" };
+    const r = await transport.send({
+      to, from: connection.senderNumber, messagingServiceSid: connection.messagingServiceSid,
+      statusCallback: opts.statusCallback ?? null, contentSid: template.contentSid, contentVariables: vars,
+    });
+    if (!r.ok) {
+      await db.update(channelConnections).set({ lastError: `${r.code}: ${r.message}`.slice(0, 300) }).where(eq(channelConnections.id, connection.id));
+      return { ok: false, reason: "provider_error", detail: `${r.code}: ${r.message}` };
+    }
+    sent = { sid: r.sid, status: r.status === "accepted" ? "queued" : r.status, connectionId: connection.id };
   }
   const messageId = randomUUID();
+  const connectionId = sent.connectionId;
   await atomic(db, (q) => [
     q.insert(messages).values({
       id: messageId, accountId, conversationId: conv.id, actor: "human", actorUserId: actor.userId, body: renderTemplate(template.body, vars),
-      language: template.language, channelMessageId: r.sid, deliveryStatus: r.status === "accepted" ? "queued" : r.status, templateId: template.id,
+      language: template.language, channelMessageId: sent.sid, deliveryStatus: sent.status, templateId: template.id,
     }),
     q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
     q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId))),
@@ -164,7 +185,7 @@ export async function sendTemplateMessage(
       id: randomUUID(), accountId, leadId: lead.id, type: "conversation.human_reply", actor: "human", actorUserId: actor.userId,
       data: { conversationId: conv.id, messageId, channel: conv.channel, template: template.name },
     }),
-    q.update(channelConnections).set({ lastOutboundAt: now, lastError: null }).where(eq(channelConnections.id, connection.id)),
+    ...(connectionId ? [q.update(channelConnections).set({ lastOutboundAt: now, lastError: null }).where(eq(channelConnections.id, connectionId))] : []),
   ]);
   if (actor.actingAs) await writeAudit(db, actor, { accountId, action: "conversation.template_sent", targetType: "lead", targetId: lead.id, details: { conversationId: conv.id, template: template.name } });
   return { ok: true, messageId };
@@ -196,7 +217,7 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
   const refusal = openerRefusal({
     twilioConfigured: !!transport,
     // A demo lead's number is fictional (lib/demo/phones.ts): never contacted, like a test lead.
-    lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status },
+    lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status, simulated: isSimulatedLead(lead) },
     hasConsent: !!consent,
     account: { status: account.status, contactHours: account.contactHours, timezone: account.timezone },
     hasConnection: !!connection,
@@ -299,23 +320,49 @@ export async function receiveInbound(db: Db, params: Record<string, string>, now
   // Only leads the seller handed us (with consent) are talked to; strangers are ignored.
   const [lead] = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.phone, from), eq(leads.isTest, false)));
   if (!lead) return { kind: "ignored", reason: "unknown_sender" };
-  if (lead.status === "opted_out") return { kind: "ignored", reason: "opted_out" };
+  return receiveLeadMessage(db, lead, "whatsapp", sid, inboundText(params), now);
+}
+
+/**
+ * The checks every real-lead inbound message passes, on any channel (WhatsApp
+ * and the buyer simulator share them): opted-out leads and accounts that are
+ * not live yet are ignored; the lead's open (or person-held) conversation on
+ * the channel takes the message, else a new one starts on the live agent.
+ * STOP and a person holding the chat are handled by runBuyerTurn.
+ * `allowBeforeGoLive`: only simulated buyers on the simulator channel (tests
+ * that must work while the account is still being set up); never WhatsApp.
+ */
+export async function inboundConversation(
+  db: Db, lead: Lead, channel: string, opts: { allowBeforeGoLive?: boolean } = {},
+): Promise<{ ok: true; conv: Conversation } | { ok: false; reason: "opted_out" | "account_not_live" | "no_agent" }> {
+  const accountId = lead.accountId;
+  if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   // Before go-live nothing reaches real leads (testers above are the way to try it). A paused account
   // still stores the message; runBuyerTurn then sends nothing automated.
   const [account] = await db.select({ status: sellerAccounts.status }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
-  if (account?.status === "setting_up") return { kind: "ignored", reason: "account_not_live" };
+  if (account?.status === "setting_up" && !opts.allowBeforeGoLive) return { ok: false, reason: "account_not_live" };
 
   let [conv] = await db.select().from(conversations)
-    .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, lead.id), eq(conversations.channel, "whatsapp"), eq(conversations.isTest, false), inArray(conversations.status, ["open", "human"])))
+    .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, lead.id), eq(conversations.channel, channel), eq(conversations.isTest, false), inArray(conversations.status, ["open", "human"])))
     .orderBy(desc(conversations.createdAt)).limit(1);
   if (!conv) {
     // The buyer wrote first (or after a closed conversation): a new conversation on the live agent.
     const [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live")));
-    if (!live) return { kind: "ignored", reason: "no_agent" };
-    [conv] = await db.insert(conversations).values({ accountId, leadId: lead.id, channel: "whatsapp", agentVersionId: live.id, language: lead.language }).returning();
+    if (!live) return { ok: false, reason: "no_agent" };
+    [conv] = await db.insert(conversations).values({ accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language }).returning();
   }
+  return { ok: true, conv };
+}
 
-  const result = await storeBuyerMessage(db, conv, sid, params, now, { accountId, conversationId: conv.id, leadId: lead.id });
+/** Stores one inbound message from a real lead after `inboundConversation`'s checks. `channelMessageId` deduplicates retries. */
+export async function receiveLeadMessage(
+  db: Db, lead: Lead, channel: string, channelMessageId: string, text: string, now: Date, opts: { allowBeforeGoLive?: boolean } = {},
+): Promise<InboundResult> {
+  const accountId = lead.accountId;
+  const gate = await inboundConversation(db, lead, channel, opts);
+  if (!gate.ok) return { kind: "ignored", reason: gate.reason };
+  const conv = gate.conv;
+  const result = await storeBuyerText(db, conv, channelMessageId, text, now, { accountId, conversationId: conv.id, leadId: lead.id });
   if (result.kind === "stored" && conv.status === "open") {
     // The buyer answered: the agent handles the lead (unless a person already does).
     await db.update(leads).set({ status: "agent_handling" })
@@ -329,7 +376,14 @@ async function storeBuyerMessage(
   db: Db, conv: { id: string; language: string }, sid: string, params: Record<string, string>, now: Date,
   ids: { accountId: string; conversationId: string; leadId: string },
 ): Promise<InboundResult> {
-  const text = inboundText(params);
+  return storeBuyerText(db, conv, sid, inboundText(params), now, ids);
+}
+
+/** Stores the buyer's text once (deduplicated on the channel's message id), card numbers masked. */
+async function storeBuyerText(
+  db: Db, conv: { id: string; language: string }, sid: string, text: string, now: Date,
+  ids: { accountId: string; conversationId: string; leadId: string },
+): Promise<InboundResult> {
   const masked = maskCardNumbers(text);
   const [stored] = await db.insert(messages).values({
     accountId: ids.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: conv.language, channelMessageId: sid,

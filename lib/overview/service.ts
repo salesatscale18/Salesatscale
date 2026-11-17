@@ -206,12 +206,16 @@ export type OverviewKpis = {
   paidRecurringMinor: number;
 };
 
+/** Simulated buyers (buyer simulator, leads.buyer_ref) are left out of the numbers unless the seller asks for them. */
+export type SimulatedFilter = { includeSimulated?: boolean };
+const realOnly = (opts: SimulatedFilter) => and(eq(leads.isTest, false), opts.includeSimulated ? undefined : isNull(leads.buyerRef))!;
+
 /**
  * What happened in (from, to]: each step counted by when it happened, not as
- * a cohort. Test leads are left out everywhere.
+ * a cohort. Test leads are left out everywhere; simulated buyers unless `includeSimulated`.
  */
-export async function overviewKpis(db: Db, accountId: string, range: { from: Date; to: Date }): Promise<OverviewKpis> {
-  const notTest = eq(leads.isTest, false);
+export async function overviewKpis(db: Db, accountId: string, range: { from: Date; to: Date }, opts: SimulatedFilter = {}): Promise<OverviewKpis> {
+  const notTest = realOnly(opts);
   const inRange = (col: Parameters<typeof gt>[0]) => and(gt(col, range.from), lte(col, range.to));
   const [[l], [q], [fs], [sg], [pd]] = await Promise.all([
     db.select({ n: count() }).from(leads).where(and(eq(leads.accountId, accountId), notTest, inRange(leads.createdAt))),
@@ -242,14 +246,14 @@ export async function overviewKpis(db: Db, accountId: string, range: { from: Dat
 
 export type RecentEvent = { event: LeadEvent; lead: { id: string; fullName: string; company: string | null }; user: User | null };
 
-/** The latest lead events across the account, test leads left out. */
-export async function recentActivity(db: Db, accountId: string, limit = 10): Promise<RecentEvent[]> {
+/** The latest lead events across the account, test leads left out (simulated buyers unless `includeSimulated`). */
+export async function recentActivity(db: Db, accountId: string, limit = 10, opts: SimulatedFilter = {}): Promise<RecentEvent[]> {
   return db
     .select({ event: leadEvents, lead: { id: leads.id, fullName: leads.fullName, company: leads.company }, user: users })
     .from(leadEvents)
     .innerJoin(leads, eq(leads.id, leadEvents.leadId))
     .leftJoin(users, eq(users.id, leadEvents.actorUserId))
-    .where(and(eq(leadEvents.accountId, accountId), eq(leads.isTest, false)))
+    .where(and(eq(leadEvents.accountId, accountId), realOnly(opts)))
     .orderBy(desc(leadEvents.createdAt), desc(leadEvents.id))
     .limit(limit);
 }

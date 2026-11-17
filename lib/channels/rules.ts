@@ -32,11 +32,13 @@ export function renderTemplate(body: string, vars: Record<string, string>): stri
 
 export type OpenerRefusal =
   | "not_configured" | "test_lead" | "opted_out" | "no_consent" | "account_not_live" | "account_paused"
-  | "outside_contact_hours" | "no_connection" | "no_template" | "no_agent" | "already_started" | "spend_cap";
+  | "outside_contact_hours" | "no_connection" | "no_template" | "no_agent" | "already_started" | "spend_cap"
+  /** A simulated buyer (buyer simulator): a buyer ID, no phone. Never contacted on WhatsApp. */
+  | "simulated_lead";
 
 export type OpenerFacts = {
   twilioConfigured: boolean;
-  lead: { isTest: boolean; status: string };
+  lead: { isTest: boolean; status: string; simulated?: boolean };
   hasConsent: boolean;
   account: { status: string; contactHours: ContactHours | null; timezone: string };
   hasConnection: boolean;
@@ -55,6 +57,7 @@ export type OpenerFacts = {
  */
 export function openerRefusal(f: OpenerFacts): OpenerRefusal | null {
   if (f.lead.isTest) return "test_lead";
+  if (f.lead.simulated) return "simulated_lead";
   if (f.lead.status === "opted_out") return "opted_out";
   if (!f.hasConsent) return "no_consent";
   if (f.hasActiveWhatsappConversation) return "already_started";

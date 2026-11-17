@@ -18,6 +18,7 @@ import { IntakeKeyForm } from "./key-form";
 import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
 import { WhatsAppSection } from "./whatsapp";
+import { SimulationSection } from "./simulation";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 
 async function baseUrl() {
@@ -41,7 +42,7 @@ const EXAMPLE = `{
   }
 }`;
 
-const SECTIONS = ["whatsapp", "payments", "users", "notifications", "hours", "intake"] as const;
+const SECTIONS = ["whatsapp", "simulation", "payments", "users", "notifications", "hours", "intake"] as const;
 type Section = (typeof SECTIONS)[number];
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -81,6 +82,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
         ) : (
           <div className="sas-split__main" style={{ flexBasis: 520 }}>
             {section === "whatsapp" ? await WhatsAppSection({ account, sp, baseUrl: await baseUrl() }) : null}
+            {section === "simulation" ? <SimulationSection account={account} saved={one(sp.saved) === "simulation"} /> : null}
             {section === "payments" ? await PaymentsSection({ account }) : null}
             {section === "users" ? await UsersSection({ access, sp }) : null}
             {section === "notifications" ? <NotificationsSection account={account} saved={!!sp.saved} /> : null}

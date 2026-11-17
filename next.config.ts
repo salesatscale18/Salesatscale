@@ -23,14 +23,14 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // Buyer links carry a personal token: never send it on in a Referer, never index.
-      {
-        source: "/f/:path*",
+      ...["/f/:path*", "/chat/:path*"].map((source) => ({
+        source,
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
           { key: "X-Robots-Tag", value: "noindex, nofollow" },
           { key: "Cache-Control", value: "private, no-store" },
         ],
-      },
+      })),
     ];
   },
 };
