@@ -58,8 +58,8 @@
 .sas-qc--held .sas-qc__sub { color: var(--qc-muted); opacity: 1; }
 /* Replaced, expired, withdrawn: dimmed. */
 /* #566073 (ink-muted) gives white 6.33:1; line-strong (#7d8697) is only 3.67:1. */
-.sas-qc--dim .sas-qc__top { background: var(--ink-muted, #566073); color: #fff; }
-.sas-qc--dim .sas-qc__logo { color: var(--ink-muted, #566073); }
+.sas-qc--dim .sas-qc__top { background: #566073; color: #fff; }
+.sas-qc--dim .sas-qc__logo { color: #566073; }
 .sas-qc--dim .sas-qc__sub { opacity: 1; }
 .sas-qc--dim .sas-qc__headline, .sas-qc--dim .sas-qc__sec { opacity: .6; }
 .sas-qc__seller { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; background: var(--qc-soft);
