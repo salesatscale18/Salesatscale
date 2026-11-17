@@ -13,9 +13,10 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, max, ne, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { agentVersions, channelConnections, consentRecords, conversations, leadEvents, leads, messageTemplates, messages, sellerAccounts } from "@/db/schema";
+import { agentVersions, channelConnections, consentRecords, conversations, leadEvents, leads, messageTemplates, messages, sellerAccounts, toolCalls } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { approvedTemplate, connectionForMarket, connectionForTester } from "./connections";
+import { appMessageKinds } from "@/lib/agent/app-message";
 import { startTestConversation } from "@/lib/agent/service";
 import { maskCardNumbers } from "@/lib/agent/safety";
 import { runBuyerTurn } from "@/lib/agent/turn";
@@ -416,6 +417,17 @@ async function testerConversation(db: Db, accountId: string, phone: string, now:
   return conv;
 }
 
+/** The app-written messages (lib/agent/app-message.ts) of the turn that ended in `replyId`, oldest first, not yet sent. */
+async function turnAppMessages(db: Db, accountId: string, conversationId: string, replyId: string) {
+  const calls = await db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result }).from(toolCalls)
+    .where(and(eq(toolCalls.accountId, accountId), eq(toolCalls.conversationId, conversationId), eq(toolCalls.messageId, replyId)));
+  const ids = [...appMessageKinds(calls).keys()];
+  if (ids.length === 0) return [];
+  return db.select({ id: messages.id, body: messages.body }).from(messages)
+    .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId), inArray(messages.id, ids), isNull(messages.deliveryStatus)))
+    .orderBy(messages.createdAt);
+}
+
 /**
  * Runs the agent on the stored buyer message and sends its reply. A taken-over
  * or paused conversation gets no automated reply (runBuyerTurn decides).
@@ -430,6 +442,12 @@ export async function replyToBuyer(
   // The lead was not opted out when the message arrived (receiveInbound), so an
   // opted-out lead now means this reply is the opt-out confirmation.
   const [lead] = await db.select({ status: leads.status }).from(leads).where(and(eq(leads.id, m.leadId), eq(leads.accountId, m.accountId)));
+  // Messages the app wrote during the turn (the quote message) go out first, under the same send rules.
+  if (lead?.status !== "opted_out") {
+    for (const app of await turnAppMessages(db, m.accountId, m.conversationId, turn.messageId)) {
+      await deliverText(db, transport, { accountId: m.accountId, conversationId: m.conversationId, messageId: app.id, body: app.body }, { statusCallback: opts.statusCallback });
+    }
+  }
   const delivery = await deliverText(db, transport, { accountId: m.accountId, conversationId: m.conversationId, messageId: turn.messageId, body: turn.text }, {
     statusCallback: opts.statusCallback, optOutConfirmation: lead?.status === "opted_out",
   });

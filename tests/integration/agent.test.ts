@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
-import { conversations, leadEvents, leads, messages, quotes, sellerAccounts, toolCalls, users, type User } from "@/db/schema";
+import { and, eq, isNotNull } from "drizzle-orm";
+import { conversations, dealStates, leadEvents, leads, messages, quotes, sellerAccounts, toolCalls, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { listLeads } from "@/lib/leads/service";
@@ -97,14 +97,20 @@ describe("agent turns (scripted model)", () => {
     expect(llm.requests[0].messages.at(-1)).toEqual({ role: "user", content: [{ type: "text", text: "We run 2 restaurant kitchens with 6 fridges. Price?", cache_control: { type: "ephemeral" } }] });
     // End-of-turn writes: agent message, its calls (linked by id) and the conversation's updated_at.
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
-    const [agentMsg] = await db.select().from(messages).where(and(eq(messages.conversationId, c.conversationId), eq(messages.actor, "agent")));
+    const [agentMsg] = await db.select().from(messages).where(and(eq(messages.conversationId, c.conversationId), eq(messages.actor, "agent"), isNotNull(messages.usage)));
     expect(r.status === "replied" && r.messageId).toBe(agentMsg.id);
     expect(agentMsg.usage).toMatchObject({ inputTokens: 30, outputTokens: 15, model: "scripted" });
     expect(conv.updatedAt.getTime()).toBeGreaterThanOrEqual(conv.createdAt.getTime());
     expect((await db.select().from(toolCalls).where(eq(toolCalls.messageId, agentMsg.id)))).toHaveLength(3);
     const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
     expect(calls.map((x) => [x.sequence, x.name, x.outcome])).toEqual([[1, "update_deal_state", "ok"], [2, "search_catalog", "ok"], [3, "create_quote", "ok"]]);
-    expect(calls[2].result).toMatchObject({ quote: "Q-1001 v1", due_on_signing: "₪4,860.00", monthly: "₪180.00/month" });
+    // Prices were withheld at search time (nothing confirmed yet); the quote's totals say which side of VAT they are on.
+    expect(calls[1].result).toMatchObject({ prices: "withheld until the buyer confirms the recommendation or asks for the price" });
+    expect(calls[2].result).toMatchObject({
+      quote: "Q-1001 v1",
+      totals: { total_today_including_vat: "₪4,860.00", subtotal_before_vat: "₪4,118.64", vat_rate: "18%", vat_amount: "₪741.36", recurring_total_including_vat: "₪180.00/month" },
+      message: "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.",
+    });
     const deal = await getDealState(db, acc, c.leadId);
     expect(deal?.fields.sites).toMatchObject({ value: "2", provenance: "buyer" });
     expect(deal?.nextStep).toBe("quote");
@@ -114,8 +120,11 @@ describe("agent turns (scripted model)", () => {
     expect(lead.status).toBe("agent_handling");
     // Tool results went back to the model as JSON tool_result blocks.
     const thread = await conversationMessages(db, acc, c.conversationId);
-    expect(thread.map((x) => x.message.actor)).toEqual(["buyer", "agent"]);
-    expect(thread[1].calls).toHaveLength(3);
+    // The app's quote message comes before the agent's reply, which carries the calls.
+    expect(thread.map((x) => x.message.actor)).toEqual(["buyer", "agent", "agent"]);
+    expect(thread[1].message.id).toBe(calls[2].result.quote_message_id);
+    expect(thread[1].message.body).toMatch(/^\*Quote Q-1001\*\n6 × Wireless fridge sensor \(SNS-200\): ₪3,540\n/);
+    expect(thread[2].calls).toHaveLength(3);
   });
 
   it("refuses a quote before the deal is qualified and says what is missing", async () => {
@@ -231,38 +240,38 @@ describe("agent turns (scripted model)", () => {
     expect(r).toMatchObject({ status: "replied", text: "still looking", calls: 8 });
   });
 
-  it("sends the order form only when the deal is ready for it; checks payment", async () => {
+  it("sends the order form without company or signer fields (the buyer fills them in the form); checks payment", async () => {
     const { saveLegalSection } = await import("@/lib/orders/settings");
     await saveLegalSection(db, acc, me.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "Terms" });
     const c = await newConv();
+    const last = (req: LlmRequest) => JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
     const llm = new ScriptedLlm([
-      step(use("u", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null })),
+      // Before-quote fields are still required.
+      step(use("s0", "send_order_form", { quote: "Q-1" })),
+      (req: LlmRequest) => {
+        expect(last(req)).toMatchObject({ refused: true, rule: "Before-quote fields missing", missing: ["Business type", "Number of sites"] });
+        return { content: [use("u", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null })] };
+      },
       step(use("q", "create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1 })),
+      // "Decision maker" (needed before the order form) is not known: the form is sent all the same.
+      (req: LlmRequest) => ({ content: [use("s1", "send_order_form", { quote: String(last(req).quote).split(" ")[0] })] }),
       (req: LlmRequest) => {
-        const quote = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content).quote as string;
-        return { content: [use("s1", "send_order_form", { quote: quote.split(" ")[0] })] };
-      },
-      (req: LlmRequest) => {
-        const res = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
-        expect(res).toMatchObject({ refused: true, rule: "Before-order-form fields missing", missing: ["Decision maker"] });
-        return { content: [use("u2", "update_deal_state", { updates: [{ key: "decision_maker", value: "Owner", provenance: "buyer" }], next_step: null, objection: null })] };
-      },
-      step(use("s2", "send_order_form", { quote: "Q-1003" })),
-      (req: LlmRequest) => {
-        const res = JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content);
+        const res = last(req);
+        expect(res.message).toContain("fill in their company details, sign and pay");
         return { content: [use("p", "check_payment", {}), say(res.link ? "Here is your order form." : `no link: ${JSON.stringify(res)}`)] };
       },
       step(say("Here is your order form.")),
     ]);
-    const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "Send me the form, I'm the owner" });
+    const r = await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "Send me the form" });
     const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId));
+    expect((await getDealState(db, acc, c.leadId))?.fields.decision_maker).toBeUndefined();
     // The model left the link out: it is added on its own line (lib/agent/links.ts).
-    expect(r.status === "replied" && r.text).toBe(`Here is your order form.\n${calls[4].result.link}`);
+    expect(r.status === "replied" && r.text).toBe(`Here is your order form.\n${calls[3].result.link}`);
     expect(calls.map((x) => [x.name, x.outcome])).toEqual([
-      ["update_deal_state", "ok"], ["create_quote", "ok"], ["send_order_form", "refused"], ["update_deal_state", "ok"], ["send_order_form", "ok"], ["check_payment", "ok"],
+      ["send_order_form", "refused"], ["update_deal_state", "ok"], ["create_quote", "ok"], ["send_order_form", "ok"], ["check_payment", "ok"],
     ]);
-    expect(calls[4].result).toMatchObject({ link: expect.stringMatching(/\/f\//) });
-    expect(calls[5].result).toMatchObject({ signed: false, order_form: "sent" });
+    expect(calls[3].result).toMatchObject({ link: expect.stringMatching(/\/f\//) });
+    expect(calls[4].result).toMatchObject({ signed: false, order_form: "sent" });
   });
 
   it("keeps accounts apart", async () => {
@@ -432,10 +441,32 @@ describe("agent turns (scripted model)", () => {
   };
   const qualify = { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "2", provenance: "buyer" }], next_step: null, objection: null };
 
-  it("search_catalog and check_fit show the market's prices; an item missing from the price list is not sold there", async () => {
-    const { runTool } = await import("@/lib/agent/tools");
+  /** Records a conversation fact (lib/agent/core/facts.ts) as lane A's update_deal_state will. */
+  const setFact = async (leadId: string, key: string) => {
+    const fields = { [key]: { value: "yes", provenance: "buyer" as const, updatedAt: new Date().toISOString() } };
+    await db.insert(dealStates).values({ accountId: acc, leadId, fields }).onConflictDoUpdate({ target: dealStates.leadId, set: { fields } });
+  };
+
+  it("search_catalog and check_fit withhold prices until the recommendation is confirmed; plain names and value lines come back", async () => {
+    const { runTool, PRICES_WITHHELD } = await import("@/lib/agent/tools");
     const memo: import("@/lib/agent/tools").TurnMemo = {};
-    const { ctx } = await toolCtx(memo);
+    const { c, ctx } = await toolCtx(memo);
+    const hidden = await runTool("search_catalog", { query: "" }, ctx("w1"));
+    expect(hidden.result).toMatchObject({ ok: true, prices: PRICES_WITHHELD });
+    expect(hidden.result).not.toHaveProperty("prices_include_tax");
+    const hiddenItems = (hidden.result as { items: Record<string, unknown>[] }).items;
+    expect(hiddenItems.find((i) => i.sku === "SNS-200")).toMatchObject({ sold_here: true, plain_name: "Wireless fridge sensor", unit: "device" });
+    for (const i of hiddenItems) {
+      for (const k of ["one_time_price", "recurring_price", "volume_prices", "priced_by_seller_from_qty"]) expect(i).not.toHaveProperty(k);
+    }
+    expect(JSON.stringify(hidden.result)).not.toContain("₪");
+    const hiddenFit = await runTool("check_fit", { lines: [{ sku: "SNS-200", qty: 4 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], sites: 2 }, ctx("w2"));
+    expect(hiddenFit.result).toMatchObject({ ok: true, prices: PRICES_WITHHELD, added_automatically: ["SVC-INST"], delivery: expect.any(String) });
+    expect(hiddenFit.result).not.toHaveProperty("totals");
+    expect(JSON.stringify(hiddenFit.result)).not.toContain("₪");
+
+    // The buyer confirmed the recommendation: prices come back.
+    await setFact(c.leadId, "_recommendation_confirmed");
     const s = await runTool("search_catalog", { query: "" }, ctx("s1"));
     expect(s.outcome).toBe("ok");
     const items = (s.result as { items: Record<string, unknown>[] }).items;
@@ -443,18 +474,31 @@ describe("agent turns (scripted model)", () => {
     expect(items.find((i) => i.sku === "PLAN-M")).toMatchObject({ sold_here: true, one_time_price: null, recurring_price: "₪90.00/month", kind: "service" });
     expect(items.find((i) => i.sku === "EXPORT-ONLY")).toMatchObject({ sold_here: false });
     expect(items.find((i) => i.sku === "EXPORT-ONLY")).not.toHaveProperty("one_time_price");
-    expect(s.result).toMatchObject({ currency: "ILS", prices_include_tax: true });
+    expect(s.result).toMatchObject({ currency: "ILS", prices_include_tax: true, price_basis: "Prices include VAT 18%." });
+    expect(s.result).not.toHaveProperty("prices");
     const firstPricing = memo.pricing;
     expect(firstPricing).toBeInstanceOf(Promise);
 
     const fit = await runTool("check_fit", { lines: [{ sku: "SNS-200", qty: 4 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], sites: 2 }, ctx("s2"));
     expect(memo.pricing).toBe(firstPricing);
     expect(fit.result).toMatchObject({
-      ok: true, added_automatically: ["SVC-INST"], due_on_signing: "₪3,680.00", recurring: "₪180.00/month",
-      lines: expect.arrayContaining([{ sku: "SVC-INST", name: "Installation", qty: 2, charge: "one-time", total: "included", added_automatically: true, buyer_can_remove: true }]),
+      ok: true, added_automatically: ["SVC-INST"],
+      totals: { total_today_including_vat: "₪3,680.00", vat_rate: "18%", recurring_total_including_vat: "₪180.00/month" },
+      lines: expect.arrayContaining([{ sku: "SVC-INST", name: "Installation", plain_name: "Installation", qty: 2, charge: "one-time", total_including_vat: "included", added_automatically: true, buyer_can_remove: true }]),
     });
     const bad = await runTool("check_fit", { lines: [{ sku: "EXPORT-ONLY", qty: 1 }], sites: null }, ctx("s3"));
     expect(bad.result).toMatchObject({ ok: false, not_sold_here: ["EXPORT-ONLY"], problems: ["EXPORT-ONLY is not sold in this market."] });
+
+    // The buyer asked for the price early: released too.
+    const asked = await toolCtx();
+    await setFact(asked.c.leadId, "_price_asked");
+    expect((await runTool("search_catalog", { query: "sensor" }, asked.ctx("a1"))).result).not.toHaveProperty("prices");
+    // A quote exists for the conversation: released.
+    const quoted = await toolCtx();
+    await runTool("update_deal_state", qualify, quoted.ctx("qq1"));
+    expect((await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1, remove_auto_added: null, exception: null }, quoted.ctx("qq2"))).outcome).toBe("ok");
+    const after = await runTool("check_fit", { lines: [{ sku: "GW-10", qty: 1 }], sites: 1 }, quoted.ctx("qq3"));
+    expect(after.result).toHaveProperty("totals");
   });
 
   it("create_quote refuses items not sold in the market, and every price tool refuses without a price list", async () => {
@@ -494,7 +538,7 @@ describe("agent turns (scripted model)", () => {
     await db.update(leads).set({ marketId: gr.market.id }).where(eq(leads.id, c.leadId));
     await runTool("update_deal_state", qualify, ctx("gr1"));
     const r = await runTool("create_quote", { lines: [{ sku: "GW-10", qty: 1 }, { sku: "PLAN-M", qty: 1 }], discount_percent: 0, sites: 1 }, ctx("gr2"));
-    expect(r.result).toMatchObject({ ok: true, due_on_signing: "€200.00", monthly: null, recurring: "€500.00/year", status: "ready" });
+    expect(r.result).toMatchObject({ ok: true, totals: { total_today_including_vat: "€200.00", recurring_total_including_vat: "€500.00/year" }, status: "ready" });
     const [q] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
     expect(q.marketId).toBe(gr.market.id);
   });

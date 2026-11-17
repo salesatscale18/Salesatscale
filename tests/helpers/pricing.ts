@@ -9,7 +9,10 @@ import { ensureHomeMarket, setMarketPriceList } from "@/lib/markets/service";
 import { createPriceList, publish, removeEntry, setEntry, type EntryInput } from "@/lib/pricing/price-lists";
 import type { TestDb } from "./db";
 
-export type SeedItem = { sku: string; name: string; unit?: string; kind?: "product" | "service"; unitCustom?: UnitCustom | null; active?: boolean };
+export type SeedItem = {
+  sku: string; name: string; unit?: string; kind?: "product" | "service"; unitCustom?: UnitCustom | null; active?: boolean;
+  plainName?: string | null; valueLine?: string | null; description?: string | null;
+};
 
 /** Publishes a catalog version with these items and rules (raw jsonb), archiving the previous one. */
 export async function seedCatalog(db: TestDb, accountId: string, items: SeedItem[], rules: Record<string, unknown>[] = []) {
@@ -21,6 +24,7 @@ export async function seedCatalog(db: TestDb, accountId: string, items: SeedItem
     await db.insert(catalogItems).values({
       id: randomUUID(), accountId, catalogVersionId: id, sku: it.sku, name: it.name, unit: it.unit ?? "item", kind: it.kind ?? "product",
       unitCustom: it.unitCustom ?? null, active: it.active ?? true, chargeType: "one_time", sortOrder: i,
+      plainName: it.plainName ?? null, valueLine: it.valueLine ?? null, description: it.description ?? null,
     });
   }
   for (const [i, rule] of rules.entries()) await db.insert(fitRules).values({ id: randomUUID(), accountId, catalogVersionId: id, rule, sortOrder: i });

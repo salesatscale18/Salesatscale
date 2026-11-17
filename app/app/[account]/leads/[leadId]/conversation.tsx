@@ -1,6 +1,8 @@
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
+import { MessageBody } from "@/components/sas/message-body";
+import { appMessageKinds } from "@/lib/agent/app-message";
 import type { ConversationView } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
 import { displayName } from "@/lib/auth/display";
@@ -153,6 +155,8 @@ export function ConversationPanel({
   notice?: string;
 }) {
   const { conversation: c, thread, authors } = view;
+  // Messages the app wrote (the quote message) are known from the tool call that wrote them.
+  const kinds = appMessageKinds(thread.flatMap((x) => x.calls));
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
@@ -173,7 +177,7 @@ export function ConversationPanel({
               locale={m.language && isLocale(m.language) ? m.language : "en"}
               trace={actor === "agent" ? traceChips(calls) : undefined}
             >
-              {m.body}
+              <MessageBody body={m.body} kind={kinds.get(m.id)} />
             </ChatMessage>
           );
         })}

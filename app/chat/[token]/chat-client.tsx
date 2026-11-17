@@ -2,6 +2,7 @@
 
 import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { BuyerChat, BuyerMessage, LinkPreview } from "@/lib/simulator/service";
+import { boldSegments } from "@/lib/agent/app-message";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string;
@@ -28,6 +29,11 @@ function Tick({ state, label }: { state: "sent" | "delivered" | "read"; label: s
 function Linked({ text }: { text: string }) {
   const parts = text.split(URL_RE);
   return <>{parts.map((p, i) => (i % 2 === 1 ? <a key={i} href={p} target="_blank" rel="noopener noreferrer">{p}</a> : <Fragment key={i}>{p}</Fragment>))}</>;
+}
+
+/** The app's quote message: WhatsApp-style `*bold*` lines (headline and totals) shown bold. */
+function Bolded({ text }: { text: string }) {
+  return <>{boldSegments(text).map((p, i) => (p.bold ? <b key={i}>{p.text}</b> : <Fragment key={i}>{p.text}</Fragment>))}</>;
 }
 
 /** Amounts and IDs stay left-to-right inside Hebrew text. */
@@ -189,8 +195,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
       <div key={m.id} className={`c-msg c-msg--${side}${m.pending === "failed" ? " c-msg--failed" : ""}`}>
         {m.from === "human" && m.name ? <span className="c-who" dir="auto">{m.name}</span> : null}
         {onlyLink ? null : (
-          <div className="c-bubble" dir="auto">
-            <Linked text={m.previews.length ? text : m.body} />
+          <div className={`c-bubble${m.kind ? ` c-bubble--${m.kind}` : ""}`} dir="auto" data-kind={m.kind}>
+            {m.kind === "quote" ? <Bolded text={m.body} /> : <Linked text={m.previews.length ? text : m.body} />}
             <span className="c-meta">
               <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>
               {m.pending === "failed" ? <span>· {strings.notSent}</span> : null}
