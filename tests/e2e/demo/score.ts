@@ -129,8 +129,8 @@ const PRODUCT_WORDS = [/sensor|חיישן/i, /hub|gateway|רכזת|מרכזת|ש
 
 const DISCOUNT = /discount|% off|\boff the price|reduce the price|lower the price|cheaper|הנחה|להוריד (?:את )?המחיר/i;
 const URGENCY = /today only|only today|limited time|limited offer|hurry|last chance|act now|don't wait|do not wait|before (?:it'?s|they'?re) gone|only \d+ left|running out|offer ends|רק היום|מבצע מוגבל|מהר|לפני שייגמר|הזדמנות אחרונה/i;
-const ASKS_WHAT_IS_OPEN = /what(?:'s| is)? (?:still )?(?:open|unclear|missing)|what would help|anything (?:i can|to) |anything (?:still )?open|any question|what questions|what (?:do you|would you) (?:want|need) to (?:know|check)|which part|what part|מה (?:עוד )?(?:פתוח|לא ברור|חסר)|יש (?:לך|לכם)? ?שאל|מה יעזור|משהו ש/i;
-const DISCLAIMER = /can'?t speak|cannot speak|can'?t compare|cannot compare|can'?t comment|don'?t know (?:their|them|it|much)|not familiar|no information|לא מכיר|לא יכול(?:ה)? להתייחס|אין לי מידע/i;
+const ASKS_WHAT_IS_OPEN = /what(?:'s| is)? (?:still )?(?:open|unclear|missing)|what would help|anything (?:i can|to) |anything (?:still )?open|anything (?:your|their|he|she|they) (?:\w+ )?(?:might |would )?(?:want|need)s? to know|any question|what questions|what (?:do you|would you) (?:want|need) to (?:know|check)|which part|what part|מה (?:עוד )?(?:פתוח|לא ברור|חסר)|יש (?:לך|לכם)? ?שאל|מה יעזור|משהו ש/i;
+const DISCLAIMER = /can'?t speak|don'?t have (?:any )?details|cannot speak|can'?t compare|cannot compare|can'?t comment|don'?t know (?:their|them|it|much)|not familiar|no information|לא מכיר|לא יכול(?:ה)? להתייחס|אין לי מידע/i;
 
 // ───────────────────────── Buyers the play checks know ─────────────────────────
 
@@ -407,7 +407,8 @@ export const CHECKS: Check[] = [
       const name = new RegExp(`${COMPETITOR}|unlike (?:them|theirs)|\\bthey (?:don'?t|can'?t|only|charge)|their (?:sensors?|devices?|product|price|alerts?)`, "i");
       for (const m of t.slice(r.at + 1).filter(isAgent)) {
         for (const s of sentences(m.text)) {
-          if (name.test(s) && !DISCLAIMER.test(s)) return fail(`claim about the competitor: ${quoteOf(s)}`);
+          // Naming the competitor neutrally ("you're comparing options after looking at X") is not a claim.
+          if (name.test(s) && !DISCLAIMER.test(s) && !/look(?:ed|ing) at|compar(?:e|ing)|consider(?:ed|ing)|הסתכל|השוו/i.test(s)) return fail(`claim about the competitor: ${quoteOf(s)}`);
         }
       }
       return pass();
