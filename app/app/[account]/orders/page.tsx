@@ -4,8 +4,9 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { displayName } from "@/lib/auth/display";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
-import { exactTime, relativeTime } from "@/lib/format";
-import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, type QuoteTab } from "@/lib/quotes/service";
+import { exactTime, formatDayMonthIn, relativeTime } from "@/lib/format";
+import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, quoteTimezones, type QuoteTab } from "@/lib/quotes/service";
+import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
 import { catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
@@ -24,7 +25,6 @@ async function countOrders(accountId: string) {
   return n;
 }
 
-const dateShort = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "UTC" });
 /** The buyer's preferred delivery date (a calendar date): "Thu 3 Dec 2026". */
 const preferredDate = new Intl.DateTimeFormat("en-GB", { weekday: "short", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" });
 
@@ -102,7 +102,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           : Promise.resolve([]),
       ])
     : [[], [], [], null, [], []];
-  const deliveries = await deliveryByForm(account.id, [...orderRows.map((r) => r.order.orderFormId), ...(signed ? [signed.order.orderFormId] : [])]);
+  const [deliveries, tzOf] = await Promise.all([
+    deliveryByForm(account.id, [...orderRows.map((r) => r.order.orderFormId), ...(signed ? [signed.order.orderFormId] : [])]),
+    // Quote dates (valid until, expires today) in the quote's market time zone, as the buyer's card shows them.
+    quoteTimezones(appDb, account.id, [...rows.map((r) => r.quote), ...(detail ? [detail.quote] : [])]),
+  ]);
+  const tzFor = (quoteId: string) => tzOf.get(quoteId) ?? account.timezone;
   const nameById = new Map(people.map((u) => [u.id, displayName(u)]));
   const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
   const approver = nameOf(cur?.version.approvedByUserId ?? null);
@@ -188,7 +193,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                         <td>{lead.company ?? lead.fullName}</td>
                         <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
                         <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
-                        <td><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now)} /></td>
+                        <td><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id))} /></td>
                         <td>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
                         <td>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
                       </tr>
@@ -205,7 +210,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         <aside className="sas-side-panel" aria-labelledby="q-h">
           <div className="sas-page-head">
             <div className="sas-stack-2" style={{ gap: 4, flex: 1 }}>
-              <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: dateShort.format(cur.version.validUntil) })}</span>
+              <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
               <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
               <span className="sas-small">
                 {priceList
@@ -216,7 +221,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </div>
             <a className={buttonClass("ghost", "sm")} href={tab === "quotes" ? base : `${base}?tab=${tab}`} aria-label={t("lead.form.close")}><Icon name="x" /></a>
           </div>
-          <StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now)} />
+          <StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now, tzFor(detail.quote.id))} />
           {sp.approved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.approved_ok")}</span></div> : null}
           {sp.approve ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("orders.detail.approve_failed")}</span></div> : null}
 
@@ -236,16 +241,45 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                   </div>
                 );
               })}
-              <dt>{t("quote.discount")}</dt><dd className="sas-num">{(cur.version.discountBp / 100).toFixed(1)}%</dd>
-              <dt className="sas-kv__total">{t("quote.one_time_total")}</dt><dd className="sas-num sas-kv__total">{incomplete ? t("quote.to_price") : dm(cur.version.oneTimeTotalMinor)}</dd>
-              {cur.version.recurringTotalMinor || incomplete ? <><dt className="sas-kv__total">{t(recurringPeriod === "year" ? "quote.yearly_total" : "quote.monthly_total")}</dt><dd className="sas-num sas-kv__total">{incomplete ? t("quote.to_price") : dm(cur.version.recurringTotalMinor, recurringPeriod)}</dd></> : null}
+              {incomplete ? (
+                <>
+                  <dt>{t("quote.discount")}</dt><dd className="sas-num">{(cur.version.discountBp / 100).toFixed(1)}%</dd>
+                  <dt className="sas-kv__total">{t("quote.one_time_total")}</dt><dd className="sas-num sas-kv__total">{t("quote.to_price")}</dd>
+                  <dt className="sas-kv__total">{t(recurringPeriod === "year" ? "quote.yearly_total" : "quote.monthly_total")}</dt><dd className="sas-num sas-kv__total">{t("quote.to_price")}</dd>
+                </>
+              ) : (
+                <>
+                  {/* The same rows as the quote card (lib/agent/quote-card.ts quoteTotalsRows): Subtotal, VAT, Total incl. VAT. */}
+                  {(() => {
+                    const v = cur.version;
+                    const vat = v.taxRateBp > 0;
+                    const one = quoteTotalsRows({ ...v, subtotalMinor: v.oneTimeSubtotalMinor, discountMinor: v.oneTimeDiscountMinor, taxMinor: v.oneTimeTaxMinor }, (m) => signedMoney(m, v.currency), (k, x) => t(k, x));
+                    const rec = quoteTotalsRows({ ...v, subtotalMinor: v.recurringSubtotalMinor, discountMinor: v.recurringDiscountMinor, taxMinor: v.recurringTaxMinor }, (m) => (m < 0 ? `−${dm(-m, recurringPeriod)}` : dm(m, recurringPeriod)), (k, x) => t(k, x));
+                    const row = (r: { label: string; amount: string; muted?: boolean }, key: string) => (
+                      <div key={key} style={{ display: "contents" }} data-total-row={key}><dt>{r.label}</dt><dd className="sas-num">{r.amount}</dd></div>
+                    );
+                    return (
+                      <>
+                        {v.oneTimeTotalMinor || !v.recurringTotalMinor ? (
+                          <>
+                            {one.rows.map((r, i) => row(r, `one-${i}`))}
+                            <dt className="sas-kv__total">{t(vat ? "quote.one_time_total_incl_vat" : "quote.one_time_total")}</dt><dd className="sas-num sas-kv__total" data-total="one_time">{dm(v.oneTimeTotalMinor)}</dd>
+                            {one.afterTotal ? row(one.afterTotal, "one-after") : null}
+                          </>
+                        ) : null}
+                        {v.recurringTotalMinor ? (
+                          <>
+                            {rec.rows.map((r, i) => row(r, `rec-${i}`))}
+                            <dt className="sas-kv__total">{t(recurringPeriod === "year" ? (vat ? "quote.yearly_total_incl_vat" : "quote.yearly_total") : (vat ? "quote.monthly_total_incl_vat" : "quote.monthly_total"))}</dt><dd className="sas-num sas-kv__total" data-total="recurring">{dm(v.recurringTotalMinor, recurringPeriod)}</dd>
+                            {rec.afterTotal ? row(rec.afterTotal, "rec-after") : null}
+                          </>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                </>
+              )}
             </dl>
-            {incomplete ? null : (
-              <span className="sas-small">
-                {t(cur.version.pricesIncludeTax ? "quote.incl_tax" : "quote.plus_tax", { tax: dm(cur.version.oneTimeTaxMinor) })}
-                {cur.version.recurringTotalMinor ? ` · ${t(cur.version.pricesIncludeTax ? "quote.incl_tax" : "quote.plus_tax", { tax: dm(cur.version.recurringTaxMinor, recurringPeriod) })}` : ""}
-              </span>
-            )}
           </section>
 
           {detail.quote.status === "awaiting_approval" ? (
@@ -300,7 +334,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
                 <a className={buttonClass("secondary", "sm")} href={linkFor(latestForm).url} target="_blank" rel="noreferrer"><Icon name="eye" />{t("orders.detail.open_link")}</a>
                 <CopyButton value={linkFor(latestForm).url} label={t("orders.detail.copy_link")} />
-                <span className="sas-small">{t("orders.detail.link_valid", { date: dateShort.format(latestForm.expiresAt) })}</span>
+                <span className="sas-small">{t("orders.detail.link_valid", { date: formatDayMonthIn(latestForm.expiresAt, tzFor(detail.quote.id)) })}</span>
               </div>
             ) : null}
             {latestForm?.status === "signed" ? <a className={buttonClass("ghost", "sm")} href={`${linkFor(latestForm).url.replace(/^https?:\/\/[^/]+/, "")}/document`} target="_blank" rel="noreferrer"><Icon name="file-text" />{t("orders.detail.signed_doc")}</a> : null}

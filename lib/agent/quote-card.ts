@@ -192,6 +192,31 @@ export type CardContext = { seller: string; /** The seller's trade name per buye
 /** Two decimals and the price list's currency sign; a minus sign (−) before negative amounts (discounts). */
 export const signedMoney = (minor: number, currency: string) => (minor < 0 ? `−${formatMoney(-minor, currency)}` : formatMoney(minor, currency));
 const localeOf = (l: string | null | undefined): Locale => (l && isLocale(l) ? l : "en");
+
+export type TotalsInput = { pricesIncludeTax: boolean; taxRateBp: number; discountBp: number; subtotalMinor: number; discountMinor: number; taxMinor: number };
+
+/**
+ * The rows around one total (one-time or recurring), as the quote card shows
+ * them; the seller's quote detail uses the same rows. Before the total: the
+ * discount, then (prices before VAT) Subtotal and VAT. After the total
+ * (prices that include VAT): "Includes VAT 18%". No VAT rate: no VAT rows.
+ */
+export function quoteTotalsRows(
+  x: TotalsInput, money: (minor: number) => string, tr: (key: MessageKey, vars?: Record<string, string | number>) => string,
+  opts: { subtotal?: boolean } = {},
+): { rows: QuoteCardRow[]; afterTotal: QuoteCardRow | null } {
+  const vat = x.taxRateBp > 0;
+  const rate = percentText(x.taxRateBp);
+  const rows: QuoteCardRow[] = [];
+  if (x.discountMinor > 0) rows.push({ label: tr("buyer.qcard.discount", { rate: percentText(x.discountBp) }), amount: money(-x.discountMinor) });
+  if (vat && !x.pricesIncludeTax) {
+    if (opts.subtotal !== false) rows.push({ label: tr("buyer.qcard.subtotal"), amount: money(x.subtotalMinor - x.discountMinor), muted: true });
+    rows.push({ label: tr("buyer.qcard.vat", { rate }), amount: money(x.taxMinor), muted: true });
+  }
+  const afterTotal = vat && x.pricesIncludeTax ? { label: tr("buyer.qcard.includes_vat", { rate }), amount: money(x.taxMinor), muted: true } : null;
+  return { rows, afterTotal };
+}
+
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 const charged = (l: CardLine) => l.priceSource !== "not_charged" && (l.lineTotalMinor ?? 0) !== 0;
 
@@ -332,19 +357,11 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
     }
     return { label, amount, was };
   };
-  const vat = v.taxRateBp > 0;
-  const rate = percentText(v.taxRateBp);
   /** The monthly block has no subtotal (board QuoteChat: lines, VAT, Monthly). */
-  const sectionRows = (t0: { subtotal: number; discount: number; tax: number }, discountBp: number, subtotal = true) => {
-    const rows: QuoteCardRow[] = [];
-    if (t0.discount > 0) rows.push({ label: tr("buyer.qcard.discount", { rate: percentText(discountBp) }), amount: money(-t0.discount) });
-    if (vat && !v.pricesIncludeTax) {
-      if (subtotal) rows.push({ label: tr("buyer.qcard.subtotal"), amount: money(t0.subtotal - t0.discount), muted: true });
-      rows.push({ label: tr("buyer.qcard.vat", { rate }), amount: money(t0.tax), muted: true });
-    }
-    return rows;
-  };
-  const includes = (tax: number): QuoteCardRow | null => (vat && v.pricesIncludeTax ? { label: tr("buyer.qcard.includes_vat", { rate }), amount: money(tax), muted: true } : null);
+  const sectionRows = (t0: { subtotal: number; discount: number; tax: number }, discountBp: number, subtotal = true) =>
+    quoteTotalsRows({ ...v, discountBp, subtotalMinor: t0.subtotal, discountMinor: t0.discount, taxMinor: t0.tax }, money, tr, { subtotal }).rows;
+  const includes = (tax: number): QuoteCardRow | null =>
+    quoteTotalsRows({ ...v, subtotalMinor: 0, discountMinor: 0, taxMinor: tax }, money, tr).afterTotal;
 
   const one = hasOneTime || !hasRecurring;
   const shown = oneTimeLines.map(lineView);

@@ -1,6 +1,7 @@
 /** Validation and go-live checks for markets (mvp-plan 3.13). Pure; unit-tested. */
 import type { MarketStatus } from "@/db/schema";
 import type { EffectiveSettings } from "./settings";
+import { whatsappStatus, type OpenerStatus, type WhatsappStatus } from "@/lib/channels/rules";
 
 /** Country calling codes, used to suggest phone prefixes for a new market. */
 /**
@@ -116,6 +117,8 @@ export type GoLiveCheck = {
   blocking: boolean;
   /** What is missing, or a note, in plain words. */
   detail: string | null;
+  /** The WhatsApp check only: its status, the same on Go live and Settings › WhatsApp (lib/channels/rules.ts). */
+  channel?: WhatsappStatus;
 };
 
 export type GoLiveFacts = {
@@ -127,6 +130,8 @@ export type GoLiveFacts = {
   legalLanguages: string[];
   /** The active WhatsApp number this market sends from (its own, else the account default), or null. */
   whatsappNumber: string | null;
+  /** The account's opening templates. Not given = not checked: a number counts as connected. */
+  whatsappOpener?: OpenerStatus;
 };
 
 /**
@@ -168,14 +173,24 @@ export function marketGoLiveChecks(f: GoLiveFacts): GoLiveCheck[] {
       blocking: true,
       detail: !(pm.card || pm.bankTransfer) ? "Turn on card or bank transfer." : bankOk ? null : "Add the bank details buyers should pay to.",
     },
-    {
-      key: "whatsapp",
-      label: "WhatsApp number",
-      ok: !!f.whatsappNumber,
-      blocking: false,
-      detail: f.whatsappNumber ? f.whatsappNumber : "Connect a number in Settings › WhatsApp.",
-    },
+    (() => {
+      const channel = whatsappStatus({ numbers: f.whatsappNumber ? 1 : 0, opener: f.whatsappOpener ?? "approved" });
+      return {
+        key: "whatsapp" as const,
+        label: "WhatsApp number",
+        ok: channel === "connected",
+        blocking: false,
+        detail: f.whatsappNumber ? f.whatsappNumber : "Connect a number in Settings › WhatsApp.",
+        channel,
+      };
+    })(),
   ];
+}
+
+/** "4 of 4 checks": only the checks that block going live count; optional ones are shown apart. */
+export function checkCount(checks: GoLiveCheck[]): { passed: number; total: number } {
+  const blocking = checks.filter((c) => c.blocking);
+  return { passed: blocking.filter((c) => c.ok).length, total: blocking.length };
 }
 
 

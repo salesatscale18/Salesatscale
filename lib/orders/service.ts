@@ -7,12 +7,12 @@
  * person confirms a bank transfer. Snapshots and signatures are never updated.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, count, desc, eq, inArray, max } from "drizzle-orm";
+import { and, count, desc, eq, inArray, max, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  catalogItems, catalogVersions, dealStates, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
-  type OrderForm, type OrderFormField, type OrderSnapshot, type RecurringPeriod, type UnitCustom,
+  agentVersions, catalogItems, catalogVersions, dealStates, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
+  type DealFieldValue, type OrderForm, type OrderFormField, type OrderSnapshot, type RecurringPeriod, type UnitCustom,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { priceQuote } from "@/lib/catalog/pricing";
@@ -29,7 +29,7 @@ import { priceWithList } from "@/lib/pricing/engine";
 import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
 import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesOf } from "@/lib/quotes/pricing";
 import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
-import { orderFormPrefillWithSources, type PrefillKey, type PrefillSource } from "./prefill";
+import { orderFormPrefillWithSources, signedDealValues, type PrefillKey, type PrefillSource } from "./prefill";
 import { getOrderFormSettings } from "./settings";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
 
@@ -448,6 +448,16 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
     .digest("hex");
   const orderId = randomUUID();
   const s = form.snapshot;
+  // What the buyer signed becomes the deal state's verified company and signer details (lead card).
+  const [[deal], [live]] = await Promise.all([
+    db.select({ fields: dealStates.fields }).from(dealStates).where(and(eq(dealStates.accountId, form.accountId), eq(dealStates.leadId, form.leadId))),
+    db.select({ playbook: agentVersions.playbook }).from(agentVersions).where(and(eq(agentVersions.accountId, form.accountId), eq(agentVersions.status, "live"))).limit(1),
+  ]);
+  const verified = signedDealValues(
+    { fields: buyerFields, fullName: input.fullName.trim().slice(0, 120), role: input.role.trim().slice(0, 80) || null },
+    { playbookKeys: (live?.playbook?.fields ?? []).map((f) => f.key), existingKeys: Object.keys(deal?.fields ?? {}) },
+    now,
+  );
 
   for (let attempt = 0; attempt < 3; attempt++) {
     const [{ top }] = await db.select({ top: max(orders.number) }).from(orders).where(eq(orders.accountId, form.accountId));
@@ -471,6 +481,9 @@ export async function signForm(db: Db, token: string, input: SignInput, meta: { 
           },
         }),
         tx.update(leads).set({ lastActivityAt: now }).where(eq(leads.id, form.leadId)),
+        // Verified values win over what the chat said (jsonb ||: the right side wins); the pre-sale next step is done.
+        tx.insert(dealStates).values({ accountId: form.accountId, leadId: form.leadId, fields: verified, nextStep: null })
+          .onConflictDoUpdate({ target: dealStates.leadId, set: { fields: sql`${dealStates.fields} || ${JSON.stringify(verified)}::jsonb`, nextStep: null } }),
       ]);
       return { ok: true, orderId };
     } catch (e) {
@@ -590,6 +603,36 @@ export async function listOrders(db: Db, accountId: string) {
 
 export async function ordersForLead(db: Db, accountId: string, leadId: string) {
   return db.select().from(orders).where(and(eq(orders.accountId, accountId), eq(orders.leadId, leadId))).orderBy(desc(orders.createdAt));
+}
+
+/** A lead's orders, newest first, each with its signature and the form's buyer fields (lead card). Scoped by account. */
+export async function leadOrdersWithSignature(db: Db, accountId: string, leadId: string) {
+  return db.select({ order: orders, signature: signatures }).from(orders)
+    .innerJoin(signatures, and(eq(signatures.orderFormId, orders.orderFormId), eq(signatures.accountId, accountId)))
+    .where(and(eq(orders.accountId, accountId), eq(orders.leadId, leadId))).orderBy(desc(orders.createdAt));
+}
+
+/**
+ * The deal-state view of a lead with a signed order: the stored fields plus
+ * the verified company and signer details of the latest signature where the
+ * stored values are not verified yet (orders signed before signForm wrote them).
+ */
+export function withSignedValues(
+  fields: Record<string, DealFieldValue>,
+  latest: { signature: typeof signatures.$inferSelect } | null | undefined,
+  playbookKeys: readonly string[],
+): Record<string, DealFieldValue> {
+  if (!latest) return fields;
+  const s = latest.signature;
+  const signed = signedDealValues({ fields: s.buyerFields ?? {}, fullName: s.fullName, role: s.role }, { playbookKeys, existingKeys: Object.keys(fields) }, s.signedAt);
+  const out = { ...fields };
+  for (const [k, v] of Object.entries(signed)) if (out[k]?.provenance !== "verified") out[k] = v;
+  return out;
+}
+
+/** The time zone a buyer page shows the form's moments in (signed at): the form's market zone frozen on it, else the account's. */
+export function formTimezone(form: Pick<OrderForm, "snapshot">, accountTimezone: string): string {
+  return snapshotOf(form).delivery?.timezone || accountTimezone;
 }
 
 export async function signatureFor(db: Db, formId: string) {

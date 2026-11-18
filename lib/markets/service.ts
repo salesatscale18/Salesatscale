@@ -7,7 +7,7 @@
  * is needed; the unique partial index markets_one_home_uq makes that safe
  * when several requests do it at once.
  */
-import { connectionForMarket } from "@/lib/channels/connections";
+import { connectionForMarket, whatsappReadiness } from "@/lib/channels/connections";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -211,13 +211,14 @@ export type MarketView = {
 export async function getMarketView(db: Db, accountId: string, marketId: string): Promise<MarketView | null> {
   const market = await getMarket(db, accountId, marketId);
   if (!market) return null;
-  const [[account], orderForm, legal, live, versions, wa] = await Promise.all([
+  const [[account], orderForm, legal, live, versions, wa, readiness] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     getOrderFormSettings(db, accountId),
     marketLegal(db, accountId, market.id),
     market.priceListLineageId ? livePriceList(db, accountId, market.priceListLineageId) : Promise.resolve(null),
     market.priceListLineageId ? priceListVersions(db, accountId, market.priceListLineageId) : Promise.resolve([]),
     connectionForMarket(db, accountId, market.id),
+    whatsappReadiness(db, accountId),
   ]);
   if (!account) return null;
   // The currency comes from the assigned price list, even before it is live (UAT: an EUR list showed "ILS · Account currency").
@@ -229,6 +230,7 @@ export async function getMarketView(db: Db, accountId: string, marketId: string)
     livePriceList: live ? { name: live.list.name } : null,
     legalLanguages: [...new Set(legal.map((s) => s.language))],
     whatsappNumber: wa?.senderNumber ?? null,
+    whatsappOpener: readiness.opener,
   });
   return {
     market,

@@ -2486,5 +2486,15 @@
   "playbook.count.signal": "(\"how much?\", \"send it\").",
   "playbook.count.pace_b": "The buyer sets the pace.",
   "playbook.count.pace": "A buyer who asks for more detail gets it; those answers never use up the budget.",
-  "playbook.count.ceiling": "Safety limit in the app: after {ceiling} questions the agent always recommends, whatever the setting."
+  "playbook.count.ceiling": "Safety limit in the app: after {ceiling} questions the agent always recommends, whatever the setting.",
+  "lead.card.orders": "Orders",
+  "lead.card.next_after_signed": "Order {order} is signed. Waiting for the payment.",
+  "lead.card.next_after_paid": "Order {order} is paid. Next: delivery.",
+  "lead.stage.after.paid_order": "Order {order} paid",
+  "quote.one_time_total_incl_vat": "Total incl. VAT",
+  "quote.monthly_total_incl_vat": "Monthly total incl. VAT",
+  "quote.yearly_total_incl_vat": "Yearly total incl. VAT",
+  "golive.optional": "Optional for now",
+  "golive.state.optional": "optional for now",
+  "golive.live_test_only": "Live · test leads only"
 }

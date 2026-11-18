@@ -63,7 +63,9 @@ export type StageInputs = {
 /** The view for one lead from its facts (pure). */
 export function stageView(i: StageInputs): LeadStageView {
   const r = deriveStage({ ...i.facts, playbook: i.playbook, fields: i.deal?.fields, objections: i.deal?.objections, agentMessages: i.agentMessages });
-  const step = STEP_OF[r.stage];
+  // The agent stops selling once the form is out ("after"), but for the seller the
+  // deal stays on Order form until it is paid (form with the buyer, or signed and unpaid).
+  const step = r.stage === "after" && !i.facts.paid ? "order_form" : STEP_OF[r.stage];
   const past = STAGE_STEPS.indexOf(step) > STAGE_STEPS.indexOf("recommend");
   const open = (i.deal?.objections ?? []).filter((o) => !o.handled);
   return {

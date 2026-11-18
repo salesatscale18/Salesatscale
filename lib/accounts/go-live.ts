@@ -13,6 +13,7 @@ import { currentLegal, getOrderFormSettings } from "@/lib/orders/settings";
 import { ensureHomeMarket, setMarketStatus } from "@/lib/markets/service";
 import { writeAudit, type Actor } from "./audit";
 import { whatsappReadiness } from "@/lib/channels/connections";
+import { whatsappStatus, type OpenerStatus } from "@/lib/channels/rules";
 
 export type GoLiveInput = {
   company: { legalName: string | null; companyId: string | null; supportContact: string | null };
@@ -26,15 +27,19 @@ export type GoLiveInput = {
   payments: { card: boolean; bankTransfer: boolean; bankDetails: string | null };
   testConversations: number;
   /** Active WhatsApp numbers and whether an opening template is approved (P6). */
-  whatsapp?: { numbers: number; approvedOpener: boolean };
+  whatsapp?: { numbers: number; approvedOpener: boolean; opener?: OpenerStatus };
 };
 
 export type GoLiveCheckId = "company" | "catalog" | "agent" | "knowledge" | "legal" | "payments" | "test_lab" | "whatsapp";
 
 export type GoLiveCheck = {
   id: GoLiveCheckId;
-  /** "later" = arrives with a later phase; shown neutral and never blocks. */
-  state: "pass" | "fail" | "later";
+  /**
+   * "later" = arrives with a later phase; "optional" = not needed to go live and
+   * not done yet (WhatsApp before go-live). Both are shown neutral, never block
+   * and are left out of the count.
+   */
+  state: "pass" | "fail" | "later" | "optional";
   blocking: boolean;
   /** Setup page that fixes it, relative to /app/<slug>. */
   fixPath: string | null;
@@ -71,13 +76,19 @@ export function goLiveChecks(input: GoLiveInput): GoLiveResult {
     }),
     check("test_lab", input.testConversations > 0, "/setup/test-lab", { count: input.testConversations }),
     // Shown, not blocking: an account can go live before its number is approved.
-    {
-      id: "whatsapp",
-      state: input.whatsapp && input.whatsapp.numbers > 0 && input.whatsapp.approvedOpener ? "pass" : "fail",
-      blocking: false,
-      fixPath: "/settings?section=whatsapp",
-      data: { numbers: input.whatsapp?.numbers ?? 0, opener: input.whatsapp?.approvedOpener ? 1 : 0 },
-    },
+    // Its status is the one Markets and Settings › WhatsApp show (lib/channels/rules.ts whatsappStatus).
+    (() => {
+      const numbers = input.whatsapp?.numbers ?? 0;
+      const opener: OpenerStatus = input.whatsapp?.opener ?? (input.whatsapp?.approvedOpener ? "approved" : "none");
+      const channel = whatsappStatus({ numbers, opener });
+      return {
+        id: "whatsapp" as const,
+        state: channel === "connected" ? "pass" as const : "optional" as const,
+        blocking: false,
+        fixPath: "/settings?section=whatsapp",
+        data: { numbers, opener: opener === "approved" ? 1 : 0, channel },
+      };
+    })(),
   ];
   const blocking = checks.filter((c) => c.blocking);
   const passed = blocking.filter((c) => c.state === "pass").length;
@@ -104,7 +115,7 @@ export async function loadGoLiveInput(db: Db, account: SellerAccount): Promise<G
     legalLanguages: [...new Set(legal.map((s) => s.language))],
     payments: { card: settings.card, bankTransfer: settings.bankTransfer, bankDetails: settings.bankDetails },
     testConversations: Number(tests),
-    whatsapp: { numbers: wa.connections.length, approvedOpener: wa.hasApprovedOpener },
+    whatsapp: { numbers: wa.connections.length, approvedOpener: wa.hasApprovedOpener, opener: wa.opener },
   };
 }
 

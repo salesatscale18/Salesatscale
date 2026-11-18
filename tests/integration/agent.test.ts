@@ -115,7 +115,8 @@ describe("agent turns (scripted model)", () => {
     expect(deal?.fields.sites).toMatchObject({ value: "2", provenance: "buyer" });
     expect(deal?.nextStep).toBe("quote");
     const [q] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
-    expect(q.status).toBe("draft");
+    // The app sent the quote card: Draft → Sent (live review).
+    expect(q.status).toBe("sent");
     const [lead] = await db.select().from(leads).where(eq(leads.id, c.leadId));
     expect(lead.status).toBe("agent_handling");
     // Tool results went back to the model as JSON tool_result blocks.

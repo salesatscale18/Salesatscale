@@ -165,7 +165,8 @@ describe("Quote card", () => {
     expect(after.cards[id].rows).toContainEqual({ label: "Discount 10%", amount: "−₪209.00" });
     // A back URL off the account falls back to the inbox.
     const [q] = await db.select().from(quotes).where(eq(quotes.id, view.quoteCards[id].quoteId));
-    expect(q.status).toBe("draft");
+    // Approved and in front of the buyer: Sent (live review).
+    expect(q.status).toBe("sent");
   });
 
   it("Send 5% instead: the in-limit version takes the placeholder's place; account admins only", async () => {

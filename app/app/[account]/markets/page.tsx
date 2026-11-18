@@ -5,7 +5,7 @@ import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { contactHoursOrDefault, summarizeContactHours, WEEKDAYS } from "@/lib/accounts/contact-hours";
 import { countLeadsByMarket, listIntakeKeys } from "@/lib/leads/service";
 import { marketLegal } from "@/lib/markets/legal";
-import { canGoLive, countryName } from "@/lib/markets/rules";
+import { canGoLive, checkCount, countryName } from "@/lib/markets/rules";
 import { ensureHomeMarket, getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
 import { overriddenCount, type AccountDefaults, type EffectiveSettings, type SettingKey } from "@/lib/markets/settings";
 import { listPriceLists } from "@/lib/pricing/price-lists";
@@ -15,6 +15,7 @@ import type { LeadIntakeKey, Market } from "@/db/schema";
 import {
   addMarketAction, overrideSettingAction, resetSettingAction, setMarketStatusAction, setPriceListAction, updateWhereAction,
 } from "./actions";
+import { CheckIcon, checkStateWord, WhatsAppStatusPill } from "../settings/whatsapp-status";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -292,8 +293,8 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {all.map((m) => {
               const v = views.get(m.id);
-              const passed = v ? v.checks.filter((c) => c.ok).length : 0;
-              const total = v ? v.checks.length : 0;
+              // Only blocking checks count; the optional WhatsApp check is shown apart.
+              const { passed, total } = v ? checkCount(v.checks) : { passed: 0, total: 0 };
               const pl = listName(m.priceListLineageId);
               return (
                 <li key={m.id} style={{ borderTop: "1px solid var(--line)" }} data-market-row={m.id}>
@@ -438,18 +439,16 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
             />
 
             <Group>{t("markets.group.golive")}</Group>
-            <ul style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label={t("markets.checks_label", { passed: view.checks.filter((c) => c.ok).length, total: view.checks.length })}>
+            <ul style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label={t("markets.checks_label", checkCount(view.checks))}>
               {view.checks.map((c) => (
                 <li key={c.key} data-check={c.key} data-ok={c.ok} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", padding: "10px 20px", borderTop: "1px solid var(--line)" }}>
-                  <span aria-hidden="true" style={{ display: "inline-grid", placeItems: "center", width: 24, height: 24, borderRadius: 999, flex: "none", background: c.ok ? "var(--success-soft)" : c.blocking ? "var(--danger-soft)" : "var(--surface-sunken)", color: c.ok ? "var(--success)" : c.blocking ? "var(--danger)" : "var(--ink-muted)" }}>
-                    <Icon name={c.ok ? "check" : c.blocking ? "x" : "clock"} />
-                  </span>
+                  <CheckIcon state={c.ok ? "pass" : c.blocking ? "fail" : "optional"} size={24} />
                   <span style={{ flex: "1 1 220px", minWidth: 0 }}>
                     <strong>{t(`markets.check.${c.key}` as MessageKey)}</strong>
-                    <span className="sas-sr"> · {t(c.ok ? "golive.state.pass" : c.blocking ? "golive.state.fail" : "golive.state.later")}</span>
+                    <span className="sas-sr"> · {checkStateWord(c.ok ? "pass" : c.blocking ? "fail" : "optional")}</span>
                     {c.detail ? <span className="sas-small" style={{ display: "block" }}>{c.detail}</span> : null}
                   </span>
-                  {!c.ok && !c.blocking ? <span className="sas-pill">{t("golive.not_blocking")}</span> : null}
+                  {c.channel ? <WhatsAppStatusPill status={c.channel} /> : !c.ok && !c.blocking ? <span className="sas-pill">{t("golive.not_blocking")}</span> : null}
                 </li>
               ))}
             </ul>

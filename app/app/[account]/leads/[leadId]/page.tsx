@@ -17,7 +17,8 @@ import { latestConversationForLead } from "@/lib/agent/conversation";
 import { WhatsAppStart } from "./whatsapp-start";
 import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
 import { defaultTransport } from "@/lib/channels/twilio";
-import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
+import { displayQuoteStatus, quotesForLead, quoteTimezones } from "@/lib/quotes/service";
+import { leadOrdersWithSignature, orderLabel, withSignedValues } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
 import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
@@ -26,7 +27,7 @@ import { publicUrl } from "@/lib/orders/token";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
 import { leadStage } from "@/lib/leads/stage";
-import { StageStepper } from "./stage";
+import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
@@ -79,7 +80,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -93,6 +94,7 @@ export default async function LeadCardPage({
     simulatorOpenerFacts(appDb, account.id, leadId),
     leadStage(appDb, account.id, leadId),
     leadFollowUp(appDb, account.id, leadId),
+    leadOrdersWithSignature(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
@@ -106,15 +108,38 @@ export default async function LeadCardPage({
   const leadMarket = (row.market ? marketList.find((m) => m.id === row.market!.id) : null) ?? marketList[0];
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
+  // Quote dates in the quote's market time zone, as the buyer's card shows them.
+  const tzOf = await quoteTimezones(appDb, account.id, leadQuotes.map((q) => q.quote));
+  // Orders: label and amounts, one source for the Orders block, the stage banner and the timeline.
+  const orderView = (o: (typeof leadOrders)[number]["order"]) => ({
+    label: orderLabel(account.tradeName, o.number),
+    amount: `${formatMoney(o.amountDueMinor, o.currency)}${o.recurringMinor ? ` + ${formatMoney(o.recurringMinor, o.currency, { period: "month" })}` : ""}`,
+  });
+  const orderById = new Map(leadOrders.map(({ order }) => [order.id, orderView(order)]));
+  const latestOrder = leadOrders[0] ?? null;
+  const paidOrder: PaidOrder | null = latestOrder && latestOrder.order.paymentStatus === "paid" ? orderView(latestOrder.order) : null;
+  // A signed form fills the company and signer details (verified); orders signed before that was stored are read from the signature.
+  const dealFields = withSignedValues(deal?.fields ?? {}, latestOrder, (playbook?.fields ?? []).map((f) => f.key));
+  // After the sale the pre-sale next step is done: the order's state replaces it.
+  const nextStep = latestOrder
+    ? t(latestOrder.order.paymentStatus === "paid" ? "lead.card.next_after_paid" : "lead.card.next_after_signed", { order: orderView(latestOrder.order).label })
+    : deal?.nextStep ?? null;
 
-  const timeline: TimelineItem[] = events.map(({ event, user }) => ({
+  const timeline: TimelineItem[] = events.map(({ event, user }) => {
+    // Signed and paid: success-toned, with the order and its amount.
+    const won = event.type === "order_form.signed" || event.type === "order.paid";
+    const ord = won ? orderById.get(String((event.data as { orderId?: string } | null)?.orderId ?? "")) : undefined;
+    // A conversation started on the buyer simulator is not a WhatsApp start.
+    const title = t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey);
+    return {
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: EVENT_ICON[event.type] ?? "cog",
-    // A conversation started on the buyer simulator is not a WhatsApp start.
-    title: t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey),
+    title: won ? <span style={{ color: "var(--success)" }} data-tone="success">{title}</span> : title,
     detail:
-      event.type.startsWith("quote.") || event.type.startsWith("order_form.")
+      won && ord
+        ? <><span className="sas-num">{ord.label} · {ord.amount}</span>{event.type === "order_form.signed" ? ` · Q-${String((event.data as { number?: number } | null)?.number ?? "")} v${String((event.data as { version?: number } | null)?.version ?? "")}` : ""}</>
+        : event.type.startsWith("quote.") || event.type.startsWith("order_form.")
         ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${displayName(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
@@ -126,7 +151,8 @@ export default async function LeadCardPage({
             ? t(`lead.origin.${String((event.data as { origin?: string } | null)?.origin ?? "manual")}` as MessageKey)
             : undefined,
     time: relativeTime(event.createdAt, now),
-  }));
+    };
+  });
 
   let chatNote: string;
   if (lead.status === "opted_out") chatNote = t("lead.card.opted_out");
@@ -159,7 +185,7 @@ export default async function LeadCardPage({
             </span>
           </div>
         </header>
-        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} />
+        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} />
         <div className="sas-lead__body">
           <div className="sas-lead__main">
             {opener ? (
@@ -201,7 +227,7 @@ export default async function LeadCardPage({
                       <a className="sas-list__row" href={`/app/${account.slug}/orders?quote=${quote.id}`}>
                         <span className="sas-num">Q-{quote.number} v{quote.currentVersion}</span>
                         <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : quoteTotals(version)}</span>
-                        <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now)} />
+                        <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id))} />
                       </a>
                       {older.length ? (
                         <details style={{ padding: "0 16px 8px" }}>
@@ -220,6 +246,22 @@ export default async function LeadCardPage({
                 </ul>
               )}
             </section>
+            {leadOrders.length ? (
+              <section aria-labelledby="lo-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
+                <h2 id="lo-h" className="sas-label" style={{ margin: 0, padding: "16px 16px 4px" }}>{t("lead.card.orders")}</h2>
+                <ul className="sas-list">
+                  {leadOrders.map(({ order }) => (
+                    <li key={order.id}>
+                      <a className="sas-list__row" href={`/app/${account.slug}/orders?tab=orders&quote=${order.quoteId}`} data-order-row={order.id}>
+                        <span className="sas-num">{orderById.get(order.id)!.label}</span>
+                        <span className="sas-list__main sas-num sas-small">{orderById.get(order.id)!.amount}</span>
+                        <StatusPill object="payment" state={order.paymentStatus} />
+                      </a>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
             <div>
               <h2 className="sas-group-label">{t("lead.card.timeline")}</h2>
               <Timeline label={t("lead.card.timeline")} items={timeline} />
@@ -254,14 +296,14 @@ export default async function LeadCardPage({
               <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t(playbook ? "lead.card.learn_none" : "lead.card.learn_pending")}</p>
             ) : (
               <div className="sas-stack-4" style={{ padding: "0 16px 16px" }}>
-                <DealStateFields fields={playbook.fields.map((f) => ({ key: f.key, label: f.label, value: deal?.fields[f.key]?.value, provenance: deal?.fields[f.key]?.provenance }))} />
+                <DealStateFields fields={playbook.fields.map((f) => ({ key: f.key, label: f.label, value: dealFields[f.key]?.value, provenance: dealFields[f.key]?.provenance }))} />
                 {deal?.objections.length ? (
                   <div className="sas-stack-2">
                     <span className="sas-group-label">{t("lead.card.objections")}</span>
                     <ul style={{ margin: 0, paddingInlineStart: 18 }}>{deal.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
                   </div>
                 ) : null}
-                {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
+                {nextStep ? <div className="sas-stack-2" data-testid="next-step"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{nextStep}</span></div> : null}
                 <details>
                   <summary className="sas-small">{t("lead.card.verify")}</summary>
                   <form action={verifyFieldAction} className="sas-stack-2" style={{ paddingBlockStart: 8 }}>

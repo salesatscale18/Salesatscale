@@ -19,7 +19,7 @@ import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { conversations, leads, messages, quotes, quoteVersions, sellerAccounts, toolCalls } from "@/db/schema";
 import type { AccountAccess } from "@/lib/accounts/service";
-import { deliveryPlanFor } from "@/lib/delivery/plan";
+import { marketTimezone } from "@/lib/markets/settings";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { isLocale, t } from "@/lib/i18n";
@@ -29,7 +29,7 @@ import { APP_MESSAGE_CALL, type AppMessageKind } from "./app-message";
 import { deliveryByPhrase, percentText } from "./quote-message";
 import { loadQuoteCards } from "./quote-card-data";
 import { quoteMessageBody } from "./tools";
-import { approveQuote, createQuoteVersion, getQuote, type QuoteResult } from "@/lib/quotes/service";
+import { approveQuote, createQuoteVersion, getQuote, markQuoteSent, type QuoteResult } from "@/lib/quotes/service";
 import { customPricesOf, requestLinesOf } from "@/lib/quotes/pricing";
 
 type Access = Pick<AccountAccess, "account" | "user" | "actingAs" | "role">;
@@ -142,8 +142,7 @@ export async function followUpApprovedQuote(
   let cardId = placeholderId;
   if (opts.offerBp !== undefined || !placeholderId) {
     const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
-    const plan = account ? deliveryPlanFor(account, await resolveMarket(db, accountId, quote.marketId)) : null;
-    const body = await quoteMessageBody(db, accountId, quote.number, version, plan?.timezone ?? account?.timezone ?? "UTC", language);
+    const body = await quoteMessageBody(db, accountId, quote.number, version, account ? marketTimezone(account, await resolveMarket(db, accountId, quote.marketId)) : "UTC", language);
     const offer = opts.offerBp !== undefined ? t("buyer.app.offer", { n: percentText(opts.offerBp) }, language) : null;
     await atomic(db, (q) => [
       ...(offer ? write(q, "quote_offer", offer) : []),
@@ -164,6 +163,8 @@ export async function followUpApprovedQuote(
     ...write(q, "quote_close", close),
     q.update(conversations).set({ updatedAt: new Date(at) }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
   ]);
+  // The buyer has the approved quote now (the placeholder card shows it in place, or the new card / WhatsApp text): Draft → Sent.
+  await markQuoteSent(db, accountId, quote.id);
 
   // Real channels: through the existing send path and its rules (text only on WhatsApp; the simulator marks them delivered).
   if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {

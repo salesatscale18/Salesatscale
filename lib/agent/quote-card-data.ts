@@ -12,6 +12,7 @@ import { approvalReasonText } from "@/lib/catalog/pricing";
 import { estimateDelivery } from "@/lib/delivery/eta";
 import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { resolveMarket } from "@/lib/markets/service";
+import { marketTimezone } from "@/lib/markets/settings";
 import { safeBrand } from "@/lib/simulator/rules";
 import type { ApprovalReason } from "@/db/schema";
 import { APP_MESSAGE_CALL } from "./app-message";
@@ -72,10 +73,11 @@ export async function loadQuoteCards(
   const markets = new Map(await Promise.all(marketIds.map(async (id) => [id, await resolveMarket(db, accountId, id)] as const)));
   const marketOfQuote = new Map(quoteRows.map((q) => [q.id, markets.get(q.marketId ?? null)!]));
   const deliveryLatest = new Map<string, string | null>();
+  // Dates on the card (valid until) in the quote's market time zone, as every seller view shows them (lib/markets/settings.ts marketTimezone).
   let timezone = account.timezone;
   for (const v of versionRows) {
     const plan = deliveryPlanFor(account, marketOfQuote.get(v.quoteId)!);
-    if (plan) timezone = plan.timezone;
+    timezone = marketTimezone(account, marketOfQuote.get(v.quoteId));
     deliveryLatest.set(v.id, plan ? estimateDelivery({ ...plan, from: v.createdAt }).latest : null);
   }
 

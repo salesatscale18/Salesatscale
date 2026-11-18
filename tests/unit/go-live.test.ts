@@ -19,9 +19,13 @@ describe("goLiveChecks", () => {
     const r = goLiveChecks(ready);
     expect(r.ready).toBe(true);
     expect(r).toMatchObject({ passed: 7, total: 7 });
-    expect(r.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "fail", blocking: false, fixPath: "/settings?section=whatsapp" });
-    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: false } }).checks.find((c) => c.id === "whatsapp")?.state).toBe("fail");
-    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: true } }).checks.find((c) => c.id === "whatsapp")?.state).toBe("pass");
+    // Not connected yet: neutral "Optional for now", never a failure (live review: it showed a red ✕).
+    expect(r.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "optional", blocking: false, fixPath: "/settings?section=whatsapp", data: { channel: "optional" } });
+    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: false } }).checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "optional", data: { channel: "template_pending" } });
+    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: false, opener: "rejected" } }).checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "optional", data: { channel: "template_rejected" } });
+    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: true } }).checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "pass", data: { channel: "connected" } });
+    // The optional check stays out of the count.
+    expect(goLiveChecks({ ...ready, whatsapp: { numbers: 1, approvedOpener: true } })).toMatchObject({ passed: 7, total: 7 });
   });
 
   it("needs legal name, company ID and support contact", () => {

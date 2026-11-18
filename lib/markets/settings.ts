@@ -85,6 +85,12 @@ export function effectiveSettings(
   };
 }
 
+/** The market's time zone (its override, else the account's): the one zone quote dates are shown in, seller and buyer side. */
+export function marketTimezone(account: { timezone: string }, market: { overrides: MarketOverrides | null | undefined } | null | undefined): string {
+  const o = sanitizeOverrides(market?.overrides);
+  return typeof o.timezone === "string" && o.timezone ? o.timezone : account.timezone;
+}
+
 /** Number of settings the market overrides ("7 settings overridden"). */
 export function overriddenCount(overrides: MarketOverrides | null | undefined): number {
   return Object.keys(sanitizeOverrides(overrides)).length;

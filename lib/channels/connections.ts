@@ -9,6 +9,7 @@ import { channelConnections, markets, messageTemplates, type ChannelConnection, 
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { normalizePhone } from "@/lib/leads/rules";
 import type { TwilioTransport } from "./twilio";
+import { openerStatusOf, whatsappStatus } from "./rules";
 
 // ---------------------------------------------------------------------------
 // Connections (Settings › WhatsApp)
@@ -165,8 +166,9 @@ export async function whatsappReadiness(db: Db, accountId: string) {
   const [conns, openers] = await Promise.all([
     db.select({ senderNumber: channelConnections.senderNumber, marketId: channelConnections.marketId }).from(channelConnections)
       .where(and(eq(channelConnections.accountId, accountId), eq(channelConnections.status, "active"))),
-    db.select({ id: messageTemplates.id }).from(messageTemplates)
-      .where(and(eq(messageTemplates.accountId, accountId), eq(messageTemplates.purpose, "opener"), eq(messageTemplates.status, "approved"))).limit(1),
+    db.select({ status: messageTemplates.status }).from(messageTemplates)
+      .where(and(eq(messageTemplates.accountId, accountId), eq(messageTemplates.purpose, "opener"))),
   ]);
-  return { connections: conns, hasApprovedOpener: openers.length > 0 };
+  const opener = openerStatusOf(openers.map((o) => o.status));
+  return { connections: conns, hasApprovedOpener: opener === "approved", opener, status: whatsappStatus({ numbers: conns.length, opener }) };
 }

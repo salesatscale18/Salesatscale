@@ -215,8 +215,8 @@ describe("company, users, settings and go live", () => {
       expect(fresh.ready).toBe(false);
       expect(fresh.checks.filter((c) => c.state === "fail" && c.blocking).map((c) => c.id)).toEqual(["company", "catalog", "agent", "knowledge", "legal", "test_lab"]);
       expect(fresh.checks.find((c) => c.id === "payments")!.state).toBe("pass"); // card is on by default
-      // No WhatsApp number yet: shown as failing, never blocking.
-      expect(fresh.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "fail", blocking: false, fixPath: "/settings?section=whatsapp" });
+      // No WhatsApp number yet: optional for now, never blocking (live review: not a failure).
+      expect(fresh.checks.find((c) => c.id === "whatsapp")).toMatchObject({ state: "optional", blocking: false, fixPath: "/settings?section=whatsapp" });
 
       // Polar: company, catalog and English legal text exist from earlier tests.
       let r = await loadGoLive(db, (await getAccountById(db, acc))!);

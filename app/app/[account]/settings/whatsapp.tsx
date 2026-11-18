@@ -8,6 +8,8 @@ import { listMarkets } from "@/lib/markets/service";
 import { relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { SellerAccount } from "@/db/schema";
+import { openerStatusOf, whatsappStatus } from "@/lib/channels/rules";
+import { WhatsAppStatusPill } from "./whatsapp-status";
 import {
   addTemplateAction, addWhatsappNumberAction, refreshTemplatesAction, removeTemplateAction, removeWhatsappNumberAction, setTesterNumbersAction,
   setWhatsappNumberStatusAction,
@@ -38,9 +40,15 @@ export async function WhatsAppSection({ account, sp, baseUrl }: { account: Selle
       <section className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="wa-h">
         <div className="sas-page-head">
           <h2 id="wa-h" className="sas-heading">{t("settings.whatsapp.title")}</h2>
-          <span className={`sas-pill ${configured ? "sas-pill--success" : "sas-pill--warning"}`}>
-            {t(configured ? "settings.whatsapp.provider_ready" : "settings.whatsapp.provider_missing")}
-          </span>
+          {/* One WhatsApp status, as Go live and Markets show it; a missing provider is its own warning. */}
+          {configured ? (
+            <WhatsAppStatusPill status={whatsappStatus({
+              numbers: connections.filter((c) => c.status === "active").length,
+              opener: openerStatusOf(templates.filter((x) => x.purpose === "opener").map((x) => x.status)),
+            })} />
+          ) : (
+            <span className="sas-pill sas-pill--warning"><Icon name="alert-triangle" />{t("settings.whatsapp.provider_missing")}</span>
+          )}
         </div>
         <span className="sas-small">{t(configured ? "settings.whatsapp.intro" : "settings.whatsapp.not_configured")}</span>
         <div className="sas-stack-2">

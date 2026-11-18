@@ -47,6 +47,37 @@ export function orderFormPrefill(
   return orderFormPrefillWithSources(lead, deal).values;
 }
 
+/**
+ * The other way round: what the buyer signed on the order form, as verified
+ * deal-state values (company and signer details). Each value goes to its
+ * canonical key (the form field's own name) and to every key of the playbook
+ * (`playbookKeys`) or of the current deal state (`existingKeys`) that the
+ * prefill maps to that field, so the lead card shows it whatever the seller
+ * called the field. Empty values are skipped. Pure.
+ */
+export function signedDealValues(
+  signed: { fields: Partial<Record<string, string>>; fullName: string; role: string | null },
+  keys: { playbookKeys?: readonly string[]; existingKeys?: readonly string[] },
+  at: Date,
+): Record<string, DealFieldValue> {
+  const known = new Set([...(keys.playbookKeys ?? []), ...(keys.existingKeys ?? [])]);
+  const valueOf: Partial<Record<PrefillKey, string>> = {};
+  for (const field of Object.keys(DEAL_KEYS_FOR_FIELD) as PrefillKey[]) {
+    const v = field === "signatory_name" ? signed.fullName : field === "signatory_role" ? signed.role ?? "" : signed.fields[field] ?? "";
+    if (v.trim()) valueOf[field] = v.trim().slice(0, 300);
+  }
+  const out: Record<string, DealFieldValue> = {};
+  const updatedAt = at.toISOString();
+  for (const field of Object.keys(valueOf) as PrefillKey[]) {
+    const value = valueOf[field]!;
+    // "address" maps to both billing and delivery: the billing address wins (the first field in the map).
+    for (const key of [field, ...DEAL_KEYS_FOR_FIELD[field].filter((k) => known.has(k))]) {
+      if (!out[key]) out[key] = { value, provenance: "verified", updatedAt };
+    }
+  }
+  return out;
+}
+
 /** Where a prefilled value came from: the conversation, or the buyer's own request (the website lead form). */
 export type PrefillSource = "chat" | "request";
 

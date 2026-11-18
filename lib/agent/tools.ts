@@ -19,7 +19,9 @@ import { publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
 import { priceWithList, type EngineLine } from "@/lib/pricing/engine";
 import { catalogAutoAdd, engineItems, enginePriceList, pricingContext, requestLinesOf, type PricingContext } from "@/lib/quotes/pricing";
-import { createQuote } from "@/lib/quotes/service";
+import { createQuote, markQuoteSent } from "@/lib/quotes/service";
+import { marketTimezone } from "@/lib/markets/settings";
+import { localDateIso } from "@/lib/format";
 import { createOrderForm } from "@/lib/orders/service";
 import { pricesAllowed } from "./core/facts";
 import type { ToolDef } from "./llm";
@@ -652,7 +654,10 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const now = new Date();
     // A ready quote goes to the buyer as the app's own message, in a fixed layout; the agent adds only the closing sentence.
     // Awaiting approval: no message and no totals to promise (the agent says it is confirming the price with the team).
-    const quoteMessageId = !awaiting && !r.reused ? await sendQuoteMessage(ctx, r.quote.number, v, plan?.timezone ?? account?.timezone ?? "UTC") : null;
+    const quoteTz = account ? marketTimezone(account, quoteMarket) : "UTC";
+    const quoteMessageId = !awaiting && !r.reused ? await sendQuoteMessage(ctx, r.quote.number, v, quoteTz) : null;
+    // The buyer has the quote now (card on the web chats, its text on WhatsApp): Draft → Sent.
+    if (quoteMessageId) await markQuoteSent(ctx.db, ctx.accountId, r.quote.id);
     // Awaiting approval: the buyer's web chat gets a placeholder card with no numbers (P11 wave 2), replaced in place once the seller approves.
     // WhatsApp gets none: the agent's own line says the team is checking.
     const heldMessageId = awaiting && !r.reused ? await sendHeldQuoteMessage(ctx, account ? localTradeName(account, ctx.language ?? "en") : "") : null;
@@ -676,7 +681,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
               recurring: { subtotalMinor: v.recurringSubtotalMinor, discountMinor: v.recurringDiscountMinor, taxMinor: v.recurringTaxMinor, totalMinor: v.recurringTotalMinor },
               period, taxRateBp: v.taxRateBp, complete: true,
             }, money),
-        valid_until: v.validUntil.toISOString().slice(0, 10),
+        // The date the buyer's card shows (the quote's market time zone), not the UTC date.
+        valid_until: localDateIso(v.validUntil, quoteTz),
         approval_reasons: v.approvalReasons.map(approvalReasonText),
         delivery: await deliveryOf(ctx, quoteMarket),
         // The close's phrase: "by about <last date of the estimate>" in the buyer's language, or "not set: …".

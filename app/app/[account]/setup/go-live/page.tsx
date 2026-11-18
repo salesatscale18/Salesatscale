@@ -6,6 +6,9 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { loadGoLive, ROLLOUT_MODES, type GoLiveCheck } from "@/lib/accounts/go-live";
 import { t, type MessageKey } from "@/lib/i18n";
 import { goLiveAction, saveRolloutAction } from "./actions";
+import { checkCount } from "@/lib/markets/rules";
+import type { WhatsappStatus } from "@/lib/channels/rules";
+import { CheckIcon, checkStateWord, WhatsAppStatusPill } from "../../settings/whatsapp-status";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -52,7 +55,15 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
           <h1 className="sas-title">{t("golive.title")}</h1>
           <div className="sas-page-head__actions">
             {account.status === "live" && liveSince ? (
-              <span className="sas-pill sas-pill--success"><Icon name="check-circle" />{t("golive.live_since", { date: liveSince })}</span>
+              account.rollout === "test_only" ? (
+                // Only test leads are contacted: live, but not with real buyers yet.
+                <span style={{ display: "inline-flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+                  <span className="sas-pill sas-pill--success" data-live="test_only"><Icon name="check-circle" />{t("golive.live_test_only")}</span>
+                  <span className="sas-small">{t("golive.live_since", { date: liveSince })}</span>
+                </span>
+              ) : (
+                <span className="sas-pill sas-pill--success" data-live={account.rollout}><Icon name="check-circle" />{t("golive.live_since", { date: liveSince })}</span>
+              )
             ) : account.status === "setting_up" ? (
               <form action={goLiveAction}>
                 <input type="hidden" name="slug" value={account.slug} />
@@ -91,22 +102,22 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
           <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
             {result.checks.map((c) => (
               <li key={c.id} data-check={c.id} data-state={c.state} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 14px", padding: "14px 16px", borderTop: "1px solid var(--line)" }}>
-                <span aria-hidden="true" style={{
-                  display: "inline-grid", placeItems: "center", width: 28, height: 28, borderRadius: 999, flex: "none",
-                  background: c.state === "pass" ? "var(--success-soft)" : c.state === "fail" ? "var(--danger-soft)" : "var(--surface-sunken)",
-                  color: c.state === "pass" ? "var(--success)" : c.state === "fail" ? "var(--danger)" : "var(--ink-muted)",
-                }}>
-                  <Icon name={c.state === "pass" ? "check" : c.state === "fail" ? "x" : "clock"} />
-                </span>
+                {c.state === "later" ? (
+                  <span aria-hidden="true" style={{ display: "inline-grid", placeItems: "center", width: 28, height: 28, borderRadius: 999, flex: "none", background: "var(--surface-sunken)", color: "var(--ink-muted)" }}>
+                    <Icon name="clock" />
+                  </span>
+                ) : <CheckIcon state={c.state} />}
                 <span style={{ flex: "1 1 240px", minWidth: 0 }}>
                   <strong>{t(`golive.check.${c.id}` as MessageKey)}</strong>
-                  <span className="sas-sr"> · {t(c.state === "pass" ? "golive.state.pass" : c.state === "fail" ? "golive.state.fail" : "golive.state.later")}</span>
+                  <span className="sas-sr"> · {c.state === "later" ? t("golive.state.later") : checkStateWord(c.state)}</span>
                   <span className="sas-small" style={{ display: "block" }}>{detail(c)}</span>
                 </span>
-                {c.state === "fail" && c.fixPath ? (
+                {(c.state === "fail" || c.state === "optional") && c.fixPath ? (
                   <a className={buttonClass("secondary", "sm")} href={`${base}${c.fixPath}`}>{t(`golive.fix.${c.id}` as MessageKey)}</a>
                 ) : null}
-                {!c.blocking ? (
+                {c.id === "whatsapp" && typeof c.data.channel === "string" ? (
+                  <WhatsAppStatusPill status={c.data.channel as WhatsappStatus} />
+                ) : !c.blocking && c.state !== "pass" ? (
                   <span className="sas-pill">{t("golive.not_blocking")}</span>
                 ) : null}
               </li>
@@ -143,7 +154,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
         </div>
         <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>
           {marketViews.map(({ market, checks }) => {
-            const passed = checks.filter((c) => c.ok).length;
+            const { passed, total } = checkCount(checks);
             return (
               <li key={market.id} data-market={market.id} style={{ padding: "14px 16px", borderTop: "1px solid var(--line)" }} className="sas-stack-2">
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
@@ -151,15 +162,16 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
                     {market.name}{market.isHome ? <span className="sas-chip" style={{ marginInlineStart: 8 }}>{t("golive.markets.home")}</span> : null}
                   </strong>
                   <StatusPill object="market" state={market.status} />
-                  <span className="sas-small sas-num">{t("golive.markets.checks", { passed, total: checks.length })}</span>
+                  <span className="sas-small sas-num">{t("golive.markets.checks", { passed, total })}</span>
                   <a className={buttonClass("secondary", "sm")} href={`${base}/markets?m=${market.id}`}>{t("golive.markets.open")}</a>
                 </div>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>
                   {checks.map((c) => (
                     <li key={c.key} data-check={c.key} data-ok={c.ok} className="sas-small" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                      <span style={{ color: c.ok ? "var(--success)" : c.blocking ? "var(--danger)" : "var(--ink-muted)", display: "inline-flex" }}><Icon name={c.ok ? "check" : c.blocking ? "x" : "clock"} /></span>
+                      <span style={{ color: c.ok ? "var(--success)" : c.blocking ? "var(--danger)" : "var(--ink-muted)", display: "inline-flex" }}><Icon name={c.ok ? "check" : c.blocking ? "x" : "info"} /></span>
                       {t(`markets.check.${c.key}` as MessageKey)}
-                      <span className="sas-sr"> · {t(c.ok ? "golive.state.pass" : c.blocking ? "golive.state.fail" : "golive.state.later")}</span>
+                      <span className="sas-sr"> · {checkStateWord(c.ok ? "pass" : c.blocking ? "fail" : "optional")}</span>
+                      {c.channel && c.channel !== "connected" ? <WhatsAppStatusPill status={c.channel} /> : null}
                     </li>
                   ))}
                 </ul>

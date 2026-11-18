@@ -15,6 +15,31 @@ export function windowState(lastBuyerMessageAt: Date | null, now: Date): WindowS
   return { open: now < closesAt, closesAt };
 }
 
+/** The account's opening templates, best first: one approved is enough. */
+export type OpenerStatus = "approved" | "pending" | "rejected" | "none";
+
+export function openerStatusOf(statuses: readonly string[]): OpenerStatus {
+  if (statuses.includes("approved")) return "approved";
+  if (statuses.includes("pending")) return "pending";
+  if (statuses.includes("rejected")) return "rejected";
+  return "none";
+}
+
+/**
+ * One WhatsApp status for Go live, Markets and Settings › WhatsApp: the design
+ * system's channel states (lib/domain/status.ts `channel`), or "optional" while
+ * there is no number yet (WhatsApp never blocks going live; shown neutral as
+ * "Optional for now" and left out of the check counts).
+ */
+export type WhatsappStatus = "connected" | "template_pending" | "template_rejected" | "optional";
+
+export function whatsappStatus(f: { numbers: number; opener: OpenerStatus }): WhatsappStatus {
+  if (f.numbers <= 0) return "optional";
+  if (f.opener === "approved") return "connected";
+  if (f.opener === "rejected") return "template_rejected";
+  return "template_pending";
+}
+
 /** The lead's first name for template variable {{1}}. */
 export function firstNameOf(fullName: string): string {
   return fullName.trim().split(/\s+/)[0] || fullName.trim();

@@ -6,11 +6,13 @@
  * written. Multi-row writes are atomic (db/atomic.ts).
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, inArray, max } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, max, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
+import { localDateIso } from "@/lib/format";
+import { marketTimezone } from "@/lib/markets/settings";
 import {
-  leadEvents, leads, quoteLines, quotes, quoteVersions, sellerAccounts,
+  leadEvents, leads, markets, quoteLines, quotes, quoteVersions, sellerAccounts,
   type ApprovalReason, type Quote, type QuoteStatus, type QuoteVersion,
 } from "@/db/schema";
 import { writeAudit } from "@/lib/accounts/audit";
@@ -422,13 +424,51 @@ export async function cancelQuote(db: Db, accountId: string, actor: { userId: st
   return quoteOf(db, accountId, q.id);
 }
 
-/** Display status: "Expires today" / "Expired" are derived from the valid-until date. */
-export function displayQuoteStatus(status: QuoteStatus, validUntil: Date, now = new Date()): "draft" | "awaiting_approval" | "sent" | "expires_today" | "expired" | "replaced" | "cancelled" {
+/**
+ * The buyer has the quote: the app sent its card (web chats) or its text
+ * (WhatsApp). Draft → Sent through the existing status; any other status
+ * (awaiting approval, replaced, cancelled, already sent) is left as is.
+ * Returns whether the status changed.
+ */
+export async function markQuoteSent(db: Db, accountId: string, quoteId: string): Promise<boolean> {
+  const updated = await db.update(quotes).set({ status: "sent" })
+    .where(and(eq(quotes.id, quoteId), eq(quotes.accountId, accountId), eq(quotes.status, "draft")))
+    .returning({ id: quotes.id });
+  return updated.length > 0;
+}
+
+/**
+ * Display status: "Expires today" / "Expired" are derived from the valid-until
+ * date, "today" in the quote's time zone (lib/markets/settings.ts marketTimezone; UTC when not given).
+ */
+export function displayQuoteStatus(status: QuoteStatus, validUntil: Date, now = new Date(), timezone?: string | null): "draft" | "awaiting_approval" | "sent" | "expires_today" | "expired" | "replaced" | "cancelled" {
   if (status === "draft" || status === "sent") {
     if (validUntil.getTime() <= now.getTime()) return "expired";
-    if (validUntil.toISOString().slice(0, 10) === now.toISOString().slice(0, 10)) return "expires_today";
+    if (localDateIso(validUntil, timezone) === localDateIso(now, timezone)) return "expires_today";
   }
   return status;
+}
+
+/**
+ * The time zone each quote's dates are shown in (valid until, expires today):
+ * its market's, else the account's. The quote card uses the same zone, so the
+ * seller and the buyer see one date. Keyed by quote id; scoped by account.
+ */
+export async function quoteTimezones(db: Db, accountId: string, rows: { id: string; marketId: string | null }[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  if (!rows.length) return out;
+  const marketIds = [...new Set(rows.map((r) => r.marketId).filter((x): x is string => !!x))];
+  // The quote's market, else (no market, or a removed one) the home market, as resolveMarket does.
+  const [[account], ms] = await Promise.all([
+    db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
+    db.select({ id: markets.id, isHome: markets.isHome, overrides: markets.overrides }).from(markets)
+      .where(and(eq(markets.accountId, accountId), marketIds.length ? or(eq(markets.isHome, true), inArray(markets.id, marketIds)) : eq(markets.isHome, true))),
+  ]);
+  const accountTz = { timezone: account?.timezone ?? "UTC" };
+  const byId = new Map(ms.map((m) => [m.id, m]));
+  const home = ms.find((m) => m.isHome) ?? null;
+  for (const r of rows) out.set(r.id, marketTimezone(accountTz, (r.marketId ? byId.get(r.marketId) : null) ?? home));
+  return out;
 }
 
 export type QuoteTab = "quotes" | "approval";

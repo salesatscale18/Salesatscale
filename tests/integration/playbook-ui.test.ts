@@ -192,7 +192,8 @@ describe("lane H: playbook, plays and stage", () => {
       for (const id of ids) expect(many.get(id)).toEqual(await leadStage(db, acc, id));
       expect(many.get(objection.c.leadId)).toMatchObject({ objection: "Too expensive" });
       expect(many.get(quoted.c.leadId)).toMatchObject({ step: "order_form" });
-      expect(many.get(sent.c.leadId)).toMatchObject({ step: "after", paid: false });
+      // The form is with the buyer: the agent is in After, the seller's stepper stays on Order form until paid.
+      expect(many.get(sent.c.leadId)).toMatchObject({ step: "order_form", stage: "after", paid: false });
       expect(many.get(held.c.leadId)).toMatchObject({ human: true });
       // Another account's lead is not read with this account's id.
       expect(await leadStage(db, acc, theirs.c.leadId)).toBeNull();

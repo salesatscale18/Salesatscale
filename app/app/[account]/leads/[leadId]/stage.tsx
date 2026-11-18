@@ -55,7 +55,8 @@ export function stageSentence(v: LeadStageView, name: string): { wait: string; n
   if (v.human) return { wait: k("human.wait"), next: k("human.next"), icon: "user" };
   if (v.closed && !v.paid) return { wait: k("after.closed_wait"), next: k("after.closed_next"), icon: "x-circle" };
   if (v.objection) return { wait: k("objection.wait"), next: k("objection.next"), icon: "alert-triangle" };
-  switch (v.step) {
+  // The stepper stays on Order form until paid (lib/leads/stage.ts); the sentence follows the agent's stage.
+  switch (v.stage === "after" ? "after" : v.step) {
     case "open": return { wait: k("open.wait"), next: k("open.next"), icon: "message-circle" };
     case "understand": return { wait: k("understand.wait"), next: v.missing.length ? k("understand.next_missing") : k("understand.next"), icon: "message-circle" };
     case "recommend": return { wait: k("recommend.wait"), next: k("recommend.next"), icon: "message-circle" };
@@ -71,10 +72,15 @@ export function stageSentence(v: LeadStageView, name: string): { wait: string; n
   }
 }
 
-/** The stepper and the sentence. `v` null: no conversation yet. */
-export function StageStepper({ v, name }: { v: LeadStageView | null; name: string }) {
+/** The paid order in the stage banner: "Order PD-10001 paid · ₪1,770.00 + ₪106.20/month." */
+export type PaidOrder = { label: string; amount: string };
+
+/** The stepper and the sentence. `v` null: no conversation yet. `paidOrder`: the lead's paid order, for the banner. */
+export function StageStepper({ v, name, paidOrder }: { v: LeadStageView | null; name: string; paidOrder?: PaidOrder | null }) {
   const current = v ? STAGE_STEPS.indexOf(v.step) : -1;
-  const tone = v ? stageTone(v) : "now";
+  const paidBanner = !!(v && paidOrder && v.paid && v.step === "after" && !v.human && !v.objection);
+  // A paid deal keeps the primary bar (the Leads list chip stays neutral).
+  const tone = v ? (paidBanner ? "now" : stageTone(v)) : "now";
   const s = TONE_STYLE[tone];
   const sentence = v ? stageSentence(v, name) : null;
   return (
@@ -107,10 +113,14 @@ export function StageStepper({ v, name }: { v: LeadStageView | null; name: strin
       {v && sentence ? (
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, background: s.bg, overflowWrap: "anywhere" }} data-testid="stage-sentence">
           <span style={{ color: s.fg, display: "inline-flex", paddingBlockStart: 2 }}><Icon name={sentence.icon} /></span>
-          <span>
-            {v.human || v.objection || v.closed || (v.step === "after" && v.paid) ? <><strong>{stageLabel(v)}.</strong>{" "}</> : null}
-            <strong>{sentence.wait}</strong> {sentence.next}
-          </span>
+          {paidBanner && paidOrder ? (
+            <span data-testid="stage-paid"><strong>{t("lead.stage.after.paid_order", { order: paidOrder.label })}</strong> · <span className="sas-num">{paidOrder.amount}</span>. {sentence.next}</span>
+          ) : (
+            <span>
+              {v.human || v.objection || v.closed || (v.step === "after" && v.paid) ? <><strong>{stageLabel(v)}.</strong>{" "}</> : null}
+              <strong>{sentence.wait}</strong> {sentence.next}
+            </span>
+          )}
         </div>
       ) : (
         <span className="sas-small">{t("lead.stage.none")}</span>
