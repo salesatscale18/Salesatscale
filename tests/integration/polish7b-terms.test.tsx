@@ -124,13 +124,14 @@ describe("Polish-7b: plain terms", () => {
   it("Order form setup: legal versions as readable links", async () => {
     const html = await render(OrderFormSetupPage, account.slug);
     save("order-form", html);
-    expect(html).toMatch(/<a href="[^"]*edit=[^"]*lang=en#editor" data-legal-version="en\.1">English · v1<\/a>/);
+    // A version link opens that language's text in the legal panel (list-page redesign).
+    expect(html).toMatch(/<a data-legal-version="en\.1"[^>]*href="[^"]*panel=legal%3A[a-z_]+&amp;lang=en">English · v1<\/a>/);
     expect(html).toMatch(/>Hebrew · v1</);
     expect(html).not.toMatch(/>EN v1</);
     const [home] = await db.select().from(markets).where(eq(markets.accountId, account.id));
     const m = await render(OrderFormSetupPage, account.slug, { market: home.id });
     save("order-form-market", m);
-    expect(m).toMatch(/data-legal-version="en\.1">English · v1</);
+    expect(m).toMatch(/data-legal-version="en\.1"[^>]*>English · v1</);
   });
 
   it("Versions and test lab: the model line only for platform admins", async () => {

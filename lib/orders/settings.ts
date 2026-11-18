@@ -13,7 +13,11 @@ export async function getOrderFormSettings(db: Db, accountId: string) {
   return s ?? { accountId, fields: DEFAULT_FIELDS, card: true, bankTransfer: true, bankDetails: null, linkValidDays: 7, brandColor: "#0f6b5a", updatedAt: null };
 }
 
-export type SettingsInput = { fields: OrderFormField[]; card: boolean; bankTransfer: boolean; bankDetails: string | null; linkValidDays: number; brandColor: string };
+/**
+ * brandColor is optional: the order form setup page shows the colour but it is
+ * changed in Company, so that form leaves it out and the saved colour stays.
+ */
+export type SettingsInput = { fields: OrderFormField[]; card: boolean; bankTransfer: boolean; bankDetails: string | null; linkValidDays: number; brandColor?: string };
 
 export function parseSettings(raw: Record<string, string>, fieldsOn: string[]): { ok: true; value: SettingsInput } | { ok: false; error: string } {
   const fields = [...new Set([...REQUIRED_FIELDS, ...fieldsOn.filter((f): f is OrderFormField => (ORDER_FORM_FIELDS as readonly string[]).includes(f))])];
@@ -22,11 +26,11 @@ export function parseSettings(raw: Record<string, string>, fieldsOn: string[]): 
   if (!card && !bankTransfer) return { ok: false, error: "Turn on at least one payment method." };
   const days = Number(raw.linkValidDays);
   if (![3, 7, 14, 30].includes(days)) return { ok: false, error: "Choose how long the link stays valid." };
-  const color = (raw.brandColor ?? "").trim();
-  if (!/^#[0-9a-fA-F]{6}$/.test(color)) return { ok: false, error: "Brand color must look like #0f6b5a." };
+  const color = raw.brandColor === undefined ? undefined : raw.brandColor.trim();
+  if (color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(color)) return { ok: false, error: "Brand color must look like #0f6b5a." };
   const bankDetails = (raw.bankDetails ?? "").trim().slice(0, 500) || null;
   if (bankTransfer && !bankDetails) return { ok: false, error: "Add the bank details buyers should pay to." };
-  return { ok: true, value: { fields, card, bankTransfer, bankDetails, linkValidDays: days, brandColor: color.toLowerCase() } };
+  return { ok: true, value: { fields, card, bankTransfer, bankDetails, linkValidDays: days, ...(color !== undefined ? { brandColor: color.toLowerCase() } : {}) } };
 }
 
 export async function saveOrderFormSettings(db: Db, accountId: string, v: SettingsInput) {
@@ -60,6 +64,35 @@ export const currentLegalKeys = cache(async (db: Db, accountId: string): Promise
   for (const r of rows) if (!latest.has(`${r.sectionKey}|${r.language}`)) latest.set(`${r.sectionKey}|${r.language}`, r);
   return [...latest.values()].filter((r) => r.active).map(({ sectionKey, language, version }) => ({ sectionKey, language, version }));
 });
+
+export type LegalRow = {
+  sectionKey: string;
+  /** The English title, else the first language's. */
+  title: string;
+  /** One entry per account language, in the account's order; version null = missing in that language. */
+  versions: { language: string; version: number | null }[];
+  /** When the newest of its current versions was saved. */
+  updatedAt: Date;
+};
+
+/**
+ * The legal texts table on the order form setup page: one row per section
+ * (in the order of currentLegal), a version per account language and the
+ * last change. Texts in a language the account no longer sells in still
+ * count for the title and the date, so a row never disappears.
+ */
+export function legalTable(legal: Pick<LegalSection, "sectionKey" | "language" | "title" | "version" | "createdAt">[], languages: string[]): LegalRow[] {
+  const keys = [...new Set(legal.map((s) => s.sectionKey))];
+  return keys.map((k) => {
+    const rows = legal.filter((s) => s.sectionKey === k);
+    return {
+      sectionKey: k,
+      title: (rows.find((r) => r.language === "en") ?? rows[0]).title,
+      versions: languages.map((l) => ({ language: l, version: rows.find((r) => r.language === l)?.version ?? null })),
+      updatedAt: new Date(Math.max(...rows.map((r) => r.createdAt.getTime()))),
+    };
+  });
+}
 
 export function sectionKeyOf(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || `section_${Date.now()}`;

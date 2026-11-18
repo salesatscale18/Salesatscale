@@ -27,7 +27,12 @@ export async function saveSectionAction(form: FormData) {
   const title = String(form.get("title") ?? "").trim();
   const body = String(form.get("body") ?? "").trim();
   const language = String(form.get("language") ?? "");
-  if (!title || !body || !a.account.languages.includes(language)) redirect(`${path(a.account.slug)}?error=${encodeURIComponent("Enter a title and the text.")}`);
+  if (!title || !body || !a.account.languages.includes(language)) {
+    // Back to the open panel (Add legal text, or the section in that language).
+    const known = String(form.get("sectionKey") ?? "");
+    const panel = known && /^[a-z0-9_]{1,40}$/.test(known) ? `panel=legal:${known}${a.account.languages.includes(language) ? `&lang=${language}` : ""}` : "panel=legal";
+    redirect(`${path(a.account.slug)}?${panel}&error=${encodeURIComponent("Enter a title and the text.")}`);
+  }
   const key = String(form.get("sectionKey") ?? "") || sectionKeyOf(String(form.get("keyTitle") ?? "") || title);
   const v = await saveLegalSection(appDb, a.account.id, a.user.id, { sectionKey: key, title, language, body });
   await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action: "order_form.legal_saved", details: { key, language, version: v } });
