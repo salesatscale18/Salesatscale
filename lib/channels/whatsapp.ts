@@ -334,7 +334,7 @@ export async function receiveInbound(db: Db, params: Record<string, string>, now
  * that must work while the account is still being set up); never WhatsApp.
  */
 export async function inboundConversation(
-  db: Db, lead: Lead, channel: string, opts: { allowBeforeGoLive?: boolean } = {},
+  db: Db, lead: Lead, channel: string, opts: { allowBeforeGoLive?: boolean; now?: Date } = {},
 ): Promise<{ ok: true; conv: Conversation } | { ok: false; reason: "opted_out" | "account_not_live" | "no_agent" }> {
   const accountId = lead.accountId;
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
@@ -350,7 +350,17 @@ export async function inboundConversation(
     // The buyer wrote first (or after a closed conversation): a new conversation on the live agent.
     const [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live")));
     if (!live) return { ok: false, reason: "no_agent" };
-    [conv] = await db.insert(conversations).values({ accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language }).returning();
+    // At the monthly AI spend cap the agent starts no new conversation (Settings › AI usage):
+    // the buyer's message is kept and the conversation waits for a person (Needs you).
+    // Open conversations above keep replying.
+    const capped = await spendCapped(db, accountId, opts.now ?? new Date());
+    [conv] = await db.insert(conversations).values({ accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language, ...(capped ? { status: "human" as const } : {}) }).returning();
+    if (capped) {
+      await Promise.all([
+        db.insert(messages).values({ accountId, conversationId: conv.id, actor: "system", body: "This month's AI spend cap is reached, so the agent did not start this conversation. A person needs to reply.", language: "en" }),
+        db.update(leads).set({ status: "human_handling" }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId), ne(leads.status, "opted_out"))),
+      ]);
+    }
   }
   return { ok: true, conv };
 }
@@ -360,7 +370,7 @@ export async function receiveLeadMessage(
   db: Db, lead: Lead, channel: string, channelMessageId: string, text: string, now: Date, opts: { allowBeforeGoLive?: boolean } = {},
 ): Promise<InboundResult> {
   const accountId = lead.accountId;
-  const gate = await inboundConversation(db, lead, channel, opts);
+  const gate = await inboundConversation(db, lead, channel, { ...opts, now });
   if (!gate.ok) return { kind: "ignored", reason: gate.reason };
   const conv = gate.conv;
   const result = await storeBuyerText(db, conv, channelMessageId, text, now, { accountId, conversationId: conv.id, leadId: lead.id });

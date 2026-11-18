@@ -1581,7 +1581,7 @@
   "overview.needs.spend.action": "See usage",
   "settings.ai_usage": "AI usage this month: ~{used} of {cap}",
   "settings.ai_usage.no_rate": "AI usage this month: ~{usd}. The cap of {cap} is not checked: no exchange rate for {currency}.",
-  "settings.ai_usage.note": "An estimate based on how much the AI reads and writes. At 80% you get a warning; at 100% the agent starts no new conversations, and open chats keep replying.",
+  "settings.ai_usage.note": "An estimate based on how much the AI reads and writes. At 80% you get a warning; at 100% no new conversations start, and open chats keep replying.",
   "admin.accounts.ai_usage": "AI usage this month",
   "admin.accounts.ai_usage.cost": "Estimated cost",
   "admin.accounts.ai_usage.state": "Spend state",

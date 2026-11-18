@@ -265,8 +265,20 @@ describe("Buyer simulator", () => {
     const capped = await simBuyer(acc, "Cap Buyer");
     await db.update(sellerAccounts).set({ monthlySpendCapMinor: 0 }).where(eq(sellerAccounts.id, acc));
     try {
-      expect(await receiveSimulatorInbound(db, await ctxFor(capped.token), "hi", randomUUID())).toEqual({ kind: "ignored", reason: "spend_cap" });
-      expect((await simulatorOpenerFacts(db, acc, capped.lead.id))?.refusal).toBe("spend_cap");
+      // At the cap the agent starts no new conversation: the buyer's message is kept and a person must reply.
+      const r = await receiveSimulatorInbound(db, await ctxFor(capped.token), "hi", randomUUID());
+      expect(r.kind).toBe("stored");
+      const [conv] = await db.select().from(conversations).where(eq(conversations.leadId, capped.lead.id));
+      expect(conv.status).toBe("human");
+      const [ld] = await db.select().from(leads).where(eq(leads.id, capped.lead.id));
+      expect(ld.status).toBe("human_handling");
+      expect((await simulatorOpenerFacts(db, acc, capped.lead.id))?.refusal).not.toBe(undefined);
+      // An open conversation keeps replying at the cap (the message is stored for the agent's turn).
+      await db.update(conversations).set({ status: "open" }).where(eq(conversations.id, conv.id));
+      const again = await receiveSimulatorInbound(db, await ctxFor(capped.token), "still there?", randomUUID());
+      expect(again.kind).toBe("stored");
+      const [still] = await db.select().from(conversations).where(eq(conversations.id, conv.id));
+      expect(still.status).toBe("open");
     } finally {
       await db.update(sellerAccounts).set({ monthlySpendCapMinor: 10_000 }).where(eq(sellerAccounts.id, acc));
     }
