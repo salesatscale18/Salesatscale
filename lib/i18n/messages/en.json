@@ -1105,7 +1105,7 @@
   "settings.users.err.owner_only": "Only an owner can remove another owner.",
   "lab.paused": "This account is paused.",
   "nav.price_lists": "Price lists",
-  "setup.prices": "Prices",
+  "setup.prices": "Price lists",
   "catalog.col.kind_unit": "Kind · unit",
   "catalog.edit.kind": "Kind",
   "catalog.edit.kind_hint": "Services such as setup, installation or training get their own line on quotes, order forms and invoices.",

@@ -1,3 +1,5 @@
+import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { notFound } from "next/navigation";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
@@ -93,6 +95,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
           </div>
         </div>
         <span className="sas-small">{listLine(shown)} · {usedBy.length > 0 ? t("price_lists.used_by", { markets: usedBy.map((m) => m.name).join(", ") }) : t("price_lists.used_by_none")}</span>
+        <SetupSteps basePath={`/app/${account.slug}`} current="prices" completed={await setupProgress(appDb, account)} />
       </header>
 
       {sp.created ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.created")}</span></div> : null}

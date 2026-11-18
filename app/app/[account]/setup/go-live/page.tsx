@@ -2,6 +2,7 @@ import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { getMarketView, listMarkets } from "@/lib/markets/service";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { loadGoLive, ROLLOUT_MODES, type GoLiveCheck } from "@/lib/accounts/go-live";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -46,7 +47,6 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
   const liveSince = account.wentLiveAt
     ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: account.timezone }).format(account.wentLiveAt)
     : null;
-  const completed = new Set(result.ready ? ["go-live"] : []);
 
   return (
     <main className="sas-shell__content">
@@ -79,7 +79,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
               ? t("golive.ready", { passed: result.passed, total: result.total })
               : t("golive.progress", { passed: result.passed, total: result.total })}
         </span>
-        <SetupSteps basePath={base} current="go-live" completed={completed} />
+        <SetupSteps basePath={`/app/${account.slug}`} current="go-live" completed={await setupProgress(appDb, account)} />
       </header>
       {sp.live ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("golive.went_live")}</span></div> : null}
       {sp.rollout ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("golive.rollout.saved")}</span></div> : null}

@@ -1,3 +1,5 @@
+import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { notFound } from "next/navigation";
 import { PRICE_LIST_FIX } from "@/lib/sources/files";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
@@ -109,6 +111,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
           {confirming ? null : <a className={buttonClass("ghost", "sm")} href={`${here}?confirm=delete`}>{t("sources.delete")}</a>}
         </div>
       </header>
+      <SetupSteps basePath={`/app/${account.slug}`} current="sources" completed={await setupProgress(appDb, account)} />
 
       {done === "saved" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("sources.done.saved")}</span></div> : null}
       {done === "call" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("sources.done.call")}</span></div> : null}

@@ -277,7 +277,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           <section className="sas-panel" aria-labelledby="setup-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
             <div className="sas-panel__head">
               <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
-              <span className="sas-small">{t("overview.setup.count", { done: done.size, total: SETUP_STEPS.length })}</span>
+              <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
             </div>
             <ol className="sas-list">
               {SETUP_STEPS.map((s, i) => {

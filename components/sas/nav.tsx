@@ -31,7 +31,7 @@ export const SELLER_NAV: NavGroup[] = [
       { id: "price-lists", label: "nav.price_lists", icon: "credit-card", path: "/setup/price-lists" },
       { id: "playbook", label: "nav.playbook", icon: "sparkles", path: "/setup/playbook" },
       { id: "order-form", label: "nav.order_form", icon: "pen", path: "/setup/order-form" },
-      { id: "follow-ups", label: "nav.follow_ups", icon: "clock", path: "/setup/follow-ups" },
+      { id: "follow-ups", label: "nav.follow_ups", icon: "clock", path: "/setup/follow-ups", hidden: true },
       { id: "test-lab", label: "nav.test_lab", icon: "flask-conical", path: "/setup/test-lab" },
       { id: "go-live", label: "nav.go_live", icon: "rocket", path: "/setup/go-live" },
     ],
@@ -119,7 +119,8 @@ export function SideNav({
   );
 }
 
-export const SETUP_STEPS: { id: string; label: MessageKey; path: string }[] = [
+/** Every setup step, including ones whose page is still a "not built yet" placeholder (`hidden`). */
+export const ALL_SETUP_STEPS: { id: string; label: MessageKey; path: string; hidden?: true }[] = [
   { id: "company", label: "setup.company", path: "/setup/company" },
   { id: "sources", label: "setup.sources", path: "/setup/sources" },
   { id: "knowledge", label: "setup.knowledge", path: "/setup/knowledge" },
@@ -127,11 +128,19 @@ export const SETUP_STEPS: { id: string; label: MessageKey; path: string }[] = [
   { id: "prices", label: "setup.prices", path: "/setup/price-lists" },
   { id: "playbook", label: "setup.playbook", path: "/setup/playbook" },
   { id: "order-form", label: "setup.order_form", path: "/setup/order-form" },
-  { id: "follow-ups", label: "setup.follow_ups", path: "/setup/follow-ups" },
+  { id: "follow-ups", label: "setup.follow_ups", path: "/setup/follow-ups", hidden: true },
   { id: "go-live", label: "setup.go_live", path: "/setup/go-live" },
 ];
 
-/** Setup steps bar: completed steps show a check, any step can be reopened. */
+/** The steps the step bar, the Overview and the admin page show and count: a hidden step is never an unfinished one. */
+export const SETUP_STEPS = ALL_SETUP_STEPS.filter((s) => !s.hidden);
+
+/**
+ * Setup steps bar: completed steps show a check, any step can be reopened.
+ * One source of state: pages pass setupProgress (lib/overview/setup.ts). Rule:
+ * every page under Setup shows the bar; a sub-page (a price list, a source)
+ * marks its step as current; Test lab is no step, so none is current there.
+ */
 export function SetupSteps({ basePath, current, completed }: { basePath: string; current: string; completed: ReadonlySet<string> }) {
   return (
     <nav aria-label={t("setup.steps")}>

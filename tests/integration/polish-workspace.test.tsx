@@ -48,6 +48,8 @@ const { default: SourcesPage } = await import("@/app/app/[account]/setup/sources
 const { default: SettingsPage } = await import("@/app/app/[account]/settings/page");
 const { default: ConversationsPage } = await import("@/app/app/[account]/conversations/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: GoLivePage } = await import("@/app/app/[account]/setup/go-live/page");
+const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
 
 const page = async (el: Promise<ReactElement>) => renderToStaticMarkup(await el);
 const props = (account: string, sp: Record<string, string> = {}, extra: Record<string, string> = {}) => ({
@@ -251,6 +253,34 @@ describe("Polish-2+5: seller workspace", () => {
       expect(html).toContain('class="sas-more"');
       expect(html).toMatch(/for="lf-open"[^>]*>.*Filters · 1/);
       expect(html).not.toMatch(/class="sas-chip" data-market/);
+    });
+
+    it("Package 7.2: one step bar everywhere: same states, 'Price lists', no Follow-ups step, on sub-pages and Test lab too", async () => {
+      const bar = (html: string) => {
+        const nav = html.split('<ol class="sas-steps">')[1]?.split("</ol>")[0] ?? "";
+        return [...nav.matchAll(/<a class="([^"]+)" href="[^"]*\/setup\/([a-z-]+)"/g)].map((m) => `${m[2]}:${m[1].includes("--done") ? "done" : "open"}`);
+      };
+      const [list] = await listPriceLists(db, acc);
+      const pages = await Promise.all([
+        page(CatalogPage(props(account.slug))),
+        page(GoLivePage(props(account.slug))),
+        page(TestLabPage(props(account.slug))),
+        page(PriceListPage(props(account.slug, {}, { lineageId: list.lineageId }) as never)),
+      ]);
+      const states = pages.map(bar);
+      // Go live used to show numbers for steps the other pages showed as done.
+      for (const s of states) expect(s).toEqual(states[0]);
+      expect(states[0]).toHaveLength(8);
+      expect(states[0].join(",")).not.toContain("follow-ups");
+      expect(states[0]).toContain("catalog:done");
+      expect(pages[0]).toMatch(/\/setup\/price-lists"[^>]*><span class="sas-steps__dot">[^<]*(<svg[\s\S]*?<\/svg>)?<\/span>Price lists</);
+      // Sub-page marks its step; Test lab is no step.
+      expect(pages[3]).toMatch(/href="[^"]*\/setup\/price-lists" aria-current="step"/);
+      expect(pages[2]).not.toContain('aria-current="step"');
+      // Follow-ups is out of the nav (its placeholder route stays).
+      holder.path = `/app/${account.slug}`;
+      const nav = renderToStaticMarkup(<SideNavForPath mode="seller" basePath={`/app/${account.slug}`} accountName="P" user={{ name: "D", initials: "D" }} />);
+      expect(nav).not.toContain("/setup/follow-ups");
     });
 
     it("opt-out icon follows the danger button colour", () => {
