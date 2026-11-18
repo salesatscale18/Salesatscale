@@ -513,7 +513,8 @@ describe("order forms, signatures and payments", () => {
     expect(html).toContain("₪1,000.00 per kit");
     expect(html).toContain("₪100.00/month");
     expect(html).toContain("Due today");
-    expect(html).toContain("Monthly total");
+    // A price list that includes VAT: one label for the monthly amount on every buyer page (round 3, B6).
+    expect(html).toContain("Monthly (VAT included)");
     expect(html).toContain("All prices include VAT.");
     const he = renderToStaticMarkup(createElement(OrderLines, { s: f.form.snapshot, tr: translator("he"), lang: "he" }));
     expect(he).toContain("ערכה");

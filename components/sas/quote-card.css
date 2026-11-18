@@ -16,6 +16,7 @@
   white-space: normal;
 }
 .sas-qc__num { font-variant-numeric: tabular-nums; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
+.sas-qc__ref { font-variant-numeric: normal; letter-spacing: 0; direction: ltr; unicode-bidi: isolate; white-space: nowrap; }
 .sas-qc__top { display: flex; gap: 10px; align-items: center; padding: 10px 12px; background: var(--qc-brand, #0f6b5a); color: var(--qc-brand-on, #fff); }
 .sas-qc__logo { width: 30px; height: 30px; border-radius: 8px; background: #fff; color: var(--qc-brand-text, var(--qc-brand, #0f6b5a)); display: grid; place-items: center;
   font-weight: 700; font-size: 11px; flex: none; }

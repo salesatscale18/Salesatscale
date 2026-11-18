@@ -274,5 +274,7 @@
   "buyer.placeholder.signatory_role": "למשל, בעלים",
   "buyer.summary.monthly_incl_vat": "חודשי כולל מע״מ",
   "buyer.summary.yearly_incl_vat": "שנתי כולל מע״מ",
-  "buyer.document_utc": "נרשם {time}"
+  "buyer.document_utc": "נרשם {time}",
+  "buyer.recurring_total.month_vat_included": "חודשי (כולל מע״מ)",
+  "buyer.recurring_total.year_vat_included": "שנתי (כולל מע״מ)"
 }

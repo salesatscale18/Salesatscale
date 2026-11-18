@@ -9,7 +9,7 @@ import { OrderLines } from "../lines";
 import { DeliveryRow } from "../delivery";
 import { PreferenceRow } from "../steps";
 import { PrintButton } from "./print-button";
-import { fakePaymentsEnabled } from "@/lib/payments/mode";
+import { legalInOrder } from "@/lib/orders/display";
 import { brandVars } from "@/lib/simulator/rules";
 import { buyerDateTime, buyerZone, utcStamp } from "../time";
 import "../buyer.css";
@@ -44,18 +44,22 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
   const initials = seller.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
   // The buyer's details in the form's own field order (step 2), then anything else that was signed.
   const order = [...s.fields, ...Object.keys(sig.buyerFields).filter((k) => !(s.fields as string[]).includes(k))];
+  // One way to name a version per language: "v1" in English, "גרסה 1" in Hebrew (buyer.version).
+  const ver = (version: number) => tr("buyer.version", { version });
+  const quoteVersion = `Q-${s.quote.number} ${ver(s.quote.version)}`;
+  // Sales terms first, then the other sections in the account's order (as on step 3).
+  const legal = legalInOrder(s.legal);
   const details = order.map((k) => [k, (sig.buyerFields as Record<string, string | undefined>)[k]] as const).filter(([, v]) => v);
   return (
     <div className="b-root" lang={lang} dir={dir(lang)} style={brandVars(s.seller.brandColor)}>
       <div className="b-page">
-        {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head" data-doc-seller="">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}><bdi>{seller}</bdi></b>{s.seller.legalName && s.seller.legalName !== seller ? <span className="b-mut"><bdi>{s.seller.legalName}</bdi></span> : null}</span>
         </header>
         <section className="b-sec">
           <h1 className="b-h1">{tr("buyer.document_title")}</h1>
-          <span><span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
+          <span data-doc-ids=""><bdi className="b-id">Q-{s.quote.number}</bdi> {ver(s.quote.version)} · <bdi className="b-id">{orderLabel(s.seller.tradeName, view.order.number)}</bdi></span>
         </section>
         <section className="b-sec">
           <OrderLines s={s} tr={tr} lang={lang} />
@@ -70,13 +74,13 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
         </section>
         <section className="b-sec b-terms" style={{ gap: 8 }}>
           <h2 className="b-h2">{tr("buyer.terms")}</h2>
-          {s.legal.map((l) => (
+          {legal.map((l) => (
             <div key={l.key}><b>{l.title}</b> <span className="b-mut">{tr("buyer.version", { version: l.version })}</span><pre>{l.body}</pre></div>
           ))}
         </section>
         <section className="b-sec">
           <b data-doc-signed="">{tr("buyer.document_signed", { name: sig.fullName, role: sig.role ? `, ${sig.role},` : "", date })}</b>
-          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `Q-${s.quote.number} v${s.quote.version} · ${s.legal.map((l) => `${l.title} v${l.version}`).join(", ")}` })} · {utcParts[0]}<bdi data-doc-utc="">{utcStamp(sig.signedAt)}</bdi>{utcParts[1]}</span>
+          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `${quoteVersion} · ${legal.map((l) => `${l.title} ${ver(l.version)}`).join(", ")}` })} · {utcParts[0]}<bdi data-doc-utc="">{utcStamp(sig.signedAt)}</bdi>{utcParts[1]}</span>
           <span className="b-mut" style={{ overflowWrap: "anywhere" }}>{hashParts[0]}<span className="b-mono" data-doc-hash="">{sig.documentHash}</span>{hashParts[1]}</span>
           <div className="b-noprint" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <PrintButton label={tr("buyer.print")} />

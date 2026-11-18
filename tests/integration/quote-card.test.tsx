@@ -315,7 +315,9 @@ describe("Quote card", () => {
     const later = new Date(Date.now() + 9 * 86_400_000);
     const exp = (await b.chat(later)).cards[String(v2.result.quote_message_id)];
     expect(exp).toMatchObject({ state: "expired", headline: "Wireless fridge sensor and 2 more", lines: [], total: { label: "Today", amount: "₪3,162.40" } });
-    expect(exp.status).toMatch(/^Expired on \d{1,2} [A-Z][a-z]{2}\. Write here and we'll send an updated quote\.$/);
+    // Full month names, as in the card's footer (round 3, B6).
+    expect(exp.status).toMatch(/^Expired on \d{1,2} [A-Z][a-z]{2,8}\. Write here and we'll send an updated quote\.$/);
+    expect(exp.status).not.toMatch(/ (Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\./);
   });
 
   it("headline: the agent's when valid (stored with the message link), dropped when it has prices; fallback only with 3+ items", async () => {
@@ -328,10 +330,10 @@ describe("Quote card", () => {
     const monthly = await b3.quote({ lines: [{ sku: "MON-1", qty: 2 }], sites: null });
     expect((await b1.chat()).cards[String(good.result.quote_message_id)].headline).toBe("2 fridge sensors and a kitchen hub, installed for you");
     expect((await b2.chat()).cards[String(bad.result.quote_message_id)].headline).toBe("Wireless fridge sensor and 2 more");
-    // Monthly only, one item: no headline, no delivery line, the first-charge footer, "Monthly" total.
+    // Monthly only, one item: no headline, no delivery line, the first-charge footer, the "Monthly incl. VAT" total (as on the form).
     expect((await b3.chat()).cards[String(monthly.result.quote_message_id)]).toMatchObject({
       headline: null, lines: [], total: null, delivery: null, firstCharge: "First charge when the service starts",
-      monthly: { heading: null, total: { label: "Monthly", amount: "₪212.40" } },
+      monthly: { heading: null, total: { label: "Monthly incl. VAT", amount: "₪212.40" } },
     });
   });
 

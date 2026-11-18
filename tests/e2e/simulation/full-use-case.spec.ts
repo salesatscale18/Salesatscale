@@ -283,10 +283,11 @@ test("5. Lead 1 (EN): quote with a fit fix, order form, decline then card paymen
   links.l1 = await sendForm();
 
   const buyer = await buyerPage(browser, links.l1);
-  await expect(buyer.getByText("Test payment. No real card is charged.")).toBeVisible();
+  // The test banner shows only on the payment and paid pages (round 3, B6).
+  await expect(buyer.getByText("Test payment. No real card is charged.")).toHaveCount(0);
   await expect(buyer.getByRole("heading", { name: /here is your order/ })).toBeVisible();
   await expect(buyer.getByText("One-time").first()).toBeVisible();
-  await expect(buyer.getByText("Monthly total")).toBeVisible();
+  await expect(buyer.getByText(/^Monthly (incl\. VAT|\(VAT included\)|total)$/)).toBeVisible();
   await noHorizontalScroll(buyer);
   await buyer.getByRole("link", { name: "עב" }).click();
   await expect(buyer.locator('.b-root[dir="rtl"]')).toBeVisible();

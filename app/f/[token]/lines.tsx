@@ -2,6 +2,7 @@ import { formatMoney } from "@/lib/domain/money";
 import type { Locale, translator } from "@/lib/i18n";
 import { chargeOf, type FormSnapshot, type SnapshotLine } from "@/lib/orders/service";
 import { unitLabel } from "@/lib/pricing/units";
+import { recurringTotalKey } from "@/lib/orders/display";
 
 type Tr = ReturnType<typeof translator>;
 type Period = "month" | "year";
@@ -63,6 +64,11 @@ export function LineName({ s, l, tr }: { s: Pick<FormSnapshot, "lines" | "recurr
   const at = label.indexOf(isolate);
   if (at < 0) return <bdi>{label}</bdi>;
   return <span data-line-name="">{label.slice(0, at)}<bdi>{isolate}</bdi>{label.slice(at + isolate.length)}</span>;
+}
+
+/** The recurring total's label, the same on every buyer page and the quote card (lib/orders/display.ts). */
+export function recurringLabel(s: Pick<FormSnapshot, "pricesIncludeTax" | "taxRateBp" | "recurring">, tr: Tr, period: Period | null | undefined) {
+  return tr(recurringTotalKey({ pricesIncludeTax: s.pricesIncludeTax, taxRateBp: s.taxRateBp, taxMinor: s.recurring.taxMinor }, period));
 }
 
 /** "One-time", "Monthly" or "Yearly". */
@@ -132,7 +138,7 @@ export function OrderLines({ s, tr, lang, paidLabel }: {
               <div className="b-row b-mut"><span>{vat}</span><span className="b-num">{money(s.recurring.taxMinor, period)}</span></div>
             </>
           ) : null}
-          <div className="b-row" style={{ fontWeight: 700 }}><span>{tr(period === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span><span className="b-num">{money(s.recurring.totalMinor, period)}</span></div>
+          <div className="b-row" style={{ fontWeight: 700 }} data-recurring-total=""><span>{recurringLabel(s, tr, period)}</span><span className="b-num">{money(s.recurring.totalMinor, period)}</span></div>
         </div>
       ) : null}
       <span className="b-mut">{plusTax ? tr("buyer.excl_vat") : tr("buyer.incl_vat")}</span>

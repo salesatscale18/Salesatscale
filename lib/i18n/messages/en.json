@@ -2561,5 +2561,7 @@
   "ofs.lang_version": "{lang} · v{version}",
   "pipeline.changed.sources": "{changed} of {total} sources",
   "pipeline.changed.stage2": "catalog or playbook",
-  "pipeline.changed.rules": "how the analysis works"
+  "pipeline.changed.rules": "how the analysis works",
+  "buyer.recurring_total.month_vat_included": "Monthly (VAT included)",
+  "buyer.recurring_total.year_vat_included": "Yearly (VAT included)"
 }

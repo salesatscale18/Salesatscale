@@ -186,7 +186,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
   const yesterday = new Date(now.getTime() - 86_400_000);
   const dateLabel = (d: Date) => dayKey(d) === dayKey(now) ? strings.today
     : dayKey(d) === dayKey(yesterday) ? strings.yesterday
-    : new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) }).format(d);
+    : new Intl.DateTimeFormat(locale, { day: "numeric", month: locale.startsWith("he") ? "long" : "short", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) }).format(d);
   const timeOf = (d: Date) => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
 
   const rows: ReactNode[] = [];

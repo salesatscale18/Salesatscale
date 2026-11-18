@@ -29,7 +29,7 @@ export function QuoteCard({ card, sellerOnly }: {
         <span className="sas-qc__titles">
           <b className="sas-qc__title">{card.title}</b>
           <span className="sas-qc__sub">
-            {card.sub ?? (dim ? <Num>{card.ref}</Num> : <><bdi>{card.seller}</bdi> · <Num>{card.ref}</Num></>)}
+            {card.sub ?? (dim ? <Ref>{card.ref}</Ref> : <><bdi>{card.seller}</bdi> · <Ref>{card.ref}</Ref></>)}
           </span>
         </span>
       </div>
@@ -89,6 +89,8 @@ export function QuoteCard({ card, sellerOnly }: {
 }
 
 const Num = ({ children }: { children: ReactNode }) => <span className="sas-qc__num">{children}</span>;
+/** The quote number ("Q-1003"): left-to-right, plain figures, no extra character spacing. */
+const Ref = ({ children }: { children: ReactNode }) => <span className="sas-qc__ref">{children}</span>;
 
 /**
  * The headline. The agent's own takes its direction from its text; the

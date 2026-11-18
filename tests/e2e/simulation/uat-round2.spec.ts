@@ -927,7 +927,8 @@ test("E1 Review and sign (English)", async ({ browser }) => {
   await page.goto(`${S.appBase}/orders?quote=${S.quotes.en}`);
   S.links.en = await sendForm();
   const buyer = await buyerPage(browser, S.links.en);
-  await expect(buyer.getByText("Test payment. No real card is charged.")).toBeVisible();
+  // The test banner shows only on the payment and paid pages (round 3, B6).
+  await expect(buyer.getByText("Test payment. No real card is charged.")).toHaveCount(0);
   await expect(buyer.locator(".b-root")).toHaveAttribute("style", /--brand:\s*#0e7c66/i);
   await expect(buyer.getByRole("heading", { name: /here is your order/ })).toBeVisible();
   S.supportOnReview = await buyer.getByText("support@uat-polar.test · 03 555 0142").first().isVisible();
@@ -936,7 +937,7 @@ test("E1 Review and sign (English)", async ({ browser }) => {
   await expect(buyer.locator('[data-charge="one_time"]').first()).toContainText("One-time");
   await expect(buyer.locator('[data-charge="recurring"]').first()).toContainText("Monthly");
   await expect(buyer.getByText("Due today")).toBeVisible();
-  await expect(buyer.getByText("Monthly total")).toBeVisible();
+  await expect(buyer.getByText("Monthly incl. VAT")).toBeVisible();
   // The home price list is without VAT (B2b), so VAT rows show.
   await expect(buyer.getByText("One-time before VAT")).toBeVisible();
   await expect(buyer.getByText("Monthly before VAT")).toBeVisible();
