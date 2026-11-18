@@ -149,7 +149,7 @@ describe("Sales plays overview", () => {
     expect(by("too_expensive")).toMatchObject({ own: true, line: "Ask. Compare.", factsLine: { kind: "facts", n: 2 } });
     expect(by("price_early")).toMatchObject({ own: false, factsLine: { kind: "facts", n: 1 } });
     expect(by("existing_solution").factsLine).toEqual({ kind: "suggested", facts: 2, card: false });
-    expect(by("competitor").factsLine).toEqual({ kind: "needs", text: "Add approved comparison facts" });
+    expect(by("competitor").factsLine).toEqual({ kind: "needs", text: "Add approved comparison facts", missing: ["approved comparison facts"] });
     expect(by("not_now").factsLine).toEqual({ kind: "none" });
     expect(addHint("The questions that decide which products fit.")).toBe("Add the questions that decide which products fit");
   });

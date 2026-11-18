@@ -7,6 +7,7 @@ import { TRADE_NAME_MAX, whiteContrast } from "@/lib/accounts/company";
 import { marketLanguages } from "@/lib/agent/names-auto";
 import { nameLanguages, tradeNameRows, typedLanguage } from "@/lib/agent/core/names";
 import { LocalNames } from "../local-names";
+import { PlatformFixed } from "../playbook/parts";
 import { listVersions } from "@/lib/agent/service";
 import { defaultPlaybook } from "@/lib/agent/playbook";
 import { getOrderFormSettings } from "@/lib/orders/settings";
@@ -39,6 +40,8 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   const nameLangs = await marketLanguages(appDb, account.id);
   const tradeRows = tradeNameRows(account, nameLanguages(nameLangs.markets, nameLangs.account, typedLanguage(account.tradeName)));
   const heAgent = playbook.agentNameLocal?.he?.trim();
+  const NAME_MARK = "\u0000name\u0000";
+  const [introBefore, introAfter = ""] = t("company.agent_preview", { name: NAME_MARK }).split(NAME_MARK);
   const lead = leadTimeOrNull(account.deliveryLeadTime);
   // The example uses the account's own time zone and weekend (a market may differ).
   const plan = deliveryPlanFor(account, { overrides: {}, countries: [] });
@@ -148,8 +151,13 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                   <a href={`${base}/setup/playbook`}>{t("company.agent_edit")}</a>
                 </span>
               </div>
-              <div style={{ background: "var(--agent-soft)", borderRadius: "var(--radius-md)", padding: "12px 14px" }}>{t("company.agent_preview", { name: playbook.agentName })}</div>
-              <span className="sas-small">{t("company.agent_disclosure")}</span>
+              {/* Set by the platform: the fixed words muted, the seller's agent name tinted (as in the Opening preview). */}
+              <PlatformFixed>
+                <span data-agent-intro="">
+                  {introBefore}<span data-part="seller" style={{ background: "var(--primary-soft)", color: "var(--primary)", borderRadius: 4, paddingInline: 3 }}><bdi>{playbook.agentName}</bdi></span>{introAfter}
+                </span>
+                <span style={{ display: "block", marginTop: 4 }}>{t("company.agent_disclosure")}</span>
+              </PlatformFixed>
             </div>
           </section>
         </div>

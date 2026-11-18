@@ -7,6 +7,7 @@ import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
 import { pendingPlaySuggestions } from "@/lib/pipeline/service";
 import { t, type MessageKey } from "@/lib/i18n";
 import { PlaybookToc } from "../toc";
+import { DraftBanner, PlatformFixed } from "../parts";
 import { filterPlays, PLAY_FILTERS, playCounts, playsOverview, type PlayFilter, type PlayOverview } from "./overview";
 import { PlayStatus, SuggestedTag } from "./parts";
 
@@ -20,11 +21,17 @@ function FactsLine({ p }: { p: PlayOverview }) {
   switch (line.kind) {
     case "facts":
       return (
-        <span style={{ ...style, color: "var(--ink-muted)" }} data-facts="facts">
-          <Icon name="check" />{t(line.n === 1 ? "playbook.plays.facts_one" : "playbook.plays.facts_n", { n: line.n })}
+        <span style={{ ...style, color: "var(--ink-muted)", alignItems: "flex-start" }} data-facts="facts">
+          <Icon name="check" />
+          <span style={{ minWidth: 0 }}>
+            {t(line.n === 1 ? "playbook.plays.facts_short_one" : "playbook.plays.facts_short", { n: line.n })}
+            {line.missing.length ? <span style={{ color: "var(--warning)", fontWeight: 600 }} data-missing="">{" · "}{t("playbook.plays.add_missing", { what: line.missing.join(", ") })}</span> : null}
+          </span>
           {p.suggested ? <SuggestedTag /> : null}
         </span>
       );
+    case "limits":
+      return <span style={{ ...style, color: "var(--ink-muted)" }} data-facts="limits"><Icon name="sliders" />{t("playbook.plays.uses_handoff")}</span>;
     case "suggested":
       return (
         <span style={{ ...style, color: "var(--ink-muted)" }} data-facts="suggested">
@@ -55,6 +62,8 @@ export default async function PlaysPage({ params, searchParams }: { params: Prom
   const counts = playCounts(plays);
   const shown = filterPlays(plays, filter);
   return (
+    <>
+    <DraftBanner draft={draft.version} live={live?.version ?? null} />
     <main className="sas-shell__content">
       <header className="sas-stack-2">
         <div className="sas-page-head">
@@ -69,17 +78,17 @@ export default async function PlaysPage({ params, searchParams }: { params: Prom
         <SetupSteps basePath={base} current="playbook" completed={progress} />
       </header>
       {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.play.saved")}</span></div> : null}
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
+      <div className="pb-layout">
         <PlaybookToc playbookHref={playbookHref} playsHref={here} current="plays" />
-        <section aria-labelledby="pl-h" className="sas-stack-4" style={{ flex: "999 1 520px", minWidth: 0 }}>
+        <section aria-labelledby="pl-h" className="sas-stack-4 pb-main">
           <div className="sas-stack-2" style={{ gap: 2 }}>
             <h2 id="pl-h" className="sas-heading">{t("playbook.plays")}</h2>
             <span className="sas-small">{t("playbook.plays.intro")}</span>
           </div>
-          <nav aria-label={t("playbook.plays.filter")} className="sas-views">
+          <nav aria-label={t("playbook.plays.filter")} className="sas-views pb-filters">
             {PLAY_FILTERS.map((f) => (
               <a key={f} className="sas-view" href={f === "all" ? here : `${here}?filter=${f}`} aria-current={f === filter ? "page" : undefined}>
-                {t(FILTER_LABEL[f])} <span className="sas-num">{counts[f]}</span>
+                {t(FILTER_LABEL[f])} <span className="pb-count">{counts[f]}</span>
               </a>
             ))}
           </nav>
@@ -107,9 +116,10 @@ export default async function PlaysPage({ params, searchParams }: { params: Prom
               ))}
             </ul>
           )}
-          <span className="sas-small">{t("playbook.plays.core_rules")}</span>
+          <PlatformFixed>{t("playbook.plays.core_rules")}</PlatformFixed>
         </section>
       </div>
     </main>
+    </>
   );
 }
