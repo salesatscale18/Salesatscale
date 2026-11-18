@@ -125,7 +125,7 @@
   "buyer.sim.status.delivered": "נמסר",
   "buyer.sim.status.read": "נקרא",
   "buyer.sim.refused.opted_out": "ביקשת לא לקבל הודעות. לא יישלחו כאן הודעות נוספות.",
-  "buyer.sim.refused.account_not_live": "הצ׳אט עדיין לא פעיל: {company} עוד לא עלו לאוויר.",
+  "buyer.sim.refused.account_not_live": "הצ׳אט של {company} עדיין לא פעיל.",
   "buyer.sim.refused.no_agent": "הצ׳אט עדיין לא פעיל: אין סוכן פעיל.",
   "buyer.sim.refused.spend_cap": "המוכר הגיע למגבלה חודשית. ההודעה לא נשלחה.",
   "buyer.sim.refused.rate_limited": "יותר מדי הודעות. המתינו דקה ונסו שוב.",
@@ -257,7 +257,7 @@
   "buyer.followup.asked": "ביקשת שאחזור אליך היום.",
   "buyer.followup.good_time": "זה זמן טוב לדבר?",
   "buyer.sim.expired_title": "תוקף הקישור לצ׳אט פג",
-  "buyer.sim.expired_body": "קישורים מפסיקים לעבוד אחרי 14 יום בלי הודעות. בקשו מ{company} קישור חדש.",
-  "buyer.sim.refused.expired": "תוקף הקישור לצ׳אט פג. בקשו מ{company} קישור חדש.",
+  "buyer.sim.expired_body": "קישורים מפסיקים לעבוד אחרי 14 ימים בלי הודעות. בקשו מ־{company} קישור חדש.",
+  "buyer.sim.refused.expired": "תוקף הקישור לצ׳אט פג. בקשו מ־{company} קישור חדש.",
   "buyer.sim.refused.daily_limit": "הצ׳אט הגיע למגבלת ההודעות היומית. נסו שוב מחר."
 }
