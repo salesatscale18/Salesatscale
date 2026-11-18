@@ -2561,5 +2561,12 @@
   "ofs.lang_version": "{lang} · v{version}",
   "pipeline.changed.sources": "{changed} of {total} sources",
   "pipeline.changed.stage2": "catalog or playbook",
-  "pipeline.changed.rules": "how the analysis works"
+  "pipeline.changed.rules": "how the analysis works",
+  "kit.apply": "Apply",
+  "kit.sort": "Sort",
+  "kit.delete": "Delete",
+  "kit.close": "Close",
+  "kit.sections": "Sections",
+  "kit.edit": "Edit",
+  "kit.drop_here": "Drop files here"
 }
