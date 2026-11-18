@@ -232,7 +232,7 @@ export function DeliveryChoice({ s, values, choices, errors, lang, tr }: {
   );
 }
 
-/** "Signing as Rina Cohen, Owner, for Rina's Kitchen Ltd": names in bold, from the template's placeholders. */
+/** "Signing as Rina Cohen, Owner, for Rina's Studio Ltd": names in bold, from the template's placeholders. */
 export function SigningAs({ name, company, tr, change }: { name: string; company: string; tr: Tr; change: ReactNode }) {
   const parts = tr("buyer.signing_as").split(/(\{name\}|\{company\})/);
   return (

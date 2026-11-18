@@ -35,7 +35,7 @@ const PLAIN_MAX = 60;
 const VALUE_MAX = 140;
 const VALUE_STORED_MAX = 200;
 
-/** "SNS-200 Wireless sensor" -> "Wireless sensor": what the agent says when there is no chat name. */
+/** "SEAT-M Monthly user seat" -> "Monthly user seat": what the agent says when there is no chat name. */
 export function nameWithoutCode(name: string, sku: string): string {
   const n = name.trim();
   const s = sku.trim();

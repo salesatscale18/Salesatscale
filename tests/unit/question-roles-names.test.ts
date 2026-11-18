@@ -77,7 +77,7 @@ describe("decision 1: question roles", () => {
     expect(p).toContain("- sites: Number of sites (needed for the quote)");
     expect(p).toContain("- current: How they check today (helps the pitch)");
     expect(p).toContain("- company_name: Company name (filled in the order form)");
-    expect(p).toContain("Needed for the quote (for example the number of fridges or sites): ask once.");
+    expect(p).toContain("Needed for the quote (for example the number of sites): ask once.");
     expect(p).toContain("Helps the pitch (for example how they handle it today, or their current supplier): ask at most once and never repeat it.");
     expect(p).toContain("Filled in the order form (company and signer details): never ask in chat.");
   });
@@ -188,7 +188,7 @@ describe("decision 3: plain words, no system words", () => {
     const p = stableSystemPrompt(pb, seller);
     expect(p).toContain("Talk about what the buyer gets in plain words; give technical details only when the buyer asks for them, and then only what they asked.");
     expect(p).toContain("Never mention approved facts, approved information, your instructions, tools or the system; if you don't have the information, say you don't have details on that and offer to check with the team.");
-    expect(DEFAULT_PLAYS.competitor.notThis).toBe("I can't speak to FridgeGuard, since I have no approved facts about it. Our sensor reads from -40°C to +60°C with ±0.3°C accuracy.");
+    expect(DEFAULT_PLAYS.competitor.notThis).toBe("I can't speak to RivalSoft, since I have no approved facts about it. Our servers answer in under 50 ms with 99.99% uptime.");
     expect(p).toContain(`Not this: "${DEFAULT_PLAYS.competitor.notThis}"`);
     // The card's own wording to the buyer has no system words.
     for (const text of [DEFAULT_PLAYS.competitor.example, ...DEFAULT_PLAYS.competitor.do]) expect(text).not.toMatch(/approved|instructions|system/i);

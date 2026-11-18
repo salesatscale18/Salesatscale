@@ -13,6 +13,7 @@ import { coreDesign, playsText } from "./core/design";
 import { isReservedFieldKey } from "./core/facts";
 import { deriveStage, NO_STAGE_FACTS, type StageFacts } from "./core/stage";
 import { namesInstruction, type BuyerNames } from "./core/names";
+import { conversationExamples, type ExampleCatalogItem } from "./core/examples";
 
 const FIELD_STAGE: Record<PlaybookField["stage"], string> = {
   before_quote: "needed for the quote",
@@ -28,7 +29,13 @@ const neverLine = (n: string) => (/^never\b/i.test(n.trim()) ? `- ${n.trim()}` :
 /** The playbook's own fields: a key in the reserved range is never shown to the model as a field. */
 const playbookFields = (p: Playbook) => p.fields.filter((f) => !isReservedFieldKey(f.key));
 
-export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; currency: string; languages: string[] }): string {
+/**
+ * `catalog`: the published catalog's items, in catalog order. Only their plain
+ * names and value lines are read, to build the examples (lib/agent/core/examples.ts):
+ * fixed for the published catalog, so the prompt stays byte-stable across turns.
+ */
+export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; currency: string; languages: string[] }, catalog?: readonly ExampleCatalogItem[] | null): string {
+  const ex = conversationExamples(p, catalog);
   const fields = playbookFields(p).map((f) => `- ${f.key}: ${f.label} (${FIELD_STAGE[f.stage] ?? f.stage})${f.hint ? ` - ${f.hint}` : ""}${f.example ? `. Example question: "${f.example}"` : ""}`).join("\n") || "- (none)";
   const objections = p.objections.map((o) => `- "${o.objection}" -> ${o.answer}`).join("\n") || "- (none yet)";
   const outcomes = [
@@ -39,7 +46,7 @@ export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; cur
 
 Your instructions have three parts: how every conversation runs, this seller's playbook, and the sales plays. After them, each turn, comes "Stage now": where this conversation stands.
 
-${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting })}
+${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting }, ex)}
 
 ## Seller playbook: ${seller.tradeName}
 
@@ -82,7 +89,7 @@ ${objections}
 ### Currency
 Amounts are in the currency of the buyer's price list, as the tools show them (the seller's default is ${seller.currency}).
 
-${playsText(p)}`;
+${playsText(p, ex)}`;
 }
 
 /** A catalog item the agent may name in plain words (from the published catalog). */

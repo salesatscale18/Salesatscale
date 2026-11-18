@@ -131,7 +131,7 @@ export const TOOL_DEFS: ToolDef[] = [
         },
         headline: {
           type: ["string", "null"],
-          description: 'One line on what the buyer gets, max 60 characters, no prices, e.g. "2 fridge sensors and a kitchen hub, installed for you"; null to leave it out.',
+          description: 'One line on what the buyer gets, max 60 characters, no prices, e.g. "12 user seats and setup help in the first week"; null to leave it out.',
         },
         assumed: {
           type: ["array", "null"],
@@ -179,7 +179,7 @@ export const TOOL_DEFS: ToolDef[] = [
       type: "object",
       properties: {
         due_at: { type: "string", description: 'The agreed time as an ISO date-time with the offset of the seller\'s time zone, e.g. "2026-11-18T10:00:00+02:00". Use "Local time now" from your context.' },
-        topic: { type: "string", description: 'What to come back about, short, in the buyer\'s words, e.g. "the quote for the second kitchen".' },
+        topic: { type: "string", description: 'What to come back about, short, in the buyer\'s words, e.g. "the quote for the second office".' },
       },
       required: ["due_at", "topic"],
       additionalProperties: false,
@@ -603,7 +603,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       if (noValue.length) {
         return refuse("Assumption needed", {
           missing: noValue.map((f) => f.label), keys: noValue.map((f) => f.key),
-          message: "The buyer did not answer these after two questions. Call create_quote again with assumed [{key, value}] for each, and say the assumption in your close, e.g. \"I've quoted for one kitchen; tell me if that's different.\"",
+          message: "The buyer did not answer these after two questions. Call create_quote again with assumed [{key, value}] for each, and say the assumption in your close, e.g. \"I've quoted for 10 users; tell me if that's different.\"",
         });
       }
       const saved = await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, missing.map((f) => ({ key: f.key, value: given.get(f.key)!, provenance: "inferred" as const })));

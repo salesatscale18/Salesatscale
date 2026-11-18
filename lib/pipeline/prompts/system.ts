@@ -17,7 +17,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { PLAY_KEYS } from "@/db/schema";
 
-export const PROMPT_VERSION = "system-v5";
+export const PROMPT_VERSION = "system-v6";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -70,7 +70,7 @@ const FACTS_SCHEMA = obj({
   }), "General facts a buyer could ask about."),
   contradictions: arr(obj({
     topic: str("Short English topic."),
-    summary: str("What the sources disagree about, in English, e.g. Sensor warranty length."),
+    summary: str("What the sources disagree about, in English, e.g. Warranty length."),
     options: arr(obj({
       statement: str("One of the conflicting statements, in the language of its source."),
       language: str("ISO 639-1 code of the statement."),
@@ -147,12 +147,12 @@ const PLAYBOOK_SCHEMA = obj({
     evidence: EVIDENCE,
   }), "Good open questions reps ask that are not already a field, each with its role."),
   opener: obj({
-    leads_ask_about: str("The most common thing leads ask about when they contact the seller, a few English words that fit \"You asked about ...\", at most 120 characters, e.g. monitoring your fridge temperatures. Empty if unclear."),
+    leads_ask_about: str("The most common thing leads ask about when they contact the seller, a few English words that fit \"You asked about ...\", at most 120 characters, e.g. a team plan for 20 users. Empty if unclear."),
     topics: arr(obj({
       text: str("A topic leads ask about, a few English words that fit \"You asked about ...\", at most 120 characters."),
       text_he: str("The same topic in Hebrew, or empty."),
     }), "Up to 6 topics leads ask about, the most common first (it repeats leads_ask_about)."),
-    opening_question: str("One easy English question about the buyer's situation today, at most 200 characters, e.g. How do you check your fridge temperatures today? Empty if unclear."),
+    opening_question: str("One easy English question about the buyer's situation today, at most 200 characters, e.g. How do you plan your team's shifts today? Empty if unclear."),
     opening_question_he: str("The opening question in Hebrew, or empty."),
     evidence: EVIDENCE,
   }, "The agent's first message: what leads ask about and the opening question."),
@@ -171,8 +171,8 @@ const PLAYBOOK_SCHEMA = obj({
   }), "The seller's own way of handling a situation, only when call transcripts clearly show it. Usually empty."),
   catalog_items: arr(obj({
     sku: str("The item's SKU from the catalog, exactly."),
-    plain_name: str("What a buyer would call the item in chat, plain English words, at most 60 characters, e.g. wireless fridge sensor. Empty to keep the current one."),
-    value_line: str("What the buyer gets from the item, one English sentence, at most 140 characters; an outcome, not features. Empty to keep the current one."),
+    plain_name: str("What a buyer would call the item in chat, plain English words, at most 60 characters, e.g. office cleaning visit. Empty to keep the current one."),
+    value_line: str("What the buyer gets from the item, one English sentence, at most 140 characters; an outcome, not features, e.g. Your site gets the machine the next morning, also for last-minute jobs. Empty to keep the current one."),
     evidence: EVIDENCE,
   }), "Plain names and one-sentence value lines for catalog items."),
 });

@@ -5,7 +5,7 @@
  * Kinds:
  * - requires:  when `sku` is quoted, one of `oneOf` must be too. With
  *              `perSite`, their total quantity must be at least the site count.
- * - max_per:   at most `max` of `sku` per unit of `perOneOf` (e.g. sensors per gateway).
+ * - max_per:   at most `max` of `sku` per unit of `perOneOf` (e.g. user seats per account).
  * - advice:    a sentence the agent should consider (shown when `sku` is quoted, or always).
  * - auto_add:  "Add automatically with" (lib/pricing/auto-add.ts). Not a check:
  *              the pricing engine adds the line, and checkFit skips it.

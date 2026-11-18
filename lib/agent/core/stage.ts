@@ -132,7 +132,7 @@ function missingForQuoteLine(d: Detail): string {
   const parts = [
     first.length ? `ask for ${first.join(", ")} in one short question` : "",
     again.length ? `ask once more for ${again.join(", ")}, in different words` : "",
-    assume.length ? `quote on an assumption for ${assume.join(", ")} (create_quote with assumed) and say it in the close, e.g. "I've quoted for one kitchen; tell me if that's different"` : "",
+    assume.length ? `quote on an assumption for ${assume.join(", ")} (create_quote with assumed) and say it in the close, e.g. "I've quoted for <the value you assumed>; tell me if that's different"` : "",
   ].filter(Boolean);
   return `Do: ${parts.join("; then ")}. As soon as nothing is left to ask, call create_quote. Never hold the quote back for a question the buyer skipped twice.`;
 }

@@ -107,10 +107,12 @@ export async function runBuyerTurn(
   // Both system blocks are fixed for the whole turn, so the prompt prefix stays
   // byte-stable across tool rounds. Deal-state changes made during the turn reach
   // the model through the update_deal_state tool result.
+  // The examples in the stable prompt come from the published catalog: fixed until it is published again.
+  const activeItems = catalog?.items.filter((i) => i.active) ?? null;
   const system: [string, string] = [
-    stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }),
+    stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }, activeItems),
     `${turnContext(version.playbook, deal, {
-      stage: stageFacts, agentMessages, opener, catalog: catalog?.items.filter((i) => i.active), names: buyerNames(version.playbook, account, lang),
+      stage: stageFacts, agentMessages, opener, catalog: activeItems, names: buyerNames(version.playbook, account, lang),
       // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
       followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, account.timezone), topic: followUp.topic } : null,
       localNow: localNowLine(new Date(), account.timezone),

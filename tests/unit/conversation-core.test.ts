@@ -7,6 +7,7 @@ import { PLAY_KEYS, type DealFieldValue, type Playbook, type PlayCard } from "@/
 import { defaultPlaybook, derivedStage } from "@/lib/agent/playbook";
 import { stableSystemPrompt, turnContext } from "@/lib/agent/prompt";
 import { coreDesign, playsText } from "@/lib/agent/core/design";
+import { conversationExamples } from "@/lib/agent/core/examples";
 import { PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "@/lib/agent/core/facts";
 import { openerText, writtenIn } from "@/lib/agent/core/opener";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
@@ -182,8 +183,8 @@ describe("stable system prompt", () => {
     expect(core).toBeGreaterThan(0);
     expect(playbook).toBeGreaterThan(core);
     expect(plays).toBeGreaterThan(playbook);
-    expect(p).toContain(coreDesign({ tradeName: "Polar", meeting: true }));
-    expect(p.endsWith(playsText(pb))).toBe(true);
+    expect(p).toContain(coreDesign({ tradeName: "Polar", meeting: true }, conversationExamples(pb)));
+    expect(p.endsWith(playsText(pb, conversationExamples(pb)))).toBe(true);
   });
 
   it("states the stages, the rules in every stage and the credibility rules", () => {

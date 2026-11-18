@@ -23,7 +23,7 @@ export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playb
   };
 }
 
-/** "Fridges / sites" → "fridges_sites" */
+/** "Users / sites" → "users_sites" */
 export function fieldKey(label: string): string {
   return label.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || "field";
 }

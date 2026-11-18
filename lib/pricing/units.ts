@@ -3,7 +3,7 @@
  *
  * An item's `unit` is one of UNIT_KEYS, or "custom" with names per language in
  * `unit_custom`. Items made before this list existed hold free text (e.g.
- * "sensor"); unitLabel shows that text as it is.
+ * "seat"); unitLabel shows that text as it is.
  */
 import type { UnitCustom } from "@/db/schema";
 

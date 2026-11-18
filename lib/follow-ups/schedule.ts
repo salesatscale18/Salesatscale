@@ -98,7 +98,7 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
   return { ok: true, followUp, dueLocal, replaced: !!existing };
 }
 
-/** The deal's next step for a scheduled follow-up: "Follow up Tue 18 Nov 10:00: the second kitchen". */
+/** The deal's next step for a scheduled follow-up: "Follow up Tue 18 Nov 10:00: the second office". */
 export const followUpNextStep = (dueLocal: string, topic: string | null) => `Follow up ${dueLocal}${topic ? `: ${topic}` : ""}`;
 
 // ---------------------------------------------------------------------------

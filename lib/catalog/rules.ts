@@ -99,7 +99,7 @@ export function parseCatalogItem(raw: Record<string, unknown>, currency: string)
   const name = s(raw.name);
   if (!name) errors.name = "Enter the product name.";
   const unit = s(raw.unit).toLowerCase();
-  if (!unit || unit.length > 30) errors.unit = "Say what one unit is, for example sensor or site.";
+  if (!unit || unit.length > 30) errors.unit = "Say what one unit is, for example a site, a user or an hour.";
   const chargeType = raw.chargeType === "recurring" ? "recurring" : "one_time";
   const priceText = s(raw.price);
   let priceMinor: number | null = null;

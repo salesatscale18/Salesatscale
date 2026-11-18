@@ -106,7 +106,7 @@ function Headline({ card }: { card: QuoteCardView }) {
   );
 }
 
-/** "2 × Wireless sensor" (lib/agent/quote-card.ts lineView): the item name is isolated (<bdi>), so mixed-direction names are not reordered. */
+/** "2 × Monthly user seat" (lib/agent/quote-card.ts lineView): the item name is isolated (<bdi>), so mixed-direction names are not reordered. */
 function LineLabel({ label }: { label: string }) {
   const m = /^(\d+ × )(.+)$/s.exec(label);
   return m ? <>{m[1]}<bdi>{m[2]}</bdi></> : <bdi>{label}</bdi>;

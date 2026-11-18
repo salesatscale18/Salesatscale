@@ -1,7 +1,7 @@
 /**
  * Agent replies are chat messages, shown as plain text (WhatsApp and the
  * buyer chat). The model sometimes writes Markdown; this strips the marks a
- * buyer would see literally (scored round, 17 Nov: "**Sensors:**"), and keeps
+ * buyer would see literally (scored round, 17 Nov: "**Options:**"), and keeps
  * the words, line breaks and list dashes.
  */
 export function plainChatText(text: string): string {

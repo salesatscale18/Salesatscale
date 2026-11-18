@@ -160,12 +160,12 @@ export const agentNameIn = (p: TemplateInput["playbook"], lang: string) => p.age
 /** The seller's local trade name in the buyer's language, else the trade name. */
 export const tradeNameIn = (a: TemplateInput["account"], lang: string) => a.tradeNameLocal?.[lang]?.trim() || a.tradeName;
 
-/** Hebrew "from": attached to a Hebrew word ("מפולאר"), with a hyphen before a foreign one ("מ-Polar"). */
+/** Hebrew "from": attached to a Hebrew word ("מאקמה"), with a hyphen before a foreign one ("מ-Acme"). */
 const heFrom = (name: string) => (/^[֐-׿]/.test(name) ? `מ${name}` : `מ-${name}`);
 
 /**
- * EN: "Hi Rina, it's Maya from Polar. You asked me to check back today about
- * the second kitchen. Is now a good time?" HE follows the agent's gender in the
+ * EN: "Hi Rina, it's Maya from Acme. You asked me to check back today about
+ * the second office. Is now a good time?" HE follows the agent's gender in the
  * self-introduction (no slashes); without a topic the middle sentence has none.
  */
 export function followUpText(input: TemplateInput): string {
