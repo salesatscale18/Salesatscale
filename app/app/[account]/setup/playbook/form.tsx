@@ -186,7 +186,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
           <input className="sas-input" id={`pb-${at}.label`} name={`${at}.label`} maxLength={60} value={f.label} onChange={(ev) => update({ label: ev.target.value })} {...invalid(`${at}.label`)} />
           {err(`${at}.label`)}
           <label className="sas-sr" htmlFor={`pb-${at}.example`}>{t("playbook.field.example")}</label>
-          {/* The example question in full, as a muted second line that grows with the text. */}
+          {/* The example question in full: plain muted text under the question that grows with it; still editable (border on hover/focus). */}
           <textarea
             className="sas-textarea pb-grow pb-q-example" id={`pb-${at}.example`} name={`${at}.example`} rows={1} maxLength={200}
             placeholder={t("playbook.field.example_placeholder")} value={f.example} onChange={(ev) => update({ example: ev.target.value })}
@@ -210,7 +210,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const fieldTable = (rows: FieldRow[], stages: PlaybookField["stage"][], group: (r: FieldRow) => boolean) => (
     <div style={{ overflowX: "auto", marginInline: -16 }}>
       <table className="sas-table pb-q-table">
-        <colgroup><col /><col style={{ width: 224 }} /><col style={{ width: 112 }} /></colgroup>
+        <colgroup><col /><col style={{ width: 224 }} /><col style={{ width: 124 }} /></colgroup>
         <thead><tr>
           <th scope="col" style={{ paddingInline: "16px 6px" }}>{t("playbook.field.label")}</th>
           <th scope="col" style={{ paddingInline: 6 }}>{t("playbook.field.needed")}</th>
@@ -371,7 +371,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
             const update = (patch: Partial<ObjectionRow>) => setObjections((rs) => rs.map((r) => (r.id === o.id ? { ...r, ...patch } : r)));
             const name = o.objection.trim() || t("playbook.objection.unnamed", { n: i + 1 });
             return (
-              <li key={o.id} style={{ display: "flex", flexWrap: "wrap", gap: 12, paddingBlock: 12, alignItems: "flex-start" }}>
+              <li key={o.id} className="pb-obj-row" data-testid="objection-row">
                 <div className="sas-input-group" style={{ flex: "1 1 200px" }}>
                   <label className="sas-input-label" htmlFor={`pb-${at}.objection`}>{t("playbook.objection.text")}</label>
                   <input className="sas-input" id={`pb-${at}.objection`} name={`${at}.objection`} maxLength={200} value={o.objection} onChange={(ev) => update({ objection: ev.target.value })} {...invalid(`${at}.objection`)} />
@@ -381,10 +381,11 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
                 </div>
                 <div className="sas-input-group" style={{ flex: "2 1 260px" }}>
                   <label className="sas-input-label" htmlFor={`pb-${at}.answer`}>{t("playbook.objection.answer")}</label>
-                  <textarea className="sas-textarea" id={`pb-${at}.answer`} name={`${at}.answer`} rows={3} maxLength={600} value={o.answer} onChange={(ev) => update({ answer: ev.target.value })} {...invalid(`${at}.answer`)} />
+                  {/* Grows with the answer, so no line is cut off (phone). */}
+                  <textarea className="sas-textarea pb-grow pb-grow--3" id={`pb-${at}.answer`} name={`${at}.answer`} rows={3} maxLength={600} value={o.answer} onChange={(ev) => update({ answer: ev.target.value })} {...growProps()} {...invalid(`${at}.answer`)} />
                   {err(`${at}.answer`)}
                 </div>
-                <div style={{ flex: "0 0 auto", paddingBlockStart: 22 }}>
+                <div className="pb-obj-remove">
                   <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setObjections((rs) => rs.filter((r) => r.id !== o.id))} aria-label={t("playbook.row.remove", { what: name })}><Icon name="x" /></button>
                 </div>
               </li>

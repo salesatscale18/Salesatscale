@@ -17,6 +17,7 @@ import type { LeadIntakeKey, Market } from "@/db/schema";
 import {
   addMarketAction, overrideSettingAction, resetSettingAction, setMarketStatusAction, setPriceListAction, updateWhereAction,
 } from "./actions";
+import "./markets.css";
 import { CheckIcon, checkStateWord, WhatsAppStatusPill } from "../settings/whatsapp-status";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -355,11 +356,11 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
               <div key={g.label}>
                 <Group>{t(g.label)}</Group>
                 {g.label === "markets.group.money" ? (
-                  <form action={setPriceListAction} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", padding: "10px 20px", borderTop: "1px solid var(--line)" }} data-price-list-form>
+                  <form action={setPriceListAction} className="mk-pl-form" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", padding: "10px 20px", borderTop: "1px solid var(--line)" }} data-price-list-form>
                     <input type="hidden" name="slug" value={account.slug} />
                     <input type="hidden" name="marketId" value={selected.id} />
                     <label htmlFor="mk-pl" style={{ flex: "0 1 180px", minWidth: 120, fontWeight: 600 }}>{t("markets.setting.price_list")}</label>
-                    <span style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
+                    <span className="mk-pl-field" style={{ flex: "1 1 220px", minWidth: 0, display: "flex", flexDirection: "column", gap: 4 }}>
                       <select className="sas-select" id="mk-pl" name="lineageId" defaultValue={selected.priceListLineageId ?? ""}>
                         <option value="">{t("markets.no_price_list")}</option>
                         {lists.map((l) => (
@@ -422,7 +423,8 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                       {legal.filter((s) => s.language === lang).map((s, i, all) => (
                         <span key={s.id}>{i > 0 ? ", " : null}<bdi>{s.title}</bdi>{` v${s.version}`}{s.source === "account" && !all.every((x) => x.source === "account") ? ` (${t("markets.from_account")})` : ""}</span>
                       ))}
-                      {legal.filter((s) => s.language === lang).every((s) => s.source === "account") ? ` · ${t("markets.from_account")}` : null}
+                      {/* Only when some texts are the market's own: otherwise the "Same as account default" pill says it. */}
+                      {ownLegal > 0 && legal.filter((s) => s.language === lang).every((s) => s.source === "account") ? ` · ${t("markets.from_account")}` : null}
                     </span>
                   ))}
                 </span>

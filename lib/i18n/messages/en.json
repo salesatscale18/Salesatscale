@@ -322,7 +322,6 @@
   "settings.intake.sends": "What your form sends",
   "settings.intake.sends_body": "A POST with the key in the Authorization header and this JSON body:",
   "settings.intake.required": "Required: full_name, phone, consent (source and text). The same source_id or phone updates the existing lead. Leads who opted out are never re-added.",
-  "settings.intake.docs": "Full field reference and responses: docs/lead-intake.md",
   "settings.sample.title": "Check a sample",
   "settings.sample.body": "Paste the JSON your form will send. We check it the same way as a real delivery. Nothing is saved.",
   "settings.sample.label": "Sample JSON",
@@ -1551,7 +1550,7 @@
   "settings.whatsapp.err.rate_limited": "Too many Twilio checks. Try again in an hour.",
   "settings.whatsapp.err.generic": "That did not work. Try again.",
   "golive.fix.whatsapp": "Set up WhatsApp",
-  "golive.check.whatsapp.ok": "{count} active number(s) and an approved opening template",
+  "golive.check.whatsapp.ok": "{count} active numbers and an approved opening template",
   "golive.check.whatsapp.fail": "Connect a WhatsApp number in Settings",
   "golive.check.whatsapp.no_opener": "Add an opening template and wait for WhatsApp approval",
   "settings.whatsapp.testers": "Tester phones",
@@ -2530,7 +2529,6 @@
   "settings.users.col.email": "Email",
   "settings.users.col.role": "Role",
   "settings.users.col.last_active": "Last active",
-  "settings.users.acting_as": "Acting as",
   "lead.tabs.chat": "Chat",
   "lead.tabs.deal": "Deal",
   "lead.tabs.timeline": "Timeline",
@@ -2561,5 +2559,12 @@
   "ofs.lang_version": "{lang} · v{version}",
   "pipeline.changed.sources": "{changed} of {total} sources",
   "pipeline.changed.stage2": "catalog or playbook",
-  "pipeline.changed.rules": "how the analysis works"
+  "pipeline.changed.rules": "how the analysis works",
+  "playbook.play.example_note": "Illustration: the agent uses only your approved facts.",
+  "settings.users.platform_acting": "Platform admin · acting as this account",
+  "settings.intake.optional": "Optional: email, country (chooses the market), source (the label in your leads list), consent.at and consent.page_url. Every call shows under Recent deliveries with its result.",
+  "golive.check.test_lab.ok_one": "{count} test conversation",
+  "golive.check.whatsapp.ok_one": "{count} active number and an approved opening template",
+  "golive.check.whatsapp.neutral": "WhatsApp number",
+  "golive.all_passed": "All checks passed."
 }

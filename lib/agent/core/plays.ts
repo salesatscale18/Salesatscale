@@ -4,6 +4,9 @@
  * the default for that seller; the seller's facts (`facts`, or an older
  * `content` text) are added to the card.
  * Wording is owned by the conversation-core lane; the shape is shared.
+ * Examples are neutral: they show the form of a reply and never promise
+ * specifics (guarantees, numbers, facts); <angle brackets> mark what the
+ * agent fills in from this seller's data.
  */
 import { PLAY_KEYS, type PlayCard, type PlayFact, type PlayKey, type Playbook } from "@/db/schema";
 
@@ -27,7 +30,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "Fitting the solution",
     when: "You know enough to recommend.",
     do: ["Recommend one set: the smallest that solves what they said.", "Say in a few words why it fits them.", "Mention a bigger option only if they ask for more."],
-    example: "For one building site for a week, two scissor lifts and one generator cover it.",
+    example: "For <what they described>, <the smallest set that solves it> covers it.",
     notThis: "We have three packages: Basic, Pro and Enterprise.",
     sellerContentHint: "Which set fits which type of customer.",
   },
@@ -35,7 +38,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "Explaining value",
     when: "You describe a product or the recommended set.",
     do: ["Give one benefit, tied to something the buyer said.", "State it as a concrete outcome for them (what they get, save or avoid).", "Do not list features."],
-    example: "Everyone sees the same schedule on their phone, so nobody works from an old copy.",
+    example: "You said <their problem>, so with <the product> you <the outcome they get>.",
     notThis: "Our amazing software has best-in-class speed, endless features and a great design.",
     sellerContentHint: "What a failure costs the buyer; the outcome each product gives.",
   },
@@ -43,7 +46,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "Price asked early",
     when: "The buyer asks the price before you have recommended a set.",
     do: ["Answer at once with a real number or range, in one or two plain sentences, no list.", "Say in a few words what it depends on.", "Ask the one question that makes it exact."],
-    example: "A user seat is <price> a month and setup is <price> one-time, so the total depends on the number of users. How many people will use it?",
+    example: "It starts at <price>, and the total depends on <what drives it>. How many <units> do you need?",
     notThis: "Before we talk price, let me understand your needs.",
     sellerContentHint: "The entry price and what drives the total.",
   },
@@ -59,7 +62,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "\"I already have something\"",
     when: "The buyer names what they use today.",
     do: ["Say what their current solution does well.", "Name the one gap it leaves and what you add there, from approved information.", "Never criticise what they have."],
-    example: "That covers you when you book a few weeks ahead. What we add is delivery to your site the next morning, also on weekends.",
+    example: "That covers <what it does well>. What we add is <the one gap it leaves, and what you do there>.",
     notThis: "Those old devices are unreliable.",
     sellerContentHint: "The gap each common existing solution leaves.",
   },
@@ -67,7 +70,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "\"How are you different from X?\"",
     when: "The buyer compares you with a competitor.",
     do: ["Give one difference that matters for this buyer, in plain words: what they get, not a specification.", "Make no claims about the competitor.", "If you know nothing about them, say you don't have details on that product and offer to check with the team."],
-    example: "I don't have details on their service, but for one office what you get with us is the same cleaning team every week, with supplies included. Is that what matters most to you?",
+    example: "I don't have details on their service, but what you get with us is <one difference that matters to this buyer>. Is that what matters most to you?",
     notThis: "I can't speak to RivalSoft, since I have no approved facts about it. Our servers answer in under 50 ms with 99.99% uptime.",
     sellerContentHint: "Approved comparison facts.",
   },
@@ -75,7 +78,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "\"Does it really work?\"",
     when: "The buyer doubts the product or the claims.",
     do: ["Give one specific proof: a fact, a customer example or a guarantee.", "Use approved information only.", "Ask if that answers the concern."],
-    example: "Yes. Every machine is checked before it leaves us, and a broken one is replaced on site within 24 hours. Does that answer it?",
+    example: "Yes. <One proof point: a fact, a customer example or a guarantee>. Does that answer it?",
     notThis: "Trust me, all our customers love it.",
     sellerContentHint: "Approved proof points: facts, customer examples, guarantees.",
   },
@@ -95,7 +98,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "\"Send me information\"",
     when: "The buyer asks for material instead of talking.",
     do: ["Send the one most relevant item you are approved to share.", "If you have nothing approved to send, give the main facts in two sentences instead.", "End with one question that keeps the chat going."],
-    example: "Here is the one-page overview. Which matters more to you, the price or how fast you can start?",
+    example: "Here is <the one item that fits their question>. Which matters more to you, the price or how fast you can start?",
     notThis: "Sure, I will send you everything we have.",
     sellerContentHint: "Links or documents approved for sharing.",
   },
@@ -116,7 +119,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "Buyer wants more or less than they need",
     when: "The buyer asks for a quantity or product that does not match their need.",
     do: ["Say honestly what is enough.", "Explain why in a few words.", "Quote what they decide."],
-    example: "For 5 people you need 5 user seats, not 10. One seat covers one person.",
+    example: "For <their need>, <what is enough> is enough, not <what they asked for>: <the sizing rule, in a few words>.",
     notThis: "Great, 10 seats it is!",
     sellerContentHint: "Sizing rules: how many of each item a customer needs.",
   },

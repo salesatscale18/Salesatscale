@@ -141,7 +141,8 @@ describe("Playbook navigation and polish (rendered)", () => {
     const html = await render(PlaysPage as Page, acc);
     save("plays", html);
     expect(html).toContain('data-testid="draft-banner"');
-    expect(html).toMatch(/1 fact<span[^>]*data-missing="">[^<]*add cost of the problem, smaller starting set/);
+    // Too expensive: the seller's fact plus the filled discount limit (5%, kept in Limits) count (R3-6, A9).
+    expect(html).toMatch(/2 facts<span[^>]*data-missing="">[^<]*add cost of the problem, smaller starting set/);
     expect(html).toContain("Uses your hand-off rule in Limits");
     expect(html).toContain("Add approved comparison facts");
     expect(html).toContain("sas-views pb-filters");

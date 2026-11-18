@@ -1,0 +1,6 @@
+/* Settings › Markets. Scoped `mk-` classes on top of components/sas/sas.css. */
+
+/* Phone: the price list select takes the full width, with Change below it. */
+@media (max-width: 767px) {
+  .mk-pl-form > label, .mk-pl-form > .mk-pl-field { flex-basis: 100% !important; }
+}

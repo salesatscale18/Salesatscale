@@ -31,6 +31,8 @@ export type PlayOverview = {
   own: boolean;
   card: PlayCard;
   facts: PlayFact[];
+  /** The facts the play uses: the seller's facts plus filled settings kept elsewhere (the discount limit for "Too expensive"). */
+  factCount: number;
   /** What the seller can add (empty: the play needs no facts). */
   hint: string;
   /** Open suggestions for this play from the latest analysis. */
@@ -47,7 +49,12 @@ export function addHint(hint: string): string {
   return t("playbook.plays.add", { what: h.charAt(0).toLowerCase() + h.slice(1) });
 }
 
-export function playsOverview(p: Pick<Playbook, "plays" | "questionBudget">, pending: ReadonlyMap<PlayKey, { facts: number; card: boolean }>): PlayOverview[] {
+/** Filled settings kept elsewhere that a play uses as a fact (shown read-only on its page). */
+export function elsewhereFactCount(key: PlayKey, p: Partial<Pick<Playbook, "maxDiscountBp">>): number {
+  return key === "too_expensive" && (p.maxDiscountBp ?? 0) > 0 ? 1 : 0;
+}
+
+export function playsOverview(p: Pick<Playbook, "plays" | "questionBudget"> & Partial<Pick<Playbook, "maxDiscountBp">>, pending: ReadonlyMap<PlayKey, { facts: number; card: boolean }>): PlayOverview[] {
   return PLAY_KEYS.map((key) => {
     const d = defaultPlayFor(key, questionBudgetOf(p));
     const stored = p.plays?.[key];
@@ -55,16 +62,17 @@ export function playsOverview(p: Pick<Playbook, "plays" | "questionBudget">, pen
     const own = !!stored?.own;
     const s = pending.get(key);
     const suggested = s && (s.facts > 0 || s.card) ? s : null;
-    const needsFacts = !!d.sellerContentHint.trim() && facts.length === 0;
+    const factCount = facts.length + elsewhereFactCount(key, p);
+    const needsFacts = !!d.sellerContentHint.trim() && factCount === 0;
     const missing = missingSlots(d.sellerContentHint, facts);
-    const factsLine: FactsLine = facts.length
-      ? { kind: "facts", n: facts.length, missing }
+    const factsLine: FactsLine = factCount
+      ? { kind: "facts", n: factCount, missing }
       : suggested ? { kind: "suggested", ...suggested }
       : needsFacts ? { kind: "needs", text: t("playbook.plays.add", { what: missing.join(", ") }), missing }
       : key === "handoff" ? { kind: "limits" }
       : { kind: "none" };
     return {
-      key, title: d.title, own, card: stored?.own ?? d, facts, hint: d.sellerContentHint, suggested, factsLine, needsFacts,
+      key, title: d.title, own, card: stored?.own ?? d, facts, factCount, hint: d.sellerContentHint, suggested, factsLine, needsFacts,
       line: own ? stored!.own!.do.join(" ") : t(`playbook.play.line.${key}` as MessageKey, { max: questionBudgetOf(p) }),
     };
   });
