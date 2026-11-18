@@ -575,40 +575,47 @@ test("M1 Home market", async ({ browser }) => {
   await expect(d.locator("#where")).toContainText("Israel, Cyprus"); // app shows names, not IL / CY
   await expect(d).toContainText("+972");
   await expect(d).toContainText("+357");
-  await expect(d).toContainText(`Selling from ${HOME_LIST} · ILS · v1.`);
+  // The dropdown names the live list; no line repeats it under the dropdown.
+  await expect(d.locator("#mk-pl option:checked")).toContainText(`${HOME_LIST} · ILS · live v1`);
+  await expect(d).not.toContainText("Selling from");
   await expect(homeRow()).toContainText(/Leads: \d+/);
   await expect(d.locator("[data-check]").first()).toBeVisible();
-  // Every setting reads "Same as account default".
+  // Every setting reads "Same as account default" (Holidays has no account default: "None").
   await expect(d.locator('[data-source="market"]')).toHaveCount(0);
-  await expect(d.locator('[data-setting] [data-source="account"]')).toHaveCount(7); // + Delivery › Lead time
+  await expect(d.locator('[data-setting] [data-source="account"]')).toHaveCount(6); // + Delivery › Lead time
+  await expect(d.locator('[data-setting="holidays"]')).toContainText("None");
   await noHorizontalScroll(page);
   await shot(page, "M1");
   await phoneCheck(browser, page.url());
 });
 
-test("M2 Override and reset", async ({ browser }) => {
+test("M2 Change for this market, edit and reset", async ({ browser }) => {
   need(S.appBase);
   await page.goto(`${S.appBase}/markets`);
   await homeRow().getByRole("link").click();
   const row = () => page.locator('[data-setting="paymentMethods"]');
   // An invalid value shows an error.
-  await row().getByRole("link", { name: "Override" }).click();
+  await row().getByRole("link", { name: "Change for this market" }).click();
   const form = page.locator('[data-override-form="paymentMethods"]');
   await form.locator('input[name="card"]').uncheck();
   await form.locator('input[name="bankTransfer"]').uncheck();
-  await form.getByRole("button", { name: "Save for this market" }).click();
+  await form.getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByRole("alert").filter({ hasText: "Turn on card or bank transfer." })).toBeVisible();
-  // Override: bank transfer only.
+  // Set for this market: bank transfer only.
   await page.locator('[data-override-form="paymentMethods"] input[name="card"]').uncheck();
   await page.locator('[data-override-form="paymentMethods"] input[name="bankTransfer"]').check();
-  await page.locator('[data-override-form="paymentMethods"]').getByRole("button", { name: "Save for this market" }).click();
+  await page.locator('[data-override-form="paymentMethods"]').getByRole("button", { name: "Save", exact: true }).click();
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
-  await expect(row().locator('[data-source="market"]')).toHaveText("Overridden");
+  await expect(row().locator('[data-source="market"]')).toHaveText("Set for this market");
   await expect(row()).toContainText("Bank transfer");
   await expect(row()).not.toContainText("Card");
   await noHorizontalScroll(page);
   await shot(page, "M2");
   await phoneCheck(browser, page.url());
+  // Edit opens the same form with the market's value.
+  await row().getByRole("link", { name: "Edit" }).click();
+  await expect(page.locator('[data-override-form="paymentMethods"] input[name="card"]')).not.toBeChecked();
+  await expect(page.locator('[data-override-form="paymentMethods"] input[name="bankTransfer"]')).toBeChecked();
   // Reset.
   await row().getByRole("button", { name: "Reset" }).click();
   await expect(page.getByText("This setting follows the account default again.")).toBeVisible();
@@ -648,11 +655,11 @@ test("M4 Legal texts per market", async ({ browser }) => {
   await page.goto(`${S.appBase}/setup/order-form`);
   await page.locator("[data-market-switcher]").getByRole("link", { name: "Europe" }).click();
   const legal = page.locator("[data-market-legal]");
-  await legal.locator('[data-section="sales_terms.en"]').getByRole("link", { name: "Override" }).click();
+  await legal.locator('[data-section="sales_terms.en"]').getByRole("link", { name: "Change for this market" }).click();
   await page.locator("#ms-body").fill("EUROPE ONLY: German and Austrian sales terms for this test.");
   await page.getByRole("button", { name: "Save for Europe" }).click();
   await expect(page.getByText(/^Saved for this market as version/)).toBeVisible();
-  await expect(legal.locator('[data-section="sales_terms.en"]')).toContainText("Overridden");
+  await expect(legal.locator('[data-section="sales_terms.en"]')).toContainText("Set for this market");
   for (const s of ["sales_terms.he", "privacy_notice.en", "privacy_notice.he"]) {
     await expect(legal.locator(`[data-section="${s}"]`)).toContainText("Same as account default");
   }

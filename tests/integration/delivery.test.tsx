@@ -167,7 +167,7 @@ describe("delivery ETA", () => {
     if (!uk.ok) throw new Error();
     const id = uk.market.id;
     let html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: id })));
-    expect(html).toMatch(/data-setting="leadTime"[^]*Lead time[^]*5–10 business days[^]*data-source="account"[^]*Override/);
+    expect(html).toMatch(/data-setting="leadTime"[^]*Lead time[^]*5–10 business days[^]*data-source="account"[^]*Change for this market/);
 
     const refused = await run(overrideSettingAction(form({ slug: acc.slug, marketId: id, key: "leadTime", minDays: "", maxDays: "" })));
     expect((refused as { redirect: string }).redirect).toContain("override=leadTime");

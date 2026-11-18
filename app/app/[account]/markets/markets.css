@@ -4,3 +4,8 @@
 @media (max-width: 767px) {
   .mk-pl-form > label, .mk-pl-form > .mk-pl-field { flex-basis: 100% !important; }
 }
+
+/* Holidays: one chip per chosen date, with a remove button. */
+.mk-holiday { display: inline-flex; align-items: center; gap: 2px; height: 28px; padding-inline: 10px 2px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
+.mk-holiday__remove { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 50%; background: none; color: var(--ink-muted); cursor: pointer; padding: 0; }
+.mk-holiday__remove:hover { background: var(--surface-sunken); color: var(--ink); }

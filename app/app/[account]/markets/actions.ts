@@ -5,9 +5,9 @@ import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { isUuid } from "@/lib/security/ids";
 import { createMarket, getMarket, setMarketPriceList, setMarketStatus, updateMarket } from "@/lib/markets/service";
-import { overrideSetting, resetSetting } from "@/lib/markets/settings";
+import { resetSetting } from "@/lib/markets/settings";
 import type { MarketStatus } from "@/db/schema";
-import { isSettingKey, parseOverride, parseWhere, reader } from "./form";
+import { isSettingKey, overridesAfterSave, parseOverride, parseWhere, reader } from "./form";
 import { autoNameModel, refreshAgentNameAuto } from "@/lib/agent/names-auto";
 
 // Server actions are public endpoints: each one re-checks access with
@@ -72,7 +72,7 @@ export async function overrideSettingAction(form: FormData) {
   if (!isSettingKey(key)) redirect(at(slug, market.id));
   const parsed = parseOverride(key, reader(form));
   if (!parsed.ok) redirect(at(slug, market.id, `override=${key}&${err(parsed.error)}`));
-  const r = await updateMarket(appDb, actorOf(access), access.account.id, market.id, { overrides: overrideSetting(market.overrides, key, parsed.value) });
+  const r = await updateMarket(appDb, actorOf(access), access.account.id, market.id, { overrides: overridesAfterSave(market.overrides, key, parsed.value) });
   if (!r.ok) redirect(at(slug, market.id, `override=${key}&${err(firstError(r.errors))}`));
   if (key === "languages") await refreshAgentNames(access);
   done(slug, market.id, `saved=${key}`);

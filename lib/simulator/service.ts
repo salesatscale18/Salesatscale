@@ -13,6 +13,8 @@
  * Scoped by account id everywhere; the only lookup that is not is the public
  * token, which yields the account.
  */
+import { marketOfLead } from "@/lib/markets/lead-settings";
+import { marketContactSettings } from "@/lib/markets/settings";
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -270,7 +272,7 @@ const gateStatus = (lead: { buyerRef?: string | null; phone: string }, status: s
 export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: string, now = new Date()) {
   const lead = await realLead(db, accountId, leadId);
   if (!lead) return null;
-  const [[account], [consent], [live], [active], capped] = await Promise.all([
+  const [[account], [consent], [live], [active], capped, market] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     db.select({ id: consentRecords.id }).from(consentRecords).where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId))).limit(1),
     db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))),
@@ -278,15 +280,18 @@ export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: st
       .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, SIMULATOR_CHANNEL), ne(conversations.status, "closed")))
       .limit(1),
     spendCapped(db, accountId, now),
+    marketOfLead(db, accountId, lead.marketId),
   ]);
   const rules = account.simulateWhatsappRules;
-  const template = await approvedTemplate(db, accountId, "opener", lead.language, account.languages);
+  // Same as WhatsApp: the lead's market decides contact hours, time zone and fallback languages.
+  const contact = marketContactSettings(account, market);
+  const template = await approvedTemplate(db, accountId, "opener", lead.language, contact.languages);
   const blocked = simulatedBuyerGate(lead, account);
   let refusal: SimOpenerRefusal | OpenerRefusal | null = blocked ?? openerRefusal({
     twilioConfigured: true,
     lead: { isTest: lead.isTest, status: lead.status },
     hasConsent: !!consent,
-    account: { status: gateStatus(lead, account.status), contactHours: account.contactHours, timezone: account.timezone },
+    account: { status: gateStatus(lead, account.status), contactHours: contact.contactHours, timezone: contact.timezone },
     hasConnection: true,
     hasApprovedOpener: rules ? !!template : true,
     hasLiveAgent: !!live,
