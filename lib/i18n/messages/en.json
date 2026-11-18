@@ -2581,5 +2581,12 @@
   "golive.check.whatsapp.neutral": "WhatsApp number",
   "golive.all_passed": "All checks passed.",
   "orders.detail.cancel_signed_confirm": "The buyer signed but hasn't paid yet. Cancel this quote?",
-  "orders.detail.cancel_signed_yes": "Yes, cancel quote"
+  "orders.detail.cancel_signed_yes": "Yes, cancel quote",
+  "kit.apply": "Apply",
+  "kit.sort": "Sort",
+  "kit.delete": "Delete",
+  "kit.close": "Close",
+  "kit.sections": "Sections",
+  "kit.edit": "Edit",
+  "kit.drop_here": "Drop files here"
 }
