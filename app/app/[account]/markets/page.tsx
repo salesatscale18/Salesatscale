@@ -2,7 +2,8 @@ import type { ReactNode } from "react";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
-import { contactHoursOrDefault, summarizeContactHours, WEEKDAYS } from "@/lib/accounts/contact-hours";
+import { contactHoursOrDefault, summarizeContactHours } from "@/lib/accounts/contact-hours";
+import { ContactHoursFields } from "@/components/sas/contact-hours-fields";
 import { countLeadsByMarket, listIntakeKeys } from "@/lib/leads/service";
 import { marketLegal } from "@/lib/markets/legal";
 import { canGoLive, checkCount, countryName } from "@/lib/markets/rules";
@@ -103,18 +104,7 @@ function OverrideForm({ slug, market, settingKey, settings, timezones, weekend }
       break;
     case "contactHours": {
       const hours = contactHoursOrDefault(v as AccountDefaults["contactHours"]);
-      fields = (
-        <div className="sas-stack-2">
-          {WEEKDAYS.map((d, i) => (
-            <fieldset key={d} style={{ border: 0, padding: 0, margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px" }}>
-              <legend className="sas-sr">{t(`settings.hours.day.${d}` as MessageKey)}</legend>
-              <label className="sas-check" style={{ width: 130 }}><input type="checkbox" name={`${d}_on`} defaultChecked={hours[i].on} />{t(`settings.hours.day.${d}` as MessageKey)}</label>
-              <label className="sas-small" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{t("settings.hours.from")}<input className="sas-input sas-num" type="time" name={`${d}_from`} defaultValue={hours[i].from} required style={{ width: 120 }} /></label>
-              <label className="sas-small" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{t("settings.hours.to")}<input className="sas-input sas-num" type="time" name={`${d}_to`} defaultValue={hours[i].to} required style={{ width: 120 }} /></label>
-            </fieldset>
-          ))}
-        </div>
-      );
+      fields = <ContactHoursFields hours={hours} />;
       break;
     }
     case "paymentMethods": {

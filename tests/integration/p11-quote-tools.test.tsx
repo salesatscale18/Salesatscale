@@ -133,8 +133,8 @@ describe("P11 tools: prices, the quote message and the order form", () => {
     expect(rows[0].language).toBe("en");
     expect(rows[0].body).toBe([
       "*Quote Q-1001*",
-      "2 × wireless fridge sensor (SNS-200): ₪1,180",
-      "1 × kitchen hub (GW-10): ₪660, plus ₪90 a month",
+      "2 × Wireless fridge sensor (SNS-200): ₪1,180",
+      "1 × Kitchen hub (GW-10): ₪660, plus ₪90 a month",
       "Installation: ₪250",
       "VAT 18%: ₪376.20",
       "*Today: ₪2,466.20 including VAT*",
@@ -155,8 +155,8 @@ describe("P11 tools: prices, the quote message and the order form", () => {
     expect(m.conversationId).toBe(c.conversationId);
     expect(m.body).toBe([
       "*הצעת מחיר Q-1002*",
-      "2 × wireless fridge sensor (SNS-200): ₪1,180",
-      "1 × kitchen hub (GW-10): ₪660, ועוד ₪90 לחודש",
+      "2 × Wireless fridge sensor (SNS-200): ₪1,180",
+      "1 × Kitchen hub (GW-10): ₪660, ועוד ₪90 לחודש",
       "Installation: ₪250",
       "מע״מ 18%: ₪376.20",
       "*היום: ₪2,466.20 כולל מע״מ*",

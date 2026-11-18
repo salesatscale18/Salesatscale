@@ -115,8 +115,8 @@ describe("decision 2: names in the buyer's language", () => {
     const base = { name: "רינה", agent: "מאיה", company: "פולאר דמו", language: "he" as const, opener: { topics: [{ en: "monitoring your fridges", he: "ניטור המקררים שלך" }], defaultTopic: 0, question: { en: "How do you check them today?", he: "איך אתם בודקים אותם היום?" } } };
     expect(openerText({ ...base, gender: "female" })).toBe("היי רינה, כאן מאיה, העוזרת האוטומטית של פולאר דמו. פנית אלינו בנושא ניטור המקררים שלך. איך אתם בודקים אותם היום?");
     expect(openerText({ ...base, agent: "דני", gender: "male" })).toBe("היי רינה, כאן דני, העוזר האוטומטי של פולאר דמו. פנית אלינו בנושא ניטור המקררים שלך. איך אתם בודקים אותם היום?");
-    expect(openerText({ ...base, gender: "neutral" })).toContain("העוזר/ת האוטומטי/ת של פולאר דמו.");
-    expect(openerText(base)).toContain("העוזר/ת האוטומטי/ת");
+    expect(openerText({ ...base, gender: "neutral" })).toContain("מהשירות האוטומטי של פולאר דמו.");
+    expect(openerText(base)).toContain("מהשירות האוטומטי");
     expect(openerText({ ...base, name: "Rina", agent: "Maya", company: "Polar Demo", language: "en", gender: "female" }))
       .toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked about monitoring your fridges. How do you check them today?");
   });
@@ -124,7 +124,7 @@ describe("decision 2: names in the buyer's language", () => {
   it("chat header texts: gendered in Hebrew, the same in English", () => {
     expect(tg("buyer.sim.automated", "female", { agent: "מאיה" }, "he")).toBe("מאיה · עוזרת אוטומטית");
     expect(tg("buyer.sim.automated", "male", { agent: "דני" }, "he")).toBe("דני · עוזר אוטומטי");
-    expect(tg("buyer.sim.automated", "neutral", { agent: "Maya" }, "he")).toBe("Maya · עוזר/ת אוטומטי/ת");
+    expect(tg("buyer.sim.automated", "neutral", { agent: "Maya" }, "he")).toBe("Maya · שירות אוטומטי");
     expect(tg("buyer.sim.typing_label", "female", { agent: "מאיה" }, "he")).toBe("מאיה מקלידה");
     expect(tg("buyer.sim.typing", "male", undefined, "he")).toBe("מקליד…");
     expect(tg("buyer.sim.automated", "female", { agent: "Maya" }, "en")).toBe("Maya · automated assistant");

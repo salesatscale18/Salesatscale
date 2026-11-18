@@ -5,7 +5,7 @@ import { appDb } from "@/lib/auth/account";
 import { listConnections, listTemplates } from "@/lib/channels/connections";
 import { twilioConfig } from "@/lib/channels/twilio";
 import { listMarkets } from "@/lib/markets/service";
-import { relativeTime } from "@/lib/format";
+import { timeAgo } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { SellerAccount } from "@/db/schema";
 import { openerStatusOf, whatsappStatus } from "@/lib/channels/rules";
@@ -73,8 +73,8 @@ export async function WhatsAppSection({ account, sp, baseUrl }: { account: Selle
                   <strong className="sas-num" dir="ltr">{c.senderNumber}</strong>{c.displayName ? ` · ${c.displayName}` : ""}
                   <span className="sas-small" style={{ display: "block" }}>
                     {marketName(c.marketId)}
-                    {" · "}{c.lastInboundAt ? t("settings.whatsapp.last_in", { when: relativeTime(c.lastInboundAt, now) }) : t("settings.whatsapp.never_in")}
-                    {c.lastOutboundAt ? ` · ${t("settings.whatsapp.last_out", { when: relativeTime(c.lastOutboundAt, now) })}` : ""}
+                    {" · "}{c.lastInboundAt ? t("settings.whatsapp.last_in", { when: timeAgo(c.lastInboundAt, now, account.timezone) }) : t("settings.whatsapp.never_in")}
+                    {c.lastOutboundAt ? ` · ${t("settings.whatsapp.last_out", { when: timeAgo(c.lastOutboundAt, now, account.timezone) })}` : ""}
                   </span>
                   {c.lastError ? <span className="sas-small" style={{ display: "block", color: "var(--danger)" }}>{t("settings.whatsapp.last_error", { error: c.lastError })}</span> : null}
                 </span>

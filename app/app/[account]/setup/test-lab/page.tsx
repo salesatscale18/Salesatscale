@@ -15,7 +15,7 @@ import { SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenar
 import { conversationScenarioCheck, latestScenarioResults } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
 import { type IconName } from "@/components/sas/icon";
-import { exactTime, relativeTime } from "@/lib/format";
+import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
@@ -53,6 +53,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account, user } = await requireAccount(slug);
+  // Records in the account's time zone, the zone on hover (not "13:42 UTC").
+  const tz = account.timezone;
+  const local = (at: Date) => formatLocalDateTime(at, tz);
   const isAdmin = user.role === "super_admin";
   const base = `/app/${account.slug}`;
   const lab = `${base}/setup/test-lab`;
@@ -115,7 +118,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <div className="sas-panel__body" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <h2 id="lab-chat-h" className="sas-heading">{t("lab.chat_with", { version: convVersion.version })}</h2>
                 <StatusPill object="agent_version" state={convVersion.status} />
-                <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · {exactTime(conv.createdAt)}</span>
+                <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={conv.createdAt.toISOString()} title={zoneTitle(conv.createdAt, tz)}>{local(conv.createdAt)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
                 {waWindow ? <WindowTimer {...windowTimerProps(waWindow, new Date())} /> : null}
               </div>
@@ -151,11 +154,11 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                         </ol>
                       ) : null}
                       {view?.quoteCards[m.id] ? (
-                        <QuoteCardMessage card={view.quoteCards[m.id]} time={exactTime(m.createdAt)} slug={null} approve={null} />
+                        <QuoteCardMessage card={view.quoteCards[m.id]} time={local(m.createdAt)} slug={null} approve={null} />
                       ) : (
                       <ChatMessage
                         actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
-                        time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${exactTime(m.createdAt)} · ${deliveryLabel(m)}` : exactTime(m.createdAt)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
+                        time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
                         <MessageBody body={m.body} kind={kinds.get(m.id)} />
                       </ChatMessage>
                       )}
@@ -325,7 +328,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                         </form>
                       ) : null}
                     </div>
-                    <span className="sas-small">{t("lab.version_model", { model: v.model, effort: v.effort })}{v.publishedAt ? ` · ${t("lab.published_at", { date: exactTime(v.publishedAt) })}` : ""}</span>
+                    <span className="sas-small">{t("lab.version_model", { model: v.model, effort: v.effort })}{v.publishedAt ? <> · <time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}</span>
                   </li>
                 ))}
               </ul>
@@ -344,7 +347,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                       <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined}>
                         {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}{c.channel === "whatsapp" ? ` · ${t("conv.channel.whatsapp")}` : ""}
                       </a>{" "}
-                      <span className="sas-small">{relativeTime(c.updatedAt)}</span>
+                      <time className="sas-small" dateTime={c.updatedAt.toISOString()} title={`${local(c.updatedAt)} · ${zoneTitle(c.updatedAt, tz)}`}>{timeAgo(c.updatedAt, new Date(), tz)}</time>
                     </li>
                   );
                 })}

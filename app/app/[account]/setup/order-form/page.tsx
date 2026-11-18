@@ -196,7 +196,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
           </form>
         </div>
         <aside className="sas-split__side">
-          <BuyerPreview seller={account.tradeName} brand={settings.brandColor} languages={account.languages} sections={sectionsByLang} fields={settings.fields} delivery={delivery} noDeliveryHint={t("ofs.preview_no_delivery")} />
+          <BuyerPreview seller={account.tradeName} brand={settings.brandColor} languages={account.languages} sections={sectionsByLang} fields={settings.fields} fieldOrder={ORDER_FORM_FIELDS} delivery={delivery} noDeliveryHint={t("ofs.preview_no_delivery")} />
         </aside>
       </div>
     </main>

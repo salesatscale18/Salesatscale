@@ -6,13 +6,13 @@
  * written. Multi-row writes are atomic (db/atomic.ts).
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, inArray, max, or } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, max, or, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { localDateIso } from "@/lib/format";
 import { marketTimezone } from "@/lib/markets/settings";
 import {
-  leadEvents, leads, markets, quoteLines, quotes, quoteVersions, sellerAccounts,
+  leadEvents, leads, markets, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls,
   type ApprovalReason, type Quote, type QuoteStatus, type QuoteVersion,
 } from "@/db/schema";
 import { writeAudit } from "@/lib/accounts/audit";
@@ -471,6 +471,37 @@ export async function quoteTimezones(db: Db, accountId: string, rows: { id: stri
   return out;
 }
 
+/**
+ * Quotes created before Draft -> Sent was stored (markQuoteSent) stay "draft"
+ * although the app already sent them. Read at display time, as signed orders
+ * are (lib/orders/service.ts withSignedValues): a draft whose current version
+ * went out as the app's quote message (create_quote with `quote_message_id`,
+ * not a held placeholder; or an `app_message` of kind "quote" after an
+ * approval) shows as "sent". Matched on "Q-<number> v<current version>", so a
+ * newer version the buyer has not had stays "draft". One query; account-scoped.
+ */
+export async function sentDraftQuoteIds(db: Db, accountId: string, rows: { id: string; number: number; status: QuoteStatus; currentVersion: number }[]): Promise<Set<string>> {
+  const drafts = rows.filter((r) => r.status === "draft");
+  if (!drafts.length) return new Set();
+  const byLabel = new Map(drafts.map((q) => [`Q-${q.number} v${q.currentVersion}`, q.id]));
+  const label = sql<string>`${toolCalls.result} ->> 'quote'`;
+  const found = await db.select({ label }).from(toolCalls)
+    .where(and(
+      eq(toolCalls.accountId, accountId), eq(toolCalls.outcome, "ok"),
+      inArray(label, [...byLabel.keys()]),
+      or(
+        and(eq(toolCalls.name, "create_quote"), sql`${toolCalls.result} ? 'quote_message_id'`, sql`coalesce(${toolCalls.result} ->> 'quote_held', 'false') <> 'true'`),
+        and(eq(toolCalls.name, "app_message"), sql`${toolCalls.result} ->> 'kind' = 'quote'`),
+      ),
+    ));
+  return new Set(found.map((f) => byLabel.get(f.label)).filter((x): x is string => !!x));
+}
+
+/** The row with the quote's derived "sent" status where sentDraftQuoteIds found one. */
+function withSent<T extends { quote: Quote }>(row: T, sent: Set<string>): T {
+  return sent.has(row.quote.id) ? { ...row, quote: { ...row.quote, status: "sent" } } : row;
+}
+
 export type QuoteTab = "quotes" | "approval";
 
 export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes") {
@@ -482,7 +513,8 @@ export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quo
     .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : [])))
     .orderBy(desc(quotes.createdAt))
     .limit(200);
-  return rows;
+  const sent = await sentDraftQuoteIds(db, accountId, rows.map((r) => r.quote));
+  return rows.map((r) => withSent(r, sent));
 }
 
 export async function countAwaitingApproval(db: Db, accountId: string) {
@@ -499,16 +531,17 @@ export async function countQuotes(db: Db, accountId: string) {
 export async function getQuote(db: Db, accountId: string, quoteId: string) {
   const q = await quoteOf(db, accountId, quoteId);
   if (!q) return null;
-  // Lead, versions and their lines in one parallel round trip after the quote.
-  const [[lead], versions, lines] = await Promise.all([
+  // Lead, versions, their lines and the derived "sent" in one parallel round trip after the quote.
+  const [[lead], versions, lines, sent] = await Promise.all([
     db.select().from(leads).where(eq(leads.id, q.leadId)),
     db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, q.id)).orderBy(desc(quoteVersions.version)),
     db.select().from(quoteLines)
       .where(inArray(quoteLines.quoteVersionId, db.select({ id: quoteVersions.id }).from(quoteVersions).where(eq(quoteVersions.quoteId, q.id))))
       .orderBy(asc(quoteLines.sortOrder)),
+    sentDraftQuoteIds(db, accountId, [q]),
   ]);
   return {
-    quote: q,
+    quote: withSent({ quote: q }, sent).quote,
     lead,
     versions: versions.map((v) => ({ version: v, lines: lines.filter((l) => l.quoteVersionId === v.id) })),
   };
@@ -529,8 +562,9 @@ export async function quotesForLead(db: Db, accountId: string, leadId: string) {
     if (!cur) byQuote.set(r.quote.id, { quote: r.quote, version: r.version, older: [] });
     else cur.older.push(r.version);
   }
+  const sent = await sentDraftQuoteIds(db, accountId, [...byQuote.values()].map((o) => o.quote));
   return [...byQuote.values()].map((o) => {
     const current = [o.version, ...o.older].find((v) => v.version === o.quote.currentVersion) ?? o.version;
-    return { quote: o.quote, version: current, older: [o.version, ...o.older].filter((v) => v.version !== current.version) };
+    return { quote: withSent(o, sent).quote, version: current, older: [o.version, ...o.older].filter((v) => v.version !== current.version) };
   });
 }

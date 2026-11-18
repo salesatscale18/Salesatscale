@@ -2525,5 +2525,10 @@
   "buyer.placeholder.signatory_role": "For example, Owner",
   "buyer.summary.monthly_incl_vat": "Monthly incl. VAT",
   "buyer.summary.yearly_incl_vat": "Yearly incl. VAT",
-  "buyer.document_utc": "recorded {time}"
+  "buyer.document_utc": "recorded {time}",
+  "settings.users.col.name": "Name",
+  "settings.users.col.email": "Email",
+  "settings.users.col.role": "Role",
+  "settings.users.col.last_active": "Last active",
+  "settings.users.acting_as": "Acting as"
 }

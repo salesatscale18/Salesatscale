@@ -4,13 +4,15 @@ import { useActionState } from "react";
 import { CopyButton } from "@/components/sas/copy-button";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
+import { safeTimezone } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { inviteUserAction, renewUserInviteAction, type UserInviteState } from "./actions";
 
-const dateFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: "UTC" });
+/** The link's last day in the account's time zone. */
+const dateIn = (iso: string, timezone?: string) => new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: safeTimezone(timezone) }).format(new Date(iso));
 
 /** One-time display of an invite link (no invite emails yet, D8). */
-function LinkPanel({ state }: { state: Extract<UserInviteState, { status: "created" }> }) {
+function LinkPanel({ state, timezone }: { state: Extract<UserInviteState, { status: "created" }>; timezone?: string }) {
   const who = state.name ? `${state.name} (${state.email})` : state.email;
   return (
     <div className="sas-stack-2 sas-alert--success" role="status" style={{ padding: 14, borderRadius: 10 }}>
@@ -20,16 +22,16 @@ function LinkPanel({ state }: { state: Extract<UserInviteState, { status: "creat
         <input id="invite-url" className="sas-input" readOnly value={state.url} style={{ background: "var(--surface-raised)" }} />
         <CopyButton value={state.url} variant="primary" />
       </div>
-      <span className="sas-small" style={{ color: "var(--ink)" }}>{t("settings.users.link_hint", { date: dateFmt.format(new Date(state.expiresAt)) })}</span>
+      <span className="sas-small" style={{ color: "var(--ink)" }}>{t("settings.users.link_hint", { date: dateIn(state.expiresAt, timezone) })}</span>
     </div>
   );
 }
 
-export function InviteUserForm({ slug }: { slug: string }) {
+export function InviteUserForm({ slug, timezone }: { slug: string; timezone?: string }) {
   const [state, action, pending] = useActionState<UserInviteState, FormData>(inviteUserAction, { status: "idle" });
   return (
     <div className="sas-stack-4">
-      {state.status === "created" ? <LinkPanel state={state} /> : null}
+      {state.status === "created" ? <LinkPanel state={state} timezone={timezone} /> : null}
       <form action={action} className="sas-stack-2">
         <input type="hidden" name="slug" value={slug} />
         <strong>{t("settings.users.invite_title")}</strong>
@@ -52,9 +54,9 @@ export function InviteUserForm({ slug }: { slug: string }) {
 }
 
 /** "Create new link" on a pending invite: cancels it and shows a fresh link once. */
-export function RenewInvite({ slug, inviteId }: { slug: string; inviteId: string }) {
+export function RenewInvite({ slug, inviteId, timezone }: { slug: string; inviteId: string; timezone?: string }) {
   const [state, action, pending] = useActionState<UserInviteState, FormData>(renewUserInviteAction, { status: "idle" });
-  if (state.status === "created") return <LinkPanel state={state} />;
+  if (state.status === "created") return <LinkPanel state={state} timezone={timezone} />;
   return (
     <form action={action}>
       <input type="hidden" name="slug" value={slug} />

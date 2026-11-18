@@ -30,14 +30,14 @@ describe("opener: topics and question per language", () => {
     expect(openerText({ ...base, language: "en", opener }))
       .toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked about monitoring your fridge temperatures. How do you check them today?");
     expect(openerText({ ...base, language: "he", opener }))
-      .toBe("היי Rina, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. פנית אלינו בנושא ניטור הטמפרטורות במקררים שלך. איך אתם בודקים אותן היום?");
+      .toBe("היי Rina, כאן \u2068Maya\u2069 מהשירות האוטומטי של \u2068Polar Demo\u2069. פנית אלינו בנושא ניטור הטמפרטורות במקררים שלך. איך אתם בודקים אותן היום?");
   });
 
   it("the default follows defaultTopic; a part with no version in the lead's language uses the general wording", () => {
     const second = { ...opener, defaultTopic: 1 };
     expect(openerText({ ...base, language: "en", opener: second })).toContain("You asked about automatic logs for inspections.");
     // No Hebrew version of topic 2: the general Hebrew sentence, never the English text.
-    expect(openerText({ ...base, language: "he", opener: second })).toBe("היי Rina, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. ביקשת שניצור קשר. איך אתם בודקים אותן היום?");
+    expect(openerText({ ...base, language: "he", opener: second })).toBe("היי Rina, כאן \u2068Maya\u2069 מהשירות האוטומטי של \u2068Polar Demo\u2069. ביקשת שניצור קשר. איך אתם בודקים אותן היום?");
     expect(openerText({ ...base, language: "he", opener: { ...opener, question: { en: "How?" } } })).toMatch(/מה גרם לך לפנות אלינו היום\?$/);
     // An index outside the list falls back to the first topic.
     expect(readOpener({ ...opener, defaultTopic: 9 }).defaultTopic).toBe(0);
@@ -56,7 +56,7 @@ describe("opener: topics and question per language", () => {
     // An older text written in Hebrew was only used for Hebrew leads; it reads as the Hebrew version.
     const heOld = { leadsAskAbout: "ניטור טמפרטורה", openingQuestion: "איך בודקים היום?" };
     expect(readOpener(heOld)).toEqual({ topics: [{ en: "", he: "ניטור טמפרטורה" }], defaultTopic: 0, question: { en: "", he: "איך בודקים היום?" } });
-    expect(openerText({ ...base, language: "he", opener: heOld })).toBe("היי Rina, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. פנית אלינו בנושא ניטור טמפרטורה. איך בודקים היום?");
+    expect(openerText({ ...base, language: "he", opener: heOld })).toBe("היי Rina, כאן \u2068Maya\u2069 מהשירות האוטומטי של \u2068Polar Demo\u2069. פנית אלינו בנושא ניטור טמפרטורה. איך בודקים היום?");
     expect(openerText({ ...base, language: "en", opener: heOld })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. What made you get in touch today?");
     // The new parts win over the older texts when both are stored.
     expect(readOpener({ ...old, topics: [{ en: "x" }], question: { en: "Q?" } })).toEqual({ topics: [{ en: "x" }], defaultTopic: 0, question: { en: "Q?" } });

@@ -10,7 +10,7 @@
  * writes here are ordered so a partial failure leaves a recoverable state
  * (e.g. an account without an invite can be re-invited).
  */
-import { and, asc, desc, eq, inArray, isNull, like, or } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, isNull, like, max, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
   accountInvites, accountMembers, auditLog, sellerAccounts, users,
@@ -193,6 +193,35 @@ export async function listMembers(db: Db, accountId: string) {
     .innerJoin(users, eq(users.id, accountMembers.userId))
     .where(eq(accountMembers.accountId, accountId))
     .orderBy(desc(accountMembers.isOwner), asc(accountMembers.createdAt));
+}
+
+export type AccountUserRow = {
+  user: User;
+  /** The membership; null for a platform admin who is in the account "acting as". */
+  member: (typeof accountMembers.$inferSelect) | null;
+  /** The user's latest audit entry in this account; null when there is none. */
+  lastActiveAt: Date | null;
+};
+
+/**
+ * Settings › Users: the account's members, plus the signed-in platform admin
+ * when they are inside the account acting as (not a member), each with their
+ * last activity here (latest audit entry by that user in this account). Two
+ * queries in parallel, no N+1; account-scoped.
+ */
+export async function listAccountUsers(db: Db, accountId: string, viewer?: { user: User; actingAs: boolean }): Promise<AccountUserRow[]> {
+  const [members, activity] = await Promise.all([
+    listMembers(db, accountId),
+    db.select({ userId: auditLog.actorUserId, at: max(auditLog.createdAt) }).from(auditLog)
+      .where(and(eq(auditLog.accountId, accountId), isNotNull(auditLog.actorUserId)))
+      .groupBy(auditLog.actorUserId),
+  ]);
+  const lastOf = new Map(activity.map((a) => [a.userId, a.at ? new Date(a.at) : null]));
+  const rows: AccountUserRow[] = members.map(({ member, user }) => ({ user, member, lastActiveAt: lastOf.get(user.id) ?? null }));
+  if (viewer?.actingAs && !rows.some((r) => r.user.id === viewer.user.id)) {
+    rows.push({ user: viewer.user, member: null, lastActiveAt: lastOf.get(viewer.user.id) ?? null });
+  }
+  return rows;
 }
 
 export async function listPendingInvites(db: Db, accountId: string, now = new Date()) {

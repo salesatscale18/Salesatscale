@@ -91,6 +91,8 @@ export function deliveryByPhrase(latestIso: string, language: string): string {
   return t("buyer.quote.delivery_by", { date: longCalendarDate(latestIso, language) }, localeOf(language));
 }
 
+const capFirst = (s: string) => (s ? s[0].toLocaleUpperCase() + s.slice(1) : s);
+
 /** The message body. Lines are grouped per SKU: one-time amount, plus the recurring amount. */
 export function quoteMessageText(q: QuoteMessageInput): string {
   const locale = localeOf(q.language);
@@ -115,7 +117,9 @@ export function quoteMessageText(q: QuoteMessageInput): string {
     const one = amount(ls.find((l) => l.charge === "one_time"), false);
     const rec = amount(ls.find((l) => l.charge === "recurring"), true);
     const price = one && rec ? tr("buyer.quote.plus", { one_time: one, recurring: rec }) : one ?? rec ?? tr("buyer.quote.included");
-    const label = first.service && first.qty === 1 ? first.name : `${first.qty} × ${first.name} (${sku})`;
+    // The chat name, first letter capitalised as on the quote card (lib/agent/quote-card.ts).
+    const name = capFirst(first.name);
+    const label = first.service && first.qty === 1 ? name : `${first.qty} × ${name} (${sku})`;
     out.push(`${label}: ${price}`);
   }
   if (q.oneTime.discountMinor > 0) out.push(`${tr("buyer.quote.discount", { rate: percentText(q.discountBp) })}: ${money(-q.oneTime.discountMinor)}`);

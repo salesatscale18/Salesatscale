@@ -3,13 +3,14 @@ import { Avatar, Button, Chip, StatusPill } from "@/components/sas/primitives";
 import { CopyButton } from "@/components/sas/copy-button";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { listMembers, listPendingInvites, type AccountAccess } from "@/lib/accounts/service";
+import { listAccountUsers, listPendingInvites, type AccountAccess } from "@/lib/accounts/service";
 import { notificationsOrDefault } from "@/lib/accounts/company";
-import { contactHoursOrDefault, summarizeContactHours, WEEKDAYS } from "@/lib/accounts/contact-hours";
+import { contactHoursOrDefault, summarizeContactHours } from "@/lib/accounts/contact-hours";
+import { ContactHoursFields } from "@/components/sas/contact-hours-fields";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { listDeliveries, listIntakeKeys } from "@/lib/leads/service";
 import { displayName, initials } from "@/lib/auth/display";
-import { relativeTime } from "@/lib/format";
+import { formatLocalDateTime, safeTimezone, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { NOTIFICATION_EVENTS, type NotificationEvent, type SellerAccount } from "@/db/schema";
 import { removeMemberAction, revokeIntakeKeyAction, saveContactHoursAction, saveNotificationsAction, setIntakeKeyMarketAction } from "./actions";
@@ -94,6 +95,11 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   );
 }
 
+/** "2 min ago", with the exact local time and its zone on hover. */
+const When = ({ at, now, tz }: { at: Date; now: Date; tz: string }) => (
+  <time dateTime={at.toISOString()} title={`${formatLocalDateTime(at, tz)} · ${zoneTitle(at, tz)}`}>{timeAgo(at, now, tz)}</time>
+);
+
 const Saved = ({ text }: { text: string }) => <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{text}</span></div>;
 const Failed = ({ text }: { text: string }) => <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{text}</span></div>;
 
@@ -118,47 +124,81 @@ async function PaymentsSection({ account }: { account: SellerAccount }) {
 
 async function UsersSection({ access, sp }: { access: AccountAccess; sp: Record<string, string | string[] | undefined> }) {
   const { account, user: me } = access;
-  const [members, invites] = await Promise.all([listMembers(appDb, account.id), listPendingInvites(appDb, account.id)]);
-  const owners = members.filter((m) => m.member.isOwner).length;
+  // Members plus the signed-in platform admin when acting as, each with their last activity here (one grouped audit query).
+  const [rows, invites] = await Promise.all([listAccountUsers(appDb, account.id, { user: me, actingAs: access.actingAs }), listPendingInvites(appDb, account.id)]);
+  const owners = rows.filter((r) => r.member?.isOwner).length;
   const err = one(sp.error);
-  const dateFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: account.timezone });
+  const dateFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: safeTimezone(account.timezone) });
+  const now = new Date();
   return (
     <>
       {sp.removed ? <Saved text={t("settings.users.removed")} /> : null}
       {err ? <Failed text={t(err === "self" ? "settings.users.err.self" : err === "last_owner" ? "settings.users.err.last_owner" : err === "owner_only" ? "settings.users.err.owner_only" : "settings.users.err.not_found")} /> : null}
-      <section className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="usr-h">
-        <h2 id="usr-h" className="sas-heading">{t("settings.users.title")}</h2>
-        <ul style={{ listStyle: "none", margin: 0, padding: 0 }} className="sas-stack-2">
-          {members.map(({ member, user }) => {
-            const self = user.id === me.id;
-            const lastOwner = member.isOwner && owners <= 1;
-            return (
-              <li key={member.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-                <Avatar actor="human" initials={initials(user)} />
-                <span style={{ flex: "1 1 200px", minWidth: 0 }}>
-                  <span style={{ display: "block", fontWeight: 600 }}>{displayName(user)}{self ? <span className="sas-small"> · {t("settings.users.you")}</span> : null}</span>
-                  <span className="sas-small" style={{ overflowWrap: "anywhere" }}>{user.email}</span>
-                </span>
-                <span className="sas-chips">
-                  {member.isOwner ? <Chip>{t("settings.users.role.owner")}</Chip> : null}
-                  <Chip>{t("settings.users.role.seller_admin")}</Chip>
-                </span>
-                {self || lastOwner ? null : (
-                  <form action={removeMemberAction}>
-                    <input type="hidden" name="slug" value={account.slug} />
-                    <input type="hidden" name="memberId" value={member.id} />
-                    <Button type="submit" size="sm" variant="ghost" aria-label={t("settings.users.remove_who", { name: displayName(user) })}>{t("settings.users.remove")}</Button>
-                  </form>
-                )}
-              </li>
-            );
-          })}
-        </ul>
-        <span className="sas-small">{t("settings.users.hint")}</span>
+      <section className="sas-panel" aria-labelledby="usr-h" style={{ overflow: "hidden" }}>
+        <div className="sas-panel__body sas-stack-2" style={{ gap: 2 }}>
+          <h2 id="usr-h" className="sas-heading">{t("settings.users.title")}</h2>
+          <span className="sas-small">{t("settings.users.hint")}</span>
+        </div>
+        <div style={{ overflowX: "auto" }}>
+          <table className="sas-table" style={{ minWidth: 600 }} data-members>
+            <thead>
+              <tr>
+                <th scope="col">{t("settings.users.col.name")}</th>
+                <th scope="col">{t("settings.users.col.email")}</th>
+                <th scope="col">{t("settings.users.col.role")}</th>
+                <th scope="col">{t("settings.users.col.last_active")}</th>
+                <th scope="col"><span className="sas-sr">{t("settings.users.remove")}</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map(({ member, user, lastActiveAt }) => {
+                const self = user.id === me.id;
+                const lastOwner = !!member?.isOwner && owners <= 1;
+                return (
+                  <tr key={member?.id ?? `viewer-${user.id}`} data-member={user.id}>
+                    <td>
+                      <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
+                        <Avatar actor="human" initials={initials(user)} />
+                        <span style={{ fontWeight: 600 }}>{displayName(user)}{self ? <span className="sas-small" style={{ fontWeight: 400 }}> · {t("settings.users.you")}</span> : null}</span>
+                      </span>
+                    </td>
+                    <td className="sas-small">{user.email ?? "—"}</td>
+                    <td>
+                      <span className="sas-chips">
+                        {member ? (
+                          <>
+                            {member.isOwner ? <Chip>{t("settings.users.role.owner")}</Chip> : null}
+                            <Chip>{t("settings.users.role.seller_admin")}</Chip>
+                          </>
+                        ) : (
+                          <><Chip>{t("nav.role.platform_admin")}</Chip><span className="sas-small">{t("settings.users.acting_as")}</span></>
+                        )}
+                      </span>
+                    </td>
+                    <td className="sas-small" data-last-active="">
+                      {lastActiveAt
+                        ? <time dateTime={lastActiveAt.toISOString()} title={`${formatLocalDateTime(lastActiveAt, account.timezone)} · ${zoneTitle(lastActiveAt, account.timezone)}`}>{timeAgo(lastActiveAt, now, account.timezone)}</time>
+                        : "—"}
+                    </td>
+                    <td style={{ textAlign: "end" }}>
+                      {!member || self || lastOwner ? null : (
+                        <form action={removeMemberAction}>
+                          <input type="hidden" name="slug" value={account.slug} />
+                          <input type="hidden" name="memberId" value={member.id} />
+                          <Button type="submit" size="sm" variant="ghost" aria-label={t("settings.users.remove_who", { name: displayName(user) })}>{t("settings.users.remove")}</Button>
+                        </form>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </section>
       <section className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="inv-h">
         <h2 id="inv-h" className="sas-sr">{t("settings.users.invite_title")}</h2>
-        <InviteUserForm slug={account.slug} />
+        <InviteUserForm slug={account.slug} timezone={account.timezone} />
         {invites.length > 0 ? (
           <div className="sas-stack-2">
             <strong>{t("settings.users.pending")}</strong>
@@ -167,7 +207,7 @@ async function UsersSection({ access, sp }: { access: AccountAccess; sp: Record<
                 <li key={invite.id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "4px 12px", padding: "8px 0", borderTop: "1px solid var(--line)" }}>
                   <span style={{ flex: "1 1 200px", minWidth: 0, overflowWrap: "anywhere" }}>{invite.inviteeName ? `${invite.inviteeName} · ` : ""}{invite.email}</span>
                   <span className="sas-small">{state === "expired" ? t("settings.users.expired") : t("settings.users.expires", { date: dateFmt.format(invite.expiresAt) })}</span>
-                  <RenewInvite slug={account.slug} inviteId={invite.id} />
+                  <RenewInvite slug={account.slug} inviteId={invite.id} timezone={account.timezone} />
                 </li>
               ))}
             </ul>
@@ -227,16 +267,7 @@ function HoursSection({ account, saved, error }: { account: SellerAccount; saved
             <span>{summarizeContactHours(hours)}</span>
           </div>
           <span className="sas-small">{t("settings.hours.body", { tz: account.timezone })}</span>
-          <div className="sas-stack-2">
-            {WEEKDAYS.map((d, i) => (
-              <fieldset key={d} style={{ border: 0, padding: 0, margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px" }}>
-                <legend className="sas-sr">{t(`settings.hours.day.${d}` as MessageKey)}</legend>
-                <label className="sas-check" style={{ width: 130 }}><input type="checkbox" name={`${d}_on`} defaultChecked={hours[i].on} />{t(`settings.hours.day.${d}` as MessageKey)}</label>
-                <label className="sas-small" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{t("settings.hours.from")}<input className="sas-input sas-num" type="time" name={`${d}_from`} defaultValue={hours[i].from} required style={{ width: 120 }} /></label>
-                <label className="sas-small" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>{t("settings.hours.to")}<input className="sas-input sas-num" type="time" name={`${d}_to`} defaultValue={hours[i].to} required style={{ width: 120 }} /></label>
-              </fieldset>
-            ))}
-          </div>
+          <ContactHoursFields hours={hours} />
           <div><Button type="submit" variant="primary" size="sm">{t("settings.save")}</Button></div>
         </form>
       </section>
@@ -294,8 +325,8 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
                           </form>
                         </td>
                         <td className="sas-num">{k.keyPrefix}…{k.keyLast4 ?? ""}</td>
-                        <td className="sas-small">{relativeTime(k.createdAt, now)}</td>
-                        <td className="sas-small">{k.lastUsedAt ? relativeTime(k.lastUsedAt, now) : t("settings.intake.never")}</td>
+                        <td className="sas-small"><When at={k.createdAt} now={now} tz={account.timezone} /></td>
+                        <td className="sas-small">{k.lastUsedAt ? <When at={k.lastUsedAt} now={now} tz={account.timezone} /> : t("settings.intake.never")}</td>
                         <td style={{ textAlign: "end" }}>
                           <form action={revokeIntakeKeyAction}>
                             <input type="hidden" name="slug" value={account.slug} />
@@ -322,7 +353,7 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
                   <tbody>
                     {deliveries.map(({ delivery, key }) => (
                       <tr key={delivery.id}>
-                        <td className="sas-num sas-small" title={delivery.createdAt.toISOString()}>{relativeTime(delivery.createdAt, now)}</td>
+                        <td className="sas-num sas-small"><When at={delivery.createdAt} now={now} tz={account.timezone} /></td>
                         <td>{delivery.leadId ? <a href={`/app/${account.slug}/leads/${delivery.leadId}`}>{delivery.leadName ?? t("settings.intake.no_name")}</a> : delivery.leadName ?? t("settings.intake.no_name")}</td>
                         <td style={{ whiteSpace: "normal" }}><StatusPill object="intake_result" state={delivery.result} />{delivery.reason ? <span className="sas-small"> {delivery.reason}</span> : null}</td>
                         <td className="sas-small">{key ? (key.revokedAt ? t("settings.intake.revoked_key") : key.name) : t("settings.intake.revoked_key")}</td>
