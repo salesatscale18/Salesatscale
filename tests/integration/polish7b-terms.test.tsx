@@ -42,7 +42,7 @@ const { default: CatalogPage } = await import("@/app/app/[account]/setup/catalog
 const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowledge/page");
 const { default: PriceListsPage } = await import("@/app/app/[account]/setup/price-lists/page");
 const { default: GoLivePage } = await import("@/app/app/[account]/setup/go-live/page");
-const { estimateText } = await import("@/app/app/[account]/setup/sources/analyze");
+const { changeText, estimateText } = await import("@/app/app/[account]/setup/sources/analyze");
 const { planAnalysis } = await import("@/lib/pipeline/service");
 
 const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
@@ -152,14 +152,17 @@ describe("Polish-7b: plain terms", () => {
     save("sources-nothing-changed", html);
     // The line and the button follow the same reuse decision as the confirm step (UX follow-up).
     const plan = (await planAnalysis(db, account.id))!;
-    expect(text(html)).toContain(estimateText(plan));
+    // The strip (redesign R3-3): what changed, then the estimated cost in the account currency.
+    expect(text(html)).toContain(changeText(plan));
     expect(html).toContain(`data-analyze-button="${plan.facts.reuse && plan.playbook.reuse ? "secondary" : "primary"}"`);
     expect(text(html)).not.toMatch(/about [\d,]+ tokens/);
     const [one] = await db.select().from(sources).where(eq(sources.accountId, account.id)).limit(1);
     await db.update(sources).set({ textHash: null }).where(eq(sources.id, one.id));
     const changed = await render(SourcesPage, account.slug);
     save("sources-changed", changed);
-    expect(text(changed)).toMatch(/Changed since the last analysis: 1 of 3 sources[^·]*· estimated cost \$\d+\.\d{2,3}/);
+    expect(text(changed)).toContain("Changed since the last analysis: 1 of 3 sources");
+    // B4: the same unit as Settings › AI usage (the demo account is in shekels).
+    expect(text(changed)).toMatch(/Estimated cost ₪\d+\.\d{2,3}/);
     expect(changed).toContain('data-analyze-button="primary"');
     // The confirm step stays (shown once AI is set up: a dummy key, no model is called while rendering).
     vi.stubEnv("ANTHROPIC_API_KEY", "test-dummy-not-used");
@@ -170,7 +173,10 @@ describe("Polish-7b: plain terms", () => {
     expect(estimateText(base as never)).toBe("Nothing changed since the last analysis. Running it again reuses the results at no cost.");
     expect(estimateText({ ...base, changed: 2, facts: { reuse: false }, playbook: { reuse: false } } as never)).toBe("Changed since the last analysis: 2 of 3 sources · estimated cost $0.15");
     expect(estimateText({ ...base, playbook: { reuse: false } } as never)).toBe("Changed since the last analysis: catalog or playbook · estimated cost $0.15");
-    expect(estimateText({ ...base, facts: { reuse: false }, playbook: { reuse: false } } as never)).toBe("Changed since the last analysis: how the analysis works · estimated cost $0.15");
+    // B4: only the analysis itself changed.
+    expect(estimateText({ ...base, facts: { reuse: false }, playbook: { reuse: false } } as never)).toBe("We improved the analysis since your last run · estimated cost $0.15");
+    expect(changeText({ ...base, facts: { reuse: false }, playbook: { reuse: false } } as never)).toBe("We improved the analysis since your last run");
+    expect(estimateText({ ...base, changed: 2, facts: { reuse: false }, playbook: { reuse: false } } as never, "ILS")).toBe("Changed since the last analysis: 2 of 3 sources · estimated cost ₪0.56");
   });
 
   it("Catalog: rule sentences name the item first, codes never wrap; the form labels and tick boxes", async () => {

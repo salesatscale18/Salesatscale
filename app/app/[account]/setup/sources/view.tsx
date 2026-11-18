@@ -3,8 +3,15 @@
  * language words. Server-safe (no hooks).
  */
 import type { Source } from "@/db/schema";
-import { isLocale, t } from "@/lib/i18n";
+import { isLocale, messages, t, type MessageKey } from "@/lib/i18n";
+
+/** `key` with {count} filled, or its `_one` form ("1 section") when count is 1 and that key exists. */
+export function plural(key: MessageKey, count: number): string {
+  const one = `${key}_one` as MessageKey;
+  return t(count === 1 && messages.en[one] ? one : key, { count: count.toLocaleString("en"), n: count.toLocaleString("en") });
+}
 import { formatClock } from "@/lib/sources/text";
+import { Icon, type IconName } from "@/components/sas/icon";
 
 type Row = Pick<Source, "kind" | "title" | "origin" | "stats" | "language">;
 
@@ -53,4 +60,40 @@ export function languageWords(code: string | null): string {
 export function fileSize(bytes: number | undefined): string | null {
   if (!bytes) return null;
   return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
+}
+
+/** The icon for each source type (list rows, detail header, add tiles). */
+export const KIND_ICON = { website: "link-2", file: "file-text", text: "pen", call: "message-square" } as const satisfies Record<Row["kind"], IconName>;
+
+/** The type icon in a small square, before a source's title. */
+export function SourceIcon({ kind }: { kind: Row["kind"] }) {
+  return (
+    <span aria-hidden="true" style={{ flex: "none", display: "inline-grid", placeItems: "center", width: 32, height: 32, borderRadius: "var(--radius-md)", background: "var(--surface-sunken)", color: "var(--ink-muted)" }}>
+      <Icon name={KIND_ICON[kind]} />
+    </span>
+  );
+}
+
+/** "12 Nov 2026" from a call date ("2026-11-12"). */
+export function callDateText(iso: string | undefined): string | null {
+  if (!iso || !/^\d{4}-\d{2}-\d{2}$/.test(iso)) return null;
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T12:00:00Z`));
+}
+
+/**
+ * The detail line under a source's title in the list: "Website · 14 pages read
+ * · /products /faq", "Call · 02:22 long · rep: Dana · 12 Nov 2026", "File · could
+ * not be read".
+ */
+export function detailLine(s: Pick<Source, "kind" | "stats" | "origin" | "status">): string {
+  const parts: string[] = [t(`sources.kind.${s.kind}`)];
+  if (s.status === "failed") parts.push(t("sources.size.failed"));
+  else if (s.status !== "processing") parts.push(sizeLine(s));
+  if (s.kind === "website" && s.origin.allowedPaths?.length) parts.push(s.origin.allowedPaths.join(" "));
+  if (s.kind === "call") {
+    if (s.origin.rep) parts.push(t("sources.call.rep_is", { rep: s.origin.rep }));
+    const d = callDateText(s.origin.callDate);
+    if (d) parts.push(d);
+  }
+  return parts.join(" · ");
 }

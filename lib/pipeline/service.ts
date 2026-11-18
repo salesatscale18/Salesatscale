@@ -1033,24 +1033,38 @@ async function applyCatalogItem(db: Db, actor: Actor, accountId: string, s: Sugg
 // Sources: "Approved" once every fact found in a source is reviewed
 // ---------------------------------------------------------------------------
 
-/** Per source: how many of its facts are still suggested and how many are approved. */
-export async function sourceFactCounts(db: Db, accountId: string): Promise<Map<string, { suggested: number; approved: number }>> {
+/** Per source fact counts by status, and the total found (one grouped query). */
+export type SourceFactCounts = { suggested: number; approved: number; rejected: number; total: number };
+
+/** Per source: how many of its facts are suggested, approved and rejected, and how many were found in all. */
+export async function sourceFactCounts(db: Db, accountId: string): Promise<Map<string, SourceFactCounts>> {
   const rows = await db
     .select({ sourceId: knowledgeFacts.sourceId, status: knowledgeFacts.status, n: sql<string>`count(*)` })
     .from(knowledgeFacts)
     .where(and(eq(knowledgeFacts.accountId, accountId), isNotNull(knowledgeFacts.sourceId)))
     .groupBy(knowledgeFacts.sourceId, knowledgeFacts.status);
-  const out = new Map<string, { suggested: number; approved: number }>();
+  const out = new Map<string, SourceFactCounts>();
   for (const r of rows) {
-    const c = out.get(r.sourceId!) ?? { suggested: 0, approved: 0 };
-    if (r.status === "suggested") c.suggested += Number(r.n);
-    if (r.status === "approved") c.approved += Number(r.n);
+    const c = out.get(r.sourceId!) ?? { suggested: 0, approved: 0, rejected: 0, total: 0 };
+    const n = Number(r.n);
+    if (r.status === "suggested") c.suggested += n;
+    if (r.status === "approved") c.approved += n;
+    if (r.status === "rejected") c.rejected += n;
+    c.total += n;
     out.set(r.sourceId!, c);
   }
   return out;
 }
 
-/** The status a source shows: "approved" instead of "ready" when its facts are all reviewed and one is approved. */
-export function sourceDisplayStatus<S extends string>(status: S, counts: { suggested: number; approved: number } | undefined): S | "approved" {
+/**
+ * The status a source shows: "approved" instead of "ready" when its facts are
+ * all reviewed and one is approved. A source changed since the last analysis
+ * (`changed`: text_hash cleared by an edit or a new read) shows "ready"
+ * ("Ready for review") again, even while its earlier facts stay approved.
+ */
+export function sourceDisplayStatus<S extends string>(
+  status: S, counts: { suggested: number; approved: number } | undefined, opts: { changed?: boolean } = {},
+): S | "approved" {
+  if (opts.changed) return status;
   return status === "ready" && counts && counts.suggested === 0 && counts.approved > 0 ? "approved" : status;
 }

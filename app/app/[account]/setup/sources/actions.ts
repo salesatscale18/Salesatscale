@@ -10,7 +10,8 @@ import { isUuid } from "@/lib/security/ids";
 import { FileRejected } from "@/lib/sources/files";
 import { UnsafeUrlError } from "@/lib/sources/ssrf";
 import {
-  addCall, addFile, addNote, addWebsite, deleteSource, markWebsiteForReread, readWebsite, SourceInputError, updateNote, type UploadedFile,
+  addCall, addFile, addNote, addWebsite, deleteSource, markWebsiteForReread, readWebsite, SourceInputError, updateCall, updateFile, updateNote, updateWebsite,
+  type UploadedFile,
 } from "@/lib/sources/service";
 
 export type FormState = { error: string | null };
@@ -104,6 +105,55 @@ export async function updateNoteAction(_prev: FormState, form: FormData): Promis
   }
   await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action: "source.edited", targetType: "source", targetId: id });
   back(a.account.slug, { done: "saved" }, `${page(a.account.slug)}/${id}`);
+}
+
+/** Edit a call: name, rep, date and transcript. Back on its page with "Saved". */
+export async function updateCallAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const a = await requireAccount(str(form, "slug"));
+  const id = str(form, "sourceId");
+  if (!isUuid(id)) return { error: t("sources.error.missing") };
+  try {
+    const s = await updateCall(appDb, a.account.id, id, { title: str(form, "title"), rep: str(form, "rep"), callDate: str(form, "callDate"), text: str(form, "text") });
+    if (!s) return { error: t("sources.error.missing") };
+  } catch (e) {
+    return { error: inputError(e) };
+  }
+  await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action: "source.edited", targetType: "source", targetId: id, details: { kind: "call" } });
+  back(a.account.slug, { done: "saved" }, `${page(a.account.slug)}/${id}`);
+}
+
+/** Edit a website's address and sections; it is read again after the response. */
+export async function updateWebsiteAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const a = await requireAccount(str(form, "slug"));
+  const id = str(form, "sourceId");
+  if (!isUuid(id)) return { error: t("sources.error.missing") };
+  try {
+    const s = await updateWebsite(appDb, a.account.id, id, { url: str(form, "url"), paths: pathList(str(form, "paths")) });
+    if (!s) return { error: t("sources.error.missing") };
+  } catch (e) {
+    return { error: inputError(e) };
+  }
+  await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action: "source.edited", targetType: "source", targetId: id, details: { kind: "website" } });
+  after(() => readWebsite(appDb, a.account.id, id));
+  back(a.account.slug, { done: "reread" }, `${page(a.account.slug)}/${id}`);
+}
+
+/** Rename a file and, optionally, replace it with a new file (its text replaces the old). */
+export async function updateFileAction(_prev: FormState, form: FormData): Promise<FormState> {
+  const a = await requireAccount(str(form, "slug"));
+  const id = str(form, "sourceId");
+  if (!isUuid(id)) return { error: t("sources.error.missing") };
+  const file = await fileFrom(form.get("file"));
+  try {
+    const s = await updateFile(appDb, a.account.id, id, { title: str(form, "title"), file });
+    if (!s) return { error: t("sources.error.missing") };
+  } catch (e) {
+    return { error: inputError(e) };
+  }
+  await writeAudit(appDb, actorOf(a), {
+    accountId: a.account.id, action: "source.edited", targetType: "source", targetId: id, details: { kind: "file", replaced: !!file, ...(file ? { size: file.bytes.byteLength } : {}) },
+  });
+  back(a.account.slug, { done: file ? "replaced" : "saved" }, `${page(a.account.slug)}/${id}`);
 }
 
 export async function addCallAction(_prev: FormState, form: FormData): Promise<FormState> {

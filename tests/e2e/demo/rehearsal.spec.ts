@@ -341,9 +341,14 @@ const TRANSCRIPT = `00:00 Rep: Hi Dana, this is Avi from Polar Demo. Thanks for 
 02:22 Rep: Will do. Thanks, Dana.`;
 
 step("C1 Sources: two notes and a call transcript", async () => {
-  await page.goto(`${S.appBase}/setup/sources`);
+  const sources = `${S.appBase}/setup/sources`;
+  // A source's row link holds its title and detail line; match the title itself.
+  const listed = (title: string) => page.locator("a.sas-row-link > strong").getByText(title, { exact: true });
+  await page.goto(sources);
   const note = async (title: string, body: string) => {
-    if (await visible(page.getByRole("link", { name: title, exact: true }), 1500)) return;
+    if (await visible(listed(title), 1500)) return;
+    // The add forms open in a side panel (?panel=note).
+    await page.goto(`${sources}?panel=note`);
     await page.locator("#src-note-title").fill(title);
     await page.locator("#src-note-body").fill(body);
     await page.getByRole("button", { name: "Save note" }).click();
@@ -352,17 +357,18 @@ step("C1 Sources: two notes and a call transcript", async () => {
   await note("Polar Demo – product facts", FACTS);
   await note("Pricing and policy", POLICY);
   const callTitle = "Discovery call – café chain, 3 sites";
-  if (!(await visible(page.getByRole("link", { name: callTitle, exact: true }), 1500))) {
+  if (!(await visible(listed(callTitle), 1500))) {
+    await page.goto(`${sources}?panel=call`);
     await page.locator("#src-call-name").fill(callTitle);
     await page.locator("#src-call-rep").fill("Avi");
-    await page.locator("#src-call-date").fill("2026-11-10");
+    await page.locator("#src-call-date").fill("10/11/2026");
     await page.locator("#src-call-text").fill(TRANSCRIPT);
     await page.locator('form:has(#src-call-text) input[name="consent"]').check();
     await page.getByRole("button", { name: "Add transcript" }).click();
     await page.waitForLoadState("networkidle");
   }
-  await page.goto(`${S.appBase}/setup/sources`);
-  await expect(page.getByRole("link", { name: callTitle, exact: true })).toBeVisible();
+  await page.goto(sources);
+  await expect(listed(callTitle)).toBeVisible();
   // Wait until no source is still being read.
   for (let i = 0; i < 20 && (await visible(page.getByText(/Reading|Processing/i).first(), 500)); i++) {
     await page.waitForTimeout(3000);
@@ -373,8 +379,9 @@ step("C1 Sources: two notes and a call transcript", async () => {
 
 // ───────────────────────── PAID: analysis ─────────────────────────
 
+// The runs table sits behind "Run history" (?panel=runs).
 const runRows = async () => {
-  const panel = page.locator("section:has(#an-h)");
+  const panel = page.locator("[data-runs]");
   return (await panel.locator("tbody tr").allInnerTexts()).map((x) => x.replace(/\s+/g, " ").trim());
 };
 
@@ -385,7 +392,7 @@ step("P1 Analyze sources (PAID, once)", async () => {
   if (!S.analysis.clicked) {
     await page.goto(sources);
     const panel = page.locator("section:has(#an-h)");
-    S.analysis.estimate = (await panel.locator('p[aria-live="polite"]').innerText()).trim();
+    S.analysis.estimate = (await panel.innerText()).replace(/\s+/g, " ").trim();
     save();
     await panel.getByRole("link", { name: "Analyze sources" }).click();
     await page.waitForURL(/analyze=confirm/);
@@ -401,7 +408,7 @@ step("P1 Analyze sources (PAID, once)", async () => {
   // Poll every ~15 s, up to 10 minutes.
   const until = Date.now() + 10 * 60_000;
   for (;;) {
-    await page.goto(sources);
+    await page.goto(`${sources}?panel=runs`);
     const rows = await runRows();
     S.analysis.runs = rows;
     save();

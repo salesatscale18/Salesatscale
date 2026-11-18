@@ -1,51 +1,77 @@
+import type { ReactNode } from "react";
 import { SetupSteps } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
 import { notFound } from "next/navigation";
-import { PRICE_LIST_FIX } from "@/lib/sources/files";
+import { PRICE_LIST_FIX, FILE_ACCEPT } from "@/lib/sources/files";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
+import { ConfirmDelete, RowMenu, SidePanel, type RowMenuItem } from "@/components/sas/list-kit";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
+import { personName } from "@/lib/auth/display";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
-import { t } from "@/lib/i18n";
+import { t, type MessageKey } from "@/lib/i18n";
+import { firstParam } from "@/lib/list-kit";
 import { isUuid } from "@/lib/security/ids";
-import { getSource, listSections, listSourceFacts } from "@/lib/sources/service";
+import { getSource, listSections, listSourceFacts, sourceAddedBy } from "@/lib/sources/service";
+import { transcriptToText } from "@/lib/sources/transcript";
+import { formatClock } from "@/lib/sources/text";
 import { customerNotes, latestSuggestions, limitPreviews, locateEvidence, runData, sourceDisplayStatus, suggestionsForSource, type PlaybookRunResult, type Suggestion } from "@/lib/pipeline/service";
 import { SuggestionItem } from "../../playbook/draft/suggestion";
 import { deleteSourceAction, rereadWebsiteAction } from "../actions";
-import { NoteForm, RefreshWhileProcessing } from "../forms";
-import { SourceBadge, fileSize, languageWords, sizeLine } from "../view";
+import { CallEditForm, FileEditForm, InfoNote, NoteForm, PanelSubmit, RefreshWhileProcessing, WebsiteEditForm } from "../forms";
+import { SourceIcon, callDateText, fileSize, languageWords, plural, sizeLine } from "../view";
 
 export const maxDuration = 60;
 
-const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
+const DONE: Record<string, MessageKey> = {
+  saved: "sources.done.saved", call: "sources.done.call", reread: "sources.done.reread", replaced: "sources.done.replaced",
+};
+
+/** Text with every match of `q` (case-insensitive) wrapped in <mark>. */
+function highlight(text: string, q: string): ReactNode {
+  if (!q) return text;
+  const parts = text.split(new RegExp(`(${q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi"));
+  return parts.map((p, i) => (i % 2 === 1 ? <mark key={i} data-match="" style={{ background: "var(--warning-soft)", color: "inherit", borderRadius: 2 }}>{p}</mark> : p));
+}
+
+/** How many times `q` occurs in `text` (case-insensitive). */
+function countMatches(text: string, q: string): number {
+  if (!q) return 0;
+  const hay = text.toLocaleLowerCase();
+  const needle = q.toLocaleLowerCase();
+  let n = 0;
+  for (let i = hay.indexOf(needle); i >= 0; i = hay.indexOf(needle, i + needle.length)) n++;
+  return n;
+}
 
 /**
- * One source in full (the "see everything uploaded" view): every section of
- * the extracted text with its locator, its problems, and the facts found in
- * it. Notes are edited here; a call shows its transcript line by line
- * (canvas: CallReview). A call's "Suggested from this call" panel lists the
- * playbook suggestions whose evidence is in this call, grouped as in the
- * design, with Accept / Edit / Remove, and what was kept back because it is
- * about this customer only.
+ * One source in full (board SourceDetailNew): header with type, title and
+ * status, Edit (every type, ?panel=edit) and ⋯ (Read again, Delete with an
+ * in-page confirm, ?confirm=delete). Left: the text with a search box (?q=,
+ * matches highlighted; no JS needed); a call shows time, speaker and line.
+ * Right: Details, the call's suggestions (Accept / Edit / Remove, and what was
+ * kept back as about this customer only) and the facts found in it.
  */
 export default async function SourcePage({ params, searchParams }: { params: Promise<{ account: string; sourceId: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug, sourceId } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const { account, user } = await requireAccount(slug);
   if (!isUuid(sourceId)) notFound();
   const source = await getSource(appDb, account.id, sourceId);
   if (!source) notFound();
   const isCall = source.kind === "call";
-  const [sections, facts, suggestions, notes, latest] = await Promise.all([
+  const [sections, facts, suggestions, notes, latest, addedBy, progress] = await Promise.all([
     listSections(appDb, account.id, source.id), listSourceFacts(appDb, account.id, source.id),
     isCall ? suggestionsForSource(appDb, account.id, source.id) : Promise.resolve([] as Suggestion[]),
     isCall ? customerNotes(appDb, account.id, source.id) : Promise.resolve([]),
     isCall ? latestSuggestions(appDb, account.id) : Promise.resolve(null),
+    sourceAddedBy(appDb, source), setupProgress(appDb, account),
   ]);
   const [evidenceLinks, limits] = await Promise.all([
     locateEvidence(appDb, account.id, account.slug, suggestions.flatMap((x) => x.evidence)),
     limitPreviews(appDb, account.id, suggestions),
   ]);
+  const one = (name: string) => firstParam(sp, name) ?? "";
   const factCounts = { suggested: facts.filter((f) => f.status === "suggested").length, approved: facts.filter((f) => f.status === "approved").length };
   const callsInCorpus = (latest?.run ? (runData(latest.run)?.result as PlaybookRunResult | undefined)?.callsInCorpus : 0) ?? 0;
   const marked = new Set(suggestions.flatMap((x) => x.evidence.filter((e) => e.sourceId === source.id).map((e) => e.locator)));
@@ -55,75 +81,121 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
     { title: "sources.call.group.pricing", kinds: ["limit"] },
     { title: "sources.call.group.other", kinds: ["goal", "tone", "never", "opener", "play_content", "play_card", "catalog_item"] },
   ];
-  const editId = one(sp.edit);
+  const editId = one("edit");
   const list = `/app/${account.slug}/setup/sources`;
   const here = `${list}/${source.id}`;
   const now = new Date();
-  const editing = source.kind === "text" && one(sp.edit) === "1";
-  const confirming = one(sp.confirm) === "delete";
-  const done = one(sp.done);
+  // ?edit=1 is the old link to a note's edit form.
+  const editing = one("panel") === "edit" || editId === "1";
+  const confirming = one("confirm") === "delete";
+  const done = DONE[one("done")];
+  const q = one("q").trim().slice(0, 100);
   const o = source.origin;
+  const status = sourceDisplayStatus(source.status, factCounts, { changed: source.textHash === null });
+  const positionOf = new Map(sections.map((s) => [s.locator, s.position]));
+  const anchor = (pos: number) => (isCall ? `#l-${pos}` : `#s-${pos}`);
+  const matches = q ? sections.reduce((n, s) => n + countMatches(`${s.heading ?? ""} ${s.text}`, q), 0) : 0;
+  const firstMatch = q ? sections.find((s) => countMatches(`${s.heading ?? ""} ${s.text}`, q) > 0) : undefined;
+  const kindTitle = t(`sources.kind_long.${source.kind}`);
 
   const meta: string[] = [t(`sources.kind.${source.kind}`), sizeLine(source), languageWords(source.language)];
-  if (source.kind === "call") {
-    if (o.rep) meta.push(t("sources.call.rep_is", { rep: o.rep }));
-    if (o.callDate) meta.push(o.callDate);
-    if (o.consentConfirmed) meta.push(t("sources.call.consent_done"));
-    meta.push(t("sources.call.masked_done"));
-  }
-  const size = fileSize(o.size);
-  if (source.kind === "file" && size) meta.push(size);
   meta.push(t("sources.detail.updated", { when: timeAgo(source.updatedAt, now, account.timezone) }));
 
-  const hidden = (
-    <>
-      <input type="hidden" name="slug" value={account.slug} />
-      <input type="hidden" name="sourceId" value={source.id} />
-      <input type="hidden" name="from" value="detail" />
-    </>
+  const fields = { slug: account.slug, sourceId: source.id, from: "detail" };
+  const menu: RowMenuItem[] = [
+    ...(source.kind === "website" ? [{ kind: "form" as const, label: t("sources.reread"), action: rereadWebsiteAction, fields, icon: "refresh-cw" as const }] : []),
+    ...(source.kind === "file" ? [{ label: t("sources.reread"), href: `${here}?panel=edit`, icon: "refresh-cw" as const }] : []),
+    { label: t("sources.delete"), href: `${here}?confirm=delete`, icon: "x-circle", danger: true },
+  ];
+
+  const details: { label: string; value: ReactNode }[] = [
+    { label: t("sources.details.type"), value: kindTitle },
+    ...(isCall ? [
+      { label: t("sources.call.rep"), value: o.rep || "—" },
+      { label: t("sources.call.date"), value: callDateText(o.callDate) ?? "—" },
+    ] : []),
+    ...(source.kind === "website" && o.url ? [
+      { label: t("sources.web.url"), value: <a href={o.url} className="sas-num" style={{ overflowWrap: "anywhere" }} rel="noreferrer noopener" target="_blank">{o.url}</a> },
+      { label: t("sources.detail.sections"), value: o.allowedPaths?.length ? <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 4, justifyContent: "flex-end" }}>{o.allowedPaths.map((p) => <span key={p} className="sas-chip sas-chip--plain" dir="ltr">{p}</span>)}</span> : t("sources.detail.whole_site") },
+    ] : []),
+    ...(source.kind === "file" ? [{ label: t("sources.file.name"), value: <span style={{ overflowWrap: "anywhere" }}>{[o.fileName, fileSize(o.size)].filter(Boolean).join(" · ") || "—"}</span> }] : []),
+    { label: t("sources.col.language"), value: languageWords(source.language) },
+    {
+      label: t("sources.details.added"),
+      value: <span title={`${formatLocalDateTime(source.createdAt, account.timezone)} · ${zoneTitle(source.createdAt, account.timezone)}`}>{addedBy ? t("sources.details.added_by", { when: formatLocalDateTime(source.createdAt, account.timezone), who: personName(addedBy, user.id, t("people.you")) }) : formatLocalDateTime(source.createdAt, account.timezone)}</span>,
+    },
+    { label: t("sources.col.updated"), value: <span style={{ fontVariantNumeric: "tabular-nums" }} title={zoneTitle(source.updatedAt, account.timezone)}>{formatLocalDateTime(source.updatedAt, account.timezone)}</span> },
+    ...(isCall ? [{ label: t("sources.details.privacy"), value: [o.consentConfirmed ? t("sources.call.consent_done") : null, t("sources.call.masked_done")].filter(Boolean).join(" · ") }] : []),
+  ];
+
+  const editPanel = editing ? (() => {
+    const form = "src-edit-form";
+    const body = sections.map((s) => s.text).join("\n\n");
+    return (
+      <SidePanel
+        title={<span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}><SourceIcon kind={source.kind} />{t(`sources.edit.title.${source.kind}`)}</span>}
+        closeHref={here}
+        footer={<><PanelSubmit form={form} label={t("sources.note.save")} /><a className={buttonClass("ghost")} href={here}>{t("common.cancel")}</a></>}
+      >
+        {source.kind === "text" ? <NoteForm slug={account.slug} id={form} note={{ id: source.id, title: source.title, body }} /> : null}
+        {source.kind === "call" ? <CallEditForm slug={account.slug} id={form} source={{ id: source.id, title: source.title, rep: o.rep, callDate: o.callDate, text: transcriptToText(sections) }} /> : null}
+        {source.kind === "website" ? <WebsiteEditForm slug={account.slug} id={form} source={{ id: source.id, url: o.url ?? "", paths: o.allowedPaths ?? [] }} /> : null}
+        {source.kind === "file" ? <FileEditForm slug={account.slug} id={form} accept={FILE_ACCEPT} source={{ id: source.id, title: source.title, fileName: o.fileName }} /> : null}
+        <InfoNote>{source.kind === "website" ? t("sources.edit.website_note") : t("sources.edit.status_note")}</InfoNote>
+        {source.kind === "website" ? (
+          <form action={rereadWebsiteAction} className="sas-stack-2" style={{ alignItems: "flex-start" }}>
+            {Object.entries(fields).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
+            <span className="sas-small">{t("sources.edit.reread_hint")}</span>
+            <button type="submit" className={buttonClass("secondary", "sm")} disabled={source.status === "processing"}><Icon name="refresh-cw" />{t("sources.reread")}</button>
+          </form>
+        ) : null}
+      </SidePanel>
+    );
+  })() : null;
+
+  const search = (
+    <form action={here} method="get" role="search" aria-label={t("sources.detail.search")} style={{ display: "flex", gap: 8, alignItems: "center", flex: "1 1 220px", maxWidth: 320 }}>
+      <label className="sas-search" style={{ flex: 1, minWidth: 0 }}>
+        <Icon name="search" />
+        <span className="sas-sr">{t("sources.detail.search")}</span>
+        <input type="search" name="q" defaultValue={q} placeholder={t("sources.detail.search")} autoComplete="off" />
+      </label>
+      <button type="submit" className={`${buttonClass("secondary", "sm")} sas-sr`}>{t("sources.detail.search_go")}</button>
+    </form>
   );
-  const noteBody = sections.map((s) => s.text).join("\n\n");
+  const searchLine = q ? (
+    <div className="sas-small" role="status" style={{ padding: "8px 20px", borderBlockEnd: "1px solid var(--line)", display: "flex", gap: 10, flexWrap: "wrap" }} data-search-result="">
+      <span>{matches ? plural("sources.detail.matches", matches) : t("sources.detail.no_matches", { q })}</span>
+      {firstMatch ? <a href={`${here}?q=${encodeURIComponent(q)}${anchor(firstMatch.position)}`}>{t("sources.detail.first_match")}</a> : null}
+      <a href={here}>{t("sources.detail.clear_search")}</a>
+    </div>
+  ) : null;
 
   return (
     <main className="sas-shell__content">
       <RefreshWhileProcessing active={source.status === "processing"} />
       <header className="sas-page-head">
-        <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 300px", minWidth: 0 }}>
-          <nav aria-label={t("sources.detail.breadcrumb")} className="sas-small"><a href={list}>{t("sources.title")}</a> / {t(`sources.kind.${source.kind}`)}</nav>
-          <span style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0 }}>
-            <SourceBadge source={source} />
+        <div className="sas-stack-2" style={{ gap: 4, flex: "1 1 300px", minWidth: 0 }}>
+          <nav aria-label={t("sources.detail.breadcrumb")} className="sas-small"><a href={list}>{t("sources.title")}</a> / {kindTitle}</nav>
+          <span style={{ display: "flex", gap: 10, alignItems: "center", minWidth: 0, flexWrap: "wrap" }}>
+            <SourceIcon kind={source.kind} />
             <h1 className="sas-title" style={{ overflowWrap: "anywhere", minWidth: 0 }} dir="auto">{source.title}</h1>
+            <StatusPill object="source" state={status} />
           </span>
           <span className="sas-small" title={`${formatLocalDateTime(source.updatedAt, account.timezone)} · ${zoneTitle(source.updatedAt, account.timezone)}`}>{meta.join(" · ")}</span>
-          {source.kind === "website" && o.url ? (
-            <span className="sas-small" style={{ overflowWrap: "anywhere" }}>
-              <span className="sas-num">{o.url}</span>
-              {o.allowedPaths?.length ? <> · {t("sources.detail.paths")} {o.allowedPaths.map((p) => <span key={p} className="sas-chip" style={{ marginInlineEnd: 4 }}>{p}</span>)}</> : null}
-            </span>
-          ) : null}
         </div>
         <div className="sas-page-head__actions" style={{ alignItems: "center" }}>
-          <StatusPill object="source" state={sourceDisplayStatus(source.status, factCounts)} />
-          {source.kind === "website" ? (
-            <form action={rereadWebsiteAction}>{hidden}<button type="submit" className={buttonClass("secondary", "sm")} disabled={source.status === "processing"}>{t("sources.reread")}</button></form>
-          ) : null}
-          {source.kind === "text" && !editing ? <a className={buttonClass("secondary", "sm")} href={`${here}?edit=1`}>{t("sources.note.edit")}</a> : null}
-          {confirming ? null : <a className={buttonClass("ghost", "sm")} href={`${here}?confirm=delete`}>{t("sources.delete")}</a>}
+          <a className={buttonClass("secondary")} href={`${here}?panel=edit`} data-edit-source=""><Icon name="pencil" />{t("kit.edit")}</a>
+          <RowMenu label={t("sources.row.more", { title: source.title })} items={menu} />
         </div>
       </header>
-      <SetupSteps basePath={`/app/${account.slug}`} current="sources" completed={await setupProgress(appDb, account)} />
+      <SetupSteps basePath={`/app/${account.slug}`} current="sources" completed={progress} />
 
-      {done === "saved" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("sources.done.saved")}</span></div> : null}
-      {done === "call" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("sources.done.call")}</span></div> : null}
-      {done === "reread" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("sources.done.reread")}</span></div> : null}
+      {done ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t(done)}</span></div> : null}
       {confirming ? (
-        <form action={deleteSourceAction} className="sas-alert sas-alert--danger" role="alert" style={{ flexWrap: "wrap", alignItems: "center" }}>
-          {hidden}
-          <Icon name="alert-triangle" />
-          <span style={{ flex: "1 1 260px" }}>{t("sources.delete.confirm_long", { title: source.title })}</span>
-          <button type="submit" className={buttonClass("danger", "sm")}>{t("sources.delete.yes")}</button>
-          <a className={buttonClass("ghost", "sm")} href={here}>{t("sources.delete.cancel")}</a>
-        </form>
+        <ConfirmDelete title={t("sources.delete.title", { title: source.title })} action={deleteSourceAction} fields={{ slug: account.slug, sourceId: source.id }} cancelHref={here} confirmLabel={t("sources.delete.yes")}>
+          {t("sources.delete.body")}
+        </ConfirmDelete>
       ) : null}
 
       {source.problems.length > 0 && source.status !== "processing" ? (
@@ -133,7 +205,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
             <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {source.problems.map((p, i) => (
                 <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-                  {p.where && p.where !== "source" ? <span className="sas-chip">{p.where}</span> : null}
+                  {p.where && p.where !== "source" ? <span className="sas-chip sas-chip--plain">{p.where}</span> : null}
                   <span style={{ flex: "1 1 260px", minWidth: 0 }}>{p.message} <span className="sas-small">{p.fix === PRICE_LIST_FIX ? <a href={`/app/${account.slug}/setup/price-lists`}>{p.fix}</a> : p.fix}</span></span>
                 </li>
               ))}
@@ -142,54 +214,73 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
         </section>
       ) : null}
 
-      {editing ? (
-        <section className="sas-panel"><div className="sas-panel__body"><NoteForm slug={account.slug} note={{ id: source.id, title: source.title, body: noteBody }} /></div></section>
-      ) : null}
-
       {source.status === "processing" ? (
         <div className="sas-alert sas-alert--warning" role="status"><Icon name="clock" /><span>{t("sources.detail.processing")}</span></div>
       ) : null}
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
-        {source.kind === "call" ? (
-          <section className="sas-panel" aria-labelledby="tr-h" style={{ flex: "999 1 560px", minWidth: 0, overflow: "hidden" }}>
-            <div className="sas-panel__head"><h2 id="tr-h" className="sas-heading">{t("sources.call.transcript")}</h2></div>
-            {sections.length === 0 ? <div className="sas-panel__body sas-small">{t("sources.detail.no_text")}</div> : (
-              <ol className="sas-transcript" aria-label={t("sources.call.transcript")}>
-                {sections.map((s) => (
-                  <li key={s.id} className="sas-transcript__line" id={`l-${s.position}`} style={marked.has(s.locator) ? { background: "var(--agent-soft)", boxShadow: "inset 3px 0 0 var(--agent)" } : undefined}>
-                    <a className="sas-transcript__time" href={`#l-${s.position}`}>{s.locator}</a>
-                    <span className="sas-transcript__who">{s.heading ?? ""}</span>
-                    <span dir="auto" style={{ overflowWrap: "anywhere", minWidth: 0 }}>{s.text}</span>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        ) : (
-          <section className="sas-panel" aria-labelledby="tx-h" style={{ flex: "999 1 560px", minWidth: 0, overflow: "hidden" }}>
-            <div className="sas-panel__head">
-              <h2 id="tx-h" className="sas-heading">{t("sources.detail.text", { count: sections.length })}</h2>
-              <span className="sas-small">{t("sources.detail.chars", { n: (source.stats.chars ?? 0).toLocaleString("en") })}</span>
-            </div>
-            {sections.length === 0 ? <div className="sas-panel__body sas-small">{t("sources.detail.no_text")}</div> : (
-              <ol className="sas-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {sections.map((s) => (
-                  <li key={s.id} id={`s-${s.position}`} className="sas-stack-2" style={{ padding: "14px 20px", alignItems: "stretch" }}>
-                    <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <a className="sas-chip" href={`#s-${s.position}`} style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }}>{s.locator}</a>
-                      {s.heading && s.heading !== s.locator ? <strong dir="auto" style={{ overflowWrap: "anywhere" }}>{s.heading}</strong> : null}
-                    </span>
-                    <div dir="auto" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", minWidth: 0 }}>{s.text}</div>
-                  </li>
-                ))}
-              </ol>
-            )}
-          </section>
-        )}
+      <div className="sas-split">
+        <div className="sas-split__main">
+          {isCall ? (
+            <section className="sas-panel" aria-labelledby="tr-h" style={{ overflow: "hidden" }}>
+              <div className="sas-panel__head" style={{ flexWrap: "wrap", gap: 12 }}>
+                <h2 id="tr-h" className="sas-heading" style={{ flex: "1 1 auto" }}>{t("sources.call.transcript")}</h2>
+                {search}
+                <span className="sas-small" style={{ fontVariantNumeric: "tabular-nums" }}>{[o.durationSec ? formatClock(o.durationSec) : null,plural("sources.detail.lines", sections.length)].filter(Boolean).join(" · ")}</span>
+              </div>
+              {searchLine}
+              {sections.length === 0 ? <div className="sas-panel__body sas-small">{t("sources.detail.no_text")}</div> : (
+                <ol className="sas-transcript" aria-label={t("sources.call.transcript")}>
+                  {sections.map((s) => (
+                    <li key={s.id} className="sas-transcript__line" id={`l-${s.position}`} style={marked.has(s.locator) ? { background: "var(--agent-soft)", boxShadow: "inset 3px 0 0 var(--agent)" } : undefined}>
+                      <a className="sas-transcript__time" href={`#l-${s.position}`}>{s.locator}</a>
+                      <span className="sas-transcript__who" style={s.heading === "Rep" ? { color: "var(--primary)" } : { color: "var(--ink)" }}>{highlight(s.heading ?? "", q)}</span>
+                      <span dir="auto" style={{ overflowWrap: "anywhere", minWidth: 0 }}>{highlight(s.text, q)}</span>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          ) : (
+            <section className="sas-panel" aria-labelledby="tx-h" style={{ overflow: "hidden" }}>
+              <div className="sas-panel__head" style={{ flexWrap: "wrap", gap: 12 }}>
+                <h2 id="tx-h" className="sas-heading" style={{ flex: "1 1 auto" }}>{plural("sources.detail.text", sections.length)}</h2>
+                {search}
+                <span className="sas-small" style={{ fontVariantNumeric: "tabular-nums" }}>{t("sources.detail.chars", { n: (source.stats.chars ?? 0).toLocaleString("en") })}</span>
+              </div>
+              {searchLine}
+              {sections.length === 0 ? <div className="sas-panel__body sas-small">{t("sources.detail.no_text")}</div> : (
+                <ol className="sas-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                  {sections.map((s) => (
+                    <li key={s.id} id={`s-${s.position}`} className="sas-stack-2" style={{ padding: "14px 20px", alignItems: "stretch" }}>
+                      <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        <a className="sas-chip sas-chip--plain" href={`#s-${s.position}`} style={{ maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis", textDecoration: "none" }}>{s.locator}</a>
+                        {s.heading && s.heading !== s.locator ? <strong dir="auto" style={{ overflowWrap: "anywhere" }}>{highlight(s.heading, q)}</strong> : null}
+                      </span>
+                      <div dir="auto" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere", minWidth: 0 }}>{highlight(s.text, q)}</div>
+                    </li>
+                  ))}
+                </ol>
+              )}
+            </section>
+          )}
+        </div>
 
-        <div className="sas-stack-6" style={{ flex: "1 1 320px", minWidth: 0 }}>
-          {source.kind === "call" ? (
+        <div className="sas-split__side sas-stack-6">
+          <section className="sas-panel" aria-labelledby="sd-h">
+            <div className="sas-panel__body sas-stack-4">
+              <h2 id="sd-h" className="sas-heading">{t("sources.details.title")}</h2>
+              <dl className="sas-kv" style={{ gridTemplateColumns: "auto minmax(0, 1fr)" }} data-details="">
+                {details.map((d) => (
+                  <div key={d.label} style={{ display: "contents" }}>
+                    <dt>{d.label}</dt>
+                    <dd style={{ overflowWrap: "anywhere", textAlign: "start" }}>{d.value}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          </section>
+
+          {isCall ? (
             <section className="sas-panel" aria-labelledby="sg-h" style={{ overflow: "hidden" }}>
               <div className="sas-panel__body sas-stack-2" style={{ paddingBlockEnd: suggestions.length || notes.length ? 4 : undefined }}>
                 <h2 id="sg-h" className="sas-heading">{t("sources.call.suggestions")}</h2>
@@ -198,13 +289,13 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
                 ) : <span className="sas-small">{t("sources.call.suggestions_soon")}</span>}
               </div>
               {groups.map((g) => {
-                const list = suggestions.filter((x) => g.kinds.includes(x.kind) && x.status !== "rejected");
-                if (list.length === 0) return null;
+                const items = suggestions.filter((x) => g.kinds.includes(x.kind) && x.status !== "rejected");
+                if (items.length === 0) return null;
                 return (
                   <div key={g.title} id={`sg-${g.kinds[0]}`}>
                     <h3 className="sas-small" style={{ margin: 0, padding: "12px 20px 4px", fontWeight: 600, textTransform: "uppercase", letterSpacing: ".06em" }}>{t(g.title)}</h3>
                     <ul className="sas-list" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                      {list.map((x) => (
+                      {items.map((x) => (
                         <SuggestionItem
                           key={x.id} s={x} slug={account.slug} back={`source:${source.id}`} editing={editId === x.id} links={evidenceLinks} calls={callsInCorpus} limit={limits.get(x.id)}
                           editHref={`${here}?edit=${x.id}#sg-${g.kinds[0]}`} cancelHref={`${here}#sg-${g.kinds[0]}`}
@@ -229,18 +320,33 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
               {suggestions.length ? <div style={{ padding: "12px 20px", borderBlockStart: "1px solid var(--line)" }}><a className="sas-small" href={`/app/${account.slug}/setup/playbook/draft`}>{t("sources.call.open_draft")}</a></div> : null}
             </section>
           ) : null}
+
           <section className="sas-panel" aria-labelledby="sf-h">
             <div className="sas-panel__body sas-stack-4">
-              <h2 id="sf-h" className="sas-heading">{t("sources.detail.facts", { count: facts.length })}</h2>
+              <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+                <h2 id="sf-h" className="sas-heading" style={{ flex: 1 }}>{t("sources.detail.facts", { count: facts.length })}</h2>
+                <a href={`/app/${account.slug}/setup/knowledge`} className="sas-small">{t("sources.detail.review")}</a>
+              </div>
               {facts.length === 0 ? <span className="sas-small">{t("sources.detail.facts_empty")}</span> : (
-                <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {facts.map((f) => (
-                    <li key={f.id} style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "baseline" }}>
-                      <span dir="auto" style={{ flex: "1 1 200px", minWidth: 0, overflowWrap: "anywhere" }}>{f.statement}</span>
-                      {f.sourceLocator ? <span className="sas-chip">{f.sourceLocator}</span> : null}
-                      <span className="sas-small">{t(`knowledge.status.${f.status}`)}</span>
-                    </li>
-                  ))}
+                <ul className="sas-stack-4" style={{ listStyle: "none", margin: 0, padding: 0 }} data-source-facts="">
+                  {facts.map((f) => {
+                    const pos = f.sourceLocator ? positionOf.get(f.sourceLocator) : undefined;
+                    return (
+                      <li key={f.id} className="sas-stack-2" style={{ gap: 6 }}>
+                        <span dir="auto" style={{ overflowWrap: "anywhere" }}>{f.statement}</span>
+                        <span style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                          {f.status === "approved" ? <span className="sas-pill sas-pill--success"><Icon name="check-circle" />{t("knowledge.status.approved")}</span> : null}
+                          {f.status === "suggested" ? <span className="sas-pill sas-pill--agent"><Icon name="sparkles" />{t("knowledge.status.suggested")}</span> : null}
+                          {f.status === "rejected" ? <span className="sas-pill"><Icon name="x-circle" />{t("knowledge.status.rejected")}</span> : null}
+                          {f.sourceLocator ? (
+                            pos !== undefined
+                              ? <a className="sas-chip sas-chip--plain sas-num" href={anchor(pos)} style={{ textDecoration: "none" }}>{f.sourceLocator}</a>
+                              : <span className="sas-chip sas-chip--plain sas-num">{f.sourceLocator}</span>
+                          ) : null}
+                        </span>
+                      </li>
+                    );
+                  })}
                 </ul>
               )}
               <a href={`/app/${account.slug}/setup/knowledge`} className="sas-small">{t("sources.review_knowledge")}</a>
@@ -248,6 +354,8 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
           </section>
         </div>
       </div>
+
+      {editPanel}
     </main>
   );
 }
