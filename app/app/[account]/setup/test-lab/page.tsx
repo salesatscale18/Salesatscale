@@ -1,3 +1,5 @@
+import { SetupSteps } from "@/components/sas/nav";
+import { setupProgress } from "@/lib/overview/setup";
 import { isUuid } from "@/lib/security/ids";
 import { Fragment } from "react";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
@@ -101,6 +103,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           </div>
         </div>
         <span className="sas-small">{t("lab.intro")}</span>
+        <SetupSteps basePath={`/app/${account.slug}`} current="" completed={await setupProgress(appDb, account)} />
       </header>
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.published", { version: one(sp.published) })}</span></div> : null}

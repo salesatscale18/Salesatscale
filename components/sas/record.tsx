@@ -10,6 +10,8 @@ export type TimelineItem = {
   title: ReactNode;
   detail?: ReactNode;
   time: string;
+  /** The full time with the zone, shown on hover. */
+  timeTitle?: string;
 };
 
 /** A lead's unified timeline (messages, quotes, forms, payments, meetings). */
@@ -25,7 +27,7 @@ export function Timeline({ items, label }: { items: TimelineItem[]; label: strin
             <span className="sas-tl__title">{it.title}</span>
             {it.detail ? <span className="sas-tl__detail">{it.detail}</span> : null}
           </div>
-          <span className="sas-tl__time">{it.time}</span>
+          <span className="sas-tl__time" title={it.timeTitle}>{it.time}</span>
         </li>
       ))}
     </ol>

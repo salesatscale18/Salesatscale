@@ -1,13 +1,13 @@
 import { Button, StatusPill, buttonClass, Chip } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { displayName } from "@/lib/auth/display";
+import { personName } from "@/lib/auth/display";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
-import { exactTime, formatDayMonthIn, relativeTime } from "@/lib/format";
+import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn, relativeTime } from "@/lib/format";
 import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, quoteTimezones, type QuoteTab } from "@/lib/quotes/service";
 import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
-import { catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
+import { catalogItems, catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
@@ -48,7 +48,7 @@ async function deliveryByForm(accountId: string, formIds: string[]) {
 export default async function OrdersPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const { account, user: me } = await requireAccount(slug);
   const base = `/app/${account.slug}/orders`;
   const tabRaw = one(sp.tab);
   const tab: QuoteTab | "orders" = tabRaw === "approval" ? "approval" : tabRaw === "orders" ? "orders" : "quotes";
@@ -108,7 +108,22 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     quoteTimezones(appDb, account.id, [...rows.map((r) => r.quote), ...(detail ? [detail.quote] : [])]),
   ]);
   const tzFor = (quoteId: string) => tzOf.get(quoteId) ?? account.timezone;
-  const nameById = new Map(people.map((u) => [u.id, displayName(u)]));
+  const nameById = new Map(people.map((u) => [u.id, personName(u, me.id, t("people.you"))]));
+  // Records: the exact date and time in the account's zone, the zone named on hover.
+  const at = (d: Date) => formatShortDateTimeIn(d, account.timezone);
+  const atFull = (d: Date) => formatDateTimeIn(d, account.timezone);
+  // Item names as the buyer read them in the chat (the catalog's chat name) lead; the internal name and code come second.
+  const itemIds = [...new Set((cur?.lines ?? []).map((l) => l.catalogItemId).filter((x): x is string => !!x))];
+  const chatNameOf = new Map(
+    itemIds.length
+      ? (await appDb.select({ id: catalogItems.id, plainName: catalogItems.plainName }).from(catalogItems)
+        .where(and(eq(catalogItems.accountId, account.id), inArray(catalogItems.id, itemIds)))).map((i) => [i.id, i.plainName?.trim() ?? ""])
+      : [],
+  );
+  const chatName = (l: { catalogItemId: string | null; name: string }) => {
+    const n = l.catalogItemId ? chatNameOf.get(l.catalogItemId) : "";
+    return n ? n.charAt(0).toUpperCase() + n.slice(1) : null;
+  };
   const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
   const approver = nameOf(cur?.version.approvedByUserId ?? null);
   const creator =
@@ -145,7 +160,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           ) : (
             <section className="sas-panel" style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 760 }}>
+                <table className="sas-table sas-table--stack" style={{ minWidth: 760 }}>
                   <thead><tr>
                     <th scope="col">{t("orders.col.order")}</th><th scope="col">{t("orders.col.lead")}</th>
                     <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
@@ -155,12 +170,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     {orderRows.map(({ order, lead }) => (
                       <tr key={order.id}>
                         <td><a className="sas-num" href={`${base}?tab=orders&quote=${order.quoteId}`}>{orderLabel(account.tradeName, order.number)}</a></td>
-                        <td>{lead.company ?? lead.fullName}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
-                        <td><StatusPill object="payment" state={order.paymentStatus} /></td>
-                        <td className="sas-small" title={exactTime(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
-                        <td className="sas-small" data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
+                        <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
+                        <td data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
+                        <td className="sas-small" data-label={t("orders.col.signed")} title={atFull(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
+                        <td className="sas-small" data-label={t("orders.col.delivery")} data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -178,11 +193,11 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         ) : (
           <section className="sas-panel" style={{ overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table className="sas-table" style={{ minWidth: 720 }}>
+              <table className="sas-table sas-table--stack" style={{ minWidth: 720 }}>
                 <thead><tr>
                   <th scope="col">{t("orders.col.quote")}</th><th scope="col">{t("orders.col.lead")}</th>
                   <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
-                  <th scope="col">{t("orders.col.quote")}</th><th scope="col">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
+                  <th scope="col">{t("orders.col.status")}</th><th scope="col">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
                 </tr></thead>
                 <tbody>
                   {rows.map(({ quote, version, lead }) => {
@@ -190,12 +205,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     return (
                       <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
                         <td><a className="sas-num" href={`${base}?${tab === "quotes" ? "" : `tab=${tab}&`}quote=${quote.id}`}>Q-{quote.number} v{quote.currentVersion}</a></td>
-                        <td>{lead.company ?? lead.fullName}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
-                        <td><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id))} /></td>
-                        <td>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
-                        <td>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
+                        <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
+                        <td data-label={t("orders.col.status")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id))} /></td>
+                        <td data-label={t("orders.col.form")}>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
+                        <td data-label={t("orders.col.payment")}>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
                       </tr>
                     );
                   })}
@@ -207,8 +222,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
       </main>
 
       {detail && cur ? (
-        <aside className="sas-side-panel" aria-labelledby="q-h">
-          <div className="sas-page-head">
+        <aside className="sas-side-panel sas-sheet" aria-labelledby="q-h">
+          <div className="sas-page-head sas-sheet__head">
             <div className="sas-stack-2" style={{ gap: 4, flex: 1 }}>
               <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
               <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
@@ -221,7 +236,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </div>
             <a className={buttonClass("ghost", "sm")} href={tab === "quotes" ? base : `${base}?tab=${tab}`} aria-label={t("lead.form.close")}><Icon name="x" /></a>
           </div>
-          <StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now, tzFor(detail.quote.id))} />
+          <div data-testid="detail-status"><StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now, tzFor(detail.quote.id))} /></div>
           {sp.approved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.approved_ok")}</span></div> : null}
           {sp.approve ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("orders.detail.approve_failed")}</span></div> : null}
 
@@ -233,8 +248,9 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                 const period = l.chargeType === "recurring" ? (l.period === "year" ? "year" : "month") : null;
                 return (
                   <div key={l.id} style={{ display: "contents" }} data-charge={l.chargeType}>
-                    <dt style={{ color: "var(--ink)" }}>
-                      {l.qty} × {l.name} <Chip>{l.sku}</Chip>
+                    <dt style={{ color: "var(--ink)" }} data-line-name="">
+                      {l.qty} × {chatName(l) ?? l.name}
+                      <div className="sas-small">{chatName(l) ? <>{l.name} <span className="sas-num">{l.sku}</span></> : <Chip>{l.sku}</Chip>}</div>
                       <div className="sas-small">{t(period ? `quote.charge.${period}` : "quote.charge.one_time")} · {t(`quote.price_source.${l.priceSource as "list" | "tier" | "custom" | "not_charged"}`)}</div>
                     </dt>
                     <dd className="sas-num">{l.lineTotalMinor === null ? t("quote.to_price") : dm(l.lineTotalMinor, period)}</dd>
@@ -243,7 +259,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               })}
               {incomplete ? (
                 <>
-                  <dt>{t("quote.discount")}</dt><dd className="sas-num">{(cur.version.discountBp / 100).toFixed(1)}%</dd>
+                  {cur.version.discountBp ? <><dt>{t("quote.discount")}</dt><dd className="sas-num">{(cur.version.discountBp / 100).toFixed(1)}%</dd></> : null}
                   <dt className="sas-kv__total">{t("quote.one_time_total")}</dt><dd className="sas-num sas-kv__total">{t("quote.to_price")}</dd>
                   <dt className="sas-kv__total">{t(recurringPeriod === "year" ? "quote.yearly_total" : "quote.monthly_total")}</dt><dd className="sas-num sas-kv__total">{t("quote.to_price")}</dd>
                 </>
@@ -303,7 +319,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </form>
           ) : approver && cur.version.approvedAt ? (
             <span className="sas-small">
-              {t("orders.detail.approved", { who: approver, when: relativeTime(cur.version.approvedAt, now) })}
+              {t("orders.detail.approved", { who: approver, when: at(cur.version.approvedAt) })}
               {cur.version.approvalReasons.length ? `: ${cur.version.approvalReasons.map(approvalReasonText).join("; ")}` : ""}
             </span>
           ) : null}
@@ -311,8 +327,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           <section className="sas-stack-2" aria-labelledby="ver-h">
             <h3 id="ver-h" className="sas-heading">{t("orders.detail.versions")}</h3>
             {detail.versions.map(({ version }, i) => (
-              <span key={version.id} className={i === 0 ? "sas-small" : "sas-small"} style={{ color: i === 0 ? "var(--ink)" : undefined }} title={exactTime(version.createdAt)}>
-                <span className="sas-num">v{version.version}</span> · {relativeTime(version.createdAt, now)}{version.changeNote ? ` · ${version.changeNote}` : ""}{i > 0 ? ` · ${t("orders.detail.replaced")}` : ""}
+              <span key={version.id} className={i === 0 ? "sas-small" : "sas-small"} style={{ color: i === 0 ? "var(--ink)" : undefined }} title={atFull(version.createdAt)}>
+                <span className="sas-num">v{version.version}</span> · {at(version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}{i > 0 ? ` · ${t("orders.detail.replaced")}` : ""}
               </span>
             ))}
           </section>
@@ -325,9 +341,9 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             {sendError ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(`orders.detail.send.${sendError}` as "orders.detail.send.no_legal")}</span></div> : null}
             {latestForm ? (
               <ol className="sas-stack-2" style={{ margin: 0, paddingInlineStart: 18 }}>
-                <li className="sas-small">{t("orders.detail.form_sent", { who: formSender ?? "", when: relativeTime(latestForm.createdAt, now) })}</li>
-                {latestForm.openedAt ? <li className="sas-small">{t("orders.detail.form_opened", { when: relativeTime(latestForm.openedAt, now) })}</li> : null}
-                {signed && latestForm.signedAt ? <li className="sas-small">{t("orders.detail.form_signed", { who: signed.signature.fullName, when: relativeTime(latestForm.signedAt, now) })}</li> : null}
+                <li className="sas-small">{t("orders.detail.form_sent", { who: formSender ?? "", when: at(latestForm.createdAt) })}</li>
+                {latestForm.openedAt ? <li className="sas-small">{t("orders.detail.form_opened", { when: at(latestForm.openedAt) })}</li> : null}
+                {signed && latestForm.signedAt ? <li className="sas-small">{t("orders.detail.form_signed", { who: signed.signature.fullName, when: at(latestForm.signedAt) })}</li> : null}
               </ol>
             ) : <span className="sas-small">{t("orders.detail.form_none")}</span>}
             {latestForm && (formStatus === "sent" || formStatus === "opened") ? (
@@ -353,7 +369,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </div>
             {sp.marked ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.marked")}</span></div> : null}
             {signed ? (
-              <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: relativeTime(signed.order.paidAt, now) })}` : ""}</span>
+              <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: at(signed.order.paidAt) })}` : ""}</span>
             ) : <span className="sas-small">{t("orders.detail.payment_soon")}</span>}
             {signed && deliveries.get(signed.order.orderFormId) ? <span className="sas-small" data-detail-delivery="">{t("orders.detail.delivery", { range: deliveries.get(signed.order.orderFormId)! })}</span> : null}
             {signed?.order.deliveryPreference ? (

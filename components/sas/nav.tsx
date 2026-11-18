@@ -5,8 +5,10 @@
 import { t, type MessageKey } from "@/lib/i18n";
 import { Icon, type IconName } from "./icon";
 import { Avatar } from "./primitives";
+import { ScrollCurrentIntoView } from "./scroll-current";
 
-export type NavItem = { id: string; label: MessageKey; icon: IconName; path: string };
+/** `hidden`: the route exists (a "not built yet" placeholder) but the nav does not list it. */
+export type NavItem = { id: string; label: MessageKey; icon: IconName; path: string; hidden?: true };
 export type NavGroup = { label?: MessageKey; items: NavItem[] };
 
 export const SELLER_NAV: NavGroup[] = [
@@ -16,8 +18,8 @@ export const SELLER_NAV: NavGroup[] = [
       { id: "leads", label: "nav.leads", icon: "user-plus", path: "/leads" },
       { id: "inbox", label: "nav.inbox", icon: "message-circle", path: "/conversations" },
       { id: "orders", label: "nav.orders", icon: "file-text", path: "/orders" },
-      { id: "meetings", label: "nav.meetings", icon: "calendar", path: "/meetings" },
-      { id: "reports", label: "nav.reports", icon: "chart", path: "/reports" },
+      { id: "meetings", label: "nav.meetings", icon: "calendar", path: "/meetings", hidden: true },
+      { id: "reports", label: "nav.reports", icon: "chart", path: "/reports", hidden: true },
     ],
   },
   {
@@ -29,13 +31,16 @@ export const SELLER_NAV: NavGroup[] = [
       { id: "price-lists", label: "nav.price_lists", icon: "credit-card", path: "/setup/price-lists" },
       { id: "playbook", label: "nav.playbook", icon: "sparkles", path: "/setup/playbook" },
       { id: "order-form", label: "nav.order_form", icon: "pen", path: "/setup/order-form" },
-      { id: "follow-ups", label: "nav.follow_ups", icon: "clock", path: "/setup/follow-ups" },
+      { id: "follow-ups", label: "nav.follow_ups", icon: "clock", path: "/setup/follow-ups", hidden: true },
       { id: "test-lab", label: "nav.test_lab", icon: "flask-conical", path: "/setup/test-lab" },
       { id: "go-live", label: "nav.go_live", icon: "rocket", path: "/setup/go-live" },
     ],
   },
   { items: [{ id: "settings", label: "nav.settings", icon: "sliders", path: "/settings" }] },
 ];
+
+/** The nav items a seller sees (hidden placeholders left out). */
+export const visibleNavItems = (groups: NavGroup[]) => groups.flatMap((g) => g.items).filter((it) => !it.hidden);
 
 export const ADMIN_NAV: NavGroup[] = [
   {
@@ -84,7 +89,7 @@ export function SideNav({
         <div key={gi}>
           {g.label ? <div className="sas-label sas-nav__group-label">{t(g.label)}</div> : null}
           <ul className="sas-nav__group">
-            {g.items.map((it) => {
+            {g.items.filter((it) => !it.hidden).map((it) => {
               const count = counts[it.id];
               return (
                 <li key={it.id}>
@@ -114,7 +119,8 @@ export function SideNav({
   );
 }
 
-export const SETUP_STEPS: { id: string; label: MessageKey; path: string }[] = [
+/** Every setup step, including ones whose page is still a "not built yet" placeholder (`hidden`). */
+export const ALL_SETUP_STEPS: { id: string; label: MessageKey; path: string; hidden?: true }[] = [
   { id: "company", label: "setup.company", path: "/setup/company" },
   { id: "sources", label: "setup.sources", path: "/setup/sources" },
   { id: "knowledge", label: "setup.knowledge", path: "/setup/knowledge" },
@@ -122,11 +128,19 @@ export const SETUP_STEPS: { id: string; label: MessageKey; path: string }[] = [
   { id: "prices", label: "setup.prices", path: "/setup/price-lists" },
   { id: "playbook", label: "setup.playbook", path: "/setup/playbook" },
   { id: "order-form", label: "setup.order_form", path: "/setup/order-form" },
-  { id: "follow-ups", label: "setup.follow_ups", path: "/setup/follow-ups" },
+  { id: "follow-ups", label: "setup.follow_ups", path: "/setup/follow-ups", hidden: true },
   { id: "go-live", label: "setup.go_live", path: "/setup/go-live" },
 ];
 
-/** Setup steps bar: completed steps show a check, any step can be reopened. */
+/** The steps the step bar, the Overview and the admin page show and count: a hidden step is never an unfinished one. */
+export const SETUP_STEPS = ALL_SETUP_STEPS.filter((s) => !s.hidden);
+
+/**
+ * Setup steps bar: completed steps show a check, any step can be reopened.
+ * One source of state: pages pass setupProgress (lib/overview/setup.ts). Rule:
+ * every page under Setup shows the bar; a sub-page (a price list, a source)
+ * marks its step as current; Test lab is no step, so none is current there.
+ */
 export function SetupSteps({ basePath, current, completed }: { basePath: string; current: string; completed: ReadonlySet<string> }) {
   return (
     <nav aria-label={t("setup.steps")}>
@@ -147,6 +161,7 @@ export function SetupSteps({ basePath, current, completed }: { basePath: string;
           );
         })}
       </ol>
+      <ScrollCurrentIntoView selector=".sas-steps" />
     </nav>
   );
 }

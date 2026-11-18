@@ -3,7 +3,7 @@ import { Icon, type IconName } from "@/components/sas/icon";
 import { Banner, MetricTile, Timeline, type TimelineItem } from "@/components/sas/record";
 import { SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { displayName } from "@/lib/auth/display";
+import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
@@ -50,14 +50,16 @@ const TONE_STYLE = {
   danger: { background: "var(--danger-soft)", color: "var(--danger)" },
 } as const;
 
-function greetingKey(now: Date, timeZone: string): MessageKey {
+function greetingKey(now: Date, timeZone: string, named: boolean): MessageKey {
   let hour = now.getUTCHours();
   try {
     hour = Number(new Intl.DateTimeFormat("en-GB", { hour: "numeric", hourCycle: "h23", timeZone }).format(now));
   } catch {
     // Unknown time zone: fall back to UTC.
   }
-  return hour < 12 ? "overview.greeting.morning" : hour < 18 ? "overview.greeting.afternoon" : "overview.greeting.evening";
+  const part = hour < 12 ? "morning" : hour < 18 ? "afternoon" : "evening";
+  // The first name, or no name at all (never an email).
+  return `overview.greeting.${part}${named ? "" : "_plain"}` as MessageKey;
 }
 
 /** Overview (P9.2, canvas: Overview). WhatsApp health, meetings, objections and costs come with later phases. */
@@ -125,14 +127,14 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const timeline: TimelineItem[] = activity.map(({ event, lead, user: by }) => ({
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
-    icon: EVENT_ICON[event.type] ?? "cog",
+    icon: event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "flask-conical" : EVENT_ICON[event.type] ?? "cog",
     // A conversation started on the buyer simulator is not a WhatsApp start.
     title: t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey),
     detail: (
       <>
         <a href={`${base}/leads/${lead.id}`}>{lead.fullName}</a>
         {lead.company ? ` · ${lead.company}` : ""}
-        {by ? ` · ${displayName(by)}` : event.actor === "agent" ? " · Agent" : ""}
+        {by ? ` · ${personName(by, user.id, t("people.you"))}` : event.actor === "agent" ? " · Agent" : ""}
       </>
     ),
     time: relativeTime(event.createdAt, now),
@@ -141,10 +143,10 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const firstOpen = SETUP_STEPS.find((s) => !(done as ReadonlySet<string>).has(s.id))?.id ?? "go-live";
 
   return (
-    <main className="sas-shell__content">
-      <header className="sas-page-head">
+    <main className="sas-shell__content sas-ov">
+      <header className="sas-page-head sas-ov__head">
         <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 280px", minWidth: 0 }}>
-          <h1 className="sas-title">{t(greetingKey(now, account.timezone), { name: user.firstName?.trim() || displayName(user) })}</h1>
+          <h1 className="sas-title">{t(greetingKey(now, account.timezone, !!user.firstName?.trim()), { name: user.firstName?.trim() ?? "" })}</h1>
           <span className="sas-small">
             {account.tradeName} · {needCount === 0 ? t("overview.sub.none") : needCount === 1 ? t("overview.sub.one") : t("overview.sub.many", { count: needCount })}
           </span>
@@ -188,7 +190,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         />
       </section>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
+      {/* Phone (sas.css): this row dissolves so "Needs you" can come first, under the greeting. */}
+      <div className="sas-ov__row" style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
         <section className="sas-panel" aria-labelledby="funnel-h" style={{ flex: "3 1 420px", minWidth: 0 }}>
           <div className="sas-panel__body sas-stack-4">
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
@@ -203,7 +206,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           </div>
         </section>
 
-        <section className="sas-panel" aria-labelledby="needs-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
+        <section className="sas-panel sas-ov__needs" aria-labelledby="needs-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
           <div className="sas-panel__head">
             <h2 id="needs-h" className="sas-heading">{t("overview.needs.title")}</h2>
             {needCount ? (
@@ -274,7 +277,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           <section className="sas-panel" aria-labelledby="setup-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
             <div className="sas-panel__head">
               <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
-              <span className="sas-small">{t("overview.setup.count", { done: done.size, total: SETUP_STEPS.length })}</span>
+              <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
             </div>
             <ol className="sas-list">
               {SETUP_STEPS.map((s, i) => {
@@ -302,7 +305,7 @@ function FunnelRow({ label, value, width, color }: { label: string; value: numbe
   return (
     <>
       <span>{label}</span>
-      <span style={{ height: 20, borderRadius: 4, background: "var(--surface-sunken)" }} aria-hidden="true">
+      <span style={{ height: 20, borderRadius: 4, background: "var(--line)" }} aria-hidden="true" data-funnel-track="">
         <span style={{ display: "block", width: `${width}%`, height: "100%", borderRadius: 4, background: color }} />
       </span>
       <span className="sas-num" style={{ textAlign: "end" }}>{value}</span>

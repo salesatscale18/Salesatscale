@@ -49,7 +49,7 @@ export function StageChip({ v }: { v: LeadStageView }) {
   );
 }
 
-/** What the agent waits for and what happens next, in one sentence (bold first part). */
+/** What the agent waits for and what happens next, in one sentence (bold first part). Waiting states use the clock. */
 export function stageSentence(v: LeadStageView, name: string): { wait: string; next: string; icon: IconName } {
   const k = (key: string) => t(`lead.stage.${key}` as MessageKey, { name, missing: v.missing.join(", "), objection: v.objection ?? "", max: v.questionBudget ?? 3 });
   if (v.human) return { wait: k("human.wait"), next: k("human.next"), icon: "user" };
@@ -57,13 +57,13 @@ export function stageSentence(v: LeadStageView, name: string): { wait: string; n
   if (v.objection) return { wait: k("objection.wait"), next: k("objection.next"), icon: "alert-triangle" };
   // The stepper stays on Order form until paid (lib/leads/stage.ts); the sentence follows the agent's stage.
   switch (v.stage === "after" ? "after" : v.step) {
-    case "open": return { wait: k("open.wait"), next: k("open.next"), icon: "message-circle" };
-    case "understand": return { wait: k("understand.wait"), next: v.missing.length ? k("understand.next_missing") : k("understand.next"), icon: "message-circle" };
-    case "recommend": return { wait: k("recommend.wait"), next: k("recommend.next"), icon: "message-circle" };
+    case "open": return { wait: k("open.wait"), next: k("open.next"), icon: "clock" };
+    case "understand": return { wait: k("understand.wait"), next: v.missing.length ? k("understand.next_missing") : k("understand.next"), icon: "clock" };
+    case "recommend": return { wait: k("recommend.wait"), next: k("recommend.next"), icon: "clock" };
     case "quote": return v.awaitingApproval
       ? { wait: k("quote.approval_wait"), next: k("quote.approval_next"), icon: "clock" }
-      : { wait: k("quote.wait"), next: k("quote.next"), icon: "file-text" };
-    case "order_form": return { wait: k(v.backAfterChange ? "order_form.back_wait" : "order_form.wait"), next: k("order_form.next"), icon: "send" };
+      : { wait: k("quote.wait"), next: k("quote.next"), icon: "clock" };
+    case "order_form": return { wait: k(v.backAfterChange ? "order_form.back_wait" : "order_form.wait"), next: k("order_form.next"), icon: "clock" };
     case "after":
       if (v.paid) return { wait: k("after.paid_wait"), next: k("after.paid_next"), icon: "check-circle" };
       if (v.closed) return { wait: k("after.closed_wait"), next: k("after.closed_next"), icon: "check-circle" };

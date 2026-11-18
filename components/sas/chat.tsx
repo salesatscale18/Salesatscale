@@ -24,7 +24,7 @@ export function ChatMessage({
   actor: Actor;
   who: string;
   time?: string;
-  /** Hover text of the time, e.g. its time zone. */
+  /** The full date and time with the zone, shown on hover. */
   timeTitle?: string;
   locale?: Locale;
   trace?: TraceItem[];

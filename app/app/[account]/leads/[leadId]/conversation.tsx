@@ -5,8 +5,8 @@ import { MessageBody } from "@/components/sas/message-body";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
 import type { ConversationView } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
-import { displayName } from "@/lib/auth/display";
-import { exactTime } from "@/lib/format";
+import { displayName, personName } from "@/lib/auth/display";
+import { formatClockIn, formatDateTimeIn, formatDayIn, localDateIso } from "@/lib/format";
 import { isLocale, messages, t, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
@@ -68,8 +68,10 @@ export function conversationStatusText(view: Pick<ConversationView, "conversatio
  * server action that re-checks access; this only decides which form to show.
  */
 export function ConversationControls({
-  slug, from, view, me, buyerName, leadOptedOut, notice,
+  slug, from, view, me, buyerName, leadOptedOut, notice, takeOverInHeader = false,
 }: {
+  /** The lead page shows Take over in its header: here only the status line. */
+  takeOverInHeader?: boolean;
   slug: string;
   from: "lead" | "lab" | "inbox";
   view: Pick<ConversationView, "conversation" | "takenOverBy" | "suggestedReply">;
@@ -100,6 +102,8 @@ export function ConversationControls({
       ) : null}
       {c.status === "closed" || leadOptedOut ? (
         <p className="sas-small" role="status" style={{ margin: 0, display: "flex", gap: 6, alignItems: "center" }}><Icon name="x-circle" />{status}</p>
+      ) : c.status === "open" && takeOverInHeader ? (
+        <p className="sas-small" role="status" style={{ margin: 0 }}>{status} {t("conv.take_over_hint_header")}</p>
       ) : c.status === "open" ? (
         <form action={takeOverAction} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           {hidden}
@@ -143,8 +147,11 @@ export function ConversationControls({
 
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
-  slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead",
+  slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead", timezone, takeOverInHeader = false,
 }: {
+  /** The viewer's time zone (the account's until people have their own): message times and day dividers. */
+  timezone?: string | null;
+  takeOverInHeader?: boolean;
   /** Where the controls send the seller back to after an action. */
   from?: "lead" | "inbox";
   /** WhatsApp only: the 24-hour window of an active conversation. */
@@ -159,6 +166,17 @@ export function ConversationPanel({
   const { conversation: c, thread, authors } = view;
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.
   const kinds = appMessageKinds(thread.flatMap((x) => x.calls));
+  const meId = (me as { id?: string }).id ?? null;
+  // Times in the viewer's zone, the zone named on hover; a divider when the day changes.
+  const clock = (d: Date) => formatClockIn(d, timezone);
+  const full = (d: Date) => formatDateTimeIn(d, timezone);
+  let lastDay = "";
+  const divider = (d: Date) => {
+    const day = localDateIso(d, timezone);
+    if (day === lastDay) return null;
+    lastDay = day;
+    return <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(d, timezone) })}><span>{formatDayIn(d, timezone)}</span></div>;
+  };
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
@@ -168,31 +186,32 @@ export function ConversationPanel({
       </div>
       <ChatThread label={t("conv.label")}>
         {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
-        {thread.map(({ message: m, calls }) => {
+        {thread.flatMap(({ message: m, calls }) => {
+          const day = divider(m.createdAt);
           // The quote message the app wrote shows as the card the buyer saw (the stored text is the fallback).
           const card = view.quoteCards?.[m.id];
           if (card) {
             const back = from === "inbox" ? `/app/${slug}/conversations?c=${c.id}` : `/app/${slug}/leads/${c.leadId}#conversation`;
-            return <QuoteCardMessage key={m.id} card={card} time={exactTime(m.createdAt)} slug={slug} approve={{ back }} />;
+            return [day, <QuoteCardMessage key={m.id} card={card} time={clock(m.createdAt)} timeTitle={full(m.createdAt)} slug={slug} approve={{ back }} />];
           }
           const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
           const kind = kinds.get(m.id);
           // Text the app wrote itself (the close after an approval) is "Sent by the app", not the agent.
-          const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author ? displayName(author) : t("conv.who.team")) : t("conv.who.system");
-          return (
+          const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author ? personName({ id: m.actorUserId ?? "", ...author }, meId, t("people.you")) : t("conv.who.team")) : t("conv.who.system");
+          return [day, (
             <ChatMessage
-              key={m.id} actor={actor} who={who} time={delivery ? `${exactTime(m.createdAt)} · ${delivery}` : exactTime(m.createdAt)}
+              key={m.id} actor={actor} who={who} time={delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)} timeTitle={full(m.createdAt)}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
               trace={actor === "agent" ? traceChips(calls) : undefined}
             >
               <MessageBody body={m.body} kind={kind} />
             </ChatMessage>
-          );
+          )];
         })}
       </ChatThread>
-      <ConversationControls slug={slug} from={from} view={view} me={me} buyerName={buyerName} leadOptedOut={leadOptedOut} notice={notice} />
+      <ConversationControls slug={slug} from={from} view={view} me={me} buyerName={buyerName} leadOptedOut={leadOptedOut} notice={notice} takeOverInHeader={takeOverInHeader} />
     </section>
   );
 }

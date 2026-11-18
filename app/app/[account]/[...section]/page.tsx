@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { SELLER_NAV, SETUP_STEPS } from "@/components/sas/nav";
+import { ALL_SETUP_STEPS, SELLER_NAV } from "@/components/sas/nav";
 import { requireAccount } from "@/lib/auth/account";
 import { t, type MessageKey } from "@/lib/i18n";
 
@@ -12,7 +12,7 @@ const PHASE: Record<string, string> = {
 
 const LABELS: Record<string, MessageKey> = Object.fromEntries([
   ...SELLER_NAV.flatMap((g) => g.items).map((i) => [i.path, i.label] as const),
-  ...SETUP_STEPS.map((s) => [s.path, s.label] as const),
+  ...ALL_SETUP_STEPS.map((s) => [s.path, s.label] as const),
 ]);
 
 /** Placeholder for workspace sections that later phases build. Unknown paths 404. */
