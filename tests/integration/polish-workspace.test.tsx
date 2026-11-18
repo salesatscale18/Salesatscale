@@ -46,6 +46,8 @@ const { default: CatalogPage } = await import("@/app/app/[account]/setup/catalog
 const { default: PriceListPage } = await import("@/app/app/[account]/setup/price-lists/[lineageId]/page");
 const { default: SourcesPage } = await import("@/app/app/[account]/setup/sources/page");
 const { default: SettingsPage } = await import("@/app/app/[account]/settings/page");
+const { default: ConversationsPage } = await import("@/app/app/[account]/conversations/page");
+const { default: OverviewPage } = await import("@/app/app/[account]/page");
 
 const page = async (el: Promise<ReactElement>) => renderToStaticMarkup(await el);
 const props = (account: string, sp: Record<string, string> = {}, extra: Record<string, string> = {}) => ({
@@ -183,6 +185,77 @@ describe("Polish-2+5: seller workspace", () => {
       const html = await page(SettingsPage(props(account.slug, { section: "hours" })));
       expect(html).toMatch(/class="sas-subnav"/);
       expect(css).toMatch(/\.sas-subnav \{ flex: 1 1 100%; max-width: none; flex-direction: row;[^}]*overflow-x: auto/);
+    });
+  });
+
+  describe("Package 5: seller workspace polish", () => {
+    it("lead page: Take over in the header, one-line simulator, sentence next step, grouped unknowns, no second Market panel", async () => {
+      const html = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.started }) as never));
+      const head = html.split('class="sas-lead__head"')[1].split("</header>")[0];
+      expect(head).toContain('data-testid="header-take-over"');
+      // Only one Take over button on the page.
+      expect(html.match(/>Take over chat</g)).toHaveLength(1);
+      expect(html).toContain("data-sim-compact");
+      expect(html).toMatch(/Simulated buyer<\/h2>.*Open buyer chat.*Copy link.*Reset link/s);
+      expect(html).not.toContain("makes the agent send its opening message");
+      expect(html).toContain("Quote, then order form.");
+      expect(html).toMatch(/data-testid="unknown-group"[\s\S]*Order form details: 3 not known yet/);
+      expect(html).not.toContain('id="lm-h"');
+      expect(html).toContain('data-testid="lead-market"');
+      // People by name or You, never the email; times in the account's zone, zone on hover; day dividers.
+      expect(html).not.toContain("testuser+clerk_test@");
+      expect(html).toContain("added by You, ");
+      expect(html).toMatch(/title="17 Nov 2026, 23:28 GMT\+2">23:28( ·|<)/);
+      expect(html).toContain('aria-label="Messages from Tue, 17 Nov 2026"');
+      expect(html).toContain('aria-label="Messages from Wed, 18 Nov 2026"');
+      expect(html).not.toContain(" UTC</span>");
+    });
+
+    it("lead page before start: Start is offered with its help, and the empty chat says to press it", async () => {
+      const html = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.before }) as never));
+      expect(html).toContain(">Start conversation<");
+      expect(html).toContain("makes the agent send its opening message");
+      expect(html).toContain("Press Start conversation to have the agent send its opening message.");
+      expect(html).not.toContain("data-sim-compact");
+      expect(html).not.toContain('data-testid="header-take-over"');
+    });
+
+    it("conversations: plain market, neutral Open lead card icon, selected row in primary-soft", async () => {
+      const sel = await page(ConversationsPage(props(account.slug, { c: ids.conv })));
+      expect(sel).toContain("lucide-arrow-up-right");
+      expect(sel).toContain('data-market="">Israel<');
+      expect(sel).not.toContain("testuser+clerk_test@");
+      expect(css).toContain('.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft);');
+    });
+
+    it("quotes: Status column, chat name first, no zero discount, Sent pill inline", async () => {
+      const list = await page(OrdersPage(props(account.slug)));
+      expect(list).toMatch(/<th scope="col">Status<\/th><th scope="col">Order form<\/th>/);
+      const detail = await page(OrdersPage(props(account.slug, { quote: ids.quote })));
+      expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small">Site gateway <span class="sas-num">GW-10<\/span>/);
+      expect(detail).not.toMatch(/>Discount</);
+      expect(detail).toContain('data-testid="detail-status"');
+    });
+
+    it("overview: greeting without an email; Needs you marked to come first on a phone; tabs and segments use primary-soft", async () => {
+      const html = await page(OverviewPage(props(account.slug)));
+      expect(html).toMatch(/<h1 class="sas-title">Good (morning|afternoon|evening)<\/h1>/);
+      expect(html).toContain("sas-ov__needs");
+      expect(html).toContain('data-funnel-track=""');
+      expect(css).toContain('.sas-app a.sas-view[aria-current="page"] { background: var(--primary-soft); color: var(--primary);');
+      expect(css).toContain('.sas-app a.sas-tab[aria-current="page"] { color: var(--primary);');
+    });
+
+    it("leads: Add lead first with the rest under More; filters behind a Filters button; market as plain text", async () => {
+      const html = await page(LeadsPage(props(account.slug, { source: "Simulated buyer" })));
+      expect(html).toContain('class="sas-more"');
+      expect(html).toMatch(/for="lf-open"[^>]*>.*Filters · 1/);
+      expect(html).not.toMatch(/class="sas-chip" data-market/);
+    });
+
+    it("opt-out icon follows the danger button colour", () => {
+      expect(css).toContain(".sas-lead__consent > .sas-ico {");
+      expect(css).not.toContain(".sas-lead__consent .sas-ico {");
     });
   });
 });

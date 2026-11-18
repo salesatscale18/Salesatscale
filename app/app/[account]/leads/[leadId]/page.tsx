@@ -3,13 +3,13 @@ import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { DealStateFields, Timeline, type TimelineItem } from "@/components/sas/record";
 import { currentPlaybook, getDealState } from "@/lib/agent/service";
-import { setLeadMarketAction, verifyFieldAction } from "../actions";
+import { setLeadMarketAction, takeOverAction, verifyFieldAction } from "../actions";
 import { listMarkets } from "@/lib/markets/service";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { displayName, nameInitials } from "@/lib/auth/display";
+import { nameInitials, personName } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
 import { maskPhone } from "@/lib/leads/rules";
-import { exactTime, relativeTime } from "@/lib/format";
+import { asSentence, formatDateTimeIn, formatShortDateTimeIn } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
 import { ConversationPanel } from "./conversation";
@@ -59,6 +59,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "conversation.handed_back": "sparkles",
   "conversation.human_reply": "message-square",
   "conversation.started": "send",
+  "conversation.started_sim": "flask-conical",
   "follow_up.scheduled": "clock",
   "follow_up.sent": "send",
   "follow_up.cancelled": "alarm-clock-off",
@@ -123,43 +124,59 @@ export default async function LeadCardPage({
   // After the sale the pre-sale next step is done: the order's state replaces it.
   const nextStep = latestOrder
     ? t(latestOrder.order.paymentStatus === "paid" ? "lead.card.next_after_paid" : "lead.card.next_after_signed", { order: orderView(latestOrder.order).label })
-    : deal?.nextStep ?? null;
+    : deal?.nextStep ? asSentence(deal.nextStep) : null;
 
+  const tz = account.timezone;
+  /** People by name, or "You" for the viewer (never the email). */
+  const who = (u: Parameters<typeof personName>[0]) => personName(u, me.id, t("people.you"));
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";
     const ord = won ? orderById.get(String((event.data as { orderId?: string } | null)?.orderId ?? "")) : undefined;
     // A conversation started on the buyer simulator is not a WhatsApp start.
-    const title = t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey);
+    const startedSim = event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator";
+    const title = t(startedSim ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey);
     return {
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
-    icon: EVENT_ICON[event.type] ?? "cog",
+    icon: EVENT_ICON[startedSim ? "conversation.started_sim" : event.type] ?? "cog",
     title: won ? <span style={{ color: "var(--success)" }} data-tone="success">{title}</span> : title,
     detail:
       won && ord
         ? <><span className="sas-num">{ord.label} · {ord.amount}</span>{event.type === "order_form.signed" ? ` · Q-${String((event.data as { number?: number } | null)?.number ?? "")} v${String((event.data as { version?: number } | null)?.version ?? "")}` : ""}</>
         : event.type.startsWith("quote.") || event.type.startsWith("order_form.")
-        ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${displayName(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
+        ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : event.type === "lead.market_changed"
-        ? `${(event.data as { from?: string | null } | null)?.from ?? "-"} → ${(event.data as { to?: string } | null)?.to ?? ""}${user ? ` · ${displayName(user)}` : ""}`
+        ? `${(event.data as { from?: string | null } | null)?.from ?? "-"} → ${(event.data as { to?: string } | null)?.to ?? ""}${user ? ` · ${who(user)}` : ""}`
         : user
-          ? displayName(user)
+          ? who(user)
           : event.type === "lead.created" || event.type === "lead.updated"
             ? t(`lead.origin.${String((event.data as { origin?: string } | null)?.origin ?? "manual")}` as MessageKey)
             : undefined,
-    time: relativeTime(event.createdAt, now),
+    // A record: the exact date and time in the account's zone (zone named on hover).
+    time: formatShortDateTimeIn(event.createdAt, tz),
+    timeTitle: formatDateTimeIn(event.createdAt, tz),
     };
   });
 
+  const allFields = (playbook?.fields ?? []).map((f) => ({ key: f.key, label: f.label, stage: f.stage, value: dealFields[f.key]?.value, provenance: dealFields[f.key]?.provenance }));
+  const unknown = (f: { value?: string | null }) => !String(f.value ?? "").trim();
+  const laterUnknown = allFields.filter((f) => f.stage === "before_order_form" && unknown(f)).map(({ stage: _s, ...f }) => f);
+  const shownFields = allFields.filter((f) => !(f.stage === "before_order_form" && unknown(f))).map(({ stage: _s, ...f }) => f);
   // Deal fields not known yet (phone summary above the tabs).
   const missingCount = (playbook?.fields ?? []).filter((f) => !String(dealFields[f.key]?.value ?? "").trim()).length;
 
+  // An open conversation is taken over from the header (not under the chat).
+  const takeOverHere = !!conversation && conversation.conversation.status === "open" && lead.status !== "opted_out";
+  // A simulated lead whose chat can be started: the empty chat says how.
+  const canStartSim = !!chatLink && !chatLink.expired && simFacts?.refusal === null;
+
   let chatNote: string;
   if (lead.status === "opted_out") chatNote = t("lead.card.opted_out");
-  else if (owner) chatNote = t("lead.card.human_owner", { name: displayName(owner) });
+  else if (owner) chatNote = t("lead.card.human_owner", { name: who(owner) });
+  else if (simulated && canStartSim) chatNote = t("lead.card.sim_start_hint");
   else chatNote = t("lead.card.wait_live");
 
   return (
@@ -183,10 +200,36 @@ export default async function LeadCardPage({
                 : <>{t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}</>}
               {leadMarket ? <span data-testid="lead-market">{t("lead.card.market_line", { market: leadMarket.name })} · </span> : null}
               {creator
-                ? t("lead.card.added", { source, who: displayName(creator), when: relativeTime(lead.createdAt, now) })
-                : t("lead.card.added_system", { source, when: relativeTime(lead.createdAt, now) })}
+                ? t("lead.card.added", { source, who: who(creator), when: formatDateTimeIn(lead.createdAt, tz) })
+                : t("lead.card.added_system", { source, when: formatDateTimeIn(lead.createdAt, tz) })}
             </span>
+            {/* The market can be changed here (the side panel that repeated it is gone). */}
+            {marketList.length > 1 ? (
+              <details className="sas-lead__market" data-testid="lead-market-change" open={!!(sp.market || sp.market_error) || undefined}>
+                <summary className="sas-small">{t("lead.card.market_change_open")}</summary>
+                <form action={setLeadMarketAction} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", paddingBlockStart: 8 }}>
+                  <input type="hidden" name="slug" value={account.slug} />
+                  <input type="hidden" name="leadId" value={lead.id} />
+                  <select className="sas-select" name="marketId" defaultValue={leadMarket?.id} aria-label={t("lead.card.market")} style={{ flex: "1 1 160px", minWidth: 0, maxWidth: 280 }}>
+                    {marketList.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                  </select>
+                  <button type="submit" className={buttonClass("secondary", "sm")}>{t("lead.card.market_change")}</button>
+                </form>
+                <span className="sas-small">{t("lead.card.market_hint")}</span>
+              </details>
+            ) : null}
+            {sp.market ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lead.card.market_saved")}</span></div> : null}
+            {sp.market_error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lead.card.market_error")}</span></div> : null}
           </div>
+          {/* Take over sits top right, as on the board; it stays in view while the page scrolls. Book meeting comes with meetings. */}
+          {takeOverHere && conversation ? (
+            <form action={takeOverAction} className="sas-lead__head-actions">
+              <input type="hidden" name="slug" value={account.slug} />
+              <input type="hidden" name="conversationId" value={conversation.conversation.id} />
+              <input type="hidden" name="from" value="lead" />
+              <button type="submit" className={buttonClass("takeover", "sm")} data-testid="header-take-over"><Icon name="user" />{t("conv.take_over")}</button>
+            </form>
+          ) : null}
         </header>
         <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} />
         {/* Phone only (sas.css): a compact deal summary, then tabs Chat · Deal · Timeline. Radio inputs, so they work without JS. */}
@@ -218,13 +261,14 @@ export default async function LeadCardPage({
                 slug={account.slug} leadId={lead.id} simulated={simulated}
                 url={chatLink ? publicUrl(chatPath(chatLink.token)) : null}
                 expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, account.timezone) : null} refusal={simFacts?.refusal ?? null} rules={account.simulateWhatsappRules}
+                started={conversation?.conversation.channel === SIMULATOR_CHANNEL || simFacts?.refusal === "already_started"}
                 notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined}
               />
             ) : null}
             {conversation ? (
               <ConversationPanel
                 chatWindow={waWindow}
-                slug={account.slug} view={conversation} me={me} buyerName={lead.fullName}
+                slug={account.slug} view={conversation} me={me} buyerName={lead.fullName} timezone={tz} takeOverInHeader={takeOverHere}
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
               />
             ) : (
@@ -292,31 +336,20 @@ export default async function LeadCardPage({
               slug={account.slug} followUp={followUp} timezone={account.timezone}
               canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"}
             />
-            <section aria-labelledby="lm-h" className="sas-stack-2" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
-              <h2 id="lm-h" className="sas-group-label" style={{ padding: "16px 0 0" }}>{t("lead.card.market")}</h2>
-              {sp.market ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lead.card.market_saved")}</span></div> : null}
-              {sp.market_error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lead.card.market_error")}</span></div> : null}
-              {marketList.length > 1 ? (
-                <form action={setLeadMarketAction} style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
-                  <input type="hidden" name="slug" value={account.slug} />
-                  <input type="hidden" name="leadId" value={lead.id} />
-                  <select className="sas-select" name="marketId" defaultValue={leadMarket?.id} aria-label={t("lead.card.market")} style={{ flex: "1 1 160px", minWidth: 0 }}>
-                    {marketList.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                  </select>
-                  <button type="submit" className={buttonClass("secondary", "sm")}>{t("lead.card.market_change")}</button>
-                </form>
-              ) : (
-                <span>{leadMarket?.name}</span>
-              )}
-              <span className="sas-small">{t("lead.card.market_hint")}</span>
-            </section>
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
             {sp.verified ? <div className="sas-alert sas-alert--success" role="status" style={{ margin: "0 16px 12px" }}><Icon name="check-circle" /><span>{t("lead.card.verified_saved")}</span></div> : null}
             {!playbook || playbook.fields.length === 0 ? (
               <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t(playbook ? "lead.card.learn_none" : "lead.card.learn_pending")}</p>
             ) : (
               <div className="sas-stack-4" style={{ padding: "0 16px 16px" }}>
-                <DealStateFields fields={playbook.fields.map((f) => ({ key: f.key, label: f.label, value: dealFields[f.key]?.value, provenance: dealFields[f.key]?.provenance }))} />
+                <DealStateFields fields={shownFields} />
+                {/* Order-form details not known yet are grouped in one line that opens. */}
+                {laterUnknown.length ? (
+                  <details className="sas-lead__unknown" data-testid="unknown-group">
+                    <summary>{t("lead.card.unknown_group", { count: laterUnknown.length })}</summary>
+                    <DealStateFields fields={laterUnknown} />
+                  </details>
+                ) : null}
                 {deal?.objections.length ? (
                   <div className="sas-stack-2">
                     <span className="sas-group-label">{t("lead.card.objections")}</span>
@@ -345,8 +378,8 @@ export default async function LeadCardPage({
                 {consent
                   ? t("lead.card.consent", {
                       source: consent.consent.source,
-                      date: exactTime(consent.consent.capturedAt),
-                      who: consent.recordedBy ? displayName(consent.recordedBy) : t("lead.origin.webhook"),
+                      date: formatDateTimeIn(consent.consent.capturedAt, tz),
+                      who: consent.recordedBy ? who(consent.recordedBy) : t("lead.origin.webhook"),
                     })
                   : t("lead.card.consent_none")}
               </span>

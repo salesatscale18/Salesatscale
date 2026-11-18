@@ -14,8 +14,10 @@ const maybe = (key: string) => (t(key as MessageKey) as string | undefined) ?? n
  * A link idle for 14 days shows "Expired": only Reset link is offered then.
  */
 export function SimulatorPanel({
-  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error,
+  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false,
 }: {
+  /** The simulated chat has started: the panel is one line (Open buyer chat · Copy link · Reset link). */
+  started?: boolean;
   slug: string;
   leadId: string;
   simulated: boolean;
@@ -41,6 +43,22 @@ export function SimulatorPanel({
   const canStart = !!url && !expired && refusal === null;
   // Why Start is not offered, unless it simply already ran (the conversation shows below).
   const why = url && !expired && refusal && refusal !== "already_started" && refusal !== "test_lead" ? refusal : null;
+  // Once the chat has started, one line is enough: the links stay, the explanations go.
+  if (started && url && !expired && !canStart) {
+    return (
+      <section id="simulator" aria-labelledby="sim-h" className="sas-sim-line" data-sim-compact="">
+        <h2 id="sim-h" className="sas-sim-line__title"><Icon name="flask-conical" />{t("sim.line")}</h2>
+        <a className={buttonClass("ghost", "sm")} href={url} target="_blank" rel="noopener noreferrer" data-chat-link="">{t("sim.open")}</a>
+        <CopyButton value={url} label={t("sim.copy")} />
+        <form action={resetChatLinkAction}>
+          {hidden}
+          <button type="submit" className={buttonClass("ghost", "sm")}>{t("sim.reset")}</button>
+        </form>
+        {noticeText ? <div className={`sas-alert ${notice === "error" ? "sas-alert--danger" : "sas-alert--success"}`} role="status" style={{ flexBasis: "100%" }}><Icon name={notice === "error" ? "alert-triangle" : "check-circle"} /><span>{noticeText}</span></div> : null}
+        {errorText ? <div className="sas-alert sas-alert--danger" role="alert" style={{ flexBasis: "100%" }}><Icon name="alert-triangle" /><span>{errorText}</span></div> : null}
+      </section>
+    );
+  }
   return (
     <section id="simulator" aria-labelledby="sim-h" className="sas-panel sas-stack-2" style={{ margin: 16, padding: "16px 20px", borderStyle: "dashed", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -92,7 +110,7 @@ export function SimulatorPanel({
           {why === "outside_contact_hours" ? <a href={`/app/${slug}/settings?section=hours`}>{t("wa.start.fix_hours")}</a> : null}
         </p>
       ) : null}
-      <span className="sas-small">{t("sim.panel.help")}{rules ? ` ${t("sim.panel.rules")}` : ""}</span>
+      {url && !expired ? <span className="sas-small">{t(canStart ? "sim.panel.help" : "sim.panel.help_reset")}{rules ? ` ${t("sim.panel.rules")}` : ""}</span> : rules ? <span className="sas-small">{t("sim.panel.rules")}</span> : null}
     </section>
   );
 }

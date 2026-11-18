@@ -14,6 +14,8 @@ import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
 import { ConversationPanel, windowTimerProps } from "../leads/[leadId]/conversation";
 import { sendTemplateAction } from "./actions";
 import { AutoRefresh } from "./auto-refresh";
+import { ScrollThreadToEnd } from "./scroll-end";
+import { asSentence } from "@/lib/format";
 import { SimulatedChip, WhatsAppChip } from "../leads/simulated-chip";
 import { activeChatToken } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
@@ -137,7 +139,20 @@ export default async function ConversationsPage({ params, searchParams }: { para
             {rows.length === 0 ? (
               <div className="sas-empty" style={{ border: 0 }}>
                 <span className="sas-empty__icon sas-empty__icon--agent"><Icon name="message-circle" /></span>
+                {/* "All" with nothing: a title, a muted body, and the test chats if there are any. */}
+                {!q && filter === "all" ? (
+                  <>
+                    <strong>{t("inbox.empty.all_title")}</strong>
+                    <span className="sas-small">{t("inbox.empty.all")}</span>
+                    {list.counts.test > 0 ? (
+                      <span className="sas-small" data-testid="empty-tests">
+                        {list.counts.test === 1 ? t("inbox.empty.tests_one") : t("inbox.empty.tests", { count: list.counts.test })} · <a href={qs({ filter: "test", page: undefined, c: undefined })}>{t("inbox.empty.see_tests")}</a>
+                      </span>
+                    ) : null}
+                  </>
+                ) : (
                 <strong>{q ? t("inbox.empty.search") : t(`inbox.empty.${filter}`)}</strong>
+                )}
                 {q ? <a className={buttonClass("secondary", "sm")} href={qs({ q: undefined, page: undefined, c: undefined })}>{t("leads.filter.clear")}</a> : null}
               </div>
             ) : (
@@ -158,15 +173,15 @@ export default async function ConversationsPage({ params, searchParams }: { para
                             <span className="sas-inbox__row-main">
                               <span className="sas-inbox__row-top">
                                 <span className="sas-inbox__name">{r.lead.fullName}{r.lead.company ? <span className="sas-small"> · {r.lead.company}</span> : null}</span>
-                                <span className="sas-num sas-small" title={r.lastAt.toISOString()}>{relativeTime(r.lastAt, now)}</span>
+                                <span className="sas-small sas-when" title={r.lastAt.toISOString()}>{relativeTime(r.lastAt, now)}</span>
                               </span>
                               <span className="sas-small sas-inbox__preview" dir="auto">{preview(r, me.id)}</span>
                               <span className="sas-inbox__meta">
                                 {r.group === "needs_you" ? <span className="sas-inbox__badge"><Icon name="user" />{r.takenOverByUserId ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff")}</span> : null}
                                 <StatusPill object="lead" state={r.lead.status} />
                                 {r.isTest ? null : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : null}
-                                {!r.isTest && (r.channel === SIMULATOR_CHANNEL || r.channel === "whatsapp") ? null : <span className="sas-chip">{r.isTest ? t("inbox.channel.test") : maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
-                                {r.marketName || homeMarket ? <span className="sas-chip">{r.marketName || homeMarket}</span> : null}
+                                {!r.isTest && (r.channel === SIMULATOR_CHANNEL || r.channel === "whatsapp") ? null : r.isTest ? <TestChatChip /> : <span className="sas-chip">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
+                                {r.marketName || homeMarket ? <span className="sas-small" data-market="">{r.marketName || homeMarket}</span> : null}
                                 {r.window ? <WindowTimer {...windowTimerProps(r.window, now)} /> : null}
                               </span>
                             </span>
@@ -203,7 +218,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
                     <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <strong>{selected.lead.fullName}{selected.lead.company ? ` · ${selected.lead.company}` : ""}</strong>
-                      {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : null}
+                      {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : selected.conv.isTest ? <TestChatChip /> : null}
                     </span>
                     <span className="sas-small">
                       {[selected.lead.buyerRef, selected.marketName || homeMarket, t(`lang.${selected.lead.language as "en" | "he"}`)].filter(Boolean).join(" · ")}
@@ -230,8 +245,9 @@ export default async function ConversationsPage({ params, searchParams }: { para
                 ) : null}
                 <div className="sas-inbox__thread-body">
                   <div className="sas-inbox__chat">
+                    <ScrollThreadToEnd />
                     <ConversationPanel
-                      from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName}
+                      from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone}
                       leadOptedOut={selected.lead.status === "opted_out"} notice={notice === "template_sent" ? undefined : notice}
                     />
                     {thread.chatWindow && !thread.chatWindow.open && selected.lead.status !== "opted_out" ? (
@@ -280,8 +296,8 @@ export default async function ConversationsPage({ params, searchParams }: { para
                       ) : (
                         <DealStateFields fields={thread.playbook.fields.map((f) => ({ key: f.key, label: f.label, value: thread.deal?.fields[f.key]?.value, provenance: thread.deal?.fields[f.key]?.provenance }))} />
                       )}
-                      {thread.deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label" style={{ padding: 0 }}>{t("lead.card.next_step")}</span><span>{thread.deal.nextStep}</span></div> : null}
-                      {selected.conv.isTest ? null : <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads/${selected.lead.id}`} style={{ alignSelf: "flex-start" }}><Icon name="user" />{t("inbox.open_lead")}</a>}
+                      {thread.deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label" style={{ padding: 0 }}>{t("lead.card.next_step")}</span><span>{asSentence(thread.deal.nextStep)}</span></div> : null}
+                      {selected.conv.isTest ? null : <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads/${selected.lead.id}`} style={{ alignSelf: "flex-start" }}><Icon name="arrow-up-right" />{t("inbox.open_lead")}</a>}
                     </section>
                   </aside>
                 </div>
@@ -292,4 +308,9 @@ export default async function ConversationsPage({ params, searchParams }: { para
       )}
     </main>
   );
+}
+
+/** One term and one look for test chats: "Test chat" with the flask. */
+function TestChatChip() {
+  return <span className="sas-chip" data-test-chat=""><Icon name="flask-conical" />{t("inbox.channel.test")}</span>;
 }

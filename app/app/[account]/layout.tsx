@@ -7,7 +7,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { needsYouCountForRequest } from "@/lib/overview/service";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 import { Icon } from "@/components/sas/icon";
-import { displayName, initials } from "@/lib/auth/display";
+import { initials, personName } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
 import { resumeAccountAction } from "@/app/sadmin/accounts/actions";
 
@@ -32,7 +32,7 @@ export default async function AccountLayout({ children, params }: { children: Re
           mode="seller"
           basePath={`/app/${account.slug}`}
           accountName={account.tradeName}
-          user={{ name: displayName(user), initials: initials(user) }}
+          user={{ name: personName(user), initials: initials(user) }}
           counts={needsYouCount ? { overview: { value: needsYouCount, tone: "human" } } : undefined}
         />
         {/* Banners come first: the top row on a phone (above the menu bar), above the page on wide screens. */}

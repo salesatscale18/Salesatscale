@@ -7,7 +7,8 @@ import { Icon, type IconName } from "./icon";
 import { Avatar } from "./primitives";
 import { ScrollCurrentIntoView } from "./scroll-current";
 
-export type NavItem = { id: string; label: MessageKey; icon: IconName; path: string };
+/** `hidden`: the route exists (a "not built yet" placeholder) but the nav does not list it. */
+export type NavItem = { id: string; label: MessageKey; icon: IconName; path: string; hidden?: true };
 export type NavGroup = { label?: MessageKey; items: NavItem[] };
 
 export const SELLER_NAV: NavGroup[] = [
@@ -17,8 +18,8 @@ export const SELLER_NAV: NavGroup[] = [
       { id: "leads", label: "nav.leads", icon: "user-plus", path: "/leads" },
       { id: "inbox", label: "nav.inbox", icon: "message-circle", path: "/conversations" },
       { id: "orders", label: "nav.orders", icon: "file-text", path: "/orders" },
-      { id: "meetings", label: "nav.meetings", icon: "calendar", path: "/meetings" },
-      { id: "reports", label: "nav.reports", icon: "chart", path: "/reports" },
+      { id: "meetings", label: "nav.meetings", icon: "calendar", path: "/meetings", hidden: true },
+      { id: "reports", label: "nav.reports", icon: "chart", path: "/reports", hidden: true },
     ],
   },
   {
@@ -37,6 +38,9 @@ export const SELLER_NAV: NavGroup[] = [
   },
   { items: [{ id: "settings", label: "nav.settings", icon: "sliders", path: "/settings" }] },
 ];
+
+/** The nav items a seller sees (hidden placeholders left out). */
+export const visibleNavItems = (groups: NavGroup[]) => groups.flatMap((g) => g.items).filter((it) => !it.hidden);
 
 export const ADMIN_NAV: NavGroup[] = [
   {
@@ -85,7 +89,7 @@ export function SideNav({
         <div key={gi}>
           {g.label ? <div className="sas-label sas-nav__group-label">{t(g.label)}</div> : null}
           <ul className="sas-nav__group">
-            {g.items.map((it) => {
+            {g.items.filter((it) => !it.hidden).map((it) => {
               const count = counts[it.id];
               return (
                 <li key={it.id}>

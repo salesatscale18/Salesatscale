@@ -74,3 +74,29 @@ export function formatDateTimeIn(at: Date, timezone: string | null | undefined, 
 export function formatAuditUtc(at: Date, language?: string | null): string {
   return formatDateTimeIn(at, "UTC", language);
 }
+
+/** "15:53" in the zone, no zone name (chat bubbles; the zone goes in the title). */
+export function formatClockIn(at: Date, timezone: string | null | undefined, language?: string | null): string {
+  return fmt(at, timezone, language, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });
+}
+
+/** "Tue, 17 Nov 2026" in the zone: the day divider in a chat. */
+export function formatDayIn(at: Date, timezone: string | null | undefined, language?: string | null): string {
+  return fmt(at, timezone, language, { weekday: "short", day: "numeric", month: "short", year: "numeric" });
+}
+
+/** "17 Nov, 23:28" in the zone (records with little room; the full value with the zone goes in the title). */
+export function formatShortDateTimeIn(at: Date, timezone: string | null | undefined, language?: string | null): string {
+  return `${fmt(at, timezone, language, { day: "numeric", month: "short" })}, ${formatClockIn(at, timezone, language)}`;
+}
+
+/**
+ * A short free-text note as a sentence: first letter upper case, ", then "
+ * between steps and a full stop ("quote then order form" → "Quote, then order form.").
+ */
+export function asSentence(text: string | null | undefined): string {
+  const s = (text ?? "").trim().replace(/\s+/g, " ").replace(/,?\s+then\s+/gi, ", then ");
+  if (!s) return "";
+  const first = s.charAt(0).toUpperCase() + s.slice(1);
+  return /[.!?…]$/.test(first) ? first : `${first}.`;
+}

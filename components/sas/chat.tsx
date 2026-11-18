@@ -16,6 +16,7 @@ export function ChatMessage({
   actor,
   who,
   time,
+  timeTitle,
   locale = "en",
   trace,
   children,
@@ -23,6 +24,8 @@ export function ChatMessage({
   actor: Actor;
   who: string;
   time?: string;
+  /** The full date and time with the zone, shown on hover. */
+  timeTitle?: string;
   locale?: Locale;
   trace?: TraceItem[];
   children: ReactNode;
@@ -31,7 +34,7 @@ export function ChatMessage({
     <div className={`sas-msg sas-msg--${actor}`}>
       <div className="sas-msg__meta">
         <span className="sas-msg__who">{who}</span>
-        {time ? <span className="sas-msg__time">{time}</span> : null}
+        {time ? <span className="sas-msg__time" title={timeTitle}>{time}</span> : null}
       </div>
       <div className="sas-msg__bubble" lang={locale} dir={dir(locale)}>
         {children}

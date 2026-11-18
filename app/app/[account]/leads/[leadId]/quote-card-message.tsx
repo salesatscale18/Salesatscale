@@ -12,7 +12,8 @@ import { approveQuoteInThreadAction, sendInLimitAction } from "./quote-card-acti
  * "Sent by the app". A held quote gets the approval panel when `approve` is
  * given (lead page, inbox); the actions re-check access on the server.
  */
-export function QuoteCardMessage({ card, time, slug, approve }: {
+export function QuoteCardMessage({ card, time, timeTitle, slug, approve }: {
+  timeTitle?: string;
   card: QuoteCardView;
   time: string;
   /** Null in the test lab: no links into quotes of hidden test leads. */
@@ -25,7 +26,7 @@ export function QuoteCardMessage({ card, time, slug, approve }: {
     <div className="sas-msg sas-msg--agent" data-app-message="quote">
       <div className="sas-msg__meta">
         <span className="sas-msg__who">{t("conv.qcard.sent_by_app")}</span>
-        <span className="sas-msg__time">{time}</span>
+        <span className="sas-msg__time" title={timeTitle}>{time}</span>
       </div>
       <QuoteCard card={card} sellerOnly={{ label: t("conv.qcard.only_you"), openLabel: t("conv.qcard.open_quote"), openHref }} />
       {card.approval && approve && slug ? <ApprovalPanel card={card} slug={slug} back={approve.back} /> : null}

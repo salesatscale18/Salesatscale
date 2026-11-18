@@ -49,7 +49,10 @@ describe("design system components", () => {
       <SideNav mode="seller" basePath="/app/acme" active="leads" accountName="Acme" user={{ name: "D L", initials: "DL" }} />,
     );
     expect(out).toContain('href="/app/acme/leads" aria-current="page"');
-    const itemCount = SELLER_NAV.flatMap((g) => g.items).length;
+    const itemCount = SELLER_NAV.flatMap((g) => g.items).filter((it) => !it.hidden).length;
     expect(out.match(/class="sas-nav__item"/g)).toHaveLength(itemCount);
+    // Meetings and Reports are hidden until they are built (live review Package 5.9); their routes stay.
+    expect(out).not.toContain('href="/app/acme/meetings"');
+    expect(out).not.toContain('href="/app/acme/reports"');
   });
 });

@@ -11,6 +11,8 @@
   --line: #dde1e8; --line-strong: #7d8697;
   --ink: #0f1420; --ink-muted: #566073;
   --primary: #2357d0; --on-primary: #ffffff;
+  /* Primary button fill: the same as --primary in light; lighter in dark so its dark label keeps well over 4.5:1. */
+  --primary-fill: #2357d0;
   /* Selected nav item, table row or option card. Confirmed by the UX session; not in tokens.json yet. */
   --primary-soft: #e8effc;
   --agent: #6a43c7; --agent-soft: #efeafc; --on-agent: #ffffff;
@@ -30,7 +32,7 @@
 
 @media (prefers-color-scheme: dark) {
   .sas-app:not([data-theme="light"]) {
-    --surface: #0b0d12; --surface-raised: #151922; --surface-sunken: #10131a;
+    --surface: #0b0d12; --primary-fill: #8db3ff; --surface-raised: #151922; --surface-sunken: #10131a;
     --line: #262c38; --line-strong: #5b6577;
     --ink: #e8ebf1; --ink-muted: #9aa3b2;
     --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #16233d;
@@ -44,7 +46,7 @@
   }
 }
 .sas-app[data-theme="dark"] {
-  --surface: #0b0d12; --surface-raised: #151922; --surface-sunken: #10131a;
+  --surface: #0b0d12; --primary-fill: #8db3ff; --surface-raised: #151922; --surface-sunken: #10131a;
   --line: #262c38; --line-strong: #5b6577;
   --ink: #e8ebf1; --ink-muted: #9aa3b2;
   --primary: #6b9dff; --on-primary: #0b0d12; --primary-soft: #16233d;
@@ -82,7 +84,7 @@
 /* Button */
 .sas-btn { display: inline-flex; align-items: center; gap: var(--space-2); height: 36px; padding-inline: 14px; border-radius: var(--radius-md); border: 1px solid transparent; font: 600 14px/20px var(--font-sans); cursor: pointer; background: none; color: var(--ink); white-space: nowrap; text-decoration: none; transition: background-color 120ms ease-out; }
 .sas-app a.sas-btn { color: var(--ink); }
-.sas-btn--primary, .sas-app a.sas-btn--primary { background: var(--primary); color: var(--on-primary); }
+.sas-btn--primary, .sas-app a.sas-btn--primary { background: var(--primary-fill); color: var(--on-primary); }
 .sas-btn--secondary { background: var(--surface-raised); border-color: var(--line-strong); }
 .sas-btn--ghost, .sas-app a.sas-btn--ghost { color: var(--ink-muted); }
 .sas-btn--ghost:hover, .sas-btn--secondary:hover { background: var(--surface-sunken); }
@@ -143,7 +145,7 @@
 .sas-tl__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; padding-block-start: 4px; }
 .sas-tl__title { font-weight: 600; }
 .sas-tl__detail { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
-.sas-tl__time { font: 500 12px/16px var(--font-mono); color: var(--ink-muted); padding-block-start: 6px; font-variant-numeric: tabular-nums; }
+.sas-tl__time { font: 500 12px/16px var(--font-sans); color: var(--ink-muted); padding-block-start: 6px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* Deal-state fields */
 .sas-fields { display: grid; gap: 0; padding: 0 var(--space-4); background: var(--surface-raised); margin: 0; }
@@ -174,8 +176,9 @@
 .sas-banner { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-2) var(--space-4); font-size: 13px; line-height: 18px; flex-wrap: wrap; }
 .sas-banner .sas-ico { width: 16px; height: 16px; }
 .sas-banner__text { flex: 1; min-width: 200px; }
-.sas-banner--acting { background: var(--ink); color: var(--surface); }
-.sas-banner--acting .sas-btn, .sas-app .sas-banner--acting a.sas-btn { color: var(--surface); border-color: currentColor; background: transparent; }
+/* Acting as: always dark with white text, in both themes (a light bar in the dark theme read as a page element). */
+.sas-banner--acting { background: #0f1420; color: #ffffff; border-block-end: 1px solid #3a4252; }
+.sas-banner--acting .sas-btn, .sas-app .sas-banner--acting a.sas-btn { color: #ffffff; border-color: currentColor; background: transparent; }
 .sas-banner--takeover { background: var(--human-soft); color: var(--ink); border-block: 1px solid var(--human); }
 .sas-banner--takeover .sas-ico { color: var(--human); }
 .sas-banner--test { background: var(--warning-soft); color: var(--ink); border-block: 1px dashed var(--warning); }
@@ -303,7 +306,7 @@
 .sas-views { display: flex; flex-wrap: wrap; gap: 4px; }
 .sas-app a.sas-view { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px; border-radius: var(--radius-pill); color: var(--ink-muted); font-weight: 500; text-decoration: none; white-space: nowrap; }
 .sas-app a.sas-view:hover { background: var(--surface-sunken); }
-.sas-app a.sas-view[aria-current="page"] { background: var(--ink); color: var(--surface); }
+.sas-app a.sas-view[aria-current="page"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 .sas-view .sas-num { font-size: 12px; }
 
 /* Search and filters */
@@ -335,7 +338,7 @@
 .sas-skeleton { display: block; height: 12px; border-radius: 6px; background: var(--surface-sunken); }
 
 /* Lead card */
-.sas-lead { overflow: hidden; }
+.sas-lead { overflow: clip; }
 .sas-lead__head { display: flex; flex-wrap: wrap; align-items: center; gap: 14px; padding: var(--space-4) var(--space-6); border-block-end: 1px solid var(--line); }
 .sas-lead__head .sas-av { width: 44px; height: 44px; font-size: 15px; }
 .sas-lead__body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
@@ -343,7 +346,7 @@
 .sas-lead__chat { background: var(--surface-sunken); min-height: 220px; border-radius: 0; }
 .sas-lead__side { border-inline-start: 1px solid var(--line); display: flex; flex-direction: column; }
 .sas-lead__consent { margin-block-start: auto; display: flex; gap: var(--space-2); padding: 14px 16px; border-block-start: 1px solid var(--line); font-size: 12px; line-height: 16px; color: var(--ink-muted); }
-.sas-lead__consent .sas-ico { width: 14px; height: 14px; flex: none; color: var(--success); }
+.sas-lead__consent > .sas-ico { width: 14px; height: 14px; flex: none; color: var(--success); }
 h2.sas-group-label { margin: 0; }
 @media (max-width: 900px) { .sas-lead__body { grid-template-columns: 1fr; } .sas-lead__side { border-inline-start: 0; border-block-start: 1px solid var(--line); } }
 
@@ -392,11 +395,13 @@ h2.sas-group-label { margin: 0; }
 .sas-alert--warning .sas-ico { color: var(--warning); }
 .sas-kv dt, .sas-kv dd { padding: 0; }
 .sas-kv .sas-kv__total { font-weight: 700; padding-block-start: var(--space-2); border-block-start: 1px solid var(--line); color: var(--ink); }
+/* The rule runs across the column gap, so it reads as one line. */
+.sas-kv dd.sas-kv__total { margin-inline-start: calc(-1 * var(--space-3)); padding-inline-start: var(--space-3); }
 
 /* Tabs */
 .sas-tabs { display: flex; gap: var(--space-6); border-block-end: 1px solid var(--line); }
 .sas-app a.sas-tab { height: 40px; display: inline-flex; align-items: center; gap: 6px; padding: 0 2px; font-weight: 600; color: var(--ink-muted); border-block-end: 2px solid transparent; text-decoration: none; margin-block-end: -1px; }
-.sas-app a.sas-tab[aria-current="page"] { color: var(--ink); border-block-end-color: var(--primary); }
+.sas-app a.sas-tab[aria-current="page"] { color: var(--primary); border-block-end-color: var(--primary); }
 .sas-tab .sas-num { font-size: 12px; }
 
 /* Conversations inbox (canvas: Inbox, P6.6): list on the left, the selected chat on the right */
@@ -407,7 +412,7 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox__group { margin: 0; padding: 14px 16px 6px; }
 .sas-app a.sas-inbox__row { display: flex; gap: 10px; padding: 12px 16px; color: var(--ink); text-decoration: none; }
 .sas-app a.sas-inbox__row:hover { background: var(--surface-sunken); }
-.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--human-soft); }
+.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
 .sas-inbox__row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .sas-inbox__row-top { display: flex; justify-content: space-between; gap: var(--space-2); align-items: baseline; }
 .sas-inbox__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
@@ -419,7 +424,7 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox__thread { overflow: hidden; }
 .sas-inbox__thread-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
 .sas-inbox__back { display: none; }
-.sas-inbox__thread-body { display: grid; grid-template-columns: minmax(0, 1fr) 280px; }
+.sas-inbox__thread-body { display: grid; grid-template-columns: minmax(0, 1fr) 320px; }
 .sas-inbox__chat { min-width: 0; display: flex; flex-direction: column; }
 .sas-inbox__templates { padding: var(--space-4); border-block-start: 1px solid var(--line); }
 .sas-inbox__template { display: flex; gap: var(--space-2); align-items: flex-start; padding: var(--space-2) var(--space-3); border: 1px solid var(--line); border-radius: var(--radius-md); }
@@ -511,3 +516,82 @@ h2.sas-group-label { margin: 0; }
   .sas-sheet--stack > .sas-panel { border-radius: 0; border-inline: 0; border-block-start: 0; }
 }
 @media (max-width: 767px) { .sas-side-panel.sas-sheet { padding-block-start: var(--space-4); box-shadow: none; } }
+
+/* ---------------------------------------------------------------------------
+ * Seller workspace polish (live review Package 5)
+ * ------------------------------------------------------------------------- */
+/* Relative times in lists: sans with tabular figures (mono made "14 h" read as "14  h"). */
+.sas-when { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* Lead page header: Take over top right, sticky while the page scrolls. */
+.sas-lead__head { position: sticky; top: 0; z-index: 6; background: var(--surface-raised); border-start-start-radius: var(--radius-lg); border-start-end-radius: var(--radius-lg); }
+.sas-lead__head-actions { margin-inline-start: auto; display: flex; gap: var(--space-2); align-self: flex-start; }
+.sas-lead__market summary { cursor: pointer; width: fit-content; }
+@media (max-width: 767px) { .sas-lead__head { position: static; } .sas-lead__head-actions { width: 100%; } .sas-lead__head-actions .sas-btn { flex: 1; justify-content: center; } }
+
+/* Simulator once the chat has started: one line. */
+.sas-sim-line { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; margin: var(--space-3) var(--space-4); padding: 6px 10px; border: 1px dashed var(--line-strong); border-radius: var(--radius-md); }
+.sas-sim-line__title { display: inline-flex; align-items: center; gap: 6px; margin: 0 6px 0 0; font-size: 13px; line-height: 18px; font-weight: 600; color: var(--ink-muted); }
+
+/* Deal state on the lead page: heading, labels and values share one start edge. */
+.sas-lead__side .sas-fields { padding-inline: 0; background: transparent; }
+.sas-lead__side .sas-group-label { padding-inline: var(--space-4); }
+.sas-lead__unknown > summary { cursor: pointer; padding-block: 10px; color: var(--ink-muted); font-size: 13px; border-block-start: 1px solid var(--line); }
+
+/* Day divider in a chat. */
+.sas-day { display: flex; align-items: center; gap: var(--space-3); align-self: stretch; font-size: 12px; line-height: 16px; font-weight: 600; color: var(--ink-muted); }
+.sas-day::before, .sas-day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+
+/* Conversations: three panes of a fixed height; the list and the thread scroll on their own, the thread's header and composer stay. */
+.sas-inbox__side .sas-fields { padding: 0; background: transparent; }
+.sas-inbox__side .sas-field { grid-template-columns: 1fr; gap: 2px; }
+@media (min-width: 861px) {
+  .sas-inbox { height: calc(100vh - 150px); min-height: 480px; align-items: stretch; }
+  .sas-inbox__list { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+  .sas-inbox__list > :not(.sas-inbox__tools):not(.sas-table-foot):not(h2) { flex: none; }
+  .sas-inbox__list { overflow-y: auto; }
+  .sas-inbox__tools { position: sticky; top: 0; z-index: 1; background: var(--surface-raised); }
+  .sas-inbox__thread { display: flex; flex-direction: column; min-height: 0; }
+  .sas-inbox__thread-body { flex: 1; min-height: 0; }
+  .sas-inbox__chat { min-height: 0; overflow: hidden; }
+  .sas-inbox__chat > section#conversation { flex: 1; min-height: 0; display: flex; flex-direction: column; border-block-end: 0 !important; }
+  .sas-inbox__chat .sas-chat { flex: 1; min-height: 0; overflow-y: auto; }
+  .sas-inbox__side { overflow-y: auto; min-height: 0; }
+}
+@media (min-width: 861px) and (max-width: 1180px) {
+  .sas-inbox__thread-body { overflow-y: auto; }
+  .sas-inbox__chat .sas-chat { max-height: 60vh; }
+}
+
+/* Overview on a phone: "Needs you" first, under the greeting. */
+@media (max-width: 767px) {
+  .sas-ov__head { order: -2; }
+  .sas-ov__row { display: contents !important; }
+  .sas-ov__row > * { flex: none !important; width: 100%; }
+  .sas-ov__needs { order: -1; }
+}
+
+/* Leads on a phone: Add lead first and full width, the rest under More; the views scroll; filters behind a button. */
+.sas-more { position: relative; display: none; }
+.sas-more > summary { list-style: none; }
+.sas-more > summary::-webkit-details-marker { display: none; }
+.sas-more__menu { position: absolute; inset-inline-end: 0; inset-block-start: calc(100% + 4px); z-index: 20; min-width: 220px; padding: 4px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); display: flex; flex-direction: column; }
+.sas-app a.sas-more__item { display: flex; align-items: center; gap: var(--space-2); height: 40px; padding: 0 10px; border-radius: var(--radius-sm); color: var(--ink); text-decoration: none; }
+.sas-app a.sas-more__item:hover { background: var(--surface-sunken); }
+.sas-filters__toggle, .sas-filters__button { display: none; }
+@media (max-width: 767px) {
+  .sas-leads-actions { width: 100%; margin-inline-start: 0; flex-wrap: nowrap; }
+  .sas-leads-actions__secondary { display: none !important; }
+  .sas-leads-actions__primary { flex: 1; justify-content: center; }
+  .sas-more { display: block; }
+  .sas-views { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; margin-inline: calc(-1 * var(--space-4)); padding-inline: var(--space-4); }
+  .sas-views::-webkit-scrollbar { display: none; }
+  .sas-leads-filters .sas-search { flex: 1 1 0; min-width: 0; order: -1; }
+  .sas-filters__button { display: inline-flex; height: 36px; order: 0; }
+  .sas-leads-filters .sas-filter, .sas-leads-filters .sas-filters__apply { display: none; }
+  .sas-filters__toggle:checked ~ .sas-filter { display: block; flex: 1 1 calc(50% - 8px); order: 1; }
+  .sas-filters__toggle:checked ~ .sas-filter .sas-select { width: 100%; height: 36px; }
+  .sas-filters__toggle:checked ~ .sas-filters__apply { display: inline-flex; order: 2; }
+  .sas-filters__toggle:checked + .sas-filters__button { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
+}
+.sas-lead__side .sas-stack-4 .sas-group-label { padding-inline: 0; }
