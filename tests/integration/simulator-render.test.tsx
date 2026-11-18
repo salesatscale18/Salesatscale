@@ -274,7 +274,7 @@ describe("Buyer simulator screens", () => {
     const page = render(await BuyerChatPage({ params: Promise.resolve({ token: idle }) }));
     save("chat-expired", page, "buyer");
     expect(page).toContain("This chat link has expired");
-    expect(page).toContain("Ask the seller for a new link.");
+    expect(page).toContain("for a new link.");
     expect(page).toContain("Polar Demo");
     expect(page).not.toContain('aria-label="Send"');
     const get = await GET(new Request(`http://x/chat/${idle}/messages`), { params: Promise.resolve({ token: idle }) });

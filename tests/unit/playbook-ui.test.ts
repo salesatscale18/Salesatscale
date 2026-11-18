@@ -38,7 +38,7 @@ describe("opener: topics and question per language", () => {
     expect(openerText({ ...base, language: "en", opener: second })).toContain("You asked about automatic logs for inspections.");
     // No Hebrew version of topic 2: the general Hebrew sentence, never the English text.
     expect(openerText({ ...base, language: "he", opener: second })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. איך אתם בודקים אותן היום?");
-    expect(openerText({ ...base, language: "he", opener: { ...opener, question: { en: "How?" } } })).toMatch(/איך אפשר לעזור\?$/);
+    expect(openerText({ ...base, language: "he", opener: { ...opener, question: { en: "How?" } } })).toMatch(/מה גרם לך לפנות אלינו היום\?$/);
     // An index outside the list falls back to the first topic.
     expect(readOpener({ ...opener, defaultTopic: 9 }).defaultTopic).toBe(0);
   });
@@ -57,7 +57,7 @@ describe("opener: topics and question per language", () => {
     const heOld = { leadsAskAbout: "ניטור טמפרטורה", openingQuestion: "איך בודקים היום?" };
     expect(readOpener(heOld)).toEqual({ topics: [{ en: "", he: "ניטור טמפרטורה" }], defaultTopic: 0, question: { en: "", he: "איך בודקים היום?" } });
     expect(openerText({ ...base, language: "he", opener: heOld })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. פנית אלינו בנושא ניטור טמפרטורה. איך בודקים היום?");
-    expect(openerText({ ...base, language: "en", opener: heOld })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. How can I help?");
+    expect(openerText({ ...base, language: "en", opener: heOld })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. What made you get in touch today?");
     // The new parts win over the older texts when both are stored.
     expect(readOpener({ ...old, topics: [{ en: "x" }], question: { en: "Q?" } })).toEqual({ topics: [{ en: "x" }], defaultTopic: 0, question: { en: "Q?" } });
   });

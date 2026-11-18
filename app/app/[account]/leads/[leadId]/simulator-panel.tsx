@@ -58,7 +58,7 @@ export function SimulatorPanel({
         ) : null}
         {url && expired ? (
           <>
-            <span className="sas-pill sas-pill--warning" data-link-expired=""><Icon name="clock" />{t("sim.expired")}</span>
+            <span className="sas-pill" data-link-expired=""><Icon name="calendar-x" />{t("sim.expired")}</span>
             <form action={resetChatLinkAction}>
               {hidden}
               <button type="submit" className={buttonClass("primary", "sm")}>{t("sim.reset")}</button>

@@ -356,17 +356,17 @@ describe("fixed opener", () => {
   });
 
   it("falls back to the earlier wording when the playbook has no opener inputs", () => {
-    expect(openerText({ ...base, language: "en" })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. How can I help?");
-    expect(openerText({ ...base, language: "he", opener: {} })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. איך אפשר לעזור?");
+    expect(openerText({ ...base, language: "en" })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. What made you get in touch today?");
+    expect(openerText({ ...base, language: "he", opener: {} })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
     // Each part falls back on its own.
-    expect(openerText({ ...base, language: "en", opener: { leadsAskAbout: "fridge alerts." } })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked about fridge alerts. How can I help?");
+    expect(openerText({ ...base, language: "en", opener: { leadsAskAbout: "fridge alerts." } })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked about fridge alerts. What made you get in touch today?");
     expect(openerText({ ...base, language: "en", opener: { openingQuestion: "  How many fridges do you have?  " } }))
       .toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. How many fridges do you have?");
   });
 
   it("never mixes languages: an input written in the other language is not used", () => {
-    expect(openerText({ ...base, language: "he", opener: en })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. איך אפשר לעזור?");
-    expect(openerText({ ...base, language: "en", opener: he })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. How can I help?");
+    expect(openerText({ ...base, language: "he", opener: en })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
+    expect(openerText({ ...base, language: "en", opener: he })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. What made you get in touch today?");
     expect(writtenIn("fridges", "en")).toBe(true);
     expect(writtenIn("מקררים", "en")).toBe(false);
     expect(writtenIn("מקררים", "he")).toBe(true);

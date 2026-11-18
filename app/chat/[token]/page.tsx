@@ -40,7 +40,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
           <div className="c-log">
             <div className="c-empty" role="status">
               <h1 className="c-expired__title">{tr("buyer.sim.expired_title")}</h1>
-              <p className="c-expired__body">{tr("buyer.sim.expired_body")}</p>
+              <p className="c-expired__body">{tr("buyer.sim.expired_body", { company: names.seller })}</p>
             </div>
           </div>
         </main>
@@ -62,7 +62,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
     placeholder: tr("buyer.sim.placeholder"),
     send: tr("buyer.sim.send"),
     ended: tr("buyer.sim.ended"),
-    expired: tr("buyer.sim.refused.expired"),
+    expired: tr("buyer.sim.refused.expired", { company: names.seller }),
     today: tr("buyer.sim.today"),
     yesterday: tr("buyer.sim.yesterday"),
     openForm: tr("buyer.sim.open_form"),
@@ -77,13 +77,13 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
     read: tr("buyer.sim.status.read"),
     refused: {
       opted_out: tr("buyer.sim.refused.opted_out"),
-      account_not_live: tr("buyer.sim.refused.account_not_live"),
+      account_not_live: tr("buyer.sim.refused.account_not_live", { company: names.seller }),
       no_agent: tr("buyer.sim.refused.no_agent"),
       spend_cap: tr("buyer.sim.refused.spend_cap"),
       rate_limited: tr("buyer.sim.refused.rate_limited"),
       daily_limit: tr("buyer.sim.refused.daily_limit"),
-      expired: tr("buyer.sim.refused.expired"),
-      account_paused: tr("buyer.sim.refused.account_paused"),
+      expired: tr("buyer.sim.refused.expired", { company: names.seller }),
+      account_paused: tr("buyer.sim.refused.account_paused", { company: names.seller }),
       simulated_disabled: tr("buyer.sim.refused.simulated_disabled"),
     },
   };

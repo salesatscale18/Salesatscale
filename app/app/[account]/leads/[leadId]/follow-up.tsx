@@ -22,7 +22,7 @@ export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled }
       {followUp ? (
         <>
           <span style={{ display: "inline-flex", gap: 6, alignItems: "center", fontWeight: 600, color: failed ? "var(--danger)" : "var(--ink)" }}>
-            <Icon name={failed ? "alert-triangle" : "clock"} />
+            <Icon name={failed ? "x-circle" : "clock"} />
             <span>{t(failed ? "followup.failed" : "followup.scheduled", { when: formatDueLocal(followUp.dueAt, timezone) })}</span>
           </span>
           {followUp.topic ? <span className="sas-small" style={{ overflowWrap: "anywhere" }}>{t("followup.topic", { topic: followUp.topic })}</span> : null}
@@ -32,7 +32,7 @@ export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled }
               <input type="hidden" name="slug" value={slug} />
               <input type="hidden" name="followUpId" value={followUp.id} />
               <button type="submit" className={buttonClass("secondary", "sm")}>
-                <Icon name="x-circle" />{t(failed ? "followup.dismiss" : "followup.cancel")}
+                {t(failed ? "followup.dismiss" : "followup.cancel")}
               </button>
             </form>
           ) : null}

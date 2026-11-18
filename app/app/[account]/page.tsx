@@ -32,7 +32,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "quote.created": "file-text", "quote.versioned": "file-text", "quote.approved": "check-circle", "quote.cancelled": "file-x",
   "handoff.requested": "user", "deal.verified": "shield-check", "order_form.sent": "send", "order_form.opened": "eye",
   "order_form.signed": "pen", "payment.bank_transfer": "clock", "payment.failed": "x-circle", "order.paid": "credit-card",
-  "follow_up.scheduled": "clock", "follow_up.sent": "send", "follow_up.cancelled": "x-circle", "follow_up.failed": "alert-triangle",
+  "follow_up.scheduled": "clock", "follow_up.sent": "send", "follow_up.cancelled": "alarm-clock-off", "follow_up.failed": "x-circle",
 };
 
 const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | "warning" | "danger" | "neutral" }> = {
@@ -42,7 +42,7 @@ const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | 
   payment_failed: { icon: "x-circle", tone: "danger" },
   form_unsigned: { icon: "pen", tone: "neutral" },
   form_expiring: { icon: "clock", tone: "warning" },
-  follow_up_failed: { icon: "alert-triangle", tone: "danger" },
+  follow_up_failed: { icon: "x-circle", tone: "danger" },
 };
 
 const TONE_STYLE = {

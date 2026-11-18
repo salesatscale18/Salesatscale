@@ -3,7 +3,7 @@
  * 12px in pills and tags, colored with currentColor. Decorative by default.
  */
 import {
-  Activity, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
+  Activity, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
   Trophy, Upload, User, UserPlus, Wrench, X, type LucideIcon,
@@ -11,6 +11,7 @@ import {
 
 const ICONS = {
   activity: Activity,
+  "alarm-clock-off": AlarmClockOff,
   archive: Archive,
   "alert-triangle": TriangleAlert,
   "book-open": BookOpen,

@@ -60,8 +60,8 @@ const EVENT_ICON: Record<string, IconName> = {
   "conversation.started": "send",
   "follow_up.scheduled": "clock",
   "follow_up.sent": "send",
-  "follow_up.cancelled": "x-circle",
-  "follow_up.failed": "alert-triangle",
+  "follow_up.cancelled": "alarm-clock-off",
+  "follow_up.failed": "x-circle",
 };
 
 /** Lead card (canvas: Main, LeadEmpty): the latest conversation with take over / hand back, deal state, quotes and timeline. */
