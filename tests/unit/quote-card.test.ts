@@ -103,12 +103,14 @@ describe("card states", () => {
       total: { label: "Today", amount: "₪2,466.20" },
       afterTotal: null,
       monthly: {
-        heading: "Then monthly",
-        lines: [{ label: "1 × Kitchen hub", amount: "₪90.00", was: null }],
+        heading: "Then monthly, from activation",
+        // The monthly charge of an item also bought once names the service (live review, Package 3 item 2).
+        lines: [{ label: "Kitchen hub · monthly service", isolate: "Kitchen hub", amount: "₪90.00", was: null }],
         rows: [{ label: "VAT 18%", amount: "₪16.20", muted: true }],
         total: { label: "Monthly", amount: "₪106.20" },
       },
-      delivery: "Delivery by about 1 Dec", validUntil: "Valid until 24 Nov", firstCharge: null, status: null, sellerOnly: null, approval: null,
+      // Full month names in the footer (Package 3 item 10).
+      delivery: "Delivery by about 1 December", validUntil: "Valid until 24 November", firstCharge: null, status: null, sellerOnly: null, approval: null,
     });
   });
 
@@ -144,7 +146,8 @@ describe("card states", () => {
     const v2 = version("v2", "q1", 2, { oneTimeSubtotalMinor: 268_000, oneTimeTaxMinor: 48_240, oneTimeTotalMinor: 316_240, recurringSubtotalMinor: 9_000, recurringTaxMinor: 1_620, recurringTotalMinor: 10_620 }, { recurringPeriod: "month" });
     const l2 = [line("SNS-200", "wireless fridge sensor", 3, "one_time", 177_000), line("GW-10", "kitchen hub", 1, "one_time", 66_000), line("GW-10", "kitchen hub", 1, "recurring", 9_000), line("CAM", "door camera", 1, "one_time", 25_000)];
     const r = cards([quote], [standard.v, v2], { v1: standard.lines, v2: l2 }, [link("m1", "q1", 1001, 1), link("m2", "q1", 1001, 2)]);
-    expect(r.m1).toMatchObject({ state: "replaced", ref: "Q-1001 v1", status: "Replaced by version 2 below.", summary: "₪2,466.20 today · ₪106.20/month", lines: [], total: null, monthly: null, headline: null });
+    // Version 1 shows no "v1" (Package 3 item 7); the next version names itself.
+    expect(r.m1).toMatchObject({ state: "replaced", ref: "Q-1001", status: "Replaced by version 2 below.", summary: "₪2,466.20 today · ₪106.20/month", lines: [], total: null, monthly: null, headline: null });
     expect(r.m2).toMatchObject({ state: "sent", ref: "Q-1001 v2", title: "Your updated quote" });
     expect(r.m2.lines.map((l) => l.was)).toEqual(["was 2", null, "new"]);
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: r.m2 }));
@@ -174,7 +177,7 @@ describe("card states", () => {
     expect(c).toMatchObject({
       lines: [{ label: "12 × Wireless fridge sensor", amount: "₪7,080.00" }],
       rows: [{ label: "Discount 5%", amount: "−₪354.00" }, { label: "Subtotal", amount: "₪6,726.00", muted: true }, { label: "VAT 18%", amount: "₪1,210.68", muted: true }],
-      total: { label: "Total", amount: "₪7,936.68" }, monthly: null, delivery: "Delivery by about 1 Dec",
+      total: { label: "Total", amount: "₪7,936.68" }, monthly: null, delivery: "Delivery by about 1 December",
     });
   });
 
@@ -217,7 +220,7 @@ describe("card states", () => {
     expect(goneHtml).not.toContain("lucide-file-text");
     expect(cards([{ ...q1, status: "cancelled" }], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { language: "he" }).m1.status).toMatch(/^בוטלה\./);
     const he = cards([q1], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { language: "he" }).m1;
-    expect(he).toMatchObject({ dir: "rtl", lang: "he", title: "ההצעה שלך", label: "הצעת מחיר Q-1001", total: { label: "לתשלום היום" }, monthly: { heading: "ואז בכל חודש", total: { label: "לחודש" } } });
+    expect(he).toMatchObject({ dir: "rtl", lang: "he", title: "ההצעה שלך", label: "הצעת מחיר Q-1001", total: { label: "לתשלום היום" }, monthly: { heading: "ואז בכל חודש, מההפעלה", total: { label: "לחודש" } } });
     expect(he.rows[1].label).toBe("מע״מ 18%");
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: he }));
     expect(html).toMatch(/<article class="sas-qc sas-qc--sent" dir="rtl" lang="he"/);
@@ -243,12 +246,38 @@ describe("mixed-direction text (UX sign-off F6)", () => {
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: he }));
     // The fallback headline keeps the card's direction (no dir="auto"); only the name is isolated.
     expect(html).toContain('<div class="sas-qc__headline"><bdi>Polar sensor</bdi> ועוד 2</div>');
-    expect(html).toContain("<span>2 × <bdi>Polar sensor</bdi></span>");
+    // The whole "2 × name" is one isolated run: quantity first in a Hebrew card too (Package 3 item 1).
+    expect(html).toContain("<span><bdi>2 × Polar sensor</bdi></span>");
     expect(html).toContain("<span><bdi>התקנה</bdi></span>");
     // The agent's own headline takes its direction from its text.
     const own = cards([q1], [standard.v], lines, [link("m1", "q1", 1001, 1, { headline: "2 Polar sensors for your kitchen" })], { language: "he" }).m1;
     expect(own.headlineName).toBeNull();
     expect(renderToStaticMarkup(createElement(QuoteCard, { card: own }))).toContain('<div class="sas-qc__headline" dir="auto"><bdi>2 Polar sensors for your kitchen</bdi></div>');
+  });
+});
+
+describe("live review, Package 3", () => {
+  it("monthly lines of items also bought once name the service; quantity stays when above 1; yearly and Hebrew", () => {
+    const v = version("v1", "q1", 1, { oneTimeSubtotalMinor: 132_000, oneTimeTaxMinor: 23_760, oneTimeTotalMinor: 155_760, recurringSubtotalMinor: 18_000, recurringTaxMinor: 3_240, recurringTotalMinor: 21_240 }, { recurringPeriod: "year" });
+    const ls = { v1: [line("GW-10", "kitchen hub", 2, "one_time", 132_000), line("GW-10", "kitchen hub", 2, "recurring", 18_000), line("MON", "Monitoring plan", 1, "recurring", 0)] };
+    const en = cards([q1], [v], ls, [link("m1", "q1", 1001, 1)]).m1;
+    expect(en.monthly!.lines[0]).toEqual({ label: "2 × Kitchen hub · yearly service", isolate: "2 × Kitchen hub", amount: "₪180.00", was: null });
+    const he = cards([q1], [v], ls, [link("m1", "q1", 1001, 1)], { language: "he" }).m1;
+    expect(he.monthly!.lines[0]).toMatchObject({ label: "2 × Kitchen hub · שירות שנתי", isolate: "2 × Kitchen hub" });
+    const html = renderToStaticMarkup(createElement(QuoteCard, { card: he }));
+    expect(html).toContain("<span><bdi>2 × Kitchen hub</bdi> · שירות שנתי</span>");
+    // Only one-time lines keep "2 × name" as the whole isolated run.
+    expect(html).toContain("<span><bdi>2 × Kitchen hub</bdi></span>");
+  });
+
+  it("the ref shows no version for v1, even beside a later version; the footer has full month names", () => {
+    const quote = { ...q1, currentVersion: 2 };
+    const v2 = { ...standard.v, id: "v2", version: 2 };
+    const r = cards([quote], [standard.v, v2], { v1: standard.lines, v2: standard.lines }, [link("m1", "q1", 1001, 1), link("m2", "q1", 1001, 2)], { language: "he" });
+    expect(r.m1.ref).toBe("Q-1001");
+    expect(r.m2.ref).toBe("Q-1001 v2");
+    expect(r.m2.validUntil).toBe("בתוקף עד 24 בנובמבר");
+    expect(r.m2.delivery).toBe("אספקה עד בערך 1 בדצמבר");
   });
 });
 
@@ -268,10 +297,10 @@ describe("cards the app sends after an approval (UX sign-off F4)", () => {
     const v2 = version("v2", "q1", 2, { oneTimeSubtotalMinor: 708_000, oneTimeDiscountMinor: 35_400, oneTimeTaxMinor: 121_068, oneTimeTotalMinor: 793_668 }, { discountBp: 500 });
     const lines = { v1: [line("SNS-200", "wireless fridge sensor", 12, "one_time", 708_000)], v2: [line("SNS-200", "wireless fridge sensor", 12, "one_time", 708_000)] };
     const out = cards([{ ...q1, currentVersion: 2 }], [v1, v2], lines, links);
-    expect(out.m1).toMatchObject({ state: "replaced", status: "Replaced by version 2 below.", summary: null, ref: "Q-1001 v1" });
+    expect(out.m1).toMatchObject({ state: "replaced", status: "Replaced by version 2 below.", summary: null, ref: "Q-1001" });
     // The buyer never saw the held numbers: none on the collapsed line either.
     expect(JSON.stringify({ ...out.m1, label: "", ref: "" })).not.toMatch(/₪/);
-    expect(out.m3).toMatchObject({ state: "sent", title: "Your updated quote", ref: "Q-1001 v2", deliveryDate: "2026-12-01", delivery: "Delivery by about 1 Dec" });
+    expect(out.m3).toMatchObject({ state: "sent", title: "Your updated quote", ref: "Q-1001 v2", deliveryDate: "2026-12-01", delivery: "Delivery by about 1 December" });
     expect(out.m3.rows[0]).toEqual({ label: "Discount 5%", amount: "−₪354.00" });
   });
 
@@ -294,6 +323,18 @@ describe("reply buttons", () => {
     expect(replyButtonsAfter(base, { m2: { state: "expired" } })).toBeNull();
     expect(replyButtonsAfter(base, {})).toBeNull();
     expect(replyButtonsAfter([...base, { id: "m6", from: "human" }], sent)).toBeNull();
+  });
+
+  it("stay under the latest close until the buyer replies or an order form follows (live review, Package 3 item 3)", () => {
+    // The live sequence: buyer, card, the agent's close.
+    const live = [{ id: "m1", from: "buyer" }, { id: "m2", from: "agent", kind: "quote" }, { id: "m3", from: "agent" }];
+    expect(replyButtonsAfter(live, sent)).toBe("m3");
+    // An agent message carrying the order-form link (its card) means the next step happened.
+    expect(replyButtonsAfter([...live, { id: "m4", from: "agent", previews: [{}] }], sent)).toBeNull();
+    expect(replyButtonsAfter([{ id: "m2", from: "agent" }, { id: "m3", from: "agent", previews: [{}] }], sent)).toBeNull();
+    expect(replyButtonsAfter([...live.slice(0, 2), { id: "m5", from: "agent", kind: "quote_close", previews: [{}] }], sent)).toBeNull();
+    // A message without previews is a close.
+    expect(replyButtonsAfter([...live.slice(0, 2), { id: "m3", from: "agent", previews: [] }], sent)).toBe("m3");
   });
 
   it("go under the app's close after an approval, even with buyer messages since the placeholder (F4)", () => {

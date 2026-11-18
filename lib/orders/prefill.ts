@@ -53,11 +53,13 @@ export type PrefillSource = "chat" | "request";
 /**
  * The prefill plus where each value came from (the order form's small
  * "From your chat" / "From your request" tags). A value from the lead record
- * counts as the buyer's request only when the lead came from the website
- * form (origin "webhook"); a seller's own import or entry gets no tag.
+ * counts as the buyer's request when the lead came from the website form
+ * (origin "webhook"), or is a simulated buyer (the seller plays the buyer's
+ * request in the test chat); a seller's own import or entry of a real lead
+ * gets no tag. A lead value the buyer also gave in the chat is "chat".
  */
 export function orderFormPrefillWithSources(
-  lead: { fullName: string; company: string | null; email: string | null; origin?: string | null },
+  lead: { fullName: string; company: string | null; email: string | null; origin?: string | null; simulated?: boolean },
   deal: Record<string, DealFieldValue> | null | undefined,
 ): { values: Prefill; sources: Partial<Record<PrefillKey, PrefillSource>> } {
   const fromLead: Prefill = {
@@ -73,8 +75,9 @@ export function orderFormPrefillWithSources(
     const value = useDeal ? d.value : fromLead[field];
     if (!value?.trim()) continue;
     values[field] = value.trim().slice(0, 300);
-    if (useDeal) sources[field] = "chat";
-    else if (lead.origin === "webhook") sources[field] = "request";
+    const sameInChat = !useDeal && d !== null && d.value.trim().toLowerCase() === value.trim().toLowerCase();
+    if (useDeal || sameInChat) sources[field] = "chat";
+    else if (lead.origin === "webhook" || lead.simulated) sources[field] = "request";
   }
   return { values, sources };
 }

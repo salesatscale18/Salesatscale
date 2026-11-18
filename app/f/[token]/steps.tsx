@@ -11,7 +11,7 @@ import type { DeliveryChoices } from "@/lib/delivery/choice";
 import { chargeOf, type FormSnapshot } from "@/lib/orders/service";
 import { companyFields, type Step, type StepErrors, type StepValues } from "@/lib/orders/draft";
 import type { PrefillKey, PrefillSource } from "@/lib/orders/prefill";
-import { moneyFor, vatLabel } from "./lines";
+import { LineName, moneyFor, vatLabel } from "./lines";
 
 type Tr = ReturnType<typeof translator>;
 
@@ -79,7 +79,7 @@ function SourceTag({ source, tr }: { source: PrefillSource | undefined; tr: Tr }
 /** One text field with its label, source tag and error. */
 function Field(props: {
   name: string; label: string; value: string; error: string | null; source?: PrefillSource; tr: Tr;
-  type?: string; inputMode?: "numeric" | "email"; ltr?: boolean; autoComplete?: string;
+  type?: string; inputMode?: "numeric" | "email"; ltr?: boolean; autoComplete?: string; placeholder?: string;
 }) {
   const id = `f-${props.name}`;
   return (
@@ -87,7 +87,7 @@ function Field(props: {
       <span className="b-lbl-top">{props.label}<SourceTag source={props.source} tr={props.tr} /></span>
       <input
         className="b-inp" id={id} name={props.name} defaultValue={props.value} type={props.type ?? "text"} inputMode={props.inputMode}
-        dir={props.ltr ? "ltr" : undefined} autoComplete={props.autoComplete}
+        dir={props.ltr ? "ltr" : undefined} autoComplete={props.autoComplete} placeholder={props.placeholder}
         {...(props.error ? { "aria-invalid": true as const, "aria-describedby": `e-${props.name}` } : {})}
       />
       <FieldError id={`e-${props.name}`} text={props.error} />
@@ -98,6 +98,17 @@ function Field(props: {
 const AUTOCOMPLETE: Partial<Record<OrderFormField, string>> = {
   invoice_email: "email", company_name: "organization", billing_address: "street-address", delivery_address: "street-address",
 };
+
+/**
+ * Example text in an empty field. The company ID's "9 digits" is the Israeli
+ * company number (ח״פ): shown only on forms priced in shekels.
+ */
+export function placeholderFor(s: Pick<FormSnapshot, "currency">, key: OrderFormField | "full_name", tr: Tr): string | undefined {
+  if (key === "company_id") return s.currency === "ILS" ? tr("buyer.placeholder.company_id_il") : undefined;
+  if (key === "signatory_role") return tr("buyer.placeholder.signatory_role");
+  if (key === "full_name") return tr("buyer.placeholder.full_name");
+  return tr(`buyer.placeholder.${key}` as MessageKey);
+}
 
 /** A value carries its source tag while it is still the prefilled one. */
 function sourceOf(s: FormSnapshot, key: PrefillKey, value: string): PrefillSource | undefined {
@@ -121,6 +132,7 @@ export function CompanyStep({ s, values, errors, tr }: { s: FormSnapshot; values
             key={f} name={f} label={tr(`buyer.field.${f}` as MessageKey)} value={values.fields[f] ?? ""} error={err(f)} tr={tr}
             source={sourceOf(s, f, values.fields[f] ?? "")} type={f === "invoice_email" ? "email" : "text"}
             inputMode={f === "company_id" ? "numeric" : undefined} ltr={f === "invoice_email" || f === "company_id"} autoComplete={AUTOCOMPLETE[f]}
+            placeholder={placeholderFor(s, f, tr)}
           />
         ))}
       </div>
@@ -130,9 +142,9 @@ export function CompanyStep({ s, values, errors, tr }: { s: FormSnapshot; values
         <span className="b-mut">{tr("buyer.signer.hint")}</span>
       </div>
       <div className="b-grid2">
-        <Field name="full_name" label={tr("buyer.signer.full_name")} value={values.fullName} error={err("full_name")} tr={tr} source={sourceOf(s, "signatory_name", values.fullName)} autoComplete="name" />
+        <Field name="full_name" label={tr("buyer.signer.full_name")} value={values.fullName} error={err("full_name")} tr={tr} source={sourceOf(s, "signatory_name", values.fullName)} autoComplete="name" placeholder={placeholderFor(s, "full_name", tr)} />
         {s.fields.includes("signatory_role") ? (
-          <Field name="signatory_role" label={tr("buyer.signer.role")} value={values.role} error={err("signatory_role")} tr={tr} source={sourceOf(s, "signatory_role", values.role)} autoComplete="organization-title" />
+          <Field name="signatory_role" label={tr("buyer.signer.role")} value={values.role} error={err("signatory_role")} tr={tr} source={sourceOf(s, "signatory_role", values.role)} autoComplete="organization-title" placeholder={placeholderFor(s, "signatory_role", tr)} />
         ) : null}
       </div>
     </section>
@@ -194,9 +206,10 @@ export function DeliveryChoice({ s, values, choices, errors, lang, tr }: {
         <div className="b-deliv">
           <label className="b-lbl" htmlFor="f-delivery_address">
             {tr("buyer.field.delivery_address")}
-            {sameAllowed ? <span className="b-deliv__same b-mut" style={{ fontSize: 14, fontWeight: 400 }}><bdi>{values.fields.billing_address}</bdi></span> : null}
+            {sameAllowed ? <span className="b-deliv__same" data-delivery-same=""><bdi>{values.fields.billing_address}</bdi></span> : null}
             <input
               className="b-inp b-deliv__input" id="f-delivery_address" name="delivery_address" defaultValue={values.fields.delivery_address ?? ""} autoComplete="street-address"
+              placeholder={placeholderFor(s, "delivery_address", tr)}
               {...(errors.delivery_address ? { "aria-invalid": true as const, "aria-describedby": "e-delivery_address" } : {})}
             />
           </label>
@@ -253,7 +266,7 @@ export function Summary({ s, tr, lang, eta, validUntil }: { s: FormSnapshot; tr:
     <aside className="b-summary" aria-labelledby="sm-h">
       <h2 id="sm-h" className="b-h2" style={{ fontSize: 15 }}>{tr("buyer.steps.order")}</h2>
       {oneTime.map((l, i) => (
-        <div key={`o-${i}`} className="b-row"><span><bdi>{l.qty} × {l.plainName || l.name}</bdi></span><span className="b-num">{l.priceSource === "not_charged" ? tr("buyer.included") : money(l.lineTotalMinor)}</span></div>
+        <div key={`o-${i}`} className="b-row"><span><LineName s={s} l={l} tr={tr} /></span><span className="b-num">{l.priceSource === "not_charged" ? tr("buyer.included") : money(l.lineTotalMinor)}</span></div>
       ))}
       {oneTime.length ? (
         <>
@@ -264,9 +277,13 @@ export function Summary({ s, tr, lang, eta, validUntil }: { s: FormSnapshot; tr:
       {recurring.length ? (
         <div className="b-mo">
           {recurring.map((l, i) => (
-            <div key={`r-${i}`} className="b-row"><span><bdi>{l.qty} × {l.plainName || l.name}</bdi></span><span className="b-num">{money(l.lineTotalMinor, l.period ?? period)}</span></div>
+            <div key={`r-${i}`} className="b-row"><span><LineName s={s} l={l} tr={tr} /></span><span className="b-num">{money(l.lineTotalMinor, l.period ?? period)}</span></div>
           ))}
-          <div className="b-row" style={{ fontWeight: 700 }}><span>{tr(period === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span><span className="b-num">{money(s.recurring.totalMinor, period)}</span></div>
+          {s.recurring.taxMinor > 0 && !s.pricesIncludeTax ? <div className="b-row b-mut"><span>{vatLabel(s, tr)}</span><span className="b-num">{money(s.recurring.taxMinor, period)}</span></div> : null}
+          <div className="b-row" style={{ fontWeight: 700 }} data-summary-monthly="">
+            <span>{tr(s.taxRateBp || s.recurring.taxMinor > 0 ? (period === "year" ? "buyer.summary.yearly_incl_vat" : "buyer.summary.monthly_incl_vat") : (period === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month"))}</span>
+            <span className="b-num">{money(s.recurring.totalMinor, period)}</span>
+          </div>
         </div>
       ) : null}
       <span className="b-mut">{eta ? `${tr("buyer.delivery.label", { range: formatDeliveryBuyer(eta, lang) })} · ` : ""}{tr("buyer.valid_until", { date: validUntil })}</span>

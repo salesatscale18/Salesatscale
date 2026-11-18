@@ -47,9 +47,9 @@ describe("the app's quote message (P11.2)", () => {
       "2 × wireless fridge sensor (SNS-200): ₪1,180",
       "1 × kitchen hub (GW-10): ₪660, ועוד ₪90 לחודש",
       "Installation: ₪250",
-      "מע\"מ 18%: ₪376.20",
-      "*היום: ₪2,466.20 כולל מע\"מ*",
-      "*לאחר מכן: ₪106.20 לחודש כולל מע\"מ*",
+      "מע״מ 18%: ₪376.20",
+      "*היום: ₪2,466.20 כולל מע״מ*",
+      "*לאחר מכן: ₪106.20 לחודש כולל מע״מ*",
       "בתוקף עד 24 בנוב׳",
     ].join("\n"));
   });
@@ -93,11 +93,11 @@ describe("the app's quote message (P11.2)", () => {
   });
 
   it("delivery phrase: 'by about' the last date of the estimated range, in the buyer's language", () => {
-    expect(deliveryByPhrase("2026-12-01", "en")).toBe("by about 1 Dec");
-    expect(deliveryByPhrase("2026-12-01", "he")).toBe("עד בערך 1 בדצמ׳");
+    expect(deliveryByPhrase("2026-12-01", "en")).toBe("by about 1 December");
+    expect(deliveryByPhrase("2026-12-01", "he")).toBe("עד בערך 1 בדצמבר");
     const eta = estimateDelivery({ leadTime: { minDays: 5, maxDays: 10, businessDays: true }, from: new Date("2026-11-17T08:00:00Z"), timezone: "Asia/Jerusalem", weekend: [5, 6] });
     expect(eta.latest).toBe("2026-12-01");
-    expect(deliveryByPhrase(eta.latest, "en")).toBe("by about 1 Dec");
+    expect(deliveryByPhrase(eta.latest, "en")).toBe("by about 1 December");
   });
 
   it("the seller's trace reads the labelled totals, and still reads older results", async () => {

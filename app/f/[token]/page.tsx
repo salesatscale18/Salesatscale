@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
+import { CircleCheck, FlaskConical, PenLine } from "lucide-react";
 import { eq } from "drizzle-orm";
 import { sellerAccounts, type OrderSnapshot } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
@@ -9,7 +10,7 @@ import { attemptCount, displaySeller, lastAttempt, loadForm, markOpened, orderLa
 import { marketLegal } from "@/lib/markets/legal";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { acceptPriceAction, payBankAction, payCardAction, stepAction } from "./actions";
-import { chargeLabel, legalTitle, moneyFor, OrderLines } from "./lines";
+import { chargeLabel, itemName, legalTitle, moneyFor, OrderLines } from "./lines";
 import { SubmitButton } from "./submit-button";
 import { CompanyStep, DeliveryChoice, ErrorSummary, PreferenceRow, Progress, SigningAs, Summary } from "./steps";
 import { companyErrors, fieldErrors, resolveStep, signedFields, stepValues, type StepErrors } from "@/lib/orders/draft";
@@ -19,6 +20,7 @@ import { chatLinkStatus } from "@/lib/simulator/service";
 import { DeliveryRow } from "./delivery";
 import { brandVars } from "@/lib/simulator/rules";
 import { isolateName } from "@/lib/agent/core/names";
+import { buyerDate, buyerTime, buyerZone } from "./time";
 import "./buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -27,9 +29,6 @@ export const metadata: Metadata = { title: "Order form", robots: { index: false,
 type Tr = ReturnType<typeof translator>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
-function Check({ color = "currentColor", size = 18 }: { color?: string; size?: number }) {
-  return <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: size, height: size, fill: "none", stroke: color, strokeWidth: 2.4, strokeLinecap: "round", strokeLinejoin: "round", flex: "none" }}><path d="M20 6 9 17l-5-5" /></svg>;
-}
 function Lock() {
   return <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 12, height: 12, fill: "none", stroke: "currentColor", strokeWidth: 2.4 }}><rect x="4" y="11" width="16" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>;
 }
@@ -40,7 +39,10 @@ function Alert({ color }: { color: string }) {
 /** The three-step form's id: the language switch in the header submits it. */
 const STEP_FORM = "b-step-form";
 
-function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number }) {
+/** "Q-1003" for version 1, "Q-1003 v2" from version 2 on (the buyer sees a version only once there is more than one). */
+export const quoteRefText = (q: { number: number; version: number }) => (q.version > 1 ? `Q-${q.number} v${q.version}` : `Q-${q.number}`);
+
+function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number; strip?: boolean }) {
   const tr = translator(props.lang);
   // On the steps, the language switch is a submit button of the step form (form="b-step-form"): it saves
   // what the buyer typed on this step as the draft, without checking it, and reloads the same step in the
@@ -55,7 +57,7 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
   return (
     <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={brandVars(props.brand)}>
       <div className={props.step ? "b-page b-page--wide" : "b-page"}>
-        {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
+        {fakePaymentsEnabled() && props.strip !== false ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}><bdi>{props.seller}</bdi></b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
@@ -116,12 +118,14 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   ]);
   // A paused account takes no signatures or payments: show "unavailable".
   const paused = account.status === "paused";
-  const date = (d: Date | string) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { day: "numeric", month: "short", year: "numeric", timeZone: account.timezone }).format(new Date(d));
-  const time = (d: Date) => new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { hour: "2-digit", minute: "2-digit", timeZone: account.timezone }).format(d);
+  // Dates and times in the buyer's (market's) time zone, the same source as the chat's quote card; times name the zone.
+  const zone = buyerZone(s, account.timezone);
+  const date = (d: Date | string) => buyerDate(d, zone, lang);
+  const time = (d: Date) => buyerTime(d, zone, lang);
   const shell = (sub: string | undefined, children: ReactNode, step?: number) => (
-    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step}>{children}</Shell>
+    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step} strip={step !== 3}>{children}</Shell>
   );
-  const quoteRef = `Q-${s.quote.number} v${s.quote.version}`;
+  const quoteRef = quoteRefText(s.quote);
   // Older snapshots have no supportContact: show nothing then.
   const support = (center: boolean) => s.supportContact ? <span className="b-mut" style={{ display: "block", ...(center ? { textAlign: "center" as const } : {}) }}><bdi>{s.supportContact}</bdi></span> : null;
   const hidden = <><input type="hidden" name="token" value={token} /><input type="hidden" name="lang" value={lang} /></>;
@@ -145,7 +149,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         </div>
         {n ? (
           <div style={{ margin: "0 20px", padding: 16, border: "1px solid var(--line)", borderRadius: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            <span className="b-mut">{tr("buyer.new_offer")} · <span className="b-num">Q-{n.snapshot.quote.number} v{n.snapshot.quote.version}</span></span>
+            <span className="b-mut">{tr("buyer.new_offer")} · <span className="b-num">{quoteRefText(n.snapshot.quote)}</span></span>
             <Lines s={n.snapshot} tr={tr} lang={lang} />
             {view.state === "updated" && view.changeNote ? <span className="b-mut">{tr("buyer.what_changed", { note: view.changeNote })}</span> : null}
           </div>
@@ -172,14 +176,21 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     if (order.paymentStatus === "paid") {
       return shell(undefined, (
         <>
-          <div className="b-center" style={{ background: "var(--ok-soft)" }}>
-            <span className="b-badge" style={{ background: "var(--brand)" }}><Check color="var(--brand-on, #fff)" size={28} /></span>
+          <div className="b-center b-paid" data-paid="">
+            <span className="b-badge b-badge--ok"><CircleCheck aria-hidden="true" size={30} strokeWidth={2.2} /></span>
             <h1 className="b-h1">{tr("buyer.paid_title")}</h1>
-            <span className="b-mut">{tr("buyer.paid_body", { name: (sig?.fullName ?? "").split(" ")[0], order: label })}</span>
+            <span className="b-mut">{tr("buyer.paid_body", { name: (sig?.fullName ?? "").split(" ")[0], order: label, quote: quoteRef })}</span>
           </div>
           <section className="b-sec">
-            <Lines s={s} tr={tr} lang={lang} />
-            <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.paid_today")}{attempt ? ` · ${tr("buyer.card")}` : ` · ${tr("buyer.bank")}`}</span><span className="b-num">{money(s, order.amountDueMinor)}</span></div>
+            {/* After payment the one-time total reads "Paid today · Card": no "Due today" above a second paid row. */}
+            {s.oneTime.totalMinor > 0 && s.oneTime.totalMinor === order.amountDueMinor ? (
+              <OrderLines s={s as FormSnapshot} tr={tr} lang={lang} paidLabel={`${tr("buyer.paid_today")} · ${attempt ? tr("buyer.card") : tr("buyer.bank")}`} />
+            ) : (
+              <>
+                <Lines s={s} tr={tr} lang={lang} />
+                <div className="b-row" style={{ fontWeight: 700 }}><span>{tr("buyer.paid_today")}{attempt ? ` · ${tr("buyer.card")}` : ` · ${tr("buyer.bank")}`}</span><span className="b-num">{money(s, order.amountDueMinor)}</span></div>
+              </>
+            )}
             <DeliveryRow s={s} signedAt={form.signedAt ?? order.createdAt} tr={tr} lang={lang} />
             <PreferenceRow order={order} tr={tr} lang={lang} />
           </section>
@@ -199,7 +210,10 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     return shell(tr("buyer.step_pay"), (
       <>
         <section className="b-sec">
-          <div className="b-note b-note--ok" style={{ padding: "10px 12px", alignItems: "center" }}><Check color="var(--brand-text, var(--brand))" />{failed ? tr("buyer.order_saved") : tr("buyer.signed_by", { name: sig?.fullName ?? "", time: sig ? time(sig.signedAt) : "" })}</div>
+          <div className="b-note b-note--ok" style={{ padding: "10px 12px", alignItems: "center" }} data-signed-banner="">
+            <PenLine aria-hidden="true" size={18} style={{ color: "var(--brand-text, var(--brand))", flex: "none" }} />
+            <span>{failed ? tr("buyer.order_saved") : tr("buyer.signed_by", { name: sig?.fullName ?? "", time: sig ? time(sig.signedAt) : "" })}</span>
+          </div>
           {failed ? (
           <div className="b-note b-note--danger" role="alert" style={{ margin: 0 }}>
             <svg viewBox="0 0 24 24" aria-hidden="true" style={{ width: 22, height: 22, flex: "none", fill: "none", stroke: "var(--danger)", strokeWidth: 2.2 }}><circle cx="12" cy="12" r="10" /><path d="m15 9-6 6" /><path d="m9 9 6 6" /></svg>
@@ -254,7 +268,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const check = paused || !priced ? { status: "unavailable" as const } : priced;
   const notice = one(sp.notice);
   if (check.status === "changed") {
-    return shell(`${tr("buyer.order_form")} · Q-${s.quote.number}`, (
+    return shell(`${tr("buyer.order_form")} · ${quoteRef}`, (
       <>
         <div className="b-note b-note--warn" style={{ margin: 20 }}>
           <Alert color="var(--warn)" />
@@ -284,7 +298,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
               <div key={charge} style={{ display: "contents" }}>
                 {rows.map((l) => (
                   <div key={`${l.sku}-${l.charge}`} className="b-grid3" data-charge={l.charge}>
-                    <span><bdi>{l.qty} × {l.name}</bdi><span className="b-mut" style={{ display: "block" }}>{chargeLabel(tr, l.charge, l.period)}</span></span>
+                    <span><bdi>{l.qty} × {itemName(l)}</bdi><span className="b-mut" style={{ display: "block" }}>{chargeLabel(tr, l.charge, l.period)}</span></span>
                     <span className={`b-num ${l.beforeMinor !== l.nowMinor ? "b-old" : "b-mut"}`}>{money(s, l.beforeMinor)}</span>
                     <span className="b-num" style={{ fontWeight: l.beforeMinor !== l.nowMinor ? 700 : 400 }}>{per(l.nowMinor, l.charge === "recurring" ? l.period ?? period : null)}</span>
                   </div>
@@ -346,7 +360,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   return shell(`${tr("buyer.order_form")} · ${quoteRef}`, (
     <>
       {check.status === "unavailable" ? <div className="b-note b-note--warn" role="alert" style={{ margin: 20 }}><Alert color="var(--warn)" /><span>{tr("buyer.unavailable")}</span></div> : null}
-      <div className="b-layout">
+      <div className={step > 1 ? "b-layout" : "b-layout b-layout--solo"}>
         <form id={STEP_FORM} action={stepAction} className="b-main" noValidate data-order-step={step}>
           {hidden}
           <input type="hidden" name="step" value={step} />
@@ -420,10 +434,13 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
                 </label>
                 {errors.agreed ? <span className="b-err" id="e-agreed">{tr("buyer.err.agreed")}</span> : null}
                 {fakePaymentsEnabled() ? (
-                  <div className="b-test" role="note"><span><b>{tr("buyer.test_mode")}</b> {tr("buyer.test_mode_body")}</span></div>
+                  <div className="b-test" role="note" data-test-notice="">
+                    <FlaskConical aria-hidden="true" size={16} style={{ flex: "none", marginBlockStart: 1, color: "var(--warn)" }} />
+                    <span><b>{tr("buyer.test_mode")}</b> {tr("buyer.test_mode_body")}</span>
+                  </div>
                 ) : null}
               </section>
-              <div className="b-cta b-cta--sign">
+              <div className="b-cta">
                 {signable ? (
                   <SubmitButton
                     name="intent" value="sign" pendingLabel={tr("buyer.signing")}
@@ -438,7 +455,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             </>
           )}
         </form>
-        <Summary s={s} tr={tr} lang={lang} eta={choices?.eta ?? null} validUntil={date(s.validUntil)} />
+        {step > 1 ? <Summary s={s} tr={tr} lang={lang} eta={choices?.eta ?? null} validUntil={date(s.validUntil)} /> : null}
       </div>
       {help}
     </>

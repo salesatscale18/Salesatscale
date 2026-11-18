@@ -66,14 +66,29 @@ export function shortDate(at: Date, timezone: string, language: string): string 
   }
 }
 
+/** "24 November" / "24 בנובמבר" in the time zone (the quote card's footer: full month names). */
+export function longDate(at: Date, timezone: string, language: string): string {
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "long" };
+  try {
+    return new Intl.DateTimeFormat(intlLocale(localeOf(language)), { ...opts, timeZone: timezone }).format(at);
+  } catch {
+    return new Intl.DateTimeFormat(intlLocale(localeOf(language)), { ...opts, timeZone: "UTC" }).format(at);
+  }
+}
+
+/** A calendar date (YYYY-MM-DD) as "1 December" / "1 בדצמבר". */
+export function longCalendarDate(iso: string, language: string): string {
+  return longDate(new Date(`${iso}T00:00:00Z`), "UTC", language);
+}
+
 /** A calendar date (YYYY-MM-DD) as "1 Dec" / "1 בדצמ׳". */
 export function shortCalendarDate(iso: string, language: string): string {
   return shortDate(new Date(`${iso}T00:00:00Z`), "UTC", language);
 }
 
-/** The close's delivery phrase: "by about 1 Dec" in the buyer's language. */
+/** The close's delivery phrase: "by about 1 December" in the buyer's language (full month, as on the quote card). */
 export function deliveryByPhrase(latestIso: string, language: string): string {
-  return t("buyer.quote.delivery_by", { date: shortCalendarDate(latestIso, language) }, localeOf(language));
+  return t("buyer.quote.delivery_by", { date: longCalendarDate(latestIso, language) }, localeOf(language));
 }
 
 /** The message body. Lines are grouped per SKU: one-time amount, plus the recurring amount. */

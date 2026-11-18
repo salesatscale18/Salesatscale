@@ -13,7 +13,7 @@
 import { formatMoney } from "@/lib/domain/money";
 import { dir as dirOf, isLocale, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { APP_MESSAGE_CALL } from "./app-message";
-import { percentText, shortCalendarDate, shortDate } from "./quote-message";
+import { longCalendarDate, longDate, percentText, shortDate } from "./quote-message";
 
 // ---------------------------------------------------------------------------
 // Headline (create_quote `headline`)
@@ -97,7 +97,12 @@ export function quoteCardLinks(calls: readonly CallLike[]): QuoteCardLink[] {
 export type QuoteCardState = "sent" | "held" | "replaced" | "expired" | "withdrawn";
 
 export type QuoteCardRow = { label: string; amount: string; muted?: boolean };
-export type QuoteCardLine = { label: string; amount: string; was: string | null };
+/**
+ * One line. `isolate` is the part of the label shown as its own bidi run: the
+ * whole "2 × <item name>" (so a Latin name in a Hebrew card still
+ * reads quantity first), or only the name inside "<item name> · monthly service".
+ */
+export type QuoteCardLine = { label: string; isolate: string; amount: string; was: string | null };
 
 export type QuoteCardView = {
   messageId: string;
@@ -113,7 +118,7 @@ export type QuoteCardView = {
   label: string;
   /** "Your quote" / "Your updated quote". */
   title: string;
-  /** "Q-1001", or "Q-1001 v2" from version 2 on; null on the held placeholder. */
+  /** "Q-1001" for version 1, "Q-1001 v2" from version 2 on; null on the held placeholder. */
   ref: string | null;
   /** Under the title instead of seller · ref (the held placeholder). */
   sub: string | null;
@@ -284,10 +289,8 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   const hasOneTime = v.oneTimeTotalMinor > 0 || oneTimeLines.some(charged);
   const hasRecurring = v.recurringTotalMinor > 0;
   const year = v.recurringPeriod === "year";
-  const versionsOfQuote = data.versions.get(r.quote.id) ?? [];
-  const sameQuoteNext = around.next && around.next.quote.id === r.quote.id;
-  const showVersion = v.version > 1 || !!sameQuoteNext || versionsOfQuote.length > 1;
-  const ref = showVersion ? `Q-${r.quote.number} v${v.version}` : `Q-${r.quote.number}`;
+  // The buyer sees a version only from v2 on (live review, Package 3 item 7).
+  const ref = v.version > 1 ? `Q-${r.quote.number} v${v.version}` : `Q-${r.quote.number}`;
   const names = itemNames(lines);
   const headline = cardHeadline(r.input.link.headline, names, lang);
   const headlineName = headline && !r.input.link.headline && names.length ? capFirst(names[0]) : null;
@@ -322,7 +325,12 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   // Lines changed since the card it replaces ("was 2"), or new.
   const prevLines = around.previous?.version ? data.lines.get(around.previous.version.id) ?? [] : null;
   const lineView = (l: CardLine): QuoteCardLine => {
-    const label = l.service && l.qty === 1 ? capFirst(l.name) : `${l.qty} × ${capFirst(l.name)}`;
+    const name = capFirst(l.name);
+    const counted = `${l.qty} × ${name}`;
+    // The monthly charge of an item also bought once names the service, so the same item does not read as charged twice.
+    const serviceOf = l.charge === "recurring" && lines.some((o) => o.sku === l.sku && o.charge === "one_time");
+    const isolate = serviceOf ? (l.qty === 1 ? name : counted) : l.service && l.qty === 1 ? name : counted;
+    const label = serviceOf ? tr(year ? "buyer.qcard.service_year" : "buyer.qcard.service_month", { name: isolate }) : isolate;
     const amount = l.lineTotalMinor === null ? "—" : charged(l) ? money(l.lineTotalMinor) : tr("buyer.qcard.included");
     let was: string | null = null;
     if (prevLines) {
@@ -330,7 +338,7 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
       if (!before) was = tr("buyer.qcard.new_line");
       else if (before.qty !== l.qty) was = tr("buyer.qcard.was", { qty: before.qty });
     }
-    return { label, amount, was };
+    return { label, isolate, amount, was };
   };
   const vat = v.taxRateBp > 0;
   const rate = percentText(v.taxRateBp);
@@ -371,10 +379,10 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
           afterTotal: includes(v.recurringTaxMinor),
         }
       : null,
-    delivery: one && ships && latest ? tr("buyer.qcard.delivery", { date: shortCalendarDate(latest, lang) }) : null,
+    delivery: one && ships && latest ? tr("buyer.qcard.delivery", { date: longCalendarDate(latest, lang) }) : null,
     deliveryDate: one && ships && latest ? latest : null,
     firstCharge: !one ? tr("buyer.qcard.first_charge") : null,
-    validUntil: tr("buyer.qcard.valid_until", { date: shortDate(v.validUntil, ctx.timezone, lang) }),
+    validUntil: tr("buyer.qcard.valid_until", { date: longDate(v.validUntil, ctx.timezone, lang) }),
   };
 }
 

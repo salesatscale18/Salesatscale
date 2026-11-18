@@ -106,16 +106,21 @@ function Headline({ card }: { card: QuoteCardView }) {
   );
 }
 
-/** "2 × Monthly user seat" (lib/agent/quote-card.ts lineView): the item name is isolated (<bdi>), so mixed-direction names are not reordered. */
-function LineLabel({ label }: { label: string }) {
-  const m = /^(\d+ × )(.+)$/s.exec(label);
-  return m ? <>{m[1]}<bdi>{m[2]}</bdi></> : <bdi>{label}</bdi>;
+/**
+ * The line's label (lib/agent/quote-card.ts lineView). Its `isolate` part is one
+ * bidi run: "2 × <item name>" reads quantity first in a Hebrew card
+ * too, and only the name is isolated inside "<item name> · שירות חודשי".
+ */
+function LineLabel({ label, isolate }: { label: string; isolate?: string }) {
+  const at = isolate ? label.indexOf(isolate) : -1;
+  if (at < 0) return <bdi>{label}</bdi>;
+  return <>{label.slice(0, at)}<bdi>{isolate}</bdi>{label.slice(at + isolate!.length)}</>;
 }
 
 function Line({ l }: { l: QuoteCardLine }) {
   return (
     <div className="sas-qc__row">
-      <span><LineLabel label={l.label} />{l.was ? <span className="sas-qc__chg">{l.was}</span> : null}</span>
+      <span><LineLabel label={l.label} isolate={l.isolate} />{l.was ? <span className="sas-qc__chg">{l.was}</span> : null}</span>
       <Num>{l.amount}</Num>
     </div>
   );
