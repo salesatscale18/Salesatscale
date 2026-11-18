@@ -1,0 +1,110 @@
+/*
+ * Playbook pages (setup/playbook/**, local-names, Company's agent preview).
+ * Scoped `pb-` classes on top of components/sas/sas.css; colours only from its tokens.
+ */
+
+/* Section list + sections */
+.pb-layout { display: flex; gap: 24px; align-items: flex-start; }
+.pb-main { flex: 1 1 0; min-width: 0; }
+/* Room below the last section, so "Never do" can scroll to the top. */
+.pb-main--spy { padding-block-end: max(0px, calc(100vh - 560px)); }
+.pb-main section[id] { scroll-margin-top: 16px; }
+
+.sas-subnav.pb-toc { position: sticky; top: 16px; flex: 0 0 248px; max-width: 248px; z-index: 2; }
+.sas-app .pb-toc a.sas-subnav__item { justify-content: space-between; gap: 8px; white-space: nowrap; }
+.sas-app .pb-toc a.sas-subnav__item:hover { background: var(--surface-sunken); }
+.sas-app .pb-toc a.sas-subnav__item[aria-current] { background: var(--primary-soft); color: var(--primary); font-weight: 600; box-shadow: none; }
+
+/* Below 1100px the sections take the full width: a sticky chip strip that scrolls sideways. */
+@media (max-width: 1099px) {
+  .pb-layout { flex-direction: column; align-items: stretch; gap: 16px; }
+  .sas-subnav.pb-toc {
+    top: 0; flex: none; max-width: none; flex-direction: row; gap: 6px; overflow-x: auto; scrollbar-width: none;
+    margin-inline: calc(-1 * var(--space-4)); padding: 8px var(--space-4); background: var(--surface); border-block-end: 1px solid var(--line);
+  }
+  .sas-subnav.pb-toc::-webkit-scrollbar { display: none; }
+  .sas-app .pb-toc a.sas-subnav__item { flex: none; height: 32px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--surface-raised); }
+  .sas-app .pb-toc a.sas-subnav__item[aria-current] { border-color: transparent; }
+  .pb-main section[id] { scroll-margin-top: 64px; }
+}
+@media (min-width: 861px) and (max-width: 1099px) {
+  .sas-subnav.pb-toc { margin-inline: calc(-1 * var(--space-8)); padding-inline: var(--space-8); }
+}
+
+/* Phone header: one full-width primary button, the others below it side by side. */
+@media (max-width: 767px) {
+  .pb-head-actions { width: 100%; margin-inline-start: 0; }
+  .pb-head-actions > .sas-btn--primary { order: -1; flex: 1 1 100%; justify-content: center; }
+  .pb-head-actions > .sas-btn:not(.sas-btn--primary) { flex: 1 1 0; justify-content: center; min-width: 0; }
+  .pb-head-actions > .sas-btn { white-space: normal; height: auto; min-height: 36px; text-align: center; }
+}
+
+/* Text set by the platform */
+.pb-fixed { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--ink-muted); font-size: 13px; line-height: 18px; }
+.pb-fixed__text { overflow-wrap: anywhere; }
+.pb-lock-tag { display: inline-flex; align-items: center; gap: 4px; height: 20px; padding: 0 6px; border-radius: var(--radius-sm); font-size: 11px; font-weight: 600; line-height: 16px; color: var(--ink-muted); background: var(--surface-raised); border: 1px solid var(--line); white-space: nowrap; }
+.pb-lock-tag .sas-ico { width: 12px; height: 12px; }
+
+/* Radios in the playbook form: outlined rings when not chosen (also in dark mode). */
+.pb-form input[type="radio"]:not(.sas-sr) {
+  appearance: none; -webkit-appearance: none; flex: none; width: 16px; height: 16px; margin: 0; border-radius: 50%;
+  border: 1.5px solid var(--line-strong); background: transparent; cursor: pointer;
+}
+.pb-form input[type="radio"]:not(.sas-sr):checked { border: 5px solid var(--primary); background: var(--surface-raised); }
+.pb-form input[type="radio"]:not(.sas-sr):focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+
+/* Textareas that grow with their text instead of cutting it off */
+.sas-textarea.pb-grow { field-sizing: content; min-height: 36px; resize: none; overflow-wrap: anywhere; }
+.sas-textarea.pb-grow--3 { min-height: 72px; resize: vertical; }
+
+/* Questions list (canvas: PlaybookQuestions) */
+.pb-q-table { min-width: 480px; table-layout: fixed; }
+/* Phone: each question is a block (question and example, then role and the row buttons). */
+@media (max-width: 600px) {
+  .pb-q-table { min-width: 0; }
+  .pb-q-table, .pb-q-table tbody { display: block; }
+  .pb-q-table colgroup, .pb-q-table thead { display: none; }
+  .pb-q-table tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line); }
+  .pb-q-table td { display: block; padding: 0 !important; border: 0; }
+  .pb-q-table td:first-child { grid-column: 1 / -1; }
+}
+.sas-textarea.pb-q-example { font-size: 13px; line-height: 18px; color: var(--ink-muted); margin-top: 6px; min-height: 32px; padding-block: 6px; border-color: var(--line); background: var(--surface); }
+.pb-row-actions { display: flex; gap: 2px; justify-content: flex-end; align-items: center; }
+
+/* Stepper (− 3 +) */
+.pb-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; background: var(--surface-raised); }
+.pb-stepper button { width: 40px; height: 40px; display: inline-grid; place-items: center; border: 0; background: none; color: var(--ink); cursor: pointer; padding: 0; }
+.pb-stepper button:hover:not([disabled]) { background: var(--surface-sunken); }
+.pb-stepper button[disabled] { color: var(--ink-muted); opacity: .45; cursor: not-allowed; }
+.pb-stepper button .sas-ico { width: 16px; height: 16px; }
+.pb-stepper output { min-width: 40px; display: inline-grid; place-items: center; font-weight: 700; font-variant-numeric: tabular-nums; border-inline: 1px solid var(--line); }
+
+/* Disclosures in the form */
+.pb-disclosure > summary { cursor: pointer; font-weight: 600; font-size: 13px; color: var(--primary); width: max-content; max-width: 100%; }
+
+/* Never do: a rule that restates the discount limit */
+.pb-covered { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.pb-covered .sas-ico { width: 12px; height: 12px; }
+
+/* Sales plays filter chips */
+.pb-filters { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding-block: 2px; }
+.pb-filters::-webkit-scrollbar { display: none; }
+.sas-app .pb-filters a.sas-view { border: 1px solid var(--line-strong); color: var(--ink); flex: none; }
+.sas-app .pb-filters a.sas-view[aria-current="page"] { border-color: var(--ink); background: var(--ink); color: var(--surface); }
+.pb-filters .pb-count { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; }
+
+/* Breadcrumb: each link underlined on its own */
+.pb-crumbs { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.pb-crumbs a { text-decoration: underline; text-underline-offset: 2px; }
+.pb-crumbs [aria-hidden="true"] { color: var(--ink-muted); }
+
+/* Names in other languages (local-names.tsx): on a phone, the tag and Reset sit on one line under the input. */
+.pb-name-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 12px; border-top: 1px solid var(--line); }
+.pb-name-input { flex: 1 1 140px; min-width: 0; }
+.pb-name-tag { flex: 0 0 auto; display: flex; gap: 8px; align-items: center; min-width: 84px; }
+@media (max-width: 767px) {
+  .sas-app .pb-name-row { flex-wrap: wrap; }
+  .sas-app .pb-name-row > .pb-name-input { flex: 1 1 0; }
+  .sas-app .pb-name-row > .pb-name-tag { flex: 1 1 100%; min-width: 0; padding-inline-start: 94px; }
+  .sas-app .pb-name-row > .pb-name-tag:empty { display: none; }
+}

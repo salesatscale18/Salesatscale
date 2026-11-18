@@ -6,6 +6,7 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import { savePlayAction, type PlayFormState } from "./actions";
+import { missingSlots, slotTitle } from "../slots";
 
 /** Limits mirrored from lib/agent/playbook.ts (the server checks them again). */
 const FACT_MAX = 600;
@@ -14,7 +15,8 @@ const FACTS_MAX = 10;
 const MAX = { when: 200, do: 1100, example: 300, notThis: 300 } as const;
 
 type OwnText = { when: string; do: string; example: string; notThis: string };
-type FactRow = { id: number; text: string; source: string };
+/** `slot`: the named fact this row was added for (its label only; not saved). */
+type FactRow = { id: number; text: string; source: string; slot?: string };
 
 const cardText = (c: PlayCard): OwnText => ({ when: c.when, do: c.do.join("\n"), example: c.example, notThis: c.notThis });
 
@@ -52,9 +54,11 @@ export function CardView({ card }: { card: PlayCard }) {
  * first and saves (the facts stay). Inputs: `play.<key>.fact.<i>.text|source`,
  * `play.<key>.own` and the card parts; the server checks everything again.
  */
-export function PlayForm({ slug, playKey, title, defaultCard, initialFacts, initialOwn, elsewhere, labHref, suggestionNote, fromSuggestion }: {
+export function PlayForm({ slug, playKey, title, defaultCard, initialFacts, initialOwn, elsewhere, labHref, suggestionNote, fromSuggestion, hint = "" }: {
   slug: string; playKey: string; title: string; defaultCard: PlayCard; initialFacts: PlayFact[]; initialOwn: PlayCard | null;
   elsewhere: ElsewhereFact[]; labHref: string; suggestionNote: ReactNode;
+  /** What the seller can add for this play (DefaultPlay.sellerContentHint): its parts are shown as named empty slots. */
+  hint?: string;
   /** "Edit first": the suggestion this own card started from (saving accepts it with the changes). */
   fromSuggestion?: string | null;
 }) {
@@ -78,6 +82,9 @@ export function PlayForm({ slug, playKey, title, defaultCard, initialFacts, init
     </div>
   );
   const firstError = Object.values(e)[0];
+  // Named facts the play asks for that no fact covers yet (a row added from a slot covers it).
+  const emptySlots = missingSlots(hint, facts).filter((s) => !facts.some((f) => f.slot === s));
+  const addFact = (slot?: string) => setFacts((rs) => [...rs, { id: ++lastId.current, text: "", source: "", slot }]);
 
   return (
     <form action={action} className="sas-stack-4" noValidate data-play-form={playKey}>
@@ -128,11 +135,11 @@ export function PlayForm({ slug, playKey, title, defaultCard, initialFacts, init
             <strong id="pc-facts-h">{t("playbook.play.content")}</strong>
             <span className="sas-small">{t("playbook.play.facts_hint")}</span>
           </div>
-          {facts.length === 0 && elsewhere.length === 0 ? <span className="sas-small">{t("playbook.play.facts_empty")}</span> : null}
+          {facts.length === 0 && elsewhere.length === 0 && emptySlots.length === 0 ?<span className="sas-small">{t("playbook.play.facts_empty")}</span> : null}
           {facts.map((f, i) => (
             <div key={f.id} className="sas-stack-2" style={{ gap: 6, padding: "10px 12px", border: "1px solid var(--line)", borderRadius: 10, background: "var(--surface-raised)" }} data-fact={i}>
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
-                <label className="sas-input-label" htmlFor={`pc-${at}.fact.${i}.text`}>{t("playbook.play.fact_n", { n: i + 1 })}</label>
+                <label className="sas-input-label" htmlFor={`pc-${at}.fact.${i}.text`}>{f.slot ? slotTitle(f.slot) : t("playbook.play.fact_n", { n: i + 1 })}</label>
                 <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setFacts((rs) => rs.filter((r) => r.id !== f.id))} aria-label={t("playbook.row.remove", { what: f.text.trim().slice(0, 60) || t("playbook.play.fact_n", { n: i + 1 }) })}><Icon name="x" /></button>
               </div>
               <textarea
@@ -159,10 +166,21 @@ export function PlayForm({ slug, playKey, title, defaultCard, initialFacts, init
             </div>
           ))}
           {err(`${at}.facts`)}
+          {emptySlots.map((s) => (
+            <div key={s} data-slot={s} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "10px 12px", border: "1px dashed var(--line-strong)", borderRadius: 10 }}>
+              <span className="sas-stack-2" style={{ gap: 0, flex: "1 1 200px", minWidth: 0 }}>
+                <strong style={{ fontSize: 13 }}>{slotTitle(s)}</strong>
+                <span className="sas-small">{t("playbook.play.slot_empty")}</span>
+              </span>
+              <button type="button" className={buttonClass("secondary", "sm")} disabled={facts.length >= FACTS_MAX} onClick={() => addFact(s)} aria-label={t("playbook.play.slot_add_label", { what: slotTitle(s) })}>
+                <Icon name="plus" />{t("playbook.play.slot_add")}
+              </button>
+            </div>
+          ))}
           <div>
             <button
               type="button" className={buttonClass("ghost", "sm")} disabled={facts.length >= FACTS_MAX}
-              onClick={() => setFacts((rs) => [...rs, { id: ++lastId.current, text: "", source: "" }])}
+              onClick={() => addFact()}
             >
               <Icon name="plus" />{t("playbook.play.add_fact")}
             </button>

@@ -268,7 +268,7 @@ describe("stable system prompt", () => {
     expect(p).toContain("- company_id: Company ID (filled in the order form)");
     expect(p).toContain('- "We keep paper logs, that is enough." ->');
     // Seller sentences keep their own wording: no "Never: Never" and no doubled full stop.
-    expect(p).toContain("\n- Never promise a discount above 5% without approval.\n");
+    expect(p).toContain("\n- Never invent product facts, prices or delivery dates.\n");
     expect(p).not.toContain("Never: Never");
     expect(p).toContain("- Tone: Warm, short and practical. One question at a time. Plain words, no pressure.\n");
     expect(openerText({ name: "Rina", agent: demo.agentName, company: "Polar Demo", language: "en", opener: demo.opener }))

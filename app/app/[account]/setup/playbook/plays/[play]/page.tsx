@@ -1,7 +1,8 @@
 import { notFound } from "next/navigation";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { ensureDraftVersion } from "@/lib/agent/service";
+import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
+import { DraftBanner } from "../../parts";
 import { DEFAULT_PLAYS, defaultPlayFor, playFacts } from "@/lib/agent/core/plays";
 import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { isPlayKey } from "@/lib/agent/playbook";
@@ -16,7 +17,7 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
   if (!isPlayKey(play)) notFound();
-  const [draft, suggestions] = await Promise.all([ensureDraftVersion(appDb, account.id), playSuggestions(appDb, account.id, play)]);
+  const [draft, live, suggestions] = await Promise.all([ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), playSuggestions(appDb, account.id, play)]);
   const base = `/app/${account.slug}`;
   const playbookHref = `${base}/setup/playbook`;
   const playsHref = `${playbookHref}/plays`;
@@ -48,9 +49,15 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
   ) : null;
 
   return (
+    <>
+    <DraftBanner draft={draft.version} live={live?.version ?? null} />
     <main className="sas-shell__content">
-      <nav aria-label={t("playbook.play.breadcrumb")} className="sas-small">
-        <a href={playsHref}>{t("playbook.play.crumb")}</a> › {d.title}
+      <nav aria-label={t("playbook.play.breadcrumb")} className="sas-small pb-crumbs">
+        <a href={playbookHref}>{t("playbook.title")}</a>
+        <span aria-hidden="true">›</span>
+        <a href={playsHref}>{t("playbook.plays")}</a>
+        <span aria-hidden="true">›</span>
+        <span aria-current="page">{d.title}</span>
       </nav>
       {sp.saved ? (
         <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t(sp.saved === "restored" ? "playbook.play.restored" : "playbook.play.saved")}</span></div>
@@ -69,9 +76,10 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
           key={JSON.stringify([stored ?? null, from ? fromId : null])}
           slug={account.slug} playKey={play} title={d.title} defaultCard={d} fromSuggestion={from ? fromId : null}
           initialFacts={playFacts(stored)} initialOwn={initialOwn} elsewhere={elsewhere}
-          labHref={`${base}/setup/test-lab`} suggestionNote={suggestionNote}
+          labHref={`${base}/setup/test-lab`} suggestionNote={suggestionNote} hint={d.sellerContentHint}
         />
       </div>
     </main>
+    </>
   );
 }

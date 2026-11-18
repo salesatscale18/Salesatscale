@@ -7,6 +7,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { t, type Locale, type MessageKey } from "@/lib/i18n";
 import { MAX_OPENER_TOPICS, textIn } from "@/lib/agent/core/opener";
 import { tg, type AgentGender } from "@/lib/agent/core/names";
+import { PlatformFixed, growProps } from "./parts";
 
 /** Limits mirrored from lib/agent/playbook.ts (OPENER_MAX; the server checks them again). */
 const TOPIC_MAX = 120;
@@ -111,13 +112,14 @@ export function OpeningSection({ initial, agent, company, names, gender, h }: { 
                       aria-label={t(isDefault ? "playbook.opening.is_default" : "playbook.opening.make_default", { topic: shown })} style={{ flex: "none", margin: 0 }}
                     />
                     {(["en", "he"] as const).map((l) => (
-                      <input
-                        key={l} className="sas-input" id={`pb-${at}.${l}`} name={`${at}.${l}`} hidden={lang !== l} maxLength={TOPIC_MAX}
+                      <textarea
+                        key={l} className="sas-textarea pb-grow" id={`pb-${at}.${l}`} name={`${at}.${l}`} hidden={lang !== l} maxLength={TOPIC_MAX} rows={1}
                         lang={l} dir={l === "he" ? "rtl" : "ltr"} value={r[l]} onChange={(ev) => update(r.id, { [l]: ev.target.value })}
+                        onKeyDown={(ev) => { if (ev.key === "Enter") ev.preventDefault(); }} {...growProps()}
                         placeholder={l === "he" ? t("playbook.opening.he_placeholder") : t("playbook.opening.topic_placeholder")}
                         aria-label={t(l === "he" ? "playbook.opening.topic_he" : "playbook.opening.topic_en", { n: i + 1 })}
                         {...h.invalid(`${at}.${l}`)}
-                        style={{ border: 0, height: 28, paddingInline: 4, minWidth: 0, flex: 1, display: lang === l ? undefined : "none" }}
+                        style={{ border: 0, minHeight: 28, padding: "4px 4px", resize: "none", minWidth: 0, flex: 1, display: lang === l ? undefined : "none" }}
                       />
                     ))}
                     {isDefault ? <span className="sas-small" style={{ whiteSpace: "nowrap" }}>{t("playbook.opening.default")}</span> : null}
@@ -159,7 +161,8 @@ export function OpeningSection({ initial, agent, company, names, gender, h }: { 
         <aside aria-labelledby="pb-op-pv-h" className="sas-stack-2" style={{ flex: "1 1 280px", minWidth: 0, padding: 16, borderRadius: 12, background: "var(--surface)" }}>
           <strong id="pb-op-pv-h" style={{ fontSize: 13 }}>{t("playbook.opening.preview")}</strong>
           <OpenerPreview lang={lang} agent={names?.[lang]?.agent ?? agent} company={names?.[lang]?.company ?? company} gender={gender} topic={defaultRow ? { en: defaultRow.en, he: defaultRow.he } : undefined} question={question} />
-          <span className="sas-small">{t("playbook.opening.preview_legend")}</span>
+          <span className="sas-small">{t("playbook.opening.preview_legend_seller")}</span>
+          <PlatformFixed>{t("playbook.opening.preview_fixed")}</PlatformFixed>
           {lang === "he" && !defaultRow?.he.trim() && !question.he.trim() ? <span className="sas-small">{t("playbook.opening.preview_he_fallback")}</span> : null}
           <span className="sas-small">{t("playbook.opening.preview_once")}</span>
         </aside>

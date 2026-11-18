@@ -2,7 +2,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
-import { Banner } from "@/components/sas/record";
+import { DraftBanner } from "./parts";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { agentNameLanguages, autoNameModel, refreshAgentNameAuto } from "@/lib/agent/names-auto";
 import { agentNameRows } from "@/lib/agent/core/names";
@@ -36,10 +36,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
   const counts = playCounts(plays);
   return (
     <>
-      <Banner kind="test">
-        <strong>{t("playbook.banner.draft", { version: draft.version })}</strong>{" "}
-        {live ? t("playbook.banner.live", { version: live.version }) : t("playbook.banner.none_live")}
-      </Banner>
+      <DraftBanner draft={draft.version} live={live?.version ?? null} />
       <main className="sas-shell__content">
         <header className="sas-stack-2">
           <div className="sas-page-head">
@@ -47,7 +44,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
               <h1 className="sas-title">{t("playbook.title")}</h1>
               <span className="sas-small">{live ? t("playbook.sub", { version: draft.version, live: live.version }) : t("playbook.sub_none", { version: draft.version })}</span>
             </div>
-            <div className="sas-page-head__actions">
+            <div className="sas-page-head__actions pb-head-actions">
               <a className={buttonClass("secondary")} href={`${here}/draft`}><Icon name="sparkles" />{t("playbook.from_sources")}</a>
               <a className={buttonClass("secondary")} href={lab}><Icon name="flask-conical" />{t("playbook.test_in_lab")}</a>
               <button type="submit" form="pb-form" className={buttonClass("primary")}>{t("playbook.save")}</button>
@@ -57,9 +54,9 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <SetupSteps basePath={base} current="playbook" completed={progress} />
         </header>
         {sp.saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("playbook.saved")}</span></div> : null}
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
+        <div className="pb-layout">
           <PlaybookToc playbookHref={here} playsHref={`${here}/plays`} />
-          <div style={{ flex: "999 1 520px", minWidth: 0 }}>
+          <div className="pb-main pb-main--spy">
             <PlaybookForm
               slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
               plays={{ total: plays.length, withFacts: plays.filter((x) => x.facts.length).length, own: counts.own, needsFacts: counts.needs, suggested: counts.suggested }}

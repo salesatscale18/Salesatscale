@@ -3,7 +3,8 @@ import { buttonClass } from "@/components/sas/primitives";
 import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { llmConfigured } from "@/lib/agent/llm";
-import { ensureDraftVersion } from "@/lib/agent/service";
+import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
+import { DraftBanner } from "../parts";
 import { spendStateForRequest } from "@/lib/ai/usage";
 import { t, type MessageKey } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
@@ -53,9 +54,9 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
   await failStaleRuns(appDb, account.id);
-  const [{ run, items }, draft, progress, runs, plan, spend] = await Promise.all([
+  const [{ run, items }, draft, progress, runs, plan, spend, liveV] = await Promise.all([
     latestSuggestions(appDb, account.id), ensureDraftVersion(appDb, account.id), setupProgress(appDb, account),
-    listRuns(appDb, account.id), planAnalysis(appDb, account.id), spendStateForRequest(appDb, account.id),
+    listRuns(appDb, account.id), planAnalysis(appDb, account.id), spendStateForRequest(appDb, account.id), liveVersion(appDb, account.id),
   ]);
   const base = `/app/${account.slug}`;
   const here = `${base}/setup/playbook/draft`;
@@ -81,6 +82,8 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
   );
 
   return (
+    <>
+    <DraftBanner draft={draft.version} live={liveV?.version ?? null} />
     <main className="sas-shell__content">
       <div className="sas-banner" role="status" style={{ background: "var(--agent-soft)", borderRadius: 8, color: "var(--ink)" }}>
         <span style={{ color: "var(--agent)", display: "inline-flex" }}><Icon name="sparkles" /></span>
@@ -164,5 +167,6 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
         );
       })}
     </main>
+    </>
   );
 }

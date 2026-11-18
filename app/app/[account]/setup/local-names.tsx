@@ -3,6 +3,7 @@
 import { useState, type ReactNode } from "react";
 import { t } from "@/lib/i18n";
 import { languageScript, type NameRow } from "@/lib/agent/core/names";
+import "./playbook/playbook.css";
 
 const TAG = { display: "inline-flex", alignItems: "center", height: 20, padding: "0 6px", borderRadius: 4, fontSize: 11, fontWeight: 600, whiteSpace: "nowrap" } as const;
 const TAG_GREY = { ...TAG, background: "var(--surface-sunken)", color: "var(--ink-muted)" } as const;
@@ -57,9 +58,9 @@ export function LocalNames({ id, inputPrefix, rows, what, column, hint, notice, 
           const tag = stale ? "automatic" : r.tag;
           const inputId = `${id}-${r.lang}`;
           return (
-            <div key={r.lang} role="row" data-lang={r.lang} data-own={value.trim() ? "" : undefined} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 10px", padding: "10px 12px", borderTop: "1px solid var(--line)" }}>
+            <div key={r.lang} role="row" data-lang={r.lang} data-own={value.trim() ? "" : undefined} className="pb-name-row">
               <b role="rowheader" style={{ flex: "0 0 84px" }}>{r.label}</b>
-              <span role="cell" style={{ flex: "1 1 140px", minWidth: 0 }}>
+              <span role="cell" className="pb-name-input">
                 <label className="sas-sr" htmlFor={inputId}>{t("names.input_label", { what, language: r.label })}</label>
                 <input
                   className="sas-input" id={inputId} name={name} lang={r.lang} dir={rtl ? "rtl" : "ltr"} maxLength={maxLength}
@@ -68,7 +69,7 @@ export function LocalNames({ id, inputPrefix, rows, what, column, hint, notice, 
                 />
                 {err ? <span className="sas-error" id={`${inputId}-error`}>{err}</span> : null}
               </span>
-              <span role="cell" style={{ flex: "0 0 auto", display: "flex", gap: 8, alignItems: "center", minWidth: 84 }}>
+              <span role="cell" className="pb-name-tag">
                 {value.trim() ? (
                   <>
                     <span style={TAG_OWN} data-tag="own">{t("names.tag.own")}</span>

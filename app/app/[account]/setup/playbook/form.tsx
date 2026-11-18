@@ -11,6 +11,8 @@ import { QUESTION_BUDGET, QUESTION_CEILING, questionBudgetOf } from "@/lib/agent
 import { savePlaybookAction, type PlaybookFormState } from "./actions";
 import { OpeningSection, type OpeningValues } from "./opening";
 import { LocalNames } from "../local-names";
+import { PlatformFixed, growProps } from "./parts";
+import { restatesDiscountLimit, shortDate } from "./checks";
 
 /** "Names in other languages" for the agent (C2): rows from the account's markets, built on the server. */
 export type AgentNamesView = { rows: NameRow[]; source: string; notice: string | null; marketsHref: string };
@@ -33,7 +35,11 @@ const STAGE_HELP: Record<PlaybookField["stage"], MessageKey> = {
 /** The main list holds the questions asked in chat (needed for the quote, helps the pitch); order-form fields have their own row. */
 const MAIN_STAGES: PlaybookField["stage"][] = ["before_quote", "optional"];
 
-const CELL = { whiteSpace: "normal", verticalAlign: "top", paddingInline: 6 } as const;
+/** Question rows: the role select, arrows and × sit centred on the row (canvas: PlaybookQuestions). */
+const CELL = { whiteSpace: "normal", verticalAlign: "middle", paddingInline: 6 } as const;
+
+/** Single-line text in a growing textarea: Enter does not add a line break. */
+const oneLine = (ev: { key: string; preventDefault: () => void }) => { if (ev.key === "Enter") ev.preventDefault(); };
 
 /** Moves row `i` up or down past the next row of the same group (rows of the other group stay where they are). */
 function moveIn<T>(rows: T[], i: number, by: -1 | 1, same: (r: T) => boolean): T[] {
@@ -127,6 +133,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const [agentName, setAgentName] = useState(v.agentName);
   const [gender, setGender] = useState(v.agentGender);
   const [budget, setBudget] = useState(v.questionBudget);
+  const [maxDiscount, setMaxDiscount] = useState(v.maxDiscount);
   const nameRows = v.agentNameLocal ? names.rows.map((r) => ({ ...r, own: v.agentNameLocal?.[r.lang] ?? r.own })) : names.rows;
   const lastId = useRef(1000);
   const newId = () => ++lastId.current;
@@ -139,7 +146,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const invalid = (name: string) => ({ "aria-invalid": e[name] ? (true as const) : undefined, "aria-describedby": e[name] ? `pb-${name}-error` : undefined });
 
   const rowButtons = (i: number, count: number, onMove: (by: -1 | 1) => void, onRemove: () => void, what: string, first: boolean, last: boolean) => (
-    <div style={{ display: "flex", gap: 2, justifyContent: "flex-end" }}>
+    <div className="pb-row-actions">
       <button type="button" className={buttonClass("ghost", "sm")} onClick={() => onMove(-1)} disabled={first || count < 2} aria-label={t("playbook.row.up", { what })}><span aria-hidden="true">↑</span></button>
       <button type="button" className={buttonClass("ghost", "sm")} onClick={() => onMove(1)} disabled={last || count < 2} aria-label={t("playbook.row.down", { what })}><span aria-hidden="true">↓</span></button>
       <button type="button" className={buttonClass("ghost", "sm")} onClick={onRemove} aria-label={t("playbook.row.remove", { what })}><Icon name="x" /></button>
@@ -147,7 +154,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   );
 
   const panel = (id: string, title: MessageKey, hint: MessageKey | null, action: ReactNode, body: ReactNode, extra?: ReactNode) => (
-    <section className="sas-panel" aria-labelledby={id} id={`${id}-s`} style={{ scrollMarginTop: 16 }}>
+    <section className="sas-panel" aria-labelledby={id} id={`${id}-s`}>
       <div className="sas-panel__body sas-stack-4">
         <div style={{ display: "flex", flexWrap: "wrap", gap: 12, alignItems: "flex-start" }}>
           <div className="sas-stack-2" style={{ flex: "1 1 280px", gap: 2 }}>
@@ -178,6 +185,14 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
           <label className="sas-sr" htmlFor={`pb-${at}.label`}>{t("playbook.field.label")}</label>
           <input className="sas-input" id={`pb-${at}.label`} name={`${at}.label`} maxLength={60} value={f.label} onChange={(ev) => update({ label: ev.target.value })} {...invalid(`${at}.label`)} />
           {err(`${at}.label`)}
+          <label className="sas-sr" htmlFor={`pb-${at}.example`}>{t("playbook.field.example")}</label>
+          {/* The example question in full, as a muted second line that grows with the text. */}
+          <textarea
+            className="sas-textarea pb-grow pb-q-example" id={`pb-${at}.example`} name={`${at}.example`} rows={1} maxLength={200}
+            placeholder={t("playbook.field.example_placeholder")} value={f.example} onChange={(ev) => update({ example: ev.target.value })}
+            onKeyDown={oneLine} {...growProps()} {...invalid(`${at}.example`)}
+          />
+          {err(`${at}.example`)}
         </td>
         <td style={CELL}>
           <label className="sas-sr" htmlFor={`pb-${at}.stage`}>{t("playbook.field.needed")}</label>
@@ -185,11 +200,6 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
             {[...new Set([...stages, f.stage])].map((s) => <option key={s} value={s}>{t(STAGE_LABEL[s])}</option>)}
           </select>
           {err(`${at}.stage`)}
-        </td>
-        <td style={CELL}>
-          <label className="sas-sr" htmlFor={`pb-${at}.example`}>{t("playbook.field.example")}</label>
-          <input className="sas-input" id={`pb-${at}.example`} name={`${at}.example`} maxLength={200} placeholder={t("playbook.field.example_placeholder")} value={f.example} onChange={(ev) => update({ example: ev.target.value })} {...invalid(`${at}.example`)} />
-          {err(`${at}.example`)}
         </td>
         <td style={{ ...CELL, paddingInlineEnd: 16 }}>
           {rowButtons(i, inGroup.length, (by) => setFields((rs) => moveIn(rs, rs.indexOf(f), by, group)), () => setFields((rs) => rs.filter((r) => r.id !== f.id)), name, pos === 0, pos === inGroup.length - 1)}
@@ -199,12 +209,11 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   };
   const fieldTable = (rows: FieldRow[], stages: PlaybookField["stage"][], group: (r: FieldRow) => boolean) => (
     <div style={{ overflowX: "auto", marginInline: -16 }}>
-      <table className="sas-table" style={{ minWidth: 620, tableLayout: "fixed" }}>
-        <colgroup><col style={{ width: "30%" }} /><col style={{ width: 236 }} /><col /><col style={{ width: 112 }} /></colgroup>
+      <table className="sas-table pb-q-table">
+        <colgroup><col /><col style={{ width: 224 }} /><col style={{ width: 112 }} /></colgroup>
         <thead><tr>
           <th scope="col" style={{ paddingInline: "16px 6px" }}>{t("playbook.field.label")}</th>
           <th scope="col" style={{ paddingInline: 6 }}>{t("playbook.field.needed")}</th>
-          <th scope="col" style={{ paddingInline: 6 }}>{t("playbook.field.example")}</th>
           <th scope="col"><span className="sas-sr">{t("playbook.row.actions")}</span></th>
         </tr></thead>
         <tbody>{rows.map((f) => fieldRow(f, stages, group))}</tbody>
@@ -222,7 +231,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const firstError = Object.values(e)[0];
 
   return (
-    <form id="pb-form" action={action} className="sas-stack-6" noValidate>
+    <form id="pb-form" action={action} className="sas-stack-6 pb-form" noValidate>
       <input type="hidden" name="slug" value={slug} />
       {panel("pb-agent-h", "playbook.agent", null, null, (
         <>
@@ -252,7 +261,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
           </fieldset>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="pb-tone">{t("playbook.tone")}</label>
-            <input className="sas-input" id="pb-tone" name="tone" maxLength={300} defaultValue={v.tone} />
+            <textarea className="sas-textarea pb-grow" id="pb-tone" name="tone" rows={1} maxLength={300} defaultValue={v.tone} onKeyDown={oneLine} {...growProps()} />
           </div>
         </>
       ))}
@@ -260,12 +269,13 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
       {panel("pb-goal-h", "playbook.goal", null, null, (
         <>
           <div className="sas-input-group">
-            <label className="sas-input-label" htmlFor="pb-goal">{t("playbook.goal_label")}</label>
-            <textarea className="sas-textarea" id="pb-goal" name="goal" rows={3} maxLength={1000} defaultValue={v.goal} {...invalid("goal")} />
+            <label className="sas-input-label" htmlFor="pb-goal">{t("playbook.goal")}</label>
+            <span className="sas-hint" id="pb-goal-hint">{t("playbook.goal_label")}</span>
+            <textarea className="sas-textarea pb-grow pb-grow--3" id="pb-goal" name="goal" rows={3} maxLength={1000} defaultValue={v.goal} {...growProps()} {...invalid("goal")} aria-describedby={e.goal ? "pb-goal-error" : "pb-goal-hint"} />
             {err("goal")}
           </div>
-          <fieldset className="sas-checks" style={{ border: 0, margin: 0, padding: 0 }}>
-            <legend className="sas-sr">{t("playbook.outcomes")}</legend>
+          <fieldset className="sas-checks" style={{ border: 0, margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
+            <legend className="sas-input-label" style={{ padding: 0, marginBottom: 8 }}>{t("playbook.outcomes_group")}</legend>
             {([["orderForm", "playbook.outcome.order_form"], ["bankTransfer", "playbook.outcome.bank_transfer"], ["meeting", "playbook.outcome.meeting"]] as const).map(([k, label]) => (
               <label key={k} className="sas-check"><input type="checkbox" name={k} defaultChecked={v.outcomes[k]} />{t(label)}</label>
             ))}
@@ -277,11 +287,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         <OpeningSection initial={openingValues(p, state)} agent={p.agentName || company} company={company} names={{ en: { agent: localAgentName(p, "en", company), company: companyLocal?.en?.trim() || company }, he: { agent: localAgentName(p, "he", company), company: companyLocal?.he?.trim() || company } }} gender={agentGenderOf(p)} h={{ err, invalid, errors: e }} />
       ), isNew)}
 
-      {panel("pb-fields-h", "playbook.fields", "playbook.fields_hint", (
-        <button type="button" className={buttonClass("secondary", "sm")} onClick={() => setFields((rs) => [...rs, { id: newId(), key: "", label: "", stage: "before_quote", example: "", hint: "" }])}>
-          <Icon name="plus" />{t("playbook.field.add")}
-        </button>
-      ), (
+      {panel("pb-fields-h", "playbook.fields", "playbook.fields_hint", null, (
         <>
           <div data-testid="question-budget" style={{ display: "flex", flexWrap: "wrap", gap: "12px 20px", alignItems: "center", padding: 14, borderRadius: 10, background: "var(--surface)" }}>
             <div className="sas-stack-2" style={{ flex: "1 1 260px", gap: 2, minWidth: 0 }}>
@@ -289,22 +295,23 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               <span className="sas-small" id="pb-questionBudget-hint">{t("playbook.questions.budget_hint")}</span>
               {err("questionBudget")}
             </div>
-            <span role="group" aria-labelledby="pb-questionBudget-label" style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--line-strong)", borderRadius: 8, overflow: "hidden", background: "var(--surface-raised)" }}>
-              <button type="button" className={buttonClass("ghost", "sm")} style={{ borderRadius: 0 }} onClick={() => setBudget((n) => Math.max(QUESTION_BUDGET.min, n - 1))} disabled={budget <= QUESTION_BUDGET.min} aria-label={t("playbook.questions.fewer")}><span aria-hidden="true">−</span></button>
-              <output id="pb-questionBudget" htmlFor="pb-questionBudget-input" aria-live="polite" style={{ minWidth: 32, textAlign: "center", fontWeight: 700 }}>{budget}</output>
+            {/* Stepper: 16px ink icons, dividers, 40px hit areas; − off at the minimum (2), + off at the maximum (6). */}
+            <span role="group" aria-labelledby="pb-questionBudget-label" className="pb-stepper" data-testid="budget-stepper">
+              <button type="button" onClick={() => setBudget((n) => Math.max(QUESTION_BUDGET.min, n - 1))} disabled={budget <= QUESTION_BUDGET.min} aria-label={t("playbook.questions.fewer")}><Icon name="minus" /></button>
+              <output id="pb-questionBudget" htmlFor="pb-questionBudget-input" aria-live="polite">{budget}</output>
               <input type="hidden" id="pb-questionBudget-input" name="questionBudget" value={budget} />
-              <button type="button" className={buttonClass("ghost", "sm")} style={{ borderRadius: 0 }} onClick={() => setBudget((n) => Math.min(QUESTION_BUDGET.max, n + 1))} disabled={budget >= QUESTION_BUDGET.max} aria-label={t("playbook.questions.more")}><span aria-hidden="true">+</span></button>
+              <button type="button" onClick={() => setBudget((n) => Math.min(QUESTION_BUDGET.max, n + 1))} disabled={budget >= QUESTION_BUDGET.max} aria-label={t("playbook.questions.more")}><Icon name="plus" /></button>
             </span>
           </div>
           {before > budget ? (
             <div className="sas-alert sas-alert--warning" role="status" data-testid="budget-warning"><Icon name="alert-triangle" /><span>{t(before - budget === 1 ? "playbook.fields.too_many" : "playbook.fields.too_many_other", { n: before, max: budget, extra: before - budget })}</span></div>
           ) : null}
-          <ul className="sas-stack-2" data-testid="field-roles" aria-label={t("playbook.field.roles")} style={{ listStyle: "none", margin: 0, padding: 0, gap: 4 }}>
-            {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
-              <li key={s} className="sas-small" data-role={s}><strong style={{ color: "var(--ink)" }}>{t(STAGE_LABEL[s])}</strong>: {t(STAGE_HELP[s])}</li>
-            ))}
-          </ul>
           {mainFields.length === 0 ? <span className="sas-small">{t("playbook.fields_empty")}</span> : fieldTable(mainFields, MAIN_STAGES, isMain)}
+          <div>
+            <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setFields((rs) => [...rs, { id: newId(), key: "", label: "", stage: "before_quote", example: "", hint: "" }])}>
+              <Icon name="plus" />{t("playbook.field.add")}
+            </button>
+          </div>
           <div className="sas-stack-2" data-testid="order-form-fields" style={{ borderBlockStart: "1px solid var(--line)", paddingBlockStart: 12 }}>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 12px", alignItems: "flex-start" }}>
               <span className="sas-stack-2" style={{ flex: "1 1 260px", gap: 2, minWidth: 0 }}>
@@ -326,7 +333,18 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               </div>
             </details>
           </div>
-          <QuestionCounting max={budget} />
+          <div className="sas-stack-2" style={{ gap: 6, borderBlockStart: "1px solid var(--line)", paddingBlockStart: 12 }}>
+            <strong id="pb-roles-h" style={{ fontSize: 13 }}>{t("playbook.field.roles_title")}</strong>
+            <ul className="sas-stack-2" data-testid="field-roles" aria-labelledby="pb-roles-h" style={{ listStyle: "none", margin: 0, padding: 0, gap: 4 }}>
+              {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
+                <li key={s} className="sas-small" data-role={s}><strong style={{ color: "var(--ink)" }}>{t(STAGE_LABEL[s])}</strong>: {t(STAGE_HELP[s])}</li>
+              ))}
+            </ul>
+          </div>
+          <details className="pb-disclosure" data-testid="count-disclosure">
+            <summary>{t("playbook.count.how")}</summary>
+            <div style={{ paddingBlockStart: 10 }}><QuestionCounting max={budget} /></div>
+          </details>
         </>
       ))}
       {err("fields")}
@@ -342,7 +360,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         </ul>
       ), isNew)}
 
-      {panel("pb-obj-h", "playbook.objections", "playbook.objections_hint", (
+      {panel("pb-obj-h", "playbook.toc.objections","playbook.objections_hint", (
         <button type="button" className={buttonClass("secondary", "sm")} onClick={() => setObjections((rs) => [...rs, { id: newId(), objection: "", answer: "", source: "" }])}>
           <Icon name="plus" />{t("playbook.objection.add")}
         </button>
@@ -381,7 +399,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="pb-maxDiscount">{t("playbook.max_discount")}</label>
             <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <input className="sas-input sas-num" style={{ width: 80 }} id="pb-maxDiscount" name="maxDiscount" inputMode="decimal" defaultValue={v.maxDiscount} {...invalid("maxDiscount")} aria-describedby={e.maxDiscount ? "pb-maxDiscount-error" : "pb-maxDiscount-hint"} />
+              <input className="sas-input sas-num" style={{ width: 80 }} id="pb-maxDiscount" name="maxDiscount" inputMode="decimal" value={maxDiscount} onChange={(ev) => setMaxDiscount(ev.target.value)}{...invalid("maxDiscount")} aria-describedby={e.maxDiscount ? "pb-maxDiscount-error" : "pb-maxDiscount-hint"} />
               <span className="sas-small">{t("playbook.max_discount_unit")}</span>
             </div>
             <span className="sas-hint" id="pb-maxDiscount-hint">{t("playbook.max_discount_hint")}</span>
@@ -405,11 +423,11 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
             {exceptions.length === 0 ? <span className="sas-small">{t("playbook.exceptions_empty")}</span> : (
               <ul className="sas-stack-2" aria-labelledby="pb-exc-h" style={{ listStyle: "none", margin: 0, padding: 0 }}>
                 {exceptions.map((x) => (
-                  <li key={x.id} style={{ display: "flex", gap: 4, alignItems: "flex-start", padding: "8px 10px", borderRadius: 8, background: "var(--warning-soft)" }}>
+                  <li key={x.id} data-exception="" style={{ display: "flex", gap: 4, alignItems: "center", padding: "8px 10px", borderRadius: 8, border: "1px solid var(--line)", background: "var(--surface-raised)" }}>
                     <input type="hidden" name="exceptionId" value={x.id} />
                     <span style={{ flex: 1, minWidth: 0, overflowWrap: "anywhere" }}>
                       <span dir="auto">{x.text}</span>
-                      <span className="sas-small" style={{ display: "block" }}>{t("playbook.exception_meta", { date: x.approvedAt.slice(0, 10) })}</span>
+                      <span className="sas-small" style={{ display: "block" }}>{t("playbook.exception_meta", { date: shortDate(x.approvedAt) || x.approvedAt.slice(0, 10) })}</span>
                     </span>
                     <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setExceptions((rs) => rs.filter((r) => r.id !== x.id))} aria-label={t("playbook.row.remove", { what: x.text })}><Icon name="x" /></button>
                   </li>
@@ -428,20 +446,28 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         <>
           {never.length === 0 ? <span className="sas-small">{t("playbook.never_empty")}</span> : (
             <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-              {never.map((n, i) => (
-                <li key={n.id} className="sas-stack-2" style={{ gap: 4 }}>
-                  <div style={{ display: "flex", gap: 4, alignItems: "center" }}>
-                    <label className="sas-sr" htmlFor={`pb-never.${i}`}>{t("playbook.never.rule", { n: i + 1 })}</label>
-                    <input className="sas-input" id={`pb-never.${i}`} name={`never.${i}`} maxLength={200} value={n.text} onChange={(ev) => setNever((rs) => rs.map((r) => (r.id === n.id ? { ...r, text: ev.target.value } : r)))} {...invalid(`never.${i}`)} />
-                    <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setNever((rs) => rs.filter((r) => r.id !== n.id))} aria-label={t("playbook.row.remove", { what: n.text.trim() || t("playbook.never.rule", { n: i + 1 }) })}><Icon name="x" /></button>
-                  </div>
-                  {err(`never.${i}`)}
-                </li>
-              ))}
+              {never.map((n, i) => {
+                const covered = restatesDiscountLimit(n.text, maxDiscount);
+                return (
+                  <li key={n.id} className="sas-stack-2" style={{ gap: 4 }} data-covered={covered ? "" : undefined}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <label className="sas-sr" htmlFor={`pb-never.${i}`}>{t("playbook.never.rule", { n: i + 1 })}</label>
+                      <textarea
+                        className="sas-textarea pb-grow" id={`pb-never.${i}`} name={`never.${i}`} rows={1} maxLength={200} value={n.text}
+                        onChange={(ev) => setNever((rs) => rs.map((r) => (r.id === n.id ? { ...r, text: ev.target.value } : r)))} onKeyDown={oneLine} {...growProps()}
+                        {...invalid(`never.${i}`)} aria-describedby={e[`never.${i}`] ? `pb-never.${i}-error` : covered ? `pb-never.${i}-covered` : undefined}
+                      />
+                      <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setNever((rs) => rs.filter((r) => r.id !== n.id))} aria-label={t("playbook.row.remove", { what: n.text.trim() || t("playbook.never.rule", { n: i + 1 }) })}><Icon name="x" /></button>
+                    </div>
+                    {covered ? <span className="pb-covered" id={`pb-never.${i}-covered`}><Icon name="info" />{t("playbook.never.covered")}</span> : null}
+                    {err(`never.${i}`)}
+                  </li>
+                );
+              })}
             </ul>
           )}
           {err("never")}
-          <span className="sas-hint">{t("playbook.never_hint")}</span>
+          <PlatformFixed>{t("playbook.never_hint")}</PlatformFixed>
         </>
       ))}
 

@@ -219,7 +219,6 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
     plays: PLAYS,
     opener: OPENER,
     neverDo: [
-      "Never promise a discount above 5% without approval.",
       "Never promise food-safety or legal compliance beyond what the approved knowledge says.",
       "Never invent product facts, prices or delivery dates.",
     ],

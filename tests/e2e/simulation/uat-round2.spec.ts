@@ -413,7 +413,7 @@ test("B4 Playbook", async () => {
   await page.goto(`${S.appBase}/setup/playbook`);
   await expect(page.locator("#pb-agentName")).toHaveValue(`${SELLER} assistant`);
   // An empty label shows an error on that row (a row left fully empty is dropped on save, by design).
-  await page.getByRole("button", { name: "Add field" }).click();
+  await page.getByRole("button", { name: "Add question" }).click();
   const rows = page.locator('input[id^="pb-field."][id$=".label"]');
   const n = await rows.count();
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("How many fridges do you have?");
@@ -450,7 +450,7 @@ test("B4 Edits survive a refused save", async () => {
   need(S.appBase);
   await page.goto(`${S.appBase}/setup/playbook`);
   await page.locator("#pb-agentName").fill("Noa");
-  await page.getByRole("button", { name: "Add field" }).click();
+  await page.getByRole("button", { name: "Add question" }).click();
   const n = await page.locator('input[id^="pb-field."][id$=".label"]').count();
   await page.locator(`[id="pb-field.${n - 1}.example"]`).fill("Only an example");
   await page.getByRole("button", { name: "Save to draft" }).first().click();

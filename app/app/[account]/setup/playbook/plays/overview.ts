@@ -4,17 +4,23 @@
  * and what the facts line says. Pure; unit-tested.
  */
 import { PLAY_KEYS, type PlayCard, type PlayFact, type PlayKey, type Playbook } from "@/db/schema";
-import { DEFAULT_PLAYS, defaultPlayFor, playFacts } from "@/lib/agent/core/plays";
+import { defaultPlayFor, playFacts } from "@/lib/agent/core/plays";
 import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { t, type MessageKey } from "@/lib/i18n";
+import { missingSlots } from "./slots";
+
+export { missingSlots, playSlots, slotTitle } from "./slots";
 
 export type PlayFilter = "all" | "needs" | "suggested" | "own";
 export const PLAY_FILTERS: readonly PlayFilter[] = ["all", "needs", "suggested", "own"];
 
 export type FactsLine =
-  | { kind: "facts"; n: number }
-  | { kind: "needs"; text: string }
+  /** The seller's facts, and the named facts the play still asks for. */
+  | { kind: "facts"; n: number; missing: string[] }
+  | { kind: "needs"; text: string; missing: string[] }
   | { kind: "suggested"; facts: number; card: boolean }
+  /** The play uses a setting kept elsewhere (hand-off: the hand-off rule in Limits). */
+  | { kind: "limits" }
   | { kind: "none" };
 
 export type PlayOverview = {
@@ -50,10 +56,12 @@ export function playsOverview(p: Pick<Playbook, "plays" | "questionBudget">, pen
     const s = pending.get(key);
     const suggested = s && (s.facts > 0 || s.card) ? s : null;
     const needsFacts = !!d.sellerContentHint.trim() && facts.length === 0;
+    const missing = missingSlots(d.sellerContentHint, facts);
     const factsLine: FactsLine = facts.length
-      ? { kind: "facts", n: facts.length }
+      ? { kind: "facts", n: facts.length, missing }
       : suggested ? { kind: "suggested", ...suggested }
-      : needsFacts ? { kind: "needs", text: addHint(d.sellerContentHint) }
+      : needsFacts ? { kind: "needs", text: t("playbook.plays.add", { what: missing.join(", ") }), missing }
+      : key === "handoff" ? { kind: "limits" }
       : { kind: "none" };
     return {
       key, title: d.title, own, card: stored?.own ?? d, facts, hint: d.sellerContentHint, suggested, factsLine, needsFacts,
