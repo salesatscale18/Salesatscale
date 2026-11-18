@@ -1,5 +1,6 @@
 "use client";
 
+import { ITEM_TABS, type ItemTab } from "./tabs";
 import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
@@ -123,9 +124,6 @@ function ChatWording({ d, suggestion, invalid, err, errors }: {
   );
 }
 
-/** The item sheet's tabs (canvas: CatalogItemSheet, CatalogItemTabs). */
-export const ITEM_TABS = ["details", "chat", "prices"] as const;
-export type ItemTab = (typeof ITEM_TABS)[number];
 
 /** Which tab holds each field, so a refused save opens the tab with the first error. */
 const FIELD_TAB: Record<string, ItemTab> = { kind: "details", name: "details", sku: "details", unit: "details", unitCustom: "details", plainName: "chat", valueLine: "chat" };

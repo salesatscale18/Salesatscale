@@ -463,7 +463,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </div>
           ) : null}
           {detail.quote.status !== "cancelled" && signed && signed.order.paymentStatus !== "paid" ? (
-            <details className="sas-confirm" data-testid="quote-cancel-signed">
+            <details className="sas-confirm-details" data-testid="quote-cancel-signed">
               <summary className={buttonClass("danger", "sm")}>{t("orders.detail.cancel")}</summary>
               <div className="sas-stack-2" style={{ marginTop: 8 }}>
                 <span className="sas-small">{t("orders.detail.cancel_signed_confirm")}</span>

@@ -634,8 +634,8 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 }
 
 /* Signed-but-unpaid "Cancel quote" confirm step (round-3 UX sign-off). */
-.sas-confirm > summary { list-style: none; width: fit-content; cursor: pointer; }
-.sas-confirm > summary::-webkit-details-marker { display: none; }
+.sas-confirm-details > summary { list-style: none; width: fit-content; cursor: pointer; }
+.sas-confirm-details > summary::-webkit-details-marker { display: none; }
 /* ---------------------------------------------------------------------------
  * List kit (components/sas/list-kit.tsx): the setup "list pages" pattern.
  * ------------------------------------------------------------------------- */

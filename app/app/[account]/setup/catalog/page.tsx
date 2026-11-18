@@ -22,7 +22,8 @@ import { tierChip } from "@/lib/pricing/list-view";
 import { CUSTOM_UNIT, isUnitKey, unitLabel } from "@/lib/pricing/units";
 import type { CatalogItem, PriceListEntry } from "@/db/schema";
 import { discardAction, publishAction, removeItemAction, removeRuleAction } from "./actions";
-import { ITEM_TABS, ItemForm, RuleForm, type ItemDefaults, type ItemTab, type RuleDefaults } from "./forms";
+import { ItemForm, RuleForm, type ItemDefaults, type RuleDefaults } from "./forms";
+import { ITEM_TABS, type ItemTab } from "./tabs";
 
 /** Params a list link never carries over: the open sheet or panel, a confirm step, one-off notices. */
 const DROP = ["panel", "tab", "confirm", "page", "item", "rule", "saved", "published", "publish"] as const;

@@ -132,6 +132,13 @@ export function MenuEnhancer() {
     const onScroll = (e: Event) => {
       if (details.open && !menu.contains(e.target as Node)) close(false);
     };
+    // Picking an item closes the menu. The <details> survives client navigation (Link, server-action
+    // redirect), so without this it stayed open over the confirm step or the panel the item opened.
+    // Closed on the next tick so the link's navigation or the form's submit starts first.
+    const onPick = (e: MouseEvent) => {
+      if ((e.target as Element | null)?.closest("a, button")) setTimeout(() => close(false), 0);
+    };
+    menu.addEventListener("click", onPick);
     details.addEventListener("toggle", onToggle);
     details.addEventListener("keydown", onKey);
     document.addEventListener("pointerdown", onDown);
@@ -139,6 +146,7 @@ export function MenuEnhancer() {
     const onResize = () => close(false);
     window.addEventListener("resize", onResize);
     return () => {
+      menu.removeEventListener("click", onPick);
       details.removeEventListener("toggle", onToggle);
       details.removeEventListener("keydown", onKey);
       document.removeEventListener("pointerdown", onDown);
