@@ -2572,5 +2572,7 @@
   "orders.search": "Search quote, lead or company",
   "orders.empty.search": "Nothing matches your search.",
   "table.sort_by": "Sort by {column}",
-  "leads.filter.prefix": "{label}: {value}"
+  "leads.filter.prefix": "{label}: {value}",
+  "buyer.recurring_total.month_vat_included": "Monthly (VAT included)",
+  "buyer.recurring_total.year_vat_included": "Yearly (VAT included)"
 }

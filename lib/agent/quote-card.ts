@@ -13,7 +13,8 @@
 import { formatMoney } from "@/lib/domain/money";
 import { dir as dirOf, isLocale, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { APP_MESSAGE_CALL } from "./app-message";
-import { longCalendarDate, longDate, percentText, shortDate } from "./quote-message";
+import { recurringTotalKey } from "@/lib/orders/display";
+import { longCalendarDate, longDate, percentText } from "./quote-message";
 
 // ---------------------------------------------------------------------------
 // Headline (create_quote `headline`)
@@ -320,7 +321,8 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   const headline = cardHeadline(r.input.link.headline, names, lang);
   const headlineName = headline && !r.input.link.headline && names.length ? capFirst(names[0]) : null;
   const totalLabel = hasRecurring ? tr("buyer.qcard.today") : tr("buyer.qcard.total");
-  const periodTotalLabel = tr(year ? "buyer.qcard.yearly" : "buyer.qcard.monthly");
+  // One label for the recurring total on the card and every buyer page (lib/orders/display.ts).
+  const periodTotalLabel = tr(recurringTotalKey({ pricesIncludeTax: v.pricesIncludeTax, taxRateBp: v.taxRateBp, taxMinor: v.recurringTaxMinor }, year ? "year" : "month"));
   const seller = ctx.audience === "seller"
     ? { skus: [...new Set(lines.map((l) => l.sku))], priceList: v.priceListId ? data.priceListNames.get(v.priceListId) ?? null : null }
     : null;
@@ -343,7 +345,7 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
       : { label: periodTotalLabel, amount: money(v.recurringTotalMinor) };
     return {
       ...withRef, headline, headlineName, total,
-      status: tr("buyer.qcard.expired", { date: shortDate(v.validUntil, ctx.timezone, lang) }),
+      status: tr("buyer.qcard.expired", { date: longDate(v.validUntil, ctx.timezone, lang) }),
     };
   }
 

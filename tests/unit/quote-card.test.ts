@@ -107,7 +107,7 @@ describe("card states", () => {
         // The monthly charge of an item also bought once names the service (live review, Package 3 item 2).
         lines: [{ label: "Kitchen hub · monthly service", isolate: "Kitchen hub", amount: "₪90.00", was: null }],
         rows: [{ label: "VAT 18%", amount: "₪16.20", muted: true }],
-        total: { label: "Monthly", amount: "₪106.20" },
+        total: { label: "Monthly incl. VAT", amount: "₪106.20" },
       },
       // Full month names in the footer (Package 3 item 10).
       delivery: "Delivery by about 1 December", validUntil: "Valid until 24 November", firstCharge: null, status: null, sellerOnly: null, approval: null,
@@ -164,7 +164,7 @@ describe("card states", () => {
     const c = cards([q1], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { now: new Date("2026-11-25T08:00:00Z") }).m1;
     expect(c).toMatchObject({
       state: "expired", headline: "Wireless fridge sensor and 2 more", lines: [], rows: [], total: { label: "Today", amount: "₪2,466.20" }, monthly: null,
-      status: "Expired on 24 Nov. Write here and we'll send an updated quote.",
+      status: "Expired on 24 November. Write here and we'll send an updated quote.",
     });
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: c }));
     expect(html).toContain("sas-qc--dim");
@@ -186,10 +186,10 @@ describe("card states", () => {
     const c = cards([q1], [v], { v1: [line("MON", "monitoring plan, per site", 2, "recurring", 18_000)] }, [link("m1", "q1", 1001, 1, { headline: "Monitoring for your 2 kitchens" })]).m1;
     expect(c).toMatchObject({
       lines: [], rows: [], total: null, delivery: null, firstCharge: "First charge when the service starts",
-      monthly: { heading: null, lines: [{ label: "2 × Monitoring plan, per site", amount: "₪180.00" }], total: { label: "Monthly", amount: "₪212.40" } },
+      monthly: { heading: null, lines: [{ label: "2 × Monitoring plan, per site", amount: "₪180.00" }], total: { label: "Monthly incl. VAT", amount: "₪212.40" } },
     });
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: c }));
-    expect(html).toContain('role="group" aria-label="Monthly"');
+    expect(html).toContain('role="group" aria-label="Monthly incl. VAT"');
   });
 
   it("prices include VAT: no subtotal, 'Includes VAT 18%' under the total; no fallback headline with 2 items", () => {
@@ -220,11 +220,11 @@ describe("card states", () => {
     expect(goneHtml).not.toContain("lucide-file-text");
     expect(cards([{ ...q1, status: "cancelled" }], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { language: "he" }).m1.status).toMatch(/^בוטלה\./);
     const he = cards([q1], [standard.v], { v1: standard.lines }, [link("m1", "q1", 1001, 1)], { language: "he" }).m1;
-    expect(he).toMatchObject({ dir: "rtl", lang: "he", title: "ההצעה שלך", label: "הצעת מחיר Q-1001", total: { label: "לתשלום היום" }, monthly: { heading: "ואז בכל חודש, מההפעלה", total: { label: "לחודש" } } });
+    expect(he).toMatchObject({ dir: "rtl", lang: "he", title: "ההצעה שלך", label: "הצעת מחיר Q-1001", total: { label: "לתשלום היום" }, monthly: { heading: "ואז בכל חודש, מההפעלה", total: { label: "חודשי כולל מע״מ" } } });
     expect(he.rows[1].label).toBe("מע״מ 18%");
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: he }));
     expect(html).toMatch(/<article class="sas-qc sas-qc--sent" dir="rtl" lang="he"/);
-    expect(html).toContain('<span class="sas-qc__num">Q-1001</span>');
+    expect(html).toContain('<span class="sas-qc__ref">Q-1001</span>');
     expect(html).toContain("sas-qc__ic--truck");
   });
 

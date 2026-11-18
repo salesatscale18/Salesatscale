@@ -11,7 +11,9 @@ import type { DeliveryChoices } from "@/lib/delivery/choice";
 import { chargeOf, type FormSnapshot } from "@/lib/orders/service";
 import { companyFields, type Step, type StepErrors, type StepValues } from "@/lib/orders/draft";
 import type { PrefillKey, PrefillSource } from "@/lib/orders/prefill";
-import { LineName, moneyFor, vatLabel } from "./lines";
+import { longCalendarDate } from "@/lib/agent/quote-message";
+import { LineName, moneyFor, recurringLabel, vatLabel } from "./lines";
+import { buyerMonth } from "./time";
 
 type Tr = ReturnType<typeof translator>;
 
@@ -76,7 +78,13 @@ function SourceTag({ source, tr }: { source: PrefillSource | undefined; tr: Tr }
   return <span className="b-from" data-source={source}>{source === "chat" ? <ChatIcon /> : null}{tr(source === "chat" ? "buyer.source.chat" : "buyer.source.request")}</span>;
 }
 
-/** One text field with its label, source tag and error. */
+/**
+ * One text field with its label, source tag and error. Free text (names,
+ * addresses, email, PO number) is `b-inp--free`: its direction comes from what
+ * is typed (unicode-bidi: plaintext), so "1 Test St, Tel Aviv" keeps its order
+ * in a Hebrew form, while an empty field and its placeholder stay at the start.
+ * Digit-only fields (`ltr`) stay left-to-right.
+ */
 function Field(props: {
   name: string; label: string; value: string; error: string | null; source?: PrefillSource; tr: Tr;
   type?: string; inputMode?: "numeric" | "email"; ltr?: boolean; autoComplete?: string; placeholder?: string;
@@ -86,7 +94,7 @@ function Field(props: {
     <label className="b-lbl" htmlFor={id}>
       <span className="b-lbl-top">{props.label}<SourceTag source={props.source} tr={props.tr} /></span>
       <input
-        className="b-inp" id={id} name={props.name} defaultValue={props.value} type={props.type ?? "text"} inputMode={props.inputMode}
+        className={props.ltr ? "b-inp" : "b-inp b-inp--free"} id={id} name={props.name} defaultValue={props.value} type={props.type ?? "text"} inputMode={props.inputMode}
         dir={props.ltr ? "ltr" : undefined} autoComplete={props.autoComplete} placeholder={props.placeholder}
         {...(props.error ? { "aria-invalid": true as const, "aria-describedby": `e-${props.name}` } : {})}
       />
@@ -110,15 +118,21 @@ export function placeholderFor(s: Pick<FormSnapshot, "currency">, key: OrderForm
   return tr(`buyer.placeholder.${key}` as MessageKey);
 }
 
-/** A value carries its source tag while it is still the prefilled one. */
-function sourceOf(s: FormSnapshot, key: PrefillKey, value: string): PrefillSource | undefined {
-  const src = s.prefillSource?.[key];
+type Sources = Partial<Record<PrefillKey, PrefillSource>>;
+
+/**
+ * A value carries its source tag while it is still the prefilled one, saved or
+ * not: the tag goes only when the buyer changes the value (both languages).
+ */
+export function sourceOf(s: Pick<FormSnapshot, "prefill">, sources: Sources | undefined, key: PrefillKey, value: string): PrefillSource | undefined {
+  const src = sources?.[key];
   return src && (s.prefill[key] ?? "").trim() === value.trim() && value.trim() ? src : undefined;
 }
 
-/** Step 2: company details and the signer, prefilled from the chat and the request. */
-export function CompanyStep({ s, values, errors, tr }: { s: FormSnapshot; values: StepValues; errors: StepErrors; tr: Tr }) {
+/** Step 2: company details and the signer, prefilled from the chat and the request. `sources`: lib/orders/display.ts displaySources. */
+export function CompanyStep({ s, values, errors, tr, sources }: { s: FormSnapshot; values: StepValues; errors: StepErrors; tr: Tr; sources?: Sources }) {
   const err = (k: keyof StepErrors) => (errors[k] ? errorText(tr, k, errors[k]!) : null);
+  const src = sources ?? s.prefillSource;
   return (
     <section className="b-sec" aria-labelledby="co-h" style={{ borderBlockEnd: 0 }}>
       <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
@@ -130,8 +144,8 @@ export function CompanyStep({ s, values, errors, tr }: { s: FormSnapshot; values
         {companyFields(s.fields).map((f) => (
           <Field
             key={f} name={f} label={tr(`buyer.field.${f}` as MessageKey)} value={values.fields[f] ?? ""} error={err(f)} tr={tr}
-            source={sourceOf(s, f, values.fields[f] ?? "")} type={f === "invoice_email" ? "email" : "text"}
-            inputMode={f === "company_id" ? "numeric" : undefined} ltr={f === "invoice_email" || f === "company_id"} autoComplete={AUTOCOMPLETE[f]}
+            source={sourceOf(s, src, f, values.fields[f] ?? "")} type={f === "invoice_email" ? "email" : "text"}
+            inputMode={f === "company_id" ? "numeric" : undefined} ltr={f === "company_id"} autoComplete={AUTOCOMPLETE[f]}
             placeholder={placeholderFor(s, f, tr)}
           />
         ))}
@@ -142,9 +156,9 @@ export function CompanyStep({ s, values, errors, tr }: { s: FormSnapshot; values
         <span className="b-mut">{tr("buyer.signer.hint")}</span>
       </div>
       <div className="b-grid2">
-        <Field name="full_name" label={tr("buyer.signer.full_name")} value={values.fullName} error={err("full_name")} tr={tr} source={sourceOf(s, "signatory_name", values.fullName)} autoComplete="name" placeholder={placeholderFor(s, "full_name", tr)} />
+        <Field name="full_name" label={tr("buyer.signer.full_name")} value={values.fullName} error={err("full_name")} tr={tr} source={sourceOf(s, src, "signatory_name", values.fullName)} autoComplete="name" placeholder={placeholderFor(s, "full_name", tr)} />
         {s.fields.includes("signatory_role") ? (
-          <Field name="signatory_role" label={tr("buyer.signer.role")} value={values.role} error={err("signatory_role")} tr={tr} source={sourceOf(s, "signatory_role", values.role)} autoComplete="organization-title" placeholder={placeholderFor(s, "signatory_role", tr)} />
+          <Field name="signatory_role" label={tr("buyer.signer.role")} value={values.role} error={err("signatory_role")} tr={tr} source={sourceOf(s, src, "signatory_role", values.role)} autoComplete="organization-title" placeholder={placeholderFor(s, "signatory_role", tr)} />
         ) : null}
       </div>
     </section>
@@ -154,9 +168,9 @@ export function CompanyStep({ s, values, errors, tr }: { s: FormSnapshot; values
 const longDate = (iso: string, lang: Locale) =>
   new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { weekday: "long", day: "numeric", month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
 
-/** "Thursday 3 Dec 2026": a chosen delivery date in the buyer's language. */
+/** "Thursday 3 Dec 2026" / "יום חמישי, 3 בדצמבר 2026": a chosen delivery date in the buyer's language. */
 export function preferredDateText(iso: string, lang: Locale) {
-  return new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { weekday: "long", day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
+  return new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { weekday: "long", day: "numeric", month: buyerMonth(lang), year: "numeric", timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
 }
 
 /** The calendar: business days from the earliest estimate on; weekends and holidays disabled; the estimate tinted. */
@@ -165,7 +179,7 @@ function Calendar({ choices, selected, lang, tr }: { choices: DeliveryChoices; s
   const first = choices.weeks[0][0].date;
   const lastWeek = choices.weeks[choices.weeks.length - 1];
   const last = lastWeek[lastWeek.length - 1].date;
-  const month = (iso: string, year: boolean) => new Intl.DateTimeFormat(loc, { month: "short", ...(year ? { year: "numeric" as const } : {}), timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
+  const month = (iso: string, year: boolean) => new Intl.DateTimeFormat(loc, { month: buyerMonth(lang), ...(year ? { year: "numeric" as const } : {}), timeZone: "UTC" }).format(new Date(`${iso}T00:00:00Z`));
   const sameMonth = first.slice(0, 7) === last.slice(0, 7);
   const title = sameMonth ? month(first, true) : `${month(first, first.slice(0, 4) !== last.slice(0, 4))} – ${month(last, true)}`;
   const weekday = new Intl.DateTimeFormat(loc, { weekday: "narrow", timeZone: "UTC" });
@@ -208,7 +222,7 @@ export function DeliveryChoice({ s, values, choices, errors, lang, tr }: {
             {tr("buyer.field.delivery_address")}
             {sameAllowed ? <span className="b-deliv__same" data-delivery-same=""><bdi>{values.fields.billing_address}</bdi></span> : null}
             <input
-              className="b-inp b-deliv__input" id="f-delivery_address" name="delivery_address" defaultValue={values.fields.delivery_address ?? ""} autoComplete="street-address"
+              className="b-inp b-inp--free b-deliv__input" id="f-delivery_address" name="delivery_address" defaultValue={values.fields.delivery_address ?? ""} autoComplete="street-address"
               placeholder={placeholderFor(s, "delivery_address", tr)}
               {...(errors.delivery_address ? { "aria-invalid": true as const, "aria-describedby": "e-delivery_address" } : {})}
             />
@@ -232,7 +246,7 @@ export function DeliveryChoice({ s, values, choices, errors, lang, tr }: {
           <div className="b-rad b-rad--date">
             <label className="b-rad__head">
               <input type="radio" name="delivery_when" value="date" defaultChecked={values.delivery.kind === "date"} {...(errors.delivery_date ? { "aria-describedby": "e-delivery_date" } : {})} />
-              <span>{tr("buyer.delivery.choose")}<span className="b-mut" style={{ display: "block" }}>{tr("buyer.delivery.choose_hint", { date: formatDeliveryShort({ earliest: choices.first, latest: choices.first }, lang) })}</span></span>
+              <span>{tr("buyer.delivery.choose")}<span className="b-mut" style={{ display: "block" }}>{tr("buyer.delivery.choose_hint", { date: lang === "he" ? longCalendarDate(choices.first, lang) : formatDeliveryShort({ earliest: choices.first, latest: choices.first }, lang) })}</span></span>
             </label>
             <Calendar choices={choices} selected={chosen} lang={lang} tr={tr} />
             <span className="b-mut b-calnote">{offered ? `${preferredDateText(chosen, lang)}. ` : ""}{tr("buyer.delivery.preference_note")}</span>
@@ -281,7 +295,7 @@ export function Summary({ s, tr, lang, eta, validUntil }: { s: FormSnapshot; tr:
           ))}
           {s.recurring.taxMinor > 0 && !s.pricesIncludeTax ? <div className="b-row b-mut"><span>{vatLabel(s, tr)}</span><span className="b-num">{money(s.recurring.taxMinor, period)}</span></div> : null}
           <div className="b-row" style={{ fontWeight: 700 }} data-summary-monthly="">
-            <span>{tr(s.taxRateBp || s.recurring.taxMinor > 0 ? (period === "year" ? "buyer.summary.yearly_incl_vat" : "buyer.summary.monthly_incl_vat") : (period === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month"))}</span>
+            <span>{recurringLabel(s, tr, period)}</span>
             <span className="b-num">{money(s.recurring.totalMinor, period)}</span>
           </div>
         </div>

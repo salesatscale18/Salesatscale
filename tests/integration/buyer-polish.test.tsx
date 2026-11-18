@@ -175,7 +175,8 @@ describe("buyer pages after the live review", () => {
     const f = await signed("0525550706");
     const [sig] = await db.select().from(signatures).where(eq(signatures.orderFormId, f.form.id));
     const local = buyerTime(sig.signedAt, "Asia/Jerusalem", "en");
-    expect(local).toMatch(/^\d{2}:\d{2} Israel Time$/);
+    // Time zone names in sentence case (round 3, B6; lib/format.ts zonePlainName).
+    expect(local).toMatch(/^\d{2}:\d{2} Israel time$/);
     let html = await page(f.token);
     expect(html).toContain('data-signed-banner=""');
     expect(html).toContain("lucide-pen-line");

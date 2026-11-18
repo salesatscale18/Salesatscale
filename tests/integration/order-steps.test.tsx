@@ -143,7 +143,9 @@ describe("order form in three steps", () => {
     expect(html).toMatch(/Company name<span class="b-from" data-source="chat">.*From your chat<\/span>/);
     expect(html).toMatch(/Email for the invoice<span class="b-from" data-source="request">From your request<\/span>/);
     expect(tag(html, "company_id")).toContain('value=""');
-    expect(tag(html, "invoice_email")).toContain('dir="ltr"');
+    // Free text takes its direction from what is typed (round 3, A3); the company ID stays left-to-right.
+    expect(tag(html, "invoice_email")).toContain('class="b-inp b-inp--free"');
+    expect(tag(html, "company_id")).toContain('dir="ltr"');
     // Continue with the company ID missing and a bad email: back to step 2 with the errors.
     const bad = { ...company, company_id: "", invoice_email: "rina@" };
     expect(await post(f.token, 2, { ...bad, intent: "continue" })).toBe(`/f/${f.token}?lang=en&step=2&check=1`);

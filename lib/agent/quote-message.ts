@@ -56,9 +56,9 @@ export function percentText(bp: number): string {
   return `${Number((bp / 100).toFixed(2))}%`;
 }
 
-/** "24 Nov" / "24 בנוב׳" in the time zone. */
+/** "24 Nov" / "24 בנובמבר" in the time zone: Hebrew always spells the month in full (round 3, B6). */
 export function shortDate(at: Date, timezone: string, language: string): string {
-  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: "short" };
+  const opts: Intl.DateTimeFormatOptions = { day: "numeric", month: localeOf(language) === "he" ? "long" : "short" };
   try {
     return new Intl.DateTimeFormat(intlLocale(localeOf(language)), { ...opts, timeZone: timezone }).format(at);
   } catch {
@@ -81,7 +81,7 @@ export function longCalendarDate(iso: string, language: string): string {
   return longDate(new Date(`${iso}T00:00:00Z`), "UTC", language);
 }
 
-/** A calendar date (YYYY-MM-DD) as "1 Dec" / "1 בדצמ׳". */
+/** A calendar date (YYYY-MM-DD) as "1 Dec" / "1 בדצמבר". */
 export function shortCalendarDate(iso: string, language: string): string {
   return shortDate(new Date(`${iso}T00:00:00Z`), "UTC", language);
 }

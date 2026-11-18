@@ -1,8 +1,10 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { CircleCheck, FlaskConical, PenLine } from "lucide-react";
-import { eq } from "drizzle-orm";
-import { sellerAccounts, type OrderSnapshot } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { leads, sellerAccounts, type OrderSnapshot } from "@/db/schema";
+import { displaySources, legalInOrder, recurringTotalKey } from "@/lib/orders/display";
+import { isSimulatedLead } from "@/lib/simulator/rules";
 import { appDb } from "@/lib/auth/account";
 import { formatMoney } from "@/lib/domain/money";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
@@ -57,7 +59,7 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
   return (
     <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={brandVars(props.brand)}>
       <div className={props.step ? "b-page b-page--wide" : "b-page"}>
-        {fakePaymentsEnabled() && props.strip !== false ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
+        {fakePaymentsEnabled() && props.strip ? <div className="b-strip" role="note" data-test-strip="">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}><bdi>{props.seller}</bdi></b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
@@ -122,8 +124,9 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const zone = buyerZone(s, account.timezone);
   const date = (d: Date | string) => buyerDate(d, zone, lang);
   const time = (d: Date) => buyerTime(d, zone, lang);
-  const shell = (sub: string | undefined, children: ReactNode, step?: number) => (
-    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step} strip={step !== 3}>{children}</Shell>
+  // The test-payment banner only where money moves: the payment and paid pages (step 3 has its own notice).
+  const shell = (sub: string | undefined, children: ReactNode, step?: number, strip = false) => (
+    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step} strip={strip}>{children}</Shell>
   );
   const quoteRef = quoteRefText(s.quote);
   // Older snapshots have no supportContact: show nothing then.
@@ -133,7 +136,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const help = s.supportContact ? (
     <div className="b-help b-noprint" data-support="">
       <span className="b-mut">{tr("buyer.questions")}</span>
-      {support(true)}
+      {support(false)}
     </div>
   ) : null;
 
@@ -149,7 +152,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         </div>
         {n ? (
           <div style={{ margin: "0 20px", padding: 16, border: "1px solid var(--line)", borderRadius: 12, display: "flex", flexDirection: "column", gap: 8 }}>
-            <span className="b-mut">{tr("buyer.new_offer")} · <span className="b-num">{quoteRefText(n.snapshot.quote)}</span></span>
+            <span className="b-mut">{tr("buyer.new_offer")} · <bdi className="b-id">{quoteRefText(n.snapshot.quote)}</bdi></span>
             <Lines s={n.snapshot} tr={tr} lang={lang} />
             {view.state === "updated" && view.changeNote ? <span className="b-mut">{tr("buyer.what_changed", { note: view.changeNote })}</span> : null}
           </div>
@@ -201,7 +204,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             {support(true)}
           </section>
         </>
-      ));
+      ), undefined, true);
     }
     // Card needs a provider: today only the test provider exists (off when PAYMENTS_MODE=live).
     const cardOn = s.paymentMethods.card && fakePaymentsEnabled();
@@ -261,7 +264,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         <section className="b-sec b-noprint"><a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a></section>
         {help}
       </>
-    ));
+    ), undefined, true);
   }
 
   // Open: check the price again, then review and sign (canvas: BuyerOrder, BuyerPriceChanged).
@@ -311,7 +314,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
                   </>
                 ) : null}
                 <div className="b-grid3" style={{ paddingTop: 10, borderTop: "1px solid var(--line)", fontWeight: 700 }}>
-                  <span>{charge === "one_time" ? tr("buyer.due_today") : tr(p === "year" ? "buyer.recurring_total.year" : "buyer.recurring_total.month")}</span>
+                  <span>{charge === "one_time" ? tr("buyer.due_today") : tr(recurringTotalKey({ pricesIncludeTax: check.pricesIncludeTax, taxRateBp: s.taxRateBp, taxMinor: n.taxMinor }, p))}</span>
                   <span className={`b-num ${before !== now ? "b-old" : "b-mut"}`} style={{ fontWeight: 400 }}>{money(s, before)}</span>
                   <span className="b-num">{per(now, p)}</span>
                 </div>
@@ -344,6 +347,12 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   // Back to the chat only while its link still works (an expired link would open the "expired" page).
   const chatLink = step === 1 ? await chatLinkStatus(appDb, form.accountId, form.leadId, now) : null;
   const chatToken = chatLink && !chatLink.expired ? chatLink.token : null;
+  // Step 2's source tags follow one rule for every form, also one frozen before "From your request" existed.
+  const [lead] = step === 2
+    ? await appDb.select({ fullName: leads.fullName, company: leads.company, email: leads.email, origin: leads.origin, buyerRef: leads.buyerRef, phone: leads.phone })
+      .from(leads).where(and(eq(leads.id, form.leadId), eq(leads.accountId, form.accountId)))
+    : [];
+  const sources = step === 2 ? displaySources(s, lead ? { ...lead, simulated: isSimulatedLead(lead) } : null) : undefined;
   let errors: StepErrors = {};
   if (checking && step === 2) errors = companyErrors(s, values);
   if (checking && step === 3) {
@@ -361,6 +370,8 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
     <>
       {check.status === "unavailable" ? <div className="b-note b-note--warn" role="alert" style={{ margin: 20 }}><Alert color="var(--warn)" /><span>{tr("buyer.unavailable")}</span></div> : null}
       <div className={step > 1 ? "b-layout" : "b-layout b-layout--solo"}>
+        {/* The form column holds the "Questions?" footer, so on desktop it lines up with the form, not the page. */}
+        <div className="b-col">
         <form id={STEP_FORM} action={stepAction} className="b-main" noValidate data-order-step={step}>
           {hidden}
           <input type="hidden" name="step" value={step} />
@@ -398,7 +409,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             </>
           ) : step === 2 ? (
             <>
-              <CompanyStep s={s} values={values} errors={errors} tr={tr} />
+              <CompanyStep s={s} values={values} errors={errors} tr={tr} sources={sources} />
               <div className="b-cta">
                 <SubmitButton name="intent" value="continue" label={tr("buyer.continue")} pendingLabel={tr("buyer.continue")} />
                 <button type="submit" name="intent" value="goto:1" className="b-btn b-btn--2">{tr("buyer.back")}</button>
@@ -414,7 +425,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
               <DeliveryChoice s={s} values={values} choices={choices} errors={errors} lang={lang} tr={tr} />
               <section className="b-sec b-terms" aria-labelledby="tm-h" style={{ gap: 0 }}>
                 <h2 id="tm-h" className="b-h2" style={{ paddingBottom: 8 }}>{tr("buyer.terms")}</h2>
-                {s.legal.map((l) => (
+                {legalInOrder(s.legal).map((l) => (
                   <details key={l.key}>
                     <summary><span><bdi>{legalTitle(l, titles)}</bdi> <span className="b-mut">{tr("buyer.version", { version: l.version })}</span></span><span aria-hidden="true">›</span></summary>
                     <pre>{l.body}</pre>
@@ -455,9 +466,10 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             </>
           )}
         </form>
+        {help}
+        </div>
         {step > 1 ? <Summary s={s} tr={tr} lang={lang} eta={choices?.eta ?? null} validUntil={date(s.validUntil)} /> : null}
       </div>
-      {help}
     </>
   ), step);
 }
