@@ -6,7 +6,7 @@ import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { conversations, dealStates, leads, messages, toolCalls, type Conversation, type DealState, type LeadStatus } from "@/db/schema";
 import { conversationMessages, getDealState, threadOf } from "./service";
-import { checkScenario, SCENARIOS, type ScenarioCheck, type ScenarioRun } from "./scenarios";
+import { checkScenario, SCENARIOS, type Scenario, type ScenarioCheck, type ScenarioRun } from "./scenarios";
 
 function runOf(
   conv: Conversation, thread: ReturnType<typeof threadOf>, deal: Pick<DealState, "fields"> | null, leadStatus: LeadStatus | undefined,
@@ -36,7 +36,8 @@ export async function conversationScenarioCheck(db: Db, accountId: string, conv:
   return checkScenario(conv.scenario, await scenarioRun(db, accountId, conv));
 }
 
-export type ScenarioSummary = { scenarioId: string; conversationId: string | null; check: ScenarioCheck | null };
+/** lastAt: when the latest test chat for the scenario last changed (the test lab's "Last test chat"); null = not run. */
+export type ScenarioSummary = { scenarioId: string; conversationId: string | null; lastAt: Date | null; check: ScenarioCheck | null };
 
 /**
  * The latest test chat per scenario for one agent version, with its check result. Not run → null.
@@ -53,7 +54,7 @@ export async function latestScenarioResults(db: Db, accountId: string, versionId
   const known = new Set(SCENARIOS.map((s) => s.id));
   for (const r of rows) if (r.scenario && known.has(r.scenario) && !latest.has(r.scenario)) latest.set(r.scenario, r);
   const convs = [...latest.values()];
-  if (convs.length === 0) return SCENARIOS.map((s) => ({ scenarioId: s.id, conversationId: null, check: null }));
+  if (convs.length === 0) return SCENARIOS.map((s) => ({ scenarioId: s.id, conversationId: null, lastAt: null, check: null }));
 
   const convIds = convs.map((c) => c.id);
   const leadIds = convs.map((c) => c.leadId);
@@ -80,9 +81,25 @@ export async function latestScenarioResults(db: Db, accountId: string, versionId
 
   return SCENARIOS.map((s) => {
     const conv = latest.get(s.id);
-    if (!conv) return { scenarioId: s.id, conversationId: null, check: null };
+    if (!conv) return { scenarioId: s.id, conversationId: null, lastAt: null, check: null };
     const thread = threadOf(msgsBy.get(conv.id) ?? [], callsBy.get(conv.id) ?? []);
     const run = runOf(conv, thread, dealBy.get(conv.leadId) ?? null, leadBy.get(conv.leadId));
-    return { scenarioId: s.id, conversationId: conv.id, check: checkScenario(s.id, run) };
+    return { scenarioId: s.id, conversationId: conv.id, lastAt: conv.updatedAt, check: checkScenario(s.id, run) };
   });
+}
+
+export type ScenarioRow = { scenario: Scenario; tested: boolean; conversationId: string | null; lastAt: Date | null };
+
+/**
+ * The test lab's scenarios table for one version: each scenario (in SCENARIOS
+ * order) with whether it has a test chat on that version and the latest one.
+ * Neutral on purpose: the seller plays the buyer and judges the result, so
+ * the automatic check is not shown as pass or fail here.
+ */
+export function scenarioTable(scenarios: readonly Scenario[], results: readonly ScenarioSummary[]): { rows: ScenarioRow[]; tested: number; total: number } {
+  const rows = scenarios.map((scenario) => {
+    const r = results.find((x) => x.scenarioId === scenario.id);
+    return { scenario, tested: Boolean(r?.conversationId), conversationId: r?.conversationId ?? null, lastAt: r?.lastAt ?? null };
+  });
+  return { rows, tested: rows.filter((r) => r.tested).length, total: rows.length };
 }

@@ -14,15 +14,16 @@ import { seesPlatformDetails } from "@/lib/auth/display";
 import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { conversationView } from "@/lib/agent/conversation";
-import { SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenarios";
-import { conversationScenarioCheck, latestScenarioResults } from "@/lib/agent/scenario-results";
+import { SCENARIOS, scenarioById } from "@/lib/agent/scenarios";
+import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
-import { type IconName } from "@/components/sas/icon";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
+import { AutoSubmit } from "@/components/sas/list-kit-client";
+import { ListTable } from "@/components/sas/list-kit";
 import { ConversationControls, deliveryLabel, windowTimerProps } from "../../leads/[leadId]/conversation";
 import { WindowTimer } from "@/components/sas/record";
 import { conversationWindow } from "@/lib/channels/whatsapp";
@@ -37,21 +38,15 @@ const LANG_NAME: Record<string, string> = { en: "English", he: "Hebrew" };
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 
 /**
- * Scenario results have no status word in the design system, so they are
- * plain pill-styled chips with an icon (neutral / success / danger).
+ * Setup · Versions and test lab (P4.4; board: TestLabNew). New test chat in
+ * one row on top, the open chat with its tool trace, and the scenarios table
+ * for the version picked under "Results for" (applies on change): what each
+ * scenario checks, whether it has a test chat on that version, the last one
+ * and Run. No automatic pass or fail: the seller plays the buyer and judges.
+ * Run starts one test chat (the opening is put in the composer; nothing is
+ * sent until the seller clicks Send), so there is no run-all. Versions,
+ * Recent test chats and Test on WhatsApp sit on the side.
  */
-const RESULT_LOOK: Record<ScenarioResult | "not_run", { cls: string; icon: IconName }> = {
-  passed: { cls: "sas-pill sas-pill--success", icon: "check-circle" },
-  not_yet: { cls: "sas-pill", icon: "clock" },
-  failed: { cls: "sas-pill sas-pill--danger", icon: "x-circle" },
-  not_run: { cls: "sas-pill", icon: "circle-dot" },
-};
-function ResultChip({ result }: { result: ScenarioResult | "not_run" }) {
-  const look = RESULT_LOOK[result];
-  return <span className={look.cls} data-scenario-result={result}><Icon name={look.icon} />{t(`lab.scenario_result.${result}`)}</span>;
-}
-
-/** Setup · Versions and test lab (P4.4): versions with publish/rollback, a test chat with the draft and its tool trace. */
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
@@ -93,6 +88,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const convVersion = conv ? versions.find((v) => v.id === conv.agentVersionId) : undefined;
   const error = one(sp.error);
   const locale = conv && isLocale(conv.language) ? conv.language : "en";
+  const table = scenarioTable(scenarios, results);
+  const versionLabel = (v: (typeof versions)[number]) => `${t("lab.version", { version: v.version })} · ${t(`status.agent_version.${v.status}` as MessageKey)}`;
+  const scenarioLabel = (s: (typeof scenarios)[number]) => `${s.title}${s.language !== "en" ? ` (${LANG_NAME[s.language] ?? s.language})` : ""}`;
+  const now = new Date();
 
   return (
     <main className="sas-shell__content">
@@ -120,6 +119,34 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
 
       <div className="sas-split">
         <div className="sas-split__main">
+          <section className="sas-panel" aria-labelledby="lab-new-h">
+            <form action={startChatAction} className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }} data-new-chat="">
+              <h2 id="lab-new-h" className="sas-heading" style={{ flex: "0 0 auto", alignSelf: "center", marginInlineEnd: 4 }}>{t("lab.new_chat")}</h2>
+              <input type="hidden" name="slug" value={account.slug} />
+              <div className="sas-input-group">
+                <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
+                <select className="sas-select" id="lab-scenario" name="scenario" defaultValue="">
+                  <option value="">{t("lab.scenario_none")}</option>
+                  {scenarios.map((s) => <option key={s.id} value={s.id}>{scenarioLabel(s)}</option>)}
+                </select>
+              </div>
+              <div className="sas-input-group">
+                <label className="sas-input-label" htmlFor="lab-lang">{t("lab.language")}</label>
+                <select className="sas-select" id="lab-lang" name="language" defaultValue={account.languages[0]}>
+                  {account.languages.map((l) => <option key={l} value={l}>{LANG_NAME[l] ?? l}</option>)}
+                </select>
+              </div>
+              <div className="sas-input-group">
+                <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
+                <select className="sas-select" id="lab-ver" name="versionId" defaultValue={draft?.id ?? ""}>
+                  {draft ? null : <option value="">{t("lab.new_draft")}</option>}
+                  {versions.map((v) => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+                </select>
+              </div>
+              <Button type="submit" variant="primary"><Icon name="plus" />{t("lab.start")}</Button>
+            </form>
+          </section>
+
           {conv && convVersion ? (
             <section className="sas-panel" aria-labelledby="lab-chat-h" style={{ overflow: "hidden" }}>
               <div className="sas-panel__body" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
@@ -179,11 +206,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               </ChatThread>
               {scenario && scenarioCheck ? (
                 <div className="sas-stack-2" role="status" aria-label={t("lab.scenario_check", { title: scenario.title })} style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                    <strong className="sas-small">{t("lab.scenario_check", { title: scenario.title })}</strong>
-                    <ResultChip result={scenarioCheck.result} />
-                  </div>
-                  <span className="sas-small">{scenarioCheck.reason} {t("lab.scenario_expected", { text: scenario.expected })}</span>
+                  <strong className="sas-small">{t("lab.scenario_check", { title: scenario.title })}</strong>
+                  <span className="sas-small">{t("lab.scenario_expected", { text: scenario.expected })}</span>
+                  <span className="sas-small" data-scenario-seen="">{t("lab.scenario_seen", { text: scenarioCheck.reason })} {t("lab.scenario_judge")}</span>
                 </div>
               ) : null}
               {conv.status === "closed" ? (
@@ -212,50 +237,71 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             </section>
           ) : null}
 
-          <section className="sas-panel" aria-labelledby="lab-new-h">
-            <form action={startChatAction} className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }}>
-              <h2 id="lab-new-h" className="sas-heading" style={{ flexBasis: "100%" }}>{t("lab.new_chat")}</h2>
-              <input type="hidden" name="slug" value={account.slug} />
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
-                <select className="sas-select" id="lab-scenario" name="scenario" defaultValue="">
-                  <option value="">{t("lab.scenario_none")}</option>
-                  {scenarios.map((s) => <option key={s.id} value={s.id}>{s.title}{s.language !== "en" ? ` (${LANG_NAME[s.language] ?? s.language})` : ""}</option>)}
-                </select>
+          <section className="sas-stack-4" aria-labelledby="lab-sc-h" data-scenarios="">
+            <div className="sas-listbar__head">
+              <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 240px", minWidth: 0 }}>
+                <h2 id="lab-sc-h" className="sas-heading">{t("lab.scenarios")}</h2>
+                {resultsVersion ? (
+                  <span className="sas-small" style={{ fontVariantNumeric: "tabular-nums" }} data-scenarios-tested="">{t("lab.scenarios_tested", { n: table.tested, total: table.total, version: resultsVersion.version })}</span>
+                ) : null}
               </div>
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor="lab-lang">{t("lab.language")}</label>
-                <select className="sas-select" id="lab-lang" name="language" defaultValue={account.languages[0]}>
-                  {account.languages.map((l) => <option key={l} value={l}>{LANG_NAME[l] ?? l}</option>)}
-                </select>
-              </div>
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
-                <select className="sas-select" id="lab-ver" name="versionId" defaultValue={draft?.id ?? ""}>
-                  {draft ? null : <option value="">{t("lab.new_draft")}</option>}
-                  {versions.map((v) => <option key={v.id} value={v.id}>{t("lab.version", { version: v.version })} · {t(`status.agent_version.${v.status}` as MessageKey)}</option>)}
-                </select>
-              </div>
-              <Button type="submit" variant="primary"><Icon name="plus" />{t("lab.start")}</Button>
-            </form>
-          </section>
-
-          <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-wa-h">
-            <h2 id="lab-wa-h" className="sas-heading">{t("lab.wa.title")}</h2>
-            {testerNumbers.length === 0 ? (
-              <span className="sas-small">{t("lab.wa.none")} <a href={`${base}/settings?section=whatsapp`}>{t("lab.wa.setup")}</a></span>
-            ) : (
-              <>
-                <span className="sas-small">{t(twilioConfig() ? "lab.wa.how" : "lab.wa.not_configured")}</span>
-                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
-                  {testerNumbers.map((c) => (
-                    <li key={c.id} className="sas-small">
-                      {t("lab.wa.pair", { testers: c.testerNumbers.join(", "), number: c.senderNumber })}
-                    </li>
-                  ))}
-                </ul>
-              </>
-            )}
+              {resultsVersion && versions.length > 1 ? (
+                <form method="get" action={lab} className="sas-listbar__form" role="search" aria-label={t("lab.results_for")}>
+                  {conv ? <input type="hidden" name="c" value={conv.id} /> : null}
+                  <label className="sas-listbar__select" style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span className="sas-small">{t("lab.results_for")}</span>
+                    <select className="sas-select" name="v" defaultValue={resultsVersion.id} data-results-for="">
+                      {versions.map((v) => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+                    </select>
+                  </label>
+                  <button type="submit" className={`${buttonClass("secondary", "sm")} sas-listbar__apply`}>{t("lab.scenarios_show")}</button>
+                  <AutoSubmit />
+                </form>
+              ) : resultsVersion ? (
+                <span className="sas-small">{t("lab.results_for")}: {versionLabel(resultsVersion)}</span>
+              ) : null}
+            </div>
+            <ListTable caption={t("lab.scenarios")} foot={<span className="sas-small">{t("lab.scenarios_note")}</span>}>
+              <thead>
+                <tr>
+                  <th scope="col">{t("lab.col.scenario")}</th>
+                  <th scope="col">{t("lab.col.on_version")}</th>
+                  <th scope="col">{t("lab.col.last_chat")}</th>
+                  <th scope="col"><span className="sas-sr">{t("lab.run")}</span></th>
+                </tr>
+              </thead>
+              <tbody>
+                {table.rows.map((r) => (
+                  <tr key={r.scenario.id} data-scenario={r.scenario.id} data-current={conv?.id && conv.id === r.conversationId ? "" : undefined}>
+                    <td style={{ minWidth: 220, whiteSpace: "normal" }}>
+                      <strong style={{ display: "block" }}>{scenarioLabel(r.scenario)}</strong>
+                      <span className="sas-small" style={{ display: "block" }}>{r.scenario.expected}</span>
+                    </td>
+                    <td data-label={t("lab.col.on_version")}>
+                      <span className="sas-pill" data-scenario-tested={r.tested ? "tested" : "not_run"}>
+                        <Icon name={r.tested ? "check" : "circle-dot"} />{r.tested ? t("lab.tested") : t("lab.scenario_result.not_run")}
+                      </span>
+                    </td>
+                    <td data-label={t("lab.col.last_chat")} className="sas-when">
+                      {r.conversationId && r.lastAt ? (
+                        <a href={`${lab}?c=${r.conversationId}${resultsVersion ? `&v=${resultsVersion.id}` : ""}`} data-last-chat="">
+                          <time dateTime={r.lastAt.toISOString()} title={`${local(r.lastAt)} · ${zoneTitle(r.lastAt, tz)}`}>{timeAgo(r.lastAt, now, tz)}</time>
+                        </a>
+                      ) : <span className="sas-small">—</span>}
+                    </td>
+                    <td data-label="" className="sas-td-actions">
+                      <form action={startChatAction}>
+                        <input type="hidden" name="slug" value={account.slug} />
+                        <input type="hidden" name="scenario" value={r.scenario.id} />
+                        <input type="hidden" name="language" value={r.scenario.language} />
+                        {resultsVersion ? <input type="hidden" name="versionId" value={resultsVersion.id} /> : null}
+                        <button type="submit" className={buttonClass("secondary", "sm")} aria-label={t("lab.run_label", { title: r.scenario.title })} data-run="">{t("lab.run")}</button>
+                      </form>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </ListTable>
           </section>
         </div>
 
@@ -272,47 +318,6 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   </div>
                 ) : null}
                 {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
-              </div>
-            </section>
-          ) : null}
-
-          {resultsVersion ? (
-            <section className="sas-panel" aria-labelledby="lab-sc-h">
-              <div className="sas-panel__body sas-stack-4">
-                <div className="sas-page-head" style={{ gap: 8 }}>
-                  <h2 id="lab-sc-h" className="sas-heading">{t("lab.scenarios")}</h2>
-                  <span className="sas-num sas-small sas-page-head__actions">
-                    {results.filter((r) => r.check?.result === "passed" && scenarios.some((s) => s.id === r.scenarioId)).length} / {scenarios.length}
-                  </span>
-                </div>
-                <span className="sas-small">{t("lab.scenarios_for", { version: resultsVersion.version })}</span>
-                {versions.length > 1 ? (
-                  <form method="get" action={lab} style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-                    {conv ? <input type="hidden" name="c" value={conv.id} /> : null}
-                    <div className="sas-input-group">
-                      <label className="sas-input-label" htmlFor="lab-sc-v">{t("lab.scenarios_version")}</label>
-                      <select className="sas-select" id="lab-sc-v" name="v" defaultValue={resultsVersion.id}>
-                        {versions.map((v) => <option key={v.id} value={v.id}>{t("lab.version", { version: v.version })} · {t(`status.agent_version.${v.status}` as MessageKey)}</option>)}
-                      </select>
-                    </div>
-                    <Button type="submit" variant="ghost" size="sm">{t("lab.scenarios_show")}</Button>
-                  </form>
-                ) : null}
-                <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                  {scenarios.map((s) => {
-                    const r = results.find((x) => x.scenarioId === s.id);
-                    return (
-                      <li key={s.id} className="sas-stack-2" style={{ gap: 2 }}>
-                        <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>
-                          <ResultChip result={r?.check?.result ?? "not_run"} />
-                          <span style={{ flex: "1 1 0", minWidth: 0 }}>{r?.conversationId ? <a href={`${lab}?c=${r.conversationId}`}>{s.title}</a> : s.title}</span>
-                        </div>
-                        {r?.check && r.check.result !== "passed" ? <span className="sas-small">{r.check.reason}</span> : null}
-                      </li>
-                    );
-                  })}
-                </ul>
-                <span className="sas-small">{t("lab.scenarios_manual")}</span>
               </div>
             </section>
           ) : null}
@@ -351,15 +356,35 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   const v = versions.find((x) => x.id === c.agentVersionId);
                   return (
                     <li key={c.id}>
-                      <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined}>
-                        {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}{c.channel === "whatsapp" ? ` · ${t("conv.channel.whatsapp")}` : ""}
-                      </a>{" "}
-                      <time className="sas-small" dateTime={c.updatedAt.toISOString()} title={`${local(c.updatedAt)} · ${zoneTitle(c.updatedAt, tz)}`}>{timeAgo(c.updatedAt, new Date(), tz)}</time>
+                      <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined} style={{ display: "block", fontWeight: c.id === conv?.id ? 600 : undefined }} data-chat-name="">
+                        {scenarioById(c.scenario)?.title ?? t("lab.free_chat")}
+                      </a>
+                      <span className="sas-small" style={{ display: "block" }}>
+                        {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}{c.channel === "whatsapp" ? ` · ${t("conv.channel.whatsapp")}` : ""} ·{" "}
+                        <time dateTime={c.updatedAt.toISOString()} title={`${local(c.updatedAt)} · ${zoneTitle(c.updatedAt, tz)}`}>{timeAgo(c.updatedAt, now, tz)}</time>
+                      </span>
                     </li>
                   );
                 })}
               </ul>
             </div>
+          </section>
+          <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-wa-h">
+            <h2 id="lab-wa-h" className="sas-heading">{t("lab.wa.title")}</h2>
+            {testerNumbers.length === 0 ? (
+              <span className="sas-small">{t("lab.wa.none")} <a href={`${base}/settings?section=whatsapp`}>{t("lab.wa.setup")}</a></span>
+            ) : (
+              <>
+                <span className="sas-small">{t(twilioConfig() ? "lab.wa.how" : "lab.wa.not_configured")}</span>
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {testerNumbers.map((c) => (
+                    <li key={c.id} className="sas-small">
+                      {t("lab.wa.pair", { testers: c.testerNumbers.join(", "), number: c.senderNumber })}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
           </section>
         </aside>
       </div>
