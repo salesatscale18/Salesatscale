@@ -5,13 +5,15 @@ import { personName } from "@/lib/auth/display";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
 import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn, relativeTime } from "@/lib/format";
-import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, quoteTimezones, type QuoteTab } from "@/lib/quotes/service";
+import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, QUOTE_SORT_DEFAULT, QUOTE_SORT_KEYS, quoteTimezones, type QuoteSortKey, type QuoteTab } from "@/lib/quotes/service";
+import { parseSort, type TableSort } from "@/lib/domain/table-sort";
+import { SortHeader } from "@/components/sas/sort-header";
 import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
 import { catalogItems, catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
-import { docStatusByQuote, formsForQuote, linkFor, listOrders, orderForQuote, orderLabel } from "@/lib/orders/service";
+import { docStatusByQuote, formsForQuote, linkFor, listOrders, ORDER_SORT_DEFAULT, ORDER_SORT_KEYS, orderForQuote, orderLabel, type OrderSortKey } from "@/lib/orders/service";
 import { CopyButton } from "@/components/sas/copy-button";
 import { estimateDelivery, formatDeliveryShort } from "@/lib/delivery/eta";
 import { frozenPlan } from "@/lib/delivery/plan";
@@ -53,15 +55,34 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const tabRaw = one(sp.tab);
   const tab: QuoteTab | "orders" = tabRaw === "approval" ? "approval" : tabRaw === "orders" ? "orders" : "quotes";
   const quoteId = one(sp.quote);
+  // Search (quote or order number, lead name, company) and sortable headings: in the URL, applied on the server.
+  const q = one(sp.q).trim().slice(0, 100) || undefined;
+  const quoteSort = parseSort(one(sp.sort), one(sp.dir), QUOTE_SORT_KEYS, QUOTE_SORT_DEFAULT);
+  const orderSort = parseSort(one(sp.sort), one(sp.dir), ORDER_SORT_KEYS, ORDER_SORT_DEFAULT);
+  const sortOf = tab === "orders" ? orderSort : quoteSort;
+  const isDefault = (s: TableSort<string>) => s.key === (tab === "orders" ? ORDER_SORT_DEFAULT : QUOTE_SORT_DEFAULT).key && s.dir === (tab === "orders" ? ORDER_SORT_DEFAULT : QUOTE_SORT_DEFAULT).dir;
+  /** This tab's URL with its search and sort, plus a patch (quote: the open panel). */
+  const listHref = (patch: { quote?: string; sort?: TableSort<string> } = {}) => {
+    const p = new URLSearchParams();
+    if (tab !== "quotes") p.set("tab", tab);
+    if (q) p.set("q", q);
+    const s = patch.sort ?? sortOf;
+    if (!isDefault(s)) { p.set("sort", s.key); p.set("dir", s.dir); }
+    if (patch.quote) p.set("quote", patch.quote);
+    const x = p.toString();
+    return x ? `${base}?${x}` : base;
+  };
+  const quoteSortHref = (s: TableSort<QuoteSortKey>) => listHref({ sort: s });
+  const orderSortHref = (s: TableSort<OrderSortKey>) => listHref({ sort: s });
   // Round trip 1–2: lists, counts and the selected quote all start together;
   // the doc statuses chain onto the quote list only.
-  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, tab);
+  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, tab, { q, sort: quoteSort });
   const [rows, docs, total, awaiting, orderRows, orderCount, detail] = await Promise.all([
     quotesP,
     quotesP.then((r) => docStatusByQuote(appDb, account.id, r.map((x) => x.quote.id))),
     countQuotes(appDb, account.id),
     countAwaitingApproval(appDb, account.id),
-    tab === "orders" ? listOrders(appDb, account.id) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
+    tab === "orders" ? listOrders(appDb, account.id, { q, sort: orderSort }) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
     countOrders(account.id),
     UUID.test(quoteId) ? getQuote(appDb, account.id, quoteId) : Promise.resolve(null),
   ]);
@@ -136,6 +157,11 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const formSender = latestForm?.createdByUserId ? nameOf(latestForm.createdByUserId) : latestForm ? t("orders.detail.created_by.agent") : null;
   const formStatus = latestForm ? (latestForm.status !== "signed" && latestForm.expiresAt.getTime() <= now.getTime() ? "link_expired" : latestForm.status) : null;
   const sendError = one(sp.send);
+  // The quote version the order was signed on (its form).
+  const signedVersion = signed ? (() => {
+    const vid = forms.find((f) => f.id === signed.order.orderFormId)?.quoteVersionId;
+    return detail?.versions.find(({ version }) => version.id === vid)?.version.version ?? null;
+  })() : null;
 
   return (
     <div className={detail ? "sas-with-panel" : undefined}>
@@ -149,27 +175,41 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               {t("orders.tab.approval")} {awaiting ? <span className="sas-pill sas-pill--warning" style={{ height: 20 }}>{awaiting}</span> : <span className="sas-num">0</span>}
             </a>
           </nav>
+          <form method="get" action={base} className="sas-filters" role="search">
+            {tab !== "quotes" ? <input type="hidden" name="tab" value={tab} /> : null}
+            {!isDefault(sortOf) ? <><input type="hidden" name="sort" value={sortOf.key} /><input type="hidden" name="dir" value={sortOf.dir} /></> : null}
+            <label className="sas-search" style={{ maxWidth: 420 }}>
+              <Icon name="search" />
+              <span className="sas-sr">{t("orders.search")}</span>
+              <input type="search" name="q" defaultValue={q ?? ""} placeholder={t("orders.search")} />
+            </label>
+          </form>
         </header>
 
         {tab === "orders" ? (
           orderRows.length === 0 ? (
             <section className="sas-panel sas-empty">
-              <span className="sas-empty__icon sas-empty__icon--start"><Icon name="file-text" /></span>
-              <span className="sas-small">{t("orders.orders_soon")}</span>
+              <span className="sas-empty__icon sas-empty__icon--start"><Icon name={q ? "search" : "file-text"} /></span>
+              <span className="sas-small">{q ? t("orders.empty.search") : t("orders.orders_soon")}</span>
+              {q ? <a className={buttonClass("secondary", "sm")} href={tabHref("orders")}>{t("leads.filter.clear")}</a> : null}
             </section>
           ) : (
             <section className="sas-panel" style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
                 <table className="sas-table sas-table--stack" style={{ minWidth: 760 }}>
                   <thead><tr>
-                    <th scope="col">{t("orders.col.order")}</th><th scope="col">{t("orders.col.lead")}</th>
-                    <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
-                    <th scope="col">{t("orders.col.payment")}</th><th scope="col">{t("orders.col.signed")}</th><th scope="col">{t("orders.col.delivery")}</th>
+                    <SortHeader label={t("orders.col.order")} column="order" sort={orderSort} href={orderSortHref} firstDir="desc" />
+                    <SortHeader label={t("orders.col.lead")} column="lead" sort={orderSort} href={orderSortHref} />
+                    <SortHeader label={t("orders.col.one_time")} column="one_time" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end" }} />
+                    <SortHeader label={t("orders.col.monthly")} column="monthly" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end" }} />
+                    <SortHeader label={t("orders.col.payment")} column="payment" sort={orderSort} href={orderSortHref} />
+                    <SortHeader label={t("orders.col.signed")} column="signed" sort={orderSort} href={orderSortHref} firstDir="desc" />
+                    <th scope="col">{t("orders.col.delivery")}</th>
                   </tr></thead>
                   <tbody>
                     {orderRows.map(({ order, lead }) => (
-                      <tr key={order.id}>
-                        <td><a className="sas-num" href={`${base}?tab=orders&quote=${order.quoteId}`}>{orderLabel(account.tradeName, order.number)}</a></td>
+                      <tr key={order.id} className={order.quoteId === quoteId ? "sas-row--selected" : undefined}>
+                        <td><a className="sas-num" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
                         <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
@@ -185,30 +225,34 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           )
         ) : rows.length === 0 ? (
           <section className="sas-panel sas-empty">
-            <span className="sas-empty__icon sas-empty__icon--start"><Icon name="file-text" /></span>
-            <strong>{tab === "approval" ? t("orders.empty.approval") : t("orders.empty.title")}</strong>
-            {tab === "quotes" ? <span className="sas-small">{t("orders.empty.body")}</span> : null}
-            {tab === "quotes" ? <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads`}>{t("orders.empty.go_leads")}</a> : null}
+            <span className="sas-empty__icon sas-empty__icon--start"><Icon name={q ? "search" : "file-text"} /></span>
+            <strong>{q ? t("orders.empty.search") : tab === "approval" ? t("orders.empty.approval") : t("orders.empty.title")}</strong>
+            {q ? <a className={buttonClass("secondary", "sm")} href={tabHref(tab)}>{t("leads.filter.clear")}</a> : null}
+            {tab === "quotes" && !q ? <span className="sas-small">{t("orders.empty.body")}</span> : null}
+            {tab === "quotes" && !q ? <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads`}>{t("orders.empty.go_leads")}</a> : null}
           </section>
         ) : (
           <section className="sas-panel" style={{ overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               <table className="sas-table sas-table--stack" style={{ minWidth: 720 }}>
                 <thead><tr>
-                  <th scope="col">{t("orders.col.quote")}</th><th scope="col">{t("orders.col.lead")}</th>
-                  <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
-                  <th scope="col">{t("orders.col.status")}</th><th scope="col">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
+                  <SortHeader label={t("orders.col.quote")} column="quote" sort={quoteSort} href={quoteSortHref} firstDir="desc" />
+                  <SortHeader label={t("orders.col.lead")} column="lead" sort={quoteSort} href={quoteSortHref} />
+                  <SortHeader label={t("orders.col.one_time")} column="one_time" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end" }} />
+                  <SortHeader label={t("orders.col.monthly")} column="monthly" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end" }} />
+                  <SortHeader label={t("orders.col.status")} column="status" sort={quoteSort} href={quoteSortHref} />
+                  <th scope="col">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
                 </tr></thead>
                 <tbody>
                   {rows.map(({ quote, version, lead }) => {
                     const toPrice = version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId;
                     return (
                       <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
-                        <td><a className="sas-num" href={`${base}?${tab === "quotes" ? "" : `tab=${tab}&`}quote=${quote.id}`}>Q-{quote.number} v{quote.currentVersion}</a></td>
+                        <td><a className="sas-num" href={listHref({ quote: quote.id })}>Q-{quote.number} v{quote.currentVersion}</a></td>
                         <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
-                        <td data-label={t("orders.col.status")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id))} /></td>
+                        <td data-label={t("orders.col.status")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id), !!docs.get(quote.id)?.payment)} /></td>
                         <td data-label={t("orders.col.form")}>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
                         <td data-label={t("orders.col.payment")}>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
                       </tr>
@@ -225,8 +269,18 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         <aside className="sas-side-panel sas-sheet" aria-labelledby="q-h">
           <div className="sas-page-head sas-sheet__head">
             <div className="sas-stack-2" style={{ gap: 4, flex: 1 }}>
-              <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
-              <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
+              {/* A signed or paid order: headed by the order, the quote it came from, no validity (round-3 review B1). */}
+              {signed ? (
+                <>
+                  <span className="sas-small" data-testid="detail-from">{detail.lead.company ?? detail.lead.fullName} · <span className="sas-num">{t("orders.detail.from_quote", { number: detail.quote.number, version: signedVersion ?? cur.version.version })}</span></span>
+                  <h2 id="q-h" className="sas-title">{t("orders.detail.order_head", { order: orderLabel(account.tradeName, signed.order.number) })}</h2>
+                </>
+              ) : (
+                <>
+                  <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
+                  <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
+                </>
+              )}
               <span className="sas-small">
                 {priceList
                   ? t("orders.detail.created_list", { who: creator, list: priceList.name, version: priceList.version })
@@ -234,9 +288,13 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                 {market ? ` · ${t("orders.detail.market", { market: market.name })}` : ""}
               </span>
             </div>
-            <a className={buttonClass("ghost", "sm")} href={tab === "quotes" ? base : `${base}?tab=${tab}`} aria-label={t("lead.form.close")}><Icon name="x" /></a>
+            <a className={buttonClass("ghost", "sm")} href={listHref()} aria-label={t("lead.form.close")}><Icon name="x" /></a>
           </div>
-          <div data-testid="detail-status"><StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now, tzFor(detail.quote.id))} /></div>
+          <div data-testid="detail-status" className="sas-detail-status">
+            {signed
+              ? signed.order.paymentStatus === "paid" ? <StatusPill object="payment" state="paid" /> : <StatusPill object="order_form" state="signed" />
+              : <StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now, tzFor(detail.quote.id))} />}
+          </div>
           {sp.approved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.approved_ok")}</span></div> : null}
           {sp.approve ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("orders.detail.approve_failed")}</span></div> : null}
 
@@ -250,7 +308,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                   <div key={l.id} style={{ display: "contents" }} data-charge={l.chargeType}>
                     <dt style={{ color: "var(--ink)" }} data-line-name="">
                       {l.qty} × {chatName(l) ?? l.name}
-                      <div className="sas-small">{chatName(l) ? <>{l.name} <span className="sas-num">{l.sku}</span></> : <Chip>{l.sku}</Chip>}</div>
+                      {/* The internal name only when it differs from the chat name; else the code alone. */}
+                      <div className="sas-small" data-line-sub="">{chatName(l) && chatName(l)!.toLowerCase() !== l.name.trim().toLowerCase() ? <>{l.name} <span className="sas-num">{l.sku}</span></> : chatName(l) ? <span className="sas-num">{l.sku}</span> : <Chip>{l.sku}</Chip>}</div>
                       <div className="sas-small">{t(period ? `quote.charge.${period}` : "quote.charge.one_time")} · {t(`quote.price_source.${l.priceSource as "list" | "tier" | "custom" | "not_charged"}`)}</div>
                     </dt>
                     <dd className="sas-num">{l.lineTotalMinor === null ? t("quote.to_price") : dm(l.lineTotalMinor, period)}</dd>
@@ -285,6 +344,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                         ) : null}
                         {v.recurringTotalMinor ? (
                           <>
+                            {/* With a one-time part above, a sub-heading before the second Subtotal. */}
+                            {v.oneTimeTotalMinor ? <div style={{ display: "contents" }} data-total-row="rec-heading"><dt className="sas-kv__sub">{t(recurringPeriod === "year" ? "orders.detail.yearly" : "orders.detail.monthly")}</dt></div> : null}
                             {rec.rows.map((r, i) => row(r, `rec-${i}`))}
                             <dt className="sas-kv__total">{t(recurringPeriod === "year" ? (vat ? "quote.yearly_total_incl_vat" : "quote.yearly_total") : (vat ? "quote.monthly_total_incl_vat" : "quote.monthly_total"))}</dt><dd className="sas-num sas-kv__total" data-total="recurring">{dm(v.recurringTotalMinor, recurringPeriod)}</dd>
                             {rec.afterTotal ? row(rec.afterTotal, "rec-after") : null}
@@ -389,8 +450,9 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             ) : null}
           </section>
 
-          {detail.quote.status !== "cancelled" ? (
-            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+          {/* Once signed the quote is an order: no new version, no cancelling. */}
+          {detail.quote.status !== "cancelled" && !signed ? (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }} data-testid="quote-actions">
               <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads/${detail.quote.leadId}/quote?from=${detail.quote.id}`}>{t("orders.detail.new_version")}</a>
               <form action={cancelQuoteAction}>
                 <input type="hidden" name="slug" value={account.slug} />

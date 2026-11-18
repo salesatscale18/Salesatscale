@@ -21,3 +21,8 @@ export function SimulatedChip() {
 export function WhatsAppChip() {
   return <ChannelPill icon="message-circle" label={t("conv.channel.whatsapp")} />;
 }
+
+/** "Test lab chat" (flask): a chat with the draft agent on a hidden test lead. The Simulated chip's look, one term (round-3 review A8). */
+export function TestLabChip() {
+  return <span className="sas-channel-pill" style={PILL} data-test-chat=""><Icon name="flask-conical" />{t("inbox.channel.test")}</span>;
+}

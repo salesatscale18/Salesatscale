@@ -283,12 +283,18 @@ describe("inbox, templates and the order-form link on WhatsApp", () => {
       const held = await mkConv("Yossi Amar", "+972501000003", { status: "human", holder: u.id, last: [{ actor: "buyer", at: ago(10), body: "Hello" }, { actor: "human", at: ago(1), body: "Happy to help", userId: u.id }] });
       const agent = await mkConv("Rina Cohen", "+972501000004", { last: [{ actor: "buyer", at: ago(26 * 60), body: "Price?" }, { actor: "agent", at: ago(25 * 60), body: "It is 590." }] });
       const closed = await mkConv("Guy Ohana", "+972501000005", { status: "closed", last: [{ actor: "buyer", at: ago(600), body: "STOP" }] });
+      // A won lead whose chat the agent still answers in: Closed, not Agent handling (round-3 B2).
+      const won = await mkConv("Eli Won", "+972501000007", { last: [{ actor: "system", at: ago(700), body: "Payment received." }] });
+      await d.update(leads).set({ status: "won" }).where(eq(leads.id, won.leadId));
       await mkConv("Stranger", "+972501000006", { accountId: b, last: [{ actor: "buyer", at: ago(1), body: "other account" }] });
       const lab = await startTestConversation(d, a, u.id, { language: "en" });
 
       const all = await listInbox(d, a, { now });
-      expect(all.counts).toEqual({ all: 4, needs_you: 2, agent: 1, human: 1, closed: 1, test: 1 });
-      expect(all.rows.map((r) => r.conversationId)).toEqual([held.id, waiting.id, handoff.id, agent.id]);
+      // All: every real conversation, grouped; won and lost leads sit under Closed with ended chats.
+      expect(all.counts).toEqual({ all: 6, needs_you: 2, agent: 1, human: 1, closed: 2, test: 1 });
+      expect(all.rows.map((r) => r.conversationId)).toEqual([held.id, waiting.id, handoff.id, closed.id, won.id, agent.id]);
+      expect(all.rows.find((r) => r.conversationId === won.id)).toMatchObject({ group: "closed" });
+      expect(all.rows.find((r) => r.conversationId === closed.id)).toMatchObject({ group: "closed" });
       const byId = Object.fromEntries(all.rows.map((r) => [r.conversationId, r]));
       expect(byId[handoff.id]).toMatchObject({ group: "needs_you", lastActor: "agent", lastBody: "Sure, a person will reply.", lead: { fullName: "Maya Ben-David" } });
       expect(byId[waiting.id]).toMatchObject({ group: "needs_you", lastActor: "buyer" });
@@ -300,7 +306,7 @@ describe("inbox, templates and the order-form link on WhatsApp", () => {
       expect((await listInbox(d, a, { filter: "needs_you", now })).rows.map((r) => r.conversationId).sort()).toEqual([handoff.id, waiting.id].sort());
       expect((await listInbox(d, a, { filter: "human", now })).rows.map((r) => r.conversationId)).toEqual([held.id]);
       expect((await listInbox(d, a, { filter: "agent", now })).rows.map((r) => r.conversationId)).toEqual([agent.id]);
-      expect((await listInbox(d, a, { filter: "closed", now })).rows.map((r) => r.conversationId)).toEqual([closed.id]);
+      expect((await listInbox(d, a, { filter: "closed", now })).rows.map((r) => r.conversationId)).toEqual([closed.id, won.id]);
       // Test-lab chats show only under Test chats.
       expect(all.rows.some((r) => r.isTest)).toBe(false);
       expect((await listInbox(d, a, { filter: "test", now })).rows.map((r) => r.conversationId)).toEqual([lab!.conversationId]);

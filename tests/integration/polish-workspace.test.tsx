@@ -200,7 +200,9 @@ describe("Polish-2+5: seller workspace", () => {
       expect(html).toContain("data-sim-compact");
       expect(html).toMatch(/Simulated buyer<\/h2>.*Open buyer chat.*Copy link.*Reset link/s);
       expect(html).not.toContain("makes the agent send its opening message");
-      expect(html).toContain("Quote, then order form.");
+      // The quote is with the buyer: the next step comes from the stage, not the agent's earlier "Quote, then order form." (round-3 A2).
+      expect(html).not.toContain("Quote, then order form.");
+      expect(html).toMatch(/data-testid="next-step"[\s\S]*?Waiting for \S+ to accept the quote\. Then the agent sends the order form\./);
       expect(html).toMatch(/data-testid="unknown-group"[\s\S]*Order form details: 3 not known yet/);
       expect(html).not.toContain('id="lm-h"');
       expect(html).toContain('data-testid="lead-market"');
@@ -232,9 +234,9 @@ describe("Polish-2+5: seller workspace", () => {
 
     it("quotes: Status column, chat name first, no zero discount, Sent pill inline", async () => {
       const list = await page(OrdersPage(props(account.slug)));
-      expect(list).toMatch(/<th scope="col">Status<\/th><th scope="col">Order form<\/th>/);
+      expect(list).toMatch(/<th scope="col" aria-sort="none" data-sort-col="status"><a class="sas-sort"[^>]*>Status<[\s\S]*?<\/th><th scope="col">Order form<\/th>/);
       const detail = await page(OrdersPage(props(account.slug, { quote: ids.quote })));
-      expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small">Site gateway <span class="sas-num">GW-10<\/span>/);
+      expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-num">GW-10<\/span>/);
       expect(detail).not.toMatch(/>Discount</);
       expect(detail).toContain('data-testid="detail-status"');
     });

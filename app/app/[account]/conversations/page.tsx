@@ -1,10 +1,9 @@
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
-import { Banner, DealStateFields, WindowTimer } from "@/components/sas/record";
+import { Banner, WindowTimer } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { nameInitials } from "@/lib/auth/display";
 import { conversationView } from "@/lib/agent/conversation";
-import { currentPlaybook, getDealState } from "@/lib/agent/service";
 import { approvedTemplates, conversationWindow } from "@/lib/channels/whatsapp";
 import { renderTemplate } from "@/lib/channels/rules";
 import { INBOX_FILTERS, inboxConversation, latestHandoff, listInbox, parseInboxFilter, type InboxGroup, type InboxList, type InboxRow } from "@/lib/conversations/inbox";
@@ -15,8 +14,9 @@ import { ConversationPanel, windowTimerProps } from "../leads/[leadId]/conversat
 import { sendTemplateAction } from "./actions";
 import { AutoRefresh } from "./auto-refresh";
 import { ScrollThreadToEnd } from "./scroll-end";
-import { asSentence } from "@/lib/format";
-import { SimulatedChip, WhatsAppChip } from "../leads/simulated-chip";
+import { SimulatedChip, TestLabChip, WhatsAppChip } from "../leads/simulated-chip";
+import { loadDealPane } from "@/lib/leads/deal-pane";
+import { DealStatePane } from "../leads/[leadId]/deal-pane";
 import { activeChatToken } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
@@ -82,16 +82,16 @@ export default async function ConversationsPage({ params, searchParams }: { para
       const { conv, lead } = selected!;
       // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on: the 24-hour window and template-only composer.
       const whatsapp = conv.channel === "whatsapp" || (conv.channel === SIMULATOR_CHANNEL && account.simulateWhatsappRules);
-      const [view, deal, playbook, chatWindow, templates, handoff, chatToken] = await Promise.all([
+      const [view, pane, chatWindow, templates, handoff, chatToken] = await Promise.all([
         conversationView(appDb, account.id, conv),
-        getDealState(appDb, account.id, lead.id),
-        currentPlaybook(appDb, account.id),
+        // The lead page's deal pane (lib/leads/deal-pane.ts): verified order details, grouped unknowns, the stage-aware next step.
+        loadDealPane(appDb, account.id, lead, account.tradeName),
         whatsapp && conv.status !== "closed" ? conversationWindow(appDb, account.id, conv.id, now) : Promise.resolve(null),
         whatsapp ? approvedTemplates(appDb, account.id) : Promise.resolve([]),
         conv.status === "human" ? latestHandoff(appDb, account.id, lead.id) : Promise.resolve(null),
         conv.channel === SIMULATOR_CHANNEL ? activeChatToken(appDb, account.id, lead.id) : Promise.resolve(null),
       ]);
-      return { view, deal, playbook, chatWindow, templates, handoff, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
+      return { view, pane, chatWindow, templates, handoff, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
     })()
     : null;
 
@@ -162,14 +162,15 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <ul className="sas-list">
                     {items.map((r) => {
                       const holding = r.group === "needs_you" || r.group === "human";
+                      const ended = r.group === "closed";
                       return (
                         <li key={r.conversationId}>
                           <a
-                            className={`sas-inbox__row${r.lastActor === "buyer" && r.status !== "closed" ? " sas-inbox__row--unread" : ""}`}
+                            className={`sas-inbox__row${r.lastActor === "buyer" && !ended ? " sas-inbox__row--unread" : ""}`}
                             href={`${qs({ c: r.conversationId })}#thread`}
                             aria-current={r.conversationId === selectedId ? "page" : undefined}
                           >
-                            <Avatar actor={r.status === "closed" ? "buyer" : holding ? "human" : "agent"} initials={nameInitials(r.lead.fullName)} />
+                            <Avatar actor={ended ? "buyer" : holding ? "human" : "agent"} initials={nameInitials(r.lead.fullName)} />
                             <span className="sas-inbox__row-main">
                               <span className="sas-inbox__row-top">
                                 <span className="sas-inbox__name">{r.lead.fullName}{r.lead.company ? <span className="sas-small"> · {r.lead.company}</span> : null}</span>
@@ -179,8 +180,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                               <span className="sas-inbox__meta">
                                 {r.group === "needs_you" ? <span className="sas-inbox__badge"><Icon name="user" />{r.takenOverByUserId ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff")}</span> : null}
                                 <StatusPill object="lead" state={r.lead.status} />
-                                {r.isTest ? null : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : null}
-                                {!r.isTest && (r.channel === SIMULATOR_CHANNEL || r.channel === "whatsapp") ? null : r.isTest ? <TestChatChip /> : <span className="sas-chip">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
+                                {r.isTest ? <TestLabChip /> : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : <span className="sas-chip">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
                                 {r.marketName || homeMarket ? <span className="sas-small" data-market="">{r.marketName || homeMarket}</span> : null}
                                 {r.window ? <WindowTimer {...windowTimerProps(r.window, now)} /> : null}
                               </span>
@@ -218,7 +218,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
                     <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <strong>{selected.lead.fullName}{selected.lead.company ? ` · ${selected.lead.company}` : ""}</strong>
-                      {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : selected.conv.isTest ? <TestChatChip /> : null}
+                      {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : selected.conv.isTest ? <TestLabChip /> : null}
                     </span>
                     <span className="sas-small">
                       {[selected.lead.buyerRef, selected.marketName || homeMarket, t(`lang.${selected.lead.language as "en" | "he"}`)].filter(Boolean).join(" · ")}
@@ -291,12 +291,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                     ) : null}
                     <section className="sas-stack-2" aria-labelledby="deal-h">
                       <h3 id="deal-h" className="sas-group-label" style={{ margin: 0, padding: 0 }}>{t("inbox.deal")}</h3>
-                      {!thread.playbook || thread.playbook.fields.length === 0 ? (
-                        <p className="sas-small" style={{ margin: 0 }}>{t(thread.playbook ? "lead.card.learn_none" : "lead.card.learn_pending")}</p>
-                      ) : (
-                        <DealStateFields fields={thread.playbook.fields.map((f) => ({ key: f.key, label: f.label, value: thread.deal?.fields[f.key]?.value, provenance: thread.deal?.fields[f.key]?.provenance }))} />
-                      )}
-                      {thread.deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label" style={{ padding: 0 }}>{t("lead.card.next_step")}</span><span>{asSentence(thread.deal.nextStep)}</span></div> : null}
+                      <DealStatePane pane={thread.pane} />
                       {selected.conv.isTest ? null : <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads/${selected.lead.id}`} style={{ alignSelf: "flex-start" }}><Icon name="arrow-up-right" />{t("inbox.open_lead")}</a>}
                     </section>
                   </aside>
@@ -308,9 +303,4 @@ export default async function ConversationsPage({ params, searchParams }: { para
       )}
     </main>
   );
-}
-
-/** One term and one look for test chats: "Test chat" with the flask. */
-function TestChatChip() {
-  return <span className="sas-chip" data-test-chat=""><Icon name="flask-conical" />{t("inbox.channel.test")}</span>;
 }

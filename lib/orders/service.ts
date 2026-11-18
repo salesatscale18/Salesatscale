@@ -7,7 +7,9 @@
  * person confirms a bank transfer. Snapshots and signatures are never updated.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, count, desc, eq, inArray, max, sql } from "drizzle-orm";
+import { and, count, desc, eq, inArray, max, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -28,7 +30,7 @@ import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { priceWithList } from "@/lib/pricing/engine";
 import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
 import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesOf } from "@/lib/quotes/pricing";
-import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
+import { createQuoteVersion, docSearchSql, getQuote } from "@/lib/quotes/service";
 import { orderFormPrefillWithSources, signedDealValues, type PrefillKey, type PrefillSource } from "./prefill";
 import { getOrderFormSettings } from "./settings";
 import { isSimulatedLead } from "@/lib/simulator/rules";
@@ -596,10 +598,26 @@ export async function orderForQuote(db: Db, accountId: string, quoteId: string) 
   return o ?? null;
 }
 
-/** The Orders tab: newest 200 orders of real (non-test) leads. */
-export async function listOrders(db: Db, accountId: string) {
+/** Orders list columns that sort on the server; default: newest first. */
+export const ORDER_SORT_KEYS = ["order", "lead", "one_time", "monthly", "payment", "signed"] as const;
+export type OrderSortKey = (typeof ORDER_SORT_KEYS)[number];
+export const ORDER_SORT_DEFAULT: TableSort<OrderSortKey> = { key: "signed", dir: "desc" };
+
+/** Orders of real leads; search by order number, lead name or company (lib/quotes/service.ts docSearchSql). */
+export async function listOrders(db: Db, accountId: string, opts: { q?: string; sort?: TableSort<OrderSortKey> } = {}) {
+  const sort = opts.sort ?? ORDER_SORT_DEFAULT;
+  const col: Record<OrderSortKey, SQL | AnyPgColumn> = {
+    order: orders.number,
+    lead: sql`lower(coalesce(${leads.company}, ${leads.fullName}))`,
+    one_time: orders.amountDueMinor,
+    monthly: orders.recurringMinor,
+    payment: orders.paymentStatus,
+    signed: orders.createdAt,
+  };
   return db.select({ order: orders, lead: leads }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
-    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false))).orderBy(desc(orders.createdAt)).limit(200);
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), docSearchSql(opts.q, orders.number) ?? undefined))
+    .orderBy(sort.dir === "asc" ? sql`${col[sort.key]} asc nulls last` : sql`${col[sort.key]} desc nulls last`, desc(orders.createdAt))
+    .limit(200);
 }
 
 export async function ordersForLead(db: Db, accountId: string, leadId: string) {

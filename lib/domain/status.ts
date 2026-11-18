@@ -30,6 +30,8 @@ export const STATUS = {
     expired: { tone: "neutral", icon: "calendar-x" },
     replaced: { tone: "neutral", icon: "file-text" },
     cancelled: { tone: "neutral", icon: "file-x" },
+    // Shown only (no stored status): a signed or paid order came from this quote.
+    ordered: { tone: "success", icon: "check-circle" },
   },
   order_form: {
     sent: { tone: "neutral", icon: "send" },

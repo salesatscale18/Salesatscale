@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
-import { DealStateFields, Timeline, type TimelineItem } from "@/components/sas/record";
+import { Timeline, type TimelineItem } from "@/components/sas/record";
 import { currentPlaybook, getDealState } from "@/lib/agent/service";
 import { setLeadMarketAction, takeOverAction, verifyFieldAction } from "../actions";
 import { listMarkets } from "@/lib/markets/service";
@@ -9,7 +9,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { nameInitials, personName } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
 import { maskPhone } from "@/lib/leads/rules";
-import { asSentence, formatDateTimeIn, formatShortDateTimeIn } from "@/lib/format";
+import { formatDateTimeIn, formatShortDateTimeIn } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
 import { ConversationPanel } from "./conversation";
@@ -18,7 +18,9 @@ import { WhatsAppStart } from "./whatsapp-start";
 import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { displayQuoteStatus, quotesForLead, quoteTimezones } from "@/lib/quotes/service";
-import { leadOrdersWithSignature, orderLabel, withSignedValues } from "@/lib/orders/service";
+import { leadOrdersWithSignature, orderLabel } from "@/lib/orders/service";
+import { dealPaneView } from "@/lib/leads/deal-pane";
+import { DealStatePane } from "./deal-pane";
 import { formatMoney } from "@/lib/domain/money";
 import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
@@ -119,12 +121,13 @@ export default async function LeadCardPage({
   const orderById = new Map(leadOrders.map(({ order }) => [order.id, orderView(order)]));
   const latestOrder = leadOrders[0] ?? null;
   const paidOrder: PaidOrder | null = latestOrder && latestOrder.order.paymentStatus === "paid" ? orderView(latestOrder.order) : null;
-  // A signed form fills the company and signer details (verified); orders signed before that was stored are read from the signature.
-  const dealFields = withSignedValues(deal?.fields ?? {}, latestOrder, (playbook?.fields ?? []).map((f) => f.key));
-  // After the sale the pre-sale next step is done: the order's state replaces it.
-  const nextStep = latestOrder
-    ? t(latestOrder.order.paymentStatus === "paid" ? "lead.card.next_after_paid" : "lead.card.next_after_signed", { order: orderView(latestOrder.order).label })
-    : deal?.nextStep ? asSentence(deal.nextStep) : null;
+  // The deal pane, one source with Conversations (lib/leads/deal-pane.ts): a signed form fills the company and
+  // signer details (verified); after the sale the order's state is the next step; once the quote or the form is
+  // with the buyer the stage says what happens next (the agent's free text only before that).
+  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName });
+  const nextStep = pane.nextStep;
+  // Quotes an order came from show "Ordered".
+  const orderedQuotes = new Set(leadOrders.map(({ order }) => order.quoteId));
 
   const tz = account.timezone;
   /** People by name, or "You" for the viewer (never the email). */
@@ -161,12 +164,8 @@ export default async function LeadCardPage({
     };
   });
 
-  const allFields = (playbook?.fields ?? []).map((f) => ({ key: f.key, label: f.label, stage: f.stage, value: dealFields[f.key]?.value, provenance: dealFields[f.key]?.provenance }));
-  const unknown = (f: { value?: string | null }) => !String(f.value ?? "").trim();
-  const laterUnknown = allFields.filter((f) => f.stage === "before_order_form" && unknown(f)).map(({ stage: _s, ...f }) => f);
-  const shownFields = allFields.filter((f) => !(f.stage === "before_order_form" && unknown(f))).map(({ stage: _s, ...f }) => f);
   // Deal fields not known yet (phone summary above the tabs).
-  const missingCount = (playbook?.fields ?? []).filter((f) => !String(dealFields[f.key]?.value ?? "").trim()).length;
+  const missingCount = pane.missingCount;
 
   // An open conversation is taken over from the header (not under the chat).
   const takeOverHere = !!conversation && conversation.conversation.status === "open" && lead.status !== "opted_out";
@@ -184,7 +183,8 @@ export default async function LeadCardPage({
       {sp.existing === "1" ? (
         <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lead.card.existing")}</span></div>
       ) : null}
-      <section className="sas-panel sas-lead">
+      {/* The deal column sticks under the header (sas.css); the market line makes the header taller. */}
+      <section className="sas-panel sas-lead" style={marketList.length > 1 ? ({ "--lead-head-h": "106px" } as React.CSSProperties) : undefined}>
         <header className="sas-lead__head">
           <Avatar actor="buyer" initials={nameInitials(lead.fullName)} />
           <div className="sas-stack-2" style={{ gap: 2, flex: 1, minWidth: 0 }}>
@@ -291,7 +291,7 @@ export default async function LeadCardPage({
                       <a className="sas-list__row" href={`/app/${account.slug}/orders?quote=${quote.id}`}>
                         <span className="sas-num">Q-{quote.number} v{quote.currentVersion}</span>
                         <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : quoteTotals(version)}</span>
-                        <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id))} />
+                        <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id), orderedQuotes.has(quote.id))} />
                       </a>
                       {older.length ? (
                         <details style={{ padding: "0 16px 8px" }}>
@@ -338,25 +338,29 @@ export default async function LeadCardPage({
             />
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
             {sp.verified ? <div className="sas-alert sas-alert--success" role="status" style={{ margin: "0 16px 12px" }}><Icon name="check-circle" /><span>{t("lead.card.verified_saved")}</span></div> : null}
-            {!playbook || playbook.fields.length === 0 ? (
-              <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t(playbook ? "lead.card.learn_none" : "lead.card.learn_pending")}</p>
-            ) : (
-              <div className="sas-stack-4" style={{ padding: "0 16px 16px" }}>
-                <DealStateFields fields={shownFields} />
-                {/* Order-form details not known yet are grouped in one line that opens. */}
-                {laterUnknown.length ? (
-                  <details className="sas-lead__unknown" data-testid="unknown-group">
-                    <summary>{t("lead.card.unknown_group", { count: laterUnknown.length })}</summary>
-                    <DealStateFields fields={laterUnknown} />
-                  </details>
-                ) : null}
-                {deal?.objections.length ? (
-                  <div className="sas-stack-2">
-                    <span className="sas-group-label">{t("lead.card.objections")}</span>
-                    <ul style={{ margin: 0, paddingInlineStart: 18 }}>{deal.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
+            <div className="sas-stack-4" style={{ padding: "0 16px 16px" }}>
+              {/* The consent line sits right under Next step (round-3 review B3). */}
+              <DealStatePane
+                pane={pane}
+                afterNextStep={
+                  <div className="sas-lead__consent sas-lead__consent--inline" data-testid="consent">
+                    <Icon name="shield-check" />
+                    <div className="sas-stack-2" style={{ flex: 1 }}>
+                    <span>
+                      {consent
+                        ? t("lead.card.consent", {
+                            source: consent.consent.source,
+                            date: formatDateTimeIn(consent.consent.capturedAt, tz),
+                            who: consent.recordedBy ? who(consent.recordedBy) : t("lead.origin.webhook"),
+                          })
+                        : t("lead.card.consent_none")}
+                    </span>
+                    {lead.status !== "opted_out" ? <OptOutButton slug={account.slug} leadId={lead.id} /> : null}
+                    </div>
                   </div>
-                ) : null}
-                {nextStep ? <div className="sas-stack-2" data-testid="next-step"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{nextStep}</span></div> : null}
+                }
+              />
+              {playbook && playbook.fields.length ? (
                 <details>
                   <summary className="sas-small">{t("lead.card.verify")}</summary>
                   <form action={verifyFieldAction} className="sas-stack-2" style={{ paddingBlockStart: 8 }}>
@@ -369,22 +373,7 @@ export default async function LeadCardPage({
                     <div><button type="submit" className={buttonClass("secondary", "sm")}><Icon name="shield-check" />{t("lead.card.verify")}</button></div>
                   </form>
                 </details>
-              </div>
-            )}
-            <div className="sas-lead__consent">
-              <Icon name="shield-check" />
-              <div className="sas-stack-2" style={{ flex: 1 }}>
-              <span>
-                {consent
-                  ? t("lead.card.consent", {
-                      source: consent.consent.source,
-                      date: formatDateTimeIn(consent.consent.capturedAt, tz),
-                      who: consent.recordedBy ? who(consent.recordedBy) : t("lead.origin.webhook"),
-                    })
-                  : t("lead.card.consent_none")}
-              </span>
-              {lead.status !== "opted_out" ? <OptOutButton slug={account.slug} leadId={lead.id} /> : null}
-              </div>
+              ) : null}
             </div>
           </aside>
         </div>

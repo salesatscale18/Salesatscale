@@ -8,7 +8,7 @@ import { t, type MessageKey } from "@/lib/i18n";
  */
 const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   lead: [["New", "neutral"], ["Waiting for reply", "neutral"], ["Agent handling", "agent"], ["Human handling", "human"], ["Meeting booked", "success"], ["Won", "success"], ["Lost", "neutral"], ["Opted out", "danger"]],
-  quote: [["Draft", "neutral"], ["Awaiting approval", "warning"], ["Sent", "neutral"], ["Expires today", "warning"], ["Expired", "neutral"], ["Replaced", "neutral"], ["Cancelled", "neutral"]],
+  quote: [["Draft", "neutral"], ["Awaiting approval", "warning"], ["Sent", "neutral"], ["Expires today", "warning"], ["Expired", "neutral"], ["Replaced", "neutral"], ["Cancelled", "neutral"], ["Ordered", "success"]],
   order_form: [["Sent", "neutral"], ["Opened", "neutral"], ["Signed", "success"], ["Link expired", "neutral"]],
   payment: [["Not started", "neutral"], ["Pending", "warning"], ["Paid", "success"], ["Failed", "danger"], ["Refunded", "neutral"], ["Bank transfer expected", "warning"]],
   agent_version: [["Draft", "neutral"], ["Testing", "warning"], ["Live", "success"], ["Retired", "neutral"]],

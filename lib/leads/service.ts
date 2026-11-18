@@ -6,7 +6,8 @@
  * (webhook). Integration tests run these against PGlite.
  */
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
-import { alias } from "drizzle-orm/pg-core";
+import { alias, type AnyPgColumn as AnyColumn } from "drizzle-orm/pg-core";
+import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -196,7 +197,14 @@ export type LeadFilters = {
   language?: Locale;
   sinceDays?: number;
   limit?: number;
+  /** Column sort (Leads list headings); default: latest activity first. */
+  sort?: TableSort<LeadSortKey>;
 };
+
+/** Leads list columns that sort on the server (the stage is worked out per lead, so it does not). */
+export const LEAD_SORT_KEYS = ["lead", "status", "market", "owner", "source", "activity"] as const;
+export type LeadSortKey = (typeof LEAD_SORT_KEYS)[number];
+export const LEAD_SORT_DEFAULT: TableSort<LeadSortKey> = { key: "activity", dir: "desc" };
 
 function escapeLike(v: string) {
   return v.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -222,6 +230,18 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
 export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, now = new Date()) {
   const owner = alias(users, "owner");
   const where = filterWhere(accountId, f, now);
+  const sort = f.sort ?? LEAD_SORT_DEFAULT;
+  const by = (col: SQL | AnyColumn) => (sort.dir === "asc" ? sql`${col} asc nulls last` : sql`${col} desc nulls last`);
+  const sortCol: Record<LeadSortKey, SQL | AnyColumn> = {
+    lead: sql`lower(${leads.fullName})`,
+    status: leads.status,
+    // Leads without a market belong to the home market: sorted with an empty name (first ascending).
+    market: sql`lower(coalesce(${markets.name}, ''))`,
+    // The agent (no owner) sorts as an empty name.
+    owner: sql`lower(coalesce(nullif(trim(concat_ws(' ', ${owner.firstName}, ${owner.lastName})), ''), ${owner.email}, ''))`,
+    source: sql`lower(coalesce(${leads.sourceLabel}, ${leads.origin}::text))`,
+    activity: leads.lastActivityAt,
+  };
   const [rows, [{ total }]] = await Promise.all([
     db
       .select({ lead: leads, owner, market: { id: markets.id, name: markets.name } })
@@ -229,7 +249,7 @@ export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, 
       .leftJoin(owner, eq(owner.id, leads.ownerUserId))
       .leftJoin(markets, and(eq(markets.id, leads.marketId), eq(markets.accountId, leads.accountId)))
       .where(where)
-      .orderBy(desc(leads.lastActivityAt), asc(leads.id))
+      .orderBy(by(sortCol[sort.key]), desc(leads.lastActivityAt), asc(leads.id))
       .limit(Math.min(f.limit ?? 50, 500)),
     db.select({ total: count() }).from(leads).where(where),
   ]);

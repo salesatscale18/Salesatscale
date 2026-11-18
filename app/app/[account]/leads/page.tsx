@@ -2,7 +2,10 @@ import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { requireAccount, appDb } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
-import { countLeadsByView, LEAD_VIEWS, listLeads, listSourceLabels, type LeadFilters, type LeadView } from "@/lib/leads/service";
+import { countLeadsByView, LEAD_SORT_DEFAULT, LEAD_SORT_KEYS, LEAD_VIEWS, listLeads, listSourceLabels, type LeadFilters, type LeadSortKey, type LeadView } from "@/lib/leads/service";
+import { parseSort, type TableSort } from "@/lib/domain/table-sort";
+import { SortHeader } from "@/components/sas/sort-header";
+import { AutoSubmit } from "@/components/sas/auto-submit";
 import { relativeTime } from "@/lib/format";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { listMarkets } from "@/lib/markets/service";
@@ -31,6 +34,9 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   const view: LeadView = (LEAD_VIEWS as readonly string[]).includes(viewRaw) ? (viewRaw as LeadView) : "all";
   const lang = one(sp.language);
   const days = Number(one(sp.days));
+  // Sortable headings: the sort is in the URL and runs on the server (lib/leads/service.ts listLeads).
+  const sort = parseSort(one(sp.sort), one(sp.dir), LEAD_SORT_KEYS, LEAD_SORT_DEFAULT);
+  const sortParams = (s: TableSort<LeadSortKey>) => (s.key === LEAD_SORT_DEFAULT.key && s.dir === LEAD_SORT_DEFAULT.dir ? { sort: undefined, dir: undefined } : { sort: s.key, dir: s.dir });
   const filters: LeadFilters = {
     view,
     q: one(sp.q).slice(0, 100) || undefined,
@@ -38,6 +44,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     language: isLocale(lang) ? lang : undefined,
     sinceDays: (PERIODS as readonly number[]).includes(days) ? days : undefined,
     limit: Math.min(Math.max(Number(one(sp.limit)) || 50, 50), 500),
+    sort,
   };
   const stageRaw = one(sp.stage);
   const stageFilter = (STAGE_STEPS as readonly string[]).includes(stageRaw) ? (stageRaw as StageStep) : undefined;
@@ -50,12 +57,14 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     const p = new URLSearchParams();
     const cur: Record<string, string | undefined> = {
       view: view === "all" ? undefined : view, q: filters.q, source: filters.sourceLabel, language: filters.language,
-      days: filters.sinceDays ? String(filters.sinceDays) : undefined, stage: stageFilter,
+      days: filters.sinceDays ? String(filters.sinceDays) : undefined, stage: stageFilter, ...sortParams(sort),
     };
     for (const [k, v] of Object.entries({ ...cur, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
     return s ? `${base}?${s}` : base;
   };
+
+  const sortHref = (s: TableSort<LeadSortKey>) => qs(sortParams(s));
 
   let data: Awaited<ReturnType<typeof listLeads>> | null = null;
   let stages = new Map<string, LeadStageView>();
@@ -131,7 +140,10 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             </nav>
 
             <form method="get" action={base} className="sas-filters sas-leads-filters">
+              {/* A changed filter applies at once; without JS the Apply button stays (noscript). */}
+              <AutoSubmit />
               {view !== "all" ? <input type="hidden" name="view" value={view} /> : null}
+              {sortParams(sort).sort ? <><input type="hidden" name="sort" value={sort.key} /><input type="hidden" name="dir" value={sort.dir} /></> : null}
               {/* Phone (sas.css): the selects sit behind a Filters button (a checkbox, no JS); search stays. */}
               <input type="checkbox" id="lf-open" className="sas-filters__toggle" defaultChecked={activeFilters > 0 || undefined} />
               <label htmlFor="lf-open" className={`${buttonClass("secondary", "sm")} sas-filters__button`}>
@@ -146,31 +158,31 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                 <span className="sas-sr">{t("leads.filter.source")}</span>
                 <select className="sas-select" name="source" defaultValue={filters.sourceLabel ?? ""}>
                   <option value="">{t("leads.filter.source")}: {t("leads.filter.any")}</option>
-                  {sources.map((s) => <option key={s} value={s}>{s}</option>)}
+                  {sources.map((s) => <option key={s} value={s}>{t("leads.filter.prefix", { label: t("leads.filter.source"), value: s })}</option>)}
                 </select>
               </label>
               <label className="sas-filter">
                 <span className="sas-sr">{t("leads.filter.language")}</span>
                 <select className="sas-select" name="language" defaultValue={filters.language ?? ""}>
                   <option value="">{t("leads.filter.language")}: {t("leads.filter.any")}</option>
-                  {(account.languages as Locale[]).map((l) => <option key={l} value={l}>{t(`lang.${l}`)}</option>)}
+                  {(account.languages as Locale[]).map((l) => <option key={l} value={l}>{t("leads.filter.prefix", { label: t("leads.filter.language"), value: t(`lang.${l}`) })}</option>)}
                 </select>
               </label>
               <label className="sas-filter">
                 <span className="sas-sr">{t("leads.filter.stage")}</span>
                 <select className="sas-select" name="stage" defaultValue={stageFilter ?? ""}>
                   <option value="">{t("leads.filter.stage")}: {t("leads.filter.any")}</option>
-                  {STAGE_STEPS.map((s) => <option key={s} value={s}>{t(STEP_LABEL[s])}</option>)}
+                  {STAGE_STEPS.map((s) => <option key={s} value={s}>{t("leads.filter.prefix", { label: t("leads.filter.stage"), value: t(STEP_LABEL[s]) })}</option>)}
                 </select>
               </label>
               <label className="sas-filter">
                 <span className="sas-sr">{t("leads.filter.period")}</span>
                 <select className="sas-select" name="days" defaultValue={filters.sinceDays ? String(filters.sinceDays) : ""}>
                   <option value="">{t("leads.filter.period")}: {t("leads.filter.any")}</option>
-                  {PERIODS.map((d) => <option key={d} value={d}>{t("leads.filter.days", { days: d })}</option>)}
+                  {PERIODS.map((d) => <option key={d} value={d}>{t("leads.filter.prefix", { label: t("leads.filter.period"), value: t("leads.filter.days", { days: d }) })}</option>)}
                 </select>
               </label>
-              <button type="submit" className={`${buttonClass("secondary", "sm")} sas-filters__apply`}>{t("leads.filter.apply")}</button>
+              <noscript><button type="submit" className={`${buttonClass("secondary", "sm")} sas-filters__apply`}>{t("leads.filter.apply")}</button></noscript>
             </form>
 
             {data.total === 0 ? (
@@ -185,13 +197,13 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                   <table className="sas-table sas-table--stack" style={{ minWidth: 940 }}>
                     <thead>
                       <tr>
-                        <th scope="col">{t("leads.col.lead")}</th>
-                        <th scope="col">{t("leads.col.status")}</th>
+                        <SortHeader label={t("leads.col.lead")} column="lead" sort={sort} href={sortHref} />
+                        <SortHeader label={t("leads.col.status")} column="status" sort={sort} href={sortHref} />
                         <th scope="col">{t("leads.col.stage")}</th>
-                        <th scope="col">{t("leads.col.market")}</th>
-                        <th scope="col">{t("leads.col.owner")}</th>
-                        <th scope="col">{t("leads.col.source")}</th>
-                        <th scope="col" style={{ textAlign: "end" }}>{t("leads.col.activity")}</th>
+                        <SortHeader label={t("leads.col.market")} column="market" sort={sort} href={sortHref} />
+                        <SortHeader label={t("leads.col.owner")} column="owner" sort={sort} href={sortHref} />
+                        <SortHeader label={t("leads.col.source")} column="source" sort={sort} href={sortHref} />
+                        <SortHeader label={t("leads.col.activity")} column="activity" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} />
                       </tr>
                     </thead>
                     <tbody>

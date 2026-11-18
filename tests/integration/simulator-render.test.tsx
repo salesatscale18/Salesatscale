@@ -251,7 +251,7 @@ describe("Buyer simulator screens", () => {
     expect(html).toContain("Open buyer chat");
     expect(html).toContain(`/chat/${token}`);
     expect(html).toContain("SIM-0001");
-    expect(html).toContain("Simulated chat. Replies go to the buyer chat page");
+    expect(html).toContain("Simulated buyer. Replies go to the buyer chat page");
   });
 
   it("overview leaves simulated buyers out unless Include simulated is on", async () => {

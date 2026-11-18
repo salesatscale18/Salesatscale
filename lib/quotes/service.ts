@@ -6,7 +6,9 @@
  * written. Multi-row writes are atomic (db/atomic.ts).
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, inArray, max, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, ilike, inArray, max, or, sql, type SQL } from "drizzle-orm";
+import type { AnyPgColumn } from "drizzle-orm/pg-core";
+import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { localDateIso } from "@/lib/format";
@@ -440,8 +442,10 @@ export async function markQuoteSent(db: Db, accountId: string, quoteId: string):
 /**
  * Display status: "Expires today" / "Expired" are derived from the valid-until
  * date, "today" in the quote's time zone (lib/markets/settings.ts marketTimezone; UTC when not given).
+ * A quote a signed or paid order came from shows "Ordered" (`ordered`), whatever its stored status or date.
  */
-export function displayQuoteStatus(status: QuoteStatus, validUntil: Date, now = new Date(), timezone?: string | null): "draft" | "awaiting_approval" | "sent" | "expires_today" | "expired" | "replaced" | "cancelled" {
+export function displayQuoteStatus(status: QuoteStatus, validUntil: Date, now = new Date(), timezone?: string | null, ordered = false): "draft" | "awaiting_approval" | "sent" | "expires_today" | "expired" | "replaced" | "cancelled" | "ordered" {
+  if (ordered) return "ordered";
   if (status === "draft" || status === "sent") {
     if (validUntil.getTime() <= now.getTime()) return "expired";
     if (localDateIso(validUntil, timezone) === localDateIso(now, timezone)) return "expires_today";
@@ -504,14 +508,41 @@ function withSent<T extends { quote: Quote }>(row: T, sent: Set<string>): T {
 
 export type QuoteTab = "quotes" | "approval";
 
-export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes") {
+/** Quotes list columns that sort on the server; default: newest first. */
+export const QUOTE_SORT_KEYS = ["quote", "lead", "one_time", "monthly", "status"] as const;
+export type QuoteSortKey = (typeof QUOTE_SORT_KEYS)[number];
+export const QUOTE_SORT_DEFAULT: TableSort<QuoteSortKey> = { key: "quote", dir: "desc" };
+
+/**
+ * Search in Quotes and orders: a quote number ("Q-1003", "1003"), an order
+ * number ("PD-10001"), or part of the lead's name or company. Null for an empty search.
+ */
+export function docSearchSql(q: string | undefined, numberCol: AnyPgColumn): SQL | null {
+  const s = q?.trim();
+  if (!s) return null;
+  const like = `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+  const conds: SQL[] = [ilike(leads.fullName, like), ilike(leads.company, like)];
+  const num = s.match(/^(?:[a-z]{1,3}-?)?\s*(\d{1,9})$/i);
+  if (num) conds.push(eq(numberCol, Number(num[1])));
+  return or(...conds)!;
+}
+
+export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes", opts: { q?: string; sort?: TableSort<QuoteSortKey> } = {}) {
+  const sort = opts.sort ?? QUOTE_SORT_DEFAULT;
+  const col: Record<QuoteSortKey, SQL | AnyPgColumn> = {
+    quote: quotes.number,
+    lead: sql`lower(coalesce(${leads.company}, ${leads.fullName}))`,
+    one_time: quoteVersions.oneTimeTotalMinor,
+    monthly: quoteVersions.recurringTotalMinor,
+    status: quotes.status,
+  };
   const rows = await db
     .select({ quote: quotes, version: quoteVersions, lead: leads })
     .from(quotes)
     .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
     .innerJoin(leads, eq(leads.id, quotes.leadId))
-    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : [])))
-    .orderBy(desc(quotes.createdAt))
+    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : []), docSearchSql(opts.q, quotes.number) ?? undefined))
+    .orderBy(sort.dir === "asc" ? sql`${col[sort.key]} asc nulls last` : sql`${col[sort.key]} desc nulls last`, desc(quotes.createdAt))
     .limit(200);
   const sent = await sentDraftQuoteIds(db, accountId, rows.map((r) => r.quote));
   return rows.map((r) => withSent(r, sent));

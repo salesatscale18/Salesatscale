@@ -14,7 +14,7 @@ import { SuggestedReplyBox } from "./suggested-reply";
 import { QuoteCardMessage } from "./quote-card-message";
 import type { WindowState } from "@/lib/channels/rules";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
-import { SimulatedChip } from "../simulated-chip";
+import { SimulatedChip, TestLabChip } from "../simulated-chip";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -181,7 +181,7 @@ export function ConversationPanel({
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
         <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
-        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : <span className="sas-chip">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
+        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : c.channel === "testlab" ? <TestLabChip /> : <span className="sas-chip">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
         {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
       </div>
       <ChatThread label={t("conv.label")}>

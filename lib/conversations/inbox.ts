@@ -4,7 +4,7 @@
  * queries, whatever the number of conversations: the last message and the
  * buyer's last message come from correlated subqueries, not one query per row.
  */
-import { and, desc, eq, ilike, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { conversations, leadEvents, leads, markets, messages, type LeadStatus } from "@/db/schema";
 import { windowState, type WindowState } from "@/lib/channels/rules";
@@ -17,13 +17,19 @@ export const INBOX_PAGE_SIZE = 50;
 /** Where a conversation sits in the inbox. Test-lab chats only ever show under the "test" filter. */
 export type InboxGroup = "needs_you" | "human" | "agent" | "closed";
 
+/** Lead statuses whose chat counts as closed even while the agent still answers in it (won, lost). */
+export const CLOSED_LEAD_STATUSES = ["won", "lost"] as const;
+
 /**
  * Needs you: the agent handed off and nobody took it yet, or a person holds it
- * and the buyer wrote last (waiting for that person). Pure; unit-tested.
+ * and the buyer wrote last (waiting for that person). Closed: the chat ended,
+ * or the agent's chat of a won or lost lead (so the counts match Leads).
+ * Pure; unit-tested.
  */
-export function inboxGroup(c: { status: string; takenOverByUserId: string | null; lastActor: string | null }): InboxGroup {
+export function inboxGroup(c: { status: string; takenOverByUserId: string | null; lastActor: string | null; leadStatus?: string | null }): InboxGroup {
   if (c.status === "closed") return "closed";
   if (c.status === "human") return !c.takenOverByUserId || c.lastActor === "buyer" ? "needs_you" : "human";
+  if ((CLOSED_LEAD_STATUSES as readonly string[]).includes(c.leadStatus ?? "")) return "closed";
   return "agent";
 }
 
@@ -46,10 +52,10 @@ function filterSql(filter: InboxFilter): SQL {
     case "test": return eq(conversations.isTest, true);
     case "needs_you": return and(eq(conversations.isTest, false), needsYouSql)!;
     case "human": return and(eq(conversations.isTest, false), humanSql)!;
-    case "agent": return and(eq(conversations.isTest, false), eq(conversations.status, "open"))!;
-    case "closed": return and(eq(conversations.isTest, false), eq(conversations.status, "closed"))!;
-    // All: every real conversation still in play.
-    default: return and(eq(conversations.isTest, false), sql`${conversations.status} <> 'closed'`)!;
+    case "agent": return and(eq(conversations.isTest, false), eq(conversations.status, "open"), notInArray(leads.status, [...CLOSED_LEAD_STATUSES]))!;
+    case "closed": return and(eq(conversations.isTest, false), or(eq(conversations.status, "closed"), and(eq(conversations.status, "open"), inArray(leads.status, [...CLOSED_LEAD_STATUSES]))))!;
+    // All: every real conversation, grouped (Needs you, Human handling, Agent handling, Closed).
+    default: return eq(conversations.isTest, false);
   }
 }
 
@@ -135,7 +141,7 @@ export async function listInbox(
       return {
         conversationId: r.conversationId, channel: r.channel, isTest: r.isTest, status: r.status, takenOverByUserId: r.takenOverByUserId,
         lead: r.lead, marketName: r.marketName, lastActor: r.lastActor, lastUserId: r.lastUserId, lastBody: r.lastBody, lastAt: lastAtDate,
-        group: inboxGroup({ status: r.status, takenOverByUserId: r.takenOverByUserId, lastActor: r.lastActor }),
+        group: inboxGroup({ status: r.status, takenOverByUserId: r.takenOverByUserId, lastActor: r.lastActor, leadStatus: r.lead.status }),
         window: (r.channel === "whatsapp" || (r.channel === SIMULATOR_CHANNEL && !!opts.simulateRules)) && r.status !== "closed" ? windowState(toDate(r.lastBuyerAt), now) : null,
       };
     }),

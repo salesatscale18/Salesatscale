@@ -49,7 +49,8 @@ export function SimulatorPanel({
       <section id="simulator" aria-labelledby="sim-h" className="sas-sim-line" data-sim-compact="">
         <h2 id="sim-h" className="sas-sim-line__title"><Icon name="flask-conical" />{t("sim.line")}</h2>
         <a className={buttonClass("ghost", "sm")} href={url} target="_blank" rel="noopener noreferrer" data-chat-link="">{t("sim.open")}</a>
-        <CopyButton value={url} label={t("sim.copy")} />
+        {/* One action style in the line: all three are small ghost buttons (round-3 review B3). */}
+        <CopyButton value={url} label={t("sim.copy")} variant="ghost" />
         <form action={resetChatLinkAction}>
           {hidden}
           <button type="submit" className={buttonClass("ghost", "sm")}>{t("sim.reset")}</button>
