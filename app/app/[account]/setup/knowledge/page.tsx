@@ -437,10 +437,11 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
       {answering ? (
         <SidePanel title={t("knowledge.answer_title")} closeHref={link()} footer={
           <>
-            <button type="submit" form="kq-form" className={buttonClass("primary")}>{t("knowledge.answer_save")}</button>
+            {/* Primary first: "Save and answer next" while more questions remain, then "Save", then Cancel (which wraps at 400px). */}
             {nextQuestion ? (
-              <button type="submit" form="kq-form" name="next" value={nextQuestion.question} className={buttonClass("secondary")} data-answer-next="">{t("knowledge.answer_next")}</button>
+              <button type="submit" form="kq-form" name="next" value={nextQuestion.question} className={buttonClass("primary")} data-answer-next="">{t("knowledge.answer_next")}</button>
             ) : null}
+            <button type="submit" form="kq-form" className={buttonClass(nextQuestion ? "secondary" : "primary")}>{t("knowledge.answer_save")}</button>
             <Link className={buttonClass("ghost")} href={link()} scroll={false}>{t("knowledge.cancel")}</Link>
           </>
         }>
