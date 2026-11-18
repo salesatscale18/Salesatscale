@@ -40,7 +40,7 @@ const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | 
   quote_approval: { icon: "file-text", tone: "warning" },
   bank_transfer: { icon: "credit-card", tone: "warning" },
   payment_failed: { icon: "x-circle", tone: "danger" },
-  form_unsigned: { icon: "pen", tone: "neutral" },
+  form_unsigned: { icon: "file-signature", tone: "neutral" },
   form_expiring: { icon: "clock", tone: "warning" },
   follow_up_failed: { icon: "x-circle", tone: "danger" },
 };

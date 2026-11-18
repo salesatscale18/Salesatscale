@@ -179,6 +179,13 @@ export type AnalysisPlan = {
   token: string;
 };
 
+/** What the Analyze line says: how many sources changed, of how many, and the estimated cost (no token counts). */
+export type AnalysisSummary = { nothingChanged: boolean; changed: number; total: number; costMicros: number };
+
+export function analysisSummary(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate">): AnalysisSummary {
+  return { nothingChanged: plan.changed === 0, changed: plan.changed, total: plan.sources.length, costMicros: plan.estimate.costMicros };
+}
+
 /** Stage 0: corpus, hashes, reuse and the estimate. Null when there is nothing to analyse. */
 export async function planAnalysis(db: Db, accountId: string, env: Record<string, string | undefined> = process.env): Promise<AnalysisPlan | null> {
   const list = await loadCorpusSources(db, accountId);

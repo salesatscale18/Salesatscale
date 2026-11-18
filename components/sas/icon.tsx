@@ -3,14 +3,15 @@
  * 12px in pills and tags, colored with currentColor. Decorative by default.
  */
 import {
-  Activity, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
+  Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
   activity: Activity,
+  "alarm-clock": AlarmClock,
   "alarm-clock-off": AlarmClockOff,
   archive: Archive,
   "alert-triangle": TriangleAlert,
@@ -31,6 +32,7 @@ const ICONS = {
   download: Download,
   "credit-card": CreditCard,
   eye: Eye,
+  "file-signature": FileSignature,
   "file-text": FileText,
   "flask-conical": FlaskConical,
   layers: Layers,
@@ -56,6 +58,8 @@ const ICONS = {
   sparkles: Sparkles,
   store: Store,
   "scan-search": ScanSearch,
+  "scroll-text": ScrollText,
+  tags: Tags,
   "circle-alert": CircleAlert,
   trophy: Trophy,
   upload: Upload,

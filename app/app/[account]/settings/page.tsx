@@ -11,7 +11,7 @@ import { ContactHoursFields } from "@/components/sas/contact-hours-fields";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { listDeliveries, listIntakeKeys } from "@/lib/leads/service";
 import { displayName, initials } from "@/lib/auth/display";
-import { formatLocalDateTime, safeTimezone, timeAgo, zoneTitle } from "@/lib/format";
+import { currencyLabel, formatLocalDateTime, safeTimezone, timeAgo, timezoneLabel, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { NOTIFICATION_EVENTS, type NotificationEvent, type SellerAccount } from "@/db/schema";
 import { removeMemberAction, revokeIntakeKeyAction, saveContactHoursAction, saveNotificationsAction, setIntakeKeyMarketAction } from "./actions";
@@ -117,7 +117,7 @@ async function PaymentsSection({ account }: { account: SellerAccount }) {
       <dl style={{ display: "grid", gridTemplateColumns: "minmax(0, 160px) minmax(0, 1fr)", gap: "8px 12px", margin: 0 }}>
         <dt className="sas-small">{t("settings.payments.provider")}</dt><dd style={{ margin: 0 }}>{t("settings.payments.provider_value")}</dd>
         <dt className="sas-small">{t("settings.payments.methods")}</dt><dd style={{ margin: 0 }}>{methods || "-"}</dd>
-        <dt className="sas-small">{t("settings.payments.currency")}</dt><dd style={{ margin: 0 }} className="sas-num">{account.currency}</dd>
+        <dt className="sas-small">{t("settings.payments.currency")}</dt><dd style={{ margin: 0 }} data-currency={account.currency}>{currencyLabel(account.currency)}</dd>
       </dl>
       <span className="sas-small">{t("settings.payments.edit")} <a href={`/app/${account.slug}/setup/order-form`}>{t("settings.payments.edit_link")}</a></span>
     </section>
@@ -268,7 +268,7 @@ function HoursSection({ account, saved, error }: { account: SellerAccount; saved
             <h2 id="hrs-h" className="sas-heading">{t("settings.hours.title")}</h2>
             <span>{summarizeContactHours(hours)}</span>
           </div>
-          <span className="sas-small">{t("settings.hours.body", { tz: account.timezone })}</span>
+          <span className="sas-small">{t("settings.hours.body", { tz: timezoneLabel(account.timezone) })}</span>
           <ContactHoursFields hours={hours} />
           <div><Button type="submit" variant="primary" size="sm">{t("settings.save")}</Button></div>
         </form>

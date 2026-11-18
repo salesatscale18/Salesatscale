@@ -10,7 +10,7 @@
  * - auto_add:  "Add automatically with" (lib/pricing/auto-add.ts). Not a check:
  *              the pricing engine adds the line, and checkFit skips it.
  */
-import { describeAutoAddRule, parseAutoAddRule, type AutoAddRule } from "@/lib/pricing/auto-add";
+import { describeAutoAddRule, itemList, itemRef, parseAutoAddRule, type AutoAddRule, type ItemNameOf } from "@/lib/pricing/auto-add";
 
 export type FitRule =
   | { kind: "requires"; sku: string; oneOf: string[]; perSite?: boolean }
@@ -53,14 +53,12 @@ export function parseFitRule(raw: unknown): FitRule | null {
   return null;
 }
 
-const list = (skus: string[]) => (skus.length === 1 ? skus[0] : `${skus.slice(0, -1).join(", ")} or ${skus[skus.length - 1]}`);
-
-/** Plain-language description for the catalog screen. */
-export function describeFitRule(r: FitRule): string {
-  if (r.kind === "requires") return r.perSite ? `${r.sku} needs one ${list(r.oneOf)} per site.` : `${r.sku} is always sold with ${list(r.oneOf)}.`;
-  if (r.kind === "max_per") return `Up to ${r.max} × ${r.sku} per ${list(r.perOneOf)}.`;
-  if (r.kind === "auto_add") return describeAutoAddRule(r);
-  return r.sku ? `${r.sku}: ${r.text}` : r.text;
+/** Plain-language description for the catalog screen. With `nameOf`, items read "Kitchen hub (GW-10)". */
+export function describeFitRule(r: FitRule, nameOf?: ItemNameOf): string {
+  if (r.kind === "requires") return r.perSite ? `${itemRef(r.sku, nameOf)} needs one ${itemList(r.oneOf, nameOf)} per site.` : `${itemRef(r.sku, nameOf)} is always sold with ${itemList(r.oneOf, nameOf)}.`;
+  if (r.kind === "max_per") return `Up to ${r.max} × ${itemRef(r.sku, nameOf)} per ${itemList(r.perOneOf, nameOf)}.`;
+  if (r.kind === "auto_add") return describeAutoAddRule(r, nameOf);
+  return r.sku ? `${itemRef(r.sku, nameOf)}: ${r.text}` : r.text;
 }
 
 export function checkFit(rules: FitRule[], lines: FitLine[], sites?: number): FitResult {
@@ -80,16 +78,16 @@ export function checkFit(rules: FitRule[], lines: FitLine[], sites?: number): Fi
     if (!qty.has(r.sku)) continue;
     if (r.kind === "requires") {
       const have = total(r.oneOf);
-      if (have === 0) problem(`${r.sku} needs ${list(r.oneOf)}.`, { sku: r.oneOf[0], add: r.perSite && sites ? sites : 1 });
+      if (have === 0) problem(`${r.sku} needs ${itemList(r.oneOf)}.`, { sku: r.oneOf[0], add: r.perSite && sites ? sites : 1 });
       else if (r.perSite && sites !== undefined && have < sites) {
-        problem(`${r.sku} needs one ${list(r.oneOf)} per site: ${sites} sites, ${have} quoted.`, { sku: r.oneOf[0], add: sites - have });
+        problem(`${r.sku} needs one ${itemList(r.oneOf)} per site: ${sites} sites, ${have} quoted.`, { sku: r.oneOf[0], add: sites - have });
       }
     } else {
       const per = total(r.perOneOf);
       const have = qty.get(r.sku)!;
       const needed = Math.ceil(have / r.max);
-      if (per === 0) problem(`${r.sku} needs ${list(r.perOneOf)}.`, { sku: r.perOneOf[0], add: needed });
-      else if (have > r.max * per) problem(`Up to ${r.max} × ${r.sku} per ${list(r.perOneOf)}: ${have} quoted for ${per}.`, { sku: r.perOneOf[0], add: needed - per });
+      if (per === 0) problem(`${r.sku} needs ${itemList(r.perOneOf)}.`, { sku: r.perOneOf[0], add: needed });
+      else if (have > r.max * per) problem(`Up to ${r.max} × ${r.sku} per ${itemList(r.perOneOf)}: ${have} quoted for ${per}.`, { sku: r.perOneOf[0], add: needed - per });
     }
   }
   return { ok: problems.length === 0, problems, notes, fixes };

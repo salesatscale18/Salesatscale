@@ -9,7 +9,7 @@ import { buttonClass, StatusPill } from "@/components/sas/primitives";
 import { usdText } from "@/lib/ai/usage";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
-import { runData, runPillState, type AnalysisPlan } from "@/lib/pipeline/service";
+import { analysisSummary, runData, runPillState, type AnalysisPlan } from "@/lib/pipeline/service";
 import { analyzeAction } from "./pipeline-actions";
 import { RefreshWhileProcessing } from "./forms";
 
@@ -19,6 +19,16 @@ const n = (x: number) => x.toLocaleString("en");
 export function costText(micros: number): string {
   if (micros > 0 && micros < 10_000) return `$${(micros / 1e6).toFixed(3)}`;
   return usdText(micros);
+}
+
+/**
+ * The estimate line: "Nothing changed since the last analysis · estimated cost $0.15", or
+ * "Changed since the last analysis: 2 of 3 sources · estimated cost $0.15".
+ */
+export function estimateText(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate">): string {
+  const s = analysisSummary(plan);
+  const cost = costText(s.costMicros);
+  return s.nothingChanged ? t("pipeline.estimate.none", { cost }) : t("pipeline.estimate.line", { changed: s.changed, total: s.total, cost });
 }
 
 const ERRORS: Record<string, MessageKey> = {
@@ -51,6 +61,8 @@ export function AnalyzePanel(s: AnalyzeState) {
   const reuseAll = !!s.plan && s.plan.facts.reuse && s.plan.playbook.reuse;
   const blocked = !s.plan || !s.configured || s.capped || active;
   const est = s.plan?.estimate;
+  // Nothing changed: the button is secondary (a rerun is still possible, after the confirm step).
+  const variant = s.plan && analysisSummary(s.plan).nothingChanged ? "secondary" : "primary";
   const error = s.error ? ERRORS[s.error] : undefined;
   const now = new Date();
   return (
@@ -63,19 +75,17 @@ export function AnalyzePanel(s: AnalyzeState) {
             <span className="sas-small">{t("pipeline.intro")}</span>
           </span>
           {s.confirming || blocked ? null : (
-            <a className={buttonClass("primary")} href={`${s.here}?analyze=confirm#an-h`}><Icon name="sparkles" />{t(s.title)}</a>
+            <a className={buttonClass(variant)} href={`${s.here}?analyze=confirm#an-h`} data-analyze-button={variant}><Icon name="sparkles" />{t(s.title)}</a>
           )}
-          {blocked && !active ? <button type="button" className={buttonClass("primary")} disabled><Icon name="sparkles" />{t(s.title)}</button> : null}
+          {blocked && !active ? <button type="button" className={buttonClass(variant)} disabled data-analyze-button={variant}><Icon name="sparkles" />{t(s.title)}</button> : null}
         </div>
 
         {error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(error)}</span></div> : null}
         {s.started && !active && !error ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("pipeline.done.reused")}</span></div> : null}
 
         {!s.plan ? <span className="sas-small">{t("pipeline.no_sources")}</span> : (
-          <p className="sas-small sas-num" style={{ margin: 0 }} aria-live="polite">
-            {reuseAll ? t("pipeline.estimate.none") : t("pipeline.estimate.line", {
-              changed: s.plan.changed, total: s.plan.sources.length, tokens: n(Math.round(est!.tokens / 1000) * 1000 || est!.tokens), cost: costText(est!.costMicros),
-            })}
+          <p className="sas-small" style={{ margin: 0 }} aria-live="polite" data-analyze-estimate="">
+            {estimateText(s.plan)}
             {s.plan.large ? <> {t("pipeline.estimate.large")}</> : null}
           </p>
         )}

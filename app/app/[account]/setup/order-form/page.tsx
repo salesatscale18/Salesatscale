@@ -15,7 +15,6 @@ import { headingTitle, marketLegal, type EffectiveSection } from "@/lib/markets/
 import { BuyerPreview } from "./preview";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
-const LANG: Record<string, string> = { en: "EN", he: "HE" };
 const LANG_NAME: Record<string, string> = { en: "English", he: "Hebrew" };
 
 /** Setup 6 · Order form (P5.2, canvas: OrderFormSetup). */
@@ -96,9 +95,9 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
                       {account.languages.map((l) => {
                         const r = rows.find((x) => x.language === l);
                         return r ? (
-                          <a key={l} className="sas-chip" href={`${here}?edit=${k}&lang=${l}#editor`}>{LANG[l] ?? l} v{r.version}</a>
+                          <a key={l} href={`${here}?edit=${k}&lang=${l}#editor`} data-legal-version={`${l}.${r.version}`}>{t("ofs.lang_version", { lang: LANG_NAME[l] ?? l, version: r.version })}</a>
                         ) : (
-                          <a key={l} className="sas-pill sas-pill--warning" href={`${here}?edit=${k}&lang=${l}#editor`}><Icon name="alert-triangle" />{t("ofs.missing", { lang: LANG[l] ?? l })}</a>
+                          <a key={l} className="sas-pill sas-pill--warning" href={`${here}?edit=${k}&lang=${l}#editor`}><Icon name="alert-triangle" />{t("ofs.missing", { lang: LANG_NAME[l] ?? l })}</a>
                         );
                       })}
                       <form action={removeSectionAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="sectionKey" value={k} /><Button type="submit" variant="ghost" size="sm">{t("ofs.remove")}</Button></form>
@@ -231,14 +230,14 @@ function MarketLegal({ slug, here, view, sections, editKey, editLang }: { slug: 
                       <span key={l} data-section={`${k}.${l}`} data-source={r?.source ?? "missing"} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 10px" }}>
                         {r ? (
                           <>
-                            <span className="sas-chip">{LANG[l] ?? l} v{r.version}</span>
+                            <span data-legal-version={`${l}.${r.version}`}>{t("ofs.lang_version", { lang: LANG_NAME[l] ?? l, version: r.version })}</span>
                             {r.source === "market"
                               ? <span className="sas-pill sas-pill--agent">{t("ofs.overridden")}</span>
                               : <span className="sas-pill">{t("ofs.same_as_account")}</span>}
                             <a className={buttonClass("ghost", "sm")} href={at(k, l)}>{t(r.source === "market" ? "ofs.edit_market" : "ofs.override")}</a>
                           </>
                         ) : (
-                          <a className="sas-pill sas-pill--warning" href={at(k, l)}><Icon name="alert-triangle" />{t("ofs.market_missing", { lang: LANG[l] ?? l })}</a>
+                          <a className="sas-pill sas-pill--warning" href={at(k, l)}><Icon name="alert-triangle" />{t("ofs.market_missing", { lang: LANG_NAME[l] ?? l })}</a>
                         )}
                       </span>
                     );

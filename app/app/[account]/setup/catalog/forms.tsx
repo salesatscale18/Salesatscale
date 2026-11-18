@@ -4,6 +4,7 @@ import { useActionState, useState, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
+import { itemRef } from "@/lib/pricing/auto-add";
 import { CUSTOM_UNIT, UNIT_OPTIONS } from "@/lib/pricing/units";
 import { addRuleAction, saveItemAction, type ItemFormState, type RuleFormState } from "./actions";
 
@@ -220,9 +221,9 @@ export function RuleForm({ slug, items }: { slug: string; items: { sku: string; 
         </div>
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="r-sku">{t(kind === "auto_add" ? "catalog.rules.auto.sku" : "catalog.rules.sku")}</label>
-          <select className="sas-select sas-num" id="r-sku" name="sku" value={sku} onChange={(e) => setSku(e.target.value)}>
+          <select className="sas-select" id="r-sku" name="sku" value={sku} onChange={(e) => setSku(e.target.value)}>
             {kind === "advice" ? <option value="">—</option> : null}
-            {skuOptions.map((i) => <option key={i.sku} value={i.sku}>{i.sku} · {i.name}</option>)}
+            {skuOptions.map((i) => <option key={i.sku} value={i.sku}>{itemRef(i.sku, () => i.name)}</option>)}
           </select>
         </div>
       </div>
@@ -232,7 +233,7 @@ export function RuleForm({ slug, items }: { slug: string; items: { sku: string; 
             <legend className="sas-input-label">{t("catalog.rules.auto.when")}</legend>
             <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
               {items.filter((i) => i.sku !== sku).map((i) => (
-                <label key={i.sku} className="sas-check"><input type="checkbox" name="whenAnyOf" value={i.sku} /><span className="sas-num">{i.sku}</span></label>
+                <label key={i.sku} className="sas-check"><input type="checkbox" name="whenAnyOf" value={i.sku} /><span>{i.name && i.name !== i.sku ? <>{i.name} <span className="sas-nowrap">({i.sku})</span></> : <span className="sas-nowrap">{i.sku}</span>}</span></label>
               ))}
             </div>
           </fieldset>

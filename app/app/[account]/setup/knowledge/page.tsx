@@ -1,3 +1,4 @@
+import { evidenceChipText } from "@/lib/pipeline/evidence-text";
 import type { CSSProperties } from "react";
 import type { KnowledgeFact } from "@/db/schema";
 import { Button, buttonClass } from "@/components/sas/primitives";
@@ -140,7 +141,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                         <input type="radio" name="choice" value={f.id} required style={{ marginBlockStart: 4 }} />
                         <span style={{ minWidth: 0, overflowWrap: "anywhere" }}>
                           <strong dir="auto">{f.statement}</strong>
-                          <span className="sas-small" style={{ display: "block" }}>{l ? <a href={l.href}>{l.title} · {l.locator}</a> : f.sourceLabel}</span>
+                          <span className="sas-small" style={{ display: "block" }}>{l ? <a href={l.href} title={`${l.title} · ${l.locator}`}>{evidenceChipText(l)}</a> : f.sourceLabel}</span>
                         </span>
                       </label>
                     );
@@ -217,8 +218,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                       {current ? null : <span className="sas-small" style={{ display: "block" }} dir="auto">{f.topic}</span>}
                     </span>
                     {linkOf(f) ? (
-                      <a className="sas-chip" style={{ maxWidth: "100%", textDecoration: "none" }} href={linkOf(f)!.href} title={f.sourceLabel ?? undefined}><Icon name="file-text" /><span style={ellipsis}>{linkOf(f)!.title} · {f.sourceLocator}</span></a>
-                    ) : f.sourceLabel ? <span className="sas-chip" style={{ maxWidth: "100%" }} title={f.sourceLabel}><Icon name="file-text" /><span style={ellipsis}>{f.sourceLabel}</span></span> : null}
+                      <a className="sas-chip sas-chip--plain" style={{ maxWidth: "100%", textDecoration: "none" }} href={linkOf(f)!.href} title={`${linkOf(f)!.title} · ${f.sourceLocator}`} data-source-chip=""><Icon name="file-text" /><span style={ellipsis} dir="auto">{evidenceChipText(linkOf(f)!)}</span></a>
+                    ) : f.sourceLabel ? <span className="sas-chip sas-chip--plain" style={{ maxWidth: "100%" }} title={f.sourceLabel}><Icon name="file-text" /><span style={ellipsis} dir="auto">{f.sourceLabel}</span></span> : null}
                     {f.status === "suggested" ? <span className="sas-pill sas-pill--agent"><Icon name="sparkles" />{t("status.generated_suggestion.suggested")}</span> : null}
                     <span style={{ display: "flex", gap: 4, flexWrap: "wrap", alignItems: "center" }}>
                       {f.status === "approved" ? <span className="sas-pill sas-pill--success"><Icon name="check-circle" />{t("knowledge.status.approved")}</span> : null}

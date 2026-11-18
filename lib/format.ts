@@ -176,3 +176,94 @@ export function asSentence(text: string | null | undefined): string {
   const first = s.charAt(0).toUpperCase() + s.slice(1);
   return /[.!?…]$/.test(first) ? first : `${first}.`;
 }
+
+// ---------------------------------------------------------------------------
+// Plain names for codes (live review 7.1): the code stays, a plain name joins it.
+// ---------------------------------------------------------------------------
+
+const GENERIC_ZONE_WORDS = /\b(Time|Standard|Mean|Daylight|Summer|Station)\b/g;
+
+/** "Israel time" for Asia/Jerusalem; null when the platform has no plain name (it would only repeat the offset). */
+export function zonePlainName(timezone: string | null | undefined, at = new Date()): string | null {
+  const tz = safeTimezone(timezone);
+  if (tz === "UTC" || tz === "Etc/UTC") return null;
+  const v = new Intl.DateTimeFormat("en", { timeZone: tz, timeZoneName: "longGeneric" }).formatToParts(at).find((p) => p.type === "timeZoneName")?.value;
+  if (!v || /^(GMT|UTC)([+-]|$)/.test(v)) return null;
+  return v.replace(GENERIC_ZONE_WORDS, (w) => w.toLowerCase());
+}
+
+/** "Israel time · Asia/Jerusalem (GMT+2)", "UTC" for UTC. Every zone in a value, list or select. */
+export function timezoneLabel(timezone: string | null | undefined, at = new Date()): string {
+  const tz = safeTimezone(timezone);
+  if (tz === "UTC" || tz === "Etc/UTC") return "UTC";
+  const plain = zonePlainName(tz, at);
+  const coded = `${tz} (${zoneLabel(at, tz)})`;
+  return plain ? `${plain} · ${coded}` : coded;
+}
+
+/** Plain currency names where the platform's own name reads oddly. */
+const CURRENCY_NAME: Record<string, string> = { ILS: "Israeli shekel" };
+
+/** "Israeli shekel", "US dollar", "Euro"; the code itself when unknown. */
+export function currencyName(code: string): string {
+  const c = code.toUpperCase();
+  if (CURRENCY_NAME[c]) return CURRENCY_NAME[c];
+  let name: string | undefined;
+  try {
+    name = new Intl.DisplayNames("en", { type: "currency" }).of(c);
+  } catch {
+    return c;
+  }
+  if (!name || name === c) return c;
+  // "US Dollar" → "US dollar", "British Pound" → "British pound": only the first word and acronyms keep capitals.
+  return name.split(" ").map((w, i) => (i === 0 || /^[A-Z]{2,}$/.test(w) ? w : w.toLowerCase())).join(" ");
+}
+
+/** "₪", "$", "€"; the code itself when there is no symbol. */
+export function currencySymbol(code: string): string {
+  try {
+    return new Intl.NumberFormat("en-US", { style: "currency", currency: code, currencyDisplay: "narrowSymbol" }).formatToParts(0).find((p) => p.type === "currency")?.value ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** "ILS · Israeli shekel (₪)". Every currency in a value, list or select. */
+export function currencyLabel(code: string): string {
+  const c = code.toUpperCase();
+  const name = currencyName(c);
+  const symbol = currencySymbol(c);
+  if (name === c) return symbol === c ? c : `${c} (${symbol})`;
+  return symbol === c ? `${c} · ${name}` : `${c} · ${name} (${symbol})`;
+}
+
+/** "Israel" for IL; the code itself when unknown. */
+export function regionName(code: string): string {
+  try {
+    const name = new Intl.DisplayNames("en", { type: "region", fallback: "none" }).of(code.toUpperCase());
+    return name && name !== "Unknown Region" ? name : code;
+  } catch {
+    return code;
+  }
+}
+
+/** A lead-form country value: "IL (Israel)" for a country code, any other value as it is ("Israel"). */
+export function countryValueLabel(value: string): string {
+  const v = value.trim();
+  if (!/^[A-Za-z]{2}$/.test(v)) return v;
+  const name = regionName(v);
+  return name.toUpperCase() === v.toUpperCase() ? v : `${v} (${name})`;
+}
+
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * Splits a sentence so each item code ("(GW-10)" or a bare "GW-10") is its own
+ * part, for rendering codes that never wrap inside (live review 7.1.6).
+ */
+export function splitCodes(text: string, codes: readonly string[]): { text: string; code: boolean }[] {
+  const list = [...new Set(codes.filter(Boolean))].sort((a, b) => b.length - a.length);
+  if (list.length === 0) return [{ text, code: false }];
+  const re = new RegExp(`(\\(?(?<![A-Za-z0-9._-])(?:${list.map(escapeRe).join("|")})(?![A-Za-z0-9._-])\\)?)`, "g");
+  return text.split(re).filter((p) => p !== "").map((p) => ({ text: p, code: list.some((c) => p === c || p === `(${c})` || p === `(${c}` || p === `${c})`) }));
+}

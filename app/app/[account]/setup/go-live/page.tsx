@@ -159,7 +159,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
               <li key={market.id} data-market={market.id} style={{ padding: "14px 16px", borderTop: "1px solid var(--line)" }} className="sas-stack-2">
                 <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 12px" }}>
                   <strong style={{ flex: "1 1 200px", minWidth: 0 }}>
-                    {market.name}{market.isHome ? <span className="sas-chip" style={{ marginInlineStart: 8 }}>{t("golive.markets.home")}</span> : null}
+                    {market.name}{market.isHome ? <span className="sas-pill" style={{ marginInlineStart: 8 }} data-home-market="">{t("golive.markets.home")}</span> : null}
                   </strong>
                   <StatusPill object="market" state={market.status} />
                   <span className="sas-small sas-num">{t("golive.markets.checks", { passed, total })}</span>

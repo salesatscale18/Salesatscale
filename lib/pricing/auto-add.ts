@@ -43,12 +43,25 @@ export function parseAutoAddRule(raw: unknown): AutoAddRule | null {
   return { kind: "auto_add", sku: r.sku, whenAnyOf, qty: r.qty, removable: r.removable === true };
 }
 
-const list = (skus: string[]) => (skus.length === 1 ? skus[0] : `${skus.slice(0, -1).join(", ")} or ${skus[skus.length - 1]}`);
+/** An item's name for a code, when the catalog has it ("Kitchen hub" for GW-10). */
+export type ItemNameOf = (sku: string) => string | null | undefined;
 
-/** Plain-language description (canvas: ProductEditor, Rules). */
-export function describeAutoAddRule(r: AutoAddRule): string {
+/** "Kitchen hub (GW-10)" with a name, else the code alone. */
+export const itemRef = (sku: string, nameOf?: ItemNameOf) => {
+  const name = nameOf?.(sku)?.trim();
+  return name && name !== sku ? `${name} (${sku})` : sku;
+};
+
+/** "A, B or C", each item named (itemRef). */
+export const itemList = (skus: string[], nameOf?: ItemNameOf) => {
+  const refs = skus.map((s) => itemRef(s, nameOf));
+  return refs.length === 1 ? refs[0] : `${refs.slice(0, -1).join(", ")} or ${refs[refs.length - 1]}`;
+};
+
+/** Plain-language description (canvas: ProductEditor, Rules). With `nameOf`, items read "Kitchen hub (GW-10)". */
+export function describeAutoAddRule(r: AutoAddRule, nameOf?: ItemNameOf): string {
   const qty = r.qty === "sites" ? " × number of sites" : r.qty === "matching" ? " × the same quantity" : " once";
-  return `When a quote has ${list(r.whenAnyOf)}, add ${r.sku}${qty}.${r.removable ? " The buyer can remove it." : ""}`;
+  return `When a quote has ${itemList(r.whenAnyOf, nameOf)}, add ${itemRef(r.sku, nameOf)}${qty}.${r.removable ? " The buyer can remove it." : ""}`;
 }
 
 /**

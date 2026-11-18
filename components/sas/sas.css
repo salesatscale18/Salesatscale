@@ -595,3 +595,7 @@ h2.sas-group-label { margin: 0; }
   .sas-filters__toggle:checked + .sas-filters__button { background: var(--primary-soft); color: var(--primary); border-color: var(--primary); }
 }
 .sas-lead__side .sas-stack-4 .sas-group-label { padding-inline: 0; }
+/* An item code never wraps inside ("GW-10" stays on one line; live review 7.1.6). */
+.sas-nowrap { white-space: nowrap; }
+/* A source chip in words ("Note: Pricing", "Call · 02:11"): normal font, muted, not a code well (live review 7.1.11). */
+.sas-app .sas-chip--plain { font: 500 12px/16px var(--font-sans); color: var(--ink-muted); }

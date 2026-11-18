@@ -10,6 +10,7 @@ import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
+import { seesPlatformDetails } from "@/lib/auth/display";
 import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { conversationView } from "@/lib/agent/conversation";
@@ -54,7 +55,10 @@ function ResultChip({ result }: { result: ScenarioResult | "not_run" }) {
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account, user } = await requireAccount(slug);
+  const access = await requireAccount(slug);
+  const { account, user } = access;
+  // Model and effort are platform details: sellers do not see them (live review 7.1.3).
+  const showModel = seesPlatformDetails(access);
   // Records in the account's time zone, the zone on hover (not "13:42 UTC").
   const tz = account.timezone;
   const local = (at: Date) => formatLocalDateTime(at, tz);
@@ -96,7 +100,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         <div className="sas-page-head">
           <h1 className="sas-title">{t("lab.title")}</h1>
           <div className="sas-page-head__actions">
-            <a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="sparkles" />{t("lab.edit_playbook")}</a>
+            <a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="scroll-text" />{t("lab.edit_playbook")}</a>
             {draft ? (
               <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="primary">{t("lab.publish", { version: draft.version })}</Button></form>
             ) : null}
@@ -331,7 +335,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                         </form>
                       ) : null}
                     </div>
-                    <span className="sas-small">{t("lab.version_model", { model: v.model, effort: v.effort })}{v.publishedAt ? <> · <time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}</span>
+                    <span className="sas-small">{showModel ? <span data-version-model="">{t("lab.version_model", { model: v.model, effort: v.effort })}</span> : null}{showModel && v.publishedAt ? " · " : null}{v.publishedAt ? <><time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}</span>
                   </li>
                 ))}
               </ul>

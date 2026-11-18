@@ -5,6 +5,7 @@ import { Fragment, useActionState, useRef, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { checkPriceBlock, serializeTierRows, tierErrorText, tierLines, tierSummary, wholeQty, type PriceBlockCheck } from "@/lib/catalog/tiers";
+import { currencyLabel, currencySymbol } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import {
   copyPriceListAction, createPriceListAction, saveEntryAction, saveMetaAction,
@@ -44,7 +45,7 @@ function MetaFields({ prefix, d, errors, currencies, resetKey }: { prefix: strin
         {currencies ? (
           <Field id={`${prefix}-cur`} label={t("price_lists.field.currency")} error={errors.currency}>
             <select className="sas-select" id={`${prefix}-cur`} name="currency" defaultValue={d.currency} key={resetKey}>
-              {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
+              {currencies.map((c) => <option key={c} value={c}>{currencyLabel(c)}</option>)}
             </select>
           </Field>
         ) : null}
@@ -99,9 +100,6 @@ type TierRow = { id: number; qty: string; price: string };
 const rowsFrom = (text: string): TierRow[] => tierLines(text).map((r) => ({ id: r.key, qty: r.qty, price: r.price }));
 const byQty = (rows: TierRow[]) => [...rows].sort((a, b) => (wholeQty(a.qty) ?? Infinity) - (wholeQty(b.qty) ?? Infinity));
 
-function currencySymbol(currency: string): string {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency, currencyDisplay: "narrowSymbol" }).formatToParts(0).find((p) => p.type === "currency")?.value ?? currency;
-}
 
 const section = { borderTop: "1px solid var(--line)", paddingTop: 16 } as const;
 const grid = { display: "grid", gridTemplateColumns: "minmax(0, 0.8fr) minmax(0, 1.2fr) 36px", gap: "8px 10px", alignItems: "center" } as const;

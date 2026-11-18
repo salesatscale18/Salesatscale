@@ -12,6 +12,7 @@ import { listVersions } from "@/lib/agent/service";
 import { defaultPlaybook } from "@/lib/agent/playbook";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { displayName } from "@/lib/auth/display";
+import { currencyLabel, timezoneLabel } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
 import { saveCompanyAction } from "./actions";
@@ -129,11 +130,11 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                 </div>
                 <div className="sas-stack-2">
                   <dt className="sas-input-label">{t("company.timezone")}</dt>
-                  <dd style={{ margin: 0 }}>{account.timezone}</dd>
+                  <dd style={{ margin: 0 }} data-timezone={account.timezone}>{timezoneLabel(account.timezone)}</dd>
                 </div>
                 <div className="sas-stack-2">
                   <dt className="sas-input-label">{t("company.currency")}</dt>
-                  <dd style={{ margin: 0 }} className="sas-num">{account.currency}</dd>
+                  <dd style={{ margin: 0 }} data-currency={account.currency}>{currencyLabel(account.currency)}</dd>
                 </div>
               </dl>
               <span className="sas-small">{t("company.markets_note")}</span>

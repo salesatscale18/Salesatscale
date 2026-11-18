@@ -28,3 +28,12 @@ export function personName(u: Pick<User, "id" | "firstName" | "lastName" | "emai
   const local = (u.email ?? "").split("@")[0].split("+")[0].trim();
   return local || "Unknown user";
 }
+
+/**
+ * Platform admins (a super admin, or anyone acting as) see technical details
+ * sellers do not, such as an agent version's model and effort. Decided on the
+ * server from the account access object.
+ */
+export function seesPlatformDetails(access: { actingAs: boolean; role: string; user: Pick<User, "role"> }): boolean {
+  return access.actingAs || access.role === "platform_admin" || access.user.role === "super_admin";
+}

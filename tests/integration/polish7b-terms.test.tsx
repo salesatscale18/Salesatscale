@@ -1,0 +1,204 @@
+/**
+ * Live-review polish, lane Polish-7b (plain terms and nav icons), on PGlite with the demo account:
+ * time zones and currencies in words, the model line only for platform admins, the
+ * Analyze estimate line, catalog rule sentences, Markets routing / home market / legal
+ * versions, order form legal versions and knowledge source chips.
+ *
+ * With POLISH_RENDER_DIR set, the rendered pages are also written there as HTML (visual check).
+ */
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
+import path from "node:path";
+import type { ReactElement } from "react";
+import { and, eq } from "drizzle-orm";
+import { markets, sellerAccounts, sources, users, type SellerAccount, type User } from "@/db/schema";
+import { createTestDb, type TestDb } from "../helpers/db";
+
+const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
+vi.mock("@/lib/auth/account", () => ({
+  get appDb() { return holder.db; },
+  requireAccount: async () => holder.access,
+  actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "localhost:3000" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
+  notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
+  usePathname: () => "/",
+  useRouter: () => ({ refresh: () => {} }),
+}));
+
+const { createDemoAccount } = await import("@/lib/demo/seed");
+const { default: CompanyPage } = await import("@/app/app/[account]/setup/company/page");
+const { default: MarketsPage } = await import("@/app/app/[account]/markets/page");
+const { default: SettingsPage } = await import("@/app/app/[account]/settings/page");
+const { default: OrderFormSetupPage } = await import("@/app/app/[account]/setup/order-form/page");
+const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
+const { default: SourcesPage } = await import("@/app/app/[account]/setup/sources/page");
+const { default: CatalogPage } = await import("@/app/app/[account]/setup/catalog/page");
+const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowledge/page");
+const { default: PriceListsPage } = await import("@/app/app/[account]/setup/price-lists/page");
+const { default: GoLivePage } = await import("@/app/app/[account]/setup/go-live/page");
+const { estimateText } = await import("@/app/app/[account]/setup/sources/analyze");
+
+const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
+const save = (name: string, html: string) => {
+  const dir = process.env.POLISH_RENDER_DIR;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${name}.html`), `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>${css}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:block">${html}</div></div></body></html>`);
+};
+type Page = (p: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
+const render = async (P: unknown, slug: string, sp: Record<string, string> = {}) =>
+  renderToStaticMarkup(await (P as Page)({ params: Promise.resolve({ account: slug }), searchParams: Promise.resolve(sp) }));
+const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'");
+
+describe("Polish-7b: plain terms", () => {
+  let t: Awaited<ReturnType<typeof createTestDb>>;
+  let db: TestDb;
+  let admin: User;
+  let seller: User;
+  let account: SellerAccount;
+  const asSeller = () => { holder.access = { account, user: seller, actingAs: false, role: "seller_admin" }; };
+  const asAdmin = () => { holder.access = { account, user: admin, actingAs: true, role: "platform_admin" }; };
+
+  beforeAll(async () => {
+    t = await createTestDb();
+    db = t.db;
+    holder.db = db;
+    [admin, seller] = await db.insert(users).values([
+      { clerkId: "c_sa", email: "sa@platform.test", role: "super_admin" },
+      { clerkId: "c_u", email: "u@seller.test", role: "user", firstName: "Sam" },
+    ]).returning();
+    const r = await createDemoAccount(db, admin, { ownerEmail: "u@seller.test" });
+    if (!r.ok) throw new Error("demo seed refused");
+    [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, r.summary.accountId));
+    await db.update(markets).set({ formCountryValues: ["IL"] }).where(and(eq(markets.accountId, account.id), eq(markets.isHome, true)));
+    asSeller();
+  }, 120_000);
+  afterAll(async () => t.close());
+
+  it("Company: time zone and currency in words", async () => {
+    const html = await render(CompanyPage, account.slug);
+    save("company", html);
+    expect(text(html)).toMatch(/Israel time · Asia\/Jerusalem \(GMT\+[23]\)/);
+    expect(text(html)).toContain("ILS · Israeli shekel (₪)");
+    expect(html).not.toMatch(/class="sas-num"[^>]*>ILS</);
+  });
+
+  it("Markets: zone, currency, routing with country names, Home market tag, legal versions in words", async () => {
+    const html = await render(MarketsPage, account.slug);
+    save("markets", html);
+    const s = text(html);
+    expect(s).toMatch(/Israel time · Asia\/Jerusalem \(GMT\+[23]\)/);
+    expect(s).toContain("ILS · Israeli shekel (₪)");
+    expect(s).toContain("Lead form: country is IL (Israel)");
+    expect(html).toMatch(/<span class="sas-pill"[^>]*data-home-market="">Home market</);
+    expect(html).not.toContain('class="sas-chip"');
+    expect(s).toMatch(/English · .+ v1/);
+    expect(s).not.toMatch(/\bEN v1\b/);
+    // The zone select names every zone the same way.
+    const tz = await render(MarketsPage, account.slug, { override: "timezone" });
+    save("markets-timezone", tz);
+    expect(text(tz)).toMatch(/Eastern time · America\/New_York \(GMT-[45]\)/);
+  });
+
+  it("Settings › Payments: currency in words, normal font; the AI usage note", async () => {
+    const html = await render(SettingsPage, account.slug, { section: "payments" });
+    save("settings-payments", html);
+    expect(text(html)).toContain("ILS · Israeli shekel (₪)");
+    expect(text(html)).toContain("An estimate based on how much the AI reads and writes.");
+  });
+
+  it("Price lists: the currency select reads in words", async () => {
+    const html = await render(PriceListsPage, account.slug, { new: "1" });
+    save("price-lists", html);
+    expect(html).toContain(">ILS · Israeli shekel (₪)</option>");
+    expect(html).toContain(">USD · US dollar ($)</option>");
+  });
+
+  it("Order form setup: legal versions as readable links", async () => {
+    const html = await render(OrderFormSetupPage, account.slug);
+    save("order-form", html);
+    expect(html).toMatch(/<a href="[^"]*edit=[^"]*lang=en#editor" data-legal-version="en\.1">English · v1<\/a>/);
+    expect(html).toMatch(/>Hebrew · v1</);
+    expect(html).not.toMatch(/>EN v1</);
+    const [home] = await db.select().from(markets).where(eq(markets.accountId, account.id));
+    const m = await render(OrderFormSetupPage, account.slug, { market: home.id });
+    save("order-form-market", m);
+    expect(m).toMatch(/data-legal-version="en\.1">English · v1</);
+  });
+
+  it("Versions and test lab: the model line only for platform admins", async () => {
+    const sellerHtml = await render(TestLabPage, account.slug);
+    save("test-lab-seller", sellerHtml);
+    expect(sellerHtml).not.toContain("data-version-model");
+    expect(sellerHtml).not.toContain("effort");
+    asAdmin();
+    const adminHtml = await render(TestLabPage, account.slug);
+    asSeller();
+    expect(adminHtml).toContain("data-version-model");
+    expect(text(adminHtml)).toMatch(/· effort /);
+    // The "Edit playbook" button uses the playbook's nav icon.
+    expect(sellerHtml).toMatch(/lucide-scroll-text[\s\S]{0,800}Edit playbook/);
+  });
+
+  it("Sources › Analyze: the estimate line in both cases, no tokens, secondary button when nothing changed", async () => {
+    const html = await render(SourcesPage, account.slug);
+    save("sources-nothing-changed", html);
+    expect(text(html)).toMatch(/Nothing changed since the last analysis · estimated cost \$\d+\.\d{2,3}/);
+    expect(html).toContain('data-analyze-button="secondary"');
+    expect(text(html)).not.toMatch(/about [\d,]+ tokens/);
+    const [one] = await db.select().from(sources).where(eq(sources.accountId, account.id)).limit(1);
+    await db.update(sources).set({ textHash: null }).where(eq(sources.id, one.id));
+    const changed = await render(SourcesPage, account.slug);
+    save("sources-changed", changed);
+    expect(text(changed)).toMatch(/Changed since the last analysis: 1 of 3 sources · estimated cost \$\d+\.\d{2,3}/);
+    expect(changed).toContain('data-analyze-button="primary"');
+    // The confirm step stays (shown once AI is set up: a dummy key, no model is called while rendering).
+    vi.stubEnv("ANTHROPIC_API_KEY", "test-dummy-not-used");
+    const confirm = await render(SourcesPage, account.slug, { analyze: "confirm" }).finally(() => vi.unstubAllEnvs());
+    expect(text(confirm)).toContain("Start analysis");
+    // Pure text, both cases.
+    const plan = { changed: 0, sources: [{}, {}, {}], estimate: { costMicros: 150_000 } } as never;
+    expect(estimateText(plan)).toBe("Nothing changed since the last analysis · estimated cost $0.15");
+    expect(estimateText({ ...(plan as object), changed: 2 } as never)).toBe("Changed since the last analysis: 2 of 3 sources · estimated cost $0.15");
+  });
+
+  it("Catalog: rule sentences name the item first, codes never wrap; the form labels and tick boxes", async () => {
+    const html = await render(CatalogPage, account.slug);
+    save("catalog", html);
+    const rules = [...html.matchAll(/data-rule-text="">([\s\S]*?)<\/span><\/span>|data-rule-text="">([\s\S]*?)<\/span>/g)].map((m) => text(m[0]));
+    expect(rules.join("\n")).toMatch(/When a quote has [^(\n]+ \(GW-10\), add [^(\n]+ \(INST-1\) × number of sites\./);
+    expect(html).toMatch(/<span class="sas-nowrap">\(GW-10\)<\/span>/);
+  });
+
+  it("Knowledge: source chips in words", async () => {
+    const html = await render(KnowledgePage, account.slug);
+    save("knowledge", html);
+    expect(html).toContain("sas-chip sas-chip--plain");
+    expect(text(html)).toMatch(/Note: [^·<]+/);
+    expect(text(html)).toMatch(/Call · \d{2}:\d{2}/);
+    expect(text(html)).not.toMatch(/· note\b/);
+  });
+
+  it("Side nav: one icon per meaning", async () => {
+    const { SideNav } = await import("@/components/sas/nav");
+    const html = renderToStaticMarkup(<SideNav mode="seller" basePath="/app/x" active="playbook" accountName="Polar" user={{ name: "Sam", initials: "S" }} />);
+    save("nav", html);
+    for (const icon of ["scroll-text", "file-signature", "tags"]) expect(html).toContain(`lucide-${icon}`);
+    expect(html).not.toContain("lucide-sparkles");
+    expect(html).not.toContain("lucide-pen ");
+    expect(html).not.toContain("lucide-credit-card");
+  });
+
+  it("Go live: Home market as a neutral tag", async () => {
+    const html = await render(GoLivePage, account.slug);
+    save("go-live", html);
+    if (html.includes("data-home-market")) expect(html).toMatch(/class="sas-pill"[^>]*data-home-market="">Home market</);
+  });
+});
+

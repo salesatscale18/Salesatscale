@@ -8,6 +8,7 @@ import { pendingCatalogSuggestion } from "@/lib/pipeline/service";
 import { describeFitRule } from "@/lib/catalog/fit";
 import { unitLanguages } from "@/lib/catalog/rules";
 import { formatMoney } from "@/lib/domain/money";
+import { splitCodes } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { describeAutoAddRule } from "@/lib/pricing/auto-add";
 import { entriesOf, listPriceLists, partState } from "@/lib/pricing/price-lists";
@@ -45,6 +46,10 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
   const { account } = await requireAccount(slug);
   const [state, progress] = await Promise.all([catalogState(appDb, account.id), setupProgress(appDb, account)]);
   const base = `/app/${account.slug}/setup/catalog`;
+  // Rules name items first, the code in brackets ("Kitchen hub (GW-10)").
+  const names = new Map(state.items.map((i) => [i.sku, i.name]));
+  const nameOf = (sku: string) => names.get(sku);
+  const codes = state.items.map((i) => i.sku);
   const priceListsPath = `/app/${account.slug}/setup/price-lists`;
   const selectedId = one(sp.item);
   const selected = state.items.find((i) => i.id === selectedId);
@@ -133,12 +138,14 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
             {state.rules.length + state.autoAdd.length === 0 ? <span className="sas-small">{t("catalog.rules.none")}</span> : (
               <ul className="sas-list" style={{ border: "1px solid var(--line)", borderRadius: "var(--radius-md)" }}>
                 {[
-                  ...state.autoAdd.map((r) => ({ id: r.id, icon: "plus" as const, text: describeAutoAddRule(r.rule) })),
-                  ...state.rules.map((r) => ({ id: r.id, icon: r.rule.kind === "advice" ? ("info" as const) : ("check" as const), text: describeFitRule(r.rule) })),
+                  ...state.autoAdd.map((r) => ({ id: r.id, icon: "plus" as const, text: describeAutoAddRule(r.rule, nameOf) })),
+                  ...state.rules.map((r) => ({ id: r.id, icon: r.rule.kind === "advice" ? ("info" as const) : ("check" as const), text: describeFitRule(r.rule, nameOf) })),
                 ].map((r) => (
                   <li key={r.id} className="sas-list__row">
                     <Icon name={r.icon} />
-                    <span className="sas-list__main">{r.text}</span>
+                    <span className="sas-list__main">
+                      <span data-rule-text="">{splitCodes(r.text, codes).map((p, i) => (p.code ? <span key={i} className="sas-nowrap">{p.text}</span> : p.text))}</span>
+                    </span>
                     <form action={removeRuleAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="ruleId" value={r.id} /><Button type="submit" size="sm" variant="ghost">{t("catalog.rules.remove")}</Button></form>
                   </li>
                 ))}

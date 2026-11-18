@@ -50,7 +50,7 @@ export default async function PriceListsPage({ params, searchParams }: { params:
         <div className="sas-split__main">
           {lists.length === 0 ? (
             <section className="sas-panel sas-empty">
-              <span className="sas-empty__icon sas-empty__icon--start"><Icon name="credit-card" /></span>
+              <span className="sas-empty__icon sas-empty__icon--start"><Icon name="tags" /></span>
               <strong>{t("price_lists.empty.title")}</strong>
               <span className="sas-small">{t("price_lists.empty.body")}</span>
               <a className={buttonClass("primary", "sm")} href={`${base}?new=1`}>{t("price_lists.empty.create")}</a>

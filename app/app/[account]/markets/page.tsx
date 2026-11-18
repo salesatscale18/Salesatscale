@@ -10,6 +10,7 @@ import { canGoLive, checkCount, countryName } from "@/lib/markets/rules";
 import { ensureHomeMarket, getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
 import { overriddenCount, type AccountDefaults, type EffectiveSettings, type SettingKey } from "@/lib/markets/settings";
 import { listPriceLists } from "@/lib/pricing/price-lists";
+import { countryValueLabel, currencyLabel, timezoneLabel } from "@/lib/format";
 import { LOCALES, t, type MessageKey } from "@/lib/i18n";
 import { leadTimeText, MAX_LEAD_DAYS, weekendFor } from "@/lib/delivery/eta";
 import type { LeadIntakeKey, Market } from "@/db/schema";
@@ -37,7 +38,7 @@ const weekendText = (days: number[]) => [...days].sort((a, b) => ((a + 6) % 7) -
 function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): string {
   switch (key) {
     case "languages": return langNames(value as string[]);
-    case "timezone": return value as string;
+    case "timezone": return timezoneLabel(value as string);
     case "contactHours": return summarizeContactHours(value as AccountDefaults["contactHours"]);
     case "paymentMethods": {
       const pm = value as AccountDefaults["paymentMethods"];
@@ -98,7 +99,7 @@ function OverrideForm({ slug, market, settingKey, settings, timezones, weekend }
     case "timezone":
       fields = (
         <select className="sas-select" name="timezone" defaultValue={v as string} aria-label={t("markets.setting.timezone")}>
-          {timezones.map((tz) => <option key={tz} value={tz}>{tz}</option>)}
+          {timezones.map((tz) => <option key={tz} value={tz}>{timezoneLabel(tz)}</option>)}
         </select>
       );
       break;
@@ -290,7 +291,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                 <li key={m.id} style={{ borderTop: "1px solid var(--line)" }} data-market-row={m.id}>
                   <a className="sas-list__row" href={`${here}?m=${m.id}`} aria-current={m.id === selected?.id ? "page" : undefined} style={{ flexDirection: "column", alignItems: "stretch", gap: 4 }}>
                     <span style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
-                      <strong>{m.name}{m.isHome ? <span className="sas-chip" style={{ marginInlineStart: 8 }}>{t("markets.home")}</span> : null}</strong>
+                      <strong>{m.name}{m.isHome ? <span className="sas-pill" style={{ marginInlineStart: 8 }} data-home-market="">{t("markets.home")}</span> : null}</strong>
                       <StatusPill object="market" state={m.status} />
                     </span>
                     <span className="sas-small">
@@ -315,7 +316,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
               <div style={{ flex: "1 1 260px", minWidth: 0 }}>
                 <h2 id="md-h" className="sas-heading" style={{ margin: 0, display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                   {selected.name}
-                  {selected.isHome ? <span className="sas-chip">{t("markets.home")}</span> : null}
+                  {selected.isHome ? <span className="sas-pill" data-home-market="">{t("markets.home")}</span> : null}
                   <StatusPill object="market" state={selected.status} />
                 </h2>
                 <span className="sas-small">{t("markets.overridden_count", { count: overriddenCount(selected.overrides) })}</span>
@@ -344,7 +345,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                 ? t("markets.routing_home")
                 : [
                     selected.phonePrefixes.length ? t("markets.routing.phone", { prefixes: selected.phonePrefixes.join(", ") }) : null,
-                    selected.formCountryValues.length ? t("markets.routing.form", { values: selected.formCountryValues.join(", ") }) : null,
+                    selected.formCountryValues.length ? t("markets.routing.form", { values: selected.formCountryValues.map(countryValueLabel).join(", ") }) : null,
                     ...selected.intakeKeyIds.map((id) => (keyName(id) ? t("markets.routing.key", { name: keyName(id)! }) : null)),
                   ].filter(Boolean).join(" · ") || t("markets.routing_none")}
             />
@@ -363,13 +364,13 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                         <option value="">{t("markets.no_price_list")}</option>
                         {lists.map((l) => (
                           <option key={l.lineageId} value={l.lineageId}>
-                            {l.shown.name} · {l.shown.currency} · {l.live ? t("markets.price_list_live", { version: l.live.version }) : t("markets.price_list_draft")}
+                            {l.shown.name} · {currencyLabel(l.shown.currency)} · {l.live ? t("markets.price_list_live", { version: l.live.version }) : t("markets.price_list_draft")}
                           </option>
                         ))}
                       </select>
                       <span className="sas-small">
                         {view.livePriceList
-                          ? t("markets.price_list_current", { name: view.livePriceList.name, currency: view.livePriceList.currency, version: view.livePriceList.version })
+                          ? t("markets.price_list_current", { name: view.livePriceList.name, currency: currencyLabel(view.livePriceList.currency), version: view.livePriceList.version })
                           : selected.priceListLineageId ? t("markets.price_list_not_live") : t("markets.price_list_none_hint")}
                         {" "}<a href={`${base}/setup/price-lists`}>{t("markets.price_lists_link")}</a>
                       </span>
@@ -403,7 +404,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                   );
                 })}
                 {g.label === "markets.group.money" ? (
-                  <Row label={t("markets.setting.currency")} value={view.settings.currency.value} muted={view.settings.currency.source === "account"} pill={<span className="sas-small">{t(view.settings.currency.source === "market" ? "markets.currency_from_list" : "markets.currency_from_account")}</span>} />
+                  <Row label={t("markets.setting.currency")} value={currencyLabel(view.settings.currency.value)} muted={view.settings.currency.source === "account"} pill={<span className="sas-small">{t(view.settings.currency.source === "market" ? "markets.currency_from_list" : "markets.currency_from_account")}</span>} />
                 ) : null}
               </div>
             ))}
@@ -416,10 +417,12 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                 <span className="sas-stack-2" style={{ gap: 4 }}>
                   {[...new Set(legal.map((s) => s.language))].map((lang) => (
                     <span key={lang} data-legal-lang={lang}>
-                      <span className="sas-chip" style={{ marginInlineEnd: 8 }}>{lang.toUpperCase()}</span>
-                      {legal.filter((s) => s.language === lang).map((s, i) => (
-                        <span key={s.id}>{i > 0 ? " · " : null}<bdi>{s.title}</bdi> v{s.version}{s.source === "account" ? ` ${t("markets.from_account")}` : ""}</span>
+                      {/* "English · Sales terms v1, Privacy notice v1 · from account" */}
+                      {LANG_NAME[lang] ?? lang}{" · "}
+                      {legal.filter((s) => s.language === lang).map((s, i, all) => (
+                        <span key={s.id}>{i > 0 ? ", " : null}<bdi>{s.title}</bdi>{` v${s.version}`}{s.source === "account" && !all.every((x) => x.source === "account") ? ` (${t("markets.from_account")})` : ""}</span>
                       ))}
+                      {legal.filter((s) => s.language === lang).every((s) => s.source === "account") ? ` · ${t("markets.from_account")}` : null}
                     </span>
                   ))}
                 </span>

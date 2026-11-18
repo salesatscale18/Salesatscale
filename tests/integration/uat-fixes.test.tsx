@@ -90,10 +90,10 @@ describe("UAT round 2 fixes", () => {
     const box = html.match(/<input type="checkbox" name="pricesIncludeTax"[^>]*>/)![0];
     expect(box).not.toContain("checked");
     expect(html).toMatch(/id="pl-copy-tax"[^>]*value="17"/);
-    expect(html).toMatch(/<option value="ILS" selected="">ILS<\/option>/);
+    expect(html).toMatch(/<option value="ILS" selected="">ILS · Israeli shekel \(₪\)<\/option>/);
     const html2 = renderToStaticMarkup(await PriceListsPage(props(acc.slug, { copy: eur.list.lineageId })));
     expect(html2.match(/<input type="checkbox" name="pricesIncludeTax"[^>]*>/)![0]).toContain("checked");
-    expect(html2).toMatch(/<option value="EUR" selected="">EUR<\/option>/);
+    expect(html2).toMatch(/<option value="EUR" selected="">EUR · Euro \(€\)<\/option>/);
     expect(html2).toMatch(/id="pl-copy-tax"[^>]*value="19"/);
   });
 

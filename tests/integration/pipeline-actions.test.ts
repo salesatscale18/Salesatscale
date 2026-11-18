@@ -90,7 +90,7 @@ describe("pipeline screens and actions", () => {
 
   it("Analyze sources: shows the estimate, is disabled without an API key, and refuses in the action", async () => {
     const page = await html(SourcesPage({ ...params, searchParams: Promise.resolve({ analyze: "confirm" }) }));
-    expect(page).toMatch(/Changed since the last analysis: 2 of 2 sources · about [\d,]+ tokens · estimated \$0\.\d+/);
+    expect(page).toMatch(/Changed since the last analysis: 2 of 2 sources · estimated cost \$0\.\d+/);
     expect(page).toContain("AI is not set up for this workspace yet");
     expect(page).not.toContain("Start analysis");
     expect(await go(pipeline.analyzeAction(form({ slug, token: "x", back: "sources" })))).toBe(`/app/${slug}/setup/sources?analyze_error=no_key#an-h`);
