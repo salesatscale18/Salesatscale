@@ -87,15 +87,26 @@ export function MenuEnhancer() {
       details.open = false;
       if (focus) summary.focus();
     };
+    // Opened with ArrowUp: focus the last item instead of the first.
+    let focusLast = false;
     const onToggle = () => {
       summary.setAttribute("aria-expanded", String(details.open));
       if (details.open) {
         place();
-        // Opened from the keyboard: focus the first item.
-        if (document.activeElement === summary) items()[0]?.focus();
+        // Opened from the keyboard: focus the first item (the last after ArrowUp).
+        const list = items();
+        if (document.activeElement === summary) list[focusLast ? list.length - 1 : 0]?.focus();
       } else reset();
+      focusLast = false;
     };
     const onKey = (e: KeyboardEvent) => {
+      // ArrowDown / ArrowUp on the closed ⋯ button open the menu (menu button pattern), like Enter and Space.
+      if (!details.open && e.target === summary && (e.key === "ArrowDown" || e.key === "ArrowUp")) {
+        e.preventDefault();
+        focusLast = e.key === "ArrowUp";
+        details.open = true;
+        return;
+      }
       if (!details.open) return;
       if (e.key === "Escape") {
         e.preventDefault();
