@@ -101,7 +101,7 @@ export function PlayForm({ slug, playKey, title, defaultCard, initialFacts, init
           {own ? (
             <button type="button" className={buttonClass("ghost", "sm")} onClick={() => setConfirming(true)} aria-haspopup="dialog"><Icon name="rotate-ccw" />{t("playbook.play.restore")}</button>
           ) : (
-            <button type="button" className={buttonClass("secondary", "sm")} onClick={() => setOwn(cardText(defaultCard))}><Icon name="pen" />{t("playbook.play.use_own")}</button>
+            <button type="button" className={buttonClass("secondary", "sm")} onClick={() => setOwn(cardText(defaultCard))}><Icon name="pencil" />{t("playbook.play.use_own")}</button>
           )}
         </div>
         {confirming && own ? (

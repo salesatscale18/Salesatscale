@@ -15,6 +15,7 @@ import { suggestionSection, type SuggestionKind } from "@/lib/pipeline/validate"
 import { AnalyzePanel } from "../../sources/analyze";
 import { acceptAllSuggestionsAction, saveSuggestionsAction } from "./actions";
 import { SuggestionItem } from "./suggestion";
+import { seesPlatformDetails } from "@/lib/auth/display";
 
 /** "Regenerate" runs the pipeline after its response: up to five minutes. */
 export const maxDuration = 300;
@@ -52,7 +53,8 @@ const ERRORS: Record<string, MessageKey> = {
 export default async function PlaybookDraftPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const access = await requireAccount(slug);
+  const { account } = access;
   await failStaleRuns(appDb, account.id);
   const [{ run, items }, draft, progress, runs, plan, spend, liveV] = await Promise.all([
     latestSuggestions(appDb, account.id), ensureDraftVersion(appDb, account.id), setupProgress(appDb, account),
@@ -118,7 +120,7 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
         <AnalyzePanel
           slug={account.slug} plan={plan} configured={llmConfigured()} capped={spend?.state === "capped"} runs={runs.slice(0, 4)}
           confirming={one(sp.analyze) === "confirm"} back="draft" here={here} error={one(sp.analyze_error) || undefined}
-          started={one(sp.analyzed) === "1"} title="draft.regenerate" timezone={account.timezone}
+          started={one(sp.analyzed) === "1"} title="draft.regenerate" timezone={account.timezone} platform={seesPlatformDetails(access)}
         />
       ) : null}
 

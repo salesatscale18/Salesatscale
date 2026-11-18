@@ -25,10 +25,15 @@ export function costText(micros: number): string {
  * The estimate line: "Nothing changed since the last analysis · estimated cost $0.15", or
  * "Changed since the last analysis: 2 of 3 sources · estimated cost $0.15".
  */
-export function estimateText(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate">): string {
+export function estimateText(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate" | "facts" | "playbook">): string {
   const s = analysisSummary(plan);
-  const cost = costText(s.costMicros);
-  return s.nothingChanged ? t("pipeline.estimate.none", { cost }) : t("pipeline.estimate.line", { changed: s.changed, total: s.total, cost });
+  if (s.nothingToRerun) return t("pipeline.estimate.none");
+  const what = [
+    s.changed > 0 ? t("pipeline.changed.sources", { changed: s.changed, total: s.total }) : null,
+    s.stage2Changed ? t("pipeline.changed.stage2") : null,
+    s.rulesChanged ? t("pipeline.changed.rules") : null,
+  ].filter(Boolean).join(" · ");
+  return t("pipeline.estimate.line", { what, cost: costText(s.costMicros) });
 }
 
 const ERRORS: Record<string, MessageKey> = {
@@ -53,6 +58,8 @@ export type AnalyzeState = {
   title: MessageKey;
   /** The account time zone, for run times (local, zone on hover). */
   timezone?: string;
+  /** Platform admins (or acting as one) also see each run's model and tokens; sellers see the cost only. */
+  platform?: boolean;
 };
 
 /** The analysis panel: estimate, confirm, runs. */
@@ -62,7 +69,7 @@ export function AnalyzePanel(s: AnalyzeState) {
   const blocked = !s.plan || !s.configured || s.capped || active;
   const est = s.plan?.estimate;
   // Nothing changed: the button is secondary (a rerun is still possible, after the confirm step).
-  const variant = s.plan && analysisSummary(s.plan).nothingChanged ? "secondary" : "primary";
+  const variant = s.plan && analysisSummary(s.plan).nothingToRerun ? "secondary" : "primary";
   const error = s.error ? ERRORS[s.error] : undefined;
   const now = new Date();
   return (
@@ -114,7 +121,7 @@ export function AnalyzePanel(s: AnalyzeState) {
               <thead><tr>
                 <th scope="col">{t("pipeline.col.step")}</th>
                 <th scope="col">{t("pipeline.col.status")}</th>
-                <th scope="col">{t("pipeline.col.tokens")}</th>
+                {s.platform ? <th scope="col">{t("pipeline.col.tokens")}</th> : null}
                 <th scope="col">{t("pipeline.col.cost")}</th>
                 <th scope="col">{t("pipeline.col.when")}</th>
               </tr></thead>
@@ -123,14 +130,16 @@ export function AnalyzePanel(s: AnalyzeState) {
                   const u = runData(r);
                   return (
                     <tr key={r.id}>
-                      <td>{t(`pipeline.kind.${r.kind}`)}<span className="sas-small" style={{ display: "block" }}>{r.model}</span></td>
+                      <td>{t(`pipeline.kind.${r.kind}`)}{s.platform ? <span className="sas-small" style={{ display: "block" }}>{r.model}</span> : null}</td>
                       <td style={{ whiteSpace: "normal" }}>
                         <StatusPill object="analysis_run" state={runPillState(r)} />
                         {r.error ? <span className="sas-small" style={{ display: "block" }}>{r.error}</span> : null}
                       </td>
-                      <td className="sas-small sas-num">
-                        {u ? t("pipeline.tokens", { input: n(u.input), output: n(u.output), read: n(u.cacheRead), write: n(u.cacheWrite) }) : "—"}
-                      </td>
+                      {s.platform ? (
+                        <td className="sas-small sas-num">
+                          {u ? t("pipeline.tokens", { input: n(u.input), output: n(u.output), read: n(u.cacheRead), write: n(u.cacheWrite) }) : "—"}
+                        </td>
+                      ) : null}
                       <td className="sas-num">{r.costEstimateMicros !== null ? costText(r.costEstimateMicros) : "—"}</td>
                       <td className="sas-small sas-num" title={`${formatLocalDateTime(r.createdAt, s.timezone)} · ${zoneTitle(r.createdAt, s.timezone)}`}>{timeAgo(r.createdAt, now, s.timezone)}</td>
                     </tr>

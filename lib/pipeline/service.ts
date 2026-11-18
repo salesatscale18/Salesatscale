@@ -179,11 +179,32 @@ export type AnalysisPlan = {
   token: string;
 };
 
-/** What the Analyze line says: how many sources changed, of how many, and the estimated cost (no token counts). */
-export type AnalysisSummary = { nothingChanged: boolean; changed: number; total: number; costMicros: number };
+/**
+ * What the Analyze line says, from the same reuse decision as the confirm
+ * step: nothing to re-run, or what changed (sources, catalog or playbook
+ * inputs, or how the analysis works) and the estimated cost. No token counts.
+ */
+export type AnalysisSummary = {
+  nothingToRerun: boolean;
+  changed: number;
+  total: number;
+  /** Stage 1 is reused but the catalog or playbook inputs of stage 2 changed. */
+  stage2Changed: boolean;
+  /** Stage 1 re-runs although no source changed (the analysis itself was updated). */
+  rulesChanged: boolean;
+  costMicros: number;
+};
 
-export function analysisSummary(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate">): AnalysisSummary {
-  return { nothingChanged: plan.changed === 0, changed: plan.changed, total: plan.sources.length, costMicros: plan.estimate.costMicros };
+export function analysisSummary(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate" | "facts" | "playbook">): AnalysisSummary {
+  const nothingToRerun = plan.facts.reuse && plan.playbook.reuse;
+  return {
+    nothingToRerun,
+    changed: plan.changed,
+    total: plan.sources.length,
+    stage2Changed: plan.facts.reuse && !plan.playbook.reuse,
+    rulesChanged: !plan.facts.reuse && plan.changed === 0,
+    costMicros: plan.estimate.costMicros,
+  };
 }
 
 /** Stage 0: corpus, hashes, reuse and the estimate. Null when there is nothing to analyse. */

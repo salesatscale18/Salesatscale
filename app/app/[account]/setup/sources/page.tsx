@@ -16,6 +16,7 @@ import { TRANSCRIPT_ACCEPT } from "@/lib/sources/transcript";
 import { deleteSourceAction, rereadWebsiteAction } from "./actions";
 import { CallForm, NoteForm, RefreshWhileProcessing, UploadForm, WebsiteForm } from "./forms";
 import { SourceBadge, languageWords, sizeLine } from "./view";
+import { seesPlatformDetails } from "@/lib/auth/display";
 
 /**
  * Server actions on this page read websites and files, and "Analyze sources"
@@ -40,7 +41,8 @@ const DONE: Record<string, MessageKey> = {
 export default async function SourcesPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
+  const access = await requireAccount(slug);
+  const { account } = access;
   await Promise.all([failStaleSources(appDb, account.id), failStaleRuns(appDb, account.id)]);
   const [rows, progress, plan, runs, about, spend, factCounts] = await Promise.all([
     listSources(appDb, account.id), setupProgress(appDb, account), planAnalysis(appDb, account.id),
@@ -96,7 +98,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
       <AnalyzePanel
         slug={account.slug} plan={plan} configured={llmConfigured()} capped={spend?.state === "capped"} runs={runs}
         confirming={one(sp.analyze) === "confirm"} back="sources" here={page} error={one(sp.analyze_error) || undefined}
-        started={one(sp.analyzed) === "1"} title="pipeline.analyze" timezone={account.timezone}
+        started={one(sp.analyzed) === "1"} title="pipeline.analyze" timezone={account.timezone} platform={seesPlatformDetails(access)}
       />
 
       <section className="sas-panel" aria-labelledby="src-h" style={{ overflow: "hidden" }}>

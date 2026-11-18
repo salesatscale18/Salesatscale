@@ -1832,8 +1832,8 @@
   "pipeline.analyze": "Analyze sources",
   "pipeline.intro": "Finds facts, contradictions and gaps in your sources, and suggests a playbook draft. Nothing reaches buyers until you approve it.",
   "pipeline.no_sources": "Add a source that is ready to analyze first.",
-  "pipeline.estimate.line": "Changed since the last analysis: {changed} of {total} sources · estimated cost {cost}",
-  "pipeline.estimate.none": "Nothing changed since the last analysis · estimated cost {cost}",
+  "pipeline.estimate.line": "Changed since the last analysis: {what} · estimated cost {cost}",
+  "pipeline.estimate.none": "Nothing changed since the last analysis. Running it again reuses the results at no cost.",
   "pipeline.estimate.large": "Your sources are large: facts are found one source at a time with a cheaper model.",
   "pipeline.confirm.spend": "Start the analysis? It makes {calls} AI requests and costs about {cost}.",
   "pipeline.confirm.reuse": "Nothing changed. Mark your sources as analyzed without new AI requests?",
@@ -2558,5 +2558,8 @@
   "leads.filters_on": "Filters · {count}",
   "conv.day": "Messages from {day}",
   "conv.take_over_hint_header": "Use Take over chat at the top to write to the buyer yourself.",
-  "ofs.lang_version": "{lang} · v{version}"
+  "ofs.lang_version": "{lang} · v{version}",
+  "pipeline.changed.sources": "{changed} of {total} sources",
+  "pipeline.changed.stage2": "catalog or playbook",
+  "pipeline.changed.rules": "how the analysis works"
 }

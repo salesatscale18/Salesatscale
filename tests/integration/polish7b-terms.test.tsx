@@ -43,6 +43,7 @@ const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowl
 const { default: PriceListsPage } = await import("@/app/app/[account]/setup/price-lists/page");
 const { default: GoLivePage } = await import("@/app/app/[account]/setup/go-live/page");
 const { estimateText } = await import("@/app/app/[account]/setup/sources/analyze");
+const { planAnalysis } = await import("@/lib/pipeline/service");
 
 const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
 const save = (name: string, html: string) => {
@@ -149,23 +150,27 @@ describe("Polish-7b: plain terms", () => {
   it("Sources › Analyze: the estimate line in both cases, no tokens, secondary button when nothing changed", async () => {
     const html = await render(SourcesPage, account.slug);
     save("sources-nothing-changed", html);
-    expect(text(html)).toMatch(/Nothing changed since the last analysis · estimated cost \$\d+\.\d{2,3}/);
-    expect(html).toContain('data-analyze-button="secondary"');
+    // The line and the button follow the same reuse decision as the confirm step (UX follow-up).
+    const plan = (await planAnalysis(db, account.id))!;
+    expect(text(html)).toContain(estimateText(plan));
+    expect(html).toContain(`data-analyze-button="${plan.facts.reuse && plan.playbook.reuse ? "secondary" : "primary"}"`);
     expect(text(html)).not.toMatch(/about [\d,]+ tokens/);
     const [one] = await db.select().from(sources).where(eq(sources.accountId, account.id)).limit(1);
     await db.update(sources).set({ textHash: null }).where(eq(sources.id, one.id));
     const changed = await render(SourcesPage, account.slug);
     save("sources-changed", changed);
-    expect(text(changed)).toMatch(/Changed since the last analysis: 1 of 3 sources · estimated cost \$\d+\.\d{2,3}/);
+    expect(text(changed)).toMatch(/Changed since the last analysis: 1 of 3 sources[^·]*· estimated cost \$\d+\.\d{2,3}/);
     expect(changed).toContain('data-analyze-button="primary"');
     // The confirm step stays (shown once AI is set up: a dummy key, no model is called while rendering).
     vi.stubEnv("ANTHROPIC_API_KEY", "test-dummy-not-used");
     const confirm = await render(SourcesPage, account.slug, { analyze: "confirm" }).finally(() => vi.unstubAllEnvs());
     expect(text(confirm)).toContain("Start analysis");
     // Pure text, both cases.
-    const plan = { changed: 0, sources: [{}, {}, {}], estimate: { costMicros: 150_000 } } as never;
-    expect(estimateText(plan)).toBe("Nothing changed since the last analysis · estimated cost $0.15");
-    expect(estimateText({ ...(plan as object), changed: 2 } as never)).toBe("Changed since the last analysis: 2 of 3 sources · estimated cost $0.15");
+    const base = { changed: 0, sources: [{}, {}, {}], estimate: { costMicros: 150_000 }, facts: { reuse: true }, playbook: { reuse: true } };
+    expect(estimateText(base as never)).toBe("Nothing changed since the last analysis. Running it again reuses the results at no cost.");
+    expect(estimateText({ ...base, changed: 2, facts: { reuse: false }, playbook: { reuse: false } } as never)).toBe("Changed since the last analysis: 2 of 3 sources · estimated cost $0.15");
+    expect(estimateText({ ...base, playbook: { reuse: false } } as never)).toBe("Changed since the last analysis: catalog or playbook · estimated cost $0.15");
+    expect(estimateText({ ...base, facts: { reuse: false }, playbook: { reuse: false } } as never)).toBe("Changed since the last analysis: how the analysis works · estimated cost $0.15");
   });
 
   it("Catalog: rule sentences name the item first, codes never wrap; the form labels and tick boxes", async () => {
