@@ -29,6 +29,42 @@ export function vatLabel(s: Pick<FormSnapshot, "taxRateBp">, tr: Tr) {
   return s.taxRateBp ? `${tr("buyer.vat")} ${s.taxRateBp / 100}%` : tr("buyer.vat");
 }
 
+const capFirst = (x: string) => (x ? x[0].toLocaleUpperCase() + x.slice(1) : x);
+
+/**
+ * The item's name as buyers see it: the chat name (the catalog's plain name,
+ * stored lower-case on purpose for sentences) with its first letter capitalised,
+ * else the catalog name as entered. Never translated.
+ */
+export function itemName(l: Pick<SnapshotLine, "name" | "plainName">): string {
+  return capFirst(l.plainName?.trim() || l.name);
+}
+
+/**
+ * A line's label: "2 × <item name>"; the monthly charge of an item
+ * also bought once names the service ("<item name> · monthly service"), so the
+ * item does not read as charged twice. `isolate` is the part shown as one bidi
+ * run, so a Latin name in a Hebrew line still reads quantity first.
+ */
+export function lineLabel(s: Pick<FormSnapshot, "lines" | "recurringPeriod">, l: SnapshotLine, tr: Tr): { label: string; isolate: string } {
+  const name = itemName(l);
+  const counted = `${l.qty} × ${name}`;
+  if (chargeOf(l) === "recurring" && s.lines.some((o) => o.sku === l.sku && chargeOf(o) === "one_time")) {
+    const isolate = l.qty === 1 ? name : counted;
+    const year = (l.period ?? s.recurringPeriod) === "year";
+    return { label: tr(year ? "buyer.line.service_year" : "buyer.line.service_month", { name: isolate }), isolate };
+  }
+  return { label: counted, isolate: counted };
+}
+
+/** The label with its isolated part in <bdi>. */
+export function LineName({ s, l, tr }: { s: Pick<FormSnapshot, "lines" | "recurringPeriod">; l: SnapshotLine; tr: Tr }) {
+  const { label, isolate } = lineLabel(s, l, tr);
+  const at = label.indexOf(isolate);
+  if (at < 0) return <bdi>{label}</bdi>;
+  return <span data-line-name="">{label.slice(0, at)}<bdi>{isolate}</bdi>{label.slice(at + isolate.length)}</span>;
+}
+
 /** "One-time", "Monthly" or "Yearly". */
 export function chargeLabel(tr: Tr, charge: "one_time" | "recurring", period: Period | null | undefined) {
   if (charge === "one_time") return tr("buyer.charge.one_time");
@@ -41,7 +77,11 @@ export function chargeLabel(tr: Tr, charge: "one_time" | "recurring", period: Pe
  * line says its charge; units come from unitLabel. VAT follows the price
  * list's prices_include_tax. Older snapshots (no charge or unit) still render.
  */
-export function OrderLines({ s, tr, lang }: { s: FormSnapshot; tr: Tr; lang: Locale }) {
+export function OrderLines({ s, tr, lang, paidLabel }: {
+  s: FormSnapshot; tr: Tr; lang: Locale;
+  /** After payment: the one-time total reads "Paid today · Card" instead of "Due today" (no second row). */
+  paidLabel?: string;
+}) {
   const money = moneyFor(s, tr);
   const period: Period = s.recurringPeriod === "year" ? "year" : "month";
   const oneTime = s.lines.filter((l) => chargeOf(l) === "one_time");
@@ -58,7 +98,7 @@ export function OrderLines({ s, tr, lang }: { s: FormSnapshot; tr: Tr; lang: Loc
     return (
       <div key={`${l.sku}-${charge}-${i}`} className="b-row" data-charge={charge}>
         <span>
-          <bdi>{l.qty} × {l.plainName || l.name}</bdi>
+          <LineName s={s} l={l} tr={tr} />
           <span className="b-mut" style={{ display: "block" }}>
             {included ? null : <><bdi>{each}</bdi> · </>}<bdi>{l.sku}</bdi> · {chargeLabel(tr, charge, p)}
           </span>
@@ -80,7 +120,7 @@ export function OrderLines({ s, tr, lang }: { s: FormSnapshot; tr: Tr; lang: Loc
               <div className="b-row b-mut"><span>{vat}</span><span className="b-num">{money(s.oneTime.taxMinor)}</span></div>
             </>
           ) : null}
-          <div className="b-row b-row--total"><span>{tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 15 }}>{money(s.oneTime.totalMinor)}</span></div>
+          <div className="b-row b-row--total"><span>{paidLabel ?? tr("buyer.due_today")}</span><span className="b-num" style={{ fontSize: 15 }}>{money(s.oneTime.totalMinor)}</span></div>
         </>
       ) : null}
       {recurring.length > 0 ? (

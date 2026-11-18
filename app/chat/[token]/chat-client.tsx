@@ -51,7 +51,8 @@ function Card({ p, s, initials, dir }: { p: LinkPreview; s: ChatStrings; initial
         <span className="c-card__logo" aria-hidden="true">{initials}</span>
         <span className="c-card__text">
           <b className="c-card__seller">{p.seller}</b>
-          <span className="c-card__title">{s.formLabel} · <Num>{p.ref}</Num></span>
+          {/* The buyer sees a version only from v2 on, as on the quote card and the form. */}
+          <span className="c-card__title">{s.formLabel} · <Num>{p.ref.replace(/ v1$/, "")}</Num></span>
           {p.oneTime || p.recurring ? (
             <span className="c-card__sum">
               {p.oneTime ? <><Num>{p.oneTime}</Num> {s.todayWord}</> : null}

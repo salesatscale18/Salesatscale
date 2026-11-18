@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { eq } from "drizzle-orm";
+import { sellerAccounts } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
 import { dir, isLocale, translator, type Locale } from "@/lib/i18n";
 import { displaySeller, loadForm, orderLabel, signatureFor, snapshotOf } from "@/lib/orders/service";
@@ -9,6 +11,7 @@ import { PreferenceRow } from "../steps";
 import { PrintButton } from "./print-button";
 import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { brandVars } from "@/lib/simulator/rules";
+import { buyerDateTime, buyerZone, utcStamp } from "../time";
 import "../buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -30,14 +33,29 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
   const asked = typeof sp.lang === "string" ? sp.lang : "";
   const lang: Locale = isLocale(asked) ? asked : isLocale(view.form.language) ? view.form.language : "en";
   const tr = translator(lang);
-  const date = new Intl.DateTimeFormat(lang === "he" ? "he-IL" : "en-GB", { dateStyle: "long", timeStyle: "short", timeZone: "UTC" }).format(sig.signedAt) + " UTC";
+  // The signing time in the buyer's (market's) zone, as on the payment page; UTC only as the audit value below.
+  const [account] = await appDb.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, view.form.accountId));
+  const date = buyerDateTime(sig.signedAt, buyerZone(s, account?.timezone ?? "UTC"), lang);
+  const seller = displaySeller(view.form, lang);
+  // Only the hash is monospace: the label around it stays in the page font.
+  const hashParts = tr("buyer.document_hash", { hash: "\u0000" }).split("\u0000");
+  // UTC is the secondary audit value, isolated so it keeps its order in Hebrew.
+  const utcParts = tr("buyer.document_utc", { time: "\u0000" }).split("\u0000");
+  const initials = seller.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  // The buyer's details in the form's own field order (step 2), then anything else that was signed.
+  const order = [...s.fields, ...Object.keys(sig.buyerFields).filter((k) => !(s.fields as string[]).includes(k))];
+  const details = order.map((k) => [k, (sig.buyerFields as Record<string, string | undefined>)[k]] as const).filter(([, v]) => v);
   return (
     <div className="b-root" lang={lang} dir={dir(lang)} style={brandVars(s.seller.brandColor)}>
       <div className="b-page">
         {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
+        <header className="b-head" data-doc-seller="">
+          <span className="b-logo" aria-hidden="true">{initials}</span>
+          <span className="b-head__name"><b style={{ fontSize: 16 }}><bdi>{seller}</bdi></b>{s.seller.legalName && s.seller.legalName !== seller ? <span className="b-mut"><bdi>{s.seller.legalName}</bdi></span> : null}</span>
+        </header>
         <section className="b-sec">
           <h1 className="b-h1">{tr("buyer.document_title")}</h1>
-          <span>{s.seller.legalName ?? displaySeller(view.form, lang)} · <span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
+          <span><span className="b-num">Q-{s.quote.number} v{s.quote.version}</span> · <span className="b-num">{orderLabel(s.seller.tradeName, view.order.number)}</span></span>
         </section>
         <section className="b-sec">
           <OrderLines s={s} tr={tr} lang={lang} />
@@ -46,8 +64,8 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
         </section>
         <section className="b-sec">
           <h2 className="b-h2">{tr("buyer.details")}</h2>
-          {Object.entries(sig.buyerFields).filter(([, v]) => v).map(([k, v]) => (
-            <div key={k} className="b-row"><span className="b-mut">{tr(`buyer.field.${k}` as "buyer.field.company_name")}</span><span>{v}</span></div>
+          {details.map(([k, v]) => (
+            <div key={k} className="b-row" data-doc-field={k}><span className="b-mut">{tr(`buyer.field.${k}` as "buyer.field.company_name")}</span><span><bdi>{v}</bdi></span></div>
           ))}
         </section>
         <section className="b-sec b-terms" style={{ gap: 8 }}>
@@ -57,9 +75,9 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
           ))}
         </section>
         <section className="b-sec">
-          <b>{tr("buyer.document_signed", { name: sig.fullName, role: sig.role ? `, ${sig.role}` : "", date })}</b>
-          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `Q-${s.quote.number} v${s.quote.version} · ${s.legal.map((l) => `${l.title} v${l.version}`).join(", ")}` })}</span>
-          <span className="b-mut b-num" style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>{tr("buyer.document_hash", { hash: sig.documentHash })}</span>
+          <b data-doc-signed="">{tr("buyer.document_signed", { name: sig.fullName, role: sig.role ? `, ${sig.role},` : "", date })}</b>
+          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `Q-${s.quote.number} v${s.quote.version} · ${s.legal.map((l) => `${l.title} v${l.version}`).join(", ")}` })} · {utcParts[0]}<bdi data-doc-utc="">{utcStamp(sig.signedAt)}</bdi>{utcParts[1]}</span>
+          <span className="b-mut" style={{ overflowWrap: "anywhere" }}>{hashParts[0]}<span className="b-mono" data-doc-hash="">{sig.documentHash}</span>{hashParts[1]}</span>
           <div className="b-noprint" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <PrintButton label={tr("buyer.print")} />
             <a className="b-btn b-btn--2" href={`/f/${token}?lang=${lang}`}>{tr("buyer.back")}</a>

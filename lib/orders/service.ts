@@ -31,6 +31,7 @@ import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesO
 import { createQuoteVersion, getQuote } from "@/lib/quotes/service";
 import { orderFormPrefillWithSources, signedDealValues, type PrefillKey, type PrefillSource } from "./prefill";
 import { getOrderFormSettings } from "./settings";
+import { isSimulatedLead } from "@/lib/simulator/rules";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
 
 const DAY_MS = 86_400_000;
@@ -131,7 +132,7 @@ export async function createOrderForm(
   if (legal.length === 0) return { ok: false, reason: "no_legal" };
   const unitCustomOf = new Map(units.map((u) => [u.id, u.unitCustom ?? null]));
   const plainNameOf = new Map(units.map((u) => [u.id, u.plainName?.trim() || null]));
-  const prefill = orderFormPrefillWithSources(q.lead, deal?.fields);
+  const prefill = orderFormPrefillWithSources({ ...q.lead, simulated: isSimulatedLead(q.lead) }, deal?.fields);
   const localNames = Object.entries(account.tradeNameLocal ?? {}).filter((e): e is [string, string] => typeof e[1] === "string" && !!e[1].trim());
   const sellerNames = localNames.length ? Object.fromEntries(localNames.map(([l, n]) => [l, n.trim()])) : null;
 

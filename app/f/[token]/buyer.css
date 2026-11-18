@@ -1,6 +1,11 @@
 /* Buyer pages (canvas: BuyerOrder, BuyerPay, BuyerPaid, BuyerExpired, BuyerPriceChanged, BuyerPayFailed).
    Mobile-first, seller-branded via --brand. Logical properties only, so Hebrew mirrors. */
-.b-root { --brand: #0f6b5a; --ink: #0f1420; --muted: #566073; --line: #dde1e8; --soft: #f2f4f3; --ok-soft: #eef6f3;
+/* --ok-soft is the seller's colour as a light tint (as the chat's quote card does), so the intro band, the
+   monthly block and the calendar's estimate follow the seller; ink text on it keeps its contrast.
+   --success is "Payment received" (design-system tokens). */
+.b-root { --brand: #0f6b5a; --ink: #0f1420; --muted: #566073; --line: #dde1e8; --soft: #f2f4f3;
+  --ok-soft: color-mix(in srgb, var(--brand) 8%, #fff);
+  --success: #1d7a35; --success-soft: #e5f4e8; --primary: #2357d0; --primary-soft: #e8effc;
   --warn: #a15c07; --warn-soft: #fdf1dc; --danger: #c23a2b; --danger-soft: #fbe9e6;
   min-height: 100vh; background: #f5f6f8; color: var(--ink); font-family: Inter, "Noto Sans Hebrew", system-ui, sans-serif; font-size: 15px; line-height: 22px; }
 .b-root *, .b-root *::before, .b-root *::after { box-sizing: border-box; }
@@ -20,7 +25,10 @@
 .b-h2 { margin: 0; font-size: 16px; line-height: 22px; font-weight: 700; }
 .b-row { display: flex; justify-content: space-between; gap: 12px; font-size: 14px; line-height: 20px; }
 .b-row--total { padding-block-start: 10px; border-block-start: 1px solid var(--line); font-weight: 700; }
-.b-num { font-family: "JetBrains Mono", ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size: 13px; white-space: nowrap; direction: ltr; unicode-bidi: isolate; }
+/* Amounts: the page font with tabular figures. plaintext takes the direction from the text itself, so
+   "₪106.20/month" stays left-to-right and "₪106.20 לחודש" reads amount first in Hebrew. */
+.b-num { font-variant-numeric: tabular-nums; white-space: nowrap; unicode-bidi: plaintext; }
+.b-mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
 .b-mut { color: var(--muted); font-size: 13px; line-height: 18px; }
 .b-lbl { display: flex; flex-direction: column; gap: 6px; font-size: 13px; font-weight: 600; }
 .b-inp { height: 44px; box-sizing: border-box; padding: 0 12px; border: 1px solid #7d8697; border-radius: 10px; font-family: inherit; font-size: 15px; font-weight: 400; color: var(--ink); background: #fff; width: 100%; }
@@ -42,10 +50,13 @@
 .b-note--ok { background: var(--ok-soft); }
 .b-tabs { display: grid; grid-template-columns: 1fr 1fr; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; font-size: 14px; font-weight: 600; }
 .b-tabs a { height: 44px; display: grid; place-items: center; color: var(--ink); text-decoration: none; }
-.b-tabs a[aria-current="true"] { background: var(--ink); color: #fff; }
+.b-tabs a[aria-current="true"] { background: var(--primary-soft); color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.b-tabs a:focus-visible { outline: 2px solid #2357d0; outline-offset: -2px; }
 .b-testbox { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px dashed #7d8697; border-radius: 12px; }
 .b-center { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 28px 20px 20px; text-align: center; }
 .b-badge { width: 56px; height: 56px; border-radius: 999px; display: grid; place-items: center; }
+.b-paid { background: var(--success-soft); }
+.b-badge--ok { background: var(--success); color: #fff; }
 .b-foot { margin-block-start: auto; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 16px; font-size: 12px; color: var(--muted); border-block-start: 1px solid var(--line); }
 .b-help { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 12px 20px; text-align: center; }
 .b-grid3 { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 4px 12px; align-items: baseline; font-size: 14px; line-height: 20px; }
@@ -68,8 +79,6 @@
 .b-cta { display: flex; flex-direction: row-reverse; gap: 10px; padding: 14px 20px; border-block-start: 1px solid var(--line); background: #fff; }
 .b-cta .b-btn { flex: 1; width: auto; }
 .b-cta .b-btn--2 { flex: none; min-height: 52px; padding: 0 18px; }
-.b-cta--sign { flex-direction: column; }
-.b-cta--sign .b-btn--2 { min-height: 44px; }
 .b-lbl-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .b-from { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; line-height: 16px; font-weight: 600; color: var(--muted); background: #eceef2; border-radius: 999px; padding: 1px 8px; }
 .b-err { display: flex; gap: 6px; align-items: center; }
@@ -81,6 +90,8 @@
 .b-mo { padding: 10px 12px; border-radius: 10px; background: var(--ok-soft); display: flex; flex-direction: column; gap: 6px; }
 .b-row--sep { padding-block-start: 8px; border-block-start: 1px solid var(--line); }
 .b-deliv { display: flex; flex-direction: column; }
+.b-deliv__same { font-size: 15px; font-weight: 400; color: var(--ink); line-height: 22px; }
+.b-inp::placeholder { color: #7d8697; }
 .b-deliv:has(input[name="delivery_same"]:checked) .b-deliv__input { display: none; }
 .b-deliv:not(:has(input[name="delivery_same"]:checked)) .b-deliv__same { display: none; }
 .b-when { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
@@ -108,11 +119,12 @@
 @media (min-width: 960px) {
   .b-page--wide { max-width: 1040px; }
   .b-page--wide .b-head { padding: 16px 40px; }
-  .b-layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 32px; padding-inline: 40px; align-items: start; }
+  /* The form column stays readable (max 560px); the summary sits on the end side (right in English, left in Hebrew). */
+  .b-layout { display: grid; grid-template-columns: minmax(0, 560px) 320px; justify-content: space-between; gap: 40px; padding-inline: 40px; align-items: start; }
+  .b-layout--solo { grid-template-columns: minmax(0, 560px); justify-content: start; }
   .b-layout .b-sec, .b-layout .b-prog { padding-inline: 0; }
   .b-layout .b-cta { padding-inline: 0; border-block-start: 0; justify-content: flex-start; }
   .b-layout .b-cta .b-btn { flex: none; padding: 0 40px; }
-  .b-layout .b-cta--sign { align-items: flex-end; }
   .b-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .b-summary { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 18px; margin-block-start: 18px; border: 1px solid var(--line); border-radius: 12px; padding: 16px; font-size: 14px; }
 }

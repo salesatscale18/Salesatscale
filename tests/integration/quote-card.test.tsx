@@ -189,7 +189,7 @@ describe("Quote card", () => {
     const card = chat.cards[after[1].id];
     expect(card).toMatchObject({ state: "sent", title: "Your updated quote", ref: expect.stringMatching(/^Q-\d+ v2$/) });
     expect(card.rows[0]).toEqual({ label: "Discount 5%", amount: "−₪104.50" });
-    expect(after[2].body).toMatch(/^If this looks right, I'll send the order form now and it can be with you by about \d{1,2} [A-Z][a-z]{2}\. Sounds good\?$/);
+    expect(after[2].body).toMatch(/^If this looks right, I'll send the order form now and it can be with you by about \d{1,2} [A-Z][a-z]+\. Sounds good\?$/);
     const page = render(await BuyerChatPage({ params: Promise.resolve({ token: b.token }) }));
     save("buyer-in-limit-en", page, "buyer");
     expect(page.match(/data-reply-buttons/g)).toHaveLength(1);
@@ -300,7 +300,7 @@ describe("Quote card", () => {
     const cur = chat.cards[String(v2.result.quote_message_id)];
     expect(old).toMatchObject({ state: "replaced", status: "Replaced by the updated quote below.", summary: "₪2,466.20 today · ₪106.20/month", lines: [] });
     expect(cur).toMatchObject({ state: "sent", title: "Your updated quote", headline: "Wireless fridge sensor and 2 more" });
-    expect(cur.lines[0]).toEqual({ label: "3 × Wireless fridge sensor", amount: "₪1,770.00", was: "was 2" });
+    expect(cur.lines[0]).toEqual({ label: "3 × Wireless fridge sensor", isolate: "3 × Wireless fridge sensor", amount: "₪1,770.00", was: "was 2" });
     expect(cur.lines[1].was).toBeNull();
     const page = render(await BuyerChatPage({ params: Promise.resolve({ token: b.token }) }));
     save("buyer-replaced-en", page, "buyer");

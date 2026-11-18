@@ -209,7 +209,8 @@ describe("Buyer simulator screens", () => {
     expect(html).toContain('aria-live="polite"');
     expect(html).toMatch(/class="c-bubble" dir="auto"/);
     // The order-form link: a card with the quote, the amounts and a button that opens the form in a new tab.
-    expect(html).toMatch(/Order form · <span class="c-num">Q-\d+ v1<\/span>/);
+    // Version 1 shows no "v1" (live review, Package 3 item 7).
+    expect(html).toMatch(/Order form · <span class="c-num">Q-\d+<\/span>/);
     expect(html).toMatch(/class="c-card__btn" href="[^"]+\/f\/[^"]+" target="_blank" rel="noopener noreferrer">Open order form</);
     expect(html).toContain("/month");
   });

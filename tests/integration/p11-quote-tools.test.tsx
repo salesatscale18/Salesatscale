@@ -124,7 +124,7 @@ describe("P11 tools: prices, the quote message and the order form", () => {
       delivery_by: await expectedDeliveryBy("en"),
       message: "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.",
     });
-    expect(String(r.result.delivery_by)).toMatch(/^by about \d{1,2} [A-Z][a-z]{2}$/);
+    expect(String(r.result.delivery_by)).toMatch(/^by about \d{1,2} [A-Z][a-z]+$/);
     // The old ambiguous fields are gone.
     for (const k of ["due_on_signing", "monthly", "recurring", "prices_include_tax"]) expect(r.result).not.toHaveProperty(k);
     const rows = await db.select().from(messages).where(and(eq(messages.conversationId, c.conversationId), eq(messages.actor, "agent")));
@@ -158,9 +158,9 @@ describe("P11 tools: prices, the quote message and the order form", () => {
       "2 × wireless fridge sensor (SNS-200): ₪1,180",
       "1 × kitchen hub (GW-10): ₪660, ועוד ₪90 לחודש",
       "Installation: ₪250",
-      "מע\"מ 18%: ₪376.20",
-      "*היום: ₪2,466.20 כולל מע\"מ*",
-      "*לאחר מכן: ₪106.20 לחודש כולל מע\"מ*",
+      "מע״מ 18%: ₪376.20",
+      "*היום: ₪2,466.20 כולל מע״מ*",
+      "*לאחר מכן: ₪106.20 לחודש כולל מע״מ*",
       `בתוקף עד ${await validUntil("q-he", "he")}`,
     ].join("\n"));
   });

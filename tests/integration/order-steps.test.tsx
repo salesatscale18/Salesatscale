@@ -319,14 +319,16 @@ describe("order form in three steps", () => {
     expect(he).toContain("החברה שלך");
     expect(he).toContain("מהצ׳אט");
     expect(he).toContain("מהפנייה שלך");
-    expect(he).toContain("מי חותם/ת");
+    // Neutral Hebrew, no slash forms (live review, Package 3 item 10).
+    expect(he).toContain("פרטי מורשה החתימה");
+    expect(he).not.toMatch(/[\u05D0-\u05EA]\/[\u05D0-\u05EA]/);
     expect(tag(he, "company_id")).toMatch(/inputMode="numeric".*dir="ltr"/);
     // The language switch submits the step form (UX sign-off G1): back to English on the same step.
     expect(he).toContain('form="b-step-form" value="lang:en" lang="en" data-lang-switch="en" name="intent">EN</button>');
     const he1 = await page(f.token, { lang: "he" });
     expect(he1).toContain("ההזמנה שלך");
     expect(he1).toContain("המשך");
-    expect(he1).toContain("מע&quot;מ 18%");
+    expect(he1).toContain("מע״מ 18%");
   });
 
   it("the step action refuses a signed form and never writes its draft", async () => {
