@@ -7,7 +7,7 @@ import { writeAudit } from "@/lib/accounts/audit";
 import { parseFitRule } from "@/lib/catalog/fit";
 import { parseItemEdit, type ItemEditErrors } from "@/lib/catalog/rules";
 import {
-  addDraftRule, catalogState, discardDraft, draftItemIdFor, itemTexts, publishDraft, removeDraftItem, removeDraftRule, saveDraftItem,
+  addDraftRule, catalogState, discardDraft, draftItemIdFor, itemTexts, publishDraft, removeDraftItem, removeDraftRule, replaceDraftRule, saveDraftItem,
 } from "@/lib/catalog/service";
 import { acceptCatalogSuggestionFromItem } from "@/lib/pipeline/service";
 import { parseAutoAddRule } from "@/lib/pricing/auto-add";
@@ -89,8 +89,15 @@ export async function addRuleAction(_prev: RuleFormState, form: FormData): Promi
     : rule.kind === "auto_add" ? [rule.sku, ...rule.whenAnyOf]
     : rule.sku ? [rule.sku] : [];
   if (!named.every((s) => known.has(s))) return { status: "error" };
-  await addDraftRule(appDb, a.account.id, rule);
-  await auditActing(a, "catalog.rule_added", { kind: rule.kind });
+  // With a rule id (the rules card's Edit) the rule is changed in place.
+  const ruleId = String(form.get("ruleId") ?? "");
+  if (ruleId) {
+    if (!isUuid(ruleId) || !(await replaceDraftRule(appDb, a.account.id, ruleId, rule))) return { status: "error" };
+    await auditActing(a, "catalog.rule_changed", { kind: rule.kind });
+  } else {
+    await addDraftRule(appDb, a.account.id, rule);
+    await auditActing(a, "catalog.rule_added", { kind: rule.kind });
+  }
   revalidatePath(path(a.account.slug));
   redirect(path(a.account.slug));
 }

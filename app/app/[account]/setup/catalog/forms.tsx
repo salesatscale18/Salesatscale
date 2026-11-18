@@ -1,11 +1,11 @@
 "use client";
 
-import { useActionState, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
 import { itemRef } from "@/lib/pricing/auto-add";
-import { CUSTOM_UNIT, UNIT_OPTIONS } from "@/lib/pricing/units";
+import { CUSTOM_UNIT, UNIT_OPTIONS, qtyWithUnit } from "@/lib/pricing/units";
 import { addRuleAction, saveItemAction, type ItemFormState, type RuleFormState } from "./actions";
 
 export type ItemDefaults = {
@@ -62,7 +62,7 @@ function ChatWording({ d, suggestion, invalid, err, errors }: {
   const shownName = plain.trim() || nameWithoutCode(d.name, d.sku) || t("catalog.sounds.this_item");
   const shownValue = value.trim() || d.description.trim();
   return (
-    <section className="sas-stack-4" aria-labelledby="ci-chat-h" style={{ padding: 16, border: "1px solid var(--primary)", borderRadius: 12 }}>
+    <section className="sas-stack-4" aria-labelledby="ci-chat-h">
       <div className="sas-stack-2" style={{ gap: 2 }}>
         <h3 id="ci-chat-h" className="sas-heading" style={{ display: "flex", alignItems: "center", gap: 8, margin: 0 }}>
           {t("catalog.chat.title")}
@@ -123,129 +123,254 @@ function ChatWording({ d, suggestion, invalid, err, errors }: {
   );
 }
 
-/** Item editor (canvas: ProductEditor, ProductChatName). Saves into the catalog draft; prices live in price lists. */
-export function ItemForm({ slug, d, unitLanguages, suggestion }: { slug: string; d: ItemDefaults; unitLanguages: string[]; suggestion?: ItemTextSuggestion | null }) {
-  const [state, action, pending] = useActionState<ItemFormState, FormData>(saveItemAction, { status: "idle" });
+/** The item sheet's tabs (canvas: CatalogItemSheet, CatalogItemTabs). */
+export const ITEM_TABS = ["details", "chat", "prices"] as const;
+export type ItemTab = (typeof ITEM_TABS)[number];
+
+/** Which tab holds each field, so a refused save opens the tab with the first error. */
+const FIELD_TAB: Record<string, ItemTab> = { kind: "details", name: "details", sku: "details", unit: "details", unitCustom: "details", plainName: "chat", valueLine: "chat" };
+
+/** The live example under "Charged per": "Shown on quotes as "2 devices"." */
+export function unitExample(unit: string, customOther: string): string | null {
+  if (unit === CUSTOM_UNIT) return customOther.trim() ? t("catalog.edit.unit_example", { example: `2 ${customOther.trim()}` }) : null;
+  return t("catalog.edit.unit_example", { example: qtyWithUnit(2, unit, null, "en") });
+}
+
+/* Segmented control and unit chips: radio inputs styled as buttons (state-driven; the focus ring needs :focus-visible). */
+const CHOICE_CSS = `
+.ci-choice input { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.ci-choice:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+`;
+const segWrap = { display: "inline-flex", border: "1px solid var(--line-strong)", borderRadius: "var(--radius-md)", overflow: "hidden" } as const;
+const seg = (on: boolean) => ({
+  position: "relative", display: "inline-flex", alignItems: "center", height: 34, padding: "0 16px", cursor: "pointer", fontWeight: 600,
+  background: on ? "var(--primary-soft)" : "var(--surface-raised)", color: on ? "var(--primary)" : "var(--ink)",
+}) as const;
+const chip = (on: boolean, dashed = false) => ({
+  position: "relative", display: "inline-flex", alignItems: "center", height: 30, padding: "0 12px", cursor: "pointer", borderRadius: "var(--radius-pill)",
+  border: `1px ${dashed && !on ? "dashed" : "solid"} ${on ? "var(--primary)" : "var(--line)"}`, fontSize: 13, whiteSpace: "nowrap",
+  background: on ? "var(--primary-soft)" : "var(--surface-raised)", color: on ? "var(--primary)" : "var(--ink)", fontWeight: on ? 600 : 500,
+}) as const;
+
+/**
+ * Item editor in the side sheet (canvas: CatalogItemSheet, CatalogItemTabs):
+ * one form over three tabs (Details, In chat, Prices and rules), so a save
+ * keeps what was typed on every tab. The tabs are the sheet's links (they work
+ * without JS); with JS a click switches here without a reload and updates the
+ * URL. Saves into the catalog draft; prices live in price lists. The footer
+ * buttons sit outside the form and submit it with form="ci-form".
+ */
+export function ItemForm({ slug, d, unitLanguages, suggestion, tab: initialTab = "details", pricesTab }: {
+  slug: string; d: ItemDefaults; unitLanguages: string[]; suggestion?: ItemTextSuggestion | null; tab?: ItemTab; pricesTab?: ReactNode;
+}) {
+  const [state, action] = useActionState<ItemFormState, FormData>(saveItemAction, { status: "idle" });
+  const [tab, setTab] = useState<ItemTab>(initialTab);
+  const [kind, setKind] = useState(d.kind);
   const [unit, setUnit] = useState(d.unit);
+  const firstLang = unitLanguages.includes("en") ? "en" : unitLanguages[0];
+  const [customOther, setCustomOther] = useState(d.unitCustom[firstLang ?? "en"]?.other ?? "");
+  const ref = useRef<HTMLFormElement>(null);
   const e = state.status === "error" ? state.errors : {};
   const invalid = (k: keyof typeof e) => (e[k] ? { "aria-invalid": true as const, "aria-describedby": `ci-${k}-error` } : {});
   const err = (k: keyof typeof e, text?: string) => (e[k] ? <span className="sas-error" id={`ci-${k}-error`}>{text ?? e[k]}</span> : null);
+
+  // The sheet's tab links switch tabs here (no reload, typed values stay) and keep the URL in step.
+  useEffect(() => {
+    const panel = ref.current?.closest("[data-sidepanel]");
+    if (!panel) return;
+    const links = [...panel.querySelectorAll<HTMLAnchorElement>("a.sas-sp__tab")];
+    const tabOf = (a: HTMLAnchorElement) => {
+      const v = new URL(a.href, window.location.href).searchParams.get("tab");
+      return (ITEM_TABS as readonly string[]).includes(v ?? "") ? (v as ItemTab) : "details";
+    };
+    const onClick = (ev: MouseEvent) => {
+      if (ev.metaKey || ev.ctrlKey || ev.shiftKey || ev.button !== 0) return;
+      const a = ev.currentTarget as HTMLAnchorElement;
+      ev.preventDefault();
+      setTab(tabOf(a));
+      window.history.replaceState(window.history.state, "", a.href);
+    };
+    links.forEach((a) => a.addEventListener("click", onClick));
+    return () => links.forEach((a) => a.removeEventListener("click", onClick));
+  }, []);
+  useEffect(() => {
+    const panel = ref.current?.closest("[data-sidepanel]");
+    panel?.querySelectorAll<HTMLAnchorElement>("a.sas-sp__tab").forEach((a) => {
+      const v = new URL(a.href, window.location.href).searchParams.get("tab") ?? "details";
+      if (v === tab) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+  }, [tab]);
+  // A refused save opens the tab with the first error.
+  useEffect(() => {
+    if (state.status !== "error") return;
+    const first = Object.keys(state.errors).find((k) => FIELD_TAB[k]);
+    if (first) setTab(FIELD_TAB[first]);
+    else setTab("details");
+  }, [state]);
+
+  const example = unitExample(unit, customOther);
   return (
-    <form action={action} className="sas-stack-4" noValidate key={d.itemId || "new"}>
+    <form id="ci-form" ref={ref} action={action} className="sas-stack-4" noValidate key={d.itemId || "new"}>
+      <style>{CHOICE_CSS}</style>
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="itemId" value={d.itemId} />
       {state.status === "error" && state.formError === "not_found" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.edit.not_found")}</span></div> : null}
-      <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-kind-hint">
-        <legend className="sas-input-label">{t("catalog.edit.kind")}</legend>
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 16 }}>
-          <label className="sas-check"><input type="radio" name="kind" value="product" defaultChecked={d.kind === "product"} />{t("catalog.kind.product")}</label>
-          <label className="sas-check"><input type="radio" name="kind" value="service" defaultChecked={d.kind === "service"} />{t("catalog.kind.service")}</label>
-        </div>
-        <span className="sas-hint" id="ci-kind-hint">{t("catalog.edit.kind_hint")}</span>
-        {err("kind")}
-      </fieldset>
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-name">{t("catalog.edit.name")}</label>
-        <input className="sas-input" id="ci-name" name="name" defaultValue={d.name} {...invalid("name")} />
-        {err("name")}
-      </div>
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-sku">{t("catalog.edit.sku")}</label>
-        <input className="sas-input sas-num" id="ci-sku" name="sku" defaultValue={d.sku} dir="ltr" {...invalid("sku")} />
-        {err("sku", e.sku === "taken" ? t("catalog.edit.sku_taken") : undefined)}
-      </div>
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-desc">{t("catalog.edit.description")}</label>
-        <textarea className="sas-textarea" id="ci-desc" name="description" rows={2} defaultValue={d.description} />
-      </div>
-      <ChatWording d={d} suggestion={suggestion} invalid={invalid} err={err} errors={e} />
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-unit">{t("catalog.edit.unit")}</label>
-        <select className="sas-select" id="ci-unit" name="unit" value={unit} onChange={(ev) => setUnit(ev.target.value)} aria-describedby="ci-unit-hint" {...invalid("unit")}>
-          {UNIT_OPTIONS.map((o) => <option key={o.key} value={o.key}>{o.key === CUSTOM_UNIT ? t("catalog.unit.custom") : o.label}</option>)}
-        </select>
-        <span className="sas-hint" id="ci-unit-hint">{t("catalog.edit.unit_hint")}</span>
-        {err("unit")}
-      </div>
-      {unit === CUSTOM_UNIT ? (
-        <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
-          <legend className="sas-input-label">{t("catalog.unit.custom_title")}</legend>
-          {unitLanguages.map((l) => (
-            <div key={l} className="sas-grid-2" style={{ gap: 12 }}>
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor={`ci-u1-${l}`}>{t("catalog.unit.one", { language: LANG_NAMES[l] ?? l })}</label>
-                <input className="sas-input" id={`ci-u1-${l}`} name={`unitOne_${l}`} defaultValue={d.unitCustom[l]?.one ?? ""} dir="auto" aria-invalid={e.unitCustom ? true : undefined} />
-              </div>
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor={`ci-u2-${l}`}>{t("catalog.unit.other", { language: LANG_NAMES[l] ?? l })}</label>
-                <input className="sas-input" id={`ci-u2-${l}`} name={`unitOther_${l}`} defaultValue={d.unitCustom[l]?.other ?? ""} dir="auto" aria-invalid={e.unitCustom ? true : undefined} />
-              </div>
-            </div>
-          ))}
-          {err("unitCustom")}
+      {state.status === "error" && !state.formError ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.edit.fix_errors")}</span></div> : null}
+
+      <div hidden={tab !== "details"} data-tab-pane="details"><div className="sas-stack-4">
+        <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-kind-hint">
+          <legend className="sas-input-label">{t("catalog.edit.kind")}</legend>
+          <div style={segWrap}>
+            {(["product", "service"] as const).map((k, i) => (
+              <label key={k} className="ci-choice" style={{ ...seg(kind === k), ...(i > 0 ? { borderInlineStart: "1px solid var(--line-strong)" } : {}) }}>
+                <input type="radio" name="kind" value={k} checked={kind === k} onChange={() => setKind(k)} />
+                {t(k === "service" ? "catalog.kind.service" : "catalog.kind.product")}
+              </label>
+            ))}
+          </div>
+          <span className="sas-hint" id="ci-kind-hint">{t("catalog.edit.kind_hint")}</span>
+          {err("kind")}
         </fieldset>
-      ) : null}
-      <div className="sas-input-group">
-        <label className="sas-input-label" htmlFor="ci-av">{t("catalog.edit.availability")}</label>
-        <input className="sas-input" id="ci-av" name="availabilityNote" defaultValue={d.availabilityNote} placeholder={t("catalog.edit.availability_placeholder")} />
+        <div className="sas-grid-2" style={{ gap: 12 }}>
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor="ci-name">{t("catalog.edit.name")}</label>
+            <input className="sas-input" id="ci-name" name="name" defaultValue={d.name} {...invalid("name")} />
+            {err("name")}
+          </div>
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor="ci-sku">{t("catalog.edit.sku")}</label>
+            <input className="sas-input sas-num" id="ci-sku" name="sku" defaultValue={d.sku} dir="ltr" {...invalid("sku")} />
+            {err("sku", e.sku === "taken" ? t("catalog.edit.sku_taken") : undefined)}
+          </div>
+        </div>
+        <div className="sas-input-group">
+          <label className="sas-input-label" htmlFor="ci-desc">{t("catalog.edit.description")}</label>
+          <textarea className="sas-textarea" id="ci-desc" name="description" rows={2} defaultValue={d.description} />
+        </div>
+        <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-unit-hint">
+          <legend className="sas-input-label">{t("catalog.edit.unit")}</legend>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }} {...(e.unit ? { "aria-invalid": true } : {})}>
+            {UNIT_OPTIONS.map((o) => (
+              <label key={o.key} className="ci-choice" style={chip(unit === o.key, o.key === CUSTOM_UNIT)}>
+                <input type="radio" name="unit" value={o.key} checked={unit === o.key} onChange={() => setUnit(o.key)} />
+                {o.key === CUSTOM_UNIT ? t("catalog.unit.custom") : o.label}
+              </label>
+            ))}
+          </div>
+          <span className="sas-hint" id="ci-unit-hint" data-unit-example="">{unit === CUSTOM_UNIT ? [example, t("catalog.edit.unit_custom_hint")].filter(Boolean).join(" ") : example}</span>
+          {err("unit")}
+        </fieldset>
+        {unit === CUSTOM_UNIT ? (
+          <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
+            <legend className="sas-input-label">{t("catalog.unit.custom_title")}</legend>
+            {unitLanguages.map((l) => (
+              <div key={l} className="sas-grid-2" style={{ gap: 12 }}>
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor={`ci-u1-${l}`}>{t("catalog.unit.one", { language: LANG_NAMES[l] ?? l })}</label>
+                  <input className="sas-input" id={`ci-u1-${l}`} name={`unitOne_${l}`} defaultValue={d.unitCustom[l]?.one ?? ""} dir="auto" aria-invalid={e.unitCustom ? true : undefined} />
+                </div>
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor={`ci-u2-${l}`}>{t("catalog.unit.other", { language: LANG_NAMES[l] ?? l })}</label>
+                  <input
+                    className="sas-input" id={`ci-u2-${l}`} name={`unitOther_${l}`} defaultValue={d.unitCustom[l]?.other ?? ""} dir="auto" aria-invalid={e.unitCustom ? true : undefined}
+                    onChange={l === firstLang ? (ev) => setCustomOther(ev.target.value) : undefined}
+                  />
+                </div>
+              </div>
+            ))}
+            {err("unitCustom")}
+          </fieldset>
+        ) : null}
+        <div style={{ display: "flex", flexWrap: "wrap", gap: "12px 24px", alignItems: "flex-end" }}>
+          <div className="sas-input-group" style={{ flex: "1 1 260px" }}>
+            <label className="sas-input-label" htmlFor="ci-av">{t("catalog.edit.availability")}</label>
+            <span className="sas-hint" id="ci-av-hint" style={{ marginBlockStart: 0 }}>{t("catalog.edit.availability_hint")}</span>
+            <input className="sas-input" id="ci-av" name="availabilityNote" defaultValue={d.availabilityNote} placeholder={t("catalog.edit.availability_placeholder")} aria-describedby="ci-av-hint" />
+          </div>
+          <label className="sas-switch-row" style={{ alignItems: "center", minHeight: 40 }}>
+            <input type="checkbox" role="switch" className="sas-switch" name="active" defaultChecked={d.active} />
+            <span>{t("catalog.edit.active")}</span>
+          </label>
+        </div>
+      </div></div>
+
+      <div hidden={tab !== "chat"} data-tab-pane="chat">
+        <ChatWording d={d} suggestion={suggestion} invalid={invalid} err={err} errors={e} />
       </div>
-      <label className="sas-check"><input type="checkbox" name="active" defaultChecked={d.active} />{t("catalog.edit.active")}</label>
-      <div className="sas-sheet__save"><button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>{t("catalog.edit.save")}</button></div>
+
+      <div hidden={tab !== "prices"} data-tab-pane="prices"><div className="sas-stack-6">{pricesTab}</div></div>
     </form>
   );
 }
 
 type RuleKind = "requires" | "max_per" | "advice" | "auto_add";
 
-/** Add a rule: the fields shown depend on the kind. */
-export function RuleForm({ slug, items }: { slug: string; items: { sku: string; name: string; kind: string | null }[] }) {
-  const [state, action, pending] = useActionState<RuleFormState, FormData>(addRuleAction, { status: "idle" });
-  const [kind, setKind] = useState<RuleKind>("auto_add");
+/** A rule's values for the rule panel (Edit opens it prefilled). */
+export type RuleDefaults = {
+  ruleId: string;
+  kind: RuleKind;
+  sku: string;
+  whenAnyOf: string[];
+  qty: "sites" | "matching" | "one";
+  removable: boolean;
+  oneOf: string;
+  perSite: boolean;
+  max: string;
+  perOneOf: string;
+  text: string;
+};
+
+/** Add or edit a rule (the rule panel): the fields shown depend on the kind. The panel's footer button submits it (form="rule-form"). */
+export function RuleForm({ slug, items, d }: { slug: string; items: { sku: string; name: string; kind: string | null }[]; d?: RuleDefaults | null }) {
+  const [state, action] = useActionState<RuleFormState, FormData>(addRuleAction, { status: "idle" });
+  const [kind, setKind] = useState<RuleKind>(d?.kind ?? "auto_add");
   const services = items.filter((i) => i.kind === "service");
   const addable = services.length > 0 ? services : items;
-  const [sku, setSku] = useState(addable[0]?.sku ?? "");
+  const [sku, setSku] = useState(d ? d.sku : (addable[0]?.sku ?? ""));
   const skuOptions = kind === "auto_add" ? addable : items;
+  // An edited rule may name an item outside the usual choices (e.g. a product as the item to add): keep it selectable.
+  const options = d?.sku && !skuOptions.some((i) => i.sku === d.sku) ? [...skuOptions, ...items.filter((i) => i.sku === d.sku)] : skuOptions;
   return (
-    <form action={action} className="sas-stack-2" noValidate>
+    <form id="rule-form" action={action} className="sas-stack-4" noValidate>
       <input type="hidden" name="slug" value={slug} />
+      {d ? <input type="hidden" name="ruleId" value={d.ruleId} /> : null}
       {state.status === "error" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.rules.invalid")}</span></div> : null}
-      <div className="sas-grid-2" style={{ gap: 12 }}>
-        <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="r-kind">{t("catalog.rules.kind")}</label>
-          <select className="sas-select" id="r-kind" name="kind" value={kind} onChange={(e) => setKind(e.target.value as RuleKind)}>
-            <option value="auto_add">{t("catalog.rules.kind.auto_add")}</option>
-            <option value="requires">{t("catalog.rules.kind.requires")}</option>
-            <option value="max_per">{t("catalog.rules.kind.max_per")}</option>
-            <option value="advice">{t("catalog.rules.kind.advice")}</option>
-          </select>
-        </div>
-        <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="r-sku">{t(kind === "auto_add" ? "catalog.rules.auto.sku" : "catalog.rules.sku")}</label>
-          <select className="sas-select" id="r-sku" name="sku" value={sku} onChange={(e) => setSku(e.target.value)}>
-            {kind === "advice" ? <option value="">—</option> : null}
-            {skuOptions.map((i) => <option key={i.sku} value={i.sku}>{itemRef(i.sku, () => i.name)}</option>)}
-          </select>
-        </div>
+      <div className="sas-input-group">
+        <label className="sas-input-label" htmlFor="r-kind">{t("catalog.rules.kind")}</label>
+        <select className="sas-select" id="r-kind" name="kind" value={kind} onChange={(e) => setKind(e.target.value as RuleKind)} data-autofocus="">
+          <option value="auto_add">{t("catalog.rules.kind.auto_add")}</option>
+          <option value="requires">{t("catalog.rules.kind.requires")}</option>
+          <option value="max_per">{t("catalog.rules.kind.max_per")}</option>
+          <option value="advice">{t("catalog.rules.kind.advice")}</option>
+        </select>
+      </div>
+      <div className="sas-input-group">
+        <label className="sas-input-label" htmlFor="r-sku">{t(kind === "auto_add" ? "catalog.rules.auto.sku" : "catalog.rules.sku")}</label>
+        <select className="sas-select" id="r-sku" name="sku" value={sku} onChange={(e) => setSku(e.target.value)}>
+          {kind === "advice" ? <option value="">—</option> : null}
+          {options.map((i) => <option key={i.sku} value={i.sku}>{itemRef(i.sku, () => i.name)}</option>)}
+        </select>
       </div>
       {kind === "auto_add" ? (
         <>
           <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="sas-input-label">{t("catalog.rules.auto.when")}</legend>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
+            <div className="sas-stack-2">
               {items.filter((i) => i.sku !== sku).map((i) => (
-                <label key={i.sku} className="sas-check"><input type="checkbox" name="whenAnyOf" value={i.sku} /><span>{i.name && i.name !== i.sku ? <>{i.name} <span className="sas-nowrap">({i.sku})</span></> : <span className="sas-nowrap">{i.sku}</span>}</span></label>
+                <label key={i.sku} className="sas-check"><input type="checkbox" name="whenAnyOf" value={i.sku} defaultChecked={d?.whenAnyOf.includes(i.sku)} /><span>{i.name && i.name !== i.sku ? <>{i.name} <span className="sas-nowrap">({i.sku})</span></> : <span className="sas-nowrap">{i.sku}</span>}</span></label>
               ))}
             </div>
           </fieldset>
           <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="sas-input-label">{t("catalog.rules.auto.qty")}</legend>
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "8px 16px" }}>
-              <label className="sas-check"><input type="radio" name="qty" value="sites" defaultChecked />{t("catalog.rules.auto.qty.sites")}</label>
-              <label className="sas-check"><input type="radio" name="qty" value="matching" />{t("catalog.rules.auto.qty.matching")}</label>
-              <label className="sas-check"><input type="radio" name="qty" value="one" />{t("catalog.rules.auto.qty.one")}</label>
+            <div className="sas-stack-2">
+              <label className="sas-check"><input type="radio" name="qty" value="sites" defaultChecked={(d?.qty ?? "sites") === "sites"} />{t("catalog.rules.auto.qty.sites")}</label>
+              <label className="sas-check"><input type="radio" name="qty" value="matching" defaultChecked={d?.qty === "matching"} />{t("catalog.rules.auto.qty.matching")}</label>
+              <label className="sas-check"><input type="radio" name="qty" value="one" defaultChecked={d?.qty === "one"} />{t("catalog.rules.auto.qty.one")}</label>
             </div>
           </fieldset>
-          <label className="sas-check"><input type="checkbox" name="removable" aria-describedby="r-removable-hint" />{t("catalog.rules.auto.removable")}</label>
+          <label className="sas-check"><input type="checkbox" name="removable" aria-describedby="r-removable-hint" defaultChecked={d?.removable} />{t("catalog.rules.auto.removable")}</label>
           <span className="sas-hint" id="r-removable-hint">{t("catalog.rules.auto.removable_hint")}</span>
         </>
       ) : null}
@@ -253,30 +378,29 @@ export function RuleForm({ slug, items }: { slug: string; items: { sku: string; 
         <>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-oneof">{t("catalog.rules.one_of")}</label>
-            <input className="sas-input sas-num" id="r-oneof" name="oneOf" placeholder="SKU-1, SKU-2" />
+            <input className="sas-input sas-num" id="r-oneof" name="oneOf" placeholder="SKU-1, SKU-2" defaultValue={d?.oneOf} />
           </div>
-          <label className="sas-check"><input type="checkbox" name="perSite" />{t("catalog.rules.per_site")}</label>
+          <label className="sas-check"><input type="checkbox" name="perSite" defaultChecked={d?.perSite} />{t("catalog.rules.per_site")}</label>
         </>
       ) : null}
       {kind === "max_per" ? (
         <div className="sas-grid-2" style={{ gap: 12 }}>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-max">{t("catalog.rules.max")}</label>
-            <input className="sas-input sas-num" id="r-max" name="max" inputMode="numeric" placeholder={t("catalog.rules.max_placeholder")} />
+            <input className="sas-input sas-num" id="r-max" name="max" inputMode="numeric" placeholder={t("catalog.rules.max_placeholder")} defaultValue={d?.max} />
           </div>
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="r-per">{t("catalog.rules.per_one_of")}</label>
-            <input className="sas-input sas-num" id="r-per" name="perOneOf" placeholder="SKU-1, SKU-2" />
+            <input className="sas-input sas-num" id="r-per" name="perOneOf" placeholder="SKU-1, SKU-2" defaultValue={d?.perOneOf} />
           </div>
         </div>
       ) : null}
       {kind === "advice" ? (
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="r-text">{t("catalog.rules.text")}</label>
-          <input className="sas-input" id="r-text" name="text" placeholder={t("catalog.rules.text_placeholder")} />
+          <input className="sas-input" id="r-text" name="text" placeholder={t("catalog.rules.text_placeholder")} defaultValue={d?.text} />
         </div>
       ) : null}
-      <div><button type="submit" className={buttonClass("ghost", "sm")} disabled={pending}><Icon name="plus" />{t("catalog.rules.add")}</button></div>
     </form>
   );
 }

@@ -8,8 +8,8 @@ import { checkPriceBlock, serializeTierRows, tierErrorText, tierLines, tierSumma
 import { currencyLabel, currencySymbol } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import {
-  copyPriceListAction, createPriceListAction, saveEntryAction, saveMetaAction,
-  type CopyFormState, type EntryFormState, type MetaFormState,
+  copyPriceListAction, createPriceListAction, renamePriceListAction, saveEntryAction, saveMetaAction,
+  type CopyFormState, type EntryFormState, type MetaFormState, type RenameFormState,
 } from "./actions";
 import type { EntryFormDefaults, EntryFormErrors } from "./rules";
 
@@ -92,6 +92,21 @@ export function MetaForm({ slug, lineageId, d }: { slug: string; lineageId: stri
       {state.status === "saved" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.meta.saved")}</span></div> : null}
       <MetaFields prefix="pl-meta" d={d} errors={errors} />
       <div><button type="submit" className={buttonClass("secondary", "sm")} disabled={pending}>{t("price_lists.meta.save")}</button></div>
+    </form>
+  );
+}
+
+/** ⋯ › Rename (a small panel on the list page); the panel's footer button submits it (form="pl-rename"). */
+export function RenameForm({ slug, lineageId, name, live }: { slug: string; lineageId: string; name: string; live: boolean }) {
+  const [state, action] = useActionState<RenameFormState, FormData>(renamePriceListAction, { status: "idle" });
+  const error = state.status === "error" ? state.error : undefined;
+  return (
+    <form id="pl-rename" action={action} className="sas-stack-4" noValidate>
+      <input type="hidden" name="slug" value={slug} />
+      <input type="hidden" name="lineageId" value={lineageId} />
+      <Field id="pl-rename-name" label={t("price_lists.field.name")} error={error} hint={live ? t("price_lists.rename.hint_live") : undefined}>
+        <input className="sas-input" id="pl-rename-name" name="name" defaultValue={name} maxLength={80} data-autofocus="" {...aria("pl-rename-name", error)} />
+      </Field>
     </form>
   );
 }

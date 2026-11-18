@@ -6,7 +6,7 @@ import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { catalogState, publishedCatalog } from "@/lib/catalog/service";
 import { ensureHomeMarket, setMarketPriceList } from "@/lib/markets/service";
 import {
-  copyAndAdjust, createPriceList, discardDraft, entriesOf, ensureDraft, lineageExists, listPriceLists, priceListVersion, publishPriceList, removeEntry,
+  copyAndAdjust, createPriceList, deletePriceList, discardDraft, entriesOf, ensureDraft, lineageExists, listPriceLists, priceListVersion, publishPriceList, removeEntry,
   saveDraftMeta, setEntry,
 } from "@/lib/pricing/price-lists";
 import { isUuid } from "@/lib/security/ids";
@@ -110,7 +110,35 @@ export async function discardPriceListDraftAction(form: FormData) {
   redirect(`${base(a.account.slug)}/${lineageId}${r.ok ? "?discarded=1" : ""}`);
 }
 
-export type CopyFormState = { status: "idle" } | { status: "error"; errors: CopyFormErrors; formError?: string };
+export type RenameFormState = { status: "idle" } | { status: "error"; error: string };
+
+/** ⋯ › Rename on the list page: the name goes into the list's draft, like every setting. */
+export async function renamePriceListAction(_prev: RenameFormState, form: FormData): Promise<RenameFormState> {
+  const a = await access(form);
+  const lineageId = await ownLineage(form, a.account.id);
+  if (!lineageId) return { status: "error", error: "This price list was not found." };
+  const name = String(form.get("name") ?? "").trim();
+  if (!name || name.length > 80) return { status: "error", error: "Enter a name of up to 80 characters." };
+  const r = await saveDraftMeta(appDb, actorOf(a), a.account.id, lineageId, { name });
+  if (!r.ok) return { status: "error", error: r.error };
+  revalidatePath(base(a.account.slug));
+  redirect(`${base(a.account.slug)}?renamed=1`);
+}
+
+/**
+ * ⋯ › Delete on the list page (after the in-page confirm). Refused while a
+ * market sells from the list, or when quotes were priced from it.
+ */
+export async function deletePriceListAction(form: FormData) {
+  const a = await access(form);
+  const lineageId = await ownLineage(form, a.account.id);
+  if (!lineageId) redirect(base(a.account.slug));
+  const r = await deletePriceList(appDb, actorOf(a), a.account.id, lineageId);
+  revalidatePath(base(a.account.slug));
+  redirect(`${base(a.account.slug)}?${r.ok ? "deleted=1" : `delete=${r.reason}&list=${lineageId}`}`);
+}
+
+export type CopyFormState ={ status: "idle" } | { status: "error"; errors: CopyFormErrors; formError?: string };
 
 /** "Copy and adjust": a new draft price list from an existing version, converted by percent or factor. */
 export async function copyPriceListAction(_prev: CopyFormState, form: FormData): Promise<CopyFormState> {

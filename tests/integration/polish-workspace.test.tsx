@@ -163,12 +163,13 @@ describe("Polish-2+5: seller workspace", () => {
 
     it("catalog item and price entry open as a full-height sheet with Save pinned", async () => {
       const cat = await catalogState(db, acc);
+      // Setup redesign: both are list-kit side panels (a full-height sheet on a phone) with the save pinned at the bottom.
       const html = await page(CatalogPage(props(account.slug, { item: cat.items[0].id })));
-      expect(html).toMatch(/<aside class="[^"]*sas-sheet"/);
-      expect(html).toContain('class="sas-sheet__save"');
+      expect(html).toContain('class="sas-sp sas-sp--wide"');
+      expect(html).toMatch(/<footer class="sas-sp__foot"><button type="submit" form="ci-form"/);
       const [list] = await listPriceLists(db, acc);
       const pl = await page(PriceListPage(props(account.slug, { sku: "GW-10" }, { lineageId: list.lineageId }) as never));
-      expect(pl).toContain("sas-sheet sas-sheet--stack");
+      expect(pl).toContain('class="sas-sp"');
       expect(pl).toMatch(/class="sas-sheet__save"/);
       expect(css).toMatch(/\.sas-sheet \.sas-sheet__save \{ position: sticky; bottom: 0/);
     });
