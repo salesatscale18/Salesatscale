@@ -35,7 +35,9 @@ export default async function AccountLayout({ children, params }: { children: Re
           user={{ name: displayName(user), initials: initials(user) }}
           counts={needsYouCount ? { overview: { value: needsYouCount, tone: "human" } } : undefined}
         />
-        <div className="sas-shell__main">
+        {/* Banners come first: the top row on a phone (above the menu bar), above the page on wide screens. */}
+        {actingAs || account.status === "paused" || spendAlert ? (
+          <div className="sas-shell__banners">
           {actingAs ? (
             <Banner
               kind="acting"
@@ -72,6 +74,9 @@ export default async function AccountLayout({ children, params }: { children: Re
               <a className="sas-btn sas-btn--secondary sas-btn--sm" href={`/app/${account.slug}/settings`}>{t("spend.banner.action")}</a>
             </div>
           ) : null}
+          </div>
+        ) : null}
+        <div className="sas-shell__main">
           {children}
         </div>
       </div>

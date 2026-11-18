@@ -168,7 +168,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             ) : (
               <section className="sas-panel" style={{ overflow: "hidden" }}>
                 <div style={{ overflowX: "auto" }}>
-                  <table className="sas-table" style={{ minWidth: 940 }}>
+                  <table className="sas-table sas-table--stack" style={{ minWidth: 940 }}>
                     <thead>
                       <tr>
                         <th scope="col">{t("leads.col.lead")}</th>
@@ -189,12 +189,12 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                               <span className="sas-small">{[lead.buyerRef, lead.company, lead.language.toUpperCase()].filter(Boolean).join(" · ")}</span>
                             </a>
                           </td>
-                          <td><StatusPill object="lead" state={lead.status} /></td>
-                          <td>{stages.get(lead.id) ? <StageChip v={stages.get(lead.id)!} /> : <span className="sas-small">—</span>}</td>
-                          <td><span className="sas-chip" data-market={market?.id ?? "home"}>{market?.name ?? homeName}</span></td>
-                          <td>{owner ? <span className="sas-owner sas-owner--human">{displayName(owner)}</span> : lead.status === "opted_out" ? <span className="sas-small">—</span> : <span className="sas-owner sas-owner--agent">{t("leads.owner.agent")}</span>}</td>
-                          <td className="sas-small">{lead.sourceLabel ?? t(`lead.origin.${lead.origin}`)}</td>
-                          <td className="sas-num sas-small" style={{ textAlign: "end" }} title={lead.lastActivityAt.toISOString()}>{relativeTime(lead.lastActivityAt, now)}</td>
+                          <td data-label={t("leads.col.status")}><StatusPill object="lead" state={lead.status} /></td>
+                          <td data-label={t("leads.col.stage")}>{stages.get(lead.id) ? <StageChip v={stages.get(lead.id)!} /> : <span className="sas-small">—</span>}</td>
+                          <td data-label={t("leads.col.market")}><span className="sas-chip" data-market={market?.id ?? "home"}>{market?.name ?? homeName}</span></td>
+                          <td data-label={t("leads.col.owner")}>{owner ? <span className="sas-owner sas-owner--human">{displayName(owner)}</span> : lead.status === "opted_out" ? <span className="sas-small">—</span> : <span className="sas-owner sas-owner--agent">{t("leads.owner.agent")}</span>}</td>
+                          <td className="sas-small" data-label={t("leads.col.source")}>{lead.sourceLabel ?? t(`lead.origin.${lead.origin}`)}</td>
+                          <td className="sas-num sas-small" style={{ textAlign: "end" }} data-label={t("leads.col.activity")} title={lead.lastActivityAt.toISOString()}>{relativeTime(lead.lastActivityAt, now)}</td>
                         </tr>
                       ))}
                     </tbody>

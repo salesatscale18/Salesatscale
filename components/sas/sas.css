@@ -183,14 +183,32 @@
 .sas-banner--paused { background: var(--warning-soft); color: var(--ink); border-block: 1px solid var(--warning); }
 .sas-banner--paused .sas-ico, .sas-banner--paused strong { color: var(--warning); }
 
-/* App shell: 232px side navigation + content */
-.sas-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); min-height: 100vh; }
-.sas-shell__main { min-width: 0; display: flex; flex-direction: column; }
+/* App shell: 232px side navigation + content. Below 768px: banners, then a top bar with a menu drawer, then the page. */
+.sas-shell { display: grid; grid-template-columns: 232px minmax(0, 1fr); grid-template-rows: auto 1fr; grid-template-areas: "nav banners" "nav main"; min-height: 100vh; }
+.sas-shell__nav { grid-area: nav; min-width: 0; }
+.sas-shell__nav > .sas-nav { min-height: 100%; }
+.sas-shell__banners { grid-area: banners; min-width: 0; }
+.sas-shell__main { grid-area: main; min-width: 0; display: flex; flex-direction: column; }
 .sas-shell__content { padding: var(--space-6) var(--space-8); display: flex; flex-direction: column; gap: var(--space-6); }
+.sas-topbar { display: none; }
 @media (max-width: 860px) {
-  .sas-shell { grid-template-columns: 1fr; }
   .sas-shell__content { padding: var(--space-4); }
 }
+@media (max-width: 767px) {
+  .sas-shell { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto 1fr; grid-template-areas: "banners" "topbar" "main"; }
+  .sas-shell__nav { display: none; }
+  .sas-topbar { grid-area: topbar; position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: 10px; height: 52px; padding: 0 var(--space-3); background: var(--surface-raised); border-block-end: 1px solid var(--line); }
+}
+.sas-topbar__title { font-weight: 600; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-drawer { position: static; }
+.sas-topbar__menu { list-style: none; position: relative; display: inline-grid; place-items: center; width: 40px; height: 40px; border-radius: var(--radius-md); cursor: pointer; color: var(--ink); }
+.sas-topbar__menu::-webkit-details-marker { display: none; }
+.sas-topbar__menu:hover { background: var(--surface-sunken); }
+.sas-topbar__menu .sas-ico { width: 20px; height: 20px; }
+.sas-topbar__count { position: absolute; inset-block-start: 0; inset-inline-end: -4px; min-width: 18px; height: 18px; line-height: 18px; padding: 0 4px; font-size: 10px; }
+.sas-drawer__panel { position: absolute; inset-block-start: 100%; inset-inline-start: 0; width: min(300px, 86vw); max-height: calc(100dvh - 52px); overflow-y: auto; background: var(--surface-raised); border-inline-end: 1px solid var(--line); box-shadow: 0 0 0 100vmax rgba(15, 20, 32, 0.45); }
+.sas-drawer__panel .sas-nav { border: 0; min-height: 0; }
+.sas-drawer__panel .sas-nav__brand { display: none; }
 
 /* Side navigation */
 .sas-nav { background: var(--surface-raised); border-inline-end: 1px solid var(--line); padding: var(--space-4) var(--space-3); display: flex; flex-direction: column; gap: 20px; min-height: 100%; }
@@ -211,10 +229,6 @@
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
 .sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .sas-nav__user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (max-width: 860px) {
-  .sas-nav { border-inline-end: 0; border-block-end: 1px solid var(--line); min-height: 0; }
-  .sas-nav__user { display: none; }
-}
 
 /* Setup steps bar */
 .sas-steps { display: flex; gap: 4px; overflow-x: auto; padding-block: 14px; margin: 0; list-style: none; padding-inline: 0; }
@@ -430,3 +444,70 @@ h2.sas-group-label { margin: 0; }
 .sas-switch:checked::after { inset-inline-start: 21px; }
 .sas-switch:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .sas-switch, .sas-switch::after { transition: none; } }
+
+/* ---------------------------------------------------------------------------
+ * Phone layouts (below 768px, live review Package 2)
+ * ------------------------------------------------------------------------- */
+
+/* Tables that become stacked cards on a phone: one card per row, every cell
+ * on its own line with its column name (td data-label). The first cell
+ * (no data-label) is the card's title. */
+@media (max-width: 767px) {
+  .sas-table.sas-table--stack { min-width: 0 !important; }
+  .sas-table--stack thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .sas-table--stack, .sas-table--stack tbody, .sas-table--stack tr { display: block; }
+  .sas-table--stack tr { padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--line); }
+  .sas-table--stack td { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 4px 0 !important; border: 0; white-space: normal; text-align: start !important; min-height: 28px; }
+  .sas-table--stack td[data-label]::before { content: attr(data-label); font-size: 13px; line-height: 18px; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 400; }
+  .sas-table--stack td:not([data-label]) { display: block; }
+  .sas-table--stack td:empty { display: none; }
+  .sas-table--stack td[data-label=""]::before { content: none; }
+  .sas-table--stack td[data-label=""] { justify-content: flex-end; }
+}
+
+/* Chip strip: setup steps and section lists scroll sideways on a phone, the current item scrolled into view. */
+.sas-steps { scrollbar-width: thin; }
+@media (max-width: 767px) {
+  .sas-steps { padding-block: var(--space-2); }
+  .sas-subnav { flex: 1 1 100%; max-width: none; flex-direction: row; gap: 4px; overflow-x: auto; padding-block-end: 4px; scrollbar-width: thin; }
+  .sas-app a.sas-subnav__item { flex: none; height: 32px; border-radius: var(--radius-pill); white-space: nowrap; }
+  .sas-app a.sas-subnav__item[aria-current="page"] { background: var(--primary-soft); color: var(--primary); box-shadow: none; }
+}
+
+/* Sheet: an editor that opens beside a list on wide screens and as a full-height sheet on a phone, Save pinned to the bottom. */
+@media (max-width: 767px) {
+  .sas-sheet { position: fixed; inset: 0; z-index: 60; margin: 0; max-width: none; border-radius: 0; border: 0; overflow-y: auto; overscroll-behavior: contain; background: var(--surface-raised); padding-block-end: 0 !important; }
+  .sas-sheet__head { position: sticky; top: 0; z-index: 1; background: var(--surface-raised); margin: calc(-1 * var(--space-4)) calc(-1 * var(--space-4)) 0; padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
+  .sas-sheet .sas-sheet__save { position: sticky; bottom: 0; z-index: 1; margin-inline: calc(-1 * var(--space-4)); padding: var(--space-3) var(--space-4); background: var(--surface-raised); border-block-start: 1px solid var(--line); }
+  .sas-sheet .sas-sheet__save .sas-btn { width: 100%; justify-content: center; height: 40px; }
+}
+
+/* Lead page on a phone: a compact deal summary, then tabs Chat · Deal · Timeline (radio inputs, no JS). */
+.sas-lead-tabs, .sas-lead__summary, .sas-lead__tab-radio { display: none; }
+@media (max-width: 767px) {
+  .sas-lead__summary { display: flex; flex-direction: column; gap: 4px; padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); background: var(--surface); }
+  .sas-lead-tabs { display: flex; gap: var(--space-4); padding: 0 var(--space-4); border-block-end: 1px solid var(--line); overflow-x: auto; position: sticky; top: 52px; z-index: 5; background: var(--surface-raised); }
+  .sas-lead-tabs label { height: 40px; display: inline-flex; align-items: center; font-weight: 600; color: var(--ink-muted); border-block-end: 2px solid transparent; cursor: pointer; white-space: nowrap; }
+  .sas-lead__tab-radio { display: block; position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+  #lt-chat:checked ~ .sas-lead-tabs label[for="lt-chat"],
+  #lt-deal:checked ~ .sas-lead-tabs label[for="lt-deal"],
+  #lt-timeline:checked ~ .sas-lead-tabs label[for="lt-timeline"] { color: var(--primary); border-block-end-color: var(--primary); }
+  #lt-chat:focus-visible ~ .sas-lead-tabs label[for="lt-chat"],
+  #lt-deal:focus-visible ~ .sas-lead-tabs label[for="lt-deal"],
+  #lt-timeline:focus-visible ~ .sas-lead-tabs label[for="lt-timeline"] { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+  #lt-chat:checked ~ .sas-lead__body [data-tab]:not([data-tab~="chat"]),
+  #lt-deal:checked ~ .sas-lead__body [data-tab]:not([data-tab~="deal"]),
+  #lt-timeline:checked ~ .sas-lead__body [data-tab]:not([data-tab~="timeline"]) { display: none; }
+  #lt-chat:checked ~ .sas-lead__body .sas-lead__side, #lt-timeline:checked ~ .sas-lead__body .sas-lead__side { display: none; }
+  #lt-deal:checked ~ .sas-lead__body .sas-lead__side { border-block-start: 0; }
+}
+/* Sticky strips sit below the phone top bar (52px), e.g. the Playbook contents strip. */
+@media (max-width: 767px) {
+  .sas-app .sas-subnav.pb-toc { top: 52px; }
+  .sas-app .pb-main section[id] { scroll-margin-top: 112px; }
+}
+@media (max-width: 767px) {
+  .sas-sheet--stack { gap: 0 !important; background: var(--surface); }
+  .sas-sheet--stack > .sas-panel { border-radius: 0; border-inline: 0; border-block-start: 0; }
+}
+@media (max-width: 767px) { .sas-side-panel.sas-sheet { padding-block-start: var(--space-4); box-shadow: none; } }

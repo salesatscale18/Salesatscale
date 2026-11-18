@@ -123,7 +123,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
               <div className="sas-panel__body"><span className="sas-small">{t("price_lists.no_items")} <a href={`/app/${account.slug}/setup/catalog`}>{t("nav.catalog")}</a></span></div>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 680 }}>
+                <table className="sas-table sas-table--stack" style={{ minWidth: 680 }}>
                   <thead><tr><th scope="col">{t("price_lists.col.item")}</th><th scope="col">{t("catalog.col.kind_unit")}</th><th scope="col">{t("price_lists.col.one_time")}</th><th scope="col">{t("price_lists.col.recurring")}</th><th scope="col">{t("price_lists.col.tiers")}</th></tr></thead>
                   <tbody>
                     {items.map(({ item, draftOnly }) => {
@@ -136,15 +136,15 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                             <a className="sas-row-link" href={link} aria-current={item.sku === selectedSku ? "true" : undefined}><strong>{item.name}</strong></a>
                             <div className="sas-small sas-num">{item.sku}{draftOnly ? ` · ${t("price_lists.catalog_draft_only")}` : ""}</div>
                           </td>
-                          <td className="sas-small">{t(item.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · {t("catalog.per", { unit: unitLabel(item.unit, item.unitCustom, "en", 1) })}</td>
+                          <td className="sas-small" data-label={t("catalog.col.kind_unit")}>{t(item.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · {t("catalog.per", { unit: unitLabel(item.unit, item.unitCustom, "en", 1) })}</td>
                           {e ? (
                             <>
-                              <td><Part entry={e} charge="one_time" currency={shown.currency} /></td>
-                              <td><Part entry={e} charge="recurring" currency={shown.currency} /></td>
-                              <td><a href={link} className="sas-small">{tiers > 0 ? (tiers === 1 ? t("price_lists.tiers_one") : t("price_lists.tiers", { count: tiers })) : t("price_lists.edit")}</a></td>
+                              <td data-label={t("price_lists.col.one_time")}><Part entry={e} charge="one_time" currency={shown.currency} /></td>
+                              <td data-label={t("price_lists.col.recurring")}><Part entry={e} charge="recurring" currency={shown.currency} /></td>
+                              <td data-label={t("price_lists.col.tiers")}><a href={link} className="sas-small">{tiers > 0 ? (tiers === 1 ? t("price_lists.tiers_one") : t("price_lists.tiers", { count: tiers })) : t("price_lists.edit")}</a></td>
                             </>
                           ) : (
-                            <td colSpan={3}><span className="sas-pill">{t("price_lists.part.not_sold")}</span> <a href={link} className="sas-small" style={{ marginInlineStart: 8 }}>{t("price_lists.add_price")}</a></td>
+                            <td colSpan={3} data-label={t("price_lists.col.one_time")}><span className="sas-pill">{t("price_lists.part.not_sold")}</span> <a href={link} className="sas-small" style={{ marginInlineStart: 8 }}>{t("price_lists.add_price")}</a></td>
                           )}
                         </tr>
                       );
@@ -152,9 +152,9 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                     {orphans.map((e) => (
                       <tr key={e.sku} className={e.sku === selectedSku ? "sas-row--selected" : undefined}>
                         <td><a className="sas-row-link" href={`${here}?sku=${encodeURIComponent(e.sku)}`}><strong className="sas-num">{e.sku}</strong></a><div className="sas-small">{t("price_lists.not_in_catalog")}</div></td>
-                        <td className="sas-small">—</td>
-                        <td><Part entry={e} charge="one_time" currency={shown.currency} /></td>
-                        <td><Part entry={e} charge="recurring" currency={shown.currency} /></td>
+                        <td className="sas-small" data-label={t("catalog.col.kind_unit")}>—</td>
+                        <td data-label={t("price_lists.col.one_time")}><Part entry={e} charge="one_time" currency={shown.currency} /></td>
+                        <td data-label={t("price_lists.col.recurring")}><Part entry={e} charge="recurring" currency={shown.currency} /></td>
                         <td />
                       </tr>
                     ))}
@@ -190,9 +190,9 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
         </div>
 
         {selectedItem || selectedOrphan ? (
-          <div className="sas-split__side sas-stack-4">
+          <div className="sas-split__side sas-stack-4 sas-sheet sas-sheet--stack">
             <aside className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="entry-h">
-              <div style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
+              <div className="sas-sheet__head" style={{ display: "flex", alignItems: "flex-start", gap: 12 }}>
                 <div className="sas-stack-2" style={{ gap: 0, flex: 1, minWidth: 0 }}>
                   <span className="sas-small sas-num">
                     {selectedSku}

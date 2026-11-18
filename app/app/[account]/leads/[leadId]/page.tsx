@@ -154,6 +154,9 @@ export default async function LeadCardPage({
     };
   });
 
+  // Deal fields not known yet (phone summary above the tabs).
+  const missingCount = (playbook?.fields ?? []).filter((f) => !String(dealFields[f.key]?.value ?? "").trim()).length;
+
   let chatNote: string;
   if (lead.status === "opted_out") chatNote = t("lead.card.opted_out");
   else if (owner) chatNote = t("lead.card.human_owner", { name: displayName(owner) });
@@ -186,8 +189,24 @@ export default async function LeadCardPage({
           </div>
         </header>
         <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} />
+        {/* Phone only (sas.css): a compact deal summary, then tabs Chat · Deal · Timeline. Radio inputs, so they work without JS. */}
+        <input type="radio" name="lead-tab" id="lt-chat" className="sas-lead__tab-radio" defaultChecked aria-label={t("lead.tabs.chat")} />
+        <input type="radio" name="lead-tab" id="lt-deal" className="sas-lead__tab-radio" aria-label={t("lead.tabs.deal")} />
+        <input type="radio" name="lead-tab" id="lt-timeline" className="sas-lead__tab-radio" aria-label={t("lead.tabs.timeline")} />
+        <div className="sas-lead__summary" data-testid="lead-summary">
+          {nextStep ? <span><strong>{t("lead.card.next_step")}:</strong> {nextStep}</span> : null}
+          {playbook && playbook.fields.length ? (
+            <span className="sas-small">{missingCount === 0 ? t("lead.summary.all_known") : missingCount === 1 ? t("lead.summary.missing_one") : t("lead.summary.missing", { count: missingCount })}</span>
+          ) : null}
+        </div>
+        <div className="sas-lead-tabs" aria-hidden="true">
+          <label htmlFor="lt-chat">{t("lead.tabs.chat")}</label>
+          <label htmlFor="lt-deal">{t("lead.tabs.deal")}</label>
+          <label htmlFor="lt-timeline">{t("lead.tabs.timeline")}</label>
+        </div>
         <div className="sas-lead__body">
           <div className="sas-lead__main">
+            <div data-tab="chat">
             {opener ? (
               <WhatsAppStart
                 slug={account.slug} leadId={lead.id} refusal={opener.refusal} templateName={opener.template?.name ?? null}
@@ -215,7 +234,8 @@ export default async function LeadCardPage({
                 <span className="sas-small">{chatNote}</span>
               </div>
             )}
-            <section aria-labelledby="lq-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
+            </div>
+            <section aria-labelledby="lq-h" data-tab="deal" style={{ borderBlockEnd: "1px solid var(--line)" }}>
               <div className="sas-page-head" style={{ padding: "16px 16px 4px" }}>
                 <h2 id="lq-h" className="sas-label" style={{ margin: 0 }}>{t("lead.card.quotes")}</h2>
                 {lead.status !== "opted_out" ? <a className={`${buttonClass("secondary", "sm")} sas-page-head__actions`} href={`/app/${account.slug}/leads/${lead.id}/quote`}><Icon name="file-text" />{t("lead.card.create_quote")}</a> : null}
@@ -247,7 +267,7 @@ export default async function LeadCardPage({
               )}
             </section>
             {leadOrders.length ? (
-              <section aria-labelledby="lo-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
+              <section aria-labelledby="lo-h" data-tab="deal" style={{ borderBlockEnd: "1px solid var(--line)" }}>
                 <h2 id="lo-h" className="sas-label" style={{ margin: 0, padding: "16px 16px 4px" }}>{t("lead.card.orders")}</h2>
                 <ul className="sas-list">
                   {leadOrders.map(({ order }) => (
@@ -262,7 +282,7 @@ export default async function LeadCardPage({
                 </ul>
               </section>
             ) : null}
-            <div>
+            <div data-tab="timeline">
               <h2 className="sas-group-label">{t("lead.card.timeline")}</h2>
               <Timeline label={t("lead.card.timeline")} items={timeline} />
             </div>

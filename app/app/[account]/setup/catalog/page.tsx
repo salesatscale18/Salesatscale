@@ -108,15 +108,15 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                 <span className="sas-small">{t("catalog.prices_in_lists")} <a href={priceListsPath}>{t("catalog.open_price_lists")}</a></span>
               </div>
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 560 }}>
+                <table className="sas-table sas-table--stack" style={{ minWidth: 560 }}>
                   <thead><tr><th scope="col">{t("catalog.col.product")}</th><th scope="col">{t("catalog.col.sku")}</th><th scope="col">{t("catalog.col.kind_unit")}</th><th scope="col">{t("catalog.col.status")}</th></tr></thead>
                   <tbody>
                     {state.items.map((i) => (
                       <tr key={i.id} className={i.id === selectedId ? "sas-row--selected" : undefined}>
                         <td><a className="sas-row-link" href={`${base}?item=${i.id}`} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a>{i.plainName ? <span className="sas-small" style={{ display: "block" }}>{t("catalog.in_chat", { name: i.plainName })}</span> : null}</td>
-                        <td className="sas-num">{i.sku}</td>
-                        <td>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · {t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}</td>
-                        <td><StatusPill object="catalog_item" state={i.active ? "active" : "inactive"} /></td>
+                        <td className="sas-num" data-label={t("catalog.col.sku")}>{i.sku}</td>
+                        <td data-label={t("catalog.col.kind_unit")}>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · {t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}</td>
+                        <td data-label={t("catalog.col.status")}><StatusPill object="catalog_item" state={i.active ? "active" : "inactive"} /></td>
                       </tr>
                     ))}
                   </tbody>
@@ -149,8 +149,8 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
         </div>
 
         {defaults ? (
-          <aside className="sas-panel sas-panel__body sas-stack-4 sas-split__side" aria-labelledby="det-h">
-            <div className="sas-page-head">
+          <aside className="sas-panel sas-panel__body sas-stack-4 sas-split__side sas-sheet" aria-labelledby="det-h">
+            <div className="sas-page-head sas-sheet__head">
               <div className="sas-stack-2" style={{ gap: 0 }}>
                 {selected ? <span className="sas-small sas-num">{selected.sku}</span> : null}
                 <h2 id="det-h" className="sas-heading" style={{ fontSize: 17 }}>{selected ? selected.name : t("catalog.edit.title_new")}</h2>

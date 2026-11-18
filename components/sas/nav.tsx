@@ -5,6 +5,7 @@
 import { t, type MessageKey } from "@/lib/i18n";
 import { Icon, type IconName } from "./icon";
 import { Avatar } from "./primitives";
+import { ScrollCurrentIntoView } from "./scroll-current";
 
 export type NavItem = { id: string; label: MessageKey; icon: IconName; path: string };
 export type NavGroup = { label?: MessageKey; items: NavItem[] };
@@ -147,6 +148,7 @@ export function SetupSteps({ basePath, current, completed }: { basePath: string;
           );
         })}
       </ol>
+      <ScrollCurrentIntoView selector=".sas-steps" />
     </nav>
   );
 }

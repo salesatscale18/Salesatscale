@@ -1,3 +1,4 @@
+import { ScrollCurrentIntoView } from "@/components/sas/scroll-current";
 import { headers } from "next/headers";
 import { Avatar, Button, Chip, StatusPill } from "@/components/sas/primitives";
 import { CopyButton } from "@/components/sas/copy-button";
@@ -76,6 +77,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
             <a key={s} className="sas-subnav__item" href={href(s)} aria-current={s === section ? "page" : undefined}>{t(`settings.section.${s}` as MessageKey)}</a>
           ))}
           <a className="sas-subnav__item" href={`/app/${account.slug}/markets`}>{t("settings.section.markets")}</a>
+          <ScrollCurrentIntoView selector=".sas-subnav" />
         </nav>
         {section === "intake" ? (
           await IntakeSection({ account, sp })

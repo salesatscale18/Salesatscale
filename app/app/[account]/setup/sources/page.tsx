@@ -109,7 +109,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
           </div>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <table className="sas-table" style={{ minWidth: 960 }}>
+            <table className="sas-table sas-table--stack" style={{ minWidth: 960 }}>
               <thead><tr>
                 <th scope="col" style={{ paddingInlineStart: 20 }}>{t("sources.col.source")}</th>
                 <th scope="col">{t("sources.col.language")}</th>
@@ -136,11 +136,11 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                         </span>
                       </span>
                     </td>
-                    <td>{languageWords(s.language)}</td>
-                    <td style={{ whiteSpace: "normal", minWidth: 120 }}>{about.get(s.id) ?? (s.textHash ? "—" : <span className="sas-small">{t("sources.about.pending")}</span>)}</td>
-                    <td><StatusPill object="source" state={sourceDisplayStatus(s.status, factCounts.get(s.id))} /></td>
-                    <td className="sas-small sas-num" title={exactTime(s.updatedAt)}>{relativeTime(s.updatedAt, now)}</td>
-                    <td style={{ textAlign: "end" }}>
+                    <td data-label={t("sources.col.language")}>{languageWords(s.language)}</td>
+                    <td style={{ whiteSpace: "normal", minWidth: 120 }} data-label={t("sources.col.about")}>{about.get(s.id) ?? (s.textHash ? "—" : <span className="sas-small">{t("sources.about.pending")}</span>)}</td>
+                    <td data-label={t("sources.col.status")}><StatusPill object="source" state={sourceDisplayStatus(s.status, factCounts.get(s.id))} /></td>
+                    <td className="sas-small sas-num" data-label={t("sources.col.updated")} title={exactTime(s.updatedAt)}>{relativeTime(s.updatedAt, now)}</td>
+                    <td style={{ textAlign: "end" }} data-label="">
                       {confirmId === s.id ? (
                         <form action={deleteSourceAction} style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>
                           {hidden(s.id)}

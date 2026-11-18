@@ -189,7 +189,7 @@ export function ItemForm({ slug, d, unitLanguages, suggestion }: { slug: string;
         <input className="sas-input" id="ci-av" name="availabilityNote" defaultValue={d.availabilityNote} placeholder={t("catalog.edit.availability_placeholder")} />
       </div>
       <label className="sas-check"><input type="checkbox" name="active" defaultChecked={d.active} />{t("catalog.edit.active")}</label>
-      <div><button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>{t("catalog.edit.save")}</button></div>
+      <div className="sas-sheet__save"><button type="submit" className={buttonClass("primary", "sm")} disabled={pending}>{t("catalog.edit.save")}</button></div>
     </form>
   );
 }

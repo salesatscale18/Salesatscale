@@ -269,7 +269,7 @@ export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { s
           </section>
         </>
       ) : <span className="sas-small">{t("price_lists.entry.not_sold_hint")}</span>}
-      <div style={{ ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+      <div className="sas-sheet__save" style={{ ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
         <button type="submit" className={buttonClass("primary", "sm")} disabled={pending || errorCount > 0}>{t("price_lists.entry.save")}</button>
         {errorCount > 0 ? <span className="sas-error" role="status" style={{ fontSize: 13 }}>{errorCount === 1 ? t("price_lists.entry.fix_one") : t("price_lists.entry.fix_many", { count: errorCount })}</span> : null}
       </div>

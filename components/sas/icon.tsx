@@ -6,7 +6,7 @@ import {
   Activity, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, Trophy, Upload, User, UserPlus, Wrench, X, type LucideIcon,
+  Minus, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -66,6 +66,11 @@ const ICONS = {
   x: X,
   "file-x": FileX,
   info: Info,
+  menu: Menu,
+  ellipsis: Ellipsis,
+  "list-filter": ListFilter,
+  "arrow-up-right": ArrowUpRight,
+  "chevron-down": ChevronDown,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

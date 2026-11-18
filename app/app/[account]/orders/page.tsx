@@ -145,7 +145,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           ) : (
             <section className="sas-panel" style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 760 }}>
+                <table className="sas-table sas-table--stack" style={{ minWidth: 760 }}>
                   <thead><tr>
                     <th scope="col">{t("orders.col.order")}</th><th scope="col">{t("orders.col.lead")}</th>
                     <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
@@ -155,12 +155,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     {orderRows.map(({ order, lead }) => (
                       <tr key={order.id}>
                         <td><a className="sas-num" href={`${base}?tab=orders&quote=${order.quoteId}`}>{orderLabel(account.tradeName, order.number)}</a></td>
-                        <td>{lead.company ?? lead.fullName}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
-                        <td><StatusPill object="payment" state={order.paymentStatus} /></td>
-                        <td className="sas-small" title={exactTime(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
-                        <td className="sas-small" data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
+                        <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
+                        <td data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
+                        <td className="sas-small" data-label={t("orders.col.signed")} title={exactTime(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
+                        <td className="sas-small" data-label={t("orders.col.delivery")} data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -178,7 +178,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         ) : (
           <section className="sas-panel" style={{ overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
-              <table className="sas-table" style={{ minWidth: 720 }}>
+              <table className="sas-table sas-table--stack" style={{ minWidth: 720 }}>
                 <thead><tr>
                   <th scope="col">{t("orders.col.quote")}</th><th scope="col">{t("orders.col.lead")}</th>
                   <th scope="col" style={{ textAlign: "end" }}>{t("orders.col.one_time")}</th><th scope="col" style={{ textAlign: "end" }}>{t("orders.col.monthly")}</th>
@@ -190,12 +190,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     return (
                       <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
                         <td><a className="sas-num" href={`${base}?${tab === "quotes" ? "" : `tab=${tab}&`}quote=${quote.id}`}>Q-{quote.number} v{quote.currentVersion}</a></td>
-                        <td>{lead.company ?? lead.fullName}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
-                        <td className="sas-num" style={{ textAlign: "end" }}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
-                        <td><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id))} /></td>
-                        <td>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
-                        <td>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
+                        <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
+                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
+                        <td data-label={t("orders.col.quote")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id))} /></td>
+                        <td data-label={t("orders.col.form")}>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
+                        <td data-label={t("orders.col.payment")}>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
                       </tr>
                     );
                   })}
@@ -207,8 +207,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
       </main>
 
       {detail && cur ? (
-        <aside className="sas-side-panel" aria-labelledby="q-h">
-          <div className="sas-page-head">
+        <aside className="sas-side-panel sas-sheet" aria-labelledby="q-h">
+          <div className="sas-page-head sas-sheet__head">
             <div className="sas-stack-2" style={{ gap: 4, flex: 1 }}>
               <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
               <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
