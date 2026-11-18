@@ -1,0 +1,7 @@
+/* Setup · Go live. Scoped `gl-` classes on top of components/sas/sas.css. */
+
+/* Phone: the live status (pill and date) sits under the title, start-aligned. */
+@media (max-width: 767px) {
+  .sas-page-head__actions.gl-head-status { margin-inline-start: 0; flex-basis: 100%; justify-content: flex-start; }
+  .sas-page-head__actions.gl-head-status:empty { display: none; }
+}

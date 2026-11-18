@@ -6,8 +6,7 @@
 /* Section list + sections */
 .pb-layout { display: flex; gap: 24px; align-items: flex-start; }
 .pb-main { flex: 1 1 0; min-width: 0; }
-/* Room below the last section, so "Never do" can scroll to the top. */
-.pb-main--spy { padding-block-end: max(0px, calc(100vh - 560px)); }
+/* Room below the last section, so "Never do" can scroll to the top: sized by the scroll-spy (toc.tsx) from the last section's height. */
 .pb-main section[id] { scroll-margin-top: 16px; }
 
 .sas-subnav.pb-toc { position: sticky; top: 16px; flex: 0 0 248px; max-width: 248px; z-index: 2; }
@@ -68,8 +67,21 @@
   .pb-q-table td { display: block; padding: 0 !important; border: 0; }
   .pb-q-table td:first-child { grid-column: 1 / -1; }
 }
-.sas-textarea.pb-q-example { font-size: 13px; line-height: 18px; color: var(--ink-muted); margin-top: 6px; min-height: 32px; padding-block: 6px; border-color: var(--line); background: var(--surface); }
-.pb-row-actions { display: flex; gap: 2px; justify-content: flex-end; align-items: center; }
+/* The example: plain muted text (no box) that shows a border on hover and focus, so it still reads as editable. */
+.sas-app .sas-textarea.pb-q-example { font-size: 13px; line-height: 18px; color: var(--ink-muted); margin-top: 2px; min-height: 30px; padding-block: 5px; border-color: transparent; background: transparent; }
+.sas-app .sas-textarea.pb-q-example:hover { border-color: var(--line); }
+.sas-app .sas-textarea.pb-q-example:focus { border-color: var(--line-strong); background: var(--surface-raised); color: var(--ink); }
+.sas-app .sas-textarea.pb-q-example[aria-invalid="true"] { border-color: var(--danger); }
+.pb-row-actions { display: flex; gap: 4px; justify-content: flex-end; align-items: center; padding-inline-start: 8px; }
+
+/* Objections: the remove button beside the answer; on a phone, at the top of the card. */
+.pb-obj-row { display: flex; flex-wrap: wrap; gap: 12px; padding-block: 12px; align-items: flex-start; }
+.pb-obj-remove { flex: 0 0 auto; padding-block-start: 22px; }
+@media (max-width: 767px) {
+  .pb-obj-row { position: relative; }
+  .pb-obj-row > .sas-input-group:first-child > .sas-input-label:first-child { padding-inline-end: 40px; }
+  .pb-obj-remove { position: absolute; inset-block-start: 6px; inset-inline-end: 0; padding: 0; z-index: 1; }
+}
 
 /* Stepper (− 3 +) */
 .pb-stepper { display: inline-flex; align-items: stretch; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; background: var(--surface-raised); }

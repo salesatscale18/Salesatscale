@@ -27,22 +27,34 @@ export function NewTag() {
   );
 }
 
+/** The scroll-spy's switch line: px from the top of the viewport, just under the sticky offset. */
+export const SPY_LINE = 160;
+
 /**
- * The section in view: the last one whose top has passed 30% of the viewport
- * (the first one before any has). Pure, for the scroll-spy and its test.
+ * The section in view: the last one whose heading (its top) has passed the switch
+ * line (the first one before any has). Pure, for the scroll-spy and its test.
  */
-export function sectionInView(tops: { id: string; top: number }[], viewport: number): string | null {
+export function sectionInView(tops: { id: string; top: number }[], line: number = SPY_LINE): string | null {
   if (!tops.length) return null;
-  const line = viewport * 0.3;
   let current = tops[0].id;
   for (const s of tops) if (s.top <= line) current = s.id;
   return current;
 }
 
 /**
+ * The blank space the sections column needs after its content, so the last section
+ * can scroll up to its scroll margin (by a TOC click) and no further. Pure: `lastTop`
+ * is the last section's top in page coordinates, `pageHeight` the page's height
+ * without this space.
+ */
+export function tailSpace({ lastTop, scrollMargin, viewport, pageHeight }: { lastTop: number; scrollMargin: number; viewport: number; pageHeight: number }): number {
+  return Math.max(0, Math.ceil(lastTop - scrollMargin + viewport - pageHeight));
+}
+
+/**
  * The playbook's section list (canvas: PlaybookOpening, PlaybookPlays). Sales
  * plays is its own page. Server-rendered links work without JS; on the
- * Playbook page a scroll-spy (IntersectionObserver) marks the section in view.
+ * Playbook page a scroll-spy marks the section in view and sizes the space after the last section.
  * Sticky beside the sections; below 1100px a sticky chip strip that scrolls
  * sideways, keeping the current item in view (playbook.css).
  */
@@ -51,18 +63,43 @@ export function PlaybookToc({ playbookHref, playsHref, current }: { playbookHref
   const nav = useRef<HTMLElement>(null);
 
   useEffect(() => {
-    if (current || typeof IntersectionObserver === "undefined") return;
+    if (current) return;
     const els = TOC_SECTIONS.map((s) => document.getElementById(spyId(s.id))).filter((x): x is HTMLElement => !!x);
     if (!els.length) return;
+    const main = nav.current?.parentElement?.querySelector<HTMLElement>(".pb-main--spy") ?? null;
+    let frame = 0;
     const update = () => {
-      const id = sectionInView(els.map((el) => ({ id: el.id, top: el.getBoundingClientRect().top })), window.innerHeight);
+      frame = 0;
+      const id = sectionInView(els.map((el) => ({ id: el.id, top: el.getBoundingClientRect().top })));
       setActive(TOC_SECTIONS.find((s) => spyId(s.id) === id)?.id ?? null);
     };
-    // Fires when a section's top or bottom crosses the 30% line.
-    const io = new IntersectionObserver(update, { rootMargin: "0px 0px -70% 0px", threshold: [0, 1] });
-    els.forEach((el) => io.observe(el));
+    const onScroll = () => { if (!frame) frame = requestAnimationFrame(update); };
+    // Size the blank space after the form to what the last section needs to reach the top.
+    const size = () => {
+      if (!main) return;
+      const last = els[els.length - 1];
+      const own = parseFloat(getComputedStyle(main).paddingBlockEnd) || 0;
+      const space = tailSpace({
+        lastTop: last.getBoundingClientRect().top + window.scrollY,
+        scrollMargin: parseFloat(getComputedStyle(last).scrollMarginTop) || 0,
+        viewport: window.innerHeight,
+        pageHeight: document.documentElement.scrollHeight - own,
+      });
+      main.style.paddingBlockEnd = `${space}px`;
+      onScroll();
+    };
+    size();
     update();
-    return () => io.disconnect();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", size);
+    const ro = typeof ResizeObserver === "undefined" || !main ? null : new ResizeObserver(size);
+    if (main) ro?.observe(main.firstElementChild ?? main);
+    return () => {
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", size);
+      ro?.disconnect();
+      if (frame) cancelAnimationFrame(frame);
+    };
   }, [current]);
 
   const shown = current === "plays" ? "plays" : active;

@@ -10,6 +10,8 @@ import { goLiveAction, saveRolloutAction } from "./actions";
 import { checkCount } from "@/lib/markets/rules";
 import type { WhatsappStatus } from "@/lib/channels/rules";
 import { CheckIcon, checkStateWord, WhatsAppStatusPill } from "../../settings/whatsapp-status";
+import "./go-live.css";
+import { checkTitle, goLiveSummary } from "./summary";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -28,8 +30,8 @@ function detail(c: GoLiveCheck): string {
       const methods = String(d.methods).split("+").map((m) => t(m === "card" ? "golive.method.card" : "golive.method.bank")).join(" · ");
       return t("golive.check.payments.ok", { methods });
     }
-    case "test_lab": return ok ? t("golive.check.test_lab.ok", { count: d.count }) : t("golive.check.test_lab.fail");
-    case "whatsapp": return ok ? t("golive.check.whatsapp.ok", { count: d.numbers }) : t(d.numbers ? "golive.check.whatsapp.no_opener" : "golive.check.whatsapp.fail");
+    case "test_lab": return ok ? t(Number(d.count) === 1 ? "golive.check.test_lab.ok_one" : "golive.check.test_lab.ok", { count: d.count }) : t("golive.check.test_lab.fail");
+    case "whatsapp": return ok ? t(Number(d.numbers) === 1 ? "golive.check.whatsapp.ok_one" : "golive.check.whatsapp.ok", { count: d.numbers }) : t(d.numbers ? "golive.check.whatsapp.no_opener" : "golive.check.whatsapp.fail");
     default: return "";
   }
 }
@@ -53,7 +55,8 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
       <header className="sas-stack-2">
         <div className="sas-page-head">
           <h1 className="sas-title">{t("golive.title")}</h1>
-          <div className="sas-page-head__actions">
+          {/* On a phone the live status sits under the title, start-aligned (go-live.css). */}
+          <div className="sas-page-head__actions gl-head-status">
             {account.status === "live" && liveSince ? (
               account.rollout === "test_only" ? (
                 // Only test leads are contacted: live, but not with real buyers yet.
@@ -73,11 +76,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
           </div>
         </div>
         <span className="sas-small">
-          {account.status === "paused"
-            ? t("golive.paused")
-            : result.ready
-              ? t("golive.ready", { passed: result.passed, total: result.total })
-              : t("golive.progress", { passed: result.passed, total: result.total })}
+          {goLiveSummary(account.status, result.passed, result.total, result.ready)}
         </span>
         <SetupSteps basePath={`/app/${account.slug}`} current="go-live" completed={await setupProgress(appDb, account)} />
       </header>
@@ -108,7 +107,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
                   </span>
                 ) : <CheckIcon state={c.state} />}
                 <span style={{ flex: "1 1 240px", minWidth: 0 }}>
-                  <strong>{t(`golive.check.${c.id}` as MessageKey)}</strong>
+                  <strong>{checkTitle(c)}</strong>
                   <span className="sas-sr"> · {c.state === "later" ? t("golive.state.later") : checkStateWord(c.state)}</span>
                   <span className="sas-small" style={{ display: "block" }}>{detail(c)}</span>
                 </span>
@@ -162,7 +161,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
                     {market.name}{market.isHome ? <span className="sas-pill" style={{ marginInlineStart: 8 }} data-home-market="">{t("golive.markets.home")}</span> : null}
                   </strong>
                   <StatusPill object="market" state={market.status} />
-                  <span className="sas-small sas-num">{t("golive.markets.checks", { passed, total })}</span>
+                  <span className="sas-small" data-market-checks="">{t("golive.markets.checks", { passed, total })}</span>
                   <a className={buttonClass("secondary", "sm")} href={`${base}/markets?m=${market.id}`}>{t("golive.markets.open")}</a>
                 </div>
                 <ul style={{ listStyle: "none", margin: 0, padding: 0, display: "flex", flexWrap: "wrap", gap: "6px 16px" }}>

@@ -59,7 +59,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <div className="pb-main pb-main--spy">
             <PlaybookForm
               slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
-              plays={{ total: plays.length, withFacts: plays.filter((x) => x.facts.length).length, own: counts.own, needsFacts: counts.needs, suggested: counts.suggested }}
+              plays={{ total: plays.length, withFacts: plays.filter((x) => x.factCount > 0).length, own: counts.own, needsFacts: counts.needs, suggested: counts.suggested }}
               playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
               names={{ rows, source: draft.playbook.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${base}/markets` }}
             />

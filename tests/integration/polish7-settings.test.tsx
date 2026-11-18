@@ -111,8 +111,7 @@ describe("Polish-7: setup and settings", () => {
       for (const h of [">Name<", ">Email<", ">Role<", ">Last active<"]) expect(html).toContain(h);
       expect(html).toContain("olga@polar.test");
       expect(html).toContain("admin@platform.test");
-      expect(html).toContain(">Platform admin<");
-      expect(html).toContain("Acting as");
+      expect(html).toContain(">Platform admin · acting as this account<");
       expect(html).toMatch(/>5 min ago</);
       // Exact local time and the zone on hover.
       expect(html).toMatch(/title="\d{1,2} Nov 2026, \d{2}:\d{2} · Asia\/Jerusalem \(GMT\+2\)"/);

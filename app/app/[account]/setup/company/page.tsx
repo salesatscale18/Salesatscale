@@ -1,4 +1,4 @@
-import { Button, buttonClass } from "@/components/sas/primitives";
+import { Button } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -195,12 +195,12 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
               </div>
               <div className="sas-input-group">
                 <label className="sas-input-label" htmlFor="co-sup">{t("company.support")}</label>
-                <input className="sas-input" id="co-sup" name="supportContact" defaultValue={account.supportContact ?? ""} maxLength={200} placeholder={t("company.support_placeholder")} />
+                {/* Wraps (grows with the text) in the narrow column, so the whole contact shows; line breaks are saved as spaces. */}
+                <textarea className="sas-textarea" id="co-sup" name="supportContact" rows={1} defaultValue={account.supportContact ?? ""} maxLength={200} placeholder={t("company.support_placeholder")} style={{ fieldSizing: "content", minHeight: 36, resize: "none", overflowWrap: "anywhere" }} />
                 <span className="sas-hint">{t("company.support_hint")}</span>
               </div>
             </div>
           </section>
-          <div><button type="submit" className={buttonClass("primary")}>{t("company.save")}</button></div>
         </div>
       </form>
     </main>

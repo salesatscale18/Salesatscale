@@ -1,6 +1,6 @@
 import { ScrollCurrentIntoView } from "@/components/sas/scroll-current";
 import { headers } from "next/headers";
-import { Avatar, Button, Chip, StatusPill } from "@/components/sas/primitives";
+import { Avatar, Button, StatusPill } from "@/components/sas/primitives";
 import { CopyButton } from "@/components/sas/copy-button";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -10,7 +10,7 @@ import { contactHoursOrDefault, summarizeContactHours } from "@/lib/accounts/con
 import { ContactHoursFields } from "@/components/sas/contact-hours-fields";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { listDeliveries, listIntakeKeys } from "@/lib/leads/service";
-import { displayName, initials } from "@/lib/auth/display";
+import { displayName, initials, personName } from "@/lib/auth/display";
 import { currencyLabel, formatLocalDateTime, safeTimezone, timeAgo, timezoneLabel, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { NOTIFICATION_EVENTS, type NotificationEvent, type SellerAccount } from "@/db/schema";
@@ -112,7 +112,7 @@ async function PaymentsSection({ account }: { account: SellerAccount }) {
     <section className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="pay-h">
       <div className="sas-page-head">
         <h2 id="pay-h" className="sas-heading">{t("settings.payments.title")}</h2>
-        <span className="sas-pill sas-pill--warning">{t("settings.payments.test_mode")}</span>
+        <span className="sas-pill" data-test-mode=""><Icon name="flask-conical" />{t("settings.payments.test_mode")}</span>
       </div>
       <dl style={{ display: "grid", gridTemplateColumns: "minmax(0, 160px) minmax(0, 1fr)", gap: "8px 12px", margin: 0 }}>
         <dt className="sas-small">{t("settings.payments.provider")}</dt><dd style={{ margin: 0 }}>{t("settings.payments.provider_value")}</dd>
@@ -142,7 +142,8 @@ async function UsersSection({ access, sp }: { access: AccountAccess; sp: Record<
           <span className="sas-small">{t("settings.users.hint")}</span>
         </div>
         <div style={{ overflowX: "auto" }}>
-          <table className="sas-table" style={{ minWidth: 600 }} data-members>
+          {/* On a phone each member is a card (name, then email, role and last active). */}
+          <table className="sas-table sas-table--stack" style={{ minWidth: 600 }} data-members>
             <thead>
               <tr>
                 <th scope="col">{t("settings.users.col.name")}</th>
@@ -161,28 +162,28 @@ async function UsersSection({ access, sp }: { access: AccountAccess; sp: Record<
                     <td>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 10 }}>
                         <Avatar actor="human" initials={initials(user)} />
-                        <span style={{ fontWeight: 600 }}>{displayName(user)}{self ? <span className="sas-small" style={{ fontWeight: 400 }}> · {t("settings.users.you")}</span> : null}</span>
+                        <span style={{ fontWeight: 600, overflowWrap: "anywhere" }} data-member-name="">{personName(user)}{self ? <span className="sas-small" style={{ fontWeight: 400 }}> · {t("settings.users.you")}</span> : null}</span>
                       </span>
                     </td>
-                    <td className="sas-small">{user.email ?? "—"}</td>
-                    <td>
+                    <td className="sas-small" data-label={t("settings.users.col.email")} style={{ whiteSpace: "normal", overflowWrap: "anywhere" }}>{user.email ?? "—"}</td>
+                    <td data-label={t("settings.users.col.role")}>
                       <span className="sas-chips">
                         {member ? (
                           <>
-                            {member.isOwner ? <Chip>{t("settings.users.role.owner")}</Chip> : null}
-                            <Chip>{t("settings.users.role.seller_admin")}</Chip>
+                            {member.isOwner ? <span className="sas-chip sas-chip--plain">{t("settings.users.role.owner")}</span> : null}
+                            <span className="sas-chip sas-chip--plain">{t("settings.users.role.seller_admin")}</span>
                           </>
                         ) : (
-                          <><Chip>{t("nav.role.platform_admin")}</Chip><span className="sas-small">{t("settings.users.acting_as")}</span></>
+                          <span className="sas-chip sas-chip--plain" style={{ whiteSpace: "nowrap" }} data-acting-tag="">{t("settings.users.platform_acting")}</span>
                         )}
                       </span>
                     </td>
-                    <td className="sas-small" data-last-active="">
+                    <td className="sas-small" data-last-active="" data-label={t("settings.users.col.last_active")}>
                       {lastActiveAt
                         ? <time dateTime={lastActiveAt.toISOString()} title={`${formatLocalDateTime(lastActiveAt, account.timezone)} · ${zoneTitle(lastActiveAt, account.timezone)}`}>{timeAgo(lastActiveAt, now, account.timezone)}</time>
                         : "—"}
                     </td>
-                    <td style={{ textAlign: "end" }}>
+                    <td style={{ textAlign: "end" }} data-label="">
                       {!member || self || lastOwner ? null : (
                         <form action={removeMemberAction}>
                           <input type="hidden" name="slug" value={account.slug} />
@@ -232,23 +233,26 @@ function NotificationsSection({ account, saved }: { account: SellerAccount; save
   return (
     <>
       {saved ? <Saved text={t("settings.notifications.saved")} /> : null}
-      <section className="sas-panel" aria-labelledby="ntf-h">
-        <form action={saveNotificationsAction} className="sas-panel__body sas-stack-4">
+      <section className="sas-panel" aria-labelledby="ntf-h" style={{ overflow: "hidden" }}>
+        <form action={saveNotificationsAction}>
           <input type="hidden" name="slug" value={account.slug} />
-          <h2 id="ntf-h" className="sas-heading">{t("settings.notifications.title")}</h2>
-          <table className="sas-table">
+          <div className="sas-panel__body"><h2 id="ntf-h" className="sas-heading">{t("settings.notifications.title")}</h2></div>
+          {/* Rows divide the whole panel width. */}
+          <table className="sas-table" data-notifications="">
             <thead><tr><th scope="col">{t("settings.notifications.event")}</th><th scope="col" style={{ width: 80, textAlign: "center" }}>{t("settings.notifications.email")}</th></tr></thead>
             <tbody>
               {NOTIFICATION_EVENTS.map((e) => (
                 <tr key={e}>
-                  <th scope="row" style={{ background: "none", textTransform: "none", letterSpacing: 0, font: "inherit", color: "var(--ink)" }}>{t(EVENT_LABEL[e])}</th>
+                  <th scope="row" style={{ background: "none", textTransform: "none", letterSpacing: 0, font: "inherit", color: "var(--ink)", borderBlockStart: "1px solid var(--line)", paddingBlock: "var(--space-3)" }} data-divider="">{t(EVENT_LABEL[e])}</th>
                   <td style={{ textAlign: "center" }}><input type="checkbox" name={`${e}_email`} defaultChecked={prefs[e].email} aria-label={t("settings.notifications.email_for", { event: t(EVENT_LABEL[e]) })} /></td>
                 </tr>
               ))}
             </tbody>
           </table>
-          <span className="sas-hint">{t("settings.notifications.hint")}</span>
-          <div><Button type="submit" variant="primary" size="sm">{t("settings.save")}</Button></div>
+          <div className="sas-panel__body sas-stack-4" style={{ borderBlockStart: "1px solid var(--line)" }}>
+            <span className="sas-hint">{t("settings.notifications.hint")}</span>
+            <div><Button type="submit" variant="primary" size="sm">{t("settings.save")}</Button></div>
+          </div>
         </form>
       </section>
     </>
@@ -290,10 +294,13 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
               <h2 id="ep-h" className="sas-heading">{t("settings.intake.title")}</h2>
               <span className="sas-small">{t("settings.intake.body")}</span>
             </div>
-            <label className="sas-small" htmlFor="endpoint">{t("settings.intake.endpoint")}</label>
-            <div className="sas-well">
-              <input id="endpoint" className="sas-input" readOnly value={endpoint} />
-              <CopyButton value={endpoint} />
+            <div className="sas-stack-2" style={{ gap: 6 }}>
+              <span className="sas-small" id="endpoint-label">{t("settings.intake.endpoint")}</span>
+              {/* The whole address, wrapped (as the WhatsApp webhook). */}
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <code id="endpoint" className="sas-num" aria-labelledby="endpoint-label" style={{ overflowWrap: "anywhere", minWidth: 0 }}>{endpoint}</code>
+                <CopyButton value={endpoint} />
+              </div>
             </div>
           </section>
 
@@ -309,13 +316,13 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
               <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("settings.intake.none")}</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table" style={{ minWidth: 720 }}>
+                <table className="sas-table sas-table--stack" style={{ minWidth: 640, fontSize: 13 }} data-intake-keys="">
                   <thead><tr><th scope="col">{t("settings.intake.col.name")}</th><th scope="col">{t("settings.intake.col.market")}</th><th scope="col">{t("settings.intake.col.key")}</th><th scope="col">{t("settings.intake.col.created")}</th><th scope="col">{t("settings.intake.col.last_used")}</th><th scope="col"><span className="sas-sr">{t("settings.intake.revoke")}</span></th></tr></thead>
                   <tbody>
                     {keys.map((k) => (
                       <tr key={k.id}>
                         <td><strong>{k.name}</strong></td>
-                        <td>
+                        <td data-label={t("settings.intake.col.market")}>
                           <form action={setIntakeKeyMarketAction} style={{ display: "flex", gap: 6, alignItems: "center" }} data-key-market={k.id}>
                             <input type="hidden" name="slug" value={account.slug} />
                             <input type="hidden" name="keyId" value={k.id} />
@@ -326,10 +333,10 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
                             <Button type="submit" size="sm" variant="ghost">{t("settings.intake.market_link")}</Button>
                           </form>
                         </td>
-                        <td className="sas-num">{k.keyPrefix}…{k.keyLast4 ?? ""}</td>
-                        <td className="sas-small"><When at={k.createdAt} now={now} tz={account.timezone} /></td>
-                        <td className="sas-small">{k.lastUsedAt ? <When at={k.lastUsedAt} now={now} tz={account.timezone} /> : t("settings.intake.never")}</td>
-                        <td style={{ textAlign: "end" }}>
+                        <td className="sas-num" data-label={t("settings.intake.col.key")}>{k.keyPrefix}…{k.keyLast4 ?? ""}</td>
+                        <td className="sas-small" data-label={t("settings.intake.col.created")}><When at={k.createdAt} now={now} tz={account.timezone} /></td>
+                        <td className="sas-small" data-label={t("settings.intake.col.last_used")}>{k.lastUsedAt ? <When at={k.lastUsedAt} now={now} tz={account.timezone} /> : t("settings.intake.never")}</td>
+                        <td style={{ textAlign: "end" }} data-label="">
                           <form action={revokeIntakeKeyAction}>
                             <input type="hidden" name="slug" value={account.slug} />
                             <input type="hidden" name="keyId" value={k.id} />
@@ -370,10 +377,11 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
         <aside className="sas-panel sas-panel__body sas-stack-4 sas-split__side" aria-labelledby="s-h">
           <h2 id="s-h" className="sas-heading">{t("settings.intake.sends")}</h2>
           <span className="sas-small">{t("settings.intake.sends_body")}</span>
-          <pre className="sas-code">{EXAMPLE}</pre>
+          {/* Wraps long values instead of cutting them off. */}
+          <pre className="sas-code" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-intake-sample="">{EXAMPLE}</pre>
           <span className="sas-small">{t("settings.intake.required")}</span>
           <SampleCheck slug={account.slug} example={EXAMPLE} />
-          <span className="sas-hint">{t("settings.intake.docs")}</span>
+          <span className="sas-hint" id="intake-optional">{t("settings.intake.optional")}</span>
         </aside>
     </>
   );

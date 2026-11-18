@@ -73,7 +73,8 @@ export function parseCompany(raw: Record<string, string>): { ok: true; value: Co
       legalName: opt("legalName", 160),
       companyId: opt("companyId", 40),
       address: opt("address", 300),
-      supportContact: opt("supportContact", 200),
+      // One line: the field wraps on screen, and line breaks are saved as spaces.
+      supportContact: (raw.supportContact ?? "").replace(/\s+/g, " ").trim().slice(0, 200) || null,
       salesRepUserId: rep || null,
       brandColor: color.toLowerCase(),
     },

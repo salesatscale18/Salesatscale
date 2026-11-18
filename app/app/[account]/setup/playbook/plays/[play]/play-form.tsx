@@ -38,6 +38,8 @@ export function CardView({ card }: { card: PlayCard }) {
       <div style={SEC}>
         <span style={LABEL}>{t("playbook.play.example")}</span>
         <span data-part="example" style={{ padding: "8px 12px", borderRadius: 10, borderStartStartRadius: 4, background: "var(--agent-soft)", overflowWrap: "anywhere" }}>{card.example}</span>
+        {/* Default examples show the form only (B8): what goes into <angle brackets> comes from this seller's facts. */}
+        <span className="sas-small" data-part="example-note">{t("playbook.play.example_note")}</span>
         <span style={{ ...LABEL, marginTop: 4 }}>{t("playbook.play.not_this")}</span>
         <span data-part="not-this" style={{ padding: "8px 12px", borderRadius: 10, background: "var(--danger-soft)", textDecoration: "line-through", textDecorationColor: "color-mix(in srgb, var(--danger) 50%, transparent)", overflowWrap: "anywhere" }}>
           <span className="sas-sr">{t("playbook.play.not_this")}: </span>{card.notThis}

@@ -231,10 +231,26 @@ describe("stable system prompt", () => {
       const card = DEFAULT_PLAYS[key];
       expect(p, key).toContain(`### ${card.title}\nWhen: ${card.when}\nDo: 1) ${card.do[0]}`);
       for (const step of card.do) expect(p, key).toContain(step);
-      expect(p, key).toContain(`Example: "${card.example}"`);
+      // Need, fit and value take the seller's example (or the fixed mix) instead of the card's neutral one.
+      const shown = (conversationExamples(pb).plays as Partial<Record<string, string>>)[key] ?? card.example;
+      expect(p, key).toContain(`Example: "${shown}"`);
       expect(p, key).toContain(`Not this: "${card.notThis}"`);
     }
     expect(p.match(/^When: /gm)).toHaveLength(PLAY_KEYS.length);
+  });
+
+  it("the default examples are neutral: no invented guarantees, numbers or facts; <angle brackets> mark what the agent fills in", () => {
+    for (const key of PLAY_KEYS) {
+      // Outside the <angle brackets>; a time the agent proposes for a follow-up is not a promise.
+      const ex = DEFAULT_PLAYS[key].example.replace(/<[^>]*>/g, "");
+      if (key !== "need_to_think" && key !== "not_now") expect(ex, key).not.toMatch(/\d/);
+      expect(ex, key).not.toMatch(/\b(guarantee[ds]?|replaced|within|always|every machine)\b/i);
+      expect(ex, key).not.toMatch(/approved|instructions|system/i);
+    }
+    expect(DEFAULT_PLAYS.proof.example).toBe("Yes. <One proof point: a fact, a customer example or a guarantee>. Does that answer it?");
+    for (const key of ["fit", "value", "price_early", "existing_solution", "competitor", "proof", "send_info", "right_size"] as const) {
+      expect(DEFAULT_PLAYS[key].example, key).toMatch(/<[^>]+>/);
+    }
   });
 
   it("a seller's own card replaces the default; seller facts are added; default and own look the same to the model", () => {
