@@ -1,5 +1,6 @@
 "use client";
 
+import { DateField } from "@/components/sas/date-field";
 import { Fragment, useActionState, useRef, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
@@ -48,7 +49,7 @@ function MetaFields({ prefix, d, errors, currencies, resetKey }: { prefix: strin
           </Field>
         ) : null}
         <Field id={`${prefix}-from`} label={t("price_lists.field.valid_from")} error={errors.validFrom}>
-          <input className="sas-input sas-num" type="date" id={`${prefix}-from`} name="validFrom" defaultValue={d.validFrom} {...aria(`${prefix}-from`, errors.validFrom)} />
+          <DateField id={`${prefix}-from`} name="validFrom" defaultValue={d.validFrom} key={`${resetKey}-from`} {...aria(`${prefix}-from`, errors.validFrom)} />
         </Field>
       </div>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>

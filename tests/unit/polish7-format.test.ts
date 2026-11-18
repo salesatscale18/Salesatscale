@@ -110,3 +110,13 @@ describe("Hebrew neutral agent texts", () => {
     expect(tg("buyer.sim.automated", "neutral", { agent: "Maya" }, "he")).toBe("Maya · שירות אוטומטי");
   });
 });
+
+describe("ago wording in sentences (UX 7.4, extended)", () => {
+  it("timeAgo reads in a sentence and falls back to a local date", async () => {
+    const { timeAgo } = await import("@/lib/format");
+    const now = new Date("2026-11-18T12:00:00Z");
+    expect(timeAgo(new Date("2026-11-18T11:58:00Z"), now)).toBe("2 min ago");
+    expect(timeAgo(new Date("2026-11-18T09:00:00Z"), now)).toBe("3 h ago");
+    expect(timeAgo(new Date("2026-11-10T09:00:00Z"), now, "Asia/Jerusalem")).toMatch(/10 Nov/);
+  });
+});

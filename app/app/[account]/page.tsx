@@ -7,7 +7,7 @@ import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
-import { relativeTime } from "@/lib/format";
+import { relativeTime, timeAgo } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { orderLabel } from "@/lib/orders/service";
 import {
@@ -111,12 +111,12 @@ export default async function OverviewPage({ params, searchParams }: { params: P
       case "quote_approval":
         return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
       case "human_handling":
-        return { title: t("overview.needs.human_handling", { name: it.leadName }), detail: [it.company, t("overview.needs.human_handling.detail", { when: relativeTime(it.at, now) })].filter(Boolean).join(" · ") };
+        return { title: t("overview.needs.human_handling", { name: it.leadName }), detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
       case "bank_transfer":
       case "payment_failed":
         return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}` };
       case "form_unsigned":
-        return { title: t("overview.needs.form_unsigned"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_unsigned.detail", { when: relativeTime(it.openedAt, now) })}` };
+        return { title: t("overview.needs.form_unsigned"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_unsigned.detail", { when: timeAgo(it.openedAt, now, account.timezone) })}` };
       case "form_expiring":
         return { title: t("overview.needs.form_expiring"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_expiring.detail", { hours: Math.max(1, Math.ceil((it.expiresAt.getTime() - now.getTime()) / 3_600_000)) })}` };
       case "follow_up_failed":

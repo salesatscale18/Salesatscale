@@ -3,7 +3,7 @@ import { PRICE_LIST_FIX } from "@/lib/sources/files";
 import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { exactTime, relativeTime } from "@/lib/format";
+import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { setupProgress } from "@/lib/overview/setup";
 import { FILE_ACCEPT } from "@/lib/sources/files";
@@ -96,7 +96,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
       <AnalyzePanel
         slug={account.slug} plan={plan} configured={llmConfigured()} capped={spend?.state === "capped"} runs={runs}
         confirming={one(sp.analyze) === "confirm"} back="sources" here={page} error={one(sp.analyze_error) || undefined}
-        started={one(sp.analyzed) === "1"} title="pipeline.analyze"
+        started={one(sp.analyzed) === "1"} title="pipeline.analyze" timezone={account.timezone}
       />
 
       <section className="sas-panel" aria-labelledby="src-h" style={{ overflow: "hidden" }}>
@@ -139,7 +139,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                     <td data-label={t("sources.col.language")}>{languageWords(s.language)}</td>
                     <td style={{ whiteSpace: "normal", minWidth: 120 }} data-label={t("sources.col.about")}>{about.get(s.id) ?? (s.textHash ? "—" : <span className="sas-small">{t("sources.about.pending")}</span>)}</td>
                     <td data-label={t("sources.col.status")}><StatusPill object="source" state={sourceDisplayStatus(s.status, factCounts.get(s.id))} /></td>
-                    <td className="sas-small sas-num" data-label={t("sources.col.updated")} title={exactTime(s.updatedAt)}>{relativeTime(s.updatedAt, now)}</td>
+                    <td className="sas-small sas-num" data-label={t("sources.col.updated")} title={`${formatLocalDateTime(s.updatedAt, account.timezone)} · ${zoneTitle(s.updatedAt, account.timezone)}`}>{timeAgo(s.updatedAt, now, account.timezone)}</td>
                     <td style={{ textAlign: "end" }} data-label="">
                       {confirmId === s.id ? (
                         <form action={deleteSourceAction} style={{ display: "inline-flex", gap: 6, alignItems: "center", flexWrap: "wrap", justifyContent: "flex-end" }}>

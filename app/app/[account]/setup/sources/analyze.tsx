@@ -7,7 +7,7 @@ import type { PipelineRun } from "@/db/schema";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass, StatusPill } from "@/components/sas/primitives";
 import { usdText } from "@/lib/ai/usage";
-import { exactTime, relativeTime } from "@/lib/format";
+import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { runData, runPillState, type AnalysisPlan } from "@/lib/pipeline/service";
 import { analyzeAction } from "./pipeline-actions";
@@ -41,6 +41,8 @@ export type AnalyzeState = {
   started?: boolean;
   /** Heading level text: "Analyze sources" or "Regenerate". */
   title: MessageKey;
+  /** The account time zone, for run times (local, zone on hover). */
+  timezone?: string;
 };
 
 /** The analysis panel: estimate, confirm, runs. */
@@ -120,7 +122,7 @@ export function AnalyzePanel(s: AnalyzeState) {
                         {u ? t("pipeline.tokens", { input: n(u.input), output: n(u.output), read: n(u.cacheRead), write: n(u.cacheWrite) }) : "—"}
                       </td>
                       <td className="sas-num">{r.costEstimateMicros !== null ? costText(r.costEstimateMicros) : "—"}</td>
-                      <td className="sas-small sas-num" title={exactTime(r.createdAt)}>{relativeTime(r.createdAt, now)}</td>
+                      <td className="sas-small sas-num" title={`${formatLocalDateTime(r.createdAt, s.timezone)} · ${zoneTitle(r.createdAt, s.timezone)}`}>{timeAgo(r.createdAt, now, s.timezone)}</td>
                     </tr>
                   );
                 })}

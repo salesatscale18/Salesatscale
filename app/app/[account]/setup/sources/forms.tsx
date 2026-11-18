@@ -1,5 +1,6 @@
 "use client";
 
+import { DateField } from "@/components/sas/date-field";
 import { useActionState, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/sas/icon";
@@ -117,7 +118,7 @@ export function CallForm({ slug, accept }: { slug: string; accept: string }) {
         </div>
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="src-call-date">{t("sources.call.date")}</label>
-          <input className="sas-input" id="src-call-date" name="callDate" type="date" />
+          <DateField id="src-call-date" name="callDate" />
         </div>
       </div>
       <div className="sas-input-group">

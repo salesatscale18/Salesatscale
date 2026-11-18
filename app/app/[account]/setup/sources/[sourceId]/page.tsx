@@ -5,7 +5,7 @@ import { PRICE_LIST_FIX } from "@/lib/sources/files";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { exactTime, relativeTime } from "@/lib/format";
+import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { isUuid } from "@/lib/security/ids";
 import { getSource, listSections, listSourceFacts } from "@/lib/sources/service";
@@ -73,7 +73,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
   }
   const size = fileSize(o.size);
   if (source.kind === "file" && size) meta.push(size);
-  meta.push(t("sources.detail.updated", { when: relativeTime(source.updatedAt, now) }));
+  meta.push(t("sources.detail.updated", { when: timeAgo(source.updatedAt, now, account.timezone) }));
 
   const hidden = (
     <>
@@ -94,7 +94,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
             <SourceBadge source={source} />
             <h1 className="sas-title" style={{ overflowWrap: "anywhere", minWidth: 0 }} dir="auto">{source.title}</h1>
           </span>
-          <span className="sas-small" title={exactTime(source.updatedAt)}>{meta.join(" · ")}</span>
+          <span className="sas-small" title={`${formatLocalDateTime(source.updatedAt, account.timezone)} · ${zoneTitle(source.updatedAt, account.timezone)}`}>{meta.join(" · ")}</span>
           {source.kind === "website" && o.url ? (
             <span className="sas-small" style={{ overflowWrap: "anywhere" }}>
               <span className="sas-num">{o.url}</span>

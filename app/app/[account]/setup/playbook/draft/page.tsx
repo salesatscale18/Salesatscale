@@ -118,7 +118,7 @@ export default async function PlaybookDraftPage({ params, searchParams }: { para
         <AnalyzePanel
           slug={account.slug} plan={plan} configured={llmConfigured()} capped={spend?.state === "capped"} runs={runs.slice(0, 4)}
           confirming={one(sp.analyze) === "confirm"} back="draft" here={here} error={one(sp.analyze_error) || undefined}
-          started={one(sp.analyzed) === "1"} title="draft.regenerate"
+          started={one(sp.analyzed) === "1"} title="draft.regenerate" timezone={account.timezone}
         />
       ) : null}
 

@@ -7,7 +7,7 @@ import type { PriceListEntry, VolumeTier } from "@/db/schema";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { catalogState, publishedCatalog } from "@/lib/catalog/service";
 import { formatMoney } from "@/lib/domain/money";
-import { exactTime } from "@/lib/format";
+import { formatLocalDateTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { entriesOf, entryProblems, itemInOtherLists, listPriceLists, partState, priceListVersions } from "@/lib/pricing/price-lists";
 import { unitLabel } from "@/lib/pricing/units";
@@ -184,7 +184,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                   <span className="sas-num">v{v.version}</span>
                   <span className="sas-list__main sas-small">
                     {v.status === "archived" ? t("price_lists.history.archived") : t(v.status === "live" ? "status.price_list.live" : "status.price_list.draft")}
-                    {v.publishedAt ? ` · ${t("price_lists.history.published", { time: exactTime(v.publishedAt) })}` : ` · ${t("price_lists.history.started", { time: exactTime(v.createdAt) })}`}
+                    {v.publishedAt ? ` · ${t("price_lists.history.published", { time: formatLocalDateTime(v.publishedAt, account.timezone) })}` : ` · ${t("price_lists.history.started", { time: formatLocalDateTime(v.createdAt, account.timezone) })}`}
                   </span>
                 </li>
               ))}
