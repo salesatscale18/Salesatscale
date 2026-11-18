@@ -6,6 +6,7 @@ import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import type { PlaybookErrors, PlaybookRowsInput } from "@/lib/agent/playbook";
 import { savePlaybookForm } from "@/lib/agent/playbook-save";
+import { autoNameModel } from "@/lib/agent/names-auto";
 
 /**
  * On a refused save the submitted values come back, so the form shows what
@@ -19,7 +20,8 @@ export type PlaybookFormState = { status: "idle" } | { status: "error"; errors: 
 export async function savePlaybookAction(_prev: PlaybookFormState, form: FormData): Promise<PlaybookFormState> {
   const a = await requireAccount(String(form.get("slug") ?? ""));
   const entries = [...form.entries()].map(([k, v]) => [k, typeof v === "string" ? v : ""] as [string, string]);
-  const r = await savePlaybookForm(appDb, a.account.id, entries);
+  // Automatic name versions are made here, once, when the name or the market languages changed (C2).
+  const r = await savePlaybookForm(appDb, a.account.id, entries, { names: autoNameModel(), actor: actorOf(a) });
   if (!r.ok) return { status: "error", errors: r.errors, values: r.values };
   await writeAudit(appDb, actorOf(a), { accountId: a.account.id, action: "agent.playbook_saved" });
   revalidatePath(`/app/${a.account.slug}/setup/playbook`);

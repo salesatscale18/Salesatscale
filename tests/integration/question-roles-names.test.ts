@@ -97,7 +97,7 @@ describe("question roles and local names", () => {
       expect(askedCount(deal.fields, "current_monitoring")).toBe(1);
       expect(deal.fields[askedKey("nope")]).toBeUndefined();
       // The stage block lists both as asked and not answered, each with what its role allows next.
-      expect(again.result.stage).toContain("Asked and not answered: Number of sites (asked once; needed for the quote: ask once more, in different words, just before the quote); How they check today (asked once; helps the pitch: do not ask it again).");
+      expect(again.result.stage).toContain("Asked and not answered: Number of sites (asked once; needed for the quote: ask once more, in different words, just before the quote); How they check today (asked once; helps the pitch: do not ask it in the next messages; you may come back to it once, later, only when it fits what the buyer is talking about, woven into your reply).");
       // Next turn: counted again.
       await runTool("update_deal_state", ask(["sites"]), ctx("a3", {}));
       deal = (await readDealState(db, acc, c.leadId))!;
@@ -246,9 +246,10 @@ describe("question roles and local names", () => {
       // A form without the input keeps what is stored.
       const r = parseCompany(base);
       expect(r.ok && r.value.tradeNameLocal).toBeUndefined();
-      // English buyers see the trade name itself: no English input is read.
+      // C2: any language of the account's markets can have its own version, in that language's script.
       const en = parseCompany({ ...base, "tradeNameLocal.en": "Polar EN" });
-      expect(en.ok && en.value.tradeNameLocal).toBeUndefined();
+      expect(en.ok && en.value.tradeNameLocal).toEqual({ en: "Polar EN" });
+      expect(parseCompany({ ...base, "tradeNameLocal.en": "פולאר" })).toMatchObject({ ok: false, errors: { "tradeNameLocal.en": expect.stringContaining("English letters") } });
     });
 
     it("saves, clears and audits in this account only", async () => {

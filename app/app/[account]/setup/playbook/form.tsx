@@ -6,9 +6,14 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import { readOpener } from "@/lib/agent/core/opener";
-import { AGENT_GENDERS, agentGenderOf } from "@/lib/agent/core/names";
+import { AGENT_GENDERS, agentGenderOf, localAgentName, type NameRow } from "@/lib/agent/core/names";
+import { QUESTION_BUDGET, QUESTION_CEILING, questionBudgetOf } from "@/lib/agent/core/stage";
 import { savePlaybookAction, type PlaybookFormState } from "./actions";
 import { OpeningSection, type OpeningValues } from "./opening";
+import { LocalNames } from "../local-names";
+
+/** "Names in other languages" for the agent (C2): rows from the account's markets, built on the server. */
+export type AgentNamesView = { rows: NameRow[]; source: string; notice: string | null; marketsHref: string };
 
 type FieldRow = { id: number; key: string; label: string; stage: PlaybookField["stage"]; example: string; hint: string };
 type ObjectionRow = { id: number; objection: string; answer: string; source: string };
@@ -27,8 +32,6 @@ const STAGE_HELP: Record<PlaybookField["stage"], MessageKey> = {
 };
 /** The main list holds the questions asked in chat (needed for the quote, helps the pitch); order-form fields have their own row. */
 const MAIN_STAGES: PlaybookField["stage"][] = ["before_quote", "optional"];
-/** Recommended most questions before the recommendation (the agent asks 3 at most in stage Understand). */
-const RECOMMENDED_BEFORE = 3;
 
 const CELL = { whiteSpace: "normal", verticalAlign: "top", paddingInline: 6 } as const;
 
@@ -47,8 +50,10 @@ export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
   const sent = state.status === "error" ? state.values : null;
   return {
     goal: sent?.goal ?? p.goal, agentName: sent?.agentName ?? p.agentName,
-    agentNameHe: sent ? sent.agentNameLocal?.he ?? "" : p.agentNameLocal?.he ?? "",
+    /** The seller's own name versions as sent after a refused save (undefined: the stored ones). */
+    agentNameLocal: sent ? sent.agentNameLocal : undefined,
     agentGender: sent?.agentGender ?? p.agentGender ?? "neutral",
+    questionBudget: sent?.questionBudget !== undefined && Number.isInteger(Number(sent.questionBudget)) ? questionBudgetOf({ questionBudget: Number(sent.questionBudget) }) : questionBudgetOf(p),
     tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
     maxDiscount: sent?.maxDiscount ?? String(p.maxDiscountBp / 100), offerMeetingWhen: sent?.offerMeetingWhen ?? p.offerMeetingWhen, handOffWhen: sent?.handOffWhen ?? p.handOffWhen,
   };
@@ -66,7 +71,43 @@ export function openingValues(p: Playbook, state: PlaybookFormState): OpeningVal
   };
 }
 
-export type PlaysSummary = { total: number; withFacts: number; own: number; needsFacts: number; suggested: number };
+/**
+ * How counting works (canvas: PlaybookQuestions, right panel), on a neutral
+ * example chat: only the questions the agent starts count.
+ */
+function QuestionCounting({ max }: { max: number }) {
+  const bubble = (who: "agent" | "buyer", text: string) => (
+    <span style={{ flex: "1 1 auto", minWidth: 0, padding: "6px 10px", borderRadius: 10, fontSize: 13, lineHeight: "18px", background: who === "agent" ? "var(--agent-soft)" : "var(--surface-raised)", border: who === "buyer" ? "1px solid var(--line)" : 0 }}>{text}</span>
+  );
+  const mark = (n: number | null, arrow = false) => (
+    <span aria-label={n ? t("playbook.count.counted", { n }) : t("playbook.count.not_counted")} style={{ flex: "0 0 20px", height: 20, borderRadius: 10, display: "inline-grid", placeItems: "center", fontSize: 11, fontWeight: 700, background: n ? "var(--primary)" : "transparent", color: n ? "var(--on-primary)" : "var(--ink-muted)" }}>{n ?? (arrow ? "→" : "–")}</span>
+  );
+  const row = (n: number | null, who: "agent" | "buyer", text: string, arrow = false) => (
+    <div style={{ display: "flex", gap: 8, alignItems: "flex-start" }}>{mark(n, arrow)}{bubble(who, text)}</div>
+  );
+  return (
+    <aside className="sas-stack-2" data-testid="question-counting" aria-labelledby="pb-count-h" style={{ gap: 10, padding: 14, borderRadius: 10, border: "1px solid var(--line)" }}>
+      <div className="sas-stack-2" style={{ gap: 2 }}>
+        <strong id="pb-count-h">{t("playbook.count.title", { max })}</strong>
+        <span className="sas-small">{t("playbook.count.sub")}</span>
+      </div>
+      {row(1, "agent", t("playbook.count.ex_agent_1"))}
+      {row(null, "buyer", t("playbook.count.ex_buyer_1"))}
+      {row(2, "agent", t("playbook.count.ex_agent_2"))}
+      <span className="sas-small" style={{ paddingInlineStart: 28, marginTop: -4 }}>{t("playbook.count.ex_note")}</span>
+      {row(null, "buyer", t("playbook.count.ex_buyer_2"))}
+      {row(null, "agent", t("playbook.count.ex_agent_3"), true)}
+      <div className="sas-stack-2" style={{ gap: 6, paddingTop: 10, borderTop: "1px solid var(--line)", fontSize: 13, lineHeight: "18px" }}>
+        <span><b>{t("playbook.count.asap_b")}</b> {t("playbook.count.asap")}</span>
+        <span><b>{t("playbook.count.signal_b")}</b> {t("playbook.count.signal")}</span>
+        <span><b>{t("playbook.count.pace_b")}</b> {t("playbook.count.pace")}</span>
+        <span className="sas-small">{t("playbook.count.ceiling", { ceiling: QUESTION_CEILING })}</span>
+      </div>
+    </aside>
+  );
+}
+
+export type PlaysSummary ={ total: number; withFacts: number; own: number; needsFacts: number; suggested: number };
 
 /**
  * Playbook editor (canvas: Playbook, PlaybookOpening). Rows live in local
@@ -76,12 +117,17 @@ export type PlaysSummary = { total: number; withFacts: number; own: number; need
  * deal-state values. Sales plays have their own pages (the form does not send
  * them, so the stored plays are kept).
  */
-export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref }: {
+export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref, names }: {
   slug: string; p: Playbook; draftVersion: number; labHref: string; company: string; companyLocal?: Partial<Record<string, string>> | null; plays: PlaysSummary; playsHref: string; orderFormHref: string;
+  names: AgentNamesView;
 }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
   const v = playbookFormValues(p, state);
+  const [agentName, setAgentName] = useState(v.agentName);
+  const [gender, setGender] = useState(v.agentGender);
+  const [budget, setBudget] = useState(v.questionBudget);
+  const nameRows = v.agentNameLocal ? names.rows.map((r) => ({ ...r, own: v.agentNameLocal?.[r.lang] ?? r.own })) : names.rows;
   const lastId = useRef(1000);
   const newId = () => ++lastId.current;
   const [fields, setFields] = useState<FieldRow[]>(() => p.fields.map((f, i) => ({ id: i, key: f.key, label: f.label, stage: f.stage, example: f.example ?? "", hint: f.hint ?? "" })));
@@ -178,6 +224,39 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   return (
     <form id="pb-form" action={action} className="sas-stack-6" noValidate>
       <input type="hidden" name="slug" value={slug} />
+      {panel("pb-agent-h", "playbook.agent", null, null, (
+        <>
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor="pb-agentName">{t("playbook.agent_name")}</label>
+            <input className="sas-input" id="pb-agentName" name="agentName" maxLength={60} value={agentName} onChange={(ev) => setAgentName(ev.target.value)} {...invalid("agentName")} aria-describedby={e.agentName ? "pb-agentName-error" : "pb-agentName-hint"} />
+            <span className="sas-hint" id="pb-agentName-hint">{t("playbook.agent_name_hint")}</span>
+            {err("agentName")}
+          </div>
+          <LocalNames
+            id="pb-names" inputPrefix="agentNameLocal" rows={nameRows} what={t("names.col_agent")} column={t("names.col_agent")} maxLength={60}
+            errors={e} notice={names.notice} typedName={agentName} source={names.source}
+            hint={<>{t("names.agent_hint_before")} <a href={names.marketsHref}>{t("names.agent_hint_link")}</a> {t("names.agent_hint_after")}</>}
+          />
+          <fieldset style={{ border: 0, margin: 0, padding: 0, display: "flex", flexDirection: "column", gap: 6 }} aria-describedby="pb-agentGender-hint">
+            <legend className="sas-input-label" style={{ padding: 0, marginBottom: 6 }}>{t("playbook.agent_speaks")}</legend>
+            <span role="radiogroup" aria-label={t("playbook.agent_speaks")} style={{ display: "inline-flex", border: "1px solid var(--line-strong)", borderRadius: 8, overflow: "hidden", width: "max-content", maxWidth: "100%" }}>
+              {AGENT_GENDERS.map((g, i) => (
+                <label key={g} data-gender={g} data-on={gender === g ? "" : undefined} style={{ padding: "7px 16px", fontWeight: 600, cursor: "pointer", background: gender === g ? "var(--ink)" : "transparent", color: gender === g ? "var(--surface-raised)" : "var(--ink)", borderInlineStart: i ? "1px solid var(--line-strong)" : 0 }}>
+                  <input type="radio" className="sas-sr" name="agentGender" value={g} checked={gender === g} onChange={() => setGender(g)} />
+                  {t(`playbook.agent_gender.${g}`)}
+                </label>
+              ))}
+            </span>
+            <span className="sas-hint" id="pb-agentGender-hint">{t("playbook.agent_speaks_hint")}</span>
+            {err("agentGender")}
+          </fieldset>
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor="pb-tone">{t("playbook.tone")}</label>
+            <input className="sas-input" id="pb-tone" name="tone" maxLength={300} defaultValue={v.tone} />
+          </div>
+        </>
+      ))}
+
       {panel("pb-goal-h", "playbook.goal", null, null, (
         <>
           <div className="sas-input-group">
@@ -191,37 +270,11 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               <label key={k} className="sas-check"><input type="checkbox" name={k} defaultChecked={v.outcomes[k]} />{t(label)}</label>
             ))}
           </fieldset>
-          <div className="sas-grid-2" style={{ gap: 12 }}>
-            <div className="sas-input-group">
-              <label className="sas-input-label" htmlFor="pb-agentName">{t("playbook.agent_name")}</label>
-              <input className="sas-input" id="pb-agentName" name="agentName" maxLength={60} defaultValue={v.agentName} {...invalid("agentName")} aria-describedby={e.agentName ? "pb-agentName-error" : "pb-agentName-hint"} />
-              <span className="sas-hint" id="pb-agentName-hint">{t("playbook.agent_name_hint")}</span>
-              {err("agentName")}
-            </div>
-            <div className="sas-input-group">
-              <label className="sas-input-label" htmlFor="pb-agentNameHe">{t("playbook.agent_name_he")}</label>
-              <input className="sas-input" id="pb-agentNameHe" name="agentNameLocal.he" lang="he" dir="rtl" maxLength={60} defaultValue={v.agentNameHe} {...invalid("agentNameLocal.he")} aria-describedby={e["agentNameLocal.he"] ? "pb-agentNameLocal.he-error" : "pb-agentNameHe-hint"} />
-              <span className="sas-hint" id="pb-agentNameHe-hint">{t("playbook.agent_name_he_hint")}</span>
-              {err("agentNameLocal.he")}
-            </div>
-            <div className="sas-input-group">
-              <label className="sas-input-label" htmlFor="pb-agentGender">{t("playbook.agent_gender")}</label>
-              <select className="sas-select" id="pb-agentGender" name="agentGender" defaultValue={v.agentGender} {...invalid("agentGender")} aria-describedby={e.agentGender ? "pb-agentGender-error" : "pb-agentGender-hint"}>
-                {AGENT_GENDERS.map((g) => <option key={g} value={g}>{t(`playbook.agent_gender.${g}`)}</option>)}
-              </select>
-              <span className="sas-hint" id="pb-agentGender-hint">{t("playbook.agent_gender_hint")}</span>
-              {err("agentGender")}
-            </div>
-            <div className="sas-input-group">
-              <label className="sas-input-label" htmlFor="pb-tone">{t("playbook.tone")}</label>
-              <input className="sas-input" id="pb-tone" name="tone" maxLength={300} defaultValue={v.tone} />
-            </div>
-          </div>
         </>
       ))}
 
       {panel("pb-opener-h", "playbook.opener", null, null, (
-        <OpeningSection initial={openingValues(p, state)} agent={p.agentName || company} company={company} names={{ en: { agent: p.agentName || company, company }, he: { agent: p.agentNameLocal?.he || p.agentName || company, company: companyLocal?.he?.trim() || company } }} gender={agentGenderOf(p)} h={{ err, invalid, errors: e }} />
+        <OpeningSection initial={openingValues(p, state)} agent={p.agentName || company} company={company} names={{ en: { agent: localAgentName(p, "en", company), company: companyLocal?.en?.trim() || company }, he: { agent: localAgentName(p, "he", company), company: companyLocal?.he?.trim() || company } }} gender={agentGenderOf(p)} h={{ err, invalid, errors: e }} />
       ), isNew)}
 
       {panel("pb-fields-h", "playbook.fields", "playbook.fields_hint", (
@@ -230,8 +283,21 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         </button>
       ), (
         <>
-          {before > RECOMMENDED_BEFORE ? (
-            <div className="sas-alert sas-alert--warning" role="status"><Icon name="alert-triangle" /><span>{t("playbook.fields.too_many", { n: before, max: RECOMMENDED_BEFORE })}</span></div>
+          <div data-testid="question-budget" style={{ display: "flex", flexWrap: "wrap", gap: "12px 20px", alignItems: "center", padding: 14, borderRadius: 10, background: "var(--surface)" }}>
+            <div className="sas-stack-2" style={{ flex: "1 1 260px", gap: 2, minWidth: 0 }}>
+              <b><label htmlFor="pb-questionBudget" id="pb-questionBudget-label">{t("playbook.questions.budget")}</label>{isNew}</b>
+              <span className="sas-small" id="pb-questionBudget-hint">{t("playbook.questions.budget_hint")}</span>
+              {err("questionBudget")}
+            </div>
+            <span role="group" aria-labelledby="pb-questionBudget-label" style={{ display: "inline-flex", alignItems: "center", border: "1px solid var(--line-strong)", borderRadius: 8, overflow: "hidden", background: "var(--surface-raised)" }}>
+              <button type="button" className={buttonClass("ghost", "sm")} style={{ borderRadius: 0 }} onClick={() => setBudget((n) => Math.max(QUESTION_BUDGET.min, n - 1))} disabled={budget <= QUESTION_BUDGET.min} aria-label={t("playbook.questions.fewer")}><span aria-hidden="true">−</span></button>
+              <output id="pb-questionBudget" htmlFor="pb-questionBudget-input" aria-live="polite" style={{ minWidth: 32, textAlign: "center", fontWeight: 700 }}>{budget}</output>
+              <input type="hidden" id="pb-questionBudget-input" name="questionBudget" value={budget} />
+              <button type="button" className={buttonClass("ghost", "sm")} style={{ borderRadius: 0 }} onClick={() => setBudget((n) => Math.min(QUESTION_BUDGET.max, n + 1))} disabled={budget >= QUESTION_BUDGET.max} aria-label={t("playbook.questions.more")}><span aria-hidden="true">+</span></button>
+            </span>
+          </div>
+          {before > budget ? (
+            <div className="sas-alert sas-alert--warning" role="status" data-testid="budget-warning"><Icon name="alert-triangle" /><span>{t(before - budget === 1 ? "playbook.fields.too_many" : "playbook.fields.too_many_other", { n: before, max: budget, extra: before - budget })}</span></div>
           ) : null}
           <ul className="sas-stack-2" data-testid="field-roles" aria-label={t("playbook.field.roles")} style={{ listStyle: "none", margin: 0, padding: 0, gap: 4 }}>
             {(["before_quote", "optional", "before_order_form"] as const).map((s) => (
@@ -260,6 +326,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               </div>
             </details>
           </div>
+          <QuestionCounting max={budget} />
         </>
       ))}
       {err("fields")}

@@ -12,16 +12,23 @@
 import { PLAY_KEYS, type Playbook } from "@/db/schema";
 import { DEFAULT_PLAYS, effectivePlay } from "./plays";
 import { MIXED_EXAMPLES, type ConversationExamples } from "./examples";
+import { HELPS_THE_PITCH_RULE, QUESTION_BUDGET, questionBudgetOf } from "./stage";
 
-export function coreDesign(seller: { tradeName: string; meeting: boolean }, ex: ConversationExamples = MIXED_EXAMPLES): string {
+/**
+ * `questionBudget`: the seller's "Questions before recommending" (B2), already
+ * clamped (stage.ts questionBudgetOf). It comes from the version's playbook
+ * only, so the text stays byte-stable across turns. Missing = 3.
+ */
+export function coreDesign(seller: { tradeName: string; meeting: boolean; questionBudget?: number }, ex: ConversationExamples = MIXED_EXAMPLES): string {
   const afterSecondNo = seller.meeting ? "offer a meeting" : "hand off to a person";
+  const budget = seller.questionBudget ?? QUESTION_BUDGET.default;
   return `## How the conversation runs
 The buyer asked to hear from ${seller.tradeName}. Take them from hello to a signed order in six stages. Every turn, "Stage now" at the end of your instructions names your stage and what to do: follow it. The stages are a skeleton: when the buyer raises something else (a question, a doubt, an objection), answer it first with the matching card under "Sales plays", then return to the stage.
 
 The examples below show the form of a good reply. Copy their form and length, never their products, facts or numbers: take those from the tools and approved information for this buyer.
 
 1. Open. One message: who you are, what the buyer asked about, one easy question about their situation today. When "Your opening message" is shown under "Stage now", the opening is already sent: it was your first message.
-2. Understand. Ask only what changes which products you recommend, the questions needed for the quote first (see "Questions" below). One question per message, 3 questions at most. Stop asking as soon as you can recommend one set.
+2. Understand. Ask only what changes which products you recommend, the questions needed for the quote first (see "Questions" below). One question per message, ${budget} questions at most: a maximum, not a target. Only the questions you start count; answering the buyer's own questions, or giving the extra detail they ask for, never does. Stop asking as soon as you can recommend one set.
 3. Recommend. One message of four short sentences, one per part, in this order: what you understood (in your own words, not a list of their answers), the set in plain words, what it gives this buyer, a check question. No prices and no SKUs. No assumptions spelled out and no second question: if something is unclear, ask it in stage 2 first.
    Example: "${ex.recommend}"
    Not this: "Based on your answers I recommend 12 × SEAT-M (₪59 each) and 1 × SETUP-1. Would you like me to prepare a quote?"
@@ -56,7 +63,7 @@ Listening
 Questions
 - Each deal-state field has a role. When you ask for one, record it with update_deal_state asked, in the same turn.
 - Needed for the quote (for example ${ex.neededForQuote}): ask once. If the buyer skips it, carry on, and ask once more in different words just before the quote. If it is still unknown, do not ask a third time: quote on a stated assumption (create_quote with assumed) and say it in the close. Example: "${ex.assumed}" Never hold the quote back for it.
-- Helps the pitch (for example how they handle it today, or their current supplier): ask at most once and never repeat it. Drop it at once when the buyer skips it or shows a buying signal.
+- Helps the pitch (for example how they handle it today, or their current supplier): ${HELPS_THE_PITCH_RULE.replace(/^A question that helps the pitch is asked/, "ask it")} Drop it at once when the buyer shows a buying signal.
 - Filled in the order form (company and signer details): never ask in chat. The buyer fills these in the order form.
 - "Asked and not answered" under "Stage now" lists what you asked that is still open, and what its role allows next.
 
@@ -100,10 +107,13 @@ Credibility
  * card when there is one, plus the seller's facts for it. Nothing tells the
  * model whether a card is the default or the seller's own.
  */
-export function playsText(playbook: Pick<Playbook, "plays">, ex: ConversationExamples = MIXED_EXAMPLES): string {
+export function playsText(playbook: Pick<Playbook, "plays" | "questionBudget">, ex: ConversationExamples = MIXED_EXAMPLES): string {
   const sellerExample: Partial<Record<string, string>> = ex.plays;
+  const budget = questionBudgetOf(playbook);
   const cards = PLAY_KEYS.map((key) => {
-    const { card: c, content, own } = effectivePlay(playbook, key);
+    const { card: c0, content, own } = effectivePlay(playbook, key);
+    // A default card stops at the seller's question budget (B2); the seller's own card stays as written.
+    const c = own ? c0 : { ...c0, do: c0.do.map((step) => step.replace(/\bStop at 3 questions\./, `Stop at ${budget} questions.`)) };
     // A default card takes this seller's example where there is one; the seller's own card stays as written.
     const card = !own && sellerExample[key] ? { ...c, example: sellerExample[key]! } : c;
     return [

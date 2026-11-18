@@ -629,8 +629,25 @@ export type Playbook = {
   agentName: string;
   /** The agent's name per buyer language, e.g. { he: "מאיה" }. Missing = `agentName` (P11 follow-up). */
   agentNameLocal?: Partial<Record<string, string>>;
+  /**
+   * Automatic versions of `agentName` per buyer language (C2, 18 Nov): the name
+   * transliterated into the language's script by the light pipeline model, made
+   * once when the name or the market languages change (lib/agent/names-auto.ts),
+   * never per message. `source` is the name they were made from: when it differs
+   * from `agentName` they are stale and not used. `asWritten` lists languages the
+   * model could not do for this source (buyers then see the name as written).
+   * The seller's own version (`agentNameLocal`) always wins. Optional: older
+   * playbooks have none.
+   */
+  agentNameAuto?: { source: string; values: Partial<Record<string, string>>; asWritten?: string[] };
   /** Grammatical gender the agent uses for itself (Hebrew and other gendered languages). Missing = "neutral". */
   agentGender?: "female" | "male" | "neutral";
+  /**
+   * Most questions the agent starts before it recommends (B2, 18 Nov), 2 to 6.
+   * Missing = 3. Only questions the agent records as asked count
+   * (lib/agent/core/stage.ts); the app's ceiling is 6 whatever the setting.
+   */
+  questionBudget?: number;
   goal: string;
   tone: string;
   outcomes: { orderForm: boolean; bankTransfer: boolean; meeting: boolean };

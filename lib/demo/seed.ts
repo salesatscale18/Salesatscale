@@ -192,7 +192,7 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
     outcomes: { orderForm: true, bankTransfer: true, meeting: true },
     fields: [
       { key: "sites", label: "Number of sites", stage: "before_quote", hint: "Whole number", example: "How many sites (kitchens or branches) would you like to monitor?" },
-      // Helps the pitch (decision 1): asked at most once, never repeated.
+      // Helps the pitch (B2): asked once without insisting; may come back once later when it fits.
       { key: "current_monitoring", label: "How they check fridges today", stage: "optional", example: "How do you check your fridge temperatures today?" },
       { key: "company_name", label: "Company name", stage: "before_order_form" },
       { key: "company_id", label: "Company ID", stage: "before_order_form" },

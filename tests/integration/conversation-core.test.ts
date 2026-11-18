@@ -221,6 +221,6 @@ describe("conversation core (scripted model)", () => {
     const heStarted = await startSimulatorConversation(db, actor(), acc, heBuyer.lead.id);
     if (!heStarted.ok) throw new Error(heStarted.reason);
     const [heOpener] = await db.select().from(messages).where(eq(messages.id, heStarted.messageId));
-    expect(heOpener.body).toBe("היי Yossi, כאן Maya, העוזר/ת האוטומטי/ת של Polar. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
+    expect(heOpener.body).toBe("היי Yossi, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar\u2069. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
   });
 });

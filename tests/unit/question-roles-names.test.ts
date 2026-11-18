@@ -42,14 +42,17 @@ describe("decision 1: question roles", () => {
     const fields = { ...asked("sites", 1), ...asked("current", 1), ...asked("company_name", 3) };
     expect(askedNotAnswered(pb, fields)).toEqual([
       "Number of sites (asked once; needed for the quote: ask once more, in different words, just before the quote)",
-      "How they check today (asked once; helps the pitch: do not ask it again)",
+      "How they check today (asked once; helps the pitch: do not ask it in the next messages; you may come back to it once, later, only when it fits what the buyer is talking about, woven into your reply)",
     ]);
+    // Asked twice (it came back once): never again.
+    expect(askedNotAnswered(pb, { ...asked("current", 2) })).toEqual(["How they check today (asked twice; helps the pitch: do not ask it again)"]);
     expect(askedNotAnswered(pb, { ...asked("sites", 2) })[0]).toContain("asked twice; needed for the quote: do not ask again; quote on a stated assumption");
     // Answered: no longer listed.
     expect(askedNotAnswered(pb, { ...asked("sites", 2), sites: said("1") })).toEqual([]);
-    const s = stageOf({ fields });
+    // Five asks recorded (budget 6 here, so still in Understand).
+    const s = stageOf({ fields, playbook: { ...pb, questionBudget: 6 } });
     expect(s.instruction).toContain("Asked and not answered: Number of sites (asked once;");
-    expect(s.instruction).toContain("Ask the questions needed for the quote first. A question that helps the pitch is asked at most once");
+    expect(s.instruction).toContain("Ask the questions needed for the quote first. A question that helps the pitch is asked once, without insisting.");
     // Nothing asked: no such line.
     expect(stageOf().instruction).not.toContain("Asked and not answered");
   });
@@ -78,7 +81,8 @@ describe("decision 1: question roles", () => {
     expect(p).toContain("- current: How they check today (helps the pitch)");
     expect(p).toContain("- company_name: Company name (filled in the order form)");
     expect(p).toContain("Needed for the quote (for example the number of sites): ask once.");
-    expect(p).toContain("Helps the pitch (for example how they handle it today, or their current supplier): ask at most once and never repeat it.");
+    expect(p).toContain("Helps the pitch (for example how they handle it today, or their current supplier): ask it once, without insisting. If the buyer skips it, move on and do not ask it again in the next messages. You may come back to it once, later, only when it fits what the buyer is talking about, woven into your reply: never as a quiz, and never holding up the next step.");
+    expect(p).not.toContain("ask at most once and never repeat it");
     expect(p).toContain("Filled in the order form (company and signer details): never ask in chat.");
   });
 
@@ -163,7 +167,7 @@ describe("decision 2: names in the buyer's language", () => {
       agentName: "Maya", goal: "Sell.", tone: "", outcomes: { orderForm: true, bankTransfer: false, meeting: false }, fields: [], objections: [], maxDiscount: "5", offerMeetingWhen: "", handOffWhen: "", neverDo: [], ...extra,
     });
     expect(parsePlaybookRows(rows({ agentNameLocal: { he: " מאיה " }, agentGender: "female" }))).toMatchObject({ ok: true, value: { agentNameLocal: { he: "מאיה" }, agentGender: "female" } });
-    expect(parsePlaybookRows(rows({ agentNameLocal: { he: "Maya" } }))).toMatchObject({ ok: false, errors: { "agentNameLocal.he": "Write the Hebrew name in Hebrew, or leave it empty." } });
+    expect(parsePlaybookRows(rows({ agentNameLocal: { he: "Maya" } }))).toMatchObject({ ok: false, errors: { "agentNameLocal.he": "Write the Hebrew name in Hebrew letters, or leave it empty." } });
     expect(parsePlaybookRows(rows({ agentNameLocal: { he: "מ".repeat(61) } }))).toMatchObject({ ok: false, errors: { "agentNameLocal.he": "Use 60 characters or fewer." } });
     expect(parsePlaybookRows(rows({ agentGender: "robot" }))).toMatchObject({ ok: false, errors: { agentGender: "Choose female, male or neutral." } });
     const empty = parsePlaybookRows(rows({ agentNameLocal: { he: "" }, agentGender: "neutral" }));

@@ -104,7 +104,7 @@ describe("the follow-up message (fixed template, no model call)", () => {
   });
   it("falls back to the main names and a neutral form", () => {
     const text = followUpText({ language: "he", leadName: "רינה", playbook: { agentName: "Maya" }, account: { tradeName: "Polar" }, topic: null });
-    expect(text).toBe("היי רינה, כאן Maya מ-Polar. ביקשת שאחזור אליך היום. זה זמן טוב לדבר?");
+    expect(text).toBe("היי רינה, כאן \u2068Maya\u2069 מ-\u2068Polar\u2069. ביקשת שאחזור אליך היום. זה זמן טוב לדבר?");
     expect(text).not.toContain("/");
   });
 });

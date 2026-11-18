@@ -19,6 +19,10 @@ export type LlmRequest = {
   system: [string, string];
   tools: ToolDef[];
   messages: Anthropic.Beta.BetaMessageParam[];
+  /** Max output tokens; default 16000 (the agent). Small jobs (automatic names) ask for less. */
+  maxTokens?: number;
+  /** Server-side refusal fallback; default on (the agent). Off for models that do not offer it (Haiku). */
+  fallbacks?: boolean;
 };
 
 export type LlmResponse = {
@@ -79,15 +83,14 @@ export function withHistoryCacheBreakpoint(history: Anthropic.Beta.BetaMessagePa
 export function buildRequestParams(req: LlmRequest): Anthropic.Beta.MessageCreateParamsNonStreaming {
   return {
     model: req.model,
-    max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
+    max_tokens: req.maxTokens ?? 16000,
+    ...(req.fallbacks === false ? {} : { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" as const }),
     output_config: { effort: req.effort as "low" | "medium" | "high" | "xhigh" | "max" },
     system: [
       { type: "text", text: req.system[0], cache_control: { type: "ephemeral" } },
       { type: "text", text: req.system[1] },
     ],
-    tools: req.tools,
+    ...(req.tools.length ? { tools: req.tools } : {}),
     messages: withHistoryCacheBreakpoint(req.messages),
   };
 }

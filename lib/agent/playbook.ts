@@ -2,7 +2,8 @@
 import { PLAY_KEYS, type DealFieldValue, type OpenerText, type PlayCard, type PlayFact, type PlayKey, type Playbook, type PlaybookException, type PlaybookField } from "@/db/schema";
 import { isReservedFieldKey } from "./core/facts";
 import { MAX_OPENER_TOPICS, writtenIn } from "./core/opener";
-import { AGENT_GENDERS, type AgentGender } from "./core/names";
+import { AGENT_GENDERS, languageName, writtenInScript, type AgentGender } from "./core/names";
+import { QUESTION_BUDGET } from "./core/stage";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -34,8 +35,14 @@ const KEY_RE = /^[a-z0-9_]{1,40}$/;
 /** What the structured playbook editor submits (tests build it directly). */
 export type PlaybookRowsInput = {
   agentName: string;
-  /** The agent's name per buyer language (decision 2); undefined when the form did not show it (the stored one is kept). */
-  agentNameLocal?: { he: string };
+  /**
+   * The seller's own version of the agent's name per buyer language (C2), from
+   * `agentNameLocal.<lang>` inputs; "" removes it (Reset). Languages the form did
+   * not show keep their stored version; undefined = the form showed none.
+   */
+  agentNameLocal?: Partial<Record<string, string>>;
+  /** "Questions before recommending" (B2), as typed; undefined when the form did not show it (the stored one is kept). */
+  questionBudget?: string;
   /** "female" | "male" | "neutral"; undefined when the form did not show it (the stored one is kept). */
   agentGender?: string;
   goal: string;
@@ -166,7 +173,8 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
   if (opener) opener.topics = ordered(topics);
   return {
     agentName: scalar.agentName ?? "",
-    ...("agentNameLocal.he" in scalar ? { agentNameLocal: { he: scalar["agentNameLocal.he"] } } : {}),
+    ...(localNames(scalar) ? { agentNameLocal: localNames(scalar) } : {}),
+    ...("questionBudget" in scalar ? { questionBudget: scalar.questionBudget } : {}),
     ...("agentGender" in scalar ? { agentGender: scalar.agentGender } : {}),
     goal: scalar.goal ?? "",
     tone: scalar.tone ?? "",
@@ -185,6 +193,16 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
       } satisfies PlayRowInput])),
     } : {}),
   };
+}
+
+/** `agentNameLocal.<lang>` inputs as a map, or undefined when there are none. */
+function localNames(scalar: Record<string, string>): Partial<Record<string, string>> | undefined {
+  const out: Partial<Record<string, string>> = {};
+  for (const [k, v] of Object.entries(scalar)) {
+    const m = k.match(/^agentNameLocal\.([a-z]{2,3})$/);
+    if (m) out[m[1]] = v;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 const sameText = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
@@ -276,10 +294,21 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   const agentName = input.agentName.trim();
   if (!agentName) errors.agentName = "Give the agent a name it uses to introduce itself.";
   else if (agentName.length > 60) errors.agentName = "Use 60 characters or fewer.";
-  // The Hebrew name is optional and must be written in Hebrew (the opener uses a name only in its own language).
-  const agentNameHe = oneLine(input.agentNameLocal?.he ?? "");
-  if (agentNameHe.length > 60) errors["agentNameLocal.he"] = "Use 60 characters or fewer.";
-  else if (agentNameHe && !writtenIn(agentNameHe, "he")) errors["agentNameLocal.he"] = "Write the Hebrew name in Hebrew, or leave it empty.";
+  // The seller's own version per language is optional and must be written in that language's script.
+  const agentNameLocal: Partial<Record<string, string>> = {};
+  for (const [lang, raw] of Object.entries(input.agentNameLocal ?? {})) {
+    if (!/^[a-z]{2,3}$/.test(lang)) continue;
+    const v = oneLine(raw ?? "");
+    if (v.length > 60) errors[`agentNameLocal.${lang}`] = "Use 60 characters or fewer.";
+    else if (v && !writtenInScript(v, lang)) errors[`agentNameLocal.${lang}`] = `Write the ${languageName(lang)} name in ${languageName(lang)} letters, or leave it empty.`;
+    else if (v) agentNameLocal[lang] = v;
+  }
+  let questionBudget: number | undefined;
+  if (input.questionBudget !== undefined) {
+    const n = Number(input.questionBudget.trim());
+    if (!input.questionBudget.trim() || !Number.isInteger(n) || n < QUESTION_BUDGET.min || n > QUESTION_BUDGET.max) errors.questionBudget = `Choose a number from ${QUESTION_BUDGET.min} to ${QUESTION_BUDGET.max}.`;
+    else questionBudget = n;
+  }
   const gender = input.agentGender?.trim() ?? "";
   if (input.agentGender !== undefined && !(AGENT_GENDERS as readonly string[]).includes(gender)) errors.agentGender = "Choose female, male or neutral.";
   const goal = input.goal.trim();
@@ -367,7 +396,9 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
     ok: true,
     value: {
       agentName,
-      ...(agentNameHe ? { agentNameLocal: { he: agentNameHe } } : {}),
+      // Only the versions typed; the save removes the languages sent empty (Reset).
+      ...(Object.keys(agentNameLocal).length ? { agentNameLocal } : {}),
+      ...(questionBudget !== undefined ? { questionBudget } : {}),
       ...(input.agentGender !== undefined ? { agentGender: gender as AgentGender } : {}),
       goal,
       tone: input.tone.trim().slice(0, 300),

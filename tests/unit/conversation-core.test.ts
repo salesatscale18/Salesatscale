@@ -39,8 +39,11 @@ describe("stage derivation", () => {
     expect(s.stage).toBe("understand");
     expect(s.instruction).toContain("## Stage now: 2 Understand");
     expect(s.instruction).toContain("You have 3 questions left");
-    expect(stageOf({ agentMessages: 3, fields: { sites: said("1") } }).instruction).toContain("You have 1 question left");
-    expect(stageOf({ agentMessages: 3, fields: { sites: said("1") } }).missingForQuote).toEqual(["Business type"]);
+    // Only questions the agent recorded as asked count (B2), not its messages.
+    const twoAsked = { sites: said("1"), _asked_sites: said("1"), _asked_business_type: said("1") };
+    expect(stageOf({ agentMessages: 3, fields: twoAsked }).instruction).toContain("You have 1 question left");
+    expect(stageOf({ agentMessages: 3, fields: { sites: said("1") } }).instruction).toContain("You have 3 questions left");
+    expect(stageOf({ agentMessages: 3, fields: twoAsked }).missingForQuote).toEqual(["Business type"]);
   });
 
   it("recommend: enough is known, or three questions were asked", () => {
@@ -51,7 +54,7 @@ describe("stage derivation", () => {
     expect(s.instruction).toContain("recommendation_confirmed true");
     expect(s.instruction).toContain("Still missing for a quote: nothing.");
     // Three questions asked and a field still unknown: recommend anyway, ask for it after the buyer confirms.
-    const late = stageOf({ agentMessages: 4, fields: { sites: said("1") } });
+    const late = stageOf({ agentMessages: 4, fields: { sites: said("1"), _asked_sites: said("1"), _asked_business_type: said("2") } });
     expect(late.stage).toBe("recommend");
     expect(late.instruction).toContain("ask for it only after the buyer confirms");
     // The opener's own question was just answered and everything is known: still one turn to react first.
@@ -258,7 +261,7 @@ describe("stable system prompt", () => {
       defaultTopic: 0, question: { en: "How do you check them today?", he: "איך אתם בודקים אותן היום?" },
     });
     expect(openerText({ name: "רינה", agent: demo.agentName, company: "Polar Demo", language: "he", opener: demo.opener }))
-      .toBe("היי רינה, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. פנית אלינו בנושא ניטור הטמפרטורות במקררים שלך. איך אתם בודקים אותן היום?");
+      .toBe("היי רינה, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. פנית אלינו בנושא ניטור הטמפרטורות במקררים שלך. איך אתם בודקים אותן היום?");
     const p = stableSystemPrompt(demo, { tradeName: "Polar Demo", currency: "ILS", languages: ["en", "he"] });
     expect(p).toContain("You are Maya, the automated sales agent for Polar Demo");
     expect(p).toContain("The buyer asked to hear from Polar Demo.");
@@ -353,12 +356,12 @@ describe("fixed opener", () => {
 
   it("HE: the same template with Hebrew inputs", () => {
     expect(openerText({ ...base, language: "he", opener: he }))
-      .toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. פנית אלינו בנושא ניטור הטמפרטורה במקררים. איך אתם בודקים אותה היום?");
+      .toBe("היי Rina, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. פנית אלינו בנושא ניטור הטמפרטורה במקררים. איך אתם בודקים אותה היום?");
   });
 
   it("falls back to the earlier wording when the playbook has no opener inputs", () => {
     expect(openerText({ ...base, language: "en" })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. What made you get in touch today?");
-    expect(openerText({ ...base, language: "he", opener: {} })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
+    expect(openerText({ ...base, language: "he", opener: {} })).toBe("היי Rina, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
     // Each part falls back on its own.
     expect(openerText({ ...base, language: "en", opener: { leadsAskAbout: "fridge alerts." } })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked about fridge alerts. What made you get in touch today?");
     expect(openerText({ ...base, language: "en", opener: { openingQuestion: "  How many fridges do you have?  " } }))
@@ -366,7 +369,7 @@ describe("fixed opener", () => {
   });
 
   it("never mixes languages: an input written in the other language is not used", () => {
-    expect(openerText({ ...base, language: "he", opener: en })).toBe("היי Rina, כאן Maya, העוזר/ת האוטומטי/ת של Polar Demo. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
+    expect(openerText({ ...base, language: "he", opener: en })).toBe("היי Rina, כאן \u2068Maya\u2069, העוזר/ת האוטומטי/ת של \u2068Polar Demo\u2069. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?");
     expect(openerText({ ...base, language: "en", opener: he })).toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked to hear from us. What made you get in touch today?");
     expect(writtenIn("fridges", "en")).toBe(true);
     expect(writtenIn("מקררים", "en")).toBe(false);

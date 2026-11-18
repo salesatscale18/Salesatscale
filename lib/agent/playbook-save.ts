@@ -7,6 +7,9 @@ import type { Db } from "@/db/types";
 import type { Playbook } from "@/db/schema";
 import { isPlayKey, parsePlaybookRows, parsePlayRow, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput, type PlayRowInput } from "./playbook";
 import { ensureDraftVersion, saveDraftPlaybook } from "./service";
+import { refreshAgentNameAuto } from "./names-auto";
+import type { LlmClient } from "./llm";
+import type { Actor } from "@/lib/accounts/audit";
 
 export type PlaybookFormSave = { ok: true } | { ok: false; errors: PlaybookErrors; values: PlaybookRowsInput };
 
@@ -44,7 +47,7 @@ export async function savePlayForm(db: Db, accountId: string, key: string, entri
  * plays sent by the form replace the stored ones; a form without them keeps
  * what is stored.
  */
-export async function savePlaybookForm(db: Db, accountId: string, entries: [string, string][]): Promise<PlaybookFormSave> {
+export async function savePlaybookForm(db: Db, accountId: string, entries: [string, string][], opts: { names?: LlmClient | null; actor?: Actor | null } = {}): Promise<PlaybookFormSave> {
   const input = playbookRowsFromForm(entries.filter(([k]) => k !== "exceptionId" && k !== "exceptionsShown"));
   const parsed = parsePlaybookRows(input);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, values: input };
@@ -53,20 +56,31 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   const shown = entries.some(([k, v]) => k === "exceptionsShown" && v === "1");
   const kept = new Set(entries.filter(([k]) => k === "exceptionId").map(([, v]) => v));
   const exceptions = shown ? stored.filter((x) => kept.has(x.id)) : stored;
-  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, ...rest } = parsed.value;
+  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, ...rest } = parsed.value;
   void _x;
   const keepOpener = input.opener === undefined ? current.opener : opener;
   const keepPlays = input.plays === undefined ? current.plays : plays;
-  // The agent's local names and gender (decision 2): a form without them keeps what is stored.
-  const keepNames = input.agentNameLocal === undefined ? current.agentNameLocal : agentNameLocal;
+  // The seller's own name versions (C2): the languages sent replace the stored ones ("" = Reset); the others are kept.
+  const keepNames: Partial<Record<string, string>> = { ...(current.agentNameLocal ?? {}) };
+  for (const lang of Object.keys(input.agentNameLocal ?? {})) delete keepNames[lang];
+  Object.assign(keepNames, agentNameLocal ?? {});
+  for (const [k, v] of Object.entries(keepNames)) if (!v?.trim()) delete keepNames[k];
+  // Gender and question budget: a form without them keeps what is stored.
   const keepGender = input.agentGender === undefined ? current.agentGender : agentGender;
+  const keepBudget = input.questionBudget === undefined ? current.questionBudget : questionBudget;
+  // Automatic name versions are kept; they are stale (and remade) when the name changed (lib/agent/names-auto.ts).
+  const keepAuto = current.agentNameAuto;
   await saveDraftPlaybook(db, accountId, {
     ...rest,
-    ...(keepNames && Object.keys(keepNames).length ? { agentNameLocal: keepNames } : {}),
+    ...(Object.keys(keepNames).length ? { agentNameLocal: keepNames } : {}),
+    ...(keepAuto ? { agentNameAuto: keepAuto } : {}),
     ...(keepGender ? { agentGender: keepGender } : {}),
+    ...(keepBudget !== undefined ? { questionBudget: keepBudget } : {}),
     ...(exceptions.length ? { exceptions } : {}),
     ...(keepOpener ? { opener: keepOpener } : {}),
     ...(keepPlays ? { plays: keepPlays } : {}),
   });
+  // Automatic versions for a new name or new market languages, once, on save (retrying earlier failures).
+  if (opts.names !== undefined) await refreshAgentNameAuto(db, accountId, opts.names, { actor: opts.actor ?? null, retry: true });
   return { ok: true };
 }

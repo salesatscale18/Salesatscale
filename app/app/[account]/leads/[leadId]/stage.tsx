@@ -51,7 +51,7 @@ export function StageChip({ v }: { v: LeadStageView }) {
 
 /** What the agent waits for and what happens next, in one sentence (bold first part). */
 export function stageSentence(v: LeadStageView, name: string): { wait: string; next: string; icon: IconName } {
-  const k = (key: string) => t(`lead.stage.${key}` as MessageKey, { name, missing: v.missing.join(", "), objection: v.objection ?? "" });
+  const k = (key: string) => t(`lead.stage.${key}` as MessageKey, { name, missing: v.missing.join(", "), objection: v.objection ?? "", max: v.questionBudget ?? 3 });
   if (v.human) return { wait: k("human.wait"), next: k("human.next"), icon: "user" };
   if (v.closed && !v.paid) return { wait: k("after.closed_wait"), next: k("after.closed_next"), icon: "x-circle" };
   if (v.objection) return { wait: k("objection.wait"), next: k("objection.next"), icon: "alert-triangle" };

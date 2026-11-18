@@ -11,7 +11,7 @@ import {
   type ContactHours, type DeliveryLeadTime, type NotificationEvent, type NotificationPrefs,
 } from "@/db/schema";
 import { DEFAULT_FIELDS } from "@/lib/orders/settings";
-import { writtenIn } from "@/lib/agent/core/opener";
+import { languageName, writtenInScript } from "@/lib/agent/core/names";
 import { LOCALES, type Locale } from "@/lib/i18n";
 import { writeAudit, type Actor } from "./audit";
 import { createInvite } from "./service";
@@ -30,7 +30,7 @@ export type CompanyInput = {
    * The trade name per buyer language (decision 2), from `tradeNameLocal.<lang>`
    * inputs; "" clears a language. Undefined when the form showed none (stored names are kept).
    */
-  tradeNameLocal?: Partial<Record<Locale, string>>;
+  tradeNameLocal?: Partial<Record<string, string>>;
   legalName: string | null;
   companyId: string | null;
   address: string | null;
@@ -51,12 +51,13 @@ export function parseCompany(raw: Record<string, string>): { ok: true; value: Co
   const tradeName = s("tradeName", TRADE_NAME_MAX);
   if (!tradeName) errors.tradeName = "Enter the trade name buyers know you by.";
   let tradeNameLocal: CompanyInput["tradeNameLocal"];
-  for (const lang of LOCAL_NAME_LANGUAGES) {
-    const k = `tradeNameLocal.${lang}`;
-    if (!(k in raw)) continue;
+  // Any buyer language the form showed (C2: the languages of the account's markets).
+  for (const k of Object.keys(raw)) {
+    const lang = k.match(/^tradeNameLocal\.([a-z]{2,3})$/)?.[1];
+    if (!lang) continue;
     const v = (raw[k] ?? "").replace(/\s+/g, " ").trim();
     if (v.length > TRADE_NAME_MAX) errors[`tradeNameLocal.${lang}`] = `Use ${TRADE_NAME_MAX} characters or fewer.`;
-    else if (v && !writtenIn(v, lang)) errors[`tradeNameLocal.${lang}`] = "Write the Hebrew trade name in Hebrew letters, or leave it empty.";
+    else if (v && !writtenInScript(v, lang)) errors[`tradeNameLocal.${lang}`] = `Write the ${languageName(lang)} trade name in ${languageName(lang)} letters, or leave it empty.`;
     (tradeNameLocal ??= {})[lang] = v;
   }
   const color = s("brandColor", 7);

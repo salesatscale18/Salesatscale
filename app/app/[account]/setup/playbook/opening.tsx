@@ -36,7 +36,7 @@ function Template({ template, vars }: { template: string; vars: Record<string, s
       {parts.map((p, i) => {
         const m = p.match(/^\{(\w+)\}$/);
         return m && m[1] in vars
-          ? <span key={i} data-part="seller" style={{ background: "var(--primary-soft)", color: "var(--primary)", borderRadius: 4, paddingInline: 3 }}>{vars[m[1]]}</span>
+          ? <span key={i} data-part="seller" style={{ background: "var(--primary-soft)", color: "var(--primary)", borderRadius: 4, paddingInline: 3 }}><bdi>{vars[m[1]]}</bdi></span>
           : <span key={i} data-part="fixed" style={{ color: "var(--ink-muted)" }}>{p}</span>;
       })}
     </>

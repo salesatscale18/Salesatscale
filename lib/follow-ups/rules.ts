@@ -8,6 +8,7 @@ import type { ContactHours, Playbook } from "@/db/schema";
 import { contactHoursOrDefault, isWithinContactHours } from "@/lib/accounts/contact-hours";
 import { firstNameOf } from "@/lib/channels/rules";
 import { isLocale, messages, t, type Locale, type MessageKey } from "@/lib/i18n";
+import { isolateName, localAgentName, localTradeName } from "@/lib/agent/core/names";
 
 const MINUTE = 60_000;
 const DAY = 24 * 60 * MINUTE;
@@ -150,15 +151,15 @@ export function nearestAllowedTime(hours: ContactHours | null | undefined, timez
 export type TemplateInput = {
   language: string;
   leadName: string;
-  playbook: Pick<Playbook, "agentName" | "agentNameLocal" | "agentGender">;
+  playbook: Pick<Playbook, "agentName" | "agentNameLocal" | "agentNameAuto" | "agentGender">;
   account: { tradeName: string; tradeNameLocal?: Partial<Record<string, string>> | null };
   topic: string | null;
 };
 
-/** The agent's name in the buyer's language, else its main name. */
-export const agentNameIn = (p: TemplateInput["playbook"], lang: string) => p.agentNameLocal?.[lang]?.trim() || p.agentName;
-/** The seller's local trade name in the buyer's language, else the trade name. */
-export const tradeNameIn = (a: TemplateInput["account"], lang: string) => a.tradeNameLocal?.[lang]?.trim() || a.tradeName;
+/** The agent's name in the buyer's language (C2): own version, else automatic version, else as typed. */
+export const agentNameIn = (p: TemplateInput["playbook"], lang: string) => localAgentName(p, lang, p.agentName);
+/** The seller's local trade name in the buyer's language, else the trade name as written. */
+export const tradeNameIn = (a: TemplateInput["account"], lang: string) => localTradeName(a, lang);
 
 /** Hebrew "from": attached to a Hebrew word ("מאקמה"), with a hyphen before a foreign one ("מ-Acme"). */
 const heFrom = (name: string) => (/^[֐-׿]/.test(name) ? `מ${name}` : `מ-${name}`);
@@ -174,9 +175,10 @@ export function followUpText(input: TemplateInput): string {
   const company = tradeNameIn(input.account, lang);
   const vars = {
     name: firstNameOf(input.leadName),
-    agent: agentNameIn(input.playbook, lang),
+    // Names in the other direction are isolated (plain-text <bdi>).
+    agent: isolateName(agentNameIn(input.playbook, lang), lang),
     // Hebrew attaches "from" to the name ("מפולאר"), so the placeholder carries it there.
-    company: lang === "he" ? heFrom(company) : company,
+    company: lang === "he" ? heFrom(isolateName(company, lang)) : isolateName(company, lang),
     topic: input.topic ?? "",
   };
   const intro = t(gender === "female" ? "buyer.followup.intro_female" : gender === "male" ? "buyer.followup.intro_male" : "buyer.followup.intro_neutral", vars, lang);

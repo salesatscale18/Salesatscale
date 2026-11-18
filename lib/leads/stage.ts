@@ -16,7 +16,7 @@ import {
   agentVersions, conversations, dealStates, messages, orderForms, orders, quoteVersions, quotes,
   type DealFieldValue, type Playbook,
 } from "@/db/schema";
-import { deriveStage, type Stage, type StageFacts } from "@/lib/agent/core/stage";
+import { deriveStage, questionBudgetOf, type Stage, type StageFacts } from "@/lib/agent/core/stage";
 import { loadStageFacts } from "@/lib/agent/core/stage-facts";
 import { priceAsked, recommendationConfirmed } from "@/lib/agent/core/facts";
 
@@ -46,13 +46,15 @@ export type LeadStageView = {
   skippedRecommend: boolean;
   /** The order form went out for an older quote: the need changed after the quote. */
   backAfterChange: boolean;
+  /** The seller's questions before recommending (B2). */
+  questionBudget: number;
   /** Before-quote fields still unknown. */
   missing: string[];
 };
 
 export type StageInputs = {
   facts: StageFacts;
-  playbook: Pick<Playbook, "fields" | "outcomes">;
+  playbook: Pick<Playbook, "fields" | "outcomes" | "questionBudget">;
   deal: { fields: Record<string, DealFieldValue>; objections: { text: string; handled: boolean }[] } | null;
   agentMessages: number;
   conversationStatus: string;
@@ -75,10 +77,11 @@ export function stageView(i: StageInputs): LeadStageView {
     skippedRecommend: past && !recommendationConfirmed(i.deal?.fields) && priceAsked(i.deal?.fields),
     backAfterChange: i.facts.orderForm === "outdated",
     missing: r.missingForQuote,
+    questionBudget: questionBudgetOf(i.playbook),
   };
 }
 
-const NO_PLAYBOOK: Pick<Playbook, "fields" | "outcomes"> = { fields: [], outcomes: { orderForm: true, bankTransfer: true, meeting: true } };
+const NO_PLAYBOOK: Pick<Playbook, "fields" | "outcomes" | "questionBudget"> = { fields: [], outcomes: { orderForm: true, bankTransfer: true, meeting: true } };
 
 /** One lead's stage, or null when it has no conversation yet. */
 export async function leadStage(db: Db, accountId: string, leadId: string): Promise<LeadStageView | null> {

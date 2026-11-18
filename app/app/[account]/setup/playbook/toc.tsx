@@ -1,6 +1,7 @@
 import { t, type MessageKey } from "@/lib/i18n";
 
 const SECTIONS: { id: string; label: MessageKey; isNew?: boolean }[] = [
+  { id: "pb-agent-h-s", label: "playbook.agent" },
   { id: "pb-goal-h-s", label: "playbook.goal" },
   { id: "pb-opener-h-s", label: "playbook.opener", isNew: true },
   { id: "pb-fields-h-s", label: "playbook.fields" },

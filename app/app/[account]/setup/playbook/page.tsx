@@ -3,7 +3,9 @@ import { Icon } from "@/components/sas/icon";
 import { SetupSteps } from "@/components/sas/nav";
 import { setupProgress } from "@/lib/overview/setup";
 import { Banner } from "@/components/sas/record";
-import { appDb, requireAccount } from "@/lib/auth/account";
+import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
+import { agentNameLanguages, autoNameModel, refreshAgentNameAuto } from "@/lib/agent/names-auto";
+import { agentNameRows } from "@/lib/agent/core/names";
 import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
 import { pendingPlaySuggestions } from "@/lib/pipeline/service";
 import { t } from "@/lib/i18n";
@@ -15,10 +17,18 @@ import { PlaybookToc } from "./toc";
 export default async function PlaybookPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
-  const [draft, live, progress, pending] = await Promise.all([
+  const access = await requireAccount(slug);
+  const { account } = access;
+  const [first, live, progress, pending] = await Promise.all([
     ensureDraftVersion(appDb, account.id), liveVersion(appDb, account.id), setupProgress(appDb, account), pendingPlaySuggestions(appDb, account.id),
   ]);
+  // Automatic name versions (C2): made once when the name or the market languages changed; this view only
+  // fills languages never tried for this name (a failed try is retried on save, not on every view).
+  const refreshed = await refreshAgentNameAuto(appDb, account.id, autoNameModel(), { actor: actorOf(access) });
+  const draft = { ...first, playbook: refreshed.playbook };
+  const languages = await agentNameLanguages(appDb, account.id, draft.playbook.agentName);
+  const rows = agentNameRows(draft.playbook, languages);
+  const asWritten = rows.filter((r) => r.tag === "as_written" && !r.own).map((r) => r.label);
   const base = `/app/${account.slug}`;
   const here = `${base}/setup/playbook`;
   const lab = `${base}/setup/test-lab`;
@@ -54,6 +64,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
               slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
               plays={{ total: plays.length, withFacts: plays.filter((x) => x.facts.length).length, own: counts.own, needsFacts: counts.needs, suggested: counts.suggested }}
               playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
+              names={{ rows, source: draft.playbook.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${base}/markets` }}
             />
           </div>
         </div>

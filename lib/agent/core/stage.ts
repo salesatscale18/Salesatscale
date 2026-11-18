@@ -9,12 +9,41 @@
  * yes to the close and then sends the link.
  */
 import type { DealFieldValue, Playbook, PlaybookField } from "@/db/schema";
-import { askedCount, isReservedFieldKey, priceAsked, pricesAllowed, recommendationConfirmed } from "./facts";
+import { ASKED_PREFIX, askedCount, isReservedFieldKey, priceAsked, pricesAllowed, recommendationConfirmed } from "./facts";
 
 export type Stage = "open" | "understand" | "recommend" | "quote_close" | "order_form" | "after";
 
-/** Most questions in stage Understand before the agent must recommend. */
-export const MAX_UNDERSTAND_QUESTIONS = 3;
+/**
+ * Questions before recommending (B2, 18 Nov): the seller's number
+ * (`Playbook.questionBudget`), a maximum, not a target. Default 3, range 2 to 6.
+ */
+export const QUESTION_BUDGET = { min: 2, max: 6, default: 3 } as const;
+/** Safety ceiling in code: after this many agent questions the stage moves to Recommend, whatever the setting. */
+export const QUESTION_CEILING = 6;
+
+/** The seller's question budget, within 2..6 (missing or invalid: 3), never above the ceiling. */
+export function questionBudgetOf(p: Pick<Playbook, "questionBudget"> | null | undefined): number {
+  const n = p?.questionBudget;
+  const v = typeof n === "number" && Number.isInteger(n) ? Math.min(QUESTION_BUDGET.max, Math.max(QUESTION_BUDGET.min, n)) : QUESTION_BUDGET.default;
+  return Math.min(v, QUESTION_CEILING);
+}
+
+/**
+ * Questions the agent started: the sum of the reserved `_asked_<key>` counts
+ * (recorded through update_deal_state `asked`, at most once per field per
+ * turn). Answers to the buyer's own questions and extra detail are never
+ * recorded as asked, so they never use the budget.
+ */
+export function agentQuestionsAsked(fields: Record<string, DealFieldValue> | null | undefined): number {
+  let n = 0;
+  for (const key of Object.keys(fields ?? {})) {
+    if (key.startsWith(ASKED_PREFIX)) n += askedCount(fields, key.slice(ASKED_PREFIX.length));
+  }
+  return n;
+}
+
+/** The "Helps the pitch" rule (B2, 18 Nov): one text for the core design and the stage block. */
+export const HELPS_THE_PITCH_RULE = "A question that helps the pitch is asked once, without insisting. If the buyer skips it, move on and do not ask it again in the next messages. You may come back to it once, later, only when it fits what the buyer is talking about, woven into your reply: never as a quiz, and never holding up the next step.";
 
 export type StageFacts = {
   /** The lead's latest live quote: none, waiting for the seller's approval, or ready to send. */
@@ -30,7 +59,7 @@ export type StageFacts = {
 export const NO_STAGE_FACTS: StageFacts = { quote: "none", orderForm: "none", signed: false, paid: false };
 
 export type StageInput = StageFacts & {
-  playbook: Pick<Playbook, "fields" | "outcomes">;
+  playbook: Pick<Playbook, "fields" | "outcomes" | "questionBudget">;
   fields: Record<string, DealFieldValue> | null | undefined;
   objections?: { text: string; handled: boolean }[] | null;
   /** Agent messages already in the conversation (the fixed opener counts). */
@@ -67,8 +96,9 @@ const timesText = (n: number) => (n === 1 ? "once" : n === 2 ? "twice" : `${n} t
 
 /**
  * Questions asked and not answered yet, with what the field's role allows
- * next (decision 1): needed for the quote = once more in other words, then
- * quote on a stated assumption; helps the pitch = never again.
+ * next (decision 1, B2): needed for the quote = once more in other words, then
+ * quote on a stated assumption; helps the pitch = not in the next messages,
+ * at most once more later when it fits, then never again.
  */
 export function askedNotAnswered(playbook: Pick<Playbook, "fields">, fields: Record<string, DealFieldValue> | null | undefined): string[] {
   return playbook.fields
@@ -76,7 +106,9 @@ export function askedNotAnswered(playbook: Pick<Playbook, "fields">, fields: Rec
     .map((f) => {
       const n = askedCount(fields, f.key);
       const next = f.stage === "optional"
-        ? "helps the pitch: do not ask it again"
+        ? n === 1
+          ? "helps the pitch: do not ask it in the next messages; you may come back to it once, later, only when it fits what the buyer is talking about, woven into your reply"
+          : "helps the pitch: do not ask it again"
         : n === 1
           ? "needed for the quote: ask once more, in different words, just before the quote"
           : "needed for the quote: do not ask again; quote on a stated assumption";
@@ -92,8 +124,10 @@ export function deriveStage(input: StageInput): StageResult {
   const confirmed = recommendationConfirmed(input.fields);
   const asked = priceAsked(input.fields);
   const open = (input.objections ?? []).filter((o) => !o.handled);
-  // The opener is one message; each later agent message in Understand is at most one question.
-  const questionsAsked = Math.max(0, input.agentMessages - 1);
+  // Only questions the agent started count (B2): the recorded asks, never agent messages,
+  // so answering the buyer's own questions or giving extra detail uses no budget.
+  const questionsAsked = agentQuestionsAsked(input.fields);
+  const budget = questionBudgetOf(input.playbook);
 
   let stage: Stage;
   if (input.paid || input.signed || input.orderForm === "sent") stage = "after";
@@ -102,11 +136,14 @@ export function deriveStage(input: StageInput): StageResult {
   // A price question skips the check question of stage 3 once nothing is missing for a quote.
   else if (asked && missing.length === 0) stage = "quote_close";
   else if (input.agentMessages === 0) stage = "open";
+  // The safety ceiling: whatever the setting and even after a price question.
+  else if (questionsAsked >= QUESTION_CEILING) stage = "recommend";
   else if (asked) stage = "understand";
-  else if (missing.length === 0 ? questionsAsked >= 1 : questionsAsked >= MAX_UNDERSTAND_QUESTIONS) stage = "recommend";
+  // Nothing missing: recommend after the first exchange. Else at the seller's number.
+  else if (missing.length === 0 ? questionsAsked >= 1 || input.agentMessages >= 2 : questionsAsked >= budget) stage = "recommend";
   else stage = "understand";
 
-  const lines = [`## Stage now: ${STAGE_TITLE[stage]}`, ...stageLines(stage, { ...input, missing, missingFields, confirmed, asked, questionsAsked })];
+  const lines = [`## Stage now: ${STAGE_TITLE[stage]}`, ...stageLines(stage, { ...input, missing, missingFields, confirmed, asked, questionsAsked, budget })];
   if (stage === "open" || stage === "understand" || stage === "recommend" || (stage === "quote_close" && input.quote === "none")) {
     lines.push(`Still missing for a quote: ${missing.length ? missing.join(", ") : "nothing"}.`);
     const unanswered = askedNotAnswered(input.playbook, input.fields);
@@ -121,7 +158,7 @@ export function deriveStage(input: StageInput): StageResult {
   return { stage, paused: open.length > 0, missingForQuote: missing, pricesAllowed: allowed, instruction: lines.join("\n") };
 }
 
-type Detail = StageInput & { missing: string[]; missingFields: PlaybookField[]; confirmed: boolean; asked: boolean; questionsAsked: number };
+type Detail = StageInput & { missing: string[]; missingFields: PlaybookField[]; confirmed: boolean; asked: boolean; questionsAsked: number; budget: number };
 
 /** What to do about the fields still missing for the quote, by how often each was asked. */
 function missingForQuoteLine(d: Detail): string {
@@ -154,10 +191,10 @@ function stageLines(stage: Stage, d: Detail): string[] {
           "Moves on when: nothing is missing for a quote. Then make the quote.",
         ];
       }
-      const left = Math.max(1, MAX_UNDERSTAND_QUESTIONS - d.questionsAsked);
+      const left = Math.max(1, d.budget - d.questionsAsked);
       return [
-        `Do: react to the buyer's last answer, then ask one question that changes which products you recommend. You have ${left} question${left === 1 ? "" : "s"} left before you must recommend.`,
-        "Ask the questions needed for the quote first. A question that helps the pitch is asked at most once: never repeat it, and drop it when the buyer skips it or shows a buying signal. Record each question with update_deal_state asked.",
+        `Do: react to the buyer's last answer, then ask one question that changes which products you recommend. You have ${left} question${left === 1 ? "" : "s"} left before you must recommend. Answering the buyer's own questions does not use them.`,
+        `Ask the questions needed for the quote first. ${HELPS_THE_PITCH_RULE} Drop it when the buyer shows a buying signal. Record each question you start with update_deal_state asked.`,
         "Moves on when: you know enough to recommend one set. If you already do, recommend now (stage 3) and ask nothing more.",
       ];
     }

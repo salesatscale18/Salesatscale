@@ -29,7 +29,7 @@ export function QuoteCard({ card, sellerOnly }: {
         <span className="sas-qc__titles">
           <b className="sas-qc__title">{card.title}</b>
           <span className="sas-qc__sub">
-            {card.sub ?? (dim ? <Num>{card.ref}</Num> : <>{card.seller} · <Num>{card.ref}</Num></>)}
+            {card.sub ?? (dim ? <Num>{card.ref}</Num> : <><bdi>{card.seller}</bdi> · <Num>{card.ref}</Num></>)}
           </span>
         </span>
       </div>

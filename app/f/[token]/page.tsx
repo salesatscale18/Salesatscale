@@ -18,6 +18,7 @@ import { frozenPlan } from "@/lib/delivery/plan";
 import { chatLinkStatus } from "@/lib/simulator/service";
 import { DeliveryRow } from "./delivery";
 import { brandVars } from "@/lib/simulator/rules";
+import { isolateName } from "@/lib/agent/core/names";
 import "./buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -57,7 +58,7 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
         {fakePaymentsEnabled() ? <div className="b-strip" role="note">{tr("buyer.test_strip")}</div> : null}
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
-          <span className="b-head__name"><b style={{ fontSize: 16 }}>{props.seller}</b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
+          <span className="b-head__name"><b style={{ fontSize: 16 }}><bdi>{props.seller}</bdi></b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
           {/* The step form's default button (Enter in a field) must come before the switch's buttons in tree order. */}
           {props.step && props.switcher !== false ? (
             <button type="submit" form={STEP_FORM} name="intent" value={props.step === 3 ? "sign" : "continue"} className="b-sr" tabIndex={-1} aria-hidden="true" />
@@ -184,7 +185,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
           </section>
           <section className="b-sec b-noprint">
             <a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a>
-            <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: displaySeller(form, lang) })}</span>
+            <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: isolateName(displaySeller(form, lang), lang) })}</span>
             <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.questions")}</span>
             {support(true)}
           </section>
@@ -225,7 +226,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
               ) : null}
               <button type="submit" name="outcome" value="succeeded" className="b-btn">{tr("buyer.simulate_ok")}</button>
               <button type="submit" name="outcome" value="failed" className="b-btn b-btn--2">{tr("buyer.simulate_fail")}</button>
-              <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: displaySeller(form, lang) })}</span>
+              <span className="b-mut" style={{ textAlign: "center" }}>{tr("buyer.invoice_by", { seller: isolateName(displaySeller(form, lang), lang) })}</span>
             </form>
           ) : order.paymentStatus === "bank_transfer_expected" ? (
             <div className="b-note b-note--warn" style={{ flexDirection: "column", gap: 6 }}>

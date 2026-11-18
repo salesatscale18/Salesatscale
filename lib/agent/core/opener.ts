@@ -13,7 +13,7 @@
  */
 import type { OpenerText, Playbook } from "@/db/schema";
 import { t, type Locale } from "@/lib/i18n";
-import { tg, type AgentGender } from "./names";
+import { isolateName, tg, type AgentGender } from "./names";
 
 const HEBREW = /[֐-׿]/;
 
@@ -89,7 +89,8 @@ export function openerParts(o: OpenerInput): { intro: string; interest: string; 
   const fromLead = picked ? textIn(picked, lang) : asked && writtenIn(asked, lang) ? asked : "";
   const interest = (fromLead || textIn(inputs.topics[inputs.defaultTopic], lang)).replace(/[.!?。]+$/u, "");
   return {
-    intro: tg("buyer.opener.intro", o.gender ?? "neutral", { name: o.name, agent: o.agent, company: o.company }, lang),
+    // Names in the other direction are isolated (plain-text <bdi>): "Acme" in a Hebrew line keeps its place.
+    intro: tg("buyer.opener.intro", o.gender ?? "neutral", { name: o.name, agent: isolateName(o.agent, lang), company: isolateName(o.company, lang) }, lang),
     interest: interest ? t("buyer.opener.asked_about", { interest }, lang) : t("buyer.opener.asked", undefined, lang),
     question: textIn(inputs.question, lang) || t("buyer.opener.question", undefined, lang),
   };

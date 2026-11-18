@@ -11,7 +11,7 @@
 import type { DealState, Playbook, PlaybookField } from "@/db/schema";
 import { coreDesign, playsText } from "./core/design";
 import { isReservedFieldKey } from "./core/facts";
-import { deriveStage, NO_STAGE_FACTS, type StageFacts } from "./core/stage";
+import { deriveStage, NO_STAGE_FACTS, questionBudgetOf, type StageFacts } from "./core/stage";
 import { namesInstruction, type BuyerNames } from "./core/names";
 import { conversationExamples, type ExampleCatalogItem } from "./core/examples";
 
@@ -46,7 +46,7 @@ export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; cur
 
 Your instructions have three parts: how every conversation runs, this seller's playbook, and the sales plays. After them, each turn, comes "Stage now": where this conversation stands.
 
-${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting }, ex)}
+${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p) }, ex)}
 
 ## Seller playbook: ${seller.tradeName}
 
