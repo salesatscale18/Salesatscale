@@ -7,7 +7,20 @@
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { markets, type Market } from "@/db/schema";
-import { marketContactSettings, type ContactSettings } from "./settings";
+import { marketContactSettings, sanitizeOverrides, type ContactSettings } from "./settings";
+
+/**
+ * Where "Fix hours" goes when an opener is refused outside contact hours: the
+ * lead's market's own contact hours on the Markets page (its row form open)
+ * when the market sets them, or its time zone when only that is its own;
+ * else the account's hours in Settings. A lead with no market uses the account's.
+ */
+export function contactHoursFixHref(slug: string, market: Pick<Market, "id" | "overrides"> | null | undefined): string {
+  const o = sanitizeOverrides(market?.overrides);
+  const key = o.contactHours ? "contactHours" : o.timezone ? "timezone" : null;
+  if (!market || !key) return `/app/${slug}/settings?section=hours`;
+  return `/app/${slug}/markets?m=${market.id}&override=${key}#set-${key}`;
+}
 
 /** The lead's market, only when it belongs to the account; null for a lead with no market. */
 export async function marketOfLead(db: Db, accountId: string, marketId: string | null | undefined): Promise<Market | null> {

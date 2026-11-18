@@ -97,18 +97,18 @@ describe("Order form setup", () => {
 });
 
 describe("Test lab scenarios table", () => {
-  it("each scenario with Tested / Not run, the last chat and the tested count", () => {
+  it("each scenario with its automatic result (Passed / Not yet / Failed / Not run), the last chat and the passed count", () => {
     const scenarios = SCENARIOS.filter((s) => s.language === "en");
     const t = scenarioTable(scenarios, [
       { scenarioId: "discount_push", conversationId: "c1", lastAt: at("17"), check: { result: "failed", reason: "x" } },
+      { scenarioId: "asks_for_person", conversationId: "c2", lastAt: at("18"), check: { result: "passed", reason: "ok" } },
       { scenarioId: "ready_buyer", conversationId: null, lastAt: null, check: null },
     ]);
     expect(t.total).toBe(scenarios.length);
-    expect(t.tested).toBe(1);
+    expect(t.passed).toBe(1);
     expect(t.rows.map((r) => r.scenario.id)).toEqual(scenarios.map((s) => s.id));
-    expect(t.rows.find((r) => r.scenario.id === "discount_push")).toMatchObject({ tested: true, conversationId: "c1", lastAt: at("17") });
-    expect(t.rows.find((r) => r.scenario.id === "ready_buyer")).toMatchObject({ tested: false, conversationId: null, lastAt: null });
-    // No pass or fail in the table data.
-    expect(Object.keys(t.rows[0]).sort()).toEqual(["conversationId", "lastAt", "scenario", "tested"]);
+    expect(t.rows.find((r) => r.scenario.id === "discount_push")).toMatchObject({ result: "failed", reason: "x", conversationId: "c1", lastAt: at("17") });
+    expect(t.rows.find((r) => r.scenario.id === "asks_for_person")).toMatchObject({ result: "passed", conversationId: "c2" });
+    expect(t.rows.find((r) => r.scenario.id === "ready_buyer")).toMatchObject({ result: "not_run", reason: null, conversationId: null, lastAt: null });
   });
 });

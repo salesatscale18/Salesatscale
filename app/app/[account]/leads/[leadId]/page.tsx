@@ -26,6 +26,7 @@ import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
+import { contactHoursFixHref } from "@/lib/markets/lead-settings";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
 import { leadStage } from "@/lib/leads/stage";
@@ -109,6 +110,8 @@ export default async function LeadCardPage({
   const simulated = isSimulatedLead(lead);
   // A lead without a market belongs to the home market (listMarkets puts it first).
   const leadMarket = (row.market ? marketList.find((m) => m.id === row.market!.id) : null) ?? marketList[0];
+  // "Fix hours" on an outside-contact-hours refusal: the lead's own market's hours when it sets them (the gates use the account's for a lead with no market).
+  const hoursHref = contactHoursFixHref(account.slug, row.market ? marketList.find((m) => m.id === row.market!.id) : null);
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
   // Quote dates in the quote's market time zone, as the buyer's card shows them.
@@ -253,7 +256,7 @@ export default async function LeadCardPage({
             {opener ? (
               <WhatsAppStart
                 slug={account.slug} leadId={lead.id} refusal={opener.refusal} templateName={opener.template?.name ?? null}
-                buyerName={lead.fullName} error={typeof sp.wa_error === "string" ? sp.wa_error : undefined}
+                buyerName={lead.fullName} error={typeof sp.wa_error === "string" ? sp.wa_error : undefined} hoursHref={hoursHref}
               />
             ) : null}
             {lead.status !== "opted_out" || chatLink ? (
@@ -262,7 +265,7 @@ export default async function LeadCardPage({
                 url={chatLink ? publicUrl(chatPath(chatLink.token)) : null}
                 expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, account.timezone) : null} refusal={simFacts?.refusal ?? null} rules={account.simulateWhatsappRules}
                 started={conversation?.conversation.channel === SIMULATOR_CHANNEL || simFacts?.refusal === "already_started"}
-                notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined}
+                notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined} hoursHref={hoursHref}
               />
             ) : null}
             {conversation ? (

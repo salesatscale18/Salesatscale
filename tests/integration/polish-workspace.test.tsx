@@ -170,7 +170,10 @@ describe("Polish-2+5: seller workspace", () => {
       const [list] = await listPriceLists(db, acc);
       const pl = await page(PriceListPage(props(account.slug, { sku: "GW-10" }, { lineageId: list.lineageId }) as never));
       expect(pl).toContain('class="sas-sp"');
-      expect(pl).toMatch(/class="sas-sheet__save"/);
+      // The price entry's Save to draft is pinned in the panel footer too (R3-8), submitting the entry form.
+      expect(pl).toMatch(/<footer class="sas-sp__foot"><button type="submit" form="pl-entry-form" class="sas-btn sas-btn--primary" data-entry-save="">Save to draft<\/button>/);
+      expect(pl).toContain('<form id="pl-entry-form"');
+      expect(pl).not.toMatch(/class="sas-sheet__save"/);
       expect(css).toMatch(/\.sas-sheet \.sas-sheet__save \{ position: sticky; bottom: 0/);
     });
 

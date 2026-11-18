@@ -104,7 +104,7 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
   const fields = { slug: account.slug, sourceId: source.id, from: "detail" };
   const menu: RowMenuItem[] = [
     ...(source.kind === "website" ? [{ kind: "form" as const, label: t("sources.reread"), action: rereadWebsiteAction, fields, icon: "refresh-cw" as const }] : []),
-    ...(source.kind === "file" ? [{ label: t("sources.reread"), href: `${here}?panel=edit`, icon: "refresh-cw" as const }] : []),
+    ...(source.kind === "file" ? [{ label: t("sources.replace_file"), href: `${here}?panel=edit`, icon: "upload" as const }] : []),
     { label: t("sources.delete"), href: `${here}?confirm=delete`, icon: "x-circle", danger: true },
   ];
 

@@ -18,7 +18,7 @@ import { entriesOf, entryProblems, itemInOtherLists, listPriceLists, partState, 
 import { unitLabel } from "@/lib/pricing/units";
 import { isUuid } from "@/lib/security/ids";
 import { discardPriceListDraftAction, publishPriceListAction } from "../actions";
-import { EntryForm, MetaForm } from "../forms";
+import { EntryForm, EntrySaveBar, EntrySaveScope, MetaForm } from "../forms";
 import { entryFormDefaults } from "../rules";
 import { formatDay } from "../view";
 
@@ -264,10 +264,12 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
       </div>
 
       {entryOpen ? (
+        <EntrySaveScope>
         <SidePanel
           id="pl-entry"
           title={selectedItem?.name ?? t("price_lists.not_in_catalog")}
           closeHref={close}
+          footer={<EntrySaveBar />}
           meta={
             <span className="sas-stack-2" style={{ gap: 2 }}>
               <span className="sas-small sas-num">{selectedSku}{selectedItem ? ` · ${kindUnit(selectedItem)}` : ""}</span>
@@ -306,6 +308,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
             <span className="sas-small">{t("price_lists.other.note")}</span>
           </section>
         </SidePanel>
+        </EntrySaveScope>
       ) : null}
 
       {settingsOpen ? (

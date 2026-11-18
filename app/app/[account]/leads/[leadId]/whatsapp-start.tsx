@@ -12,7 +12,7 @@ const SETTINGS_FIX: ReadonlySet<OpenerRefusal> = new Set(["no_connection", "no_t
  * sending; this only shows the button, or why it is not available.
  */
 export function WhatsAppStart({
-  slug, leadId, refusal, templateName, buyerName, error,
+  slug, leadId, refusal, templateName, buyerName, error, hoursHref,
 }: {
   slug: string;
   leadId: string;
@@ -20,6 +20,8 @@ export function WhatsAppStart({
   templateName: string | null;
   buyerName: string;
   error?: string;
+  /** "Fix hours": the lead's market's contact hours when it has its own (contactHoursFixHref), else Settings › hours. */
+  hoursHref?: string;
 }) {
   if (refusal === "already_started" || refusal === "test_lead" || refusal === "opted_out" || refusal === "simulated_lead") return null;
   const errorText = error ? (t(`wa.start.refused.${error}` as MessageKey) || t("wa.start.refused.provider_error")) : null;
@@ -39,7 +41,7 @@ export function WhatsAppStart({
           <Icon name="pause" />{t(`wa.start.refused.${refusal}` as MessageKey)}
           {SETTINGS_FIX.has(refusal) ? <a href={`/app/${slug}/settings?section=whatsapp`}>{t("wa.start.fix")}</a> : null}
           {refusal === "account_not_live" ? <a href={`/app/${slug}/setup/go-live`}>{t("wa.start.fix_golive")}</a> : null}
-          {refusal === "outside_contact_hours" ? <a href={`/app/${slug}/settings?section=hours`}>{t("wa.start.fix_hours")}</a> : null}
+          {refusal === "outside_contact_hours" ? <a href={hoursHref ?? `/app/${slug}/settings?section=hours`} data-fix-hours="">{t("wa.start.fix_hours")}</a> : null}
         </p>
       )}
     </section>

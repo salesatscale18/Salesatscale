@@ -129,3 +129,22 @@ export const priceRowSortAccessors: SortAccessors<PriceRow, PriceRowSort> = {
   one_time: (r) => (r.entry?.oneTimeCharged ? r.entry.oneTimeMinor : null),
   recurring: (r) => (r.entry?.recurringCharged ? r.entry.recurringMinor : null),
 };
+
+/** "Israel", "Israel and Cyprus", "Israel, Cyprus and Greece". */
+export function joinNames(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return t("common.list_and", { first: names.slice(0, -1).join(", "), last: names[names.length - 1] });
+}
+
+/**
+ * Why Delete was refused, in plain words, naming the blocker: every market
+ * that sells from the list, or the quotes priced from it. Null for any other reason.
+ */
+export function deleteRefusalText(reason: string | null | undefined, markets: string[]): string | null {
+  if (reason === "in_use") {
+    if (markets.length === 0) return t("price_lists.delete.in_use_unknown");
+    return t(markets.length === 1 ? "price_lists.delete.in_use" : "price_lists.delete.in_use_many", { markets: joinNames(markets) });
+  }
+  if (reason === "quoted") return t("price_lists.delete.quoted");
+  return null;
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { DateField } from "@/components/sas/date-field";
-import { Fragment, useActionState, useRef, useState } from "react";
+import { Fragment, createContext, useActionState, useContext, useEffect, useRef, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { checkPriceBlock, serializeTierRows, tierErrorText, tierLines, tierSummary, wholeQty, type PriceBlockCheck } from "@/lib/catalog/tiers";
@@ -205,6 +205,32 @@ function TierBlock(props: {
   );
 }
 
+/** The entry form's save state, shared with the save bar pinned in the panel footer. */
+type EntrySave = { pending: boolean; errorCount: number };
+const EntrySaveContext = createContext<{ save: EntrySave; setSave: (s: EntrySave) => void } | null>(null);
+const ENTRY_FORM_ID = "pl-entry-form";
+
+/** Wraps the price entry panel so its footer's save bar (EntrySaveBar) follows the form (EntryForm). */
+export function EntrySaveScope({ children }: { children: React.ReactNode }) {
+  const [save, setSave] = useState<EntrySave>({ pending: false, errorCount: 0 });
+  return <EntrySaveContext.Provider value={{ save, setSave }}>{children}</EntrySaveContext.Provider>;
+}
+
+function SaveBarContent({ pending, errorCount, formId }: EntrySave & { formId?: string }) {
+  return (
+    <>
+      <button type="submit" form={formId} className={buttonClass("primary")} disabled={pending || errorCount > 0} data-entry-save="">{t("price_lists.entry.save")}</button>
+      {errorCount > 0 ? <span className="sas-error" role="status" style={{ fontSize: 13 }}>{errorCount === 1 ? t("price_lists.entry.fix_one") : t("price_lists.entry.fix_many", { count: errorCount })}</span> : null}
+    </>
+  );
+}
+
+/** "Save to draft" pinned at the bottom of the price entry panel (desktop and phone), like the other panels. */
+export function EntrySaveBar() {
+  const ctx = useContext(EntrySaveContext);
+  return <SaveBarContent {...(ctx?.save ?? { pending: false, errorCount: 0 })} formId={ENTRY_FORM_ID} />;
+}
+
 /**
  * The item panel of a price list (canvas: PriceEntry): sold here, a one-time
  * and a recurring price block with the structured tier editor, and custom
@@ -233,9 +259,13 @@ export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { s
   const errorCount = sold ? (oneTime ? ot.errorCount : 0) + (recurring ? rc.errorCount : 0) + (customInvalid ? 1 : 0) : 0;
   const server = (...keys: (keyof EntryFormErrors)[]) => keys.map((k) => errors[k]).filter((m): m is string => !!m);
   const customErr = customInvalid ? t("price_lists.entry.err_custom_from") : errors.customPricingFromQty;
+  // In a panel with EntrySaveScope the save bar sits in the panel footer; without one it stays under the form.
+  const saveScope = useContext(EntrySaveContext);
+  const setSave = saveScope?.setSave;
+  useEffect(() => { setSave?.({ pending, errorCount }); }, [setSave, pending, errorCount]);
 
   return (
-    <form action={action} className="sas-stack-4" noValidate key={sku}>
+    <form id={ENTRY_FORM_ID} action={action} className="sas-stack-4" noValidate key={sku}>
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="lineageId" value={lineageId} />
       <input type="hidden" name="sku" value={sku} />
@@ -283,10 +313,11 @@ export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { s
           </section>
         </>
       ) : <span className="sas-small">{t("price_lists.entry.not_sold_hint")}</span>}
-      <div className="sas-sheet__save" style={{ ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
-        <button type="submit" className={buttonClass("primary", "sm")} disabled={pending || errorCount > 0}>{t("price_lists.entry.save")}</button>
-        {errorCount > 0 ? <span className="sas-error" role="status" style={{ fontSize: 13 }}>{errorCount === 1 ? t("price_lists.entry.fix_one") : t("price_lists.entry.fix_many", { count: errorCount })}</span> : null}
-      </div>
+      {saveScope ? null : (
+        <div className="sas-sheet__save" style={{ ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 10 }}>
+          <SaveBarContent pending={pending} errorCount={errorCount} />
+        </div>
+      )}
     </form>
   );
 }

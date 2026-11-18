@@ -14,9 +14,10 @@ import { seesPlatformDetails } from "@/lib/auth/display";
 import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { conversationView } from "@/lib/agent/conversation";
-import { SCENARIOS, scenarioById } from "@/lib/agent/scenarios";
+import { SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenarios";
 import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
+import { type IconName } from "@/components/sas/icon";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
@@ -42,11 +43,26 @@ const json = (v: unknown) => JSON.stringify(v, null, 2);
  * one row on top, the open chat with its tool trace, and the scenarios table
  * for the version picked under "Results for" (applies on change): what each
  * scenario checks, whether it has a test chat on that version, the last one
- * and Run. No automatic pass or fail: the seller plays the buyer and judges.
- * Run starts one test chat (the opening is put in the composer; nothing is
+ * the automatic result of the last one (Passed / Not yet / Failed / Not run)
+ * and Run. Run starts one test chat (the opening is put in the composer; nothing is
  * sent until the seller clicks Send), so there is no run-all. Versions,
  * Recent test chats and Test on WhatsApp sit on the side.
  */
+/**
+ * Scenario results have no status word in the design system, so they are
+ * plain pill-styled chips with an icon (neutral / success / danger).
+ */
+const RESULT_LOOK: Record<ScenarioResult | "not_run", { cls: string; icon: IconName }> = {
+  passed: { cls: "sas-pill sas-pill--success", icon: "check-circle" },
+  not_yet: { cls: "sas-pill", icon: "clock" },
+  failed: { cls: "sas-pill sas-pill--danger", icon: "x-circle" },
+  not_run: { cls: "sas-pill", icon: "circle-dot" },
+};
+function ResultChip({ result }: { result: ScenarioResult | "not_run" }) {
+  const look = RESULT_LOOK[result];
+  return <span className={look.cls} data-scenario-result={result}><Icon name={look.icon} />{t(`lab.scenario_result.${result}`)}</span>;
+}
+
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
@@ -206,9 +222,11 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               </ChatThread>
               {scenario && scenarioCheck ? (
                 <div className="sas-stack-2" role="status" aria-label={t("lab.scenario_check", { title: scenario.title })} style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
-                  <strong className="sas-small">{t("lab.scenario_check", { title: scenario.title })}</strong>
-                  <span className="sas-small">{t("lab.scenario_expected", { text: scenario.expected })}</span>
-                  <span className="sas-small" data-scenario-seen="">{t("lab.scenario_seen", { text: scenarioCheck.reason })} {t("lab.scenario_judge")}</span>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                    <strong className="sas-small">{t("lab.scenario_check", { title: scenario.title })}</strong>
+                    <ResultChip result={scenarioCheck.result} />
+                  </div>
+                  <span className="sas-small">{scenarioCheck.reason} {t("lab.scenario_expected", { text: scenario.expected })}</span>
                 </div>
               ) : null}
               {conv.status === "closed" ? (
@@ -242,7 +260,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 240px", minWidth: 0 }}>
                 <h2 id="lab-sc-h" className="sas-heading">{t("lab.scenarios")}</h2>
                 {resultsVersion ? (
-                  <span className="sas-small" style={{ fontVariantNumeric: "tabular-nums" }} data-scenarios-tested="">{t("lab.scenarios_tested", { n: table.tested, total: table.total, version: resultsVersion.version })}</span>
+                  <span className="sas-small" style={{ fontVariantNumeric: "tabular-nums" }} data-scenarios-passed="">{t("lab.scenarios_passed", { n: table.passed, total: table.total, version: resultsVersion.version })}</span>
                 ) : null}
               </div>
               {resultsVersion && versions.length > 1 ? (
@@ -265,7 +283,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <thead>
                 <tr>
                   <th scope="col">{t("lab.col.scenario")}</th>
-                  <th scope="col">{t("lab.col.on_version")}</th>
+                  <th scope="col">{t("lab.col.result")}</th>
                   <th scope="col">{t("lab.col.last_chat")}</th>
                   <th scope="col"><span className="sas-sr">{t("lab.run")}</span></th>
                 </tr>
@@ -277,10 +295,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                       <strong style={{ display: "block" }}>{scenarioLabel(r.scenario)}</strong>
                       <span className="sas-small" style={{ display: "block" }}>{r.scenario.expected}</span>
                     </td>
-                    <td data-label={t("lab.col.on_version")}>
-                      <span className="sas-pill" data-scenario-tested={r.tested ? "tested" : "not_run"}>
-                        <Icon name={r.tested ? "check" : "circle-dot"} />{r.tested ? t("lab.tested") : t("lab.scenario_result.not_run")}
-                      </span>
+                    <td data-label={t("lab.col.result")} style={{ whiteSpace: "normal" }}>
+                      <ResultChip result={r.result} />
+                      {r.reason && r.result !== "passed" ? <span className="sas-small" style={{ display: "block", marginBlockStart: 4 }} data-scenario-reason="">{r.reason}</span> : null}
                     </td>
                     <td data-label={t("lab.col.last_chat")} className="sas-when">
                       {r.conversationId && r.lastAt ? (

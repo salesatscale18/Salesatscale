@@ -122,7 +122,7 @@ export async function renamePriceListAction(_prev: RenameFormState, form: FormDa
   const r = await saveDraftMeta(appDb, actorOf(a), a.account.id, lineageId, { name });
   if (!r.ok) return { status: "error", error: r.error };
   revalidatePath(base(a.account.slug));
-  redirect(`${base(a.account.slug)}?renamed=1`);
+  redirect(`${base(a.account.slug)}?renamed=${lineageId}`);
 }
 
 /**

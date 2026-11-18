@@ -301,16 +301,20 @@ describe("Setup redesign: Catalog and Price lists", () => {
       const confirm = await lists({ confirm: israel });
       save("price-lists-confirm", confirm);
       expect(text(confirm)).toContain("Delete Israel prices?");
-      expect(text(confirm)).toContain("Israel sells from this price list.");
+      expect(text(confirm)).toContain("Israel sells from this list. Choose another price list for that market first.");
     });
 
     it("rename goes into the draft; delete is refused while a market uses the list or quotes were priced from it", async () => {
       expect(await run(plActions.renamePriceListAction(idle, form({ slug: acc.slug, lineageId: uk, name: "  " })))).toMatchObject({ status: "error" });
-      expect(await run(plActions.renamePriceListAction(idle, form({ slug: acc.slug, lineageId: uk, name: "UK 2027" })))).toEqual({ redirect: "/app/polar/setup/price-lists?renamed=1" });
+      expect(await run(plActions.renamePriceListAction(idle, form({ slug: acc.slug, lineageId: uk, name: "UK 2027" })))).toEqual({ redirect: `/app/polar/setup/price-lists?renamed=${uk}` });
       expect((await priceListVersions(db, acc.id, uk))[0].name).toBe("UK 2027");
+      // A list that was never published: the plain message.
+      expect(text(await lists({ renamed: uk }))).toContain("Name saved to the draft. Publish the price list to use it.");
       // In use by the home market.
       expect(await run(plActions.deletePriceListAction(form({ slug: acc.slug, lineageId: israel })))).toEqual({ redirect: `/app/polar/setup/price-lists?delete=in_use&list=${israel}` });
-      expect(text(await lists({ delete: "in_use", list: israel }))).toContain("Israel sells from this price list. Choose another price list for it in Settings › Markets first.");
+      const inUse = await lists({ delete: "in_use", list: israel });
+      expect(text(inUse)).toContain("Can't delete Israel prices. Israel sells from this list. Choose another price list for that market first. Open Markets");
+      expect(inUse).toMatch(/href="\/app\/polar\/markets\?m=[0-9a-f-]{36}">Open Markets</);
       // Quoted: a quote version priced from it.
       const q = await createPriceList(db, { userId: admin.id, actingAs: false }, acc.id, { name: "Quoted", currency: "ILS", pricesIncludeTax: true, taxRateBp: 1800 });
       if (!q.ok) throw new Error(q.error);
@@ -324,10 +328,18 @@ describe("Setup redesign: Catalog and Price lists", () => {
         recurringTaxMinor: 0, recurringTotalMinor: 0, validUntil: new Date(Date.now() + 86_400_000), createdByActor: "agent", priceListId: q.list.id,
       });
       expect(await run(plActions.deletePriceListAction(form({ slug: acc.slug, lineageId: q.list.lineageId })))).toEqual({ redirect: `/app/polar/setup/price-lists?delete=quoted&list=${q.list.lineageId}` });
+      expect(text(await lists({ delete: "quoted", list: q.list.lineageId }))).toContain("Can't delete Quoted. Quotes were priced from this list, so it can't be deleted.");
       // Another account cannot delete it; an unused list goes with every version.
       as(other);
       expect(await run(plActions.deletePriceListAction(form({ slug: other.slug, lineageId: uk })))).toEqual({ redirect: "/app/other/setup/price-lists" });
       as(acc);
+      // Renaming a live list: the new name is in draft vN and needs Publish, with a link to the list.
+      expect(await run(plActions.renamePriceListAction(idle, form({ slug: acc.slug, lineageId: israel, name: "Israel 2027" })))).toEqual({ redirect: `/app/polar/setup/price-lists?renamed=${israel}` });
+      const israelDraft = (await priceListVersions(db, acc.id, israel)).find((v) => v.status === "draft")!;
+      const renamedLive = await lists({ renamed: israel });
+      expect(text(renamedLive)).toContain(`The new name "Israel 2027" is in draft v${israelDraft.version}. Publish the price list to use it. Open to publish`);
+      expect(renamedLive).toContain(`href="/app/polar/setup/price-lists/${israel}">Open to publish</a>`);
+      await run(plActions.renamePriceListAction(idle, form({ slug: acc.slug, lineageId: israel, name: "Israel prices" })));
       expect(await priceListVersions(db, acc.id, uk)).toHaveLength(1);
       expect(await run(plActions.deletePriceListAction(form({ slug: acc.slug, lineageId: uk })))).toEqual({ redirect: "/app/polar/setup/price-lists?deleted=1" });
       expect(await priceListVersions(db, acc.id, uk)).toHaveLength(0);

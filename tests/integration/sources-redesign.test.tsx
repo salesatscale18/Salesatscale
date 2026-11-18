@@ -233,11 +233,19 @@ describe("Sources redesign", () => {
       expect(html).toMatch(/class="sas-when"[^>]*title="[^"]*Asia\/Jerusalem/);
     });
 
-    it("row menu: Open, Edit, Read again for websites and files only, Delete links to the in-page confirm", async () => {
+    it("row menu: Open, Edit, Re-read for websites, Replace file for files, Delete links to the in-page confirm", async () => {
       const html = await list();
       const row = (id: string) => html.slice(html.indexOf(`href="/app/${slug}/setup/sources/${id}"`), html.indexOf("</tr>", html.indexOf(`href="/app/${slug}/setup/sources/${id}"`)));
       expect(row(webId)).toContain(">Re-read<");
-      expect(row(fileId)).toContain(">Re-read<");
+      expect(row(fileId)).not.toContain(">Re-read<");
+      expect(row(fileId)).toMatch(new RegExp(`href="/app/${slug}/setup/sources/${fileId}\\?panel=edit"[^>]*><svg[^>]*lucide-upload[\\s\\S]*?</svg>Replace file</a>`));
+      expect(row(webId)).not.toContain("Replace file");
+      // Type icons: Website = globe, File = file-text, Note = sticky-note, Call = phone-call.
+      const wholeRow = (id: string) => { const at = html.indexOf(`href="/app/${slug}/setup/sources/${id}"`); return html.slice(html.lastIndexOf("<tr", at), html.indexOf("</tr>", at)); };
+      expect(wholeRow(webId)).toContain("lucide-globe");
+      expect(wholeRow(fileId)).toContain("lucide-file-text");
+      expect(wholeRow(noteId)).toContain("lucide-sticky-note");
+      expect(wholeRow(callId)).toContain("lucide-phone-call");
       expect(row(noteId)).not.toContain(">Re-read<");
       expect(row(callId)).not.toContain(">Re-read<");
       expect(row(noteId)).toContain(`/setup/sources/${noteId}?panel=edit`);
@@ -323,14 +331,15 @@ describe("Sources redesign", () => {
   });
 
   describe("detail page", () => {
-    it("every type has Edit and a ⋯ menu; Read again only for websites and files", async () => {
+    it("every type has Edit and a ⋯ menu; Re-read for websites, Replace file for files", async () => {
       for (const id of [noteId, callId, fileId, webId]) {
         const html = await detail(id);
         expect(html).toContain("data-edit-source");
         expect(html).toContain(`href="/app/${slug}/setup/sources/${id}?panel=edit"`);
         expect(html).toContain("sas-rowmenu");
         expect(html).toContain(`?confirm=delete`);
-        expect(html.includes(">Re-read<")).toBe(id === fileId || id === webId);
+        expect(html.includes(">Re-read<")).toBe(id === webId);
+        expect(html.includes("</svg>Replace file</a>")).toBe(id === fileId);
       }
     });
 

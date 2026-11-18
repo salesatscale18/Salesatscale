@@ -88,18 +88,19 @@ export async function latestScenarioResults(db: Db, accountId: string, versionId
   });
 }
 
-export type ScenarioRow = { scenario: Scenario; tested: boolean; conversationId: string | null; lastAt: Date | null };
+export type ScenarioRow = { scenario: Scenario; result: ScenarioCheck["result"] | "not_run"; reason: string | null; conversationId: string | null; lastAt: Date | null };
 
 /**
  * The test lab's scenarios table for one version: each scenario (in SCENARIOS
- * order) with whether it has a test chat on that version and the latest one.
- * Neutral on purpose: the seller plays the buyer and judges the result, so
- * the automatic check is not shown as pass or fail here.
+ * order) with the automatic check of its latest test chat on that version
+ * (Passed / Not yet / Failed, or Not run), the check's reason and that chat.
+ * passed counts the scenarios whose latest chat passed.
  */
-export function scenarioTable(scenarios: readonly Scenario[], results: readonly ScenarioSummary[]): { rows: ScenarioRow[]; tested: number; total: number } {
-  const rows = scenarios.map((scenario) => {
+export function scenarioTable(scenarios: readonly Scenario[], results: readonly ScenarioSummary[]): { rows: ScenarioRow[]; passed: number; total: number } {
+  const rows = scenarios.map((scenario): ScenarioRow => {
     const r = results.find((x) => x.scenarioId === scenario.id);
-    return { scenario, tested: Boolean(r?.conversationId), conversationId: r?.conversationId ?? null, lastAt: r?.lastAt ?? null };
+    const check = r?.conversationId ? r.check : null;
+    return { scenario, result: check?.result ?? "not_run", reason: check?.reason ?? null, conversationId: r?.conversationId ?? null, lastAt: r?.lastAt ?? null };
   });
-  return { rows, tested: rows.filter((r) => r.tested).length, total: rows.length };
+  return { rows, passed: rows.filter((r) => r.result === "passed").length, total: rows.length };
 }

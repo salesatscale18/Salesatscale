@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
 import { and, eq } from "drizzle-orm";
-import { knowledgeFacts, legalSections, orderFormSettings, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
+import { knowledgeFacts, legalSections, toolCalls, orderFormSettings, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -110,7 +110,7 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       expect(text(html)).toMatch(new RegExp(`Approved ${facts.filter((f) => f.status === "approved").length}\\b`));
       expect(html).toContain('name="source"');
       expect(html).toContain(">Added by hand</option>");
-      for (const col of ["Fact", "Source", "Status", "Updated"]) expect(html).toMatch(new RegExp(`<th scope="col"[^>]*class="sas-th-sort"><a[^>]*>${col}<`));
+      for (const col of ["Fact", "Source", "Status", "Added"]) expect(html).toMatch(new RegExp(`<th scope="col"[^>]*class="sas-th-sort"><a[^>]*>${col}<`));
       // Default sort: facts to review first; the to-review row has Approve in the row and Reject in ⋯.
       const rows = factRows(html);
       expect(rows[0]).toEqual({ status: "suggested", statement: "Buyers can install the sensors themselves." });
@@ -184,6 +184,34 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
         .toBe(`/app/${slug}/setup/knowledge?done=answered&n=1`);
       const [answered] = await db.select().from(knowledgeFacts).where(and(eq(knowledgeFacts.accountId, account.id), eq(knowledgeFacts.statement, "Yes, down to -40 °C.")));
       expect(answered).toMatchObject({ topic: "Product", status: "approved" });
+    });
+
+    it("Save and answer next saves the fact and opens the next open question in the same panel", async () => {
+      const live = (await listVersions(db, account.id)).find((v) => v.status === "live")!;
+      const c = await startTestConversation(db, account.id, seller.id, { language: "en", versionId: live.id });
+      const asked = ["Do you ship to Eilat?", "Is there a night rate?", "Can I pay in euros?"];
+      await db.insert(toolCalls).values(asked.map((query, i) => ({
+        accountId: account.id, conversationId: c!.conversationId, sequence: i + 1, name: "lookup_knowledge", input: { query }, result: { facts: [] }, outcome: "ok" as const,
+        createdAt: new Date(Date.now() - (i + 1) * 60_000),
+      })));
+      // Newest asked first: Eilat, night rate, euros.
+      const first = await render(KnowledgePage, slug, { panel: "answer", question: asked[0] });
+      save("knowledge-answer", first);
+      expect(first).toMatch(/<button type="submit" form="kq-form" value="Is there a night rate\?"[^>]*data-answer-next="" name="next">Save and answer next</);
+      // The per-question Answer button stays.
+      expect(first).toContain('aria-label="Answer: Can I pay in euros?"');
+      const url = await go(knowledge.answerQuestionsAction(form({ slug, list: "topic=Installation", panel: "answer", next: asked[1], "q.0.question": asked[0], "q.0.answer": "Yes, in 3 days.", "q.0.topic": "Delivery" })));
+      expect(url).toBe(`/app/${slug}/setup/knowledge?topic=Installation&done=answered&n=1&panel=answer&question=Is+there+a+night+rate%3F`);
+      expect(await db.select().from(knowledgeFacts).where(and(eq(knowledgeFacts.accountId, account.id), eq(knowledgeFacts.statement, "Yes, in 3 days.")))).toHaveLength(1);
+      const second = await render(KnowledgePage, slug, { topic: "Installation", done: "answered", n: "1", panel: "answer", question: asked[1] });
+      expect(second).toContain('data-answer-question="">Is there a night rate?<');
+      expect(second).not.toContain('value="Do you ship to Eilat?"');
+      // The last open question wraps to the first remaining one; with one left there is no "next".
+      expect(await render(KnowledgePage, slug, { panel: "answer", question: asked[2] })).toMatch(/value="Is there a night rate\?"[^>]*data-answer-next=""/);
+      await go(knowledge.answerQuestionsAction(form({ slug, list: "", panel: "answer", "q.0.question": asked[1], "q.0.answer": "No.", "q.0.topic": "Pricing" })));
+      const last = await render(KnowledgePage, slug, { panel: "answer", question: asked[2] });
+      expect(last).not.toContain("data-answer-next");
+      expect(last).toContain(">Save answer</button>");
     });
 
     it("Delete asks to confirm in the page; Approve and Reject keep the filters", async () => {
@@ -272,7 +300,7 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
   });
 
   describe("Versions and test lab", () => {
-    it("scenarios table: Tested / Not run on the chosen version, last chat link, Run per scenario, no pass or fail", async () => {
+    it("scenarios table: the automatic result on the chosen version, last chat link, Run per scenario", async () => {
       const [live] = await listVersions(db, account.id);
       // A draft next to the live version, so "Results for" offers a choice.
       await saveDraftPlaybook(db, account.id, live.playbook, "R3-5 test");
@@ -281,13 +309,15 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       save("test-lab", html);
       expect(html).toContain("data-new-chat");
       expect(html.indexOf("data-new-chat")).toBeLessThan(html.indexOf("data-scenarios"));
-      expect(html).toMatch(/data-scenarios-tested="">1 of \d+ tested on v1</);
+      expect(html).toMatch(/data-scenarios-passed="">0 of \d+ passed on v1</);
+      expect(html).toContain(">Result</th>");
       const row = (id: string) => html.slice(html.indexOf(`data-scenario="${id}"`), html.indexOf("</tr>", html.indexOf(`data-scenario="${id}"`)));
-      expect(row("discount_push")).toContain('data-scenario-tested="tested"');
+      // The chat has no messages yet, so its check is "Not yet" (not "Not run").
+      expect(row("discount_push")).toMatch(/data-scenario-result="not_yet"><svg[\s\S]*?Not yet</);
       expect(row("discount_push")).toContain(`href="/app/${slug}/setup/test-lab?c=${c!.conversationId}&amp;v=${live.id}" data-last-chat=""`);
-      expect(row("ready_buyer")).toContain('data-scenario-tested="not_run"');
+      expect(row("ready_buyer")).toMatch(/data-scenario-result="not_run"[\s\S]*?Not run</);
       expect(row("ready_buyer")).toMatch(/<input type="hidden" name="scenario" value="ready_buyer"\/>[\s\S]*name="versionId" value="[^"]+"[\s\S]*data-run="">Run</);
-      expect(html).not.toMatch(/>Passed<|>Failed<|>Not yet</);
+      expect(html).not.toContain("judge");
       expect(html).toContain("there is no run-all");
       // Results for applies on change (auto-submit marker) with a no-JS fallback.
       expect(html).toMatch(/<select class="sas-select" name="v"[^>]*data-results-for=""/);
@@ -304,10 +334,10 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       expect(url).toMatch(new RegExp(`^/app/${slug}/setup/test-lab\\?c=[0-9a-f-]{36}$`));
       const chat = await render(TestLabPage, slug, { c: url.split("c=")[1] });
       save("test-lab-chat", chat);
-      // The opening waits in the composer; the scenario note is neutral.
-      expect(chat).toContain("data-scenario-seen");
-      expect(chat).toContain("You judge whether it did what you expect.");
-      expect(chat).not.toMatch(/data-scenario-result=/);
+      // The opening waits in the composer; the box under the chat has the result chip, title, the check's reason and Expected.
+      expect(chat).toMatch(/aria-label="Scenario: Asks for a person"[\s\S]*?data-scenario-result="not_yet"/);
+      expect(chat).toMatch(/Expected: /);
+      expect(chat).not.toContain("You judge whether");
     });
   });
 });

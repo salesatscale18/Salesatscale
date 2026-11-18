@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { PriceList, PriceListEntry } from "@/db/schema";
 import { sortRows } from "@/lib/list-kit";
 import {
-  entryPriced, filterPriceLists, filterPriceRows, hasRecurring, hasTiers, itemsPriced, listUpdatedAt, priceListSortAccessors, priceRowCounts,
+  deleteRefusalText, entryPriced, filterPriceLists, joinNames, filterPriceRows, hasRecurring, hasTiers, itemsPriced, listUpdatedAt, priceListSortAccessors, priceRowCounts,
   priceRowSortAccessors, tierChip, vatParts, type PriceListRow, type PriceRow,
 } from "@/lib/pricing/list-view";
 import type { PriceListSummary } from "@/lib/pricing/price-lists";
@@ -79,5 +79,17 @@ describe("price list helpers", () => {
     expect(skus(filterPriceRows(rows, { q: "gateway", show: "missing" }))).toEqual([]);
     expect(skus(sortRows(rows, "one_time", "desc", priceRowSortAccessors))).toEqual(["GW-10", "SNS-200", "OLD-1", "CRP-40", "INST-1"]);
     expect(skus(sortRows(rows, "item", "asc", priceRowSortAccessors))).toEqual(["CRP-40", "INST-1", "OLD-1", "GW-10", "SNS-200"]);
+  });
+});
+
+describe("price list delete refusal", () => {
+  it("says why in plain words and names every market, or the quotes", () => {
+    expect(joinNames(["Israel", "Cyprus", "Greece"])).toBe("Israel, Cyprus and Greece");
+    expect(deleteRefusalText("in_use", ["Israel"])).toBe("Israel sells from this list. Choose another price list for that market first.");
+    expect(deleteRefusalText("in_use", ["Israel", "Cyprus"])).toBe("Israel and Cyprus sell from this list. Choose another price list for those markets first.");
+    expect(deleteRefusalText("in_use", [])).toBe("A market sells from this list. Choose another price list for that market first.");
+    expect(deleteRefusalText("quoted", [])).toMatch(/^Quotes were priced from this list, so it can.t be deleted\./);
+    expect(deleteRefusalText("not_found", [])).toBeNull();
+    expect(deleteRefusalText(undefined, [])).toBeNull();
   });
 });

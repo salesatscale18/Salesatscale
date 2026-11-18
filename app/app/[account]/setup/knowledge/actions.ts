@@ -87,9 +87,10 @@ export async function answerQuestionsAction(form: FormData) {
     const topic = str(form, `q.${i}.topic`).trim().slice(0, 60) || "General";
     if (await answerQuestion(appDb, actorOf(a), a.account.id, { question: question.slice(0, 300), answer, topic })) n++;
   }
-  // From the Answer panel (one question): an empty answer reopens it.
+  // From the Answer panel (one question): an empty answer reopens it. "Save and answer next" opens the next open question.
   const single = str(form, "q.0.question");
-  back(a.account.slug, form, n ? { done: "answered", n: String(n) } : { error: "answer", ...(form.has("panel") && single ? { panel: "answer", question: single.slice(0, 300) } : {}) });
+  const next = form.has("panel") ? str(form, "next").slice(0, 300) : "";
+  back(a.account.slug, form, n ? { done: "answered", n: String(n), ...(next && next !== single ? { panel: "answer", question: next } : {}) } : { error: "answer", ...(form.has("panel") && single ? { panel: "answer", question: single.slice(0, 300) } : {}) });
 }
 
 /** A contradiction: the chosen side is approved and the others rejected, or a typed answer becomes the approved fact. */

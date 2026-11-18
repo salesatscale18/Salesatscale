@@ -11,7 +11,7 @@ import { firstParam, hrefWith, sortParams, sortRows } from "@/lib/list-kit";
 import { countryName, standardVatBp } from "@/lib/markets/rules";
 import { setupProgress } from "@/lib/overview/setup";
 import {
-  PRICE_LIST_SORTS, filterPriceLists, itemsPriced, listUpdatedAt, priceListSortAccessors, vatParts, type PriceListRow,
+  PRICE_LIST_SORTS, deleteRefusalText, filterPriceLists, itemsPriced, listUpdatedAt, priceListSortAccessors, vatParts, type PriceListRow,
 } from "@/lib/pricing/list-view";
 import { entriesOf, listPriceLists, type PriceListSummary } from "@/lib/pricing/price-lists";
 import { deletePriceListAction } from "./actions";
@@ -53,6 +53,9 @@ export default async function PriceListsPage({ params, searchParams }: { params:
   const confirm = firstParam(sp, "confirm");
   const deleteError = firstParam(sp, "delete");
   const deleteList = lists.find((l) => l.lineageId === firstParam(sp, "list"));
+  const refusal = deleteRefusalText(deleteError, deleteList?.usedBy.map((m) => m.name) ?? []);
+  // Rename of a list that is live: the new name waits in draft vN until Publish.
+  const renamed = lists.find((l) => l.lineageId === firstParam(sp, "renamed"));
   const currencies = [...new Set([account.currency, ...CURRENCIES])];
   const defaults = {
     name: lists.length === 0 ? `${countryName(account.market)} ${new Date().getFullYear()}` : "",
@@ -79,12 +82,30 @@ export default async function PriceListsPage({ params, searchParams }: { params:
         <SetupSteps basePath={`/app/${account.slug}`} current="prices" completed={progress} />
       </header>
 
-      {sp.renamed ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.rename.saved")}</span></div> : null}
-      {sp.deleted ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.delete.done")}</span></div> : null}
-      {deleteError === "in_use" ? (
-        <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("price_lists.delete.in_use", { markets: deleteList?.usedBy.map((m) => m.name).join(", ") || t("price_lists.delete.a_market") })}</span></div>
+      {sp.renamed ? (
+        <div className="sas-alert sas-alert--success" role="status" data-renamed="">
+          <Icon name="check-circle" />
+          {renamed?.live && renamed.draft ? (
+            <span>
+              {t("price_lists.rename.saved_live", { name: renamed.draft.name, version: renamed.draft.version })}{" "}
+              <a href={`${base}/${renamed.lineageId}`}>{t("price_lists.rename.open_publish")}</a>
+            </span>
+          ) : <span>{t("price_lists.rename.saved")}</span>}
+        </div>
       ) : null}
-      {deleteError === "quoted" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("price_lists.delete.quoted")}</span></div> : null}
+      {sp.deleted ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.delete.done")}</span></div> : null}
+      {refusal ? (
+        <div className="sas-alert sas-alert--danger" role="alert" data-delete-refused={deleteError}>
+          <Icon name="alert-triangle" />
+          <span>
+            {deleteList ? <strong>{t("price_lists.delete.refused", { name: deleteList.shown.name })} </strong> : null}
+            {refusal}
+            {deleteError === "in_use" && deleteList?.usedBy.length ? (
+              <> <a href={`/app/${account.slug}/markets?m=${deleteList.usedBy[0].id}`}>{t("price_lists.delete.open_markets")}</a></>
+            ) : null}
+          </span>
+        </div>
+      ) : null}
 
       {lists.length === 0 ? (
         <section className="sas-panel sas-empty">
@@ -182,7 +203,7 @@ export default async function PriceListsPage({ params, searchParams }: { params:
                         fields={{ slug: account.slug, lineageId: l.lineageId }}
                         cancelHref={hrefWith(base, sp, { confirm: null })}
                       >
-                        {l.usedBy.length > 0 ? t("price_lists.delete.in_use", { markets: l.usedBy.map((m) => m.name).join(", ") }) : t("price_lists.delete.body")}
+                        {l.usedBy.length > 0 ? deleteRefusalText("in_use", l.usedBy.map((m) => m.name)) : t("price_lists.delete.body")}
                       </ConfirmDelete>
                     </td>
                   </tr>,

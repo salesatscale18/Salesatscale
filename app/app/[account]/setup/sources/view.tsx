@@ -63,7 +63,7 @@ export function fileSize(bytes: number | undefined): string | null {
 }
 
 /** The icon for each source type (list rows, detail header, add tiles). */
-export const KIND_ICON = { website: "link-2", file: "file-text", text: "pen", call: "message-square" } as const satisfies Record<Row["kind"], IconName>;
+export const KIND_ICON = { website: "globe", file: "file-text", text: "sticky-note", call: "phone-call" } as const satisfies Record<Row["kind"], IconName>;
 
 /** The type icon in a small square, before a source's title. */
 export function SourceIcon({ kind }: { kind: Row["kind"] }) {

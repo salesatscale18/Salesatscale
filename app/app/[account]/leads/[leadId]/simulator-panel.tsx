@@ -14,8 +14,10 @@ const maybe = (key: string) => (t(key as MessageKey) as string | undefined) ?? n
  * A link idle for 14 days shows "Expired": only Reset link is offered then.
  */
 export function SimulatorPanel({
-  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false,
+  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false, hoursHref,
 }: {
+  /** "Fix hours": the lead's market's contact hours when it has its own (contactHoursFixHref), else Settings › hours. */
+  hoursHref?: string;
   /** The simulated chat has started: the panel is one line (Open buyer chat · Copy link · Reset link). */
   started?: boolean;
   slug: string;
@@ -108,7 +110,7 @@ export function SimulatorPanel({
           {why === "account_not_live" ? <a href={`/app/${slug}/setup/go-live`}>{t("wa.start.fix_golive")}</a> : null}
           {why === "no_agent" ? <a href={`/app/${slug}/setup/playbook`}>{t("sim.start.fix_publish")}</a> : null}
           {why === "simulated_disabled" ? <a href={`/app/${slug}/settings?section=simulation`}>{t("sim.start.fix_settings")}</a> : null}
-          {why === "outside_contact_hours" ? <a href={`/app/${slug}/settings?section=hours`}>{t("wa.start.fix_hours")}</a> : null}
+          {why === "outside_contact_hours" ? <a href={hoursHref ?? `/app/${slug}/settings?section=hours`} data-fix-hours="">{t("wa.start.fix_hours")}</a> : null}
         </p>
       ) : null}
       {url && !expired ? <span className="sas-small">{t(canStart ? "sim.panel.help" : "sim.panel.help_reset")}{rules ? ` ${t("sim.panel.rules")}` : ""}</span> : rules ? <span className="sas-small">{t("sim.panel.rules")}</span> : null}

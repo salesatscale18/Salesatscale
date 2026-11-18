@@ -106,6 +106,11 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   );
   const editing = panel && panel !== "new" && panel !== "answer" ? allFacts.find((f) => f.id === panel) ?? null : null;
   const answering = panel === "answer" ? questions.find((q) => q.question === firstParam(sp, "question")) ?? (firstParam(sp, "question") ? { question: firstParam(sp, "question")!.slice(0, 300), times: 0, lastAskedAt: null, topic: null } : null) : null;
+  // "Save and answer next": the next open question after this one (wrapping round), while another remains.
+  const answeringAt = answering ? questions.findIndex((q) => q.question === answering.question) : -1;
+  const nextQuestion = answering
+    ? (answeringAt >= 0 ? [...questions.slice(answeringAt + 1), ...questions.slice(0, answeringAt)] : questions).find((q) => q.question !== answering.question) ?? null
+    : null;
   const filtered = Boolean(filters.q || filters.source || (filters.status === "suggested" || filters.status === "approved"));
   const label = (f: KnowledgeFact) => f.statement.slice(0, 60);
   const sourceChip = (f: KnowledgeFact) => {
@@ -284,7 +289,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                     <SortableTh column="fact" path={page} params={sp} sort={sort}>{t("knowledge.col.fact")}</SortableTh>
                     <SortableTh column="source" path={page} params={sp} sort={sort}>{t("knowledge.col.source")}</SortableTh>
                     <SortableTh column="status" path={page} params={sp} sort={sort}>{t("knowledge.col.status")}</SortableTh>
-                    <SortableTh column="updated" path={page} params={sp} sort={sort} firstDir="desc">{t("knowledge.col.updated")}</SortableTh>
+                    <SortableTh column="updated" path={page} params={sp} sort={sort} firstDir="desc">{t("knowledge.col.added")}</SortableTh>
                     <th scope="col"><span className="sas-sr">{t("knowledge.col.actions")}</span></th>
                   </tr>
                 </thead>
@@ -318,7 +323,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                             ) : null}
                           </span>
                         </td>
-                        <td data-label={t("knowledge.col.updated")} className="sas-when"><time dateTime={f.createdAt.toISOString()} title={`${formatLocalDateTime(f.createdAt, tz)} · ${zoneTitle(f.createdAt, tz)}`}>{timeAgo(f.createdAt, now, tz)}</time></td>
+                        <td data-label={t("knowledge.col.added")} className="sas-when"><time dateTime={f.createdAt.toISOString()} title={`${formatLocalDateTime(f.createdAt, tz)} · ${zoneTitle(f.createdAt, tz)}`}>{timeAgo(f.createdAt, now, tz)}</time></td>
                         <td data-label="" className="sas-td-actions">
                           <RowMenu label={t("knowledge.more", { fact: label(f) })} items={menu(f)} />
                         </td>
@@ -433,6 +438,9 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
         <SidePanel title={t("knowledge.answer_title")} closeHref={link()} footer={
           <>
             <button type="submit" form="kq-form" className={buttonClass("primary")}>{t("knowledge.answer_save")}</button>
+            {nextQuestion ? (
+              <button type="submit" form="kq-form" name="next" value={nextQuestion.question} className={buttonClass("secondary")} data-answer-next="">{t("knowledge.answer_next")}</button>
+            ) : null}
             <Link className={buttonClass("ghost")} href={link()} scroll={false}>{t("knowledge.cancel")}</Link>
           </>
         }>

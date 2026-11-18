@@ -45,7 +45,7 @@ type AddPanel = keyof typeof ADD_PANELS;
  * on the Files tile or anywhere on the page), the analysis strip with its run
  * history (?panel=runs), and "Your sources" with search, type chips, Status
  * and Language filters and sortable headings, all in search params. Row ⋯:
- * Open, Edit, Read again, Delete (?confirm=<id>, an in-page confirm step).
+ * Open, Edit, Re-read (websites) or Replace file (files), Delete (?confirm=<id>, an in-page confirm step).
  * "Analyze sources" shows its estimate first and asks for a confirm click
  * (?analyze=confirm).
  */
@@ -230,7 +230,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                   ...(s.kind === "website"
                     ? [{ kind: "form" as const, label: t("sources.reread"), action: rereadWebsiteAction, fields: fields(s.id), icon: "refresh-cw" as const }]
                     : s.kind === "file"
-                      ? [{ label: t("sources.reread"), href: `${detail}?panel=edit`, icon: "refresh-cw" as const }]
+                      ? [{ label: t("sources.replace_file"), href: `${detail}?panel=edit`, icon: "upload" as const }]
                       : []),
                   { label: t("sources.delete"), href: `${open({ confirm: s.id })}#src-h`, icon: "x-circle", danger: true },
                 ];
