@@ -18,7 +18,7 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, consentRecords, conversations, leadEvents, leads, messages, orderFormSettings, sellerAccounts, simulatorLinks, toolCalls, users,
+  agentVersions, consentRecords, conversations, followUps, leadEvents, leads, messages, orderFormSettings, sellerAccounts, simulatorLinks, toolCalls, users,
   type Lead, type SellerAccount,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -36,7 +36,7 @@ import { isLocale, t, type Locale } from "@/lib/i18n";
 import { openerText } from "@/lib/agent/core/opener";
 import { buyerNames, type BuyerNames } from "@/lib/agent/core/names";
 import { displaySeller } from "@/lib/orders/service";
-import { agentTyping, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
+import { agentTyping, chatLinkExpiresAt, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
 import { chatTokenFor, hashToken, linkIdFromChatToken } from "./token";
 
 export const SIM_CONSENT = "Simulated buyer for testing";
@@ -131,7 +131,39 @@ async function realLead(db: Db, accountId: string, leadId: string) {
   return lead ?? null;
 }
 
-/** The lead's active chat token, or null. Never creates one (pages call this on every view). */
+/**
+ * When the lead's chat link expires (rules.chatLinkExpiresAt): the latest of
+ * the link's creation, the last buyer or team message and the latest
+ * conversation start on the simulator channel, and a scheduled or sent
+ * follow-up's due date, plus 14 days.
+ */
+export async function chatLinkExpiry(db: Db, accountId: string, leadId: string, linkCreatedAt: Date): Promise<Date> {
+  const simConvs = and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, SIMULATOR_CHANNEL), eq(conversations.isTest, false));
+  const [[msg], [conv], [fu]] = await Promise.all([
+    db.select({ at: sql<unknown>`max(${messages.createdAt})` }).from(messages)
+      .innerJoin(conversations, eq(conversations.id, messages.conversationId))
+      .where(and(simConvs, eq(messages.accountId, accountId), inArray(messages.actor, ["buyer", "human"]))),
+    db.select({ at: sql<unknown>`max(${conversations.createdAt})` }).from(conversations).where(simConvs),
+    db.select({ at: sql<unknown>`max(${followUps.dueAt})` }).from(followUps)
+      .where(and(eq(followUps.accountId, accountId), eq(followUps.leadId, leadId), inArray(followUps.status, ["scheduled", "sent"]))),
+  ]);
+  return chatLinkExpiresAt([linkCreatedAt, asDate(msg?.at), asDate(conv?.at), asDate(fu?.at)]);
+}
+
+const asDate = (v: unknown): Date | null => v == null ? null : v instanceof Date ? v : new Date(String(v));
+
+export type ChatLinkStatus = { token: string; expired: boolean; expiresAt: Date };
+
+/** The lead's active (not reset) chat link with its expiry, or null. Never creates one. */
+export async function chatLinkStatus(db: Db, accountId: string, leadId: string, now = new Date()): Promise<ChatLinkStatus | null> {
+  const [link] = await db.select({ id: simulatorLinks.id, createdAt: simulatorLinks.createdAt }).from(simulatorLinks)
+    .where(and(eq(simulatorLinks.accountId, accountId), eq(simulatorLinks.leadId, leadId), isNull(simulatorLinks.revokedAt)));
+  if (!link) return null;
+  const expiresAt = await chatLinkExpiry(db, accountId, leadId, link.createdAt);
+  return { token: chatTokenFor(link.id), expired: expiresAt <= now, expiresAt };
+}
+
+/** The lead's active chat token, or null, expired or not. Never creates one (pages call this on every view). */
 export async function activeChatToken(db: Db, accountId: string, leadId: string): Promise<string | null> {
   const [link] = await db.select({ id: simulatorLinks.id }).from(simulatorLinks)
     .where(and(eq(simulatorLinks.accountId, accountId), eq(simulatorLinks.leadId, leadId), isNull(simulatorLinks.revokedAt)));
@@ -174,17 +206,34 @@ export async function resetChatLink(db: Db, actor: Actor, accountId: string, lea
 
 export type ChatContext = { lead: Lead; account: SellerAccount; brandColor: string };
 
-/** The lead and account behind a public chat token. Null for a malformed, forged or revoked token (the page shows 404). */
-export async function resolveChatToken(db: Db, token: string): Promise<ChatContext | null> {
+export type ChatLink =
+  | { state: "live"; ctx: ChatContext }
+  /** Signed, not reset, but idle for too long: the page says so instead of a 404. */
+  | { state: "expired"; ctx: ChatContext };
+
+/**
+ * The lead and account behind a public chat token, and whether the link is
+ * still live. Null for a malformed, forged or reset token (the page shows 404).
+ */
+export async function resolveChatLink(db: Db, token: string, now = new Date()): Promise<ChatLink | null> {
   const id = linkIdFromChatToken(token);
   if (!id) return null;
-  const [row] = await db.select({ lead: leads, account: sellerAccounts, brandColor: orderFormSettings.brandColor })
+  const [row] = await db.select({ lead: leads, account: sellerAccounts, brandColor: orderFormSettings.brandColor, linkCreatedAt: simulatorLinks.createdAt })
     .from(simulatorLinks)
     .innerJoin(leads, and(eq(leads.id, simulatorLinks.leadId), eq(leads.accountId, simulatorLinks.accountId)))
     .innerJoin(sellerAccounts, eq(sellerAccounts.id, simulatorLinks.accountId))
     .leftJoin(orderFormSettings, eq(orderFormSettings.accountId, simulatorLinks.accountId))
     .where(and(eq(simulatorLinks.id, id), eq(simulatorLinks.tokenHash, hashToken(token)), isNull(simulatorLinks.revokedAt), eq(leads.isTest, false)));
-  return row ? { lead: row.lead, account: row.account, brandColor: safeBrand(row.brandColor) } : null;
+  if (!row) return null;
+  const ctx: ChatContext = { lead: row.lead, account: row.account, brandColor: safeBrand(row.brandColor) };
+  const expiresAt = await chatLinkExpiry(db, row.account.id, row.lead.id, row.linkCreatedAt);
+  return { state: expiresAt <= now ? "expired" : "live", ctx };
+}
+
+/** The context behind a live chat token. Null for a malformed, forged, reset or expired token. */
+export async function resolveChatToken(db: Db, token: string, now = new Date()): Promise<ChatContext | null> {
+  const link = await resolveChatLink(db, token, now);
+  return link?.state === "live" ? link.ctx : null;
 }
 
 // ---------------------------------------------------------------------------

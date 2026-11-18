@@ -15,7 +15,7 @@ import { CompanyStep, DeliveryChoice, ErrorSummary, PreferenceRow, Progress, Sig
 import { companyErrors, fieldErrors, resolveStep, signedFields, stepValues, type StepErrors } from "@/lib/orders/draft";
 import { checkDeliveryChoice, deliveryChoices } from "@/lib/delivery/choice";
 import { frozenPlan } from "@/lib/delivery/plan";
-import { activeChatToken } from "@/lib/simulator/service";
+import { chatLinkStatus } from "@/lib/simulator/service";
 import { DeliveryRow } from "./delivery";
 import { brandVars } from "@/lib/simulator/rules";
 import "./buyer.css";
@@ -326,7 +326,9 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const now = new Date();
   const plan = frozenPlan(s.delivery);
   const choices = plan ? deliveryChoices(plan, now) : null;
-  const chatToken = step === 1 ? await activeChatToken(appDb, form.accountId, form.leadId) : null;
+  // Back to the chat only while its link still works (an expired link would open the "expired" page).
+  const chatLink = step === 1 ? await chatLinkStatus(appDb, form.accountId, form.leadId, now) : null;
+  const chatToken = chatLink && !chatLink.expired ? chatLink.token : null;
   let errors: StepErrors = {};
   if (checking && step === 2) errors = companyErrors(s, values);
   if (checking && step === 3) {

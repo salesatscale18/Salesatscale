@@ -2441,5 +2441,12 @@
   "lead.event.follow_up.sent": "Follow-up sent",
   "lead.event.follow_up.cancelled": "Follow-up cancelled",
   "lead.event.follow_up.failed": "Follow-up not sent",
-  "overview.needs.follow_up_failed.action": "Open lead"
+  "overview.needs.follow_up_failed.action": "Open lead",
+  "buyer.sim.expired_title": "This chat link has expired",
+  "buyer.sim.expired_body": "Links stop working after 14 days without messages. Ask the seller for a new link.",
+  "buyer.sim.refused.expired": "This chat link has expired. Ask the seller for a new link.",
+  "buyer.sim.refused.daily_limit": "This chat reached today's message limit. Try again tomorrow.",
+  "sim.expired": "Expired",
+  "sim.expired_help": "This link expired after 14 days without messages. Reset it and send the buyer the new link.",
+  "sim.expires": "Link works until {date}"
 }

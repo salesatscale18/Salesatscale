@@ -7,7 +7,7 @@ import { QuoteCard } from "@/components/sas/quote-card";
 import { replyButtonsAfter } from "@/lib/agent/quote-replies";
 
 export type ChatStrings = {
-  bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string;
+  bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
   closedBy: string; today: string; yesterday: string; openForm: string; formLabel: string; todayWord: string; perMonth: string;
   empty: string; notSent: string; messages: string; sent: string; delivered: string; read: string;
   /** Reply buttons after the close ("Sounds good" / "Change something"). */
@@ -82,6 +82,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
   const [cards, setCards] = useState(initial.cards ?? {});
   const [typing, setTyping] = useState(initial.typing);
   const [ended, setEnded] = useState(initial.ended);
+  // The link went idle for 14 days while the page was open: the server answers 410.
+  const [expired, setExpired] = useState(false);
   const [closedAt, setClosedAt] = useState(initial.closedAt);
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
@@ -99,6 +101,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
     busy.current = true;
     try {
       const res = await fetch(`${base}${lastId.current ? `?after=${lastId.current}` : ""}`, { cache: "no-store" });
+      if (res.status === 410) { setExpired(true); setEnded(true); return; }
       if (!res.ok) return;
       const data = (await res.json()) as BuyerChat;
       setTyping(data.typing);
@@ -164,6 +167,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
     if (reason) {
       setNotice(strings.refused[reason] ?? strings.notSent);
       if (reason === "opted_out") setEnded(true);
+      if (reason === "expired") { setExpired(true); setEnded(true); }
     } else {
       setTyping(true);
     }
@@ -264,7 +268,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
       <div className="c-sr" aria-live="polite">{announce}</div>
       {notice ? <div className="c-notice" role="status" dir={dir}>{notice}</div> : null}
       {ended ? (
-        <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{strings.ended}</div>
+        <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{expired ? strings.expired : strings.ended}</div>
       ) : (
         <form className="c-bar" dir={dir} onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <label className="c-sr" htmlFor="c-input">{strings.placeholder}</label>

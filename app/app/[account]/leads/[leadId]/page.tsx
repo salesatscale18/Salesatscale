@@ -19,7 +19,7 @@ import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { displayQuoteStatus, quotesForLead } from "@/lib/quotes/service";
 import { formatMoney } from "@/lib/domain/money";
-import { activeChatToken, simulatorOpenerFacts } from "@/lib/simulator/service";
+import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
@@ -29,6 +29,7 @@ import { leadStage } from "@/lib/leads/stage";
 import { StageStepper } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
+import { formatDueLocal } from "@/lib/follow-ups/rules";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -78,7 +79,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatToken, simFacts, stage, followUp] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -88,7 +89,7 @@ export default async function LeadCardPage({
     latestConversationForLead(appDb, account.id, leadId),
     listMarkets(appDb, account.id),
     openerFacts(appDb, defaultTransport(), account.id, leadId),
-    activeChatToken(appDb, account.id, leadId),
+    chatLinkStatus(appDb, account.id, leadId),
     simulatorOpenerFacts(appDb, account.id, leadId),
     leadStage(appDb, account.id, leadId),
     leadFollowUp(appDb, account.id, leadId),
@@ -167,10 +168,11 @@ export default async function LeadCardPage({
                 buyerName={lead.fullName} error={typeof sp.wa_error === "string" ? sp.wa_error : undefined}
               />
             ) : null}
-            {lead.status !== "opted_out" || chatToken ? (
+            {lead.status !== "opted_out" || chatLink ? (
               <SimulatorPanel
                 slug={account.slug} leadId={lead.id} simulated={simulated}
-                url={chatToken ? publicUrl(chatPath(chatToken)) : null} refusal={simFacts?.refusal ?? null} rules={account.simulateWhatsappRules}
+                url={chatLink ? publicUrl(chatPath(chatLink.token)) : null}
+                expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, account.timezone) : null} refusal={simFacts?.refusal ?? null} rules={account.simulateWhatsappRules}
                 notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined}
               />
             ) : null}

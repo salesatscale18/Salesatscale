@@ -4,6 +4,9 @@
  * GET  ?after=<message id>  → the buyer's view of the chat (newer messages only with `after`)
  * POST { text, clientId }   → the buyer sends a message
  *
+ * A link idle for 14 days (lib/simulator/rules chatLinkExpiresAt) answers
+ * 410 { reason: "expired" }. Per link: 20 messages a minute and 100 a day.
+ *
  * POST takes the same inbound checks as WhatsApp (receiveSimulatorInbound);
  * the agent's turn runs after the response (`after`), like the WhatsApp webhook.
  * The agent's reply is delivered by writing it to the conversation; nothing
@@ -14,7 +17,8 @@ import { appDb } from "@/lib/auth/account";
 import { AnthropicLlm } from "@/lib/agent/llm";
 import { replyToBuyer } from "@/lib/channels/whatsapp";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
-import { buyerChat, receiveSimulatorInbound, resolveChatToken } from "@/lib/simulator/service";
+import { CHAT_RATE_PER_DAY, CHAT_RATE_PER_MINUTE } from "@/lib/simulator/rules";
+import { buyerChat, receiveSimulatorInbound, resolveChatLink } from "@/lib/simulator/service";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -24,17 +28,23 @@ const json = (body: unknown, status = 200) => Response.json(body, { status, head
 
 export async function GET(req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const ctx = await resolveChatToken(appDb, token);
-  if (!ctx) return json({ error: "not_found" }, 404);
+  const link = await resolveChatLink(appDb, token);
+  if (!link) return json({ error: "not_found" }, 404);
+  if (link.state === "expired") return json({ error: "expired" }, 410);
+  const ctx = link.ctx;
   const afterId = new URL(req.url).searchParams.get("after");
   return json(await buyerChat(appDb, ctx, { after: afterId }));
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const ctx = await resolveChatToken(appDb, token);
-  if (!ctx) return json({ ok: false, reason: "not_found" }, 404);
-  if (!(await rateLimit(appDb, `chat:${hashKey(token)}`, { limit: 30, windowSeconds: 60 })).ok) return json({ ok: false, reason: "rate_limited" }, 429);
+  const link = await resolveChatLink(appDb, token);
+  if (!link) return json({ ok: false, reason: "not_found" }, 404);
+  if (link.state === "expired") return json({ ok: false, reason: "expired" }, 410);
+  const ctx = link.ctx;
+  const key = hashKey(token);
+  if (!(await rateLimit(appDb, `chat:${key}`, { limit: CHAT_RATE_PER_MINUTE, windowSeconds: 60 })).ok) return json({ ok: false, reason: "rate_limited" }, 429);
+  if (!(await rateLimit(appDb, `chat-day:${key}`, { limit: CHAT_RATE_PER_DAY, windowSeconds: 86_400 })).ok) return json({ ok: false, reason: "daily_limit" }, 429);
   const body = (await req.json().catch(() => null)) as { text?: unknown; clientId?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text : "";
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";

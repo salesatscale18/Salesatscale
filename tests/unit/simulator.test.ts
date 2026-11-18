@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
-  agentTyping, buyerBubbleColor, contrastRatio, formatBuyerRef, INK, isSimulatedLead, nextBuyerRef, orderFormLinks, PRIMARY_SOFT, safeBrand,
+  agentTyping, buyerBubbleColor, CHAT_LINK_IDLE_DAYS, chatLinkExpiresAt, contrastRatio, formatBuyerRef, INK, isSimulatedLead, nextBuyerRef, orderFormLinks, PRIMARY_SOFT, safeBrand,
   simulatedPhone, tintOverWhite, TYPING_MS,
 } from "@/lib/simulator/rules";
 import { chatTokenFor, linkIdFromChatToken } from "@/lib/simulator/token";
@@ -11,6 +11,15 @@ import { openerRefusal } from "@/lib/channels/rules";
 import { parseSimBuyer } from "@/lib/simulator/service";
 
 describe("buyer simulator rules", () => {
+  it("a chat link expires 14 days after its latest anchor; missing anchors are skipped", () => {
+    const d = (iso: string) => new Date(iso);
+    expect(CHAT_LINK_IDLE_DAYS).toBe(14);
+    expect(chatLinkExpiresAt([d("2026-11-01T10:00:00Z"), null, d("2026-11-10T08:30:00Z"), undefined]).toISOString()).toBe("2026-11-24T08:30:00.000Z");
+    // A follow-up due later than any message moves the expiry past its due date.
+    expect(chatLinkExpiresAt([d("2026-11-01T10:00:00Z"), d("2026-12-20T09:00:00Z")]).toISOString()).toBe("2027-01-03T09:00:00.000Z");
+    expect(chatLinkExpiresAt([]).getTime()).toBe(0);
+  });
+
   it("buyer IDs count up per account and ignore other values", () => {
     expect(formatBuyerRef(1)).toBe("SIM-0001");
     expect(formatBuyerRef(12345)).toBe("SIM-12345");
