@@ -229,6 +229,24 @@ export async function removeDraftRule(db: Db, accountId: string, ruleId: string)
   return true;
 }
 
+/**
+ * Changes a rule in the draft, keeping its place in the list (the rules card's
+ * Edit). A published rule is matched in the draft copy by content, as in
+ * removeDraftRule.
+ */
+export async function replaceDraftRule(db: Db, accountId: string, ruleId: string, rule: FitRule | AutoAddRule) {
+  const [row] = await db.select().from(fitRules).where(and(eq(fitRules.id, ruleId), eq(fitRules.accountId, accountId)));
+  if (!row) return false;
+  const draft = await ensureDraft(db, accountId);
+  const target =
+    row.catalogVersionId === draft.id
+      ? row.id
+      : (await allRulesOf(db, accountId, draft.id)).find((r) => JSON.stringify(r.rule) === JSON.stringify(parseAnyRule(row.rule)))?.id;
+  if (!target) return false;
+  await db.update(fitRules).set({ rule }).where(and(eq(fitRules.id, target), eq(fitRules.accountId, accountId)));
+  return true;
+}
+
 export async function saveDraftSettings(db: Db, accountId: string, settings: { pricesIncludeTax: boolean; taxRateBp: number }) {
   const draft = await ensureDraft(db, accountId);
   await db.update(catalogVersions).set(settings).where(and(eq(catalogVersions.id, draft.id), eq(catalogVersions.accountId, accountId)));

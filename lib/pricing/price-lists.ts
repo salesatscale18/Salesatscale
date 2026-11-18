@@ -12,7 +12,7 @@ import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, max, ne } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { markets, priceListEntries, priceLists, type PriceList, type PriceListEntry, type RecurringPeriod, type VolumeTier } from "@/db/schema";
+import { markets, priceListEntries, priceLists, quoteVersions, type PriceList, type PriceListEntry, type RecurringPeriod, type VolumeTier } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { tierProblem } from "@/lib/catalog/rules";
 import { adjustMinor, adjustmentRatio, minorDigits, ROUNDINGS, type Rounding } from "./adjust";
@@ -421,6 +421,38 @@ export async function discardDraft(db: Db, actor: Actor, accountId: string, line
     .where(and(eq(priceLists.accountId, accountId), eq(priceLists.lineageId, lineageId), eq(priceLists.status, "draft")))
     .returning({ id: priceLists.id });
   if (gone.length > 0) await writeAudit(db, actor, { accountId, action: "price_list.draft_discarded", targetType: "price_list", targetId: lineageId });
+  return { ok: true };
+}
+
+export type DeleteResult = { ok: true } | { ok: false; reason: "not_found" | "in_use" | "quoted"; markets?: string[] };
+
+/**
+ * Deletes a price list with every version (the list page's ⋯ › Delete). A
+ * list a market sells from cannot be deleted (choose another list for the
+ * market first), nor one that quotes were priced from: those quotes keep
+ * pointing at the version they froze.
+ */
+export async function deletePriceList(db: Db, actor: Actor, accountId: string, lineageId: string): Promise<DeleteResult> {
+  const versions = await db
+    .select({ id: priceLists.id, name: priceLists.name })
+    .from(priceLists)
+    .where(and(eq(priceLists.accountId, accountId), eq(priceLists.lineageId, lineageId)));
+  if (versions.length === 0) return { ok: false, reason: "not_found" };
+  const using = await db
+    .select({ name: markets.name })
+    .from(markets)
+    .where(and(eq(markets.accountId, accountId), eq(markets.priceListLineageId, lineageId)));
+  if (using.length > 0) return { ok: false, reason: "in_use", markets: using.map((m) => m.name) };
+  const ids = versions.map((v) => v.id);
+  const [quoted] = await db
+    .select({ id: quoteVersions.id })
+    .from(quoteVersions)
+    .where(and(eq(quoteVersions.accountId, accountId), inArray(quoteVersions.priceListId, ids)))
+    .limit(1);
+  if (quoted) return { ok: false, reason: "quoted" };
+  // Entries go with their version (on delete cascade); copies made from it keep their prices.
+  await db.delete(priceLists).where(and(eq(priceLists.accountId, accountId), eq(priceLists.lineageId, lineageId)));
+  await writeAudit(db, actor, { accountId, action: "price_list.deleted", targetType: "price_list", targetId: lineageId, details: { name: versions[0].name } });
   return { ok: true };
 }
 
