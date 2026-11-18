@@ -9,6 +9,8 @@
  * - nothing is sent to an opted-out lead (except the one opt-out confirmation)
  * - the opener runs every gate in `openerRefusal` before sending
  */
+import { marketOfLead } from "@/lib/markets/lead-settings";
+import { marketContactSettings } from "@/lib/markets/settings";
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, isNull, max, ne, or } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -204,7 +206,7 @@ export type OpenerResult =
 export async function openerFacts(db: Db, transport: TwilioTransport | null, accountId: string, leadId: string, now = new Date()) {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return null;
-  const [[account], [consent], connection, [live], [activeConv], capped] = await Promise.all([
+  const [[account], [consent], connection, [live], [activeConv], capped, market] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     db.select({ id: consentRecords.id }).from(consentRecords).where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId))).limit(1),
     connectionForMarket(db, accountId, lead.marketId),
@@ -213,14 +215,17 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
       .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, "whatsapp"), ne(conversations.status, "closed")))
       .limit(1),
     spendCapped(db, accountId, now),
+    marketOfLead(db, accountId, lead.marketId),
   ]);
-  const template = await approvedTemplate(db, accountId, "opener", lead.language, account.languages);
+  // The lead's market decides the contact hours, time zone and fallback languages (its own, else the account's).
+  const contact = marketContactSettings(account, market);
+  const template = await approvedTemplate(db, accountId, "opener", lead.language, contact.languages);
   const refusal = openerRefusal({
     twilioConfigured: !!transport,
     // A demo lead's number is fictional (lib/demo/phones.ts): never contacted, like a test lead.
     lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status, simulated: isSimulatedLead(lead) },
     hasConsent: !!consent,
-    account: { status: account.status, contactHours: account.contactHours, timezone: account.timezone },
+    account: { status: account.status, contactHours: contact.contactHours, timezone: contact.timezone },
     hasConnection: !!connection,
     hasApprovedOpener: !!template,
     hasLiveAgent: !!live,

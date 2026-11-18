@@ -183,8 +183,8 @@ describe("UAT round 2 fixes", () => {
       expect(html).toContain("Connect a number in Settings › WhatsApp.");
       expect(html).toMatch(/data-legal-lang="en"[^]*?<bdi>Sales terms<\/bdi>/);
       expect(html).toMatch(/data-legal-lang="he"[^]*?<bdi>תנאי מכירה<\/bdi>/);
-      // Pill and Override/Reset share one group on every setting row.
-      expect(html).toMatch(/data-row-end=""><span class="sas-pill" data-source="account">[^<]+<\/span><a [^>]*>Override<\/a>/);
+      // Pill and "Change for this market"/Reset share one group on every setting row.
+      expect(html).toMatch(/data-row-end=""><span class="sas-pill" data-source="account">[^<]+<\/span><a [^>]*>Change for this market<\/a>/);
     });
   });
 

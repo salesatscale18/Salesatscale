@@ -151,6 +151,13 @@ export function normalizeClock(text: string): string | null {
   return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}`;
 }
 
+/** A calendar date "2026-12-25" → "25 Dec 2026" (he: the Hebrew month); the input unchanged when it is not a date. */
+export function formatIsoDate(iso: string, language?: string | null): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
+  const at = new Date(`${iso}T12:00:00Z`);
+  return Number.isNaN(at.getTime()) ? iso : fmt(at, "UTC", language, { day: "numeric", month: "short", year: "numeric" });
+}
+
 /** "15:53" in the zone, no zone name (chat bubbles; the zone goes in the title). */
 export function formatClockIn(at: Date, timezone: string | null | undefined, language?: string | null): string {
   return fmt(at, timezone, language, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" });

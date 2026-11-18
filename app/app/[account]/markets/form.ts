@@ -2,11 +2,13 @@
  * Reading the Markets screen forms (pure; unit-tested). The server actions in
  * ./actions.ts call these, then the market services validate again.
  */
-import type { AccountDefaults, SettingKey } from "@/lib/markets/settings";
-import { OVERRIDABLE, overrideProblem } from "@/lib/markets/settings";
+import type { AccountDefaults, MarketOverrides, SettingKey } from "@/lib/markets/settings";
+import { OVERRIDABLE, overrideProblem, overrideSetting, resetSetting } from "@/lib/markets/settings";
 import { CALLING_CODES, countryName } from "@/lib/markets/rules";
 import { parseContactHours } from "@/lib/accounts/contact-hours";
 import { parseLeadTime } from "@/lib/delivery/eta";
+import { formatIsoDate } from "@/lib/format";
+import { t } from "@/lib/i18n";
 
 /** Reads one or all values of a form field. */
 export type FormReader = { get: (name: string) => string; getAll: (name: string) => string[] };
@@ -62,7 +64,9 @@ export function parseOverride<K extends SettingKey>(key: K, f: FormReader): Over
       value = f.get("bankDetails").trim() || null;
       break;
     case "holidays":
-      value = [...new Set(f.get("holidays").split(/[\s,;]+/).map((d) => d.trim()).filter(Boolean))].sort();
+      // One "holidays" value per chosen date (the date list), plus the date field when a date was typed but not added.
+      // Older forms sent one textarea with a date per line: still read.
+      value = [...new Set(f.getAll("holidays").flatMap((v) => v.split(/[\s,;]+/)).map((d) => d.trim()).filter(Boolean))].sort();
       break;
     case "leadTime": {
       // An override is always a range; to follow the account again, Reset.
@@ -92,4 +96,24 @@ export function parseWhere(f: FormReader, opts: { fillFromCountries: boolean }):
     if (formCountryValues.length === 0) formCountryValues = [...new Set(countries.flatMap((c) => [c, countryName(c)]))];
   }
   return { name: f.get("name"), countries, phonePrefixes, formCountryValues, intakeKeyIds: f.getAll("intakeKeyIds") };
+}
+
+/**
+ * The market's overrides after saving `key`. The account has no holidays, so
+ * saving an empty holiday list clears the market's holidays (the same as Reset).
+ */
+export function overridesAfterSave<K extends SettingKey>(overrides: MarketOverrides | null | undefined, key: K, value: AccountDefaults[K]): MarketOverrides {
+  if (key === "holidays" && Array.isArray(value) && value.length === 0) return resetSetting(overrides, key);
+  return overrideSetting(overrides, key, value);
+}
+
+/**
+ * "8 dates · next 25 Dec 2026"; "None" without dates. `today` is the market's
+ * calendar date: a holiday today counts as next.
+ */
+export function holidaysText(dates: string[], today: string): string {
+  if (dates.length === 0) return t("markets.none");
+  const count = dates.length === 1 ? t("markets.holidays_one") : t("markets.holidays_count", { count: dates.length });
+  const next = [...dates].sort().find((d) => d >= today);
+  return next ? `${count} · ${t("markets.holidays_next", { date: formatIsoDate(next) })}` : count;
 }

@@ -91,6 +91,26 @@ export function marketTimezone(account: { timezone: string }, market: { override
   return typeof o.timezone === "string" && o.timezone ? o.timezone : account.timezone;
 }
 
+/** What the agent needs to contact one lead: the market's own time zone, contact hours and selling languages, else the account's. */
+export type ContactSettings = { timezone: string; contactHours: ContactHours | null; languages: string[] };
+
+/**
+ * The effective time zone, contact hours and selling languages for a lead's
+ * market: each the market's own value when it has one, else the account's.
+ * A lead with no market (null) uses the account's values unchanged.
+ */
+export function marketContactSettings(
+  account: { timezone: string; contactHours: ContactHours | null; languages: string[] },
+  market: { overrides: MarketOverrides | null | undefined } | null | undefined,
+): ContactSettings {
+  const o = sanitizeOverrides(market?.overrides);
+  return {
+    timezone: o.timezone ?? account.timezone,
+    contactHours: o.contactHours ?? account.contactHours,
+    languages: o.languages ?? account.languages,
+  };
+}
+
 /** Number of settings the market overrides ("7 settings overridden"). */
 export function overriddenCount(overrides: MarketOverrides | null | undefined): number {
   return Object.keys(sanitizeOverrides(overrides)).length;

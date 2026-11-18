@@ -23,6 +23,7 @@ import { plainChatText } from "./core/plain-text";
 import { buyerNames } from "./core/names";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
+import { leadContactSettings } from "@/lib/markets/lead-settings";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -84,12 +85,14 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, contact] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
     catalogRead.catch(() => null),
     scheduledFollowUp(db, args.accountId, conv.leadId),
+    // The lead's market: its own time zone and selling languages, else the account's.
+    leadContactSettings(db, account, lead.marketId),
   ]);
   const recent = recentDesc.reverse();
   const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
@@ -110,12 +113,12 @@ export async function runBuyerTurn(
   // The examples in the stable prompt come from the published catalog: fixed until it is published again.
   const activeItems = catalog?.items.filter((i) => i.active) ?? null;
   const system: [string, string] = [
-    stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: account.languages }, activeItems),
+    stableSystemPrompt(version.playbook, { tradeName: account.tradeName, currency: account.currency, languages: contact.languages }, activeItems),
     `${turnContext(version.playbook, deal, {
       stage: stageFacts, agentMessages, opener, catalog: activeItems, names: buyerNames(version.playbook, account, lang),
       // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
-      followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, account.timezone), topic: followUp.topic } : null,
-      localNow: localNowLine(new Date(), account.timezone),
+      followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
+      localNow: localNowLine(new Date(), contact.timezone),
     })}\nConversation language: ${lang}.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };

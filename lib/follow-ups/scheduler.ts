@@ -16,6 +16,7 @@ import {
   type FollowUp, type Playbook, type SellerAccount,
 } from "@/db/schema";
 import { isWithinContactHours } from "@/lib/accounts/contact-hours";
+import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import type { TwilioTransport } from "@/lib/channels/twilio";
@@ -106,6 +107,8 @@ async function processOne(
     return { kind: "cancelled", reason: "conversation_closed" };
   }
   const { lead, conv } = row;
+  // Sent within the contact hours of the lead's market (its own, else the account's).
+  const contact = await leadContactSettings(db, account, lead.marketId);
   const [[paid], [wrote]] = await Promise.all([
     db.select({ id: orders.id }).from(orders)
       .where(and(eq(orders.accountId, f.accountId), eq(orders.leadId, f.leadId), eq(orders.paymentStatus, "paid"))).limit(1),
@@ -119,7 +122,7 @@ async function processOne(
     conversationStatus: conv.status,
     paid: !!paid,
     buyerWroteAfterScheduling: !!wrote,
-    withinContactHours: isWithinContactHours(account.contactHours, account.timezone, now),
+    withinContactHours: isWithinContactHours(contact.contactHours, contact.timezone, now),
   });
   if (decision.action === "cancel") {
     await atomic(db, (q) => [

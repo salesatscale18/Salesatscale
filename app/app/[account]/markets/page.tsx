@@ -10,7 +10,7 @@ import { canGoLive, checkCount, countryName } from "@/lib/markets/rules";
 import { ensureHomeMarket, getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
 import { overriddenCount, type AccountDefaults, type EffectiveSettings, type SettingKey } from "@/lib/markets/settings";
 import { listPriceLists } from "@/lib/pricing/price-lists";
-import { countryValueLabel, currencyLabel, timezoneLabel } from "@/lib/format";
+import { countryValueLabel, currencyLabel, localDateIso, timezoneLabel } from "@/lib/format";
 import { LOCALES, t, type MessageKey } from "@/lib/i18n";
 import { leadTimeText, MAX_LEAD_DAYS, weekendFor } from "@/lib/delivery/eta";
 import type { LeadIntakeKey, Market } from "@/db/schema";
@@ -18,6 +18,8 @@ import {
   addMarketAction, overrideSettingAction, resetSettingAction, setMarketStatusAction, setPriceListAction, updateWhereAction,
 } from "./actions";
 import "./markets.css";
+import { HolidaysField } from "./holidays-field";
+import { holidaysText } from "./form";
 import { CheckIcon, checkStateWord, WhatsAppStatusPill } from "../settings/whatsapp-status";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -46,7 +48,7 @@ function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): stri
       return [pm.card ? t("golive.method.card") : null, pm.bankTransfer ? t("golive.method.bank") : null].filter(Boolean).join(", ") || t("markets.none");
     }
     case "bankDetails": return (value as string | null)?.trim() || t("markets.none");
-    case "holidays": return (value as string[]).length ? (value as string[]).join(", ") : t("markets.none");
+    case "holidays": return holidaysText(value as string[], localDateIso(new Date(), "UTC"));
     case "leadTime": {
       const lt = value as AccountDefaults["leadTime"];
       return lt ? leadTimeText(lt) : t("markets.lead_time_not_set");
@@ -67,7 +69,7 @@ function Row({ label, value, pill, action, muted, id }: { label: string; value: 
     <div id={id} style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 12px", padding: "10px 20px", borderTop: "1px solid var(--line)" }}>
       <strong style={{ flex: "0 1 180px", minWidth: 120 }}>{label}</strong>
       <span style={{ flex: "1 1 160px", minWidth: 0, overflowWrap: "anywhere", color: muted ? "var(--ink-muted)" : undefined }}>{value}</span>
-      {/* Pill and action stay together on one line, so "Override" and "Reset" line up the same way. */}
+      {/* Pill and action stay together on one line, so "Change for this market" and "Edit · Reset" line up the same way. */}
       {pill || action ? (
         <span style={{ flex: "0 0 auto", minWidth: 250, display: "inline-flex", alignItems: "center", justifyContent: "flex-end", gap: 8, marginInlineStart: "auto" }} data-row-end="">
           {pill}
@@ -124,11 +126,15 @@ function OverrideForm({ slug, market, settingKey, settings, timezones, weekend }
       fields = <textarea className="sas-textarea" name="bankDetails" rows={3} maxLength={500} defaultValue={(v as string | null) ?? ""} aria-label={t("markets.setting.bankDetails")} />;
       break;
     case "holidays":
+      // A date field with "Add date" and the chosen dates (client); the form still sends a list of dates.
       fields = (
-        <>
-          <textarea className="sas-textarea" name="holidays" rows={3} defaultValue={(v as string[]).join("\n")} aria-label={t("markets.setting.holidays")} aria-describedby="hol-hint" />
-          <span className="sas-hint" id="hol-hint">{t("markets.holidays_hint")}</span>
-        </>
+        <HolidaysField
+          initial={v as string[]}
+          labels={{
+            field: t("markets.holiday_field"), add: t("markets.holiday_add"), remove: t("markets.holiday_remove", { date: "{date}" }),
+            empty: t("markets.holidays_empty"), invalid: t("markets.holiday_invalid", { format: "{format}" }),
+          }}
+        />
       );
       break;
     case "leadTime": {
@@ -155,7 +161,7 @@ function OverrideForm({ slug, market, settingKey, settings, timezones, weekend }
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="marketId" value={market.id} />
       <input type="hidden" name="key" value={settingKey} />
-      <span className="sas-small">{t("markets.override_intro", { market: market.name })}</span>
+      <span className="sas-small">{settingKey === "holidays" ? t("markets.holidays_intro", { market: market.name }) : t("markets.override_intro", { market: market.name })}</span>
       {fields}
       <div style={{ display: "flex", gap: 8 }}>
         <Button type="submit" variant="primary" size="sm">{t("markets.save_override")}</Button>
@@ -369,11 +375,10 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                           </option>
                         ))}
                       </select>
-                      <span className="sas-small">
-                        {view.livePriceList
-                          ? t("markets.price_list_current", { name: view.livePriceList.name, currency: currencyLabel(view.livePriceList.currency), version: view.livePriceList.version })
-                          : selected.priceListLineageId ? t("markets.price_list_not_live") : t("markets.price_list_none_hint")}
-                        {" "}<a href={`${base}/setup/price-lists`}>{t("markets.price_lists_link")}</a>
+                      {/* The dropdown already names the live list, its currency and version: a line only when there is more to say. */}
+                      <span className="sas-small" data-price-list-note={view.livePriceList ? "link" : selected.priceListLineageId ? "not_live" : "none"}>
+                        {view.livePriceList ? null : <>{selected.priceListLineageId ? t("markets.price_list_not_live") : t("markets.price_list_none_hint")}{" "}</>}
+                        <a href={`${base}/setup/price-lists`}>{t("markets.price_lists_link")}</a>
                       </span>
                     </span>
                     <Button type="submit" variant="secondary" size="sm">{t("markets.change")}</Button>
@@ -381,6 +386,24 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                 ) : null}
                 {g.keys.map((k) => {
                   const s = view.settings[k];
+                  const formHref = `${here}?m=${selected.id}&override=${k}#set-${k}`;
+                  // Holidays: the account has none, so there is no account default to compare with or reset to.
+                  // "None" + Add dates, or "8 dates · next 25 Dec 2026" + Edit; removing every date clears them.
+                  if (k === "holidays") {
+                    const dates = s.value as string[];
+                    return (
+                      <div key={k} data-setting={k}>
+                        <Row
+                          id={`set-${k}`}
+                          label={t("markets.setting.holidays")}
+                          value={holidaysText(dates, localDateIso(new Date(), view.settings.timezone.value))}
+                          muted={dates.length === 0}
+                          action={overriding === k ? null : <a className={buttonClass("ghost", "sm")} href={formHref}>{t(dates.length ? "markets.edit" : "markets.holidays_add")}</a>}
+                        />
+                        {overriding === k ? <OverrideForm slug={account.slug} market={selected} settingKey={k} settings={view.settings} timezones={timezones} weekend={weekendFor(selected.countries, account.market)} /> : null}
+                      </div>
+                    );
+                  }
                   return (
                     <div key={k} data-setting={k}>
                       <Row
@@ -390,14 +413,18 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                         muted={s.source === "account"}
                         pill={<SourcePill source={s.source} />}
                         action={s.source === "market" ? (
-                          <form action={resetSettingAction}>
-                            <input type="hidden" name="slug" value={account.slug} />
-                            <input type="hidden" name="marketId" value={selected.id} />
-                            <input type="hidden" name="key" value={k} />
-                            <Button type="submit" variant="ghost" size="sm">{t("markets.reset")}</Button>
-                          </form>
+                          // Edit opens the same form, prefilled with the market's value; Reset follows the account again.
+                          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+                            {overriding === k ? null : <a className={buttonClass("ghost", "sm")} href={formHref} data-edit-setting={k}>{t("markets.edit")}</a>}
+                            <form action={resetSettingAction}>
+                              <input type="hidden" name="slug" value={account.slug} />
+                              <input type="hidden" name="marketId" value={selected.id} />
+                              <input type="hidden" name="key" value={k} />
+                              <Button type="submit" variant="ghost" size="sm">{t("markets.reset")}</Button>
+                            </form>
+                          </span>
                         ) : overriding === k ? null : (
-                          <a className={buttonClass("ghost", "sm")} href={`${here}?m=${selected.id}&override=${k}#set-${k}`}>{t("markets.override")}</a>
+                          <a className={buttonClass("ghost", "sm")} href={formHref}>{t("markets.override")}</a>
                         )}
                       />
                       {overriding === k ? <OverrideForm slug={account.slug} market={selected} settingKey={k} settings={view.settings} timezones={timezones} weekend={weekendFor(selected.countries, account.market)} /> : null}
