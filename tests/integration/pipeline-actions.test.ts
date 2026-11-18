@@ -90,7 +90,9 @@ describe("pipeline screens and actions", () => {
 
   it("Analyze sources: shows the estimate, is disabled without an API key, and refuses in the action", async () => {
     const page = await html(SourcesPage({ ...params, searchParams: Promise.resolve({ analyze: "confirm" }) }));
-    expect(page).toMatch(/Changed since the last analysis: 2 of 2 sources · estimated cost \$0\.\d+/);
+    // The analysis strip: what changed, then the estimated cost (redesign R3-3).
+    expect(page).toContain("Changed since the last analysis: 2 of 2 sources");
+    expect(page).toMatch(/Estimated cost \$0\.\d+/);
     expect(page).toContain("AI is not set up for this workspace yet");
     expect(page).not.toContain("Start analysis");
     expect(await go(pipeline.analyzeAction(form({ slug, token: "x", back: "sources" })))).toBe(`/app/${slug}/setup/sources?analyze_error=no_key#an-h`);
@@ -149,7 +151,10 @@ describe("pipeline screens and actions", () => {
     expect(sourcesPage).toContain("Sensor spec");
     expect(sourcesPage).toContain("Discovery call");
     expect(sourcesPage).toContain("Nothing changed since the last analysis");
-    expect(sourcesPage).toMatch(/300 in · 2,000 out · 0 from cache · 5,000 to cache/);
+    // The runs moved behind "Run history" (?panel=runs); a platform admin still sees the tokens there.
+    expect(sourcesPage).toContain("Run history");
+    const history = await html(SourcesPage({ ...params, searchParams: Promise.resolve({ panel: "runs" }) }));
+    expect(history).toMatch(/300 in · 2,000 out · 0 from cache · 5,000 to cache/);
 
     const kPage = await html(KnowledgePage(params));
     expect(kPage).toContain("Contradiction: Warranty length");
@@ -219,8 +224,9 @@ describe("pipeline screens and actions", () => {
 
   it("run status pills and the Approved source status on the Sources page", async () => {
     const page = await html(SourcesPage(params));
-    expect(page).toContain('data-status="analysis_run.completed"');
-    expect(page).toContain(">Completed<");
+    const history = await html(SourcesPage({ ...params, searchParams: Promise.resolve({ panel: "runs" }) }));
+    expect(history).toContain('data-status="analysis_run.completed"');
+    expect(history).toContain(">Completed<");
     // Every fact of the note is reviewed and one approved: Approved; the call has none approved: Ready for review.
     expect(page).toContain('data-status="source.approved"');
     expect(page).toContain('data-status="source.ready"');

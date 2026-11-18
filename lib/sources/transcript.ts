@@ -121,5 +121,17 @@ export function parseTranscript(raw: string): ParseResult {
   return { sections, problems: [], stats: times.length ? { durationSec: Math.max(...times) } : {} };
 }
 
+/**
+ * A stored transcript back as editable text, one turn per line
+ * ("00:04 Rep: Thanks for…"), in the form parseTranscript reads again.
+ */
+export function transcriptToText(sections: { locator: string; heading: string | null; text: string }[]): string {
+  return sections.map((s) => {
+    const time = parseClock(s.locator) !== null ? `${s.locator} ` : "";
+    if (/^part \d+$/.test(s.locator)) return s.text;
+    return `${time}${s.heading ? `${s.heading}: ` : ""}${s.text}`;
+  }).join("\n");
+}
+
 /** File types a transcript upload accepts. */
 export const TRANSCRIPT_ACCEPT = ".txt,.vtt,.srt,.docx";

@@ -11,7 +11,7 @@ import { and, asc, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  knowledgeFacts, sourceSections, sources, type Source, type SourceKind, type SourceOrigin, type SourceProblem, type SourceStats,
+  knowledgeFacts, sourceSections, sources, users, type Source, type SourceKind, type SourceOrigin, type SourceProblem, type SourceStats,
 } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
 import { isUuid } from "@/lib/security/ids";
@@ -276,6 +276,86 @@ export async function deleteSource(db: Db, accountId: string, id: string): Promi
   if (!isUuid(id)) return false;
   const rows = await db.delete(sources).where(where(accountId, id)).returning({ id: sources.id });
   return rows.length > 0;
+}
+
+// ---------------------------------------------------------------------------
+// Editing (Source detail › Edit). Every edit clears text_hash: the source
+// needs analysis again and shows "Ready for review"; facts found in it stay
+// (approved ones too) until the next analysis replaces them.
+// ---------------------------------------------------------------------------
+
+/** Edits a call: name, rep, call date and the transcript (masked and parsed again). Null when not this account's call. */
+export async function updateCall(
+  db: Db, accountId: string, id: string, input: { title: string; rep?: string; callDate?: string; text: string },
+): Promise<Source | null> {
+  const current = await getSource(db, accountId, id);
+  if (!current || current.kind !== "call") return null;
+  const raw = input.text.trim();
+  if (!raw) throw new SourceInputError("Paste the transcript or upload a transcript file.");
+  if (raw.length > 400_000) throw new SourceInputError("A transcript can be up to 400,000 characters.");
+  const date = input.callDate && /^\d{4}-\d{2}-\d{2}$/.test(input.callDate) ? input.callDate : undefined;
+  const result = parseTranscript(raw);
+  const origin: SourceOrigin = {
+    ...current.origin,
+    rep: input.rep?.trim().slice(0, 100) || undefined,
+    callDate: date,
+    durationSec: result.stats?.durationSec ?? undefined,
+  };
+  await db.update(sources).set({ title: cleanTitle(input.title, current.title), origin, textHash: null }).where(where(accountId, id));
+  return saveParse(db, accountId, id, result);
+}
+
+/**
+ * Edits a website's address and sections and marks it for a new read
+ * (status processing). Call `readWebsite` next, e.g. in `after()`. Null when
+ * not this account's website.
+ */
+export async function updateWebsite(db: Db, accountId: string, id: string, input: { url: string; paths: string[] }): Promise<Source | null> {
+  const current = await getSource(db, accountId, id);
+  if (!current || current.kind !== "website") return null;
+  const url = parsePublicUrl(input.url);
+  const allowedPaths = normalizePaths(input.paths);
+  await db.update(sources).set({
+    title: url.host, origin: { ...current.origin, url: url.toString(), allowedPaths }, status: "processing", textHash: null,
+  }).where(where(accountId, id));
+  return getSource(db, accountId, id);
+}
+
+/**
+ * Renames a file source and, with `file`, replaces its text with the new
+ * file's (the bytes are not kept, so a file cannot be read again without
+ * uploading it). A name left as it was takes the new file's name. Null when
+ * not this account's file.
+ */
+export async function updateFile(db: Db, accountId: string, id: string, input: { title: string; file?: UploadedFile | null }): Promise<Source | null> {
+  const current = await getSource(db, accountId, id);
+  if (!current || current.kind !== "file") return null;
+  const file = input.file && input.file.bytes.byteLength > 0 ? input.file : null;
+  if (!file) {
+    await db.update(sources).set({ title: cleanTitle(input.title, current.title), textHash: null }).where(where(accountId, id));
+    return getSource(db, accountId, id);
+  }
+  const name = cleanTitle(file.name.split(/[\\/]/).pop() ?? "", "File");
+  const kind = fileKind(name, file.bytes);
+  const typed = cleanTitle(input.title, current.title);
+  const title = typed === current.title ? name : typed;
+  await db.update(sources).set({
+    title, textHash: null, status: "processing",
+    origin: { ...current.origin, fileName: name, mime: file.type.slice(0, 100) || kind, size: file.bytes.byteLength },
+  }).where(where(accountId, id));
+  try {
+    return await saveParse(db, accountId, id, await parseFile(kind, file.bytes, name));
+  } catch {
+    await markFailed(db, accountId, id, "We could not read this file.");
+    return getSource(db, accountId, id);
+  }
+}
+
+/** Who added a source, for its Details card (null when unknown or removed). */
+export async function sourceAddedBy(db: Db, source: Pick<Source, "createdByUserId">) {
+  if (!source.createdByUserId) return null;
+  const [u] = await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email }).from(users).where(eq(users.id, source.createdByUserId));
+  return u ?? null;
 }
 
 /** Sources stuck in processing (e.g. the function stopped) for longer than this are shown as failed on read. */
