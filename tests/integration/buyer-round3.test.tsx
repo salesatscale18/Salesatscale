@@ -217,10 +217,10 @@ describe("buyer pages, round-3 review", () => {
     const en = await doc(f.token);
     expect(en).toMatch(new RegExp(`<span data-doc-ids=""><bdi class="b-id">Q-${f.number}</bdi> v1 · <bdi class="b-id">PD-\\d+</bdi></span>`));
     expect(en).not.toContain("גרסה");
-    expect(en).toContain("Sales terms v1");
+    expect(en).toContain("\u2068Sales terms\u2069 v1");
     const he = await doc(f.token, { lang: "he" });
     expect(he).toContain(`<bdi class="b-id">Q-${f.number}</bdi> גרסה 1 · `);
-    expect(he).toContain("Sales terms גרסה 1");
+    expect(he).toContain("\u2068Sales terms\u2069 גרסה 1");
     expect(he).not.toMatch(/ v1\b/);
     expect(he).not.toMatch(HE_SHORT_MONTH);
     expect(css).toMatch(/\.b-id \{ font-variant-numeric: normal; letter-spacing: 0;/);

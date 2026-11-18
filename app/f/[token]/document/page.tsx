@@ -80,7 +80,7 @@ export default async function SignedDocumentPage({ params, searchParams }: { par
         </section>
         <section className="b-sec">
           <b data-doc-signed="">{tr("buyer.document_signed", { name: sig.fullName, role: sig.role ? `, ${sig.role},` : "", date })}</b>
-          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `${quoteVersion} · ${legal.map((l) => `${l.title} ${ver(l.version)}`).join(", ")}` })} · {utcParts[0]}<bdi data-doc-utc="">{utcStamp(sig.signedAt)}</bdi>{utcParts[1]}</span>
+          <span className="b-mut">{tr("buyer.document_record", { ip: sig.ip ?? "—", version: `${quoteVersion} · ${legal.map((l) => `\u2068${l.title}\u2069 ${ver(l.version)}`).join(", ")}` })} · {utcParts[0]}<bdi data-doc-utc="">{utcStamp(sig.signedAt)}</bdi>{utcParts[1]}</span>
           <span className="b-mut" style={{ overflowWrap: "anywhere" }}>{hashParts[0]}<span className="b-mono" data-doc-hash="">{sig.documentHash}</span>{hashParts[1]}</span>
           <div className="b-noprint" style={{ display: "flex", flexDirection: "column", gap: 10 }}>
             <PrintButton label={tr("buyer.print")} />

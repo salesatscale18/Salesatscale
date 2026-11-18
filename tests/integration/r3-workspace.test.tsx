@@ -15,7 +15,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
 import { eq } from "drizzle-orm";
-import { conversations, leads, messages, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
+import { conversations, leads, orders, messages, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -217,6 +217,22 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     const { t: tr } = await import("@/lib/i18n");
     expect(tr("inbox.empty.tests_one")).toBe("1 test conversation");
     expect(tr("inbox.empty.tests", { count: 3 })).toBe("3 test conversations");
+  });
+
+  it("B1: signed but unpaid keeps Cancel quote behind a confirm step, without Create new version", async () => {
+    const [ord] = await db.select().from(orders).where(eq(orders.quoteId, ids.eliQuote));
+    await db.update(orders).set({ paymentStatus: "bank_transfer_expected" }).where(eq(orders.id, ord.id));
+    try {
+      const html = await page(OrdersPage(props(account.slug, { tab: "orders", quote: ids.eliQuote })));
+      const panel = html.split('class="sas-side-panel sas-sheet"')[1];
+      expect(panel).toContain('data-testid="quote-cancel-signed"');
+      expect(panel).toMatch(/<summary[^>]*>Cancel quote<\/summary>/);
+      expect(panel).toContain("Yes, cancel quote");
+      expect(panel).not.toContain("Create new version");
+      expect(panel).not.toContain('data-testid="quote-actions"');
+    } finally {
+      await db.update(orders).set({ paymentStatus: ord.paymentStatus }).where(eq(orders.id, ord.id));
+    }
   });
 
   it("B1: a paid order's panel is headed by the order, without validity or quote actions; Monthly sub-heading; code only when names match", async () => {

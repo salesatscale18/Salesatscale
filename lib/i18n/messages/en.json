@@ -2018,7 +2018,7 @@
   "settings.simulator.rules": "Simulate WhatsApp rules",
   "settings.simulator.rules_hint": "When on, simulated chats follow WhatsApp's 24-hour window and template rules, so you can test follow-ups. Buyers see no difference; you see the window timer and the template-only composer as in real chats.",
   "overview.include_simulated": "Include simulated",
-  "buyer.sim.banner_lead": "Test chat.",
+  "buyer.sim.banner_lead": "Simulated chat.",
   "buyer.sim.typing_label": "{agent} is typing",
   "buyer.sim.closed_by": "Conversation closed by {seller}",
   "buyer.sim.form_label": "Order form",
@@ -2579,5 +2579,7 @@
   "golive.check.test_lab.ok_one": "{count} test conversation",
   "golive.check.whatsapp.ok_one": "{count} active number and an approved opening template",
   "golive.check.whatsapp.neutral": "WhatsApp number",
-  "golive.all_passed": "All checks passed."
+  "golive.all_passed": "All checks passed.",
+  "orders.detail.cancel_signed_confirm": "The buyer signed but hasn't paid yet. Cancel this quote?",
+  "orders.detail.cancel_signed_yes": "Yes, cancel quote"
 }

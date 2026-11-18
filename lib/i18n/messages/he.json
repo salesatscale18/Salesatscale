@@ -131,7 +131,7 @@
   "buyer.sim.refused.rate_limited": "יותר מדי הודעות. המתינו דקה ונסו שוב.",
   "buyer.sim.team": "צוות",
   "buyer.sim.opener": "היי {name}, כאן {agent} מהשירות האוטומטי של {company}. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?",
-  "buyer.sim.banner_lead": "צ׳אט בדיקה.",
+  "buyer.sim.banner_lead": "צ׳אט מדומה.",
   "buyer.sim.typing_label": "{agent} בהקלדה",
   "buyer.sim.closed_by": "השיחה נסגרה על ידי {seller}",
   "buyer.sim.form_label": "טופס הזמנה",

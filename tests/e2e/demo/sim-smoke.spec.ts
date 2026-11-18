@@ -45,7 +45,7 @@ test("simulator smoke (free)", async ({ page, browser }) => {
   const buyer = await (await browser.newContext({ viewport: { width: 390, height: 844 } })).newPage();
   await buyer.goto(new URL(chatHref!, base).toString());
   await expect(buyer.getByText("the automated assistant of").first()).toBeVisible({ timeout: 20_000 });
-  await expect(buyer.getByText("Test chat.").first()).toBeVisible();
+  await expect(buyer.getByText("Simulated chat.").first()).toBeVisible();
   await buyer.screenshot({ path: `${SHOTS}/sim-smoke-buyer.png` });
   await page.screenshot({ path: `${SHOTS}/sim-smoke-lead.png`, fullPage: true });
 });

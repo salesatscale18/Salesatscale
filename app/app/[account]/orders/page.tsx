@@ -450,7 +450,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             ) : null}
           </section>
 
-          {/* Once signed the quote is an order: no new version, no cancelling. */}
+          {/* Once signed the quote is an order: no new version. Signed but unpaid (bank transfer expected) keeps
+              "Cancel quote", behind a confirm step: it is the seller's only way out when the buyer never pays. */}
           {detail.quote.status !== "cancelled" && !signed ? (
             <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }} data-testid="quote-actions">
               <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads/${detail.quote.leadId}/quote?from=${detail.quote.id}`}>{t("orders.detail.new_version")}</a>
@@ -460,6 +461,19 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                 <Button type="submit" variant="danger" size="sm">{t("orders.detail.cancel")}</Button>
               </form>
             </div>
+          ) : null}
+          {detail.quote.status !== "cancelled" && signed && signed.order.paymentStatus !== "paid" ? (
+            <details className="sas-confirm" data-testid="quote-cancel-signed">
+              <summary className={buttonClass("danger", "sm")}>{t("orders.detail.cancel")}</summary>
+              <div className="sas-stack-2" style={{ marginTop: 8 }}>
+                <span className="sas-small">{t("orders.detail.cancel_signed_confirm")}</span>
+                <form action={cancelQuoteAction} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                  <input type="hidden" name="slug" value={account.slug} />
+                  <input type="hidden" name="quoteId" value={detail.quote.id} />
+                  <Button type="submit" variant="danger" size="sm">{t("orders.detail.cancel_signed_yes")}</Button>
+                </form>
+              </div>
+            </details>
           ) : null}
         </aside>
       ) : null}

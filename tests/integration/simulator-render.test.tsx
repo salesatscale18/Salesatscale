@@ -201,7 +201,7 @@ describe("Buyer simulator screens", () => {
     await db.insert(messages).values({ accountId: acc.id, conversationId: conv.id, actor: "agent", body: `Here is your order form:\n${await formLink(leadId)}`, deliveryStatus: "delivered", createdAt: new Date(Date.now() + 2000) });
     const html = render(await BuyerChatPage({ params: Promise.resolve({ token }) }));
     save("chat-en", html, "buyer", "en");
-    expect(html).toContain("Test chat.");
+    expect(html).toContain("Simulated chat.");
     expect(html).toContain("Nothing here is sent on WhatsApp.");
     expect(html).toContain("Maya · automated assistant");
     expect(html).toContain("Shall I send the order form?");
@@ -227,7 +227,7 @@ describe("Buyer simulator screens", () => {
     const html = render(await BuyerChatPage({ params: Promise.resolve({ token: heToken }) }));
     save("chat-he", html, "buyer", "he");
     expect(html).toMatch(/<div class="c-root" lang="he" dir="ltr"/);
-    expect(html).toContain("צ׳אט בדיקה.");
+    expect(html).toContain("צ׳אט מדומה.");
     // No gender set: the neutral (slash) form.
     expect(html).toContain("Maya · שירות אוטומטי");
     expect(html).toMatch(/class="c-bar" dir="rtl"/);

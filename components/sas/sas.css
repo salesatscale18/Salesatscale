@@ -632,3 +632,7 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-leads-filters .sas-filters__button { flex: none; }
   .sas-filters__toggle:checked ~ .sas-filter { flex: 1 1 calc(50% - 4px); min-width: 0; }
 }
+
+/* Signed-but-unpaid "Cancel quote" confirm step (round-3 UX sign-off). */
+.sas-confirm > summary { list-style: none; width: fit-content; cursor: pointer; }
+.sas-confirm > summary::-webkit-details-marker { display: none; }
