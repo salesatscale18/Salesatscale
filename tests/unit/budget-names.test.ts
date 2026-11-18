@@ -252,3 +252,14 @@ describe("C2: automatic versions (output check, no model here)", () => {
     expect(languagesToGenerate({ ...base, agentName: "דניאל" }, ["he", "en"])).toEqual(["en"]);
   });
 });
+
+describe("plays editor follows the question budget (UX, 18 Nov)", () => {
+  it("the need play's line and default card say the seller's number", async () => {
+    const { playsOverview } = await import("@/app/app/[account]/setup/playbook/plays/overview");
+    const { defaultPlayFor } = await import("@/lib/agent/core/plays");
+    const need = playsOverview({ plays: {}, questionBudget: 5 }, new Map()).find((x) => x.key === "need")!;
+    expect(need.line).toContain("Stop at 5 questions.");
+    expect(defaultPlayFor("need", 4).do.join(" ")).toContain("Stop at 4 questions.");
+    expect(defaultPlayFor("need", 4).do.join(" ")).not.toContain("Stop at 3");
+  });
+});

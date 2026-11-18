@@ -8,6 +8,7 @@ import { createMarket, getMarket, setMarketPriceList, setMarketStatus, updateMar
 import { overrideSetting, resetSetting } from "@/lib/markets/settings";
 import type { MarketStatus } from "@/db/schema";
 import { isSettingKey, parseOverride, parseWhere, reader } from "./form";
+import { autoNameModel, refreshAgentNameAuto } from "@/lib/agent/names-auto";
 
 // Server actions are public endpoints: each one re-checks access with
 // requireAccount() and passes only that account's id to the market services,
@@ -27,6 +28,20 @@ async function marketForm(form: FormData) {
   return { access, market, slug: access.account.slug };
 }
 
+/**
+ * A market's languages decide which agent-name rows exist (UX, 18 Nov): make
+ * the missing automatic versions right after a market change, so a new
+ * language row is not empty until the next playbook save. Nothing is called
+ * when no language is missing; a failure never blocks the market save.
+ */
+async function refreshAgentNames(access: Awaited<ReturnType<typeof requireAccount>>) {
+  try {
+    await refreshAgentNameAuto(appDb, access.account.id, autoNameModel(), { actor: actorOf(access) });
+  } catch (e) {
+    console.error("[markets] automatic agent names failed", e instanceof Error ? e.message : e);
+  }
+}
+
 function done(slug: string, marketId: string, extra: string): never {
   revalidatePath(path(slug));
   redirect(at(slug, marketId, extra));
@@ -38,6 +53,7 @@ export async function addMarketAction(form: FormData) {
   const where = parseWhere(reader(form), { fillFromCountries: true });
   const r = await createMarket(appDb, actorOf(access), access.account.id, { ...where, intakeKeyIds: [] });
   if (!r.ok) redirect(`${path(slug)}?add=1&${err(firstError(r.errors))}`);
+  await refreshAgentNames(access);
   done(slug, r.market.id, "saved=added");
 }
 
@@ -58,6 +74,7 @@ export async function overrideSettingAction(form: FormData) {
   if (!parsed.ok) redirect(at(slug, market.id, `override=${key}&${err(parsed.error)}`));
   const r = await updateMarket(appDb, actorOf(access), access.account.id, market.id, { overrides: overrideSetting(market.overrides, key, parsed.value) });
   if (!r.ok) redirect(at(slug, market.id, `override=${key}&${err(firstError(r.errors))}`));
+  if (key === "languages") await refreshAgentNames(access);
   done(slug, market.id, `saved=${key}`);
 }
 
@@ -67,6 +84,7 @@ export async function resetSettingAction(form: FormData) {
   if (!isSettingKey(key)) redirect(at(slug, market.id));
   const r = await updateMarket(appDb, actorOf(access), access.account.id, market.id, { overrides: resetSetting(market.overrides, key) });
   if (!r.ok) redirect(at(slug, market.id, err(firstError(r.errors))));
+  if (key === "languages") await refreshAgentNames(access);
   done(slug, market.id, `reset=${key}`);
 }
 

@@ -2,7 +2,8 @@ import { notFound } from "next/navigation";
 import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { ensureDraftVersion } from "@/lib/agent/service";
-import { DEFAULT_PLAYS, playFacts } from "@/lib/agent/core/plays";
+import { DEFAULT_PLAYS, defaultPlayFor, playFacts } from "@/lib/agent/core/plays";
+import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { isPlayKey } from "@/lib/agent/playbook";
 import { playSuggestions } from "@/lib/pipeline/service";
 import { t } from "@/lib/i18n";
@@ -20,7 +21,7 @@ export default async function PlayPage({ params, searchParams }: { params: Promi
   const playbookHref = `${base}/setup/playbook`;
   const playsHref = `${playbookHref}/plays`;
   const draftHref = `${playbookHref}/draft#sg-play`;
-  const d = DEFAULT_PLAYS[play];
+  const d = defaultPlayFor(play, questionBudgetOf(draft.playbook));
   const stored = draft.playbook.plays?.[play];
   const pb = draft.playbook;
 

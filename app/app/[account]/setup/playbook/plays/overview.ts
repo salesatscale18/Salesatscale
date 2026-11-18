@@ -4,7 +4,8 @@
  * and what the facts line says. Pure; unit-tested.
  */
 import { PLAY_KEYS, type PlayCard, type PlayFact, type PlayKey, type Playbook } from "@/db/schema";
-import { DEFAULT_PLAYS, playFacts } from "@/lib/agent/core/plays";
+import { DEFAULT_PLAYS, defaultPlayFor, playFacts } from "@/lib/agent/core/plays";
+import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { t, type MessageKey } from "@/lib/i18n";
 
 export type PlayFilter = "all" | "needs" | "suggested" | "own";
@@ -40,9 +41,9 @@ export function addHint(hint: string): string {
   return t("playbook.plays.add", { what: h.charAt(0).toLowerCase() + h.slice(1) });
 }
 
-export function playsOverview(p: Pick<Playbook, "plays">, pending: ReadonlyMap<PlayKey, { facts: number; card: boolean }>): PlayOverview[] {
+export function playsOverview(p: Pick<Playbook, "plays" | "questionBudget">, pending: ReadonlyMap<PlayKey, { facts: number; card: boolean }>): PlayOverview[] {
   return PLAY_KEYS.map((key) => {
-    const d = DEFAULT_PLAYS[key];
+    const d = defaultPlayFor(key, questionBudgetOf(p));
     const stored = p.plays?.[key];
     const facts = playFacts(stored);
     const own = !!stored?.own;
@@ -56,7 +57,7 @@ export function playsOverview(p: Pick<Playbook, "plays">, pending: ReadonlyMap<P
       : { kind: "none" };
     return {
       key, title: d.title, own, card: stored?.own ?? d, facts, hint: d.sellerContentHint, suggested, factsLine, needsFacts,
-      line: own ? stored!.own!.do.join(" ") : t(`playbook.play.line.${key}` as MessageKey),
+      line: own ? stored!.own!.do.join(" ") : t(`playbook.play.line.${key}` as MessageKey, { max: questionBudgetOf(p) }),
     };
   });
 }

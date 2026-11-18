@@ -113,7 +113,7 @@ export function playsText(playbook: Pick<Playbook, "plays" | "questionBudget">, 
   const cards = PLAY_KEYS.map((key) => {
     const { card: c0, content, own } = effectivePlay(playbook, key);
     // A default card stops at the seller's question budget (B2); the seller's own card stays as written.
-    const c = own ? c0 : { ...c0, do: c0.do.map((step) => step.replace(/\bStop at 3 questions\./, `Stop at ${budget} questions.`)) };
+    const c = own ? c0 : { ...c0, do: c0.do.map((step) => step.replace(/\bStop at 3 questions\./, `Stop at ${budget} questions.`)) }; // same rewrite as defaultPlayFor
     // A default card takes this seller's example where there is one; the seller's own card stays as written.
     const card = !own && sellerExample[key] ? { ...c, example: sellerExample[key]! } : c;
     return [

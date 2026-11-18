@@ -2267,7 +2267,7 @@
   "playbook.plays.add": "Add {what}",
   "playbook.plays.no_facts": "No facts needed",
   "playbook.plays.core_rules": "The core rules (stages, one question per message, no early price, credibility rules) are the same for every seller and are not edited here.",
-  "playbook.play.line.need": "Start with how they handle it today, then ask only what decides the set. Stop at 3 questions.",
+  "playbook.play.line.need": "Start with how they handle it today, then ask only what decides the set. Stop at {max} questions.",
   "playbook.play.line.fit": "Recommend the smallest set that solves the need and say why it fits.",
   "playbook.play.line.value": "One benefit per message, tied to what the buyer said, as a concrete outcome.",
   "playbook.play.line.price_early": "Answer with a number or range, say what it depends on, ask the deciding question.",

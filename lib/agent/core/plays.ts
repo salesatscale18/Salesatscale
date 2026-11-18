@@ -164,3 +164,9 @@ export function effectivePlay(playbook: Pick<Playbook, "plays">, key: PlayKey): 
 }
 
 export const allPlayKeys = (): readonly PlayKey[] => PLAY_KEYS;
+
+/** A default card with the seller's question budget in it ("Stop at N questions."). A seller's own card is never rewritten. */
+export function defaultPlayFor<K extends PlayKey>(key: K, budget: number): DefaultPlay {
+  const d = DEFAULT_PLAYS[key];
+  return { ...d, do: d.do.map((step) => step.replace(/\bStop at 3 questions\./, `Stop at ${budget} questions.`)) };
+}
