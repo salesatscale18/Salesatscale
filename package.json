@@ -15,9 +15,12 @@
     "test:sim": "playwright test -c playwright.sim.config.ts --trace off"
   },
   "dependencies": {
+    "@ai-sdk/gateway": "4.0.150",
     "@anthropic-ai/sdk": "^1.8.0",
     "@clerk/nextjs": "^7.9.25",
     "@neondatabase/serverless": "^1.2.0",
+    "@vercel/functions": "3.11.3",
+    "ai": "7.0.177",
     "drizzle-orm": "^0.45.4",
     "fflate": "^0.8.3",
     "lucide-react": "^1.72.0",
@@ -25,7 +28,8 @@
     "next": "^16.4.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "unpdf": "^1.6.2"
+    "unpdf": "^1.6.2",
+    "ws": "8.23.0"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",
@@ -33,6 +37,7 @@
     "@types/node": "^26.6.6",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
+    "@types/ws": "8.18.2",
     "dotenv": "^18.0.10",
     "drizzle-kit": "^0.31.11",
     "tsx": "^4.23.15",
