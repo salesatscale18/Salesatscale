@@ -67,7 +67,9 @@
 @media (prefers-reduced-motion: reduce) { .sas-app * { transition: none !important; animation: none !important; } }
 
 .sas-ico { width: 16px; height: 16px; flex: none; }
-.sas-num { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
+.sas-num { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
+/* Codes and IDs only (Q-1003 v1, PD-10002, SKUs, buyer IDs): the code font. Money and counts use .sas-num (round-4 review D11). */
+.sas-id { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
 
 /* Typography helpers (design system type styles) */
 .sas-display { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
@@ -121,7 +123,7 @@
 @keyframes sas-fade-in { from { opacity: 0; } to { opacity: 1; } }
 .sas-msg__bubble { padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--ink); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; }
 .sas-msg__meta { display: flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--ink-muted); }
-.sas-msg__time { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.sas-msg__time { font-family: var(--font-sans); font-variant-numeric: tabular-nums; }
 .sas-msg--buyer { align-self: flex-start; }
 .sas-msg--buyer .sas-msg__bubble { border-start-start-radius: var(--radius-sm); }
 .sas-msg--agent, .sas-msg--human { align-self: flex-end; align-items: flex-end; }
@@ -227,7 +229,7 @@
 .sas-app a.sas-nav__item:hover { background: var(--surface-sunken); }
 .sas-app a.sas-nav__item[aria-current="page"] { color: var(--primary); background: var(--primary-soft); font-weight: 600; }
 .sas-nav__label { flex: 1; }
-.sas-nav__count { font-family: var(--font-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.sas-nav__count { font-family: var(--font-sans); font-size: 12px; font-variant-numeric: tabular-nums; }
 .sas-nav__count--human { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 700 11px/20px var(--font-sans); text-align: center; }
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
 .sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
@@ -754,3 +756,25 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-app a.sas-typetile[data-dragover] { outline: 2px dashed var(--primary); outline-offset: -2px; }
 .sas-app a.sas-typetile[data-dragover] .sas-typetile__drop { display: grid; place-items: center; position: absolute; inset: 0; border-radius: inherit; background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 @media (max-width: 767px) { .sas-typetiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sas-typetile__line { white-space: normal; } }
+
+/* Round-4 (lane R4-1): workspace (lead page, Conversations, quotes and orders) */
+/* D9: the side navigation stays in view while a long page scrolls (no empty column under it). */
+@media (min-width: 768px) {
+  .sas-shell__nav > .sas-nav { position: sticky; top: 0; height: 100vh; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+}
+/* E7: win events (order form signed, order paid) get a filled green circle, like the agent and person events. */
+.sas-av--success { background: var(--success); color: var(--on-agent); }
+/* F2: an order form a person sent, in the seller's thread (only the seller sees it). */
+.sas-thread-note { align-self: flex-end; max-width: 78%; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: var(--space-2) var(--space-3); border: 1px dashed var(--line-strong); border-radius: var(--radius-lg); background: var(--surface-raised); font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-thread-note > .sas-ico { color: var(--human); }
+.sas-thread-note strong { color: var(--ink); font-weight: 600; }
+/* F1: the list preview is "Who: " plus the message, the message in its own direction, cut at its own end. */
+.sas-inbox__preview { display: flex; min-width: 0; gap: 4px; }
+.sas-inbox__preview-who { flex: none; }
+.sas-inbox__preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* D4: Conversations tabs wrap on a phone instead of scrolling out of sight. */
+@media (max-width: 767px) {
+  .sas-inbox__tools .sas-views { flex-wrap: wrap; overflow-x: visible; margin-inline: 0; padding-inline: 0; }
+}
+/* E7: table headings like "One-time" stay on one line. */
+.sas-th-nowrap { white-space: nowrap; }

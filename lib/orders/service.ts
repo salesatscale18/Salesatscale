@@ -7,13 +7,13 @@
  * person confirms a bank transfer. Snapshots and signatures are never updated.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, count, desc, eq, inArray, max, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, max, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, catalogItems, catalogVersions, dealStates, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures,
+  agentVersions, catalogItems, catalogVersions, dealStates, leadEvents, leads, markets, orderForms, orders, paymentAttempts, priceLists, quoteLines, quoteVersions, quotes, sellerAccounts, signatures, users,
   type DealFieldValue, type OrderForm, type OrderFormField, type OrderSnapshot, type RecurringPeriod, type UnitCustom,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -657,6 +657,20 @@ export function formTimezone(form: Pick<OrderForm, "snapshot">, accountTimezone:
 export async function signatureFor(db: Db, formId: string) {
   const [s] = await db.select().from(signatures).where(eq(signatures.orderFormId, formId));
   return s ?? null;
+}
+
+/**
+ * Order forms a person (not the agent) sent for a lead, oldest first, with the
+ * sender: the seller's thread shows each one where it happened, as it shows the
+ * agent's message with the link (round-4 review F2). Scoped by account.
+ */
+export async function personSentForms(db: Db, accountId: string, leadId: string) {
+  return db.select({
+    id: orderForms.id, status: orderForms.status, expiresAt: orderForms.expiresAt, createdAt: orderForms.createdAt,
+    sender: { id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email },
+  }).from(orderForms).innerJoin(users, eq(users.id, orderForms.createdByUserId))
+    .where(and(eq(orderForms.accountId, accountId), eq(orderForms.leadId, leadId), eq(orderForms.createdBy, "human")))
+    .orderBy(asc(orderForms.createdAt));
 }
 
 /** Latest order-form status and payment per quote, for the Quotes list. */

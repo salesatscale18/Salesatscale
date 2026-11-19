@@ -184,7 +184,8 @@ describe("Polish-2+5: seller workspace", () => {
       expect(html).toContain('data-tab="chat"');
       expect(html).toContain('data-tab="deal"');
       expect(html).toContain('data-tab="timeline"');
-      expect(html).toMatch(/data-testid="lead-summary"[\s\S]*3 deal fields not known yet/);
+      // Round-4 review B9: the same words as desktop.
+      expect(html).toMatch(/data-testid="lead-summary"[\s\S]*Order form details: 3 not known yet/);
     });
 
     it("settings sections are a chip strip that scrolls the current one into view", async () => {
@@ -212,7 +213,8 @@ describe("Polish-2+5: seller workspace", () => {
       expect(html).toContain('data-testid="lead-market"');
       // People by name or You, never the email; times in the account's zone, zone on hover; day dividers.
       expect(html).not.toContain("testuser+clerk_test@");
-      expect(html).toContain("added by You, ");
+      // Inside a sentence: lower-case "you", isolated from the date (round-4 review F1, B8).
+      expect(html).toContain("added by \u2068you\u2069, ");
       expect(html).toMatch(/title="17 Nov 2026, 23:28 GMT\+2">23:28( ·|<)/);
       expect(html).toContain('aria-label="Messages from Tue, 17 Nov 2026"');
       expect(html).toContain('aria-label="Messages from Wed, 18 Nov 2026"');
@@ -240,7 +242,7 @@ describe("Polish-2+5: seller workspace", () => {
       const list = await page(OrdersPage(props(account.slug)));
       expect(list).toMatch(/<th scope="col" aria-sort="none" data-sort-col="status"><a class="sas-sort"[^>]*>Status<[\s\S]*?<\/th><th scope="col">Order form<\/th>/);
       const detail = await page(OrdersPage(props(account.slug, { quote: ids.quote })));
-      expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-num">GW-10<\/span>/);
+      expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-id">GW-10<\/span>/);
       expect(detail).not.toMatch(/>Discount</);
       expect(detail).toContain('data-testid="detail-status"');
     });

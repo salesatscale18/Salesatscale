@@ -17,8 +17,13 @@ import { docStatusByQuote, formsForQuote, linkFor, listOrders, ORDER_SORT_DEFAUL
 import { CopyButton } from "@/components/sas/copy-button";
 import { estimateDelivery, formatDeliveryShort } from "@/lib/delivery/eta";
 import { frozenPlan } from "@/lib/delivery/plan";
+import { isolate } from "@/lib/leads/bidi";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
+/** "2 h ago", "12 min ago"; "just now" and dates stay as they are (round-4 review E7). */
+function agoText(rel: string): string {
+  return / (min|h)$/.test(rel) ? t("orders.ago", { time: rel }) : rel;
+}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Orders of real (non-test) leads, for the tab count; the list itself loads only on the Orders tab. */
 async function countOrders(accountId: string) {
@@ -129,7 +134,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     quoteTimezones(appDb, account.id, [...rows.map((r) => r.quote), ...(detail ? [detail.quote] : [])]),
   ]);
   const tzFor = (quoteId: string) => tzOf.get(quoteId) ?? account.timezone;
-  const nameById = new Map(people.map((u) => [u.id, personName(u, me.id, t("people.you"))]));
+  // Names sit inside sentences ("Sent by you · 18 Nov"): lower-case "you", and each name isolated so a Hebrew name never pulls the date into it (round-4 review F1, B8).
+  const nameById = new Map(people.map((u) => [u.id, isolate(personName(u, me.id, t("people.you_lower")))]));
   // Records: the exact date and time in the account's zone, the zone named on hover.
   const at = (d: Date) => formatShortDateTimeIn(d, account.timezone);
   const atFull = (d: Date) => formatDateTimeIn(d, account.timezone);
@@ -146,6 +152,14 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     return n ? n.charAt(0).toUpperCase() + n.slice(1) : null;
   };
   const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
+  /** "2 × Kitchen hub"; the recurring charge of an item also bought once: "Kitchen hub · monthly service" (round-4 review B7, as lib/agent/quote-card.ts). */
+  const lineLabel = (l: NonNullable<typeof cur>["lines"][number]) => {
+    const name = chatName(l) ?? l.name;
+    const counted = `${l.qty} × ${name}`;
+    const service = l.chargeType === "recurring" && (cur?.lines ?? []).some((o) => o.sku === l.sku && o.chargeType === "one_time");
+    if (!service) return counted;
+    return t(l.period === "year" ? "buyer.line.service_year" : "buyer.line.service_month", { name: l.qty === 1 ? name : counted });
+  };
   const approver = nameOf(cur?.version.approvedByUserId ?? null);
   const creator =
     cur?.version.createdByActor === "human"
@@ -200,8 +214,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                   <thead><tr>
                     <SortHeader label={t("orders.col.order")} column="order" sort={orderSort} href={orderSortHref} firstDir="desc" />
                     <SortHeader label={t("orders.col.lead")} column="lead" sort={orderSort} href={orderSortHref} />
-                    <SortHeader label={t("orders.col.one_time")} column="one_time" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end" }} />
-                    <SortHeader label={t("orders.col.monthly")} column="monthly" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end" }} />
+                    <SortHeader label={t("orders.col.one_time")} column="one_time" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
+                    <SortHeader label={t("orders.col.monthly")} column="monthly" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
                     <SortHeader label={t("orders.col.payment")} column="payment" sort={orderSort} href={orderSortHref} />
                     <SortHeader label={t("orders.col.signed")} column="signed" sort={orderSort} href={orderSortHref} firstDir="desc" />
                     <th scope="col">{t("orders.col.delivery")}</th>
@@ -209,12 +223,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                   <tbody>
                     {orderRows.map(({ order, lead }) => (
                       <tr key={order.id} className={order.quoteId === quoteId ? "sas-row--selected" : undefined}>
-                        <td><a className="sas-num" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
-                        <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
+                        <td><a className="sas-id" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
+                        <td data-label={t("orders.col.lead")}><bdi>{lead.company ?? lead.fullName}</bdi></td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
                         <td data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
-                        <td className="sas-small" data-label={t("orders.col.signed")} title={atFull(order.createdAt)}>{relativeTime(order.createdAt, now)}</td>
+                        <td className="sas-small" data-label={t("orders.col.signed")} title={atFull(order.createdAt)}>{agoText(relativeTime(order.createdAt, now))}</td>
                         <td className="sas-small" data-label={t("orders.col.delivery")} data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
                       </tr>
                     ))}
@@ -238,8 +252,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                 <thead><tr>
                   <SortHeader label={t("orders.col.quote")} column="quote" sort={quoteSort} href={quoteSortHref} firstDir="desc" />
                   <SortHeader label={t("orders.col.lead")} column="lead" sort={quoteSort} href={quoteSortHref} />
-                  <SortHeader label={t("orders.col.one_time")} column="one_time" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end" }} />
-                  <SortHeader label={t("orders.col.monthly")} column="monthly" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end" }} />
+                  <SortHeader label={t("orders.col.one_time")} column="one_time" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
+                  <SortHeader label={t("orders.col.monthly")} column="monthly" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
                   <SortHeader label={t("orders.col.status")} column="status" sort={quoteSort} href={quoteSortHref} />
                   <th scope="col">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
                 </tr></thead>
@@ -248,8 +262,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     const toPrice = version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId;
                     return (
                       <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
-                        <td><a className="sas-num" href={listHref({ quote: quote.id })}>Q-{quote.number} v{quote.currentVersion}</a></td>
-                        <td data-label={t("orders.col.lead")}>{lead.company ?? lead.fullName}</td>
+                        <td><a className="sas-id" href={listHref({ quote: quote.id })}>Q-{quote.number} v{quote.currentVersion}</a></td>
+                        <td data-label={t("orders.col.lead")}><bdi>{lead.company ?? lead.fullName}</bdi></td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
                         <td data-label={t("orders.col.status")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id), !!docs.get(quote.id)?.payment)} /></td>
@@ -272,13 +286,14 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               {/* A signed or paid order: headed by the order, the quote it came from, no validity (round-3 review B1). */}
               {signed ? (
                 <>
-                  <span className="sas-small" data-testid="detail-from">{detail.lead.company ?? detail.lead.fullName} · <span className="sas-num">{t("orders.detail.from_quote", { number: detail.quote.number, version: signedVersion ?? cur.version.version })}</span></span>
+                  <span className="sas-small" data-testid="detail-from"><bdi>{detail.lead.company ?? detail.lead.fullName}</bdi> · {t("orders.detail.from_quote_words")} <span className="sas-id">Q-{detail.quote.number} v{signedVersion ?? cur.version.version}</span></span>
                   <h2 id="q-h" className="sas-title">{t("orders.detail.order_head", { order: orderLabel(account.tradeName, signed.order.number) })}</h2>
                 </>
               ) : (
                 <>
-                  <span className="sas-small sas-num">{t("orders.detail.valid", { number: detail.quote.number, version: cur.version.version, date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
-                  <h2 id="q-h" className="sas-title">{detail.lead.company ?? detail.lead.fullName}</h2>
+                  {/* Only the reference is a code (round-4 review D11). */}
+                  <span className="sas-small"><span className="sas-id">Q-{detail.quote.number} v{cur.version.version}</span> · {t("orders.detail.valid_until", { date: formatDayMonthIn(cur.version.validUntil, tzFor(detail.quote.id)) })}</span>
+                  <h2 id="q-h" className="sas-title"><bdi>{detail.lead.company ?? detail.lead.fullName}</bdi></h2>
                 </>
               )}
               <span className="sas-small">
@@ -307,9 +322,9 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                 return (
                   <div key={l.id} style={{ display: "contents" }} data-charge={l.chargeType}>
                     <dt style={{ color: "var(--ink)" }} data-line-name="">
-                      {l.qty} × {chatName(l) ?? l.name}
+                      {lineLabel(l)}
                       {/* The internal name only when it differs from the chat name; else the code alone. */}
-                      <div className="sas-small" data-line-sub="">{chatName(l) && chatName(l)!.toLowerCase() !== l.name.trim().toLowerCase() ? <>{l.name} <span className="sas-num">{l.sku}</span></> : chatName(l) ? <span className="sas-num">{l.sku}</span> : <Chip>{l.sku}</Chip>}</div>
+                      <div className="sas-small" data-line-sub="">{chatName(l) && chatName(l)!.toLowerCase() !== l.name.trim().toLowerCase() ? <>{l.name} <span className="sas-id">{l.sku}</span></> : chatName(l) ? <span className="sas-id">{l.sku}</span> : <Chip>{l.sku}</Chip>}</div>
                       <div className="sas-small">{t(period ? `quote.charge.${period}` : "quote.charge.one_time")} · {t(`quote.price_source.${l.priceSource as "list" | "tier" | "custom" | "not_charged"}`)}</div>
                     </dt>
                     <dd className="sas-num">{l.lineTotalMinor === null ? t("quote.to_price") : dm(l.lineTotalMinor, period)}</dd>
@@ -389,7 +404,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             <h3 id="ver-h" className="sas-heading">{t("orders.detail.versions")}</h3>
             {detail.versions.map(({ version }, i) => (
               <span key={version.id} className={i === 0 ? "sas-small" : "sas-small"} style={{ color: i === 0 ? "var(--ink)" : undefined }} title={atFull(version.createdAt)}>
-                <span className="sas-num">v{version.version}</span> · {at(version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}{i > 0 ? ` · ${t("orders.detail.replaced")}` : ""}
+                <span className="sas-id">v{version.version}</span> · {at(version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}{i > 0 ? ` · ${t("orders.detail.replaced")}` : ""}
               </span>
             ))}
           </section>
@@ -404,7 +419,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               <ol className="sas-stack-2" style={{ margin: 0, paddingInlineStart: 18 }}>
                 <li className="sas-small">{t("orders.detail.form_sent", { who: formSender ?? "", when: at(latestForm.createdAt) })}</li>
                 {latestForm.openedAt ? <li className="sas-small">{t("orders.detail.form_opened", { when: at(latestForm.openedAt) })}</li> : null}
-                {signed && latestForm.signedAt ? <li className="sas-small">{t("orders.detail.form_signed", { who: signed.signature.fullName, when: at(latestForm.signedAt) })}</li> : null}
+                {signed && latestForm.signedAt ? <li className="sas-small">{t("orders.detail.form_signed", { who: isolate(signed.signature.fullName), when: at(latestForm.signedAt) })}</li> : null}
               </ol>
             ) : <span className="sas-small">{t("orders.detail.form_none")}</span>}
             {latestForm && (formStatus === "sent" || formStatus === "opened") ? (
@@ -430,7 +445,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             </div>
             {sp.marked ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.marked")}</span></div> : null}
             {signed ? (
-              <span className="sas-small">{orderLabel(account.tradeName, signed.order.number)} · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: at(signed.order.paidAt) })}` : ""}</span>
+              <span className="sas-small"><span className="sas-id">{orderLabel(account.tradeName, signed.order.number)}</span> · {dm(signed.order.amountDueMinor)}{signed.order.recurringMinor ? ` + ${dm(signed.order.recurringMinor, recurringPeriod)}` : ""}{signed.order.paidAt ? ` · ${t("orders.detail.paid_at", { when: at(signed.order.paidAt) })}` : ""}</span>
             ) : <span className="sas-small">{t("orders.detail.payment_soon")}</span>}
             {signed && deliveries.get(signed.order.orderFormId) ? <span className="sas-small" data-detail-delivery="">{t("orders.detail.delivery", { range: deliveries.get(signed.order.orderFormId)! })}</span> : null}
             {signed?.order.deliveryPreference ? (

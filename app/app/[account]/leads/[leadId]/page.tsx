@@ -12,13 +12,15 @@ import { maskPhone } from "@/lib/leads/rules";
 import { formatDateTimeIn, formatShortDateTimeIn } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
-import { ConversationPanel } from "./conversation";
+import { ConversationPanel, dealEnded, formNotes } from "./conversation";
 import { latestConversationForLead } from "@/lib/agent/conversation";
 import { WhatsAppStart } from "./whatsapp-start";
 import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
 import { defaultTransport } from "@/lib/channels/twilio";
-import { displayQuoteStatus, quotesForLead, quoteTimezones } from "@/lib/quotes/service";
-import { leadOrdersWithSignature, orderLabel } from "@/lib/orders/service";
+import { displayQuoteStatus, furthestQuoteState, quotesForLead, quoteTimezones } from "@/lib/quotes/service";
+import { docStatusByQuote, leadOrdersWithSignature, linkFor, orderLabel, personSentForms } from "@/lib/orders/service";
+import { isolate } from "@/lib/leads/bidi";
+import { seesPlatformDetails } from "@/lib/auth/display";
 import { dealPaneView } from "@/lib/leads/deal-pane";
 import { DealStatePane } from "./deal-pane";
 import { formatMoney } from "@/lib/domain/money";
@@ -84,7 +86,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -99,6 +101,7 @@ export default async function LeadCardPage({
     leadStage(appDb, account.id, leadId),
     leadFollowUp(appDb, account.id, leadId),
     leadOrdersWithSignature(appDb, account.id, leadId),
+    personSentForms(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
@@ -115,7 +118,11 @@ export default async function LeadCardPage({
   const now = new Date();
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
   // Quote dates in the quote's market time zone, as the buyer's card shows them.
-  const tzOf = await quoteTimezones(appDb, account.id, leadQuotes.map((q) => q.quote));
+  const [tzOf, docs] = await Promise.all([
+    quoteTimezones(appDb, account.id, leadQuotes.map((q) => q.quote)),
+    // The quote row shows the furthest state (form opened, paid), as the timeline does (round-4 review F2).
+    docStatusByQuote(appDb, account.id, leadQuotes.map((q) => q.quote.id)),
+  ]);
   // Orders: label and amounts, one source for the Orders block, the stage banner and the timeline.
   const orderView = (o: (typeof leadOrders)[number]["order"]) => ({
     label: orderLabel(account.tradeName, o.number),
@@ -133,8 +140,10 @@ export default async function LeadCardPage({
   const orderedQuotes = new Set(leadOrders.map(({ order }) => order.quoteId));
 
   const tz = account.timezone;
-  /** People by name, or "You" for the viewer (never the email). */
-  const who = (u: Parameters<typeof personName>[0]) => personName(u, me.id, t("people.you"));
+  /** People by name, or "You" for the viewer (never the email); isolated so a Hebrew name never pulls in the date next to it (round-4 review F1). */
+  const who = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you")));
+  /** The same inside a sentence ("added by you"). */
+  const whoIn = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you_lower")));
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";
@@ -146,10 +155,12 @@ export default async function LeadCardPage({
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: EVENT_ICON[startedSim ? "conversation.started_sim" : event.type] ?? "cog",
+    // Wins get the filled green circle (round-4 review E7).
+    tone: won ? ("success" as const) : undefined,
     title: won ? <span style={{ color: "var(--success)" }} data-tone="success">{title}</span> : title,
     detail:
       won && ord
-        ? <><span className="sas-num">{ord.label} · {ord.amount}</span>{event.type === "order_form.signed" ? ` · Q-${String((event.data as { number?: number } | null)?.number ?? "")} v${String((event.data as { version?: number } | null)?.version ?? "")}` : ""}</>
+        ? <><span className="sas-id">{ord.label}</span> · <span className="sas-num">{ord.amount}</span>{event.type === "order_form.signed" ? ` · Q-${String((event.data as { number?: number } | null)?.number ?? "")} v${String((event.data as { version?: number } | null)?.version ?? "")}` : ""}</>
         : event.type.startsWith("quote.") || event.type.startsWith("order_form.")
         ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
         : event.type === "consent.recorded"
@@ -172,6 +183,8 @@ export default async function LeadCardPage({
 
   // An open conversation is taken over from the header (not under the chat).
   const takeOverHere = !!conversation && conversation.conversation.status === "open" && lead.status !== "opted_out";
+  // A won or lost deal: the agent still answers, so Take over stays, as a secondary button (round-4 review E2).
+  const ended = dealEnded(lead.status);
   // A simulated lead whose chat can be started: the empty chat says how.
   const canStartSim = !!chatLink && !chatLink.expired && simFacts?.refusal === null;
 
@@ -180,6 +193,8 @@ export default async function LeadCardPage({
   else if (owner) chatNote = t("lead.card.human_owner", { name: who(owner) });
   else if (simulated && canStartSim) chatNote = t("lead.card.sim_start_hint");
   else chatNote = t("lead.card.wait_live");
+  // Order forms a person sent show in the thread where they happened (round-4 review F2).
+  const notes = formNotes(sentForms, me.id, (id) => linkFor({ id }).url, now);
 
   return (
     <main className="sas-shell__content">
@@ -192,19 +207,19 @@ export default async function LeadCardPage({
           <Avatar actor="buyer" initials={nameInitials(lead.fullName)} />
           <div className="sas-stack-2" style={{ gap: 2, flex: 1, minWidth: 0 }}>
             <div className="sas-page-head" style={{ gap: 8 }}>
-              <h1 className="sas-title">{lead.fullName}{lead.company ? ` · ${lead.company}` : ""}</h1>
+              <h1 className="sas-title"><bdi>{lead.fullName}</bdi>{lead.company ? <> · <bdi>{lead.company}</bdi></> : null}</h1>
               {simulated ? <SimulatedChip /> : null}
               <StatusPill object="lead" state={lead.status} />
             </div>
             <span className="sas-small">
               {/* A simulated buyer has a buyer ID, not a phone (the placeholder is never shown or formatted as one). */}
               {simulated
-                ? <span data-testid="buyer-ref">{t("sim.header", { id: "" })}<span className="sas-num" dir="ltr">{lead.buyerRef ?? lead.phone.replace(/^sim:/, "")}</span> · {t(`lang.${lead.language as "en" | "he"}`)} ·{" "}</span>
+                ? <span data-testid="buyer-ref">{t("sim.header", { id: "" })}<span className="sas-id" dir="ltr">{lead.buyerRef ?? lead.phone.replace(/^sim:/, "")}</span> · {t(`lang.${lead.language as "en" | "he"}`)} ·{" "}</span>
                 : <>{t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}</>}
               {leadMarket ? <span data-testid="lead-market">{t("lead.card.market_line", { market: leadMarket.name })} · </span> : null}
               {creator
-                ? t("lead.card.added", { source, who: who(creator), when: formatDateTimeIn(lead.createdAt, tz) })
-                : t("lead.card.added_system", { source, when: formatDateTimeIn(lead.createdAt, tz) })}
+                ? t("lead.card.added", { source: isolate(source), who: whoIn(creator), when: formatDateTimeIn(lead.createdAt, tz) })
+                : t("lead.card.added_system", { source: isolate(source), when: formatDateTimeIn(lead.createdAt, tz) })}
             </span>
             {/* The market can be changed here (the side panel that repeated it is gone). */}
             {marketList.length > 1 ? (
@@ -230,7 +245,7 @@ export default async function LeadCardPage({
               <input type="hidden" name="slug" value={account.slug} />
               <input type="hidden" name="conversationId" value={conversation.conversation.id} />
               <input type="hidden" name="from" value="lead" />
-              <button type="submit" className={buttonClass("takeover", "sm")} data-testid="header-take-over"><Icon name="user" />{t("conv.take_over")}</button>
+              <button type="submit" className={buttonClass(ended ? "secondary" : "takeover", "sm")} data-testid="header-take-over" data-take-over={ended ? "secondary" : "primary"}><Icon name="user" />{t("conv.take_over")}</button>
             </form>
           ) : null}
         </header>
@@ -273,6 +288,7 @@ export default async function LeadCardPage({
                 chatWindow={waWindow}
                 slug={account.slug} view={conversation} me={me} buyerName={lead.fullName} timezone={tz} takeOverInHeader={takeOverHere}
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
+                leadStatus={lead.status} notes={notes} rawToolNames={seesPlatformDetails(access)}
               />
             ) : (
               <div className="sas-empty sas-lead__chat">
@@ -292,9 +308,12 @@ export default async function LeadCardPage({
                   {leadQuotes.map(({ quote, version, older }) => (
                     <li key={quote.id}>
                       <a className="sas-list__row" href={`/app/${account.slug}/orders?quote=${quote.id}`}>
-                        <span className="sas-num">Q-{quote.number} v{quote.currentVersion}</span>
+                        <span className="sas-id">Q-{quote.number} v{quote.currentVersion}</span>
                         <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : quoteTotals(version)}</span>
-                        <StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id), orderedQuotes.has(quote.id))} />
+                        {(() => {
+                          const f = furthestQuoteState(displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id), orderedQuotes.has(quote.id)), docs.get(quote.id));
+                          return f.object === "payment" ? <StatusPill object="payment" state={f.state} /> : f.object === "order_form" ? <StatusPill object="order_form" state={f.state} /> : <StatusPill object="quote" state={f.state} />;
+                        })()}
                       </a>
                       {older.length ? (
                         <details style={{ padding: "0 16px 8px" }}>
@@ -320,7 +339,7 @@ export default async function LeadCardPage({
                   {leadOrders.map(({ order }) => (
                     <li key={order.id}>
                       <a className="sas-list__row" href={`/app/${account.slug}/orders?tab=orders&quote=${order.quoteId}`} data-order-row={order.id}>
-                        <span className="sas-num">{orderById.get(order.id)!.label}</span>
+                        <span className="sas-id">{orderById.get(order.id)!.label}</span>
                         <span className="sas-list__main sas-num sas-small">{orderById.get(order.id)!.amount}</span>
                         <StatusPill object="payment" state={order.paymentStatus} />
                       </a>
@@ -352,9 +371,9 @@ export default async function LeadCardPage({
                     <span>
                       {consent
                         ? t("lead.card.consent", {
-                            source: consent.consent.source,
                             date: formatDateTimeIn(consent.consent.capturedAt, tz),
-                            who: consent.recordedBy ? who(consent.recordedBy) : t("lead.origin.webhook"),
+                            source: isolate(consent.consent.source),
+                            who: consent.recordedBy ? whoIn(consent.recordedBy) : t("lead.origin.webhook"),
                           })
                         : t("lead.card.consent_none")}
                     </span>

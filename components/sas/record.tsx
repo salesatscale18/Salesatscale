@@ -12,6 +12,8 @@ export type TimelineItem = {
   time: string;
   /** The full time with the zone, shown on hover. */
   timeTitle?: string;
+  /** "success": a win (order form signed, order paid), a filled green circle. */
+  tone?: "success";
 };
 
 /** A lead's unified timeline (messages, quotes, forms, payments, meetings). */
@@ -20,7 +22,7 @@ export function Timeline({ items, label }: { items: TimelineItem[]; label: strin
     <ol className="sas-tl" aria-label={label}>
       {items.map((it) => (
         <li key={it.id} className="sas-tl__item">
-          <span className={it.actor === "agent" || it.actor === "human" ? `sas-av sas-av--${it.actor}` : "sas-av"} aria-hidden="true">
+          <span className={it.tone === "success" ? "sas-av sas-av--success" : it.actor === "agent" || it.actor === "human" ? `sas-av sas-av--${it.actor}` : "sas-av"} aria-hidden="true" data-tone={it.tone}>
             <Icon name={it.icon} />
           </span>
           <div className="sas-tl__body">

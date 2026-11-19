@@ -15,6 +15,8 @@ import { QuoteCardMessage } from "./quote-card-message";
 import type { WindowState } from "@/lib/channels/rules";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { SimulatedChip, TestLabChip } from "../simulated-chip";
+import { CopyButton } from "@/components/sas/copy-button";
+import { isolate } from "@/lib/leads/bidi";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -45,22 +47,75 @@ const firstName = (p: Person) => p.firstName || displayName(p);
 /** The text for a key built at runtime, or null when there is no such key. */
 const maybe = (key: string) => messages.en[key as MessageKey] ?? null;
 
-/** Trace chips for an agent message: the seller-readable label, plus Refused/Failed when the tool did not succeed. */
-export function traceChips(calls: ConversationView["thread"][number]["calls"]): TraceItem[] {
+/** A tool's plain label in the seller's thread ("Deal details updated"), never its internal name (round-4 review C1). */
+export function toolLabel(name: string): string {
+  return maybe(`conv.tool.${name}`) ?? t("conv.tool.other");
+}
+
+/**
+ * Trace chips for an agent message: the seller-readable label, plus Refused/Failed when the tool did not succeed.
+ * `raw`: platform admins also get the internal name ("deal_state.update") as the chip's tooltip.
+ */
+export function traceChips(calls: ConversationView["thread"][number]["calls"], raw = false): TraceItem[] {
   // The app's own messages (after a seller approval) are linked by an app_message row: no tool, no chip.
   return calls.filter((c) => c.name !== APP_MESSAGE_CALL).map((c) => ({
     kind: c.name === "lookup_knowledge" ? "knowledge" : "tool",
-    label: describeCall(c.name, c.input, c.result, c.outcome).label,
+    label: toolLabel(c.name),
     outcome: c.outcome === "ok" ? undefined : c.outcome,
+    ...(raw ? { title: describeCall(c.name, c.input, c.result, c.outcome).label } : {}),
   }));
 }
 
-/** One line on who has the conversation: agent, a person, or closed. */
-export function conversationStatusText(view: Pick<ConversationView, "conversation" | "takenOverBy">, leadOptedOut: boolean): string {
+/** Lead statuses whose deal is over while the agent still answers in the chat. */
+const DEAL_ENDED = ["won", "lost"] as const;
+export const dealEnded = (leadStatus: string | null | undefined): leadStatus is "won" | "lost" => (DEAL_ENDED as readonly string[]).includes(leadStatus ?? "");
+
+/** One line on who has the conversation: agent, a person, or closed. A won or lost deal says so (round-4 review E2). */
+export function conversationStatusText(view: Pick<ConversationView, "conversation" | "takenOverBy">, leadOptedOut: boolean, leadStatus?: string | null): string {
   const { conversation: c, takenOverBy } = view;
   if (c.status === "closed" || leadOptedOut) return t(leadOptedOut ? "conv.status.closed_opted_out" : "conv.status.closed");
   if (c.status === "human") return takenOverBy ? t("conv.status.human", { name: displayName(takenOverBy) }) : t("conv.status.human_unknown");
+  if (dealEnded(leadStatus)) return t(leadStatus === "won" ? "conv.status.won" : "conv.status.lost");
   return t("conv.status.open");
+}
+
+/** An order form a person sent, shown in the seller's thread where it happened (round-4 review F2). */
+export type FormNote = { id: string; at: Date; who: string; url: string | null; closed: boolean };
+
+/**
+ * Thread notes from the forms a person sent (lib/orders/service.ts personSentForms):
+ * the sender ("you" for the viewer), and the link while it still works.
+ */
+export function formNotes(
+  rows: { id: string; status: string; expiresAt: Date; createdAt: Date; sender: { id: string; firstName: string | null; lastName: string | null; email: string | null } }[],
+  meId: string | null,
+  linkOf: (id: string) => string,
+  now = new Date(),
+): FormNote[] {
+  return rows.map((r) => {
+    const open = (r.status === "sent" || r.status === "opened") && r.expiresAt.getTime() > now.getTime();
+    return {
+      id: r.id, at: r.createdAt, who: isolate(personName(r.sender, meId, t("people.you_lower"))),
+      url: open ? linkOf(r.id) : null, closed: !open && r.status !== "signed",
+    };
+  });
+}
+
+function FormNoteEntry({ note, time, timeTitle }: { note: FormNote; time: string; timeTitle: string }) {
+  return (
+    <div className="sas-thread-note" data-thread-note="order_form" role="note">
+      <Icon name="send" />
+      <strong>{t("conv.form_note.sent", { who: note.who })}</strong>
+      <span className="sas-msg__time" title={timeTitle}>{time}</span>
+      {note.url ? (
+        <>
+          <a href={note.url} target="_blank" rel="noreferrer">{t("conv.form_note.open")}</a>
+          <CopyButton value={note.url} label={t("conv.form_note.copy")} variant="ghost" />
+        </>
+      ) : note.closed ? <span>{t("conv.form_note.closed")}</span> : null}
+      <span style={{ flexBasis: "100%" }}>{t("conv.form_note.only_you")}</span>
+    </div>
+  );
 }
 
 /**
@@ -68,8 +123,10 @@ export function conversationStatusText(view: Pick<ConversationView, "conversatio
  * server action that re-checks access; this only decides which form to show.
  */
 export function ConversationControls({
-  slug, from, view, me, buyerName, leadOptedOut, notice, takeOverInHeader = false,
+  slug, from, view, me, buyerName, leadOptedOut, notice, takeOverInHeader = false, leadStatus = null,
 }: {
+  /** The lead's status: a won or lost deal says so and keeps Take over as a secondary button. */
+  leadStatus?: string | null;
   /** The lead page shows Take over in its header: here only the status line. */
   takeOverInHeader?: boolean;
   slug: string;
@@ -90,7 +147,8 @@ export function ConversationControls({
   );
   const noticeText = notice ? maybe(`conv.notice.${notice}`) : null;
   const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim" || notice === "quote_approved" || notice === "quote_in_limit";
-  const status = conversationStatusText(view, leadOptedOut);
+  const status = conversationStatusText(view, leadOptedOut, leadStatus);
+  const ended = dealEnded(leadStatus);
   const replyId = `reply-${from}`;
 
   return (
@@ -103,14 +161,14 @@ export function ConversationControls({
       {c.status === "closed" || leadOptedOut ? (
         <p className="sas-small" role="status" style={{ margin: 0, display: "flex", gap: 6, alignItems: "center" }}><Icon name="x-circle" />{status}</p>
       ) : c.status === "open" && takeOverInHeader ? (
-        <p className="sas-small" role="status" style={{ margin: 0 }}>{status} {t("conv.take_over_hint_header")}</p>
+        <p className="sas-small" role="status" style={{ margin: 0 }}>{status}{ended ? null : <> {t("conv.take_over_hint_header")}</>}</p>
       ) : c.status === "open" ? (
         <form action={takeOverAction} style={{ display: "flex", gap: 12, alignItems: "center", flexWrap: "wrap" }}>
           {hidden}
           <span className="sas-small" style={{ flex: "1 1 240px" }}>
-            {status} {from === "lab" ? t("lab.take_over_hint") : t("conv.take_over_hint", { name: buyerName })}
+            {status}{ended ? null : <> {from === "lab" ? t("lab.take_over_hint") : t("conv.take_over_hint", { name: buyerName })}</>}
           </span>
-          <button type="submit" className={buttonClass("takeover", "sm")}><Icon name="user" />{t("conv.take_over")}</button>
+          <button type="submit" className={buttonClass(ended ? "secondary" : "takeover", "sm")} data-take-over={ended ? "secondary" : "primary"}><Icon name="user" />{t("conv.take_over")}</button>
         </form>
       ) : (
         <>
@@ -148,7 +206,14 @@ export function ConversationControls({
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
   slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead", timezone, takeOverInHeader = false,
+  leadStatus = null, notes = [], rawToolNames = false,
 }: {
+  /** The lead's status (won or lost: the status line says the deal is over). */
+  leadStatus?: string | null;
+  /** Order forms a person sent, placed in the thread by time (round-4 review F2). */
+  notes?: FormNote[];
+  /** Platform admins: the tool's internal name as the trace chip's tooltip. */
+  rawToolNames?: boolean;
   /** The viewer's time zone (the account's until people have their own): message times and day dividers. */
   timezone?: string | null;
   takeOverInHeader?: boolean;
@@ -177,41 +242,48 @@ export function ConversationPanel({
     lastDay = day;
     return <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(d, timezone) })}><span>{formatDayIn(d, timezone)}</span></div>;
   };
+  let pending = [...notes].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const noteNode = (n: FormNote) => [divider(n.at), <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} />];
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
         <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
-        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : c.channel === "testlab" ? <TestLabChip /> : <span className="sas-chip">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
+        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : c.channel === "testlab" ? <TestLabChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
         {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
       </div>
       <ChatThread label={t("conv.label")}>
-        {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
+        {thread.length === 0 && notes.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
         {thread.flatMap(({ message: m, calls }) => {
+          // Notes (forms a person sent) that happened before this message come first.
+          const before = pending.filter((n) => n.at.getTime() <= m.createdAt.getTime());
+          pending = pending.slice(before.length);
+          const noteNodes = before.flatMap(noteNode);
           const day = divider(m.createdAt);
           // The quote message the app wrote shows as the card the buyer saw (the stored text is the fallback).
           const card = view.quoteCards?.[m.id];
           if (card) {
             const back = from === "inbox" ? `/app/${slug}/conversations?c=${c.id}` : `/app/${slug}/leads/${c.leadId}#conversation`;
-            return [day, <QuoteCardMessage key={m.id} card={card} time={clock(m.createdAt)} timeTitle={full(m.createdAt)} slug={slug} approve={{ back }} />];
+            return [...noteNodes, day, <QuoteCardMessage key={m.id} card={card} time={clock(m.createdAt)} timeTitle={full(m.createdAt)} slug={slug} approve={{ back }} />];
           }
           const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
           const kind = kinds.get(m.id);
-          // Text the app wrote itself (the close after an approval) is "Sent by the app", not the agent.
+          // Text the app wrote itself (the close after an approval) reads "Agent", as the timeline does (round-4 review B8).
           const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author ? personName({ id: m.actorUserId ?? "", ...author }, meId, t("people.you")) : t("conv.who.team")) : t("conv.who.system");
-          return [day, (
+          return [...noteNodes, day, (
             <ChatMessage
               key={m.id} actor={actor} who={who} time={delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)} timeTitle={full(m.createdAt)}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
-              trace={actor === "agent" ? traceChips(calls) : undefined}
+              trace={actor === "agent" ? traceChips(calls, rawToolNames) : undefined}
             >
               <MessageBody body={m.body} kind={kind} />
             </ChatMessage>
           )];
         })}
+        {pending.flatMap(noteNode)}
       </ChatThread>
-      <ConversationControls slug={slug} from={from} view={view} me={me} buyerName={buyerName} leadOptedOut={leadOptedOut} notice={notice} takeOverInHeader={takeOverInHeader} />
+      <ConversationControls slug={slug} from={from} view={view} me={me} buyerName={buyerName} leadOptedOut={leadOptedOut} notice={notice} takeOverInHeader={takeOverInHeader} leadStatus={leadStatus} />
     </section>
   );
 }
