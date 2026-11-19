@@ -90,8 +90,9 @@ describe("pipeline screens and actions", () => {
 
   it("Analyze sources: shows the estimate, is disabled without an API key, and refuses in the action", async () => {
     const page = await html(SourcesPage({ ...params, searchParams: Promise.resolve({ analyze: "confirm" }) }));
-    // The analysis strip: what changed, then the estimated cost (redesign R3-3).
-    expect(page).toContain("Changed since the last analysis: 2 of 2 sources");
+    // The analysis strip: what changed, then the estimated cost (redesign R3-3). No run has
+    // finished yet, so it says so instead of comparing with a last analysis (R4 F3).
+    expect(page).toContain("Your sources have not been analyzed yet");
     expect(page).toMatch(/Estimated cost \$0\.\d+/);
     expect(page).toContain("AI is not set up for this workspace yet");
     expect(page).not.toContain("Start analysis");

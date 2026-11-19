@@ -14,7 +14,7 @@ import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { firstParam, hrefWith, sortParams, TRANSIENT_PARAMS } from "@/lib/list-kit";
 import {
-  DEFAULT_FACT_SORT, FACT_SORTS, filterFacts, LIST_KEYS, sortFacts, sourceOptions, statusCounts,
+  DEFAULT_FACT_SORT, FACT_SORTS, factLead, filterFacts, LIST_KEYS, sortFacts, sourceChipIcon, sourceOptions, statusCounts,
 } from "@/lib/knowledge/facts-list";
 import {
   addFactAction, answerQuestionsAction, approveAllAction, removeFactAction, resolveContradictionAction, setFactStatusAction, updateFactAction,
@@ -95,7 +95,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   const filter = current?.topic ?? "";
   const totals = topics.reduce((s, x) => ({ total: s.total + x.total, approved: s.approved + x.approved, suggested: s.suggested + x.suggested }), { total: 0, approved: 0, suggested: 0 });
   const topicNames = topics.map((x) => x.topic);
-  const defaultTopic = current?.topic ?? topicNames[0] ?? "General";
+  // Add fact: the topic selected in the side list, else empty (a placeholder asks for one).
+  const defaultTopic = current?.topic ?? "";
   const hidden = (f?: KnowledgeFact) => (
     <>
       <input type="hidden" name="slug" value={account.slug} />
@@ -115,8 +116,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   const label = (f: KnowledgeFact) => f.statement.slice(0, 60);
   const sourceChip = (f: KnowledgeFact) => {
     const l = linkOf(f);
-    if (l) return <a className="sas-chip sas-chip--plain" style={{ maxWidth: "100%", textDecoration: "none" }} href={l.href} title={`${l.title} · ${f.sourceLocator}`} data-source-chip=""><Icon name="file-text" /><span style={ellipsis} dir="auto">{evidenceChipText(l)}</span></a>;
-    if (f.sourceLabel) return <span className="sas-chip sas-chip--plain" style={{ maxWidth: "100%" }} title={f.sourceLabel}><Icon name="file-text" /><span style={ellipsis} dir="auto">{f.sourceLabel}</span></span>;
+    if (l) return <a className="sas-chip sas-chip--plain sas-kchip" href={l.href} title={`${l.title} · ${f.sourceLocator}`} data-source-chip="" data-kind={l.kind}><Icon name={sourceChipIcon(l.kind)} /><span dir="auto">{evidenceChipText(l)}</span></a>;
+    if (f.sourceLabel) return <span className="sas-chip sas-chip--plain sas-kchip" title={f.sourceLabel}><Icon name={sourceChipIcon(null)} /><span dir="auto">{f.sourceLabel}</span></span>;
     return <span className="sas-small">—</span>;
   };
   const statusPill = (f: KnowledgeFact) =>
@@ -130,12 +131,15 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
       : []),
     ...(f.status === "suggested"
       ? [{ kind: "form" as const, label: t("knowledge.reject"), action: setFactStatusAction, fields: { slug: account.slug, filter, list: listParams, factId: f.id, status: "rejected" }, icon: "x-circle" as const }]
-      : [{ label: t("knowledge.remove"), href: hrefWith(page, sp, { confirm: f.id }, ["panel", "done", "error", "n", "edit", "question"]), icon: "x-circle" as const, danger: true }]),
+      : [{ label: t("knowledge.remove"), href: hrefWith(page, sp, { confirm: f.id }, ["panel", "done", "error", "n", "edit", "question"]), icon: "trash" as const, danger: true }]),
   ];
   const topicInput = (id: string, name: string, value: string) => (
     <div className="sas-input-group">
       <label className="sas-input-label" htmlFor={id}>{t("knowledge.topic")}</label>
-      <input className="sas-input" id={id} name={name} required maxLength={60} defaultValue={value} list="kf-topics" autoComplete="off" aria-describedby={`${id}-hint`} />
+      <span className="sas-combo">
+        <input className="sas-input" id={id} name={name} required maxLength={60} defaultValue={value} list="kf-topics" autoComplete="off" placeholder={t("knowledge.topic_placeholder")} aria-describedby={`${id}-hint`} />
+        <Icon name="chevron-down" className="sas-combo__arrow" />
+      </span>
       <span className="sas-hint" id={`${id}-hint`}>{t("knowledge.topic_hint")}</span>
     </div>
   );
@@ -225,7 +229,6 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
               params={sp}
               drop={DROP}
               title={<span id="kf-h">{t("knowledge.facts_heading", { topic: current?.topic ?? t("knowledge.all_topics"), count: inTopic.length })}</span>}
-              label={t("knowledge.find")}
               actions={
                 current && approvable(current.topic) > 0 ? (
                   <form action={approveAllAction}>
@@ -240,35 +243,6 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                   </form>
                 ) : undefined
               }
-              search={{ label: t("knowledge.search") }}
-              chips={{
-                param: "status",
-                label: t("knowledge.filter.status"),
-                items: [
-                  { value: null, label: t("knowledge.filter.all"), count: counts.all },
-                  { value: "suggested", label: t("knowledge.filter.to_review"), count: counts.suggested },
-                  { value: "approved", label: t("knowledge.filter.approved"), count: counts.approved },
-                ],
-              }}
-              selects={sources.length ? [{
-                name: "source",
-                label: t("knowledge.filter.source"),
-                value: filters.source ?? "",
-                options: [
-                  { value: "", label: t("knowledge.filter.any_source") },
-                  ...sources.map((s) => ({ value: s.value, label: s.title ?? t("knowledge.filter.manual") })),
-                ],
-              }] : []}
-              sort={{
-                current: sort,
-                options: [
-                  { key: "status", dir: "asc", label: t("knowledge.sort.review_first") },
-                  { key: "updated", dir: "desc", label: t("knowledge.sort.newest") },
-                  { key: "updated", dir: "asc", label: t("knowledge.sort.oldest") },
-                  { key: "fact", dir: "asc", label: t("knowledge.sort.fact") },
-                  { key: "source", dir: "asc", label: t("knowledge.sort.source") },
-                ],
-              }}
             />
             {inTopic.length === 0 ? (
               <div className="sas-panel">
@@ -282,6 +256,43 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
             ) : (
               <ListTable
                 caption={t("knowledge.facts")}
+                toolbar={
+                  <ListToolbar
+                    path={page}
+                    params={sp}
+                    drop={DROP}
+                    label={t("knowledge.find")}
+                    search={{ label: t("knowledge.search") }}
+                    chips={{
+                      param: "status",
+                      label: t("knowledge.filter.status"),
+                      items: [
+                        { value: null, label: t("knowledge.filter.all"), count: counts.all },
+                        { value: "suggested", label: t("knowledge.filter.to_review"), count: counts.suggested },
+                        { value: "approved", label: t("knowledge.filter.approved"), count: counts.approved },
+                      ],
+                    }}
+                    selects={sources.length ? [{
+                      name: "source",
+                      label: t("knowledge.filter.source"),
+                      value: filters.source ?? "",
+                      options: [
+                        { value: "", label: t("knowledge.filter.any_source") },
+                        ...sources.map((s) => ({ value: s.value, label: s.title ?? t("knowledge.filter.manual") })),
+                      ],
+                    }] : []}
+                    sort={{
+                      current: sort,
+                      options: [
+                        { key: "status", dir: "asc", label: t("knowledge.sort.review_first") },
+                        { key: "updated", dir: "desc", label: t("knowledge.sort.newest") },
+                        { key: "updated", dir: "asc", label: t("knowledge.sort.oldest") },
+                        { key: "fact", dir: "asc", label: t("knowledge.sort.fact") },
+                        { key: "source", dir: "asc", label: t("knowledge.sort.source") },
+                      ],
+                    }}
+                  />
+                }
                 foot={<span className="sas-small" data-facts-shown="">{t("knowledge.showing", { shown: facts.length, total: inTopic.length })}</span>}
               >
                 <thead>
@@ -309,7 +320,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                           <span style={{ display: "block", overflowWrap: "anywhere" }} dir="auto">{f.statement}</span>
                           <span className="sas-small" style={{ display: "block" }} dir="auto">{f.topic}</span>
                         </td>
-                        <td data-label={t("knowledge.col.source")} style={{ maxWidth: 240 }}>{sourceChip(f)}</td>
+                        <td data-label={t("knowledge.col.source")} className="sas-td-under sas-td-kchip">{sourceChip(f)}</td>
                         <td data-label={t("knowledge.col.status")}>
                           {/* Approve sits with the status (in the row on a desktop and in the card on a phone, where the ⋯ takes the corner). */}
                           <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
@@ -334,7 +345,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                       row,
                       <tr key={`${f.id}-confirm`} className="sas-confirm-row">
                         <td colSpan={5} data-label="">
-                          <ConfirmDelete title={t("knowledge.delete_confirm")} action={removeFactAction} fields={{ slug: account.slug, filter, list: listParams, factId: f.id }} cancelHref={hrefWith(page, sp, { confirm: null }, DROP)}>
+                          <ConfirmDelete title={t("knowledge.delete_confirm", { fact: factLead(f.statement) })} action={removeFactAction} fields={{ slug: account.slug, filter, list: listParams, factId: f.id }} cancelHref={hrefWith(page, sp, { confirm: null }, DROP)}>
                             {t("knowledge.delete_confirm_body")}
                           </ConfirmDelete>
                         </td>

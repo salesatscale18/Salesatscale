@@ -214,7 +214,8 @@ describe("Sources redesign", () => {
       expect(html).toContain(`href="/app/${slug}/setup/sources?panel=website"`);
       // The strip: what changed, estimated cost in the account currency (₪, like Settings › AI usage), Run history, the button.
       expect(html).toContain("data-analyze-strip");
-      expect(tx).toMatch(/Changed since the last analysis: \d of \d sources/);
+      // No analysis has finished on this account: no "since the last analysis" (R4 F3).
+      expect(tx).toContain("Your sources have not been analyzed yet");
       expect(tx).toMatch(/Estimated cost ₪\d+\.\d{2,3}/);
       expect(html).toContain(`href="/app/${slug}/setup/sources?panel=runs"`);
       expect(html).toContain('data-analyze-button="primary"');
@@ -351,7 +352,7 @@ describe("Sources redesign", () => {
       expect(html).toMatch(/<mark data-match=""[^>]*>Hello<\/mark>/);
       expect(text(html)).toContain("1 match");
       const tx = text(html);
-      for (const s of ["Details", "Call transcript", "Avi", "13 Nov 2026", "English", "by You", "use of recording confirmed"]) expect(tx).toContain(s);
+      for (const s of ["Details", "Call transcript", "Avi", "13 Nov 2026", "English", "by You", "Use of recording confirmed · personal details masked"]) expect(tx).toContain(s);
       expect(html).toContain("data-source-facts");
       expect(html).toMatch(/class="sas-chip sas-chip--plain sas-num" href="#l-0"[^>]*>00:04</);
       expect(tx).toContain("Approved");

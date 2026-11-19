@@ -96,9 +96,11 @@ export const STATUS = {
   // Knowledge sources (P8): reading a website, file, note or call transcript.
   source: {
     processing: { tone: "agent", icon: "sparkles" },
+    // Read, but no analysis has looked at its current text and it has no facts (computed on read, no column).
+    not_analyzed: { tone: "neutral", icon: "circle-dot" },
     ready: { tone: "neutral", icon: "scan-search" },
     // Every fact found in it is reviewed and at least one approved (computed on read, no column).
-    approved: { tone: "success", icon: "check" },
+    approved: { tone: "success", icon: "check-circle" },
     needs_input: { tone: "warning", icon: "alert-triangle" },
     partly_failed: { tone: "danger", icon: "circle-alert" },
     failed: { tone: "danger", icon: "x-circle" },

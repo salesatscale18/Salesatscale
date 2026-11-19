@@ -354,7 +354,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                         items={[
                           { label: t("catalog.menu.edit"), href: open(i.id), icon: "pencil" },
                           ...(chosen ? [{ label: t("catalog.menu.prices", { list: chosen.shown.name }), href: `${priceListsPath}/${chosen.lineageId}?sku=${encodeURIComponent(i.sku)}`, icon: "tags" as const }] : []),
-                          { label: t("catalog.edit.remove"), href: hrefWith(base, sp, { confirm: i.id }, DROP.filter((d) => d !== "confirm")), icon: "x-circle", danger: true },
+                          { label: t("catalog.edit.remove"), href: hrefWith(base, sp, { confirm: i.id }, DROP.filter((d) => d !== "confirm")), icon: "trash", danger: true },
                         ]}
                       />
                     </td>

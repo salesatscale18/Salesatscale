@@ -104,7 +104,7 @@ export default async function AccountDetailPage({
             <form action={removeDemoAccountAction} className="sas-panel__body sas-stack-2">
               <input type="hidden" name="accountId" value={account.id} />
               <span className="sas-small">{t("admin.demo.remove_hint")}</span>
-              <div><Button type="submit" size="sm" variant="danger" icon="x-circle">{t("admin.demo.remove")}</Button></div>
+              <div><Button type="submit" size="sm" variant="danger" icon="trash">{t("admin.demo.remove")}</Button></div>
             </form>
           </section>
         ) : null}

@@ -187,8 +187,8 @@ export type RowMenuItem =
  * The ⋯ button with a row's actions. A <details> menu (opens without JS);
  * with JS: aria-expanded, Arrow/Home/End keys, Escape and click outside.
  * Items are links or one-button forms (server actions); `danger` styles a
- * Delete. Delete should be a link to the confirm step (see ConfirmDelete),
- * never a direct form.
+ * Delete, with the trash icon (x-circle means Failed, never Delete). Delete
+ * should be a link to the confirm step (see ConfirmDelete), never a direct form.
  */
 export function RowMenu({ label, items }: { /** e.g. "More actions for acme.com" */ label: string; items: RowMenuItem[] }) {
   return (
@@ -200,9 +200,10 @@ export function RowMenu({ label, items }: { /** e.g. "More actions for acme.com"
       <div className="sas-rowmenu__list">
         {items.map((it, i) => {
           const cls = it.danger ? "sas-rowmenu__item sas-rowmenu__item--danger" : "sas-rowmenu__item";
+          const icon = it.danger ? "trash" : it.icon;
           const inner = (
             <>
-              {it.icon ? <Icon name={it.icon} /> : null}
+              {icon ? <Icon name={icon} /> : null}
               {it.label}
             </>
           );
@@ -268,7 +269,7 @@ export function ConfirmDelete({
           <input key={k} type="hidden" name={k} value={v} />
         ))}
         <Link href={cancelHref} className={buttonClass("secondary", "sm")} replace scroll={false}>{t("common.cancel")}</Link>
-        <button type="submit" className={`${buttonClass("danger", "sm")} sas-btn--danger-solid`}>{confirmLabel}</button>
+        <button type="submit" className={`${buttonClass("danger", "sm")} sas-btn--danger-solid`}><Icon name="trash" />{confirmLabel}</button>
       </form>
       <FocusOnMount />
     </div>
@@ -455,11 +456,13 @@ export function TypeTiles({ label, tiles, pageDrop }: { label: string; tiles: Ty
  * a `sas-table sas-table--stack` table (cards on a phone; give every td a
  * data-label, the first cell none, the actions cell data-label=""), and an
  * optional footer (totals). Mark the row whose panel is open with
- * data-current on its <tr>.
+ * data-current on its <tr>. `toolbar` (a ListToolbar without a title: search,
+ * chips, selects) sits inside the card above the table, so the rows start higher.
  */
-export function ListTable({ caption, children, foot }: { caption: string; children: ReactNode; foot?: ReactNode }) {
+export function ListTable({ caption, children, foot, toolbar }: { caption: string; children: ReactNode; foot?: ReactNode; toolbar?: ReactNode }) {
   return (
     <div className="sas-panel sas-listtable">
+      {toolbar ? <div className="sas-listtable__bar">{toolbar}</div> : null}
       <div className="sas-listtable__scroll">
         <table className="sas-table sas-table--stack">
           <caption className="sas-sr">{caption}</caption>

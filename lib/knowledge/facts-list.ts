@@ -4,6 +4,22 @@
  * over the facts already loaded for the page. Pure: no DB, no React.
  */
 import { sortRows, type SortDir, type SortState } from "@/lib/list-kit";
+import type { IconName } from "@/components/sas/icon";
+
+/** A fact source chip shows its source type (Sources uses the same icons); a typed-in label is a document reference. */
+const SOURCE_CHIP_ICON: Record<string, IconName> = { website: "globe", file: "file-text", text: "sticky-note", call: "phone-call" };
+export function sourceChipIcon(kind: string | null): IconName {
+  return (kind && SOURCE_CHIP_ICON[kind]) || "file-text";
+}
+
+/** The first words of a fact, to name it in a delete confirm: at most 8 words and 60 characters, with "…" when cut. */
+export function factLead(statement: string): string {
+  const text = statement.replace(/\s+/g, " ").trim();
+  const words = text.split(" ");
+  let out = words.slice(0, 8).join(" ");
+  if (out.length > 60) out = out.slice(0, 60).replace(/\s+\S*$/, "") || out.slice(0, 60);
+  return out.length < text.length ? `${out.replace(/[\s,.;:]+$/, "")}…` : out;
+}
 
 export type ListFact = {
   id: string;

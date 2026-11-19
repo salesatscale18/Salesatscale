@@ -185,7 +185,7 @@ export default async function PriceListsPage({ params, searchParams }: { params:
                           items={[
                             { label: t("price_lists.menu.open"), href, icon: "eye" },
                             { label: t("price_lists.menu.rename"), href: withPanel({ rename: l.lineageId }), icon: "pencil" },
-                            { label: t("kit.delete"), href: withPanel({ confirm: l.lineageId }), icon: "x-circle", danger: true },
+                            { label: t("kit.delete"), href: withPanel({ confirm: l.lineageId }), icon: "trash", danger: true },
                           ]}
                         />
                       </span>

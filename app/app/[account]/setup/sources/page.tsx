@@ -99,7 +99,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
             <span className="sas-small">{t("sources.intro")}</span>
           </div>
           <div className="sas-page-head__actions">
-            <a className={buttonClass("primary")} href={`${base}/setup/knowledge`}>{t("sources.review_knowledge")}</a>
+            <a className={buttonClass("secondary")} href={`${base}/setup/knowledge`} data-review-knowledge="">{t("sources.review_knowledge")}</a>
           </div>
         </div>
         <SetupSteps basePath={base} current="sources" completed={progress} />
@@ -133,48 +133,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
       />
 
       <section className="sas-stack-4" aria-labelledby="src-h" id="your-sources">
-        <ListToolbar
-          path={page}
-          params={sp}
-          title={<span id="src-h">{t("sources.list.heading")}</span>}
-          label={t("sources.list.find")}
-          search={{ label: t("sources.list.search") }}
-          chips={{
-            param: "type",
-            label: t("sources.col.type"),
-            items: [
-              { value: null, label: t("sources.chip.all"), count: view.typeCounts.all },
-              { value: "website", label: t("sources.chip.website"), count: view.typeCounts.website },
-              { value: "file", label: t("sources.chip.file"), count: view.typeCounts.file },
-              { value: "note", label: t("sources.chip.note"), count: view.typeCounts.note },
-              { value: "call", label: t("sources.chip.call"), count: view.typeCounts.call },
-            ],
-          }}
-          selects={[
-            {
-              name: "status", label: t("sources.col.status"), value: view.status ?? "",
-              options: [{ value: "", label: t("sources.filter.any_status") }, ...DISPLAY_STATUSES.map((st) => ({ value: st, label: t(`status.source.${st}`) }))],
-            },
-            {
-              name: "lang", label: t("sources.col.language"), value: view.lang ?? "",
-              options: [
-                { value: "", label: t("sources.filter.any_language") },
-                ...view.languages.map((c) => ({ value: c, label: languageWords(c) })),
-                { value: "none", label: t("sources.filter.no_language") },
-              ],
-            },
-          ]}
-          sort={{
-            current: view.sort,
-            options: [
-              { key: "updated", dir: "desc", label: t("sources.sort.updated_desc") },
-              { key: "updated", dir: "asc", label: t("sources.sort.updated_asc") },
-              { key: "title", dir: "asc", label: t("sources.sort.title_asc") },
-              { key: "facts", dir: "desc", label: t("sources.sort.facts_desc") },
-              { key: "status", dir: "asc", label: t("sources.sort.status_asc") },
-            ],
-          }}
-        />
+        <ListToolbar path={page} params={sp} title={<span id="src-h">{t("sources.list.heading")}</span>} />
 
         {rows.length === 0 ? (
           <div className="sas-panel">
@@ -187,6 +146,49 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
         ) : (
           <ListTable
             caption={t("sources.list.heading")}
+            toolbar={
+              <ListToolbar
+                path={page}
+                params={sp}
+                label={t("sources.list.find")}
+                search={{ label: t("sources.list.search") }}
+                chips={{
+                  param: "type",
+                  label: t("sources.col.type"),
+                  items: [
+                    { value: null, label: t("sources.chip.all"), count: view.typeCounts.all },
+                    { value: "website", label: t("sources.chip.website"), count: view.typeCounts.website },
+                    { value: "file", label: t("sources.chip.file"), count: view.typeCounts.file },
+                    { value: "note", label: t("sources.chip.note"), count: view.typeCounts.note },
+                    { value: "call", label: t("sources.chip.call"), count: view.typeCounts.call },
+                  ],
+                }}
+                selects={[
+                  {
+                    name: "status", label: t("sources.col.status"), value: view.status ?? "",
+                    options: [{ value: "", label: t("sources.filter.any_status") }, ...DISPLAY_STATUSES.map((st) => ({ value: st, label: t(`status.source.${st}`) }))],
+                  },
+                  {
+                    name: "lang", label: t("sources.col.language"), value: view.lang ?? "",
+                    options: [
+                      { value: "", label: t("sources.filter.any_language") },
+                      ...view.languages.map((c) => ({ value: c, label: languageWords(c) })),
+                      { value: "none", label: t("sources.filter.no_language") },
+                    ],
+                  },
+                ]}
+                sort={{
+                  current: view.sort,
+                  options: [
+                    { key: "updated", dir: "desc", label: t("sources.sort.updated_desc") },
+                    { key: "updated", dir: "asc", label: t("sources.sort.updated_asc") },
+                    { key: "title", dir: "asc", label: t("sources.sort.title_asc") },
+                    { key: "facts", dir: "desc", label: t("sources.sort.facts_desc") },
+                    { key: "status", dir: "asc", label: t("sources.sort.status_asc") },
+                  ],
+                }}
+              />
+            }
             foot={
               <>
                 <span style={{ fontVariantNumeric: "tabular-nums" }} data-sources-totals="">
@@ -232,7 +234,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                     : s.kind === "file"
                       ? [{ label: t("sources.replace_file"), href: `${detail}?panel=edit`, icon: "upload" as const }]
                       : []),
-                  { label: t("sources.delete"), href: `${open({ confirm: s.id })}#src-h`, icon: "x-circle", danger: true },
+                  { label: t("sources.delete"), href: `${open({ confirm: s.id })}#src-h`, icon: "trash", danger: true },
                 ];
                 const aboutText = about.get(s.id);
                 const row = (

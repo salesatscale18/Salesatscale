@@ -220,7 +220,7 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       expect(list).toContain(`href="/app/${slug}/setup/knowledge?topic=Brackets&amp;confirm=${brackets.id}"`);
       const confirm = await render(KnowledgePage, slug, { topic: "Brackets", confirm: brackets.id });
       save("knowledge-confirm", confirm);
-      expect(confirm).toMatch(/role="alertdialog"[\s\S]*Delete this fact\?/);
+      expect(confirm).toMatch(/role="alertdialog"[\s\S]*Delete “Brackets fit any flat wall\.”\?/); // R4 D7: names the fact
       expect(await go(knowledge.removeFactAction(form({ slug, filter: "Brackets", list: "topic=Brackets", factId: brackets.id })))).toBe(`/app/${slug}/setup/knowledge?topic=Brackets&done=removed`);
       expect(await db.select().from(knowledgeFacts).where(eq(knowledgeFacts.id, brackets.id))).toHaveLength(0);
 

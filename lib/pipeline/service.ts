@@ -162,6 +162,14 @@ async function doneRunWithHash(db: Db, accountId: string, kind: "facts" | "playb
   return r?.id ?? null;
 }
 
+/** Whether any facts run (stage 1) of this account ever finished. */
+async function anyDoneFactsRun(db: Db, accountId: string): Promise<boolean> {
+  const [r] = await db.select({ id: pipelineRuns.id }).from(pipelineRuns)
+    .where(and(eq(pipelineRuns.accountId, accountId), eq(pipelineRuns.kind, "facts"), eq(pipelineRuns.status, "done")))
+    .limit(1);
+  return !!r;
+}
+
 export type AnalysisPlan = {
   sources: (CorpusSource & { changed: boolean })[];
   /** Sources new or changed since their last analysis. */
@@ -177,6 +185,11 @@ export type AnalysisPlan = {
   estimate: AnalysisEstimate;
   /** What the confirm click must echo back: the run starts only if nothing changed since the estimate. */
   token: string;
+  /**
+   * No analysis ever finished for this account (facts may still exist: added
+   * by hand, or seeded). The Analyze line then never speaks of a "last run".
+   */
+  firstRun?: boolean;
 };
 
 /**
@@ -192,17 +205,21 @@ export type AnalysisSummary = {
   stage2Changed: boolean;
   /** Stage 1 re-runs although no source changed (the analysis itself was updated). */
   rulesChanged: boolean;
+  /** No analysis has finished yet: nothing to compare with. */
+  firstRun: boolean;
   costMicros: number;
 };
 
-export function analysisSummary(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate" | "facts" | "playbook">): AnalysisSummary {
+export function analysisSummary(plan: Pick<AnalysisPlan, "changed" | "sources" | "estimate" | "facts" | "playbook" | "firstRun">): AnalysisSummary {
   const nothingToRerun = plan.facts.reuse && plan.playbook.reuse;
+  const firstRun = !plan.facts.reuse && plan.firstRun === true;
   return {
     nothingToRerun,
     changed: plan.changed,
     total: plan.sources.length,
     stage2Changed: plan.facts.reuse && !plan.playbook.reuse,
-    rulesChanged: !plan.facts.reuse && plan.changed === 0,
+    rulesChanged: !firstRun && !plan.facts.reuse && plan.changed === 0,
+    firstRun,
     costMicros: plan.estimate.costMicros,
   };
 }
@@ -237,6 +254,7 @@ export async function planAnalysis(db: Db, accountId: string, env: Record<string
     sources: list, changed: list.filter((s) => s.changed).length, corpus, corpusTokens, large, model, lightModel,
     facts: { hash: factsHash, reuse: factsReuse }, playbook: { hash: pbHash, reuse: pbReuse }, estimate,
     token: `${factsHash.slice(0, 16)}${pbHash.slice(0, 16)}`,
+    firstRun: factsReuse ? false : !(await anyDoneFactsRun(db, accountId)),
   };
 }
 
@@ -1061,10 +1079,12 @@ export async function sourceFactCounts(db: Db, accountId: string): Promise<Map<s
  * all reviewed and one is approved. A source changed since the last analysis
  * (`changed`: text_hash cleared by an edit or a new read) shows "ready"
  * ("Ready for review") again, even while its earlier facts stay approved.
+ * A read source that no analysis has looked at yet (`changed` and no facts of
+ * any status) shows "not_analyzed" ("Not analyzed yet"), not "Ready for review".
  */
 export function sourceDisplayStatus<S extends string>(
-  status: S, counts: { suggested: number; approved: number } | undefined, opts: { changed?: boolean } = {},
-): S | "approved" {
-  if (opts.changed) return status;
+  status: S, counts: { suggested: number; approved: number; total?: number } | undefined, opts: { changed?: boolean } = {},
+): S | "approved" | "not_analyzed" {
+  if (opts.changed) return status === "ready" && !(counts && (counts.total ?? counts.suggested + counts.approved) > 0) ? "not_analyzed" : status;
   return status === "ready" && counts && counts.suggested === 0 && counts.approved > 0 ? "approved" : status;
 }
