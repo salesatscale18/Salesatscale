@@ -372,14 +372,15 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(tx).toContain("4 of 5 items priced · 1 price missing");
       const strip = text(html.split('class="sas-summary"')[1].split("</section>")[0]);
       expect(strip).toContain("CurrencyILS · Israeli shekel (₪)");
-      expect(strip).toContain("VATPrices without VAT · 18%");
+      // S9 (R5b): the list's order, "18% · prices without VAT".
+      expect(strip).toContain("VAT18% · prices without VAT");
       expect(strip).toContain("Used byIsrael");
       expect(strip).toContain("Valid fromNot set");
       expect(strip).toContain("Edit settings");
       expect(html).toContain(`/setup/price-lists/${israel}?panel=settings`);
       // The settings form is no longer on the page.
       expect(html).not.toContain('id="pl-meta-name"');
-      expect(tx).toMatch(/All5Missing price1With tiers1Recurring1/);
+      expect(tx).toMatch(/All5Price missing1With tiers1Recurring1/);
       const rows = tableRows(html);
       expect(rows.find((r) => r.startsWith("Wireless"))).toMatch(/SNS-200.*Product · per device.*₪590\.00.*Not charged.*From 10: ₪550\.00.*Edit/);
       expect(rows.find((r) => r.startsWith("Cold room probe"))).toMatch(/Price missing.*Add price$/);
@@ -387,7 +388,9 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(html).toContain(`/setup/price-lists/${israel}?sku=CRP-40`);
       // Versions: the draft with Publish and Discard, the live one with its date.
       const versions = text(html.split('id="hist-h"')[1].split("</section>")[0]);
-      expect(versions).toMatch(/v2Draft.*Started .*Publish v2Discard draft/);
+      // R5-9 (R5b): Publish is secondary and disabled with the reason while a price is missing; Discard draft stays.
+      expect(versions).toMatch(/v2Draft.*Started .*Publish v2Discard draftNot ready to publish: add the missing price above\./);
+      expect(html).toMatch(/<button type="submit" class="sas-btn sas-btn--secondary sas-btn--sm" disabled="" aria-describedby="pl-publish-why" data-publish="">Publish v2</);
       expect(versions).toMatch(/v1Live.*Published /);
       expect(tx).toContain("Copy and adjust");
       expect(tableRows(await detail(israel, { show: "missing" }))).toHaveLength(1);

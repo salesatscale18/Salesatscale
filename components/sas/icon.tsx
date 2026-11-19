@@ -4,7 +4,7 @@
  */
 import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
-  CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, Lock, MessageCircle,
+  CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
   Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, Trash2, type LucideIcon,
 } from "lucide-react";
@@ -35,6 +35,8 @@ const ICONS = {
   eye: Eye,
   "file-signature": FileSignature,
   "file-text": FileText,
+  // Draft (pill and banner): its own icon, so it is never read as the File source type (R5 S6).
+  "file-pen": FilePen,
   "flask-conical": FlaskConical,
   layers: Layers,
   "link-2": Link2,

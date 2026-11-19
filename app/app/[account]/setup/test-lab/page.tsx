@@ -99,6 +99,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     conv ? getDealState(appDb, account.id, conv.leadId) : null,
   ]);
   const thread = view?.thread ?? [];
+  // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
+  const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.
   const kinds = appMessageKinds(thread.flatMap((x) => x.calls));
   const notice = one(sp.notice) || undefined;
@@ -189,7 +191,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <div className="sas-panel__body" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <h2 id="lab-chat-h" className="sas-heading">{t("lab.chat_with", { version: convVersion.version })}</h2>
                 <StatusPill object="agent_version" state={convVersion.status} />
-                <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={conv.createdAt.toISOString()} title={zoneTitle(conv.createdAt, tz)}>{local(conv.createdAt)}</time></span>
+                {/* R5-14: when the chat started (its first message), not when the conversation row was made. */}
+                <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
                 {waWindow ? <WindowTimer {...windowTimerProps(waWindow, new Date())} /> : null}
               </div>
@@ -230,7 +233,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                       <ChatMessage
                         actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
                         time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
-                        <MessageBody body={m.body} kind={kinds.get(m.id)} />
+                        {/* R5-2: each message finds its own direction (an English reply in a Hebrew chat reads left to right). */}
+                        <div dir="auto" data-msg-dir="">
+                          <MessageBody body={m.body} kind={kinds.get(m.id)} />
+                        </div>
                       </ChatMessage>
                       )}
                       {isAdmin && usage?.inputTokens !== undefined ? (

@@ -11,7 +11,7 @@ import "./playbook.css";
 export function DraftBanner({ draft, live }: { draft: number; live: number | null }) {
   return (
     <div className="sas-banner sas-banner--test" role="status" data-testid="draft-banner">
-      <Icon name="file-text" />
+      <Icon name="file-pen" />
       <span className="sas-banner__text">
         <strong>{t("playbook.banner.draft", { version: draft })}</strong>{" "}
         {live ? t("playbook.banner.live", { version: live }) : t("playbook.banner.none_live")}

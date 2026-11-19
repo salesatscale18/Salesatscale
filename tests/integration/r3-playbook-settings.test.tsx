@@ -260,7 +260,7 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       for (const language of ["en", "he"]) await saveLegalSection(db, acc.id, admin.id, { sectionKey: "sales_terms", title: "Sales terms", language, body: "Terms" });
       const html = await render(MarketsPage);
       save("markets", html);
-      expect(html).toMatch(/data-legal-lang="en">English · <span><bdi>Sales terms<\/bdi> v1<\/span><\/span>/);
+      expect(html).toMatch(/data-legal-lang="en">English · <span><bdi>Sales terms<\/bdi>\u00a0v1<\/span><\/span>/);
       expect(html).toContain('class="mk-pl-form"');
       expect(html).toContain('class="mk-pl-field"');
       const legal = html.match(/data-legal-lang[\s\S]*?Same as account default/)?.[0] ?? "";

@@ -866,4 +866,18 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 /* S4: the phone back link in Conversations: a chevron, lined up with the header edge. */
 @media (max-width: 860px) {
   .sas-inbox__back { margin-inline-start: -6px; padding-inline-start: 2px; gap: 2px; }
+/* Round-5 (lane R5b): setup pages */
+/* R5-1: price list detail, the Versions card goes under the prices table when the two do not fit side by side. */
+.r5b-pl-split { container-type: inline-size; }
+@container (max-width: 1399px) {
+  .r5b-pl-split > .sas-split__side { flex-basis: 100%; }
+}
+/* S8: Catalog on a phone, "Add item" first in the header actions. */
+@media (max-width: 767px) {
+  .sas-page-head__actions > .r5b-add-first { order: -1; }
+}
+/* R5-11: Knowledge questions on a phone, the Answer button under the question text, not over it. */
+@media (max-width: 767px) {
+  .r5b-questions .sas-table--stack tr:has(> td.sas-td-actions) > td:first-child { padding-inline-end: 0 !important; }
+  .r5b-questions .sas-table--stack td.sas-td-actions { position: static; justify-content: flex-start; padding: 4px 0 !important; }
 }

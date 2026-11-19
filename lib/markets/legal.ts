@@ -58,8 +58,9 @@ export function effectiveLegal(rows: LegalSection[], marketId: string | null): E
  * (then any other), sections in the order of their first text (as the Order
  * form table rows).
  */
-export function legalByLanguage<S extends Pick<LegalSection, "sectionKey" | "language">>(sections: S[], languages: string[]): { language: string; sections: S[] }[] {
-  const keys = [...new Set(sections.map((s) => s.sectionKey))];
+export function legalByLanguage<S extends Pick<LegalSection, "sectionKey" | "language">>(sections: S[], languages: string[], order: string[] = []): { language: string; sections: S[] }[] {
+  // `order`: the section order from every language's texts (R5-7), so a market with fewer languages keeps it.
+  const keys = [...new Set([...order, ...sections.map((s) => s.sectionKey)])];
   const present = new Set(sections.map((s) => s.language));
   const langs = [...languages.filter((l) => present.has(l)), ...[...present].filter((l) => !languages.includes(l))];
   return langs.map((language) => ({

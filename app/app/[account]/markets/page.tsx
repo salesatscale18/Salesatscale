@@ -6,7 +6,7 @@ import { contactHoursOrDefault, summarizeContactHours } from "@/lib/accounts/con
 import { ContactHoursFields } from "@/components/sas/contact-hours-fields";
 import { countLeadsByMarket, listIntakeKeys } from "@/lib/leads/service";
 import { legalByLanguage, marketLegal } from "@/lib/markets/legal";
-import { canGoLive, checkCount, countryName, formCountryLabel } from "@/lib/markets/rules";
+import { canGoLive, checkCount, countryName, formCountryLabels } from "@/lib/markets/rules";
 import { ensureHomeMarket, getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
 import { overriddenCount, type AccountDefaults, type EffectiveSettings, type SettingKey } from "@/lib/markets/settings";
 import { listPriceLists } from "@/lib/pricing/price-lists";
@@ -57,9 +57,15 @@ function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): stri
   return "";
 }
 
+/** "Mon–Thu 09:00–17:30 · Fri 09:00–16:00": each part on one line, breaking only at " · " (R5-7). */
+function KeepParts({ text }: { text: string }) {
+  return <>{text.split(" · ").map((p, i) => <span key={i}>{i > 0 ? " · " : null}<span className="sas-nowrap">{p}</span></span>)}</>;
+}
+
+/** "Set for this market" in the Trust Blue soft tint (a changed value), not the agent violet (R5-10). */
 function SourcePill({ source }: { source: "account" | "market" }) {
   return source === "market"
-    ? <span className="sas-pill sas-pill--agent" data-source="market">{t("markets.overridden")}</span>
+    ? <span className="sas-pill mk-pill--set" data-source="market">{t("markets.overridden")}</span>
     : <span className="sas-pill" data-source="account">{t("markets.same_as_account")}</span>;
 }
 
@@ -254,7 +260,10 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
   const here = `${base}/markets`;
   const listName = (lineageId: string | null) => (lineageId ? lists.find((l) => l.lineageId === lineageId)?.shown.name ?? null : null);
   const keyName = (id: string) => keys.find((k) => k.id === id)?.name;
-  const legal = selected && view ? (await marketLegal(appDb, account.id, selected.id)).filter((s) => view.settings.languages.value.includes(s.language)) : [];
+  const allLegal = selected && view ? await marketLegal(appDb, account.id, selected.id) : [];
+  const legal = view ? allLegal.filter((s) => view.settings.languages.value.includes(s.language)) : [];
+  // R5-7: the section order comes from every language's texts, so a one-language market lists them as the others do.
+  const legalOrder = [...new Set(allLegal.map((s) => s.sectionKey))];
   const ownLegal = legal.filter((s) => s.source === "market").length;
   const timezones = overriding === "timezone" ? Intl.supportedValuesOf("timeZone") : [];
 
@@ -352,7 +361,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                 ? t("markets.routing_home")
                 : [
                     selected.phonePrefixes.length ? t("markets.routing.phone", { prefixes: selected.phonePrefixes.join(", ") }) : null,
-                    selected.formCountryValues.length ? t("markets.routing.form", { values: selected.formCountryValues.map(formCountryLabel).join(", ") }) : null,
+                    selected.formCountryValues.length ? t("markets.routing.form", { values: formCountryLabels(selected.formCountryValues).join(", ") }) : null,
                     ...selected.intakeKeyIds.map((id) => (keyName(id) ? t("markets.routing.key", { name: keyName(id)! }) : null)),
                   ].filter(Boolean).join(" · ") || t("markets.routing_none")}
             />
@@ -410,7 +419,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                       <Row
                         id={`set-${k}`}
                         label={t(`markets.setting.${k}` as MessageKey)}
-                        value={describe(k, s.value as AccountDefaults[typeof k])}
+                        value={k === "contactHours" ? <KeepParts text={describe(k, s.value as AccountDefaults[typeof k])} /> : describe(k, s.value as AccountDefaults[typeof k])}
                         muted={s.source === "account"}
                         pill={<SourcePill source={s.source} />}
                         action={s.source === "market" ? (
@@ -444,12 +453,13 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
               value={legal.length === 0 ? t("markets.legal_none") : (
                 // One line per language; each title in <bdi> so Hebrew titles don't flip the reading order.
                 <span className="sas-stack-2" style={{ gap: 4 }}>
-                  {legalByLanguage(legal, view.settings.languages.value).map(({ language: lang, sections }) => (
+                  {legalByLanguage(legal, view.settings.languages.value, legalOrder).map(({ language: lang, sections }) => (
                     <span key={lang} data-legal-lang={lang}>
                       {/* "English · Sales terms v1, Privacy notice v1 · from account" */}
                       {LANG_NAME[lang] ?? lang}{" · "}
                       {sections.map((s, i, all) => (
-                        <span key={s.id}>{i > 0 ? ", " : null}<bdi>{s.title}</bdi>{` v${s.version}`}{s.source === "account" && !all.every((x) => x.source === "account") ? ` (${t("markets.from_account")})` : ""}</span>
+                        // R5-7: "v1" stays with its title (no-break space).
+                        <span key={s.id}>{i > 0 ? ", " : null}<bdi>{s.title}</bdi>{`\u00a0v${s.version}`}{s.source === "account" && !all.every((x) => x.source === "account") ? ` (${t("markets.from_account")})` : ""}</span>
                       ))}
                       {/* Only when some texts are the market's own: otherwise the "Same as account default" pill says it. */}
                       {ownLegal > 0 && sections.every((s) => s.source === "account") ? ` · ${t("markets.from_account")}` : null}
@@ -457,7 +467,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                   ))}
                 </span>
               )}
-              pill={ownLegal === 0 ? <SourcePill source="account" /> : <span className="sas-pill sas-pill--agent">{ownLegal === legal.length ? t("markets.overridden") : t("markets.partly_overridden")}</span>}
+              pill={ownLegal === 0 ? <SourcePill source="account" /> : <span className="sas-pill mk-pill--set">{ownLegal === legal.length ? t("markets.overridden") : t("markets.partly_overridden")}</span>}
               action={<a className={buttonClass("ghost", "sm")} href={`${base}/setup/order-form?market=${selected.id}`} data-row-action="" data-legal-action="">{t(ownLegal === 0 ? "markets.override" : "markets.edit")}</a>}
             />
 

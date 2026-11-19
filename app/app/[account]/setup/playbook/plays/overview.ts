@@ -11,8 +11,9 @@ import { missingSlots } from "./slots";
 
 export { missingSlots, playSlots, slotTitle } from "./slots";
 
-export type PlayFilter = "all" | "needs" | "suggested" | "own";
-export const PLAY_FILTERS: readonly PlayFilter[] = ["all", "needs", "suggested", "own"];
+/** R5-18: "Ready" and "Needs your facts" split All, so those two add up to it. */
+export type PlayFilter = "all" | "ready" | "needs" | "suggested" | "own";
+export const PLAY_FILTERS: readonly PlayFilter[] = ["all", "ready", "needs", "suggested", "own"];
 
 export type FactsLine =
   /** The seller's facts, and the named facts the play still asks for. */
@@ -80,6 +81,7 @@ export function playsOverview(p: Pick<Playbook, "plays" | "questionBudget"> & Pa
 
 export function filterPlays(plays: PlayOverview[], f: PlayFilter): PlayOverview[] {
   switch (f) {
+    case "ready": return plays.filter((x) => !x.needsFacts);
     case "needs": return plays.filter((x) => x.needsFacts);
     case "suggested": return plays.filter((x) => !!x.suggested);
     case "own": return plays.filter((x) => x.own);

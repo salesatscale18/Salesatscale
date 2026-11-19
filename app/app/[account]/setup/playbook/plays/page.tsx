@@ -12,7 +12,7 @@ import { filterPlays, PLAY_FILTERS, playCounts, playsOverview, type PlayFilter, 
 import { PlayStatus, SuggestedTag } from "./parts";
 
 const FILTER_LABEL: Record<PlayFilter, MessageKey> = {
-  all: "playbook.plays.filter.all", needs: "playbook.plays.filter.needs", suggested: "playbook.plays.filter.suggested", own: "playbook.plays.filter.own",
+  all: "playbook.plays.filter.all", ready: "playbook.plays.filter.ready", needs: "playbook.plays.filter.needs", suggested: "playbook.plays.filter.suggested", own: "playbook.plays.filter.own",
 };
 
 function FactsLine({ p }: { p: PlayOverview }) {
