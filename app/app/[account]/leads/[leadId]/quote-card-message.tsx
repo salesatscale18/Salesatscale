@@ -9,7 +9,7 @@ import { approveQuoteInThreadAction, sendInLimitAction } from "./quote-card-acti
 /**
  * A quote message in the seller's thread (board QuoteSeller): exactly the
  * card the buyer saw, plus the dashed "Only you see this" strip, with the meta
- * "Sent by the app". A held quote gets the approval panel when `approve` is
+ * "Agent", as the timeline names it (round-4 review B8). A held quote gets the approval panel when `approve` is
  * given (lead page, inbox); the actions re-check access on the server.
  */
 export function QuoteCardMessage({ card, time, timeTitle, slug, approve }: {
@@ -48,7 +48,7 @@ function ApprovalPanel({ card, slug, back }: { card: QuoteCardView; slug: string
     <section className="sas-qc-approval" aria-labelledby={id} data-quote-approval="">
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <StatusPill object="quote" state="awaiting_approval" />
-        <b id={id} className="sas-num" style={{ fontSize: 13 }}><span className="sas-sr">{t("conv.qcard.approval_label")} </span>{a.ref}</b>
+        <b id={id} className="sas-id" style={{ fontSize: 13 }}><span className="sas-sr">{t("conv.qcard.approval_label")} </span>{a.ref}</b>
       </div>
       {a.reasons.map((r, i) => <span key={i} className="sas-small" style={{ color: "var(--ink)" }}>{r}</span>)}
       <div className="sas-stack-2" style={{ gap: 2, fontSize: 13 }}>

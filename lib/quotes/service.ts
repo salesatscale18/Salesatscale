@@ -454,6 +454,24 @@ export function displayQuoteStatus(status: QuoteStatus, validUntil: Date, now = 
 }
 
 /**
+ * One pill for a quote row on the lead card: the furthest state the deal
+ * reached with this quote, so the row and the timeline agree (round-4 review
+ * F2). A paid order shows Paid; a signed one Ordered; a sent quote whose order
+ * form the buyer opened shows Opened. Ended quotes (expired, replaced,
+ * cancelled) and "expires today" keep their quote state. Pure.
+ */
+export function furthestQuoteState(
+  quoteState: ReturnType<typeof displayQuoteStatus>,
+  doc: { form: "sent" | "opened" | "signed" | "link_expired" | null; payment: string | null } | null | undefined,
+): { object: "quote"; state: ReturnType<typeof displayQuoteStatus> } | { object: "order_form"; state: "opened" | "signed" } | { object: "payment"; state: "paid" } {
+  if (doc?.payment === "paid") return { object: "payment", state: "paid" };
+  if (quoteState === "ordered") return { object: "quote", state: "ordered" };
+  if (quoteState === "sent" && doc?.form === "signed") return { object: "order_form", state: "signed" };
+  if (quoteState === "sent" && doc?.form === "opened") return { object: "order_form", state: "opened" };
+  return { object: "quote", state: quoteState };
+}
+
+/**
  * The time zone each quote's dates are shown in (valid until, expires today):
  * its market's, else the account's. The quote card uses the same zone, so the
  * seller and the buyer see one date. Keyed by quote id; scoped by account.

@@ -156,7 +156,9 @@ describe("Quote card", () => {
     expect(panel).toContain("Approve and send");
     expect(panel).toContain("Send 5% instead");
     expect(panel).toContain(`/app/${acc.slug}/leads/${b.lead.id}/quote?from=${view.quoteCards[id].quoteId}`);
-    expect(panel).toContain("Sent by the app");
+    // The card reads "Agent", as the timeline does (round-4 review B8).
+    expect(panel).toMatch(/data-app-message="quote"><div class="sas-msg__meta"><span class="sas-msg__who">Agent<\/span>/);
+    expect(panel).not.toContain("Sent by the app");
 
     const out = await run(approveQuoteInThreadAction(form({ slug: acc.slug, quoteId: view.quoteCards[id].quoteId, back: `/app/${acc.slug}/leads/${b.lead.id}#conversation` })));
     expect(out).toEqual({ redirect: `/app/${acc.slug}/leads/${b.lead.id}?notice=quote_approved#conversation` });
@@ -196,7 +198,7 @@ describe("Quote card", () => {
     expect(page.indexOf("data-reply-buttons")).toBeGreaterThan(page.indexOf("I&#x27;ll send the order form now"));
   });
 
-  it("Approve and send: the close follows in the buyer's language with reply buttons, stored for the agent, 'Sent by the app' for the seller", async () => {
+  it("Approve and send: the close follows in the buyer's language with reply buttons, stored for the agent, 'Agent' for the seller", async () => {
     const b = await buyer();
     const r = await b.quote({ discount_percent: 10 });
     const id = String(r.result.quote_message_id);
@@ -222,13 +224,14 @@ describe("Quote card", () => {
     expect(await approveHeldQuote(db, access(), String(r.result.quote_id))).toMatchObject({ ok: false, reason: "quote_closed" });
     expect((await b.chat()).messages).toHaveLength(chat.messages.length);
 
-    // Seller: "Sent by the app", no trace chip for the app's own message.
+    // Seller: "Agent" (round-4 review B8), no trace chip for the app's own message.
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
     const view = await conversationView(db, acc.id, conv);
     const html = render(ConversationPanel({ slug: acc.slug, view, me, buyerName: "Rina Cohen", leadOptedOut: false }));
     save("seller-approved-close", html, "seller");
     const closeAt = html.indexOf("I&#x27;ll send the order form now");
-    expect(html.lastIndexOf("Sent by the app", closeAt)).toBeGreaterThan(html.lastIndexOf("ok, thanks", closeAt));
+    expect(html.lastIndexOf('<span class="sas-msg__who">Agent</span>', closeAt)).toBeGreaterThan(html.lastIndexOf("ok, thanks", closeAt));
+    expect(html).not.toContain("Sent by the app");
     expect(html).not.toContain("app_message");
   });
 

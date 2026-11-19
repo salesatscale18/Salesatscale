@@ -240,7 +240,8 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     save("order-detail", html);
     const panel = html.split('class="sas-side-panel sas-sheet"')[1];
     expect(panel).toMatch(/<h2 id="q-h" class="sas-title">Order PD-10001<\/h2>/);
-    expect(panel).toContain(`from quote ${ids.eliQuoteNo} v1`);
+    // Only the reference is a code (round-4 review D11).
+    expect(panel).toContain(`from quote <span class="sas-id">${ids.eliQuoteNo} v1</span>`);
     expect(panel).not.toContain("valid until");
     expect(panel).toMatch(/data-testid="detail-status"[^>]*><span class="sas-pill sas-pill--success" data-status="payment.paid"/);
     expect(panel).not.toContain('data-testid="quote-actions"');
@@ -249,16 +250,17 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     // "Monthly" right before the second Subtotal.
     expect(panel).toMatch(/<dt class="sas-kv__sub">Monthly<\/dt><\/div><div style="display:contents" data-total-row="rec-0"><dt>Subtotal<\/dt>/);
     // The chat name equals the internal name: the code alone; else the internal name and the code.
-    expect(panel).toMatch(/1 × Wireless fridge sensor<div class="sas-small" data-line-sub=""><span class="sas-num">SNS-200<\/span><\/div>/);
-    expect(panel).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-num">GW-10<\/span>/);
+    expect(panel).toMatch(/1 × Wireless fridge sensor<div class="sas-small" data-line-sub=""><span class="sas-id">SNS-200<\/span><\/div>/);
+    expect(panel).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-id">GW-10<\/span>/);
     expect(css).toMatch(/@media \(max-width: 767px\) \{ \.sas-detail-status \{ padding-block-start/);
   });
 
   it("B1: the quote an order came from shows Ordered, on the lead page and in the Quotes list", async () => {
     const lead = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.eliLead }) as never));
     const row = lead.match(/<a class="sas-list__row" href="[^"]*orders\?quote=[^"]*">[\s\S]*?<\/a>/)?.[0] ?? "";
-    expect(row).toContain('data-status="quote.ordered"');
-    expect(row).toContain(">Ordered<");
+    // The lead page shows the furthest state: the order is paid (round-4 review F2).
+    expect(row).toContain('data-status="payment.paid"');
+    expect(row).toContain(">Paid<");
     expect(row).not.toContain(">Sent<");
     const list = await page(OrdersPage(props(account.slug)));
     const qRow = list.match(new RegExp(`<tr[^>]*>(?:(?!</tr>)[\\s\\S])*quote=${ids.eliQuote}(?:(?!</tr>)[\\s\\S])*</tr>`))?.[0] ?? "";

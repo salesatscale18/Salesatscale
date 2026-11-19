@@ -212,7 +212,7 @@ describe("Polish-1: wrong or contradicting data", () => {
     const rows = [...html.matchAll(/<dt[^>]*>([^<]*)<\/dt><dd[^>]*>([^<]*)<\/dd>/g)].map((m) => [m[1], m[2]]);
     expect(rows).toEqual(expect.arrayContaining([
       ["Subtotal", "₪1,500.00"], ["VAT 18%", "₪270.00"], ["Total incl. VAT", "₪1,770.00"],
-      ["Subtotal", "₪90.00/month"], ["VAT 18%", "₪16.20/month"], ["Monthly total incl. VAT", "₪106.20/month"],
+      ["Subtotal", "₪90.00/month"], ["VAT 18%", "₪16.20/month"], ["Monthly incl. VAT", "₪106.20/month"],
     ]));
     const [v] = await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId));
     const local = new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: "Asia/Jerusalem" }).format(v.validUntil);

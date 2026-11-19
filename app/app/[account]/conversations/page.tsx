@@ -10,7 +10,9 @@ import { INBOX_FILTERS, inboxConversation, latestHandoff, listInbox, parseInboxF
 import { relativeTime } from "@/lib/format";
 import { listMarkets } from "@/lib/markets/service";
 import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
-import { ConversationPanel, windowTimerProps } from "../leads/[leadId]/conversation";
+import { ConversationPanel, formNotes, windowTimerProps } from "../leads/[leadId]/conversation";
+import { linkFor, personSentForms } from "@/lib/orders/service";
+import { seesPlatformDetails } from "@/lib/auth/display";
 import { sendTemplateAction } from "./actions";
 import { AutoRefresh } from "./auto-refresh";
 import { ScrollThreadToEnd } from "./scroll-end";
@@ -29,21 +31,26 @@ const maybe = (key: string) => i18n.en[key as MessageKey] ?? null;
 
 const GROUP_ORDER: InboxGroup[] = ["needs_you", "human", "agent", "closed"];
 
-/** "Buyer: …", "Agent: …", "You: …" before the last message. */
-function preview(r: InboxRow, meId: string) {
-  if (!r.lastBody) return t("inbox.no_messages");
+/**
+ * "Buyer: …", "Agent: …", "You: …" before the last message. The message is a
+ * separate part: it gets its own direction and is cut at its own end, so a
+ * Hebrew preview shows the start of the sentence (round-4 review F1).
+ */
+function preview(r: Pick<InboxRow, "lastBody" | "lastActor" | "lastUserId">, meId: string): { who: string | null; text: string } {
+  if (!r.lastBody) return { who: null, text: t("inbox.no_messages") };
   const who = r.lastActor === "buyer" ? t("inbox.from.buyer")
     : r.lastActor === "agent" ? t("inbox.from.agent")
     : r.lastActor === "human" ? (r.lastUserId && r.lastUserId === meId ? t("inbox.from.you") : t("inbox.from.team"))
     : t("inbox.from.system");
-  return `${who}: ${r.lastBody.replace(/\s+/g, " ").slice(0, 120)}`;
+  return { who, text: r.lastBody.replace(/\s+/g, " ").slice(0, 120) };
 }
 
 /** Conversations inbox (canvas: Inbox, P6.6). Filters, search and the selected chat live in the URL. */
 export default async function ConversationsPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Search> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account, user: me } = await requireAccount(slug);
+  const access = await requireAccount(slug);
+  const { account, user: me } = access;
   const base = `/app/${account.slug}/conversations`;
   const filter = parseInboxFilter(one(sp.filter));
   const q = one(sp.q).trim().slice(0, 100) || undefined;
@@ -82,7 +89,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
       const { conv, lead } = selected!;
       // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on: the 24-hour window and template-only composer.
       const whatsapp = conv.channel === "whatsapp" || (conv.channel === SIMULATOR_CHANNEL && account.simulateWhatsappRules);
-      const [view, pane, chatWindow, templates, handoff, chatToken] = await Promise.all([
+      const [view, pane, chatWindow, templates, handoff, chatToken, sentForms] = await Promise.all([
         conversationView(appDb, account.id, conv),
         // The lead page's deal pane (lib/leads/deal-pane.ts): verified order details, grouped unknowns, the stage-aware next step.
         loadDealPane(appDb, account.id, lead, account.tradeName),
@@ -90,8 +97,11 @@ export default async function ConversationsPage({ params, searchParams }: { para
         whatsapp ? approvedTemplates(appDb, account.id) : Promise.resolve([]),
         conv.status === "human" ? latestHandoff(appDb, account.id, lead.id) : Promise.resolve(null),
         conv.channel === SIMULATOR_CHANNEL ? activeChatToken(appDb, account.id, lead.id) : Promise.resolve(null),
+        // Order forms a person sent: shown in the thread where they happened (round-4 review F2).
+        conv.isTest ? Promise.resolve([]) : personSentForms(appDb, account.id, lead.id),
       ]);
-      return { view, pane, chatWindow, templates, handoff, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
+      const notes = formNotes(sentForms, me.id, (id) => linkFor({ id }).url, now);
+      return { view, pane, chatWindow, templates, handoff, notes, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
     })()
     : null;
 
@@ -173,14 +183,22 @@ export default async function ConversationsPage({ params, searchParams }: { para
                             <Avatar actor={ended ? "buyer" : holding ? "human" : "agent"} initials={nameInitials(r.lead.fullName)} />
                             <span className="sas-inbox__row-main">
                               <span className="sas-inbox__row-top">
-                                <span className="sas-inbox__name">{r.lead.fullName}{r.lead.company ? <span className="sas-small"> · {r.lead.company}</span> : null}</span>
+                                <span className="sas-inbox__name"><bdi>{r.lead.fullName}</bdi>{r.lead.company ? <span className="sas-small"> · <bdi>{r.lead.company}</bdi></span> : null}</span>
                                 <span className="sas-small sas-when" title={r.lastAt.toISOString()}>{relativeTime(r.lastAt, now)}</span>
                               </span>
-                              <span className="sas-small sas-inbox__preview" dir="auto">{preview(r, me.id)}</span>
+                              {(() => {
+                                const p = preview(r, me.id);
+                                return (
+                                  <span className="sas-small sas-inbox__preview" data-preview="">
+                                    {p.who ? <span className="sas-inbox__preview-who">{p.who}:</span> : null}
+                                    <span className="sas-inbox__preview-text" dir="auto">{p.text}</span>
+                                  </span>
+                                );
+                              })()}
                               <span className="sas-inbox__meta">
                                 {r.group === "needs_you" ? <span className="sas-inbox__badge"><Icon name="user" />{r.takenOverByUserId ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff")}</span> : null}
                                 <StatusPill object="lead" state={r.lead.status} />
-                                {r.isTest ? <TestLabChip /> : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : <span className="sas-chip">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
+                                {r.isTest ? <TestLabChip /> : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
                                 {r.marketName || homeMarket ? <span className="sas-small" data-market="">{r.marketName || homeMarket}</span> : null}
                                 {r.window ? <WindowTimer {...windowTimerProps(r.window, now)} /> : null}
                               </span>
@@ -217,7 +235,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <a className={`${buttonClass("ghost", "sm")} sas-inbox__back`} href={qs({ c: undefined })}>{t("inbox.back")}</a>
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
                     <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <strong>{selected.lead.fullName}{selected.lead.company ? ` · ${selected.lead.company}` : ""}</strong>
+                      <strong><bdi>{selected.lead.fullName}</bdi>{selected.lead.company ? <> · <bdi>{selected.lead.company}</bdi></> : null}</strong>
                       {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : selected.conv.isTest ? <TestLabChip /> : null}
                     </span>
                     <span className="sas-small">
@@ -249,6 +267,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                     <ConversationPanel
                       from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone}
                       leadOptedOut={selected.lead.status === "opted_out"} notice={notice === "template_sent" ? undefined : notice}
+                      leadStatus={selected.lead.status} notes={thread.notes} rawToolNames={seesPlatformDetails(access)}
                     />
                     {thread.chatWindow && !thread.chatWindow.open && selected.lead.status !== "opted_out" ? (
                       <section className="sas-stack-2 sas-inbox__templates" aria-labelledby="tpl-h">
