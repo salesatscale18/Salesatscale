@@ -3078,6 +3078,6 @@
   "lab.voice.choices_heading": "New test chat or call",
   "lab.voice.start_chat": "Start chat",
   "lab.voice.start_call": "Start call",
-  "lab.voice.english_only": "Calls are in English only.",
+  "lab.voice.english_only": "Calls are in English only. Choose English to call.",
   "voice.settings.limit_line": "Calls: up to {limit}"
 }
