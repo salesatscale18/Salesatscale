@@ -1323,7 +1323,7 @@
   "markets.field.intake_keys_hint": "Leads sent with a ticked key always come to this market. A key belongs to one market.",
   "settings.intake.col.market": "Market",
   "settings.intake.market_for": "Market for {name}",
-  "settings.intake.market_auto": "Choose by country or phone",
+  "settings.intake.market_auto": "By country",
   "settings.intake.market_link": "Save",
   "settings.intake.key_market_saved": "Key's market saved.",
   "settings.intake.key_market_error": "Choose a market from the list.",
@@ -2920,5 +2920,6 @@
   "price_lists.publish_blocked.missing_one": "Not ready to publish: add the missing price above.",
   "price_lists.warning.must_fix": "Must be fixed before publishing:",
   "price_lists.warning.not_in_list": "Not in this price list yet, so the agent can't quote it here:",
-  "sources.size.pages_read_one": "1 page read"
+  "sources.size.pages_read_one": "1 page read",
+  "buyer.bank_name": "Bank"
 }

@@ -52,8 +52,10 @@ export function toolLabel(name: string): string {
   return maybe(`conv.tool.${name}`) ?? t("conv.tool.other");
 }
 
-/** The timeline's icon for the same event, where there is one (S3); other tools keep the wrench. */
+/** The timeline's icon for the same event, where there is one (S3), plus deal details and fit; other tools keep the wrench. */
 const TOOL_ICON: Record<string, IconName> = {
+  update_deal_state: "clipboard-list",
+  check_fit: "list-checks",
   hand_off_to_human: "user",
   send_order_form: "send",
   create_quote: "file-text",

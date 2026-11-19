@@ -83,7 +83,7 @@ describe("R5 follow-ups", () => {
   });
 
   it("S3: trace chips reuse the timeline icons where they exist", () => {
-    const calls = ["hand_off_to_human", "send_order_form", "create_quote", "update_deal_state"].map((name, i) => ({ id: String(i), name, input: {}, result: {}, outcome: "ok" })) as never;
-    expect(traceChips(calls).map((c) => c.icon ?? null)).toEqual(["user", "send", "file-text", null]);
+    const calls = ["hand_off_to_human", "send_order_form", "create_quote", "update_deal_state", "check_fit", "search_catalog"].map((name, i) => ({ id: String(i), name, input: {}, result: {}, outcome: "ok" })) as never;
+    expect(traceChips(calls).map((c) => c.icon ?? null)).toEqual(["user", "send", "file-text", "clipboard-list", "list-checks", null]);
   });
 });

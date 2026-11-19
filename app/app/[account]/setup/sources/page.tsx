@@ -290,7 +290,7 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
                     <Icon name={statusDef("source", s.status).icon} />
                   </span>
                   <span style={{ flex: "1 1 300px", minWidth: 0, overflowWrap: "anywhere" }}>
-                    <strong dir="auto">{s.title}</strong>{p.where && p.where !== "source" && p.where !== s.title ? <span className="sas-chip" style={{ marginInline: 6 }}>{p.where}</span> : ": "}
+                    <strong dir="auto">{s.title}</strong>{p.where && p.where !== "source" && p.where !== s.title ? <><span className="sas-chip" style={{ marginInlineStart: 6 }}>{p.where}</span>{": "}</> : ": "}
                     {p.message} <span className="sas-small">{p.fix === PRICE_LIST_FIX ? <a href={`${base}/setup/price-lists`}>{p.fix}</a> : p.fix}</span>
                   </span>
                   {s.kind === "website" ? (

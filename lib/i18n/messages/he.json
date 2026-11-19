@@ -282,5 +282,6 @@
   "buyer.bank_branch": "סניף",
   "buyer.bank_account": "חשבון",
   "buyer.copy": "העתקה",
-  "buyer.copied": "הועתק"
+  "buyer.copied": "הועתק",
+  "buyer.bank_name": "בנק"
 }
