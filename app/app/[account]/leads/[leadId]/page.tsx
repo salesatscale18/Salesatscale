@@ -24,6 +24,7 @@ import { SignedFormLinks } from "../../orders/signed-form-links";
 import { ScrollLeadToLatest } from "./scroll-latest";
 import { isolate } from "@/lib/leads/bidi";
 import { seesPlatformDetails } from "@/lib/auth/display";
+import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
 import { dealPaneView } from "@/lib/leads/deal-pane";
 import { DealStatePane } from "./deal-pane";
 import { formatMoney } from "@/lib/domain/money";
@@ -293,6 +294,7 @@ export default async function LeadCardPage({
                 slug={account.slug} view={conversation} me={me} buyerName={lead.fullName} timezone={tz} takeOverInHeader={takeOverHere}
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
                 leadStatus={lead.status} notes={notes} rawToolNames={seesPlatformDetails(access)}
+                steps={{ show: await agentStepsFor("workspace", me.id, sp.steps), back: `/app/${account.slug}/leads/${lead.id}#conversation` }}
               />
             ) : null}
             {conversation ? (

@@ -3079,5 +3079,10 @@
   "lab.voice.start_chat": "Start chat",
   "lab.voice.start_call": "Start call",
   "lab.voice.english_only": "Calls are in English only. Choose English to call.",
-  "voice.settings.limit_line": "Calls: up to {limit}"
+  "voice.settings.limit_line": "Calls: up to {limit}",
+  "conv.steps.show": "Show agent steps",
+  "conv.marker.handoff": "The agent asked for a person",
+  "conv.marker.taken_over": "Chat taken over by {name}",
+  "conv.marker.taken_over_unknown": "Chat taken over by a person",
+  "conv.marker.handed_back": "Handed back to the agent"
 }

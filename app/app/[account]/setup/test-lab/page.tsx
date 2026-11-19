@@ -4,7 +4,9 @@ import { isUuid } from "@/lib/security/ids";
 import { Fragment } from "react";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
-import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
+import { AgentStepsSwitch, ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
+import type { ThreadMarker } from "@/lib/agent/thread-markers";
+import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
 import { MessageBody } from "@/components/sas/message-body";
 import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
@@ -26,7 +28,7 @@ import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
 import { AutoSubmit } from "@/components/sas/list-kit-client";
 import { ListTable } from "@/components/sas/list-kit";
-import { ConversationControls, deliveryLabel, windowTimerProps } from "../../leads/[leadId]/conversation";
+import { ConversationControls, MarkerEntry, deliveryLabel, splitMarkers, windowTimerProps } from "../../leads/[leadId]/conversation";
 import { WindowTimer } from "@/components/sas/record";
 import { conversationWindow } from "@/lib/channels/whatsapp";
 import { listConnections } from "@/lib/channels/connections";
@@ -122,6 +124,13 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     conv ? getDealState(appDb, account.id, conv.leadId) : null,
   ]);
   const thread = view?.thread ?? [];
+  // "Show agent steps" (board ConvSteps): the step list before agent replies. On by default here, remembered apart from the workspace.
+  const showSteps = await agentStepsFor("lab", user.id, sp.steps);
+  const stepsBack = conv ? `${lab}?c=${conv.id}${isUuid(one(sp.v)) ? `&v=${one(sp.v)}` : ""}` : lab;
+  // Hand-off, take-over and hand-back markers show either way.
+  const { timed: timedMarkers, after: markersAfter } = splitMarkers(view?.markers);
+  let pendingMarkers = timedMarkers;
+  const markerNode = (mk: ThreadMarker, key: string) => <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} />;
   // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.
@@ -184,9 +193,12 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
         const trace: TraceItem[] = [];
         const usage = m.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number } | null;
+        const before = pendingMarkers.filter((mk) => mk.at.getTime() <= m.createdAt.getTime());
+        pendingMarkers = pendingMarkers.slice(before.length);
         return (
           <Fragment key={m.id}>
-            {calls.length ? (
+            {before.map((mk, i) => markerNode(mk, `mk-${m.id}-${i}`))}
+            {calls.length && showSteps ? (
               <ol className="sas-stack-2" aria-label={t("lab.trace")} style={{ margin: 0, paddingInlineStart: 0, listStyle: "none", alignSelf: "flex-end", maxWidth: "78%", width: "100%" }}>
                 {calls.map((c) => {
                   const d = describeCall(c.name, c.input, c.result, c.outcome);
@@ -228,9 +240,11 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             {isAdmin && usage?.inputTokens !== undefined ? (
               <span className="sas-small sas-num" style={{ alignSelf: "flex-end" }}>{t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}</span>
             ) : null}
+            {(markersAfter.get(m.id) ?? []).map((mk, i) => markerNode(mk, `mk-after-${m.id}-${i}`))}
           </Fragment>
         );
       })}
+      {pendingMarkers.map((mk, i) => markerNode(mk, `mk-end-${i}`))}
       <span id="end" />
     </ChatThread>
   ) : null;
@@ -322,6 +336,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
                 {waWindow ? <WindowTimer {...windowTimerProps(waWindow, new Date())} /> : null}
+                <span className="sas-steps-switch__slot"><AgentStepsSwitch slug={account.slug} scope="lab" show={showSteps} back={stepsBack} /></span>
               </div>
               {onVoice && voice ? (
                 <VoiceLabLive conversationId={conv.id} slug={account.slug} lab={lab} usageHref={usageHref}>

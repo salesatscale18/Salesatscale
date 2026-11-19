@@ -1013,3 +1013,18 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-vt__hint { display: none; }
   .lab-call__bar { flex-wrap: wrap; }
 }
+
+/* W (lane W4): "Show agent steps" switch and centred thread markers (board ConvSteps). */
+.sas-steps-switch__slot { margin-inline-start: auto; display: inline-flex; }
+.sas-steps-switch { margin: 0; display: inline-flex; }
+.sas-steps-switch__btn { display: inline-flex; align-items: center; gap: 8px; padding: 4px 2px; border: 0; background: none; font: inherit; font-size: 13px; line-height: 18px; color: var(--ink-muted); cursor: pointer; white-space: nowrap; }
+.sas-steps-switch__btn:hover { color: var(--ink); }
+.sas-steps-switch__btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
+.sas-steps-switch__track { position: relative; width: 30px; height: 18px; flex: none; border-radius: 999px; background: var(--line-strong); transition: background .15s; }
+.sas-steps-switch__track::after { content: ""; position: absolute; top: 2px; inset-inline-start: 2px; width: 14px; height: 14px; border-radius: 999px; background: #fff; transition: inset-inline-start .15s; }
+.sas-steps-switch__btn[aria-checked="true"] .sas-steps-switch__track { background: var(--primary); }
+.sas-steps-switch__btn[aria-checked="true"] .sas-steps-switch__track::after { inset-inline-start: 14px; }
+@media (prefers-reduced-motion: reduce) { .sas-steps-switch__track, .sas-steps-switch__track::after { transition: none; } }
+.sas-thread-marker { align-self: stretch; display: flex; justify-content: center; }
+.sas-thread-marker__body { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 6px; max-width: 100%; padding: 4px 12px; border: 1px dashed var(--line-strong); border-radius: 999px; background: var(--surface-raised); font-size: 12px; line-height: 16px; color: var(--ink-muted); text-align: center; }
+.sas-thread-marker__body > .sas-ico { color: var(--human); }
