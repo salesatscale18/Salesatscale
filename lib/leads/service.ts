@@ -15,6 +15,8 @@ import {
   type IntakeResult, type Lead, type LeadOrigin, type LeadStatus,
 } from "@/db/schema";
 import { getMarket, listMarkets, updateMarket } from "@/lib/markets/service";
+import { marketWhere } from "@/lib/markets/selection";
+import { marketNameSort } from "@/lib/markets/sort";
 import { applyLeadMarket, leadMarketContext, type LeadMarketHints } from "./market";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { Locale } from "@/lib/i18n";
@@ -199,7 +201,12 @@ export type LeadFilters = {
   limit?: number;
   /** Column sort (Leads list headings); default: latest activity first. */
   sort?: TableSort<LeadSortKey>;
+  /** The market switcher's choice (lib/markets/selection.ts); null or missing = all markets. Leads without a market are the home market's. */
+  market?: LeadMarketFilter | null;
 };
+
+/** The selected market as the lead filters need it. */
+export type LeadMarketFilter = { id: string; isHome: boolean };
 
 /** Leads list columns that sort on the server (the stage is worked out per lead, so it does not). */
 export const LEAD_SORT_KEYS = ["lead", "status", "market", "owner", "source", "activity"] as const;
@@ -216,6 +223,8 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
   if (f.language) parts.push(eq(leads.language, f.language));
   if (f.sourceLabel) parts.push(eq(leads.sourceLabel, f.sourceLabel));
   if (f.sinceDays) parts.push(gte(leads.lastActivityAt, new Date(now.getTime() - f.sinceDays * 86_400_000)));
+  const inMarket = marketWhere(leads.marketId, f.market ?? null);
+  if (inMarket) parts.push(inMarket);
   const q = f.q?.trim();
   if (q) {
     const like = `%${escapeLike(q)}%`;
@@ -235,8 +244,8 @@ export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, 
   const sortCol: Record<LeadSortKey, SQL | AnyColumn> = {
     lead: sql`lower(${leads.fullName})`,
     status: leads.status,
-    // Leads without a market belong to the home market: sorted with an empty name (first ascending).
-    market: sql`lower(coalesce(${markets.name}, ''))`,
+    // Leads without a market belong to the home market: sorted under the home market's name.
+    market: marketNameSort(markets.name, leads.accountId),
     // The agent (no owner) sorts as an empty name.
     owner: sql`lower(coalesce(nullif(trim(concat_ws(' ', ${owner.firstName}, ${owner.lastName})), ''), ${owner.email}, ''))`,
     source: sql`lower(coalesce(${leads.sourceLabel}, ${leads.origin}::text))`,
@@ -256,12 +265,12 @@ export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, 
   return { rows, total };
 }
 
-/** Counts per view for the saved-view tabs (ignores search and filters). */
-export async function countLeadsByView(db: Db, accountId: string): Promise<Record<LeadView, number>> {
+/** Counts per view for the saved-view tabs (ignores search and filters, but follows the market switcher's choice). */
+export async function countLeadsByView(db: Db, accountId: string, market: LeadMarketFilter | null = null): Promise<Record<LeadView, number>> {
   const rows = await db
     .select({ status: leads.status, n: count() })
     .from(leads)
-    .where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)))
+    .where(and(eq(leads.accountId, accountId), eq(leads.isTest, false), marketWhere(leads.marketId, market)))
     .groupBy(leads.status);
   const out = Object.fromEntries(LEAD_VIEWS.map((v) => [v, 0])) as Record<LeadView, number>;
   for (const r of rows) {

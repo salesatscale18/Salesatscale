@@ -9,6 +9,7 @@ import type { Db } from "@/db/types";
 import { conversations, leadEvents, leads, markets, messages, type LeadStatus } from "@/db/schema";
 import { windowState, type WindowState } from "@/lib/channels/rules";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { marketWhere } from "@/lib/markets/selection";
 
 export const INBOX_FILTERS = ["all", "needs_you", "agent", "human", "closed", "test"] as const;
 export type InboxFilter = (typeof INBOX_FILTERS)[number];
@@ -95,15 +96,17 @@ const toDate = (v: unknown): Date | null => (v === null || v === undefined ? nul
 
 /**
  * One page of the inbox, most recent activity first, plus the count of every
- * filter (search applied). Three queries in one parallel batch.
+ * filter (search and market applied). Three queries in one parallel batch.
+ * `market`: the market switcher's choice (lib/markets/selection.ts), by the
+ * lead's market (no market id = the home market); null or missing = all markets.
  */
 export async function listInbox(
-  db: Db, accountId: string, opts: { filter?: InboxFilter; q?: string; page?: number; now?: Date; simulateRules?: boolean } = {},
+  db: Db, accountId: string, opts: { filter?: InboxFilter; q?: string; page?: number; now?: Date; simulateRules?: boolean; market?: { id: string; isHome: boolean } | null } = {},
 ): Promise<InboxList> {
   const filter = opts.filter ?? "all";
   const now = opts.now ?? new Date();
   const search = searchSql(opts.q);
-  const scope = and(eq(conversations.accountId, accountId), eq(leads.accountId, accountId), search);
+  const scope = and(eq(conversations.accountId, accountId), eq(leads.accountId, accountId), search, marketWhere(leads.marketId, opts.market ?? null));
   const where = and(scope, filterSql(filter));
   const requested = Math.max(1, Math.floor(opts.page ?? 1));
 

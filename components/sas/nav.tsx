@@ -29,6 +29,7 @@ export const SELLER_NAV: NavGroup[] = [
       { id: "knowledge", label: "nav.knowledge", icon: "book-open", path: "/setup/knowledge" },
       { id: "catalog", label: "nav.catalog", icon: "package", path: "/setup/catalog" },
       { id: "price-lists", label: "nav.price_lists", icon: "tags", path: "/setup/price-lists" },
+      { id: "markets", label: "nav.markets", icon: "globe", path: "/markets" },
       { id: "playbook", label: "nav.playbook", icon: "scroll-text", path: "/setup/playbook" },
       { id: "order-form", label: "nav.order_form", icon: "file-signature", path: "/setup/order-form" },
       { id: "follow-ups", label: "nav.follow_ups", icon: "alarm-clock", path: "/setup/follow-ups", hidden: true },

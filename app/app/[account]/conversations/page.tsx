@@ -8,7 +8,8 @@ import { approvedTemplates, conversationWindow } from "@/lib/channels/whatsapp";
 import { renderTemplate } from "@/lib/channels/rules";
 import { INBOX_FILTERS, inboxConversation, latestHandoff, listInbox, parseInboxFilter, type InboxGroup, type InboxList, type InboxRow } from "@/lib/conversations/inbox";
 import { relativeTime } from "@/lib/format";
-import { listMarkets } from "@/lib/markets/service";
+import { MarketSwitcher } from "@/components/sas/market-switcher";
+import { MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
 import { ConversationPanel, formNotes, windowTimerProps } from "../leads/[leadId]/conversation";
 import { linkFor, personSentForms } from "@/lib/orders/service";
@@ -58,10 +59,18 @@ export default async function ConversationsPage({ params, searchParams }: { para
   const page = Math.max(1, Math.floor(Number(one(sp.page)) || 1));
   const selectedId = UUID.test(one(sp.c)) ? one(sp.c) : null;
   const now = new Date();
+  // The market switcher's choice (URL, then the stored preference; null = all markets): it filters
+  // the list, its groups and the filter counts by the lead's market. An open thread stays open.
+  const selection = await marketSelection(appDb, account.id, sp);
+  const market = selection.selected;
+  // `market` stays on this page's links only when the URL has it (the stored choice covers the rest).
+  const urlMarket = selection.showSwitcher ? one(sp[MARKET_PARAM]) || undefined : undefined;
+  // Leads without a market belong to the home market.
+  const homeMarket = (selection.markets.find((m) => m.isHome) ?? selection.markets[0])?.name ?? "";
 
   const qs = (patch: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    const cur: Record<string, string | undefined> = { filter: filter === "all" ? undefined : filter, q, page: page > 1 ? String(page) : undefined, c: selectedId ?? undefined };
+    const cur: Record<string, string | undefined> = { filter: filter === "all" ? undefined : filter, q, page: page > 1 ? String(page) : undefined, c: selectedId ?? undefined, [MARKET_PARAM]: urlMarket };
     for (const [k, v] of Object.entries({ ...cur, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
     return s ? `${base}?${s}` : base;
@@ -70,16 +79,11 @@ export default async function ConversationsPage({ params, searchParams }: { para
   // One parallel batch: the list (with counts) and the selected conversation.
   let list: InboxList | null = null;
   let selected: Awaited<ReturnType<typeof inboxConversation>> | null = null;
-  let homeMarket = "";
   try {
-    let marketList: { name: string }[];
-    [list, selected, marketList] = await Promise.all([
-      listInbox(appDb, account.id, { filter, q, page, now, simulateRules: account.simulateWhatsappRules }),
+    [list, selected] = await Promise.all([
+      listInbox(appDb, account.id, { filter, q, page, now, simulateRules: account.simulateWhatsappRules, market }),
       selectedId ? inboxConversation(appDb, account.id, selectedId) : Promise.resolve(null),
-      listMarkets(appDb, account.id),
     ]);
-    // Leads without a market belong to the home market (listMarkets puts it first).
-    homeMarket = marketList[0]?.name ?? "";
   } catch (e) {
     console.error("[inbox] list failed", e);
   }
@@ -120,6 +124,9 @@ export default async function ConversationsPage({ params, searchParams }: { para
       <AutoRefresh />
       <header className="sas-page-head">
         <h1 className="sas-title">{t("inbox.title")}</h1>
+        <div className="sas-page-head__actions">
+          <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp, ["page", "c", "notice", "template_error"])} />
+        </div>
       </header>
 
       {!list ? (
@@ -142,6 +149,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
               </nav>
               <form method="get" action={base} className="sas-filters">
                 {filter !== "all" ? <input type="hidden" name="filter" value={filter} /> : null}
+                {urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
                 <label className="sas-search">
                   <Icon name="search" />
                   <span className="sas-sr">{t("inbox.search")}</span>
@@ -155,7 +163,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                 {/* "All" with nothing: a title, a muted body, and the test chats if there are any. */}
                 {!q && filter === "all" ? (
                   <>
-                    <strong>{t("inbox.empty.all_title")}</strong>
+                    <strong>{market ? t("inbox.empty.market_title", { market: market.name }) : t("inbox.empty.all_title")}</strong>
                     <span className="sas-small">{t("inbox.empty.all")}</span>
                     {list.counts.test > 0 ? (
                       <span className="sas-small" data-testid="empty-tests">

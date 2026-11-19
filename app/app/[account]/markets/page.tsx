@@ -271,7 +271,6 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
     <main className="sas-shell__content">
       <header className="sas-page-head">
         <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 300px", minWidth: 0 }}>
-          <nav aria-label={t("markets.breadcrumb")} className="sas-small"><a href={`${base}/settings`}>{t("settings.title")}</a> / {t("markets.title")}</nav>
           <h1 className="sas-title">{t("markets.title")}</h1>
           <span className="sas-small">{t("markets.intro")}</span>
         </div>

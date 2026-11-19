@@ -16,6 +16,8 @@ vi.mock("@/lib/auth/account", () => ({
   actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+// W2: Quotes and orders reads the market switcher's stored choice (a cookie) for accounts with several markets.
+vi.mock("next/headers", () => ({ headers: async () => new Headers(), cookies: async () => ({ get: () => undefined }) }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },

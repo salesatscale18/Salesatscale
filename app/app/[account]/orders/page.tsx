@@ -20,6 +20,9 @@ import { CopyButton } from "@/components/sas/copy-button";
 import { estimateDelivery, formatDeliveryShort } from "@/lib/delivery/eta";
 import { frozenPlan } from "@/lib/delivery/plan";
 import { isolate } from "@/lib/leads/bidi";
+import { MarketSwitcher } from "@/components/sas/market-switcher";
+import { MARKET_PARAM, marketSelection, marketWhere, switcherReturnTo } from "@/lib/markets/selection";
+import type { DocMarketFilter } from "@/lib/quotes/service";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 /** "2 h ago", "12 min ago"; "just now" and dates stay as they are (round-4 review E7). */
@@ -27,10 +30,10 @@ function agoText(rel: string): string {
   return / (min|h)$/.test(rel) ? t("orders.ago", { time: rel }) : rel;
 }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Orders of real (non-test) leads, for the tab count; the list itself loads only on the Orders tab. */
-async function countOrders(accountId: string) {
+/** Orders of real (non-test) leads in the chosen market, for the tab count; the list itself loads only on the Orders tab. */
+async function countOrders(accountId: string, market: DocMarketFilter) {
   const [{ n }] = await appDb.select({ n: count() }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
-    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false)));
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), marketWhere(orders.marketId, market)));
   return n;
 }
 
@@ -59,6 +62,14 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const sp = await searchParams;
   const { account, user: me } = await requireAccount(slug);
   const base = `/app/${account.slug}/orders`;
+  // The market switcher's choice (URL, then the stored preference; null = all markets). A quote or
+  // order counts under its own market (the one it was priced in); no market id = the home market.
+  const selection = await marketSelection(appDb, account.id, sp);
+  const chosenMarket = selection.selected;
+  const showMarket = selection.showSwitcher;
+  const homeName = (selection.markets.find((m) => m.isHome) ?? selection.markets[0])?.name ?? "";
+  // `market` stays on this page's links only when the URL has it (the stored choice covers the rest).
+  const urlMarket = showMarket ? one(sp[MARKET_PARAM]) || undefined : undefined;
   const tabRaw = one(sp.tab);
   const tab: QuoteTab | "orders" = tabRaw === "approval" ? "approval" : tabRaw === "orders" ? "orders" : "quotes";
   const quoteId = one(sp.quote);
@@ -73,6 +84,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     const p = new URLSearchParams();
     if (tab !== "quotes") p.set("tab", tab);
     if (q) p.set("q", q);
+    if (urlMarket) p.set(MARKET_PARAM, urlMarket);
     const s = patch.sort ?? sortOf;
     if (!isDefault(s)) { p.set("sort", s.key); p.set("dir", s.dir); }
     if (patch.quote) p.set("quote", patch.quote);
@@ -83,14 +95,14 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const orderSortHref = (s: TableSort<OrderSortKey>) => listHref({ sort: s });
   // Round trip 1–2: lists, counts and the selected quote all start together;
   // the doc statuses chain onto the quote list only.
-  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, tab, { q, sort: quoteSort });
+  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, tab, { q, sort: quoteSort, market: chosenMarket });
   const [rows, docs, total, awaiting, orderRows, orderCount, detail] = await Promise.all([
     quotesP,
     quotesP.then((r) => docStatusByQuote(appDb, account.id, r.map((x) => x.quote.id))),
-    countQuotes(appDb, account.id),
-    countAwaitingApproval(appDb, account.id),
-    tab === "orders" ? listOrders(appDb, account.id, { q, sort: orderSort }) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
-    countOrders(account.id),
+    countQuotes(appDb, account.id, chosenMarket),
+    countAwaitingApproval(appDb, account.id, chosenMarket),
+    tab === "orders" ? listOrders(appDb, account.id, { q, sort: orderSort, market: chosenMarket }) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
+    countOrders(account.id, chosenMarket),
     UUID.test(quoteId) ? getQuote(appDb, account.id, quoteId) : Promise.resolve(null),
   ]);
   const now = new Date();
@@ -98,7 +110,17 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const moneyIn = (currency: string) => (m: number, period?: string | null) =>
     formatMoney(m, currency, period === "year" || period === "month" ? { period } : {});
   const money = moneyIn(account.currency);
-  const tabHref = (x: string) => (x === "quotes" ? base : `${base}?tab=${x}`);
+  const tabHref = (x: string) => {
+    const p = new URLSearchParams();
+    if (x !== "quotes") p.set("tab", x);
+    if (urlMarket) p.set(MARKET_PARAM, urlMarket);
+    const s = p.toString();
+    return s ? `${base}?${s}` : base;
+  };
+  /** The Market cell: the row's market, or the home market for rows without one. */
+  const marketCell = (m: { id: string | null; name: string | null } | null) => (
+    <td className="sas-col-minor" data-label={t("orders.col.market")}><span data-market={m?.id ?? "home"}>{m?.name ?? homeName}</span></td>
+  );
 
   const cur = detail?.versions[0];
   const incomplete = !!cur?.lines.some((l) => l.unitPriceMinor === null);
@@ -186,7 +208,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     <div className={detail ? "sas-with-panel" : undefined}>
       <main className="sas-shell__content">
         <header className="sas-stack-2">
-          <h1 className="sas-title">{t("orders.title")}</h1>
+          <div className="sas-page-head">
+            <h1 className="sas-title">{t("orders.title")}</h1>
+            <div className="sas-page-head__actions">
+              <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp, ["quote", "send"])} />
+            </div>
+          </div>
           <nav aria-label={t("orders.tabs")} className="sas-tabs">
             <a className="sas-tab" href={tabHref("quotes")} aria-current={tab === "quotes" ? "page" : undefined}>{t("orders.tab.quotes")} <span className="sas-num">{total}</span></a>
             <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined}>{t("orders.tab.orders")} <span className="sas-num">{orderCount}</span></a>
@@ -196,6 +223,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           </nav>
           <form method="get" action={base} className="sas-filters" role="search">
             {tab !== "quotes" ? <input type="hidden" name="tab" value={tab} /> : null}
+            {urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
             {!isDefault(sortOf) ? <><input type="hidden" name="sort" value={sortOf.key} /><input type="hidden" name="dir" value={sortOf.dir} /></> : null}
             <label className="sas-search" style={{ maxWidth: 420 }}>
               <Icon name="search" />
@@ -209,17 +237,18 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           orderRows.length === 0 ? (
             <section className="sas-panel sas-empty">
               <span className="sas-empty__icon sas-empty__icon--start"><Icon name={q ? "search" : "file-text"} /></span>
-              <span className="sas-small">{q ? t("orders.empty.search") : t("orders.orders_soon")}</span>
+              <span className="sas-small">{q ? t("orders.empty.search") : chosenMarket ? t("orders.empty.orders_market", { market: chosenMarket.name }) : t("orders.orders_soon")}</span>
               {q ? <a className={buttonClass("secondary", "sm")} href={tabHref("orders")}>{t("leads.filter.clear")}</a> : null}
             </section>
           ) : (
             <section className="sas-panel" style={{ overflow: "hidden" }}>
               <div style={{ overflowX: "auto" }}>
                 {/* With the side panel open, the minor columns hide so Payment stays whole (R5-5, sas.css). */}
-                <table className="sas-table sas-table--stack sas-table--panel-aware" style={{ minWidth: detail ? 0 : 760 }}>
+                <table className="sas-table sas-table--stack sas-table--panel-aware" style={{ minWidth: detail ? 0 : showMarket ? 880 : 760 }}>
                   <thead><tr>
                     <SortHeader label={t("orders.col.order")} column="order" sort={orderSort} href={orderSortHref} firstDir="desc" />
                     <SortHeader label={t("orders.col.lead")} column="lead" sort={orderSort} href={orderSortHref} />
+                    {showMarket ? <SortHeader label={t("orders.col.market")} column="market" sort={orderSort} href={orderSortHref} className="sas-col-minor" /> : null}
                     <SortHeader label={t("orders.col.one_time")} column="one_time" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
                     <SortHeader label={t("orders.col.monthly")} column="monthly" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} className="sas-col-minor" />
                     <SortHeader label={t("orders.col.payment")} column="payment" sort={orderSort} href={orderSortHref} />
@@ -227,10 +256,11 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     <th scope="col" className="sas-col-minor">{t("orders.col.delivery")}</th>
                   </tr></thead>
                   <tbody>
-                    {orderRows.map(({ order, lead }) => (
+                    {orderRows.map(({ order, lead, market: rowMarket }) => (
                       <tr key={order.id} className={order.quoteId === quoteId ? "sas-row--selected" : undefined}>
                         <td><a className="sas-id" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
                         <td data-label={t("orders.col.lead")}><bdi>{lead.company ?? lead.fullName}</bdi></td>
+                        {showMarket ? marketCell(rowMarket) : null}
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
                         <td className="sas-num sas-col-minor" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
                         <td data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
@@ -246,7 +276,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         ) : rows.length === 0 ? (
           <section className="sas-panel sas-empty">
             <span className="sas-empty__icon sas-empty__icon--start"><Icon name={q ? "search" : "file-text"} /></span>
-            <strong>{q ? t("orders.empty.search") : tab === "approval" ? t("orders.empty.approval") : t("orders.empty.title")}</strong>
+            <strong>{q ? t("orders.empty.search") : tab === "approval" ? t("orders.empty.approval") : chosenMarket ? t("orders.empty.quotes_market", { market: chosenMarket.name }) : t("orders.empty.title")}</strong>
             {q ? <a className={buttonClass("secondary", "sm")} href={tabHref(tab)}>{t("leads.filter.clear")}</a> : null}
             {tab === "quotes" && !q ? <span className="sas-small">{t("orders.empty.body")}</span> : null}
             {tab === "quotes" && !q ? <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads`}>{t("orders.empty.go_leads")}</a> : null}
@@ -255,22 +285,24 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
           <section className="sas-panel" style={{ overflow: "hidden" }}>
             <div style={{ overflowX: "auto" }}>
               {/* With the side panel open, Monthly and Form hide (the panel shows both) so Payment is not cut (R5-5). */}
-              <table className="sas-table sas-table--stack sas-table--panel-aware" style={{ minWidth: detail ? 0 : 720 }}>
+              <table className="sas-table sas-table--stack sas-table--panel-aware" style={{ minWidth: detail ? 0 : showMarket ? 840 : 720 }}>
                 <thead><tr>
                   <SortHeader label={t("orders.col.quote")} column="quote" sort={quoteSort} href={quoteSortHref} firstDir="desc" />
                   <SortHeader label={t("orders.col.lead")} column="lead" sort={quoteSort} href={quoteSortHref} />
+                  {showMarket ? <SortHeader label={t("orders.col.market")} column="market" sort={quoteSort} href={quoteSortHref} className="sas-col-minor" /> : null}
                   <SortHeader label={t("orders.col.one_time")} column="one_time" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
                   <SortHeader label={t("orders.col.monthly")} column="monthly" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} className="sas-col-minor" />
                   <SortHeader label={t("orders.col.status")} column="status" sort={quoteSort} href={quoteSortHref} />
                   <th scope="col" className="sas-col-minor">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
                 </tr></thead>
                 <tbody>
-                  {rows.map(({ quote, version, lead }) => {
+                  {rows.map(({ quote, version, lead, market: rowMarket }) => {
                     const toPrice = version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId;
                     return (
                       <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
                         <td><a className="sas-id" href={listHref({ quote: quote.id })}>Q-{quote.number} v{quote.currentVersion}</a></td>
                         <td data-label={t("orders.col.lead")}><bdi>{lead.company ?? lead.fullName}</bdi></td>
+                        {showMarket ? marketCell(rowMarket) : null}
                         <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
                         <td className="sas-num sas-col-minor" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
                         <td data-label={t("orders.col.status")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id), !!docs.get(quote.id)?.payment)} /></td>

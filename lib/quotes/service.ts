@@ -13,6 +13,8 @@ import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { localDateIso } from "@/lib/format";
 import { marketTimezone } from "@/lib/markets/settings";
+import { marketWhere } from "@/lib/markets/selection";
+import { marketNameSort } from "@/lib/markets/sort";
 import {
   leadEvents, leads, markets, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls,
   type ApprovalReason, type Quote, type QuoteStatus, type QuoteVersion,
@@ -527,7 +529,7 @@ function withSent<T extends { quote: Quote }>(row: T, sent: Set<string>): T {
 export type QuoteTab = "quotes" | "approval";
 
 /** Quotes list columns that sort on the server; default: newest first. */
-export const QUOTE_SORT_KEYS = ["quote", "lead", "one_time", "monthly", "status"] as const;
+export const QUOTE_SORT_KEYS = ["quote", "lead", "one_time", "monthly", "status", "market"] as const;
 export type QuoteSortKey = (typeof QUOTE_SORT_KEYS)[number];
 export const QUOTE_SORT_DEFAULT: TableSort<QuoteSortKey> = { key: "quote", dir: "desc" };
 
@@ -545,7 +547,10 @@ export function docSearchSql(q: string | undefined, numberCol: AnyPgColumn): SQL
   return or(...conds)!;
 }
 
-export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes", opts: { q?: string; sort?: TableSort<QuoteSortKey> } = {}) {
+/** The market switcher's choice for Quotes and orders (lib/markets/selection.ts): a quote or order with no market id is the home market's. */
+export type DocMarketFilter = { id: string; isHome: boolean } | null;
+
+export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes", opts: { q?: string; sort?: TableSort<QuoteSortKey>; market?: DocMarketFilter } = {}) {
   const sort = opts.sort ?? QUOTE_SORT_DEFAULT;
   const col: Record<QuoteSortKey, SQL | AnyPgColumn> = {
     quote: quotes.number,
@@ -553,27 +558,29 @@ export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quo
     one_time: quoteVersions.oneTimeTotalMinor,
     monthly: quoteVersions.recurringTotalMinor,
     status: quotes.status,
+    market: marketNameSort(markets.name, quotes.accountId),
   };
   const rows = await db
-    .select({ quote: quotes, version: quoteVersions, lead: leads })
+    .select({ quote: quotes, version: quoteVersions, lead: leads, market: { id: markets.id, name: markets.name } })
     .from(quotes)
     .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
     .innerJoin(leads, eq(leads.id, quotes.leadId))
-    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : []), docSearchSql(opts.q, quotes.number) ?? undefined))
+    .leftJoin(markets, and(eq(markets.id, quotes.marketId), eq(markets.accountId, quotes.accountId)))
+    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : []), docSearchSql(opts.q, quotes.number) ?? undefined, marketWhere(quotes.marketId, opts.market ?? null)))
     .orderBy(sort.dir === "asc" ? sql`${col[sort.key]} asc nulls last` : sql`${col[sort.key]} desc nulls last`, desc(quotes.createdAt))
     .limit(200);
   const sent = await sentDraftQuoteIds(db, accountId, rows.map((r) => r.quote));
   return rows.map((r) => withSent(r, sent));
 }
 
-export async function countAwaitingApproval(db: Db, accountId: string) {
+export async function countAwaitingApproval(db: Db, accountId: string, market: DocMarketFilter = null) {
   const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
-    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), eq(quotes.status, "awaiting_approval")));
+    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), eq(quotes.status, "awaiting_approval"), marketWhere(quotes.marketId, market)));
   return n;
 }
 
-export async function countQuotes(db: Db, accountId: string) {
-  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false)));
+export async function countQuotes(db: Db, accountId: string, market: DocMarketFilter = null) {
+  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), marketWhere(quotes.marketId, market)));
   return n;
 }
 

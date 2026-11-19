@@ -30,7 +30,9 @@ import { fakePaymentsEnabled } from "@/lib/payments/mode";
 import { priceWithList } from "@/lib/pricing/engine";
 import { entriesOf, livePriceList } from "@/lib/pricing/price-lists";
 import { customPricesOf, customsFor, engineItems, enginePriceList, requestLinesOf } from "@/lib/quotes/pricing";
-import { createQuoteVersion, docSearchSql, getQuote } from "@/lib/quotes/service";
+import { createQuoteVersion, docSearchSql, getQuote, type DocMarketFilter } from "@/lib/quotes/service";
+import { marketWhere } from "@/lib/markets/selection";
+import { marketNameSort } from "@/lib/markets/sort";
 import { orderFormPrefillWithSources, signedDealValues, type PrefillKey, type PrefillSource } from "./prefill";
 import { getOrderFormSettings } from "./settings";
 import { isSimulatedLead } from "@/lib/simulator/rules";
@@ -608,12 +610,12 @@ export async function orderForQuote(db: Db, accountId: string, quoteId: string) 
 }
 
 /** Orders list columns that sort on the server; default: newest first. */
-export const ORDER_SORT_KEYS = ["order", "lead", "one_time", "monthly", "payment", "signed"] as const;
+export const ORDER_SORT_KEYS = ["order", "lead", "one_time", "monthly", "payment", "signed", "market"] as const;
 export type OrderSortKey = (typeof ORDER_SORT_KEYS)[number];
 export const ORDER_SORT_DEFAULT: TableSort<OrderSortKey> = { key: "signed", dir: "desc" };
 
 /** Orders of real leads; search by order number, lead name or company (lib/quotes/service.ts docSearchSql). */
-export async function listOrders(db: Db, accountId: string, opts: { q?: string; sort?: TableSort<OrderSortKey> } = {}) {
+export async function listOrders(db: Db, accountId: string, opts: { q?: string; sort?: TableSort<OrderSortKey>; market?: DocMarketFilter } = {}) {
   const sort = opts.sort ?? ORDER_SORT_DEFAULT;
   const col: Record<OrderSortKey, SQL | AnyPgColumn> = {
     order: orders.number,
@@ -622,9 +624,11 @@ export async function listOrders(db: Db, accountId: string, opts: { q?: string; 
     monthly: orders.recurringMinor,
     payment: orders.paymentStatus,
     signed: orders.createdAt,
+    market: marketNameSort(markets.name, orders.accountId),
   };
-  return db.select({ order: orders, lead: leads }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
-    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), docSearchSql(opts.q, orders.number) ?? undefined))
+  return db.select({ order: orders, lead: leads, market: { id: markets.id, name: markets.name } }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
+    .leftJoin(markets, and(eq(markets.id, orders.marketId), eq(markets.accountId, orders.accountId)))
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), docSearchSql(opts.q, orders.number) ?? undefined, marketWhere(orders.marketId, opts.market ?? null)))
     .orderBy(sort.dir === "asc" ? sql`${col[sort.key]} asc nulls last` : sql`${col[sort.key]} desc nulls last`, desc(orders.createdAt))
     .limit(200);
 }

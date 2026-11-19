@@ -16,6 +16,7 @@ import { splitCodes } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { firstParam, hrefWith, sortParams, sortRows } from "@/lib/list-kit";
 import { listMarkets } from "@/lib/markets/service";
+import { marketSkus, soldIn, soldInText, type MarketSkus } from "@/lib/catalog/sold-in";
 import { describeAutoAddRule, type AutoAddRule } from "@/lib/pricing/auto-add";
 import { entriesOf, listPriceLists, partState, type PriceListSummary } from "@/lib/pricing/price-lists";
 import { tierChip } from "@/lib/pricing/list-view";
@@ -69,6 +70,14 @@ function PriceCell({ row, currency }: { row: CatalogRow; currency: string | null
     e.recurringCharged ? <Part key="r" entry={e} charge="recurring" currency={currency} /> : null,
   ].filter(Boolean);
   return <span style={{ whiteSpace: "nowrap" }}>{parts.flatMap((p, i) => (i > 0 ? [<span key={`s${i}`}> + </span>, p] : [p]))}</span>;
+}
+
+/** The "Sold in" cell: market names ("Israel, UK +2"), all of them on hover, or "Not sold yet" in the warning tone. */
+function SoldInCell({ sku, markets }: { sku: string; markets: MarketSkus[] }) {
+  const names = soldIn(sku, markets);
+  const text = soldInText(names);
+  if (!text) return <span style={{ color: "var(--warning)", fontWeight: 600 }} data-sold-in="none">{t("catalog.sold_in.none")}</span>;
+  return <span data-sold-in={names.length} title={names.length > 2 ? names.join(", ") : undefined}>{text}</span>;
 }
 
 /** A rule sentence with its codes kept on one line ("Kitchen hub (GW-10)"). */
@@ -181,6 +190,10 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
   const entries = chosen ? await entriesOf(appDb, account.id, chosen.shown.id) : null;
   const currency = chosen?.shown.currency ?? null;
   const all = catalogRows(state.items, entries, allRules);
+  // "Sold in": only with more than one market (one market sells everything it prices, as Price shows).
+  const showSoldIn = markets.length > 1;
+  const sold = showSoldIn ? await marketSkus(appDb, account.id, markets) : [];
+  const cols = showSoldIn ? 9 : 8;
 
   const kind = firstParam(sp, "kind");
   const status = firstParam(sp, "status");
@@ -322,6 +335,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                 <SortableTh column="kind" path={base} params={sp} sort={sort}>{t("catalog.col.kind")}</SortableTh>
                 <SortableTh column="charged" path={base} params={sp} sort={sort}>{t("catalog.col.charged")}</SortableTh>
                 <SortableTh column="price" path={base} params={sp} sort={sort} firstDir="desc">{t("catalog.col.price")}</SortableTh>
+                {showSoldIn ? <th scope="col">{t("catalog.col.sold_in")}</th> : null}
                 <th scope="col">{t("catalog.col.rules")}</th>
                 <SortableTh column="status" path={base} params={sp} sort={sort}>{t("catalog.col.status")}</SortableTh>
                 <th scope="col"><span className="sas-sr">{t("catalog.col.actions")}</span></th>
@@ -329,7 +343,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
             </thead>
             <tbody>
               {rows.length === 0 ? (
-                <tr><td colSpan={8} data-label=""><span className="sas-small">{t("catalog.no_match")} <a href={base}>{t("catalog.clear_filters")}</a></span></td></tr>
+                <tr><td colSpan={cols} data-label=""><span className="sas-small">{t("catalog.no_match")} <a href={base}>{t("catalog.clear_filters")}</a></span></td></tr>
               ) : null}
               {rows.flatMap((r) => {
                 const i = r.item;
@@ -343,6 +357,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                     <td data-label={t("catalog.col.kind")}>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")}</td>
                     <td data-label={t("catalog.col.charged")} style={{ whiteSpace: "nowrap" }}>{t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}</td>
                     <td data-label={t("catalog.col.price")}><PriceCell row={r} currency={currency} /></td>
+                    {showSoldIn ? <td data-label={t("catalog.col.sold_in")}><SoldInCell sku={i.sku} markets={sold} /></td> : null}
                     <td data-label={t("catalog.col.rules")}>
                       {r.chips.length === 0 ? <span className="sas-small">—</span> : (
                         <span className="sas-chips" data-rule-chips="">{r.chips.map((c) => <span key={c} className="sas-chip sas-chip--plain">{c}</span>)}</span>
@@ -362,7 +377,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                   </tr>
                 );
                 if (confirm !== i.id || sheetOpen) return [row];
-                return [row, <tr key={`${i.id}-confirm`} className="sas-confirm-row"><td colSpan={8} data-label="">{removeConfirm(i)}</td></tr>];
+                return [row, <tr key={`${i.id}-confirm`} className="sas-confirm-row"><td colSpan={cols} data-label="">{removeConfirm(i)}</td></tr>];
               })}
             </tbody>
           </ListTable>

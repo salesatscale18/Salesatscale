@@ -67,9 +67,9 @@ describe("CSV template", () => {
 describe("side nav: Overview matches only its own page", () => {
   const items = SELLER_NAV.flatMap((g) => g.items);
   const base = "/app/polar";
-  it("highlights Settings on /markets (was Overview)", () => {
-    expect(activeNavId(items, base, `${base}/markets`, "seller")).toBe("settings");
-    expect(activeNavId(items, base, `${base}/markets/x`, "seller")).toBe("settings");
+  it("highlights Markets on /markets (its own item under Agent setup since W2; was Settings)", () => {
+    expect(activeNavId(items, base, `${base}/markets`, "seller")).toBe("markets");
+    expect(activeNavId(items, base, `${base}/markets/x`, "seller")).toBe("markets");
   });
   it("Overview on the base path only; the longest path wins elsewhere", () => {
     expect(activeNavId(items, base, base, "seller")).toBe("overview");

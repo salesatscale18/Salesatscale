@@ -1121,3 +1121,14 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-thread-marker { align-self: stretch; display: flex; justify-content: center; }
 .sas-thread-marker__body { display: inline-flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px 6px; max-width: 100%; padding: 4px 12px; border: 1px dashed var(--line-strong); border-radius: 999px; background: var(--surface-raised); font-size: 12px; line-height: 16px; color: var(--ink-muted); text-align: center; }
 .sas-thread-marker__body > .sas-ico { color: var(--human); }
+
+/* ------------------------------------------------------------------------- */
+/* W (lane W2): markets across the workspace                                 */
+/* ------------------------------------------------------------------------- */
+/* Leads on a phone: the market switcher takes its own full-width row above Add lead and More. */
+@media (max-width: 767px) {
+  .sas-leads-actions:has(> .sas-mswitch) { flex-wrap: wrap; }
+  .sas-leads-actions > .sas-mswitch { flex: 1 0 100%; }
+  .sas-leads-actions > .sas-mswitch .sas-mswitch__field { flex: 1; }
+  .sas-leads-actions > .sas-mswitch .sas-mswitch__select { width: 100%; max-width: none; }
+}

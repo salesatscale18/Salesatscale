@@ -23,8 +23,6 @@ export function activeNavId(items: { id: string; path: string }[], basePath: str
       best = href.length;
     }
   }
-  // Markets live under Settings (its subnav links there).
-  if (!active && mode !== "admin" && (pathname === `${basePath}/markets` || pathname.startsWith(`${basePath}/markets/`))) active = "settings";
   return active;
 }
 

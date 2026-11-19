@@ -8,7 +8,8 @@ import { SortHeader } from "@/components/sas/sort-header";
 import { AutoSubmit } from "@/components/sas/auto-submit";
 import { relativeTime } from "@/lib/format";
 import { isLocale, t, type Locale } from "@/lib/i18n";
-import { listMarkets } from "@/lib/markets/service";
+import { MarketSwitcher } from "@/components/sas/market-switcher";
+import { MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { AddLeadForm } from "./add-lead-form";
 import { AddSimBuyerForm } from "./add-sim-buyer-form";
 import { countryName } from "@/lib/markets/rules";
@@ -29,6 +30,14 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   const sp = await searchParams;
   const { account, user: me } = await requireAccount(slug);
   const base = `/app/${account.slug}/leads`;
+  // The market switcher's choice (URL `?market=`, then the stored preference; null = all markets).
+  // It filters the list, the view counts and the totals; one control, no separate market filter.
+  const selection = await marketSelection(appDb, account.id, sp);
+  const market = selection.selected;
+  const marketList = selection.markets;
+  // `market` stays on this page's links only when the URL has it (the stored choice covers the rest).
+  const urlMarket = selection.showSwitcher ? one(sp[MARKET_PARAM]) || undefined : undefined;
+  const showMarket = selection.showSwitcher;
 
   const viewRaw = one(sp.view);
   const view: LeadView = (LEAD_VIEWS as readonly string[]).includes(viewRaw) ? (viewRaw as LeadView) : "all";
@@ -45,6 +54,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     sinceDays: (PERIODS as readonly number[]).includes(days) ? days : undefined,
     limit: Math.min(Math.max(Number(one(sp.limit)) || 50, 50), 500),
     sort,
+    market,
   };
   const stageRaw = one(sp.stage);
   const stageFilter = (STAGE_STEPS as readonly string[]).includes(stageRaw) ? (stageRaw as StageStep) : undefined;
@@ -57,7 +67,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     const p = new URLSearchParams();
     const cur: Record<string, string | undefined> = {
       view: view === "all" ? undefined : view, q: filters.q, source: filters.sourceLabel, language: filters.language,
-      days: filters.sinceDays ? String(filters.sinceDays) : undefined, stage: stageFilter, ...sortParams(sort),
+      days: filters.sinceDays ? String(filters.sinceDays) : undefined, stage: stageFilter, ...sortParams(sort), [MARKET_PARAM]: urlMarket,
     };
     for (const [k, v] of Object.entries({ ...cur, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
@@ -70,13 +80,14 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   let stages = new Map<string, LeadStageView>();
   let counts: Record<LeadView, number> | null = null;
   let sources: string[] = [];
-  let marketList: { id: string; name: string; countries: string[] }[] = [];
+  // With a market chosen, "no leads yet" is about the account, not the market.
+  let anyLeads = true;
   try {
-    [data, counts, sources, marketList] = await Promise.all([
+    [data, counts, sources, anyLeads] = await Promise.all([
       listLeads(appDb, account.id, stageFilter ? { ...filters, limit: STAGE_FILTER_SCAN } : filters),
-      countLeadsByView(appDb, account.id),
+      countLeadsByView(appDb, account.id, market),
       listSourceLabels(appDb, account.id),
-      listMarkets(appDb, account.id),
+      market ? countLeadsByView(appDb, account.id).then((c) => c.all > 0) : Promise.resolve(true),
     ]);
     // Stages for the listed leads in a fixed number of queries (lib/leads/stage.ts). With a stage
     // filter, the most recent matching leads are read first, then filtered by stage.
@@ -90,7 +101,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   }
   const now = new Date();
   // Leads without a market belong to the home market (listMarkets puts it first).
-  const homeName = marketList[0]?.name ?? "";
+  const homeName = (marketList.find((m) => m.isHome) ?? marketList[0])?.name ?? "";
 
   return (
     <div className={showAdd || showSim ? "sas-with-panel" : undefined}>
@@ -99,6 +110,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
           <h1 className="sas-title">{t("leads.title")}</h1>
           {/* Phone (sas.css): Add lead first and full width, the other actions under More. */}
           <div className="sas-page-head__actions sas-leads-actions">
+            <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp, ["page", "limit", "add"])} />
             <a className={`${buttonClass("secondary")} sas-leads-actions__secondary`} href={`${base}/import`}><Icon name="upload" />{t("leads.import")}</a>
             {account.allowSimulatedBuyers ? <a className={`${buttonClass("secondary")} sas-leads-actions__secondary`} href={qs({ add: "sim" })}><Icon name="flask-conical" />{t("sim.add")}</a> : null}
             <a className={`${buttonClass("primary")} sas-leads-actions__primary`} href={qs({ add: "1" })}><Icon name="user-plus" />{t("leads.add")}</a>
@@ -119,7 +131,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             <span className="sas-small">{t("leads.error.body")}</span>
             <a className={buttonClass("secondary", "sm")} href={qs({})}>{t("leads.error.retry")}</a>
           </section>
-        ) : counts.all === 0 ? (
+        ) : counts.all === 0 && (!market || !anyLeads) ? (
           <section className="sas-panel sas-empty">
             <span className="sas-empty__icon sas-empty__icon--start"><Icon name="user-plus" /></span>
             <strong>{t("leads.empty.title")}</strong>
@@ -143,6 +155,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
               {/* A changed filter applies at once; without JS the Apply button stays (noscript). */}
               <AutoSubmit />
               {view !== "all" ? <input type="hidden" name="view" value={view} /> : null}
+              {urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
               {sortParams(sort).sort ? <><input type="hidden" name="sort" value={sort.key} /><input type="hidden" name="dir" value={sort.dir} /></> : null}
               {/* Phone (sas.css): the selects sit behind a Filters button (a checkbox, no JS); search stays. */}
               <input type="checkbox" id="lf-open" className="sas-filters__toggle" defaultChecked={activeFilters > 0 || undefined} />
@@ -188,26 +201,27 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             {data.total === 0 ? (
               <section className="sas-panel sas-empty">
                 <span className="sas-empty__icon"><Icon name="search" /></span>
-                <strong>{filtered ? t("leads.filtered.title") : t(`leads.view.${view}`)}</strong>
-                <a className={buttonClass("secondary", "sm")} href={view === "all" ? base : `${base}?view=${view}`}>{t("leads.filter.clear")}</a>
+                <strong>{filtered ? t("leads.filtered.title") : market ? t("leads.market_empty", { market: market.name }) : t(`leads.view.${view}`)}</strong>
+                {/* Clearing the filters keeps the view, the sort and the market (the switcher is its own control). */}
+                {filtered || !market ? <a className={buttonClass("secondary", "sm")} href={qs({ q: undefined, source: undefined, language: undefined, days: undefined, stage: undefined })}>{t("leads.filter.clear")}</a> : null}
               </section>
             ) : (
               <section className="sas-panel" style={{ overflow: "hidden" }}>
                 <div style={{ overflowX: "auto" }}>
-                  <table className="sas-table sas-table--stack" style={{ minWidth: 940 }}>
+                  <table className="sas-table sas-table--stack" style={{ minWidth: showMarket ? 940 : 820 }}>
                     <thead>
                       <tr>
                         <SortHeader label={t("leads.col.lead")} column="lead" sort={sort} href={sortHref} />
                         <SortHeader label={t("leads.col.status")} column="status" sort={sort} href={sortHref} />
                         <th scope="col">{t("leads.col.stage")}</th>
-                        <SortHeader label={t("leads.col.market")} column="market" sort={sort} href={sortHref} />
+                        {showMarket ? <SortHeader label={t("leads.col.market")} column="market" sort={sort} href={sortHref} /> : null}
                         <SortHeader label={t("leads.col.owner")} column="owner" sort={sort} href={sortHref} />
                         <SortHeader label={t("leads.col.source")} column="source" sort={sort} href={sortHref} />
                         <SortHeader label={t("leads.col.activity")} column="activity" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} />
                       </tr>
                     </thead>
                     <tbody>
-                      {data.rows.map(({ lead, owner, market }) => (
+                      {data.rows.map(({ lead, owner, market: rowMarket }) => (
                         <tr key={lead.id}>
                           <td>
                             <a className="sas-row-link" href={`${base}/${lead.id}`}>
@@ -217,7 +231,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                           </td>
                           <td data-label={t("leads.col.status")}><StatusPill object="lead" state={lead.status} /></td>
                           <td data-label={t("leads.col.stage")}>{stages.get(lead.id) ? <StageChip v={stages.get(lead.id)!} /> : <span className="sas-small">—</span>}</td>
-                          <td data-label={t("leads.col.market")}><span data-market={market?.id ?? "home"}>{market?.name ?? homeName}</span></td>
+                          {showMarket ? <td data-label={t("leads.col.market")}><span data-market={rowMarket?.id ?? "home"}>{rowMarket?.name ?? homeName}</span></td> : null}
                           <td data-label={t("leads.col.owner")}>{owner ? <span className="sas-owner sas-owner--human">{personName(owner, me.id, t("people.you"))}</span> : lead.status === "opted_out" ? <span className="sas-small">—</span> : <span className="sas-owner sas-owner--agent">{t("leads.owner.agent")}</span>}</td>
                           <td className="sas-small" data-label={t("leads.col.source")}>{lead.sourceLabel ?? t(`lead.origin.${lead.origin}`)}</td>
                           <td className="sas-small sas-when" style={{ textAlign: "end" }} data-label={t("leads.col.activity")} title={lead.lastActivityAt.toISOString()}>{relativeTime(lead.lastActivityAt, now)}</td>

@@ -3104,5 +3104,13 @@
   "conv.marker.handoff": "The agent asked for a person",
   "conv.marker.taken_over": "Chat taken over by {name}",
   "conv.marker.taken_over_unknown": "Chat taken over by a person",
-  "conv.marker.handed_back": "Handed back to the agent"
+  "conv.marker.handed_back": "Handed back to the agent",
+  "nav.markets": "Markets",
+  "leads.market_empty": "No leads in {market} yet",
+  "orders.col.market": "Market",
+  "orders.empty.quotes_market": "No quotes in {market} yet",
+  "orders.empty.orders_market": "No orders in {market} yet.",
+  "inbox.empty.market_title": "No conversations in {market} yet",
+  "catalog.col.sold_in": "Sold in",
+  "catalog.sold_in.none": "Not sold yet"
 }
