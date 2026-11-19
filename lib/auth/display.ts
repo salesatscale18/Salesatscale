@@ -1,7 +1,11 @@
 import type { User } from "@/db/schema";
 
+/** The email's local part without any "+tag" ("testuser+clerk_test@…" → "testuser"); never the full email. */
+const emailLocal = (email: string | null | undefined) => (email ?? "").split("@")[0].split("+")[0].trim();
+
+/** A person's name, else the local part of their email (never the full email). */
 export function displayName(u: Pick<User, "firstName" | "lastName" | "email">): string {
-  return [u.firstName, u.lastName].filter(Boolean).join(" ") || u.email || "Unknown user";
+  return [u.firstName, u.lastName].filter((p) => p?.trim()).join(" ") || emailLocal(u.email) || "Unknown user";
 }
 
 export function initials(u: Pick<User, "firstName" | "lastName" | "email">): string {
@@ -25,8 +29,7 @@ export function personName(u: Pick<User, "id" | "firstName" | "lastName" | "emai
   if (viewerId && u.id === viewerId) return you;
   const name = [u.firstName, u.lastName].filter((p) => p?.trim()).join(" ");
   if (name) return name;
-  const local = (u.email ?? "").split("@")[0].split("+")[0].trim();
-  return local || "Unknown user";
+  return emailLocal(u.email) || "Unknown user";
 }
 
 /**
