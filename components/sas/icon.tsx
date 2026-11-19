@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, ClipboardList, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, History, ArrowRight, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -102,12 +102,16 @@ const ICONS = {
   play: Play,
   /** Delete (row menus, delete confirms). Never x-circle, which means Failed. */
   trash: Trash2,
+  /** Overview: Recent activity. */
+  history: History,
+  /** Market cards: open this market (mirrors in RTL). */
+  "arrow-right": ArrowRight,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;
 
 /** Icons that point in a direction and must mirror in RTL. */
-const DIRECTIONAL: ReadonlySet<IconName> = new Set(["send", "chevron-left"]);
+const DIRECTIONAL: ReadonlySet<IconName> = new Set(["send", "chevron-left", "arrow-right"]);
 
 export function Icon({ name, label, className }: { name: IconName; label?: string; className?: string }) {
   const Cmp = ICONS[name];

@@ -3079,5 +3079,16 @@
   "lab.voice.start_chat": "Start chat",
   "lab.voice.start_call": "Start call",
   "lab.voice.english_only": "Calls are in English only. Choose English to call.",
-  "voice.settings.limit_line": "Calls: up to {limit}"
+  "voice.settings.limit_line": "Calls: up to {limit}",
+  "markets.switcher.label": "Market",
+  "markets.switcher.all": "All markets",
+  "markets.switcher.option": "{name} · {status}",
+  "overview.markets.title": "Your markets",
+  "overview.markets.manage": "Manage markets",
+  "overview.markets.add": "Add market",
+  "overview.markets.card_label": "{name}: open this market",
+  "overview.markets.open_leads": "Open leads",
+  "overview.markets.need_you": "Need you",
+  "overview.needs.more": "Show {count} more",
+  "overview.activity.open": "Recent activity"
 }

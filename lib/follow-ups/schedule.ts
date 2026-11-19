@@ -167,7 +167,7 @@ export const cancelOnTakeOver = (q: Db, accountId: string, leadId: string) =>
 
 /** Failed follow-ups of the last FAILED_SHOWN_MS for the account's Needs you list (not test leads). */
 export async function failedFollowUps(db: Db, accountId: string, now: Date) {
-  return db.select({ followUp: followUps, leadName: leads.fullName, company: leads.company }).from(followUps)
+  return db.select({ followUp: followUps, leadName: leads.fullName, company: leads.company, marketId: leads.marketId }).from(followUps)
     .innerJoin(leads, eq(leads.id, followUps.leadId))
     .where(failedFollowUpWhere(accountId, now));
 }

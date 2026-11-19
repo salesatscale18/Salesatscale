@@ -194,7 +194,10 @@ describe("overview, setup progress and admin activity", () => {
 
       const week = await overviewKpis(db, a, periodRange(7, now));
       // mkOrder adds a quote and a signed form for each order.
-      expect(week).toEqual({ newLeads: 1, quotesCreated: 4, formsSent: 4, formsSigned: 2, paidOrders: 1, paidRevenueMinor: 100_000, paidRecurringMinor: 5_000 });
+      expect(week).toEqual({
+        newLeads: 1, quotesCreated: 4, formsSent: 4, formsSigned: 2, paidOrders: 1, paidRevenueMinor: 100_000, paidRecurringMinor: 5_000,
+        paidByCurrency: [{ currency: "ILS", oneTimeMinor: 100_000, recurringMinor: 5_000 }],
+      });
       const month = await overviewKpis(db, a, periodRange(30, now));
       expect(month).toMatchObject({ newLeads: 2, formsSigned: 3, paidOrders: 2, paidRevenueMinor: 150_000 });
       expect(parsePeriod("7")).toBe(7);

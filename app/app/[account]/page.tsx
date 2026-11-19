@@ -1,6 +1,8 @@
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { Banner, MetricTile, Timeline, type TimelineItem } from "@/components/sas/record";
+import { SidePanel } from "@/components/sas/list-kit";
+import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
@@ -11,21 +13,32 @@ import { relativeTime, timeAgo } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { orderLabel } from "@/lib/orders/service";
 import {
-  PERIODS, needsYouForRequest, needsYouHref, overviewKpis, parsePeriod, periodRange, recentActivity, type NeedsYouItem,
+  PERIODS, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewKpis, parsePeriod, periodRange, recentActivity,
+  type CurrencyTotal, type NeedsYouItem,
 } from "@/lib/overview/service";
+import { inMarket, MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
+import { MarketCards } from "./market-cards";
 import { setupProgress } from "@/lib/overview/setup";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 import { formatDueLocal, reasonText } from "@/lib/follow-ups/rules";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
-/** "?period=7&sim=1": 30 days and simulated buyers left out are the defaults. */
-const overviewQuery = (period: number, sim: boolean) => {
+/**
+ * "?period=7&sim=1&market=…&panel=activity": 30 days, simulated buyers left
+ * out, the stored market and no panel are the defaults. `market` is kept only
+ * when the URL has it (the URL wins over the stored choice).
+ */
+const overviewQuery = (period: number, sim: boolean, market?: string, panel?: string) => {
   const q = new URLSearchParams();
   if (period !== 30) q.set("period", String(period));
   if (sim) q.set("sim", "1");
+  if (market) q.set(MARKET_PARAM, market);
+  if (panel) q.set("panel", panel);
   const s = q.toString();
   return s ? `?${s}` : "";
 };
+/** How many "Needs you" items show before "Show N more". */
+const NEEDS_SHOWN = 2;
 
 const EVENT_ICON: Record<string, IconName> = {
   "lead.created": "user-plus", "lead.updated": "file-text", "consent.recorded": "shield-check", "lead.opted_out": "x-circle",
@@ -73,25 +86,43 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const includeSimulated = one(sp.sim) === "1";
   const base = `/app/${account.slug}`;
   const range = periodRange(period, now);
-  const [items, kpis, realKpis, activity, done, agent, spend] = await Promise.all([
+  const showActivity = one(sp.panel) === "activity";
+  // The market switcher's choice (URL, then the stored preference); null = all markets.
+  const selection = await marketSelection(appDb, account.id, sp);
+  const market = selection.selected;
+  const homeId = selection.markets.find((m) => m.isHome)?.id ?? selection.markets[0]?.id ?? "";
+  const urlMarket = one(sp[MARKET_PARAM]);
+  const [allItems, kpis, realKpis, activity, done, agent, spend, openLeads] = await Promise.all([
     needsYouForRequest(appDb, account.id),
-    overviewKpis(appDb, account.id, range, { includeSimulated }),
+    overviewKpis(appDb, account.id, range, { includeSimulated, market }),
     // With simulated data included, the real-only numbers give the "incl. N simulated" lines.
-    includeSimulated ? overviewKpis(appDb, account.id, range) : Promise.resolve(null),
-    recentActivity(appDb, account.id, 10, { includeSimulated }),
+    includeSimulated ? overviewKpis(appDb, account.id, range, { market }) : Promise.resolve(null),
+    showActivity ? recentActivity(appDb, account.id, 10, { includeSimulated, market }) : Promise.resolve([]),
     setupProgress(appDb, account),
     liveVersion(appDb, account.id),
     spendStateForRequest(appDb, account.id),
+    openLeadsByMarket(appDb, account.id, homeId, { includeSimulated }),
   ]);
-  // The account's AI spend at 80% or more of the cap is a "Needs you" item of its own (not about a lead).
+  const items = allItems.filter((it) => inMarket(it.marketId, market));
+  // The account's AI spend at 80% or more of the cap is a "Needs you" item of its own (not about a lead or a market).
   const spendAlert = spend && spend.state !== "ok" ? spend : null;
   const spendText = spendAlert ? spendTexts(spendAlert) : null;
   const needCount = items.length + (spendAlert ? 1 : 0);
-  const money = (m: number) => formatMoney(m, account.currency);
+  // Amounts are never added across currencies: one line per currency (nothing paid yet: the account currency).
+  const revenue: CurrencyTotal[] = kpis.paidByCurrency.length ? kpis.paidByCurrency : [{ currency: account.currency, oneTimeMinor: 0, recurringMinor: 0 }];
   const sim = realKpis ? {
     leads: kpis.newLeads - realKpis.newLeads, quotes: kpis.quotesCreated - realKpis.quotesCreated, signed: kpis.formsSigned - realKpis.formsSigned,
-    paid: kpis.paidOrders - realKpis.paidOrders, revenue: kpis.paidRevenueMinor - realKpis.paidRevenueMinor,
+    paid: kpis.paidOrders - realKpis.paidOrders,
+    revenue: revenue
+      .map((r) => formatMoney(r.oneTimeMinor - (realKpis.paidByCurrency.find((x) => x.currency === r.currency)?.oneTimeMinor ?? 0), r.currency))
+      .join(" + "),
   } : null;
+  const recurring = revenue.filter((r) => r.recurringMinor > 0);
+  const revenueDelta = recurring.length
+    ? recurring.map((r) => t("overview.kpi.revenue_recurring", { amount: formatMoney(r.recurringMinor, r.currency, { period: "month" }) })).join(" · ")
+    : t("overview.kpi.revenue_delta");
+  const query = (o: { period?: number; sim?: boolean; panel?: string } = {}) =>
+    overviewQuery(o.period ?? period, o.sim ?? includeSimulated, urlMarket, o.panel);
   /** The tile's own sub-line, plus "incl. N simulated" while simulated data is included. */
   const withSim = (delta: string | undefined, n: number | string | null) =>
     sim && n !== null ? [delta, t("overview.incl_simulated", { count: n })].filter(Boolean).join(" · ") : delta;
@@ -140,6 +171,48 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     time: relativeTime(event.createdAt, now),
   }));
 
+  // "Needs you": the spend alert first, then the items; the first NEEDS_SHOWN show, the rest under "Show N more".
+  const needRows = [
+    ...(spendAlert && spendText ? [
+      <li key="spend">
+        <a className="sas-list__row" href={`${base}/settings`} style={{ alignItems: "flex-start" }}>
+          <span className="sas-av" style={TONE_STYLE[spendAlert.state === "capped" ? "danger" : "warning"]} aria-hidden="true">
+            <Icon name="alert-triangle" />
+          </span>
+          <span className="sas-list__main">
+            <strong>{t(spendAlert.state === "capped" ? "overview.needs.spend_capped" : "overview.needs.spend_warn")}</strong>
+            <span className="sas-small">{t("overview.needs.spend.detail", { used: spendText.used, cap: spendText.cap })}</span>
+          </span>
+          <span className={buttonClass("secondary", "sm")}>{t("overview.needs.spend.action")}</span>
+        </a>
+      </li>,
+    ] : []),
+    ...items.map((it) => {
+      const look = ITEM_LOOK[it.kind];
+      const text = itemText(it);
+      return (
+        <li key={it.id}>
+          <a className="sas-list__row" href={needsYouHref(base, it)} style={{ alignItems: "flex-start" }}>
+            <span
+              className={look.tone === "human" ? "sas-av sas-av--human" : "sas-av"}
+              style={look.tone === "warning" || look.tone === "danger" ? TONE_STYLE[look.tone] : undefined}
+              aria-hidden="true"
+            >
+              <Icon name={look.icon} />
+            </span>
+            <span className="sas-list__main">
+              <strong>{text.title}</strong>
+              <span className="sas-small">{text.detail}</span>
+            </span>
+            <span className={look.tone === "human" ? buttonClass("takeover", "sm") : buttonClass("secondary", "sm")}>
+              {t(`overview.needs.${it.kind}.action` as MessageKey)}
+            </span>
+          </a>
+        </li>
+      );
+    }),
+  ];
+
   const firstOpen = SETUP_STEPS.find((s) => !(done as ReadonlySet<string>).has(s.id))?.id ?? "go-live";
 
   return (
@@ -155,24 +228,30 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           <span className="sas-pill sas-pill--success"><Icon name="check-circle" />{t("overview.agent_live", { version: agent.version })}</span>
         ) : null}
         {account.status !== "live" ? <StatusPill object="account" state={account.status} /> : null}
-        <nav aria-label={t("overview.period")} className="sas-tabs">
-          {PERIODS.map((d) => (
-            <a key={d} className="sas-tab" href={`${base}${overviewQuery(d, includeSimulated)}`} aria-current={d === period ? "page" : undefined}>
-              {t(`overview.period.${d}`)}
-            </a>
-          ))}
-        </nav>
-        <a
-          href={`${base}${overviewQuery(period, !includeSimulated)}`} role="checkbox" aria-checked={includeSimulated}
-          data-include-simulated={includeSimulated ? "1" : "0"}
-          style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}
-        >
-          <span aria-hidden="true" style={{
-            width: 18, height: 18, borderRadius: 4, display: "grid", placeItems: "center", color: "var(--on-primary)",
-            border: `1.5px solid ${includeSimulated ? "var(--primary)" : "var(--line-strong)"}`, background: includeSimulated ? "var(--primary)" : "transparent",
-          }}>{includeSimulated ? <Icon name="check" /> : null}</span>
-          {t("overview.include_simulated")}
-        </a>
+        <div className="sas-ov__tools">
+          <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp)} />
+          <nav aria-label={t("overview.period")} className="sas-tabs">
+            {PERIODS.map((d) => (
+              <a key={d} className="sas-tab" href={`${base}${query({ period: d })}`} aria-current={d === period ? "page" : undefined}>
+                {t(`overview.period.${d}`)}
+              </a>
+            ))}
+          </nav>
+          <a
+            href={`${base}${query({ sim: !includeSimulated })}`} role="checkbox" aria-checked={includeSimulated}
+            data-include-simulated={includeSimulated ? "1" : "0"}
+            style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}
+          >
+            <span aria-hidden="true" style={{
+              width: 18, height: 18, borderRadius: 4, display: "grid", placeItems: "center", color: "var(--on-primary)",
+              border: `1.5px solid ${includeSimulated ? "var(--primary)" : "var(--line-strong)"}`, background: includeSimulated ? "var(--primary)" : "transparent",
+            }}>{includeSimulated ? <Icon name="check" /> : null}</span>
+            {t("overview.include_simulated")}
+          </a>
+          <a className={buttonClass("secondary", "sm")} href={`${base}${query({ panel: "activity" })}`} data-open-activity="" aria-haspopup="dialog">
+            <Icon name="history" />{t("overview.activity.open")}
+          </a>
+        </div>
       </header>
 
       {sim ? (
@@ -185,14 +264,26 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         <MetricTile label={t("overview.kpi.paid")} value={kpis.paidOrders} delta={withSim(undefined, sim?.paid ?? null)} />
         <MetricTile
           label={t("overview.kpi.revenue")}
-          value={money(kpis.paidRevenueMinor)}
-          delta={withSim(kpis.paidRecurringMinor ? t("overview.kpi.revenue_recurring", { amount: formatMoney(kpis.paidRecurringMinor, account.currency, { period: "month" }) }) : t("overview.kpi.revenue_delta"), sim ? money(sim.revenue) : null)}
+          value={revenue.length === 1 ? formatMoney(revenue[0].oneTimeMinor, revenue[0].currency) : (
+            <span className="sas-ov__money" data-currencies={revenue.length}>
+              {revenue.map((r) => <span key={r.currency} data-currency={r.currency}>{formatMoney(r.oneTimeMinor, r.currency)}</span>)}
+            </span>
+          )}
+          delta={withSim(revenueDelta, sim ? sim.revenue : null)}
         />
       </section>
 
+      <MarketCards
+        base={base}
+        markets={selection.markets}
+        openLeads={openLeads}
+        needYou={needsYouByMarket(allItems, homeId)}
+        returnTo={`${base}${overviewQuery(period, includeSimulated)}`}
+      />
+
       {/* Phone (sas.css): this row dissolves so "Needs you" can come first, under the greeting. */}
       <div className="sas-ov__row" style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
-        <section className="sas-panel" aria-labelledby="funnel-h" style={{ flex: "3 1 420px", minWidth: 0 }}>
+        <section className="sas-panel" aria-labelledby="funnel-h" style={{ flex: "1 1 420px", minWidth: 0 }}>
           <div className="sas-panel__body sas-stack-4">
             <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
               <h2 id="funnel-h" className="sas-heading">{t("overview.funnel.title")}</h2>
@@ -206,7 +297,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           </div>
         </section>
 
-        <section className="sas-panel sas-ov__needs" aria-labelledby="needs-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
+        <section className="sas-panel sas-ov__needs" aria-labelledby="needs-h" style={{ flex: "0 1 480px", minWidth: 0, overflow: "hidden" }}>
           <div className="sas-panel__head">
             <h2 id="needs-h" className="sas-heading">{t("overview.needs.title")}</h2>
             {needCount ? (
@@ -216,87 +307,60 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           {needCount === 0 ? (
             <p className="sas-panel__body sas-small" style={{ margin: 0 }}>{t("overview.needs.empty")}</p>
           ) : (
-            <ul className="sas-list">
-              {spendAlert && spendText ? (
-                <li key="spend">
-                  <a className="sas-list__row" href={`${base}/settings`} style={{ alignItems: "flex-start" }}>
-                    <span className="sas-av" style={TONE_STYLE[spendAlert.state === "capped" ? "danger" : "warning"]} aria-hidden="true">
-                      <Icon name="alert-triangle" />
-                    </span>
-                    <span className="sas-list__main">
-                      <strong>{t(spendAlert.state === "capped" ? "overview.needs.spend_capped" : "overview.needs.spend_warn")}</strong>
-                      <span className="sas-small">{t("overview.needs.spend.detail", { used: spendText.used, cap: spendText.cap })}</span>
-                    </span>
-                    <span className={buttonClass("secondary", "sm")}>{t("overview.needs.spend.action")}</span>
-                  </a>
-                </li>
+            <>
+              <ul className="sas-list">{needRows.slice(0, NEEDS_SHOWN)}</ul>
+              {needRows.length > NEEDS_SHOWN ? (
+                <details className="sas-ov__more" data-needs-more="">
+                  <summary className="sas-ov__more-toggle">
+                    <Icon name="chevron-down" />{t("overview.needs.more", { count: needRows.length - NEEDS_SHOWN })}
+                  </summary>
+                  <ul className="sas-list">{needRows.slice(NEEDS_SHOWN)}</ul>
+                </details>
               ) : null}
-              {items.map((it) => {
-                const look = ITEM_LOOK[it.kind];
-                const text = itemText(it);
-                return (
-                  <li key={it.id}>
-                    <a className="sas-list__row" href={needsYouHref(base, it)} style={{ alignItems: "flex-start" }}>
-                      <span
-                        className={look.tone === "human" ? "sas-av sas-av--human" : "sas-av"}
-                        style={look.tone === "warning" || look.tone === "danger" ? TONE_STYLE[look.tone] : undefined}
-                        aria-hidden="true"
-                      >
-                        <Icon name={look.icon} />
-                      </span>
-                      <span className="sas-list__main">
-                        <strong>{text.title}</strong>
-                        <span className="sas-small">{text.detail}</span>
-                      </span>
-                      <span className={look.tone === "human" ? buttonClass("takeover", "sm") : buttonClass("secondary", "sm")}>
-                        {t(`overview.needs.${it.kind}.action` as MessageKey)}
-                      </span>
-                    </a>
-                  </li>
-                );
-              })}
-            </ul>
+            </>
           )}
         </section>
       </div>
 
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
-        <section className="sas-panel" aria-labelledby="act-h" style={{ flex: "3 1 420px", minWidth: 0 }}>
+      {account.status !== "live" ? (
+        <section className="sas-panel" aria-labelledby="setup-h" style={{ minWidth: 0, overflow: "hidden" }}>
           <div className="sas-panel__head">
-            <h2 id="act-h" className="sas-heading">{t("overview.activity.title")}</h2>
-            <a className="sas-small" href={`${base}/leads`}>{t("overview.activity.all")}</a>
+            <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
+            <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
           </div>
+          <ol className="sas-list">
+            {SETUP_STEPS.map((s, i) => {
+              const complete = (done as ReadonlySet<string>).has(s.id);
+              return (
+                <li key={s.id}>
+                  <a className="sas-list__row" href={`${base}${s.path}`} aria-current={s.id === firstOpen ? "step" : undefined}>
+                    <span className="sas-av" style={complete ? { background: "var(--success-soft)", color: "var(--success)" } : undefined}>
+                      {complete ? <Icon name="check" label="Done" /> : i + 1}
+                    </span>
+                    <span className="sas-list__main" style={complete ? undefined : { fontWeight: s.id === firstOpen ? 600 : undefined }}>{t(s.label)}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ) : null}
+
+      {showActivity ? (
+        <SidePanel
+          id="activity-panel"
+          wide
+          title={t("overview.activity.title")}
+          closeHref={`${base}${query()}`}
+          meta={<a className="sas-small" href={`${base}/leads`}>{t("overview.activity.all")}</a>}
+        >
           {timeline.length === 0 ? (
-            <p className="sas-panel__body sas-small" style={{ margin: 0 }}>{t("overview.activity.empty")}</p>
+            <p className="sas-small" style={{ margin: 0, padding: 20 }}>{t("overview.activity.empty")}</p>
           ) : (
             <Timeline items={timeline} label={t("overview.activity.title")} />
           )}
-        </section>
-
-        {account.status !== "live" ? (
-          <section className="sas-panel" aria-labelledby="setup-h" style={{ flex: "2 1 320px", minWidth: 0, overflow: "hidden" }}>
-            <div className="sas-panel__head">
-              <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
-              <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
-            </div>
-            <ol className="sas-list">
-              {SETUP_STEPS.map((s, i) => {
-                const complete = (done as ReadonlySet<string>).has(s.id);
-                return (
-                  <li key={s.id}>
-                    <a className="sas-list__row" href={`${base}${s.path}`} aria-current={s.id === firstOpen ? "step" : undefined}>
-                      <span className="sas-av" style={complete ? { background: "var(--success-soft)", color: "var(--success)" } : undefined}>
-                        {complete ? <Icon name="check" label="Done" /> : i + 1}
-                      </span>
-                      <span className="sas-list__main" style={complete ? undefined : { fontWeight: s.id === firstOpen ? 600 : undefined }}>{t(s.label)}</span>
-                    </a>
-                  </li>
-                );
-              })}
-            </ol>
-          </section>
-        ) : null}
-      </div>
+        </SidePanel>
+      ) : null}
     </main>
   );
 }

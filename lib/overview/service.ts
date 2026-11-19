@@ -4,18 +4,20 @@
  * Read-only: derived from leads, quotes, order forms, orders and lead events.
  */
 import { cache } from "react";
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
+import { marketKey, marketWhere } from "@/lib/markets/selection";
 import {
   followUps, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
-  type ApprovalReason, type LeadEvent, type User,
+  type ApprovalReason, type LeadEvent, type Market, type User,
 } from "@/db/schema";
 
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
-type LeadRef = { leadId: string; leadName: string; company: string | null };
+/** `marketId` is the lead's market (null = the home market), for the market filter and the market cards. */
+type LeadRef = { leadId: string; leadName: string; company: string | null; marketId: string | null };
 
 /** One thing a person on the seller's team should act on. `at` is when it started needing them. */
 export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
@@ -35,7 +37,7 @@ export const UNSIGNED_AFTER_MS = DAY_MS;
 /** A form counts as "expiring" when its link ends within this window. */
 export const EXPIRING_WITHIN_MS = DAY_MS;
 
-const leadCols = { leadId: leads.id, leadName: leads.fullName, company: leads.company };
+const leadCols = { leadId: leads.id, leadName: leads.fullName, company: leads.company, marketId: leads.marketId };
 
 /*
  * The four sources of "Needs you". `needsYou` (full items) and `needsYouCount`
@@ -101,7 +103,7 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
   ]);
 
   const items: NeedsYouItem[] = [];
-  const ref = (r: LeadRef): LeadRef => ({ leadId: r.leadId, leadName: r.leadName, company: r.company });
+  const ref = (r: LeadRef): LeadRef => ({ leadId: r.leadId, leadName: r.leadName, company: r.company, marketId: r.marketId });
 
   for (const r of approvals) {
     items.push({
@@ -131,7 +133,7 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
   for (const r of failedRows) {
     const f = r.followUp;
     items.push({
-      leadId: f.leadId, leadName: r.leadName, company: r.company, kind: "follow_up_failed", id: `follow_up:${f.id}`, at: f.updatedAt,
+      leadId: f.leadId, leadName: r.leadName, company: r.company, marketId: r.marketId, kind: "follow_up_failed", id: `follow_up:${f.id}`, at: f.updatedAt,
       followUpId: f.id, dueAt: f.dueAt, reason: f.reason,
     });
   }
@@ -213,24 +215,34 @@ export type OverviewKpis = {
   formsSent: number;
   formsSigned: number;
   paidOrders: number;
-  /** Sum of one-time amounts of orders paid in the period, in the account currency's minor units. */
+  /**
+   * Sum of one-time amounts of orders paid in the period, in minor units. Only
+   * meaningful with one currency: amounts are never added across currencies,
+   * so read `paidByCurrency` wherever orders can be in several.
+   */
   paidRevenueMinor: number;
-  /** Recurring amounts of those orders (per month). */
+  /** Recurring amounts of those orders (per month). Same caveat. */
   paidRecurringMinor: number;
+  /** Paid orders of the period per currency (sorted by currency code): one line each on the "Paid revenue" tile. */
+  paidByCurrency: CurrencyTotal[];
 };
+
+export type CurrencyTotal = { currency: string; oneTimeMinor: number; recurringMinor: number };
 
 /** Simulated buyers (buyer simulator, leads.buyer_ref) are left out of the numbers unless the seller asks for them. */
 export type SimulatedFilter = { includeSimulated?: boolean };
+/** Overview filters: simulated buyers, and the market switcher's choice (null or missing = all markets; by the lead's market). */
+export type OverviewFilter = SimulatedFilter & { market?: Pick<Market, "id" | "isHome"> | null };
 const realOnly = (opts: SimulatedFilter) => and(eq(leads.isTest, false), opts.includeSimulated ? undefined : isNull(leads.buyerRef))!;
 
 /**
  * What happened in (from, to]: each step counted by when it happened, not as
  * a cohort. Test leads are left out everywhere; simulated buyers unless `includeSimulated`.
  */
-export async function overviewKpis(db: Db, accountId: string, range: { from: Date; to: Date }, opts: SimulatedFilter = {}): Promise<OverviewKpis> {
-  const notTest = realOnly(opts);
+export async function overviewKpis(db: Db, accountId: string, range: { from: Date; to: Date }, opts: OverviewFilter = {}): Promise<OverviewKpis> {
+  const notTest = and(realOnly(opts), marketWhere(leads.marketId, opts.market ?? null))!;
   const inRange = (col: Parameters<typeof gt>[0]) => and(gt(col, range.from), lte(col, range.to));
-  const [[l], [q], [fs], [sg], [pd]] = await Promise.all([
+  const [[l], [q], [fs], [sg], pd] = await Promise.all([
     db.select({ n: count() }).from(leads).where(and(eq(leads.accountId, accountId), notTest, inRange(leads.createdAt))),
     db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
       .where(and(eq(quotes.accountId, accountId), notTest, inRange(quotes.createdAt))),
@@ -238,18 +250,23 @@ export async function overviewKpis(db: Db, accountId: string, range: { from: Dat
       .where(and(eq(orderForms.accountId, accountId), notTest, inRange(orderForms.createdAt))),
     db.select({ n: count() }).from(orderForms).innerJoin(leads, eq(leads.id, orderForms.leadId))
       .where(and(eq(orderForms.accountId, accountId), notTest, eq(orderForms.status, "signed"), inRange(orderForms.signedAt))),
-    db.select({ n: count(), oneTime: sum(orders.amountDueMinor), recurring: sum(orders.recurringMinor) }).from(orders)
+    db.select({ currency: orders.currency, n: count(), oneTime: sum(orders.amountDueMinor), recurring: sum(orders.recurringMinor) }).from(orders)
       .innerJoin(leads, eq(leads.id, orders.leadId))
-      .where(and(eq(orders.accountId, accountId), notTest, eq(orders.paymentStatus, "paid"), inRange(orders.paidAt))),
+      .where(and(eq(orders.accountId, accountId), notTest, eq(orders.paymentStatus, "paid"), inRange(orders.paidAt)))
+      .groupBy(orders.currency),
   ]);
+  const paidByCurrency = pd
+    .map((r) => ({ currency: r.currency, oneTimeMinor: Number(r.oneTime ?? 0), recurringMinor: Number(r.recurring ?? 0) }))
+    .sort((a, b) => a.currency.localeCompare(b.currency));
   return {
     newLeads: l.n,
     quotesCreated: q.n,
     formsSent: fs.n,
     formsSigned: sg.n,
-    paidOrders: pd.n,
-    paidRevenueMinor: Number(pd.oneTime ?? 0),
-    paidRecurringMinor: Number(pd.recurring ?? 0),
+    paidOrders: pd.reduce((n, r) => n + r.n, 0),
+    paidRevenueMinor: paidByCurrency.reduce((n, r) => n + r.oneTimeMinor, 0),
+    paidRecurringMinor: paidByCurrency.reduce((n, r) => n + r.recurringMinor, 0),
+    paidByCurrency,
   };
 }
 
@@ -260,13 +277,49 @@ export async function overviewKpis(db: Db, accountId: string, range: { from: Dat
 export type RecentEvent = { event: LeadEvent; lead: { id: string; fullName: string; company: string | null }; user: User | null };
 
 /** The latest lead events across the account, test leads left out (simulated buyers unless `includeSimulated`). */
-export async function recentActivity(db: Db, accountId: string, limit = 10, opts: SimulatedFilter = {}): Promise<RecentEvent[]> {
+export async function recentActivity(db: Db, accountId: string, limit = 10, opts: OverviewFilter = {}): Promise<RecentEvent[]> {
   return db
     .select({ event: leadEvents, lead: { id: leads.id, fullName: leads.fullName, company: leads.company }, user: users })
     .from(leadEvents)
     .innerJoin(leads, eq(leads.id, leadEvents.leadId))
     .leftJoin(users, eq(users.id, leadEvents.actorUserId))
-    .where(and(eq(leadEvents.accountId, accountId), realOnly(opts)))
+    .where(and(eq(leadEvents.accountId, accountId), realOnly(opts), marketWhere(leads.marketId, opts.market ?? null)))
     .orderBy(desc(leadEvents.createdAt), desc(leadEvents.id))
     .limit(limit);
+}
+
+// ---------------------------------------------------------------------------
+// Market cards ("Your markets")
+// ---------------------------------------------------------------------------
+
+/** Lead statuses that are finished: everything else is an open lead. */
+export const CLOSED_LEAD_STATUSES = ["won", "lost", "opted_out"] as const;
+
+/**
+ * Open leads (not won, lost or opted out) per market id, test leads left out
+ * (simulated buyers unless `includeSimulated`). Leads without a market count
+ * for the home market. Markets without open leads are missing (read as 0).
+ */
+export async function openLeadsByMarket(db: Db, accountId: string, homeMarketId: string, opts: SimulatedFilter = {}): Promise<Map<string, number>> {
+  const rows = await db
+    .select({ marketId: leads.marketId, n: count() })
+    .from(leads)
+    .where(and(eq(leads.accountId, accountId), realOnly(opts), notInArray(leads.status, [...CLOSED_LEAD_STATUSES])))
+    .groupBy(leads.marketId);
+  const out = new Map<string, number>();
+  for (const r of rows) {
+    const k = marketKey(r.marketId, homeMarketId);
+    out.set(k, (out.get(k) ?? 0) + r.n);
+  }
+  return out;
+}
+
+/** Each market's share of the "Needs you" items, per market id (items of leads without a market count for the home market). */
+export function needsYouByMarket(items: readonly Pick<NeedsYouItem, "marketId">[], homeMarketId: string): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const it of items) {
+    const k = marketKey(it.marketId, homeMarketId);
+    out.set(k, (out.get(k) ?? 0) + 1);
+  }
+  return out;
 }

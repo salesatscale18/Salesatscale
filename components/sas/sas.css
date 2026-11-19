@@ -1013,3 +1013,60 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-vt__hint { display: none; }
   .lab-call__bar { flex-wrap: wrap; }
 }
+
+/* ------------------------------------------------------------------------- */
+/* W (lane W1): Overview as a home page, market switcher, market cards       */
+/* ------------------------------------------------------------------------- */
+/* Header tools on the end side: market switcher, period, Include simulated, Recent activity. */
+.sas-ov__tools { margin-inline-start: auto; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) var(--space-4); }
+/* Market switcher (components/sas/market-switcher.tsx): "🌐 All markets ▾" on a native select. */
+.sas-mswitch { display: inline-flex; align-items: center; gap: var(--space-2); margin: 0; }
+.sas-mswitch__field { position: relative; display: inline-flex; align-items: center; }
+.sas-mswitch__field > .sas-ico:first-child { position: absolute; inset-inline-start: 10px; color: var(--ink-muted); pointer-events: none; }
+.sas-mswitch__chev { position: absolute; inset-inline-end: 10px; color: var(--ink-muted); pointer-events: none; }
+.sas-mswitch__select { appearance: none; -webkit-appearance: none; height: 32px; max-width: 260px; padding-inline: 32px 30px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; text-overflow: ellipsis; }
+.sas-mswitch__select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+/* Paid revenue with several currencies: one line each, never added up. */
+.sas-ov__money { display: flex; flex-direction: column; font-size: 22px; line-height: 28px; }
+/* "Needs you": the first two items, the rest behind "Show N more". */
+.sas-ov__more { border-block-start: 1px solid var(--line); }
+.sas-ov__more > summary { list-style: none; }
+.sas-ov__more > summary::-webkit-details-marker { display: none; }
+.sas-ov__more-toggle { display: flex; align-items: center; gap: 6px; padding: 10px 20px; font-size: 13px; font-weight: 600; color: var(--primary); cursor: pointer; }
+.sas-ov__more[open] > .sas-ov__more-toggle .sas-ico { transform: rotate(180deg); }
+.sas-ov__more > .sas-list { border-block-start: 1px solid var(--line); }
+/* "Your markets": fixed-width cards from the start side, wrapping; the last one adds a market. */
+.sas-mcards { display: flex; flex-direction: column; gap: var(--space-3); }
+.sas-mcards__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }
+.sas-mcards__list { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.sas-mcards__list > li { width: 264px; max-width: 100%; display: flex; }
+.sas-mcard { --mk-panel: var(--surface-sunken); --mk-shape: var(--line-strong); flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); overflow: hidden; color: var(--ink); text-decoration: none; }
+.sas-mcard--live { --mk-panel: var(--primary-soft); --mk-shape: var(--primary); }
+.sas-app a.sas-mcard { color: var(--ink); text-decoration: none; }
+.sas-app a.sas-mcard:hover { border-color: var(--line-strong); text-decoration: none; }
+.sas-app a.sas-mcard:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-mcard__map { position: relative; height: 150px; display: grid; place-items: center; background: var(--mk-panel); }
+.sas-mcard__map svg { width: 200px; height: 150px; max-width: 100%; }
+/* Fill plus a hairline stroke in the same colour, so the countries of one market read as one shape. */
+.sas-mcard__map path { fill: var(--mk-shape); stroke: var(--mk-shape); stroke-width: 0.6; stroke-linejoin: round; }
+.sas-mcard__globe { color: var(--mk-shape); }
+.sas-mcard__globe .sas-ico { width: 56px; height: 56px; stroke-width: 1.5; }
+.sas-mcard__pill { position: absolute; inset-block-start: 10px; inset-inline-start: 10px; }
+.sas-mcard__name { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); padding: 12px 16px; border-block: 1px solid var(--line); font-size: 17px; line-height: 24px; font-weight: 600; }
+.sas-mcard__name > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-mcard__name > .sas-ico { flex: none; color: var(--ink-muted); }
+.sas-mcard__nums { display: grid; grid-template-columns: 1fr 1fr; }
+.sas-mcard__num { display: flex; flex-direction: column; gap: 2px; padding: 12px 16px; min-width: 0; }
+.sas-mcard__num + .sas-mcard__num { border-inline-start: 1px solid var(--line); }
+.sas-mcard__num > strong { font-size: 26px; line-height: 32px; font-weight: 600; }
+.sas-mcard__num > span { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--ink-muted); }
+.sas-mcard__dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: var(--mk-shape); }
+.sas-mcard__dot--human { background: var(--human); }
+.sas-mcard--add { align-items: center; justify-content: center; gap: var(--space-2); min-height: 260px; background: transparent; border: 1.5px dashed var(--line-strong); color: var(--ink-muted); font-weight: 600; }
+.sas-app a.sas-mcard--add { color: var(--ink-muted); }
+.sas-app a.sas-mcard--add:hover { color: var(--primary); border-color: var(--primary); }
+@media (max-width: 767px) {
+  .sas-ov__tools { margin-inline-start: 0; width: 100%; }
+  .sas-mcards__list > li { width: 100%; }
+  .sas-mcard--add { min-height: 72px; flex-direction: row; }
+}
