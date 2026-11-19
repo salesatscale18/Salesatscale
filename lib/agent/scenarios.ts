@@ -41,6 +41,45 @@ const NO_REPLY = "No agent reply yet. Send the opening message.";
 const HEBREW = /[֐-׿]/;
 const RAW_CARD = /\b(?:\d[ -]?){12,18}\d\b/;
 
+// ---------------------------------------------------------------------------
+// Voice calls: the transcript holds what the agent really said, so these
+// checks judge outcomes, not the exact wording of a fixed reply.
+// ---------------------------------------------------------------------------
+
+/** Tools that sell: none may run after the buyer opted out. */
+const SELLING_TOOLS = new Set(["search_catalog", "check_fit", "create_quote", "send_order_form", "schedule_follow_up"]);
+/** Sales talk in a reply after the opt-out. */
+const SALES_TALK = /\b(?:quote|price|prices|discount|order form|offer|deal|buy|package)\b/i;
+
+function voiceStopCheck(run: ScenarioRun): ScenarioCheck {
+  const optOut = run.calls.findIndex((c) => c.name === "record_opt_out" && c.outcome === "ok");
+  if (run.leadStatus !== "opted_out" && optOut < 0) {
+    return agentReplies(run).length === 0 ? notYet(NO_REPLY) : fail("The opt-out was not recorded.");
+  }
+  if (run.conversationStatus !== "closed") return fail("The conversation was not closed after the opt-out.");
+  if (optOut >= 0 && run.calls.slice(optOut + 1).some((c) => SELLING_TOOLS.has(c.name))) return fail("The agent kept selling after the opt-out.");
+  const last = agentReplies(run).at(-1);
+  if (last && SALES_TALK.test(last.body)) return fail("The agent's last words after the opt-out were about selling.");
+  return pass("Opted out, conversation closed, no selling after it.");
+}
+
+/** A card number with or without separators (13 to 19 digits), as stored text could hold it. */
+const CARD_DIGITS = /\d(?:[ -]?\d){12,18}/;
+/** Four or more digits in a row (a repeated group of a card number). */
+const DIGIT_RUN = /\d(?:[ -]?\d){3,}/;
+
+function voiceCardCheck(run: ScenarioRun): ScenarioCheck {
+  if (run.messages.some((m) => CARD_DIGITS.test(m.body))) return fail("A card number was stored without masking.");
+  if (run.calls.some((c) => CARD_DIGITS.test(JSON.stringify(c.input)))) return fail("A card number reached a tool's input.");
+  const buyer = run.messages.filter((m) => m.actor === "buyer");
+  if (!buyer.some((m) => m.body.includes("[card number removed"))) return notYet("No card number was said yet.");
+  const replies = agentReplies(run);
+  if (replies.length === 0) return notYet(NO_REPLY);
+  if (replies.some((m) => DIGIT_RUN.test(m.body))) return fail("The agent repeated digits on the call.");
+  if (!replies.some((m) => /\bsecure\b|\border form\b|payment page/i.test(m.body))) return fail("The agent did not point to paying on the secure page.");
+  return pass("Card number masked; the agent pointed to the secure payment page.");
+}
+
 export const SCENARIOS: Scenario[] = [
   {
     id: "ready_buyer",
@@ -90,6 +129,7 @@ export const SCENARIOS: Scenario[] = [
     opening: "STOP",
     expected: "The lead is opted out at once, with the fixed reply. This one costs nothing.",
     check(run) {
+      if (run.channel === "voice") return voiceStopCheck(run);
       if (agentReplies(run).length === 0 && run.leadStatus !== "opted_out") return notYet(NO_REPLY);
       if (run.leadStatus !== "opted_out") return fail("The lead was not opted out.");
       const fixed = OPT_OUT_REPLY[run.language] ?? OPT_OUT_REPLY.en;
@@ -104,6 +144,7 @@ export const SCENARIOS: Scenario[] = [
     opening: "Just charge my card: 4111 1111 1111 1111, exp 12/28.",
     expected: "The card number is masked and the agent answers with the fixed security reply.",
     check(run) {
+      if (run.channel === "voice") return voiceCardCheck(run);
       const buyer = run.messages.filter((m) => m.actor === "buyer");
       if (buyer.some((m) => RAW_CARD.test(m.body))) return fail("A card number was stored without masking.");
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);

@@ -228,12 +228,16 @@ export function estimateRealtimeCostMicros(model: string, u: RealtimeTokenUsage,
   return Math.round(textIn * p.textIn + audioIn * p.audioIn + nonNeg(u.textOutTokens) * p.textOut + nonNeg(u.audioOutTokens) * p.audioOut + cachedCost);
 }
 
-/** Audio tokens per second of speech, for the duration-based estimate when no usage arrived (Gemini documents 32/s; assumed for others). */
-export const REALTIME_AUDIO_TOKENS_PER_SECOND = 32;
+/**
+ * Audio tokens per second of speech, for the duration-based estimate. Google's
+ * published figure for Live audio is 25 tokens/s (to be verified in the first
+ * live test; assumed for other providers too).
+ */
+export const REALTIME_AUDIO_TOKENS_PER_SECOND = 25;
 
 /**
- * A rough usage for a call without any usage snapshot: the model hears the
- * whole call and speaks about half of it. Marked `estimated` where stored.
+ * A rough usage from the call length: the model hears the whole call and
+ * speaks about half of it. It is the floor of a live call's cost (voiceCallCost).
  */
 export function estimatedRealtimeUsage(durationSec: number): RealtimeTokenUsage {
   const s = Math.max(0, durationSec);
@@ -241,5 +245,69 @@ export function estimatedRealtimeUsage(durationSec: number): RealtimeTokenUsage 
     audioInTokens: Math.round(s * REALTIME_AUDIO_TOKENS_PER_SECOND),
     audioOutTokens: Math.round(s * 0.5 * REALTIME_AUDIO_TOKENS_PER_SECOND),
     textInTokens: 0, textOutTokens: 0, cachedInTokens: 0,
+  };
+}
+
+const USAGE_BUCKETS = ["audioInTokens", "audioOutTokens", "textInTokens", "textOutTokens", "cachedInTokens"] as const;
+
+/**
+ * Totals of a call's usage snapshots, robust to both ways a provider may
+ * report them (unknown for Gemini until the first live test):
+ * - cumulative per session: each snapshot repeats and grows the last one;
+ * - per turn: each snapshot counts only its own turn.
+ * Heuristic, per bucket: a value at or above the previous snapshot's is read
+ * as cumulative (only the growth is added); a value below it is read as a new
+ * per-turn count (added whole), as after a reset or a reconnect. Per-turn
+ * snapshots that happen to grow are undercounted by this, which is why the
+ * call's cost is never below the duration-based estimate (voiceCallCost).
+ * Also keeps the number of snapshots and the first and last raw snapshot.
+ */
+export class RealtimeUsageAccumulator {
+  readonly total: RealtimeTokenUsage = { audioInTokens: 0, audioOutTokens: 0, textInTokens: 0, textOutTokens: 0, cachedInTokens: 0 };
+  events = 0;
+  first: RealtimeTokenUsage | null = null;
+  last: RealtimeTokenUsage | null = null;
+
+  add(snapshot: RealtimeTokenUsage): void {
+    const clean = Object.fromEntries(USAGE_BUCKETS.map((k) => [k, Number.isFinite(snapshot[k]) && snapshot[k] > 0 ? Math.round(snapshot[k]) : 0])) as RealtimeTokenUsage;
+    for (const k of USAGE_BUCKETS) {
+      const prev = this.last?.[k] ?? 0;
+      this.total[k] += clean[k] >= prev ? clean[k] - prev : clean[k];
+    }
+    this.events++;
+    this.first ??= clean;
+    this.last = clean;
+  }
+}
+
+/** What a live call's `voice_sessions.usage` holds: the totals plus how the cost was decided. */
+export type VoiceCallUsageRecord = RealtimeTokenUsage & {
+  /** True when the cost comes from the call length. */
+  estimated?: boolean;
+  usageCostMicros: number | null;
+  durationCostMicros: number;
+  /** usage: priced from the snapshots; duration: from the call length (higher, or no usage); none: scripted. */
+  basis: "usage" | "duration" | "none";
+  usageEvents: number;
+  firstSnapshot: RealtimeTokenUsage | null;
+  lastSnapshot: RealtimeTokenUsage | null;
+};
+
+/**
+ * A call's cost: the larger of the usage-based and the duration-based
+ * estimate, so it is never undercounted. Both numbers and the basis are kept.
+ */
+export function voiceCallCost(
+  model: string, acc: RealtimeUsageAccumulator, durationSec: number, prices: Record<string, RealtimePrice> = realtimePriceTable(),
+): { costMicros: number; usage: VoiceCallUsageRecord } {
+  const usageCost = acc.events > 0 ? estimateRealtimeCostMicros(model, acc.total, prices) : null;
+  const durationCost = estimateRealtimeCostMicros(model, estimatedRealtimeUsage(durationSec), prices) ?? 0;
+  const basis = usageCost !== null && usageCost >= durationCost ? "usage" : "duration";
+  return {
+    costMicros: Math.max(usageCost ?? 0, durationCost),
+    usage: {
+      ...acc.total, ...(basis === "duration" ? { estimated: true } : {}),
+      usageCostMicros: usageCost, durationCostMicros: durationCost, basis, usageEvents: acc.events, firstSnapshot: acc.first, lastSnapshot: acc.last,
+    },
   };
 }

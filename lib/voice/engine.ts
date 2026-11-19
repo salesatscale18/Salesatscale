@@ -16,14 +16,14 @@ import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
   agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, voiceSessions,
-  type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndReason, type VoiceSession, type VoiceUsage,
+  type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
 import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
-import { estimatedRealtimeUsage, estimateRealtimeCostMicros } from "@/lib/ai/models";
+import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallUsageRecord } from "@/lib/ai/models";
 import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
@@ -109,9 +109,9 @@ export class VoiceEngine {
   private agentMessages = 0;
   private answerTimes: number[] = [];
   private lines: TranscriptLine[] = [];
-  private lastUsage: VoiceUsage | null = null;
+  /** Usage snapshots, totalled whether the provider reports them per session or per turn. */
+  private usageAcc = new RealtimeUsageAccumulator();
   private providerSessionId: string | null = null;
-  private fixedReply: string | null = null;
   private pendingEnd: VoiceEndReason | null = null;
   private optedOut = false;
   private reconnectUsed = false;
@@ -274,8 +274,8 @@ export class VoiceEngine {
 
   /** Cost so far, from the latest usage snapshot (0 for the scripted model). */
   private costSoFar(): number {
-    if (this.model.mode === "scripted" || !this.lastUsage) return 0;
-    return estimateRealtimeCostMicros(this.model.modelId, this.lastUsage) ?? 0;
+    if (this.model.mode === "scripted" || this.callStart === null) return 0;
+    return voiceCallCost(this.model.modelId, this.usageAcc, Math.round(this.offsetMs() / 1000)).costMicros;
   }
 
   private sendStats() {
@@ -433,7 +433,7 @@ export class VoiceEngine {
         void this.enqueue(() => this.handleTurnDone());
         return;
       case "usage":
-        this.lastUsage = e.usage;
+        this.usageAcc.add(e.usage);
         this.sendStats();
         return;
       case "going-away":
@@ -520,7 +520,6 @@ export class VoiceEngine {
       await this.codeOptOut(masked.text);
     } else if (masked.found) {
       // Card details never belong in a call: the fixed security reply, as in chat.
-      this.fixedReply = CARD_REPLY.en;
       this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY.en}"`);
     } else if (typed) {
       this.conn.sendText(masked.text);
@@ -539,7 +538,6 @@ export class VoiceEngine {
 
   private afterOptOut() {
     this.optedOut = true;
-    this.fixedReply = OPT_OUT_REPLY.en;
     this.endSoon("opt_out");
   }
 
@@ -625,9 +623,8 @@ export class VoiceEngine {
     const turn = this.agentTurn;
     if (!turn || !this.loaded) return;
     this.agentTurn = null;
-    // After an opt-out or a card number the turn carries the fixed reply, whatever the model said (as in chat).
-    const body = this.fixedReply ?? maskCardNumbers(turn.text.trim()).text;
-    this.fixedReply = null;
+    // What the agent actually said (card numbers masked): the owner reviews calls from this transcript.
+    const body = maskCardNumbers(turn.text.trim()).text;
     if (!body && !turn.tools.length) return;
     const { conv, account, version, lead } = this.loaded;
     const messageId = randomUUID();
@@ -713,11 +710,15 @@ export class VoiceEngine {
     }
     const connected = this.callStart !== null;
     const durationSec = connected ? Math.round(this.offsetMs() / 1000) : 0;
-    let usage: VoiceUsage | null = this.lastUsage;
+    // Live: the larger of the usage-based and the duration-based cost, both kept with the basis (never undercounted).
+    // Scripted: always 0; the fake counts are kept with basis "none".
+    let usage: VoiceCallUsageRecord | null = null;
     let costMicros = 0;
     if (this.model.mode === "live" && connected) {
-      if (!usage) usage = { ...estimatedRealtimeUsage(durationSec), estimated: true };
-      costMicros = estimateRealtimeCostMicros(this.model.modelId, usage) ?? 0;
+      ({ costMicros, usage } = voiceCallCost(this.model.modelId, this.usageAcc, durationSec));
+    } else if (this.usageAcc.events > 0) {
+      const a = this.usageAcc;
+      usage = { ...a.total, usageCostMicros: 0, durationCostMicros: 0, basis: "none", usageEvents: a.events, firstSnapshot: a.first, lastSnapshot: a.last };
     }
     const answerMsAvg = this.answerMsAvg();
     await this.db.update(voiceSessions).set({

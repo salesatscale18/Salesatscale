@@ -15,7 +15,8 @@ import { aiUsageThisMonth, platformUsageThisMonth } from "@/lib/ai/usage";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
 import type { ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
-import { micPcm, ScriptedRealtime, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
+import { expectBuyer, micPcm, say, ScriptedRealtime, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
+import type { VoiceCallUsageRecord } from "@/lib/ai/models";
 import {
   closeStaleVoiceSessions, conversationVoiceMode, createVoiceSession, redeemVoiceTicket, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary,
 } from "@/lib/voice/service";
@@ -222,10 +223,56 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     const buyer = rows.find((m) => m.actor === "buyer")!;
     expect(buyer.body).toContain("[card number removed …1111]");
     expect(buyer.body).not.toMatch(/4111 1111/);
+    // The scripted model says what it was asked to: the security reply.
     expect(rows.filter((m) => m.actor === "agent").at(-1)!.body).toBe(CARD_REPLY.en);
     // Nothing unmasked reached the browser either.
     expect(JSON.stringify(c.json())).not.toMatch(/4111 1111 1111 1111/);
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
+  });
+
+  it("the transcript stores what the agent really said (no fixed reply swapped in)", async () => {
+    const clock = new ManualClock();
+    const own = "Please stop there, never read card details on a call. You'll pay on the secure page from the order form.";
+    // A model that answers in its own words before the requested security line.
+    const model = new ScriptedRealtime({ clock, scripts: { card_in_chat: [expectBuyer("Just charge my card: 4111 1111 1111 1111, exp 12/28."), say(own)] } });
+    const c = await newCall("card_in_chat", { clock, model });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(40_000);
+    await hangUp(c);
+    const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent").map((m) => m.body);
+    expect(agent).toContain(own);
+    // Each stored turn is exactly a spoken final transcript.
+    const spokenFinals = c.json().filter((m) => m.t === "transcript" && m.role === "agent" && m.final).map((m) => (m as { text: string }).text);
+    expect(agent).toEqual(spokenFinals);
+    expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
+  });
+
+  it("a live call's cost: the larger of usage and duration, both stored with the basis and the raw snapshots", async () => {
+    const clock = new ManualClock();
+    const inner = new ScriptedRealtime({ clock });
+    // The free scripted model presented as a live Gemini model (it emits fake usage snapshots).
+    const live = { modelId: "google/gemini-3.8-live", mode: "live" as const, connect: inner.connect.bind(inner), connections: inner.connections };
+    const c = await newCall(null, { clock, model: live as unknown as ScriptedRealtime });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(15_000);
+    await hangUp(c);
+    const s = await sessionRow(c.sessionId);
+    const u = s.usage as unknown as VoiceCallUsageRecord;
+    expect(u.usageEvents).toBeGreaterThan(1);
+    expect(u.firstSnapshot).not.toBeNull();
+    expect(u.lastSnapshot).not.toBeNull();
+    expect(u.durationCostMicros).toBeGreaterThan(0);
+    expect(u.usageCostMicros).not.toBeNull();
+    expect(s.costMicros).toBe(Math.max(u.usageCostMicros!, u.durationCostMicros));
+    expect(u.basis).toBe(u.usageCostMicros! >= u.durationCostMicros ? "usage" : "duration");
+    const stats = c.json().filter((m) => m.t === "stats");
+    expect((stats.at(-1) as { costMicros: number }).costMicros).toBeGreaterThan(0);
+    expect(c.json().find((m) => m.t === "ended")).toMatchObject({ costMicros: s.costMicros });
+    // It counts in AI spend.
+    expect((await aiUsageThisMonth(db, acc)).byModel.find((m) => m.model === "google/gemini-3.8-live")?.costMicros).toBeGreaterThanOrEqual(s.costMicros);
+    await db.delete(voiceSessions).where(eq(voiceSessions.id, c.sessionId));
   });
 
   it("other language: the agent offers English or the chat (calls are English only); scenario passed", async () => {
