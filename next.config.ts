@@ -4,14 +4,15 @@ import type { NextConfig } from "next";
  * Security headers (hardening cycle). A full Content-Security-Policy needs the
  * Clerk and font origins listed and nonces for Next's inline scripts; until
  * then the CSP only covers what cannot break the app: no framing, no <base>
- * hijacking, no plugins.
+ * hijacking, no plugins. The microphone is allowed for this site only
+ * (voice calls in the test lab and the buyer chat); never for embedded origins.
  */
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "X-Frame-Options", value: "DENY" },
   { key: "Content-Security-Policy", value: "frame-ancestors 'none'; base-uri 'self'; object-src 'none'" },
-  { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=()" },
+  { key: "Permissions-Policy", value: "camera=(), microphone=(self), geolocation=(), payment=(), usb=()" },
   { key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" },
 ];
 

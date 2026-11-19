@@ -9,6 +9,8 @@ import { CARD_REPLY, OPT_OUT_REPLY } from "./safety";
 
 export type ScenarioRun = {
   language: string;
+  /** The conversation's channel ("testlab", "voice", …). Missing = a chat. */
+  channel?: string;
   conversationStatus: "open" | "human" | "closed";
   leadStatus: string;
   messages: { actor: string; body: string }[];
@@ -120,6 +122,11 @@ export const SCENARIOS: Scenario[] = [
     check(run) {
       const replies = agentReplies(run);
       if (replies.length === 0) return notYet(NO_REPLY);
+      // A voice call is English only: the agent offers to go on in English or in the chat.
+      if (run.channel === "voice") {
+        if (replies.some((m) => /\bEnglish\b/i.test(m.body) && /\bchat\b/i.test(m.body))) return pass("On the call the agent offered English or the chat.");
+        return notYet("On a call the agent should offer to continue in English or in the chat.");
+      }
       if (replies.every((m) => HEBREW.test(m.body))) return pass("Every reply is in Hebrew.");
       return fail("A reply is not in Hebrew.");
     },

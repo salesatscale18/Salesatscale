@@ -1,0 +1,478 @@
+/**
+ * Live voice, pure parts: the wire protocol, the tool schemas, the voice
+ * instructions, spoken safety checks, realtime cost, settings and modes, the
+ * scripted model's turn logic (fake clock) and the Gateway adapter's mapping
+ * (fixture events; nothing connects).
+ */
+import { describe, expect, it } from "vitest";
+import type { Playbook } from "@/db/schema";
+import { defaultPlaybook } from "@/lib/agent/playbook";
+import { stableSystemPrompt, turnContext } from "@/lib/agent/prompt";
+import { coreDesign } from "@/lib/agent/core/design";
+import { applyVoiceReplacements, CORE_DESIGN_VOICE, voiceStageText } from "@/lib/agent/core/voice";
+import { deriveStage, NO_STAGE_FACTS } from "@/lib/agent/core/stage";
+import { TOOL_DEFS } from "@/lib/agent/tools";
+import { DEFAULT_REALTIME_PRICES, estimatedRealtimeUsage, estimateRealtimeCostMicros, realtimePriceTable } from "@/lib/ai/models";
+import { parseClientMessage, parseServerMessage, pcmDurationMs } from "@/lib/voice/protocol";
+import { geminiSchema, realtimeTools, schemaFamilyOf, voiceToolDescription } from "@/lib/voice/tool-schema";
+import { buildVoiceInstructions, openerInstruction } from "@/lib/voice/instructions";
+import { isSpokenOptOut, safeTranscript } from "@/lib/voice/safety";
+import {
+  maxCallSeconds, resolveVoiceSettings, turnTakingFor, validateVoiceSettings, voiceCapabilities, voiceMode, voiceModelId,
+} from "@/lib/voice/settings";
+import { ManualClock, flushAsync, type RealtimeEvent } from "@/lib/voice/realtime";
+import { fieldsFromInstructions, lineForInstruction, micPcm, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool } from "@/lib/voice/scripted-realtime";
+import { assertLiveAllowed, clientEvents, GatewayRealtime, ServerEventMapper, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
+
+const seller = { tradeName: "Acme", currency: "ILS", languages: ["en", "he"] };
+const pb: Playbook = defaultPlaybook("Acme", 500);
+const catalog = [{ sku: "SEAT-M", name: "Seat", plainName: "monthly user seat", valueLine: "Everyone sees the same plan on their phone." }];
+
+describe("wire protocol", () => {
+  it("accepts the browser's messages and nothing else", () => {
+    expect(parseClientMessage('{"t":"start"}')).toEqual({ t: "start" });
+    expect(parseClientMessage({ t: "mute", on: true })).toEqual({ t: "mute", on: true });
+    expect(parseClientMessage({ t: "text", text: "  hello " })).toEqual({ t: "text", text: "hello" });
+    expect(parseClientMessage({ t: "end", extra: 1 })).toEqual({ t: "end" });
+    expect(parseClientMessage({ t: "ping" })).toEqual({ t: "ping" });
+    for (const bad of ["", "nope", "[]", "null", '{"t":"mute"}', '{"t":"mute","on":"yes"}', '{"t":"text","text":""}', '{"t":"text","text":5}', '{"t":"instructions"}', 42]) {
+      expect(parseClientMessage(bad)).toBeNull();
+    }
+    expect(parseClientMessage({ t: "text", text: "x".repeat(4001) })).toBeNull();
+  });
+
+  it("validates the relay's messages", () => {
+    const ok = [
+      { t: "state", state: "speaking" }, { t: "transcript", id: "a1", role: "agent", text: "Hi", final: false, atMs: 0 },
+      { t: "tool", id: "c1", name: "search_catalog", label: "Checking", status: "running" }, { t: "message", messageId: "m" },
+      { t: "flush" }, { t: "notice", kind: "limit_soon" }, { t: "stats", durationSec: 5, costMicros: 0, answerMsAvg: null },
+      { t: "ended", reason: "limit", durationSec: 600, costMicros: 10, answerMsAvg: 800 }, { t: "error", code: "spend_cap" },
+    ];
+    for (const m of ok) expect(parseServerMessage(JSON.stringify(m))).toEqual(m);
+    expect(parseServerMessage({ t: "state", state: "dancing" })).toBeNull();
+    expect(parseServerMessage({ t: "error", code: "whatever" })).toBeNull();
+    expect(parseServerMessage({ t: "transcript", id: "a", role: "system", text: "x", final: true, atMs: 0 })).toBeNull();
+  });
+
+  it("audio frames are 24 kHz PCM16", () => {
+    expect(pcmDurationMs(4800)).toBe(100);
+    expect(speechPcm(100).byteLength).toBe(4800);
+  });
+
+  it("the protocol file imports nothing from the server", async () => {
+    const { readFileSync } = await import("node:fs");
+    const src = readFileSync("lib/voice/protocol.ts", "utf8");
+    expect(src).not.toMatch(/^import /m);
+  });
+});
+
+describe("tool schemas", () => {
+  const walk = (node: unknown, visit: (n: Record<string, unknown>) => void) => {
+    if (!node || typeof node !== "object") return;
+    visit(node as Record<string, unknown>);
+    const n = node as Record<string, unknown>;
+    if (n.properties) for (const p of Object.values(n.properties as object)) walk(p, visit);
+    if (n.items) walk(n.items, visit);
+  };
+
+  it("every tool, Gemini dialect: one type per node, nullable flags, no unsupported keywords", () => {
+    const tools = realtimeTools("gemini");
+    expect(tools.map((t) => t.name)).toEqual(TOOL_DEFS.map((d) => d.name));
+    const allowed = new Set(["type", "description", "properties", "required", "items", "enum", "nullable", "format", "minimum", "maximum", "minItems", "maxItems"]);
+    for (const t of tools) {
+      walk(t.parameters, (n) => {
+        expect(typeof n.type, `${t.name} type`).toBe("string");
+        for (const k of Object.keys(n)) expect(allowed.has(k), `${t.name}: ${k}`).toBe(true);
+        if (n.required) for (const r of n.required as string[]) expect(Object.keys(n.properties as object)).toContain(r);
+      });
+    }
+    const cq = tools.find((t) => t.name === "create_quote")!.parameters as { properties: Record<string, Record<string, unknown>> };
+    expect(cq.properties.sites).toEqual({ type: "integer", nullable: true });
+    expect(cq.properties.assumed).toMatchObject({ type: "array", nullable: true, items: { type: "object", required: ["key", "value"] } });
+    expect(cq.properties.lines.items).toEqual({ type: "object", properties: { sku: { type: "string" }, qty: { type: "integer" } }, required: ["sku", "qty"] });
+    const uds = tools.find((t) => t.name === "update_deal_state")!.parameters as { properties: Record<string, Record<string, unknown>> };
+    expect(uds.properties.objection).toMatchObject({ type: "object", nullable: true });
+    expect(tools.find((t) => t.name === "check_payment")!.parameters).toEqual({ type: "object" });
+  });
+
+  it("every tool, OpenAI dialect: plain JSON Schema as defined", () => {
+    const tools = realtimeTools("openai");
+    for (const [i, t] of tools.entries()) expect(t.parameters).toEqual(TOOL_DEFS[i].input_schema);
+  });
+
+  it("descriptions use call wording", () => {
+    for (const t of realtimeTools("gemini")) expect(t.description).not.toMatch(/\bin (the )?chat\b(?! below)/);
+    expect(voiceToolDescription(TOOL_DEFS.find((d) => d.name === "send_order_form")!.description!)).toContain("never read it aloud");
+    expect(voiceToolDescription(TOOL_DEFS.find((d) => d.name === "record_opt_out")!.description!)).toContain("ends the call");
+  });
+
+  it("schema family from the model id; odd nodes stay valid", () => {
+    expect(schemaFamilyOf("google/gemini-3.8-live")).toBe("gemini");
+    expect(schemaFamilyOf("openai/gpt-realtime-2")).toBe("openai");
+    expect(geminiSchema(null)).toEqual({ type: "string" });
+    expect(geminiSchema({ type: ["string", "integer"], additionalProperties: false, $schema: "x" })).toEqual({ type: "string" });
+  });
+});
+
+describe("voice instructions", () => {
+  const voiceStable = stableSystemPrompt(pb, seller, catalog, { channel: "voice", fillers: true });
+  const chatStable = stableSystemPrompt(pb, seller, catalog);
+
+  it("chat output is unchanged by the channel parameter", () => {
+    expect(stableSystemPrompt(pb, seller, catalog, { channel: "chat" })).toBe(chatStable);
+    expect(coreDesign({ tradeName: "Acme", meeting: true }, undefined, "chat")).toBe(coreDesign({ tradeName: "Acme", meeting: true }));
+    const extra = { agentMessages: 2, opener: "Hi there.", stage: { ...NO_STAGE_FACTS, quote: "ready" as const } };
+    expect(turnContext(pb, null, { ...extra, channel: "chat" })).toBe(turnContext(pb, null, extra));
+  });
+
+  it("the voice prompt has no chat-format lines left", () => {
+    for (const chatLine of [
+      "on a messaging channel", "At most 3 short sentences per message", "One question per message", "Plain text, as in a chat",
+      "The buyer sees the quote card first", "send the link with one line", "do not ask for it in chat", "never ask in chat",
+      "Answer in the buyer's language", "in your first message", "end every message", "One value point per message",
+      "payment card details in chat", "then send only the reply", "keeps the chat going",
+    ]) expect(voiceStable, chatLine).not.toContain(chatLine);
+    for (const voiceLine of [
+      "on a live voice call", "One or two short spoken sentences per turn", "One question at a time", "Spoken language only",
+      "say the total once, say the quote is in the chat below", "the order form link is in the chat below", "never ask by voice",
+      "### On a voice call (always)", "automated assistant", "hand_off_to_human", "record_opt_out", "card number", "English",
+    ]) expect(voiceStable, voiceLine).toContain(voiceLine);
+    // Follow-ups are still messages.
+    expect(voiceStable).toContain("I'll message you tomorrow at 10.");
+    // The voice block sits before the deal-state fields, once.
+    expect(voiceStable.indexOf("### On a voice call")).toBeLessThan(voiceStable.indexOf("### Deal-state fields"));
+    expect(voiceStable.split("### On a voice call").length).toBe(2);
+  });
+
+  it("fillers follow the setting", () => {
+    expect(voiceStable).toContain("One moment, I'm checking that.");
+    const none = stableSystemPrompt(pb, seller, catalog, { channel: "voice", fillers: false });
+    expect(none).not.toContain("One moment, I'm checking that.");
+    expect(none).toContain("Do not announce your checks");
+  });
+
+  it("the stage block in a call speaks of the chat below", () => {
+    const facts = { quote: "ready" as const, orderForm: "none" as const, signed: false, paid: false };
+    const s = deriveStage({ ...facts, playbook: pb, fields: {}, agentMessages: 3 }).instruction;
+    expect(s).toContain("send the link");
+    expect(voiceStageText(s)).not.toContain("send the link");
+    expect(voiceStageText(s)).toContain("the order form link is in the chat below");
+    const ctx = turnContext(pb, null, { agentMessages: 1, opener: "Hi, this is Ava.", stage: facts, channel: "voice" });
+    expect(ctx).toContain("Your opening line, which you say first when the call connects");
+    expect(ctx).not.toContain("already sent");
+  });
+
+  it("a missing chat line fails loudly (no half-converted prompt)", () => {
+    expect(() => applyVoiceReplacements("nothing here", CORE_DESIGN_VOICE, "test")).toThrow(/chat text not found/);
+  });
+
+  it("buildVoiceInstructions: stable + context + this call, with recap and pace", () => {
+    const base = {
+      playbook: pb, voiceSettings: { pace: "slower" as const, fillers: true }, seller, catalog, deal: null, stage: NO_STAGE_FACTS, agentMessages: 0,
+      names: { agent: "Ava", seller: "Acme", gender: "neutral" as const, language: "en" }, opener: "Hi Dana, this is Ava, the automated assistant of Acme.",
+      localNow: "Tue 17 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)", followUp: null,
+      recap: [{ role: "buyer" as const, text: "My card is 4111 1111 1111 1111" }, { role: "agent" as const, text: "Please don't." }],
+    };
+    const text = buildVoiceInstructions(base);
+    expect(text.startsWith(voiceStable.slice(0, 60))).toBe(true);
+    expect(text).toContain("Your opening line, which you say first");
+    expect(text).toContain("Speak a little slower");
+    expect(text).toContain("- Buyer: My card is [card number removed …1111]");
+    expect(text.endsWith("Conversation language: en.")).toBe(true);
+    // The opener counts as an agent turn: the stage is no longer "Open".
+    expect(text).not.toContain("## Stage now: 1 Open");
+    const resumed = buildVoiceInstructions({ ...base, resumed: true });
+    expect(resumed).toContain("The call dropped for a moment");
+    expect(resumed).not.toContain("Your opening line, which you say first");
+    expect(openerInstruction("Hi.")).toContain('"Hi."');
+  });
+});
+
+describe("spoken safety", () => {
+  it("opt-out phrases inside a sentence", () => {
+    for (const s of [
+      "stop", "Stop.", "STOP please", "please stop", "Stop calling me.", "Look, just stop calling me, okay?", "Don't call me again.",
+      "do not contact me again please", "Never call us again!", "Please remove me from your list.", "Take me off your list",
+      "unsubscribe", "Unsubscribe me", "I want to unsubscribe", "opt me out", "I'd like to opt out", "leave me alone",
+      "I don't want to be contacted", "don't call me", "Stop contacting us, we're not interested.", "Don’t contact me again",
+    ]) expect(isSpokenOptOut(s), s).toBe(true);
+  });
+
+  it("interruptions and ordinary sentences are not opt-outs", () => {
+    for (const s of [
+      "stop, wait, go back", "Stop for a second", "can you stop talking", "Stop, let me think.", "wait stop", "stop right there, what was the price?",
+      "how do I stop the alerts?", "Don't call me Mr Smith", "don't call me before ten", "Does it stop automatically?",
+      "I don't want to be rushed", "please don't stop", "Nonstop service?", "the bus stop is near", "", "   ",
+    ]) expect(isSpokenOptOut(s), s).toBe(false);
+  });
+
+  it("card numbers are masked in transcripts (digits with spaces or dashes)", () => {
+    expect(safeTranscript("my card is 4111 1111 1111 1111 thanks")).toEqual({ text: "my card is [card number removed …1111] thanks", cardFound: true });
+    expect(safeTranscript("4111-1111-1111-1111").cardFound).toBe(true);
+    expect(safeTranscript("we have 12 sites and 300 users")).toEqual({ text: "we have 12 sites and 300 users", cardFound: false });
+  });
+});
+
+describe("realtime cost", () => {
+  const u = { audioInTokens: 1_000_000, audioOutTokens: 1_000_000, textInTokens: 1_000_000, textOutTokens: 1_000_000, cachedInTokens: 0 };
+  it("prices by modality (USD micros)", () => {
+    expect(estimateRealtimeCostMicros("google/gemini-3.8-live", u, DEFAULT_REALTIME_PRICES)).toBe(3_000_000 + 12_000_000 + 750_000 + 4_500_000);
+    expect(estimateRealtimeCostMicros("openai/gpt-realtime-2", u, DEFAULT_REALTIME_PRICES)).toBe(32_000_000 + 64_000_000 + 4_000_000 + 24_000_000);
+    expect(estimateRealtimeCostMicros("unknown", u, DEFAULT_REALTIME_PRICES)).toBeNull();
+  });
+  it("cached input is billed at the cached price where there is one", () => {
+    const cached = { ...u, cachedInTokens: 500_000 };
+    expect(estimateRealtimeCostMicros("openai/gpt-realtime-2", cached, DEFAULT_REALTIME_PRICES)).toBe(32_000_000 + 64_000_000 + 2_000_000 + 24_000_000 + 200_000);
+    // Gemini has no cached price: no discount.
+    expect(estimateRealtimeCostMicros("google/gemini-3.8-live", cached, DEFAULT_REALTIME_PRICES)).toBe(estimateRealtimeCostMicros("google/gemini-3.8-live", u, DEFAULT_REALTIME_PRICES));
+  });
+  it("AI_PRICES overrides realtime prices; junk is ignored", () => {
+    const t = realtimePriceTable({ AI_PRICES: '{"google/gemini-3.8-live": {"audioIn": 5}, "x/new-live": {"audioOut": 1}, "claude-opus-5-5": {"input": 1}}' });
+    expect(t["google/gemini-3.8-live"]).toMatchObject({ audioIn: 5, audioOut: 12 });
+    expect(t["x/new-live"]).toEqual({ textIn: 0, textOut: 0, audioIn: 0, audioOut: 1 });
+    expect(t["claude-opus-5-5"]).toBeUndefined();
+    expect(realtimePriceTable({ AI_PRICES: "{nope" })).toEqual(DEFAULT_REALTIME_PRICES);
+  });
+  it("duration estimate when no usage arrived", () => {
+    expect(estimatedRealtimeUsage(100)).toMatchObject({ audioInTokens: 3200, audioOutTokens: 1600 });
+  });
+});
+
+describe("settings and modes", () => {
+  it("voice mode from VOICE_REALTIME; live needs the Gateway key", () => {
+    expect(voiceMode({})).toBe("off");
+    expect(voiceMode({ VOICE_REALTIME: "off" })).toBe("off");
+    expect(voiceMode({ VOICE_REALTIME: "scripted" })).toBe("scripted");
+    expect(voiceMode({ VOICE_REALTIME: "live" })).toBe("off");
+    expect(voiceMode({ VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "k" })).toBe("live");
+    expect(voiceModelId({})).toBe("google/gemini-3.8-live");
+    expect(voiceModelId({ VOICE_MODEL: "openai/gpt-realtime-2" })).toBe("openai/gpt-realtime-2");
+  });
+  it("max call length: the smallest of platform, version, env and deadline", () => {
+    expect(maxCallSeconds({ env: {} })).toBe(600);
+    expect(maxCallSeconds({ settings: { maxCallSec: 300 }, env: {} })).toBe(300);
+    expect(maxCallSeconds({ settings: { maxCallSec: 9999 }, env: {} })).toBe(600);
+    expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "240" } })).toBe(240);
+    expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "junk" }, deadlineSec: 200 })).toBe(200);
+  });
+  it("capabilities per model; Gemini has no turn-taking tuning", () => {
+    expect(voiceCapabilities("google/gemini-3.8-live")).toMatchObject({ style: false, pauseMs: false, interruptSensitivity: false, pace: true });
+    expect(voiceCapabilities("google/gemini-3.8-live").voices.length).toBeGreaterThan(0);
+    expect(voiceCapabilities("openai/gpt-realtime-2")).toMatchObject({ style: true, pauseMs: true });
+    expect(turnTakingFor("patient", "google/gemini-3.8-live")).toBeNull();
+    expect(turnTakingFor("patient", "openai/gpt-realtime-2")!.silenceMs).toBeGreaterThan(turnTakingFor("quick", "openai/gpt-realtime-2")!.silenceMs);
+  });
+  it("validation and defaults", () => {
+    expect(validateVoiceSettings({ voice: "Kore", pace: "slower", style: "quick", fillers: false, maxCallSec: "300" })).toEqual({
+      ok: true, value: { voice: "Kore", pace: "slower", style: "quick", fillers: false, maxCallSec: 300 },
+    });
+    const bad = validateVoiceSettings({ voice: "Robot", pace: "warp", maxCallSec: 5, fillers: "yes" });
+    expect(bad.ok).toBe(false);
+    if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(["fillers", "maxCallSec", "pace", "voice"]);
+    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 600 });
+    expect(resolveVoiceSettings({ pace: "warp" as never, maxCallSec: 10 })).toMatchObject({ pace: "normal", maxCallSec: 60 });
+  });
+});
+
+describe("scripted realtime model (fake clock, no database)", () => {
+  async function connect(script = [expectBuyer("Hello there."), say("Hi! How can I help?"), tool("search_catalog", { query: "" }), say("Done.")]) {
+    const clock = new ManualClock();
+    const model = new ScriptedRealtime({ clock, scripts: { s: script } });
+    const events: RealtimeEvent[] = [];
+    const conn = await model.connect({ instructions: "x", tools: [], language: "en", toolBehavior: "blocking", scenario: "s" }, (e) => events.push(e));
+    const run = (ms: number) => clock.advance(ms, () => flushAsync());
+    return { clock, model, conn, events, run, c: model.connections[0] };
+  }
+  const talk = async (t: Awaited<ReturnType<typeof connect>>, loudMs: number, quietMs = 800) => {
+    for (let x = 0; x < loudMs; x += 100) { t.conn.sendAudio(micPcm(100, true)); await t.run(100); }
+    for (let x = 0; x < quietMs; x += 100) { t.conn.sendAudio(micPcm(100, false)); await t.run(100); }
+  };
+
+  it("speaks the opener only when asked, paced like speech, with audio", async () => {
+    const t = await connect();
+    await t.run(5_000);
+    expect(t.events.filter((e) => e.type === "audio")).toHaveLength(0);
+    t.conn.requestResponse('Say: "Hi, this is Ava, the automated assistant."');
+    await t.run(1_000);
+    const partial = t.events.filter((e) => e.type === "agent-transcript").at(-1) as { text: string };
+    expect(partial.text).toBe("Hi, this is Ava,");
+    await t.run(5_000);
+    expect(t.events.filter((e) => e.type === "agent-transcript" && e.final)).toEqual([{ type: "agent-transcript", text: "Hi, this is Ava, the automated assistant.", final: true }]);
+    expect(t.events.some((e) => e.type === "turn-done")).toBe(true);
+    expect(t.events.filter((e) => e.type === "audio").length).toBe(7);
+    expect(t.events.some((e) => e.type === "usage")).toBe(true);
+  });
+
+  it("energy VAD: under 200 ms of speech is not a turn; a turn ends after 700 ms quiet", async () => {
+    const t = await connect();
+    t.conn.requestResponse('"Hi."');
+    await t.run(1_000);
+    await talk(t, 100, 1_000);
+    expect(t.events.some((e) => e.type === "speech-started")).toBe(false);
+    await talk(t, 300, 600);
+    expect(t.events.filter((e) => e.type === "speech-started")).toHaveLength(1);
+    expect(t.events.some((e) => e.type === "buyer-transcript" && e.final)).toBe(false);
+    t.conn.sendAudio(micPcm(100, false));
+    await t.run(100);
+    expect(t.events.filter((e) => e.type === "buyer-transcript")).toEqual([
+      { type: "buyer-transcript", text: "Hello", final: false }, { type: "buyer-transcript", text: "Hello there.", final: true },
+    ]);
+  });
+
+  it("audio that stops mid-speech also ends the turn after 700 ms", async () => {
+    const t = await connect();
+    t.conn.requestResponse('"Hi."');
+    await t.run(1_000);
+    for (let i = 0; i < 4; i++) { t.conn.sendAudio(micPcm(100, true)); await t.run(100); }
+    await t.run(800);
+    expect(t.events.some((e) => e.type === "buyer-transcript" && e.final)).toBe(true);
+  });
+
+  it("tool steps wait for the result; typed text is a buyer turn without a transcript", async () => {
+    const t = await connect();
+    t.conn.requestResponse('"Hi."');
+    await t.run(1_000);
+    t.conn.sendText("typed hello");
+    await t.run(3_000);
+    expect(t.events.some((e) => e.type === "buyer-transcript")).toBe(false);
+    const call = t.events.find((e) => e.type === "tool-call") as Extract<RealtimeEvent, { type: "tool-call" }>;
+    expect(call).toMatchObject({ name: "search_catalog", args: { query: "" } });
+    await t.run(3_000);
+    expect(t.events.filter((e) => e.type === "agent-transcript").at(-1)).toMatchObject({ text: "Hi! How can I help?" });
+    t.conn.sendToolResult(call.callId, "search_catalog", { ok: true, items: [] });
+    await t.run(3_000);
+    expect(t.events.filter((e) => e.type === "agent-transcript" && e.final).at(-1)).toMatchObject({ text: "Hi! How can I help? Done." });
+    expect(t.c.ctx.last("search_catalog")).toEqual({ ok: true, items: [] });
+  });
+
+  it("barge-in: speech while the agent talks cuts it short", async () => {
+    const t = await connect([say("one two three four five six seven eight nine ten"), expectBuyer("Sorry, what?")]);
+    t.conn.requestResponse('"Hi."');
+    await t.run(1_000);
+    await t.run(1_000); // "one two three four"
+    await talk(t, 300, 800);
+    const finals = t.events.filter((e) => e.type === "agent-transcript" && e.final) as { text: string }[];
+    expect(finals.at(-1)!.text.split(" ").length).toBeLessThan(10);
+    expect(t.events.some((e) => e.type === "turn-done" && e.interrupted)).toBe(true);
+    expect(t.events.filter((e) => e.type === "buyer-transcript" && e.final)).toEqual([{ type: "buyer-transcript", text: "Sorry, what?", final: true }]);
+  });
+
+  it("close stops everything and counts", async () => {
+    const t = await connect();
+    t.conn.close();
+    t.conn.close();
+    expect(t.c.closeCalls).toBe(2);
+    t.conn.requestResponse('"Hi."');
+    await t.run(2_000);
+    expect(t.events.filter((e) => e.type === "audio")).toHaveLength(0);
+  });
+
+  it("helpers: fields from the instructions, lines for one-off instructions, RMS", () => {
+    const instr = stableSystemPrompt(pb, seller, null, { channel: "voice" });
+    expect(fieldsFromInstructions(instr).filter((f) => f.neededForQuote).map((f) => f.key)).toEqual(["business_type", "sites"]);
+    expect(lineForInstruction('Say exactly: "Bye."')).toBe("Bye.");
+    expect(lineForInstruction("The call is close to its time limit.")).toMatch(/almost out of time/);
+    expect(lineForInstruction("The buyer has been quiet for a while.")).toBe("Are you still there?");
+    expect(rms(micPcm(100, false))).toBe(0);
+    expect(rms(micPcm(100, true))).toBeGreaterThan(0.1);
+  });
+});
+
+describe("Gateway adapter (pure mapping; nothing connects)", () => {
+  const cfg = { instructions: "Be brief.", tools: realtimeTools("gemini").slice(0, 1), voice: "Kore", language: "en" as const, toolBehavior: "blocking" as const };
+
+  it("session config for Gemini: audio out, both transcriptions, server VAD, blocking tools", () => {
+    expect(toSdkSessionConfig(cfg, "google/gemini-3.8-live")).toEqual({
+      instructions: "Be brief.", voice: "Kore", outputModalities: ["audio"],
+      inputAudioFormat: { type: "audio/pcm", rate: 24000 }, outputAudioFormat: { type: "audio/pcm", rate: 24000 },
+      inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" },
+      tools: [{ type: "function", name: "search_catalog", description: cfg.tools[0].description, parameters: cfg.tools[0].parameters }],
+      providerOptions: { google: { defaultToolBehavior: "BLOCKING" } },
+    });
+  });
+
+  it("session config for OpenAI: turn-taking values, no Google options", () => {
+    const c = toSdkSessionConfig({ ...cfg, turnTaking: { silenceMs: 900, threshold: 0.6, prefixPaddingMs: 300 } }, "openai/gpt-realtime-2");
+    expect(c.turnDetection).toEqual({ type: "server-vad", threshold: 0.6, silenceDurationMs: 900, prefixPaddingMs: 300 });
+    expect(c.providerOptions).toBeUndefined();
+  });
+
+  it("maps a whole turn of server events", () => {
+    const m = new ServerEventMapper();
+    const pcm = Buffer.from(new Uint8Array([1, 0, 2, 0])).toString("base64");
+    const all = [
+      m.map({ type: "session-created", sessionId: "s1", raw: {} }),
+      m.map({ type: "speech-started", raw: {} }),
+      m.map({ type: "transcript-fragment", speaker: "user", delta: "How much ", startMs: 0, endMs: 1, raw: {} }),
+      m.map({ type: "transcript-fragment", speaker: "user", delta: "is it?", startMs: 1, endMs: 2, raw: {} }),
+      // The agent starts answering: the buyer's turn is final first.
+      m.map({ type: "audio-delta", responseId: "r", itemId: "i", delta: pcm, raw: {} }),
+      m.map({ type: "audio-transcript-delta", responseId: "r", itemId: "i", delta: "One ", raw: {} }),
+      m.map({ type: "audio-transcript-delta", responseId: "r", itemId: "i", delta: "moment.", raw: {} }),
+      m.map({ type: "function-call-arguments-done", responseId: "r", itemId: "i", callId: "c1", name: "search_catalog", arguments: '{"query":""}', raw: {} }),
+      m.map({ type: "response-done", responseId: "r", status: "completed", usage: { inputAudioTokens: 100, inputTextTokens: 50, outputAudioTokens: 40, outputTextTokens: 5 }, raw: {} }),
+    ].flat();
+    expect(all).toEqual([
+      { type: "session", providerSessionId: "s1" },
+      { type: "speech-started" },
+      { type: "buyer-transcript", text: "How much", final: false },
+      { type: "buyer-transcript", text: "How much is it?", final: false },
+      { type: "buyer-transcript", text: "How much is it?", final: true },
+      { type: "audio", pcm: new Uint8Array([1, 0, 2, 0]) },
+      { type: "agent-transcript", text: "One ", final: false },
+      { type: "agent-transcript", text: "One moment.", final: false },
+      { type: "tool-call", callId: "c1", name: "search_catalog", args: { query: "" } },
+      { type: "agent-transcript", text: "One moment.", final: true },
+      { type: "turn-done" },
+      { type: "usage", usage: { audioInTokens: 100, textInTokens: 50, audioOutTokens: 40, textOutTokens: 5, cachedInTokens: 0 } },
+    ]);
+    expect(m.responseDone).toBe(true);
+    expect(m.openCalls.has("c1")).toBe(true);
+  });
+
+  it("maps Gemini lifecycle and usage custom events, final input transcription, interruptions, errors", () => {
+    const m = new ServerEventMapper();
+    expect(m.map({ type: "custom", rawType: "goAway", raw: {} })).toEqual([{ type: "going-away" }]);
+    expect(m.map({ type: "custom", rawType: "sessionResumptionUpdate", raw: {} })).toEqual([]);
+    expect(m.map({ type: "custom", rawType: "usageMetadata", usage: { inputTokens: 500, inputAudioTokens: 400, outputTokens: 90, outputAudioTokens: 80, cachedInputTokens: 20 }, raw: {} }))
+      .toEqual([{ type: "usage", usage: { audioInTokens: 400, textInTokens: 100, audioOutTokens: 80, textOutTokens: 10, cachedInTokens: 20 } }]);
+    expect(m.map({ type: "custom", rawType: "interrupted", raw: {} })).toEqual([{ type: "speech-started" }]);
+    expect(m.map({ type: "input-transcription-completed", itemId: "x", transcript: " Hello ", raw: {} })).toEqual([{ type: "buyer-transcript", text: "Hello", final: true }]);
+    expect(m.map({ type: "function-call-arguments-done", responseId: "r", itemId: "i", callId: "c", name: "x", arguments: "{broken", raw: {} }))
+      .toEqual([{ type: "tool-call", callId: "c", name: "x", args: {} }]);
+    expect(m.map({ type: "response-done", responseId: "r", status: "cancelled", raw: {} })).toEqual([{ type: "turn-done", interrupted: true }]);
+    expect(m.map({ type: "error", message: "bad", code: "x1", raw: {} })).toEqual([]);
+    expect(m.lastError).toBe("x1: bad");
+    expect(m.map({ type: "session-closed", usage: { seconds: 1 }, reason: "done", raw: {} })).toEqual([{ type: "closed" }]);
+  });
+
+  it("usage with gross totals only", () => {
+    expect(toVoiceUsage({ inputTokens: 10, outputTokens: 4 })).toEqual({ audioInTokens: 0, textInTokens: 10, audioOutTokens: 0, textOutTokens: 4, cachedInTokens: 0 });
+    expect(toVoiceUsage({ cachedInputTextTokens: 3, cachedInputAudioTokens: 4 }).cachedInTokens).toBe(7);
+  });
+
+  it("client events: audio, text turns, tool results, one-off instructions", () => {
+    expect(clientEvents.audio(new Uint8Array([1, 2, 3]))).toEqual({ type: "input-audio-append", audio: "AQID" });
+    expect(clientEvents.text("hi")).toEqual([{ type: "conversation-item-create", item: { type: "text-message", role: "user", text: "hi" } }, { type: "response-create" }]);
+    expect(clientEvents.toolResult("c1", "x", { ok: true })).toEqual({ type: "conversation-item-create", item: { type: "function-call-output", callId: "c1", name: "x", output: '{"ok":true}' } });
+    expect(clientEvents.respond()).toEqual([{ type: "response-create" }]);
+    expect(clientEvents.respond("Say bye")[0]).toMatchObject({ item: { text: "(Note from the system, not from the buyer: Say bye)" } });
+  });
+
+  it("cannot be built in tests, without live mode or without the key", () => {
+    expect(() => assertLiveAllowed({ VITEST: "true", VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "k" })).toThrow(/test runner/);
+    expect(() => assertLiveAllowed({ VOICE_REALTIME: "scripted", AI_GATEWAY_API_KEY: "k" })).toThrow(/VOICE_REALTIME/);
+    expect(() => assertLiveAllowed({ VOICE_REALTIME: "live" })).toThrow(/AI_GATEWAY_API_KEY/);
+    expect(() => new GatewayRealtime({ VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "k" })).not.toThrow();
+    expect(() => new GatewayRealtime(process.env)).toThrow();
+  });
+});
+
+describe("security headers", () => {
+  it("the microphone is allowed for this site only; camera, payment and others stay off", async () => {
+    const config = (await import("@/next.config")).default;
+    const rules = await config.headers!();
+    const all = rules.find((r) => r.source === "/:path*")!.headers;
+    expect(all.find((h) => h.key === "Permissions-Policy")?.value).toBe("camera=(), microphone=(self), geolocation=(), payment=(), usb=()");
+  });
+});

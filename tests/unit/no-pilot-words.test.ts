@@ -17,6 +17,10 @@ import { askedKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "@/lib/a
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { NO_STAGE_FACTS } from "@/lib/agent/core/stage";
 import { TOOL_DEFS } from "@/lib/agent/tools";
+import { voiceCallBlock } from "@/lib/agent/core/voice";
+import { buildVoiceInstructions } from "@/lib/voice/instructions";
+import { realtimeTools } from "@/lib/voice/tool-schema";
+import { DEFAULT_SCRIPT, VOICE_SCRIPTS } from "@/lib/voice/scripted-realtime";
 import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION } from "@/lib/pipeline/prompts/facts";
 import { playbookInstruction, PLAYBOOK_INSTRUCTION } from "@/lib/pipeline/prompts/playbook";
 import { PIPELINE_TOOLS, SYSTEM_PROMPT } from "@/lib/pipeline/prompts/system";
@@ -100,6 +104,25 @@ describe("no pilot words in shared code", () => {
     expectClean("tool definitions", JSON.stringify(TOOL_DEFS));
     // The messages tools return to the model are in the tool code.
     expectClean("lib/agent", sourceText("lib/agent"));
+  });
+
+  it("the voice call instructions, tools and scripts (live voice)", () => {
+    for (const fillers of [true, false]) {
+      expectClean("voice block", voiceCallBlock({ fillers }));
+      expectClean("voice stable prompt, fixed mix", stableSystemPrompt(pb, seller, null, { channel: "voice", fillers }));
+      expectClean("voice stable prompt, seller examples", stableSystemPrompt(withExamples, seller, catalog, { channel: "voice", fillers }));
+    }
+    for (const stage of [NO_STAGE_FACTS, { ...NO_STAGE_FACTS, quote: "ready" as const }]) {
+      expectClean("voice turn context", turnContext(pb, null, { agentMessages: 1, stage, opener: "Hi, this is Ava.", channel: "voice" }));
+    }
+    expectClean("voice instructions", buildVoiceInstructions({
+      playbook: withExamples, voiceSettings: { pace: "slower" }, seller, catalog: catalog.map((c) => ({ ...c, name: c.sku })), deal: null, stage: NO_STAGE_FACTS,
+      agentMessages: 0, names: { agent: "Ava", seller: "Acme", gender: "neutral", language: "en" }, opener: "Hi, this is Ava.", localNow: null, followUp: null, recap: [],
+    }));
+    expectClean("voice tools (gemini)", JSON.stringify(realtimeTools("gemini")));
+    expectClean("voice tools (openai)", JSON.stringify(realtimeTools("openai")));
+    expectClean("scripted call lines", JSON.stringify({ VOICE_SCRIPTS, DEFAULT_SCRIPT }));
+    expectClean("lib/voice", sourceText("lib/voice"));
   });
 
   it("every pipeline prompt", () => {

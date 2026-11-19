@@ -13,13 +13,22 @@ import { PLAY_KEYS, type Playbook } from "@/db/schema";
 import { DEFAULT_PLAYS, effectivePlay, withQuestionBudget } from "./plays";
 import { MIXED_EXAMPLES, type ConversationExamples } from "./examples";
 import { HELPS_THE_PITCH_RULE, QUESTION_BUDGET, questionBudgetOf } from "./stage";
+import { applyVoiceReplacements, CORE_DESIGN_VOICE, type PromptChannel } from "./voice";
 
 /**
  * `questionBudget`: the seller's "Questions before recommending" (B2), already
  * clamped (stage.ts questionBudgetOf). It comes from the version's playbook
  * only, so the text stays byte-stable across turns. Missing = 3.
  */
-export function coreDesign(seller: { tradeName: string; meeting: boolean; questionBudget?: number }, ex: ConversationExamples = MIXED_EXAMPLES): string {
+export function coreDesign(
+  seller: { tradeName: string; meeting: boolean; questionBudget?: number }, ex: ConversationExamples = MIXED_EXAMPLES, channel: PromptChannel = "chat",
+): string {
+  const text = chatCoreDesign(seller, ex);
+  // A voice call: the chat lines are replaced with their spoken form (lib/agent/core/voice.ts).
+  return channel === "voice" ? applyVoiceReplacements(text, CORE_DESIGN_VOICE, "core design") : text;
+}
+
+function chatCoreDesign(seller: { tradeName: string; meeting: boolean; questionBudget?: number }, ex: ConversationExamples): string {
   const afterSecondNo = seller.meeting ? "offer a meeting" : "hand off to a person";
   const budget = seller.questionBudget ?? QUESTION_BUDGET.default;
   return `## How the conversation runs

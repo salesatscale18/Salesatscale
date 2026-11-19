@@ -30,6 +30,7 @@ tokens summed over the model calls of that turn, plus the model that answered. A
 after some calls stores its usage on the "could not reply" system message. The knowledge pipeline
 stores usage per stage in `pipeline_runs.usage` (`input`, `output`, `cacheRead`, `cacheWrite`) with
 the run's model and `cost_estimate_micros`; both count toward the spend cap and the platform budget.
+Live voice calls store their priced cost on `voice_sessions` (see "Voice calls"), which counts too.
 
 ## Knowledge pipeline (`lib/pipeline`)
 
@@ -85,10 +86,35 @@ every model call refuses with `AiBudgetError` before reaching the API. The agent
 chat to a person and sends no automated reply. Unset means no guard. A value that is not a number
 counts as $0.
 
+## Voice calls (`lib/voice`)
+
+A realtime voice model is the agent in a browser call: browser ⇄ our WebSocket relay ⇄ model.
+Our server owns the model connection; the browser never sees the instructions, the tool
+definitions or a provider token. The model gets the same playbook (the chat prompt with its chat
+lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run on our server.
+
+- **Modes** (`VOICE_REALTIME`): `off` (default, no calls), `scripted` (the free fake model,
+  `lib/voice/scripted-realtime.ts`: a person can click through a whole call; cost 0, never counted
+  in AI spend and never a scenario result for a version) and `live` (the paid realtime model through
+  the Vercel AI Gateway; needs `AI_GATEWAY_API_KEY`). `VOICE_MODEL` picks the model
+  (default `google/gemini-3.8-live`); `VOICE_MAX_CALL_SECONDS` can shorten the 10-minute maximum.
+- **Spend rule**: a live call spends money. In development and testing it needs the owner's
+  approval first, with an estimate (CLAUDE.md, "AI spend"). Tests only use the scripted model;
+  the Gateway adapter refuses to be built under the test runner or without `VOICE_REALTIME=live`.
+- **Prices**: `DEFAULT_REALTIME_PRICES` in `lib/ai/models.ts`, USD per million tokens by modality
+  (text in/out, audio in/out, cached in), written down from the product brief (2026-11-19) and to be
+  verified on the providers' price pages. `AI_PRICES` corrects them with the keys `textIn`, `textOut`,
+  `audioIn`, `audioOut`, `cachedIn`. A call is priced when it ends from the last usage snapshot the
+  model reported (snapshots, not increments); without any, from the call length (`usage.estimated`).
+- **Where it is stored**: `voice_sessions` (one row per call: mode, model, duration, usage,
+  `cost_micros`, answer times, how it ended). Live sessions' `cost_micros` count toward the account
+  spend cap, the usage display and the platform budget (`lib/ai/usage.ts`). Spoken turns are
+  conversation messages with `voice_session_id`, `spoken_at_ms` and, for agent turns, `answer_ms`.
+
 ## Tests
 
 Tests never call the real API: the agent uses `ScriptedLlm`, the availability check a fake
-`models.retrieve`.
+`models.retrieve`, voice calls the free `ScriptedRealtime` with a hand-moved clock.
 
 ## Scored test rounds (`tests/e2e/demo/scored-round.spec.ts`)
 

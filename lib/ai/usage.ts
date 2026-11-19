@@ -2,8 +2,10 @@
  * AI usage and spend (mvp-plan: spend cap; implementation plan P9.5).
  *
  * Token usage is stored per agent message (`messages.usage`, summed over the
- * model calls of one buyer turn, with the model that answered) and per
- * knowledge-pipeline run (`pipeline_runs.usage` with `pipeline_runs.model`). This module
+ * model calls of one buyer turn, with the model that answered), per
+ * knowledge-pipeline run (`pipeline_runs.usage` with `pipeline_runs.model`) and
+ * per live voice call (`voice_sessions.cost_micros`, already priced when the
+ * call ended; scripted calls cost nothing and are left out). This module
  * rolls it up per calendar month (UTC), prices it with lib/ai/models.ts and
  * decides the account's spend state:
  * - ok: under 80% of the cap;
@@ -16,7 +18,7 @@
 import { cache } from "react";
 import { and, eq, gte, isNotNull, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { messages, pipelineRuns, sellerAccounts } from "@/db/schema";
+import { messages, pipelineRuns, sellerAccounts, voiceSessions } from "@/db/schema";
 import { formatMoney } from "@/lib/domain/money";
 import { estimateCostMicros, priceTable, usdMicrosToMinor, type TokenUsage } from "./models";
 
@@ -81,6 +83,14 @@ async function rollup(db: Db, accountId: string | null, now: Date): Promise<Usag
     const usage = { inputTokens: num(r.input), outputTokens: num(r.output), cacheReadTokens: num(r.cacheRead), cacheWriteTokens: num(r.cacheWrite) };
     return { model: r.model, calls: num(r.calls), ...usage, costMicros: estimateCostMicros(r.model, usage, prices) };
   });
+  // Live voice calls: priced when each call ended (lib/voice/engine.ts); one "call" per session.
+  for (const v of await voiceRollup(db, accountId, from)) {
+    const same = byModel.find((m) => m.model === v.model);
+    if (same) {
+      same.calls += v.calls; same.inputTokens += v.inputTokens; same.outputTokens += v.outputTokens; same.cacheReadTokens += v.cacheReadTokens;
+      same.costMicros = (same.costMicros ?? 0) + (v.costMicros ?? 0);
+    } else byModel.push(v);
+  }
   byModel.sort((a, b) => (b.costMicros ?? 0) - (a.costMicros ?? 0) || a.model.localeCompare(b.model));
   const sum = (k: "inputTokens" | "outputTokens" | "cacheReadTokens" | "cacheWriteTokens") => byModel.reduce((s, m) => s + m[k], 0);
   return {
@@ -90,6 +100,30 @@ async function rollup(db: Db, accountId: string | null, now: Date): Promise<Usag
     costMicros: byModel.reduce((s, m) => s + (m.costMicros ?? 0), 0),
     unpricedModels: byModel.filter((m) => m.costMicros === null && (m.inputTokens || m.outputTokens)).map((m) => m.model),
   };
+}
+
+/**
+ * Live voice sessions created since `from`, per realtime model: tokens (audio
+ * and text together; cached input as cache reads) and the stored cost.
+ * Scripted sessions (the free fake model) are never counted.
+ */
+async function voiceRollup(db: Db, accountId: string | null, from: Date): Promise<ModelUsage[]> {
+  const u = voiceSessions.usage;
+  const rows = await db
+    .select({
+      model: voiceSessions.model,
+      calls: sql<string>`count(*)`,
+      input: sql<string>`coalesce(sum(coalesce((${u}->>'audioInTokens')::bigint, 0) + coalesce((${u}->>'textInTokens')::bigint, 0)), 0)`,
+      output: sql<string>`coalesce(sum(coalesce((${u}->>'audioOutTokens')::bigint, 0) + coalesce((${u}->>'textOutTokens')::bigint, 0)), 0)`,
+      cached: sql<string>`coalesce(sum(coalesce((${u}->>'cachedInTokens')::bigint, 0)), 0)`,
+      cost: sql<string>`coalesce(sum(${voiceSessions.costMicros}), 0)`,
+    })
+    .from(voiceSessions)
+    .where(and(eq(voiceSessions.mode, "live"), gte(voiceSessions.createdAt, from), accountId ? eq(voiceSessions.accountId, accountId) : undefined))
+    .groupBy(voiceSessions.model);
+  return rows.map((r) => ({
+    model: r.model, calls: num(r.calls), inputTokens: num(r.input), outputTokens: num(r.output), cacheReadTokens: num(r.cached), cacheWriteTokens: 0, costMicros: num(r.cost),
+  }));
 }
 
 /** One account's AI usage this calendar month (UTC): tokens by type and model, and the estimated cost. */

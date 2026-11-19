@@ -154,3 +154,92 @@ export function usdMicrosToMinor(micros: number, currency: string, env: Record<s
   if (rate === null) return null;
   return Math.round((micros / 10_000) * rate);
 }
+
+// ---------------------------------------------------------------------------
+// Realtime voice models (live voice calls, lib/voice)
+// ---------------------------------------------------------------------------
+
+/** USD per million tokens of a realtime voice model, by modality. `cachedIn`: cached input (missing = no discount). */
+export type RealtimePrice = { textIn: number; textOut: number; audioIn: number; audioOut: number; cachedIn?: number };
+
+/*
+ * Realtime prices, written down 2026-11-19 from the product brief (not checked
+ * against the providers' price pages): verify before relying on them and
+ * correct them without a deploy through AI_PRICES, e.g.
+ * {"google/gemini-3.8-live": {"audioIn": 3, "audioOut": 12}}.
+ * - Gemini 3.8 Live: text in $0.75, text out $4.50, audio in $3, audio out $12 (no cached price given).
+ * - GPT Realtime 2: text in $4, out $24, cached in $0.40, audio in $32, audio out $64.
+ */
+export const DEFAULT_REALTIME_PRICES: Record<string, RealtimePrice> = {
+  "google/gemini-3.8-live": { textIn: 0.75, textOut: 4.5, audioIn: 3, audioOut: 12 },
+  "openai/gpt-realtime-2": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
+};
+
+const REALTIME_PRICE_KEYS = ["textIn", "textOut", "audioIn", "audioOut", "cachedIn"] as const;
+
+/** The realtime price table in effect: defaults with the realtime keys of AI_PRICES applied. */
+export function realtimePriceTable(env: Record<string, string | undefined> = process.env): Record<string, RealtimePrice> {
+  const table: Record<string, RealtimePrice> = { ...DEFAULT_REALTIME_PRICES };
+  const raw = env.AI_PRICES?.trim();
+  if (!raw) return table;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return table; // parsePriceOverrides already warns
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return table;
+  for (const [model, p] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!p || typeof p !== "object") continue;
+    const price: Partial<RealtimePrice> = {};
+    for (const k of REALTIME_PRICE_KEYS) {
+      const v = (p as Record<string, unknown>)[k];
+      if (typeof v === "number" && Number.isFinite(v) && v >= 0) price[k] = v;
+    }
+    if (!Object.keys(price).length) continue;
+    const base = table[model] ?? { textIn: 0, textOut: 0, audioIn: 0, audioOut: 0 };
+    table[model] = { ...base, ...price };
+  }
+  return table;
+}
+
+/** Token counts of a voice call by modality. `cachedInTokens` is the cached part of the input (a subset). */
+export type RealtimeTokenUsage = { audioInTokens: number; audioOutTokens: number; textInTokens: number; textOutTokens: number; cachedInTokens: number };
+
+/**
+ * Estimated cost of a voice call in USD micros, or null for a model without a
+ * price. Cached input is billed at `cachedIn` (taken from the text input
+ * first, then from the audio input) when the model has a cached price.
+ */
+export function estimateRealtimeCostMicros(model: string, u: RealtimeTokenUsage, prices: Record<string, RealtimePrice> = realtimePriceTable()): number | null {
+  const p = prices[model];
+  if (!p) return null;
+  const nonNeg = (n: number) => (Number.isFinite(n) && n > 0 ? n : 0);
+  let textIn = nonNeg(u.textInTokens);
+  let audioIn = nonNeg(u.audioInTokens);
+  let cachedCost = 0;
+  if (p.cachedIn !== undefined) {
+    const cached = Math.min(nonNeg(u.cachedInTokens), textIn + audioIn);
+    const fromText = Math.min(cached, textIn);
+    textIn -= fromText;
+    audioIn -= cached - fromText;
+    cachedCost = cached * p.cachedIn;
+  }
+  return Math.round(textIn * p.textIn + audioIn * p.audioIn + nonNeg(u.textOutTokens) * p.textOut + nonNeg(u.audioOutTokens) * p.audioOut + cachedCost);
+}
+
+/** Audio tokens per second of speech, for the duration-based estimate when no usage arrived (Gemini documents 32/s; assumed for others). */
+export const REALTIME_AUDIO_TOKENS_PER_SECOND = 32;
+
+/**
+ * A rough usage for a call without any usage snapshot: the model hears the
+ * whole call and speaks about half of it. Marked `estimated` where stored.
+ */
+export function estimatedRealtimeUsage(durationSec: number): RealtimeTokenUsage {
+  const s = Math.max(0, durationSec);
+  return {
+    audioInTokens: Math.round(s * REALTIME_AUDIO_TOKENS_PER_SECOND),
+    audioOutTokens: Math.round(s * 0.5 * REALTIME_AUDIO_TOKENS_PER_SECOND),
+    textInTokens: 0, textOutTokens: 0, cachedInTokens: 0,
+  };
+}

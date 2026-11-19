@@ -14,6 +14,7 @@ import { isReservedFieldKey } from "./core/facts";
 import { deriveStage, NO_STAGE_FACTS, questionBudgetOf, type StageFacts } from "./core/stage";
 import { namesInstruction, type BuyerNames } from "./core/names";
 import { conversationExamples, type ExampleCatalogItem } from "./core/examples";
+import { applyVoiceReplacements, STABLE_PROMPT_VOICE, voiceCallBlock, voiceStageText, type PromptChannel } from "./core/voice";
 
 const FIELD_STAGE: Record<PlaybookField["stage"], string> = {
   before_quote: "needed for the quote",
@@ -34,7 +35,18 @@ const playbookFields = (p: Playbook) => p.fields.filter((f) => !isReservedFieldK
  * names and value lines are read, to build the examples (lib/agent/core/examples.ts):
  * fixed for the published catalog, so the prompt stays byte-stable across turns.
  */
-export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; currency: string; languages: string[] }, catalog?: readonly ExampleCatalogItem[] | null): string {
+export function stableSystemPrompt(
+  p: Playbook, seller: { tradeName: string; currency: string; languages: string[] }, catalog?: readonly ExampleCatalogItem[] | null,
+  opts: { channel?: PromptChannel; fillers?: boolean } = {},
+): string {
+  const text = chatStablePrompt(p, seller, catalog, opts.channel ?? "chat");
+  if (opts.channel !== "voice") return text;
+  // A voice call (lib/voice/instructions.ts): chat lines replaced, plus the platform's fixed voice block.
+  const spoken = applyVoiceReplacements(text, STABLE_PROMPT_VOICE, "stable prompt");
+  return applyVoiceReplacements(spoken, [{ from: "\n\n### Deal-state fields\n", to: `\n\n${voiceCallBlock({ fillers: opts.fillers ?? true })}\n\n### Deal-state fields\n` }], "voice block");
+}
+
+function chatStablePrompt(p: Playbook, seller: { tradeName: string; currency: string; languages: string[] }, catalog: readonly ExampleCatalogItem[] | null | undefined, channel: PromptChannel): string {
   const ex = conversationExamples(p, catalog);
   const fields = playbookFields(p).map((f) => `- ${f.key}: ${f.label} (${FIELD_STAGE[f.stage] ?? f.stage})${f.hint ? ` - ${f.hint}` : ""}${f.example ? `. Example question: "${f.example}"` : ""}`).join("\n") || "- (none)";
   const objections = p.objections.map((o) => `- "${o.objection}" -> ${o.answer}`).join("\n") || "- (none yet)";
@@ -46,7 +58,7 @@ export function stableSystemPrompt(p: Playbook, seller: { tradeName: string; cur
 
 Your instructions have three parts: how every conversation runs, this seller's playbook, and the sales plays. After them, each turn, comes "Stage now": where this conversation stands.
 
-${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p) }, ex)}
+${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p) }, ex, channel)}
 
 ## Seller playbook: ${seller.tradeName}
 
@@ -110,6 +122,8 @@ export type TurnExtra = {
   localNow?: string | null;
   /** The follow-up already scheduled with this buyer (lib/follow-ups). */
   followUp?: { dueLocal: string; topic: string | null } | null;
+  /** "voice": a live call (lib/voice/instructions.ts). Default: chat, unchanged. */
+  channel?: PromptChannel;
 };
 
 const MAX_PLAIN_ITEMS = 30;
@@ -124,10 +138,16 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     ...(extra.stage ?? NO_STAGE_FACTS), playbook: p, fields, objections: deal?.objections, agentMessages: extra.agentMessages ?? 0,
   });
   const plain = (extra.catalog ?? []).filter((i) => i.plainName?.trim()).slice(0, MAX_PLAIN_ITEMS);
+  const voice = extra.channel === "voice";
+  const opener = !extra.opener
+    ? ""
+    : voice
+      ? `Your opening line, which you say first when the call connects: "${extra.opener}"\nAfter it, do not introduce yourself again unless the buyer asks.`
+      : `Your opening message, already sent: "${extra.opener}"\nDo not introduce yourself again.`;
   return [
-    stage.instruction,
+    voice ? voiceStageText(stage.instruction) : stage.instruction,
     extra.names ? namesInstruction(extra.names) : "",
-    extra.opener ?`Your opening message, already sent: "${extra.opener}"\nDo not introduce yourself again.` : "",
+    opener,
     `## Known so far\n${known}`,
     deal?.objections?.length ? `Objections so far: ${deal.objections.map((o) => `${o.text} (${o.handled ? "handled" : "open"})`).join("; ")}.` : "",
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",

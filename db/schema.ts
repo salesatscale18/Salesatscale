@@ -89,6 +89,8 @@ export const sellerAccounts = pgTable(
     simulateWhatsappRules: boolean("simulate_whatsapp_rules").notNull().default(false),
     /** Buyer simulator: "Add simulated buyer" is offered (and allowed on the server). On by default. */
     allowSimulatedBuyers: boolean("allow_simulated_buyers").notNull().default(true),
+    /** Voice calls on the buyer chat page (live voice, release 2). Off by default; the test lab does not need it. */
+    voiceBuyerCalls: boolean("voice_buyer_calls").notNull().default(false),
     rollout: rolloutMode("rollout").notNull().default("test_only"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
@@ -275,6 +277,10 @@ export const consentRecords = pgTable(
     ip: text("ip"),
     pageUrl: text("page_url"),
     recordedByUserId: uuid("recorded_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    /** When the person agreed to talk to the automated assistant by voice (live voice, release 2). Null = not asked. */
+    voiceConsentAt: timestamp("voice_consent_at", { withTimezone: true }),
+    /** When the person agreed that a voice call is recorded (separate from voice consent). Null = not agreed. */
+    recordingConsentAt: timestamp("recording_consent_at", { withTimezone: true }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [index("consent_records_lead_idx").on(t.leadId)],
@@ -697,6 +703,20 @@ export const PLAY_KEYS = [
   "proof", "need_to_think", "send_info", "not_now", "right_size", "handoff",
 ] as const;
 export type PlayKey = (typeof PLAY_KEYS)[number];
+/**
+ * Voice call settings of an agent version (live voice). Every key is optional:
+ * a missing key is the platform default (lib/voice/settings.ts), which also
+ * validates them. `maxCallSec` can only lower the platform maximum.
+ */
+export type VoiceSettings = {
+  voice?: string;
+  pace?: "slower" | "normal" | "faster";
+  style?: "patient" | "balanced" | "quick";
+  /** A short spoken filler before a tool that takes time ("One moment, I'm checking that"). */
+  fillers?: boolean;
+  maxCallSec?: number;
+};
+
 /** One play card: when it applies, the moves in order, a good reply and a reply to avoid. */
 export type PlayCard = { when: string; do: string[]; example: string; notThis: string };
 
@@ -716,6 +736,8 @@ export const agentVersions = pgTable(
     playbook: jsonb("playbook").$type<Playbook>().notNull(),
     model: text("model").notNull(),
     effort: text("effort").notNull().default("medium"),
+    /** Voice call settings of this version (lib/voice/settings.ts). Null = the platform defaults. Travels with the playbook. */
+    voiceSettings: jsonb("voice_settings").$type<VoiceSettings>(),
     changeNote: text("change_note"),
     publishedAt: timestamp("published_at", { withTimezone: true }),
     publishedByUserId: uuid("published_by_user_id").references(() => users.id, { onDelete: "set null" }),
@@ -918,7 +940,7 @@ export const conversations = pgTable(
     leadId: uuid("lead_id")
       .notNull()
       .references(() => leads.id, { onDelete: "cascade" }),
-    /** "testlab" now; "whatsapp" in P6. */
+    /** "testlab" | "whatsapp" | "simulator" | "voice" (a test-lab voice call). */
     channel: text("channel").notNull(),
     isTest: boolean("is_test").notNull().default(false),
     /** The agent version this conversation runs on. */
@@ -949,6 +971,81 @@ export const conversations = pgTable(
   ],
 );
 
+export const VOICE_SESSION_STATUSES = ["pending", "live", "ended"] as const;
+export type VoiceSessionStatus = (typeof VOICE_SESSION_STATUSES)[number];
+/** Why a voice call ended. */
+export const VOICE_END_REASONS = [
+  "user_hangup", "agent_closed", "limit", "silence", "opt_out", "handoff", "take_over", "connection_lost", "budget", "error",
+] as const;
+export type VoiceEndReason = (typeof VOICE_END_REASONS)[number];
+/** scripted: the free fake model (VOICE_REALTIME=scripted), never counted in AI spend; live: a paid realtime model. */
+export type VoiceSessionMode = "scripted" | "live";
+
+/**
+ * Token usage of a voice call: the last snapshot the realtime model reported
+ * (snapshots, not increments). Cached = the cached part of the input. `estimated`:
+ * no usage arrived, the numbers come from the call length.
+ */
+export type VoiceUsage = {
+  audioInTokens: number;
+  audioOutTokens: number;
+  textInTokens: number;
+  textOutTokens: number;
+  cachedInTokens: number;
+  estimated?: boolean;
+};
+
+/**
+ * One voice call (live voice): the browser talks to our relay, the relay to the
+ * realtime model. The conversation's messages carry `voice_session_id` when spoken.
+ */
+export const voiceSessions = pgTable(
+  "voice_sessions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    conversationId: uuid("conversation_id")
+      .notNull()
+      .references(() => conversations.id, { onDelete: "cascade" }),
+    agentVersionId: uuid("agent_version_id").references(() => agentVersions.id, { onDelete: "set null" }),
+    /** The seller's user who started a test call; null = the buyer. */
+    startedByUserId: uuid("started_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    isTest: boolean("is_test").notNull().default(false),
+    status: text("status").$type<VoiceSessionStatus>().notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    connectedAt: timestamp("connected_at", { withTimezone: true }),
+    endedAt: timestamp("ended_at", { withTimezone: true }),
+    endReason: text("end_reason").$type<VoiceEndReason>(),
+    /** The last error code the caller was shown (protocol `{t:'error'}`), for review. */
+    errorCode: text("error_code"),
+    /** Realtime model id, e.g. "google/gemini-3.8-live" ("scripted" for the free fake). */
+    model: text("model").notNull(),
+    mode: text("mode").$type<VoiceSessionMode>().notNull(),
+    providerSessionId: text("provider_session_id"),
+    durationSec: integer("duration_sec"),
+    /** Average time from the end of the buyer's turn to the agent's first audio, in ms. */
+    answerMsAvg: integer("answer_ms_avg"),
+    usage: jsonb("usage").$type<VoiceUsage>(),
+    /** Estimated cost in USD micros (lib/ai/models.ts). Always 0 for scripted calls. */
+    costMicros: bigint("cost_micros", { mode: "number" }).notNull().default(0),
+    /** The voice settings the call used (snapshot). */
+    settings: jsonb("settings").$type<VoiceSettings>(),
+    /** sha256 (hex) of the one-time socket ticket; valid 60 s, single use. */
+    ticketHash: text("ticket_hash").notNull(),
+    ticketUsedAt: timestamp("ticket_used_at", { withTimezone: true }),
+    recordingConsent: boolean("recording_consent"),
+    recordingRef: text("recording_ref"),
+  },
+  (t) => [
+    index("voice_sessions_account_created_idx").on(t.accountId, t.createdAt),
+    index("voice_sessions_conversation_idx").on(t.conversationId),
+  ],
+);
+
+export type VoiceSession = typeof voiceSessions.$inferSelect;
+
 export const messages = pgTable(
   "messages",
   {
@@ -975,6 +1072,12 @@ export const messages = pgTable(
     deliveryError: text("delivery_error"),
     /** The approved template this message was sent with (outside the 24-hour window). */
     templateId: uuid("template_id").references((): AnyPgColumn => messageTemplates.id, { onDelete: "set null" }),
+    /** Set when the message was spoken in a voice call (the call's transcript). */
+    voiceSessionId: uuid("voice_session_id").references(() => voiceSessions.id, { onDelete: "set null" }),
+    /** Offset in the call, in ms, when the turn started. */
+    spokenAtMs: integer("spoken_at_ms"),
+    /** Spoken agent turns: ms from the end of the buyer's turn to the agent's first audio. Null when the agent spoke first. */
+    answerMs: integer("answer_ms"),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

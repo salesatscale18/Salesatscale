@@ -2,9 +2,9 @@
  * Scenario results for test-lab conversations: builds the run a scenario check
  * reads from the database. Scoped by account id.
  */
-import { and, asc, desc, eq, inArray, isNotNull } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, isNotNull, notExists } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { conversations, dealStates, leads, messages, toolCalls, type Conversation, type DealState, type LeadStatus } from "@/db/schema";
+import { conversations, dealStates, leads, messages, toolCalls, voiceSessions, type Conversation, type DealState, type LeadStatus } from "@/db/schema";
 import { conversationMessages, getDealState, threadOf } from "./service";
 import { checkScenario, SCENARIOS, type Scenario, type ScenarioCheck, type ScenarioRun } from "./scenarios";
 
@@ -13,6 +13,7 @@ function runOf(
 ): ScenarioRun {
   return {
     language: conv.language,
+    channel: conv.channel,
     conversationStatus: conv.status,
     leadStatus: leadStatus ?? "new",
     messages: thread.map(({ message }) => ({ actor: message.actor, body: message.body })),
@@ -41,13 +42,18 @@ export type ScenarioSummary = { scenarioId: string; conversationId: string | nul
 
 /**
  * The latest test chat per scenario for one agent version, with its check result. Not run → null.
+ * Scripted voice calls (voice_sessions.mode "scripted") are left out: they never ran the real model.
  * Messages, tool calls, deal states and leads of all those chats load in four batched queries.
  */
 export async function latestScenarioResults(db: Db, accountId: string, versionId: string): Promise<ScenarioSummary[]> {
   const rows = await db
     .select()
     .from(conversations)
-    .where(and(eq(conversations.accountId, accountId), eq(conversations.agentVersionId, versionId), eq(conversations.isTest, true), isNotNull(conversations.scenario)))
+    .where(and(
+      eq(conversations.accountId, accountId), eq(conversations.agentVersionId, versionId), eq(conversations.isTest, true), isNotNull(conversations.scenario),
+      // A scripted voice call (the free fake model) is a click-through, not a result for this version.
+      notExists(db.select({ id: voiceSessions.id }).from(voiceSessions).where(and(eq(voiceSessions.conversationId, conversations.id), eq(voiceSessions.mode, "scripted")))),
+    ))
     .orderBy(desc(conversations.createdAt))
     .limit(200);
   const latest = new Map<string, Conversation>();

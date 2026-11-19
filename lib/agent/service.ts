@@ -59,6 +59,8 @@ export async function ensureDraftVersion(db: Db, accountId: string): Promise<Age
       playbook: live?.playbook ?? defaultPlaybook(account.tradeName, account.maxDiscountBp),
       model: live?.model ?? DEFAULT_MODEL,
       effort: live?.effort ?? "medium",
+      // Voice settings travel with the playbook (publish and rollback move whole rows, so they keep theirs).
+      voiceSettings: live?.voiceSettings ?? null,
     });
   } catch (e) {
     const winner = await byStatus(db, accountId, "draft");
@@ -380,7 +382,7 @@ export function rankFacts<T extends { topic: string; statement: string }>(facts:
  */
 export async function startTestConversation(
   db: Db, accountId: string, userId: string | null,
-  opts: { language: string; scenario?: string | null; versionId?: string; channel?: "testlab" | "whatsapp"; channelAddress?: string | null },
+  opts: { language: string; scenario?: string | null; versionId?: string; channel?: "testlab" | "whatsapp" | "voice"; channelAddress?: string | null },
 ) {
   const version = opts.versionId
     ? (await db.select().from(agentVersions).where(and(eq(agentVersions.id, opts.versionId), eq(agentVersions.accountId, accountId))))[0]
@@ -393,7 +395,7 @@ export async function startTestConversation(
   await atomic(db, (q) => [
     q.insert(leads).values({
       id: leadId, accountId, fullName: opts.channel === "whatsapp" ? "WhatsApp tester" : "Test buyer", phone, language: opts.language,
-      origin: "manual", sourceLabel: opts.channel === "whatsapp" ? "Test lab · WhatsApp" : "Test lab", isTest: true, createdByUserId: userId,
+      origin: "manual", sourceLabel: opts.channel === "whatsapp" ? "Test lab · WhatsApp" : opts.channel === "voice" ? "Test lab · Voice" : "Test lab", isTest: true, createdByUserId: userId,
     }),
     q.insert(conversations).values({
       id: conversationId, accountId, leadId, channel: opts.channel ?? "testlab", channelAddress: opts.channelAddress ?? null, isTest: true,
