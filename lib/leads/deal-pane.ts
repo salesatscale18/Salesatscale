@@ -12,10 +12,16 @@ import type { DealFieldValue, Playbook } from "@/db/schema";
 import { currentPlaybook, getDealState } from "@/lib/agent/service";
 import { leadOrdersWithSignature, orderLabel, withSignedValues } from "@/lib/orders/service";
 import { leadStage, type LeadStageView } from "@/lib/leads/stage";
-import { asSentence } from "@/lib/format";
+import { eq } from "drizzle-orm";
+import { sellerAccounts } from "@/db/schema";
+import { asSentence, formatIsoDate, localDateIso } from "@/lib/format";
 import { t } from "@/lib/i18n";
 
-export type PaneField = { key: string; label: string; value?: string | null; provenance?: DealFieldValue["provenance"] };
+export type PaneField = {
+  key: string; label: string; value?: string | null; provenance?: DealFieldValue["provenance"];
+  /** A verified value: where it came from (the signed order form, or a person on the team) and its date, as the tooltip says it (W3). */
+  verified?: { source: "form" | "person"; title: string };
+};
 
 export type DealPane = {
   /** No playbook yet ("pending"), a playbook with no fields ("none"), or fields to show. */
@@ -28,7 +34,22 @@ export type DealPane = {
   missingCount: number;
   objections: { text: string; handled: boolean }[];
   nextStep: string | null;
+  /** A shown value came from the signed order form: the note line under the list. */
+  formVerified: boolean;
 };
+
+/**
+ * The tooltip and accessible label of a verified value (W3): the signed order
+ * form's values say so with the signing date; a value a person verified on
+ * the lead page ("Verify a detail") says that instead. Dates in the account's zone.
+ */
+export function verifiedOf(v: Pick<DealFieldValue, "provenance" | "updatedAt" | "verifiedBy"> | undefined, timezone: string | null | undefined): PaneField["verified"] {
+  if (!v || v.provenance !== "verified") return undefined;
+  const at = new Date(v.updatedAt);
+  const date = Number.isNaN(at.getTime()) ? "" : formatIsoDate(localDateIso(at, timezone));
+  const source = v.verifiedBy ? "person" : "form";
+  return { source, title: t(source === "form" ? "lead.card.verified_form" : "lead.card.verified_person", { date }) };
+}
 
 type LatestOrder = Parameters<typeof withSignedValues>[1] & { order: { number: number; paymentStatus: string } };
 
@@ -62,31 +83,36 @@ export function dealPaneView(i: {
   stage: Pick<LeadStageView, "stage"> | null;
   tradeName: string;
   buyerName: string;
+  /** The account's zone, for the verified dates. */
+  timezone?: string | null;
 }): DealPane {
   const playbookFields = i.playbook?.fields ?? [];
   // A signed form fills the company and signer details (verified).
   const fields = withSignedValues(i.deal?.fields ?? {}, i.latestOrder, playbookFields.map((f) => f.key));
-  const all = playbookFields.map((f) => ({ key: f.key, label: f.label, stage: f.stage, value: fields[f.key]?.value, provenance: fields[f.key]?.provenance }));
+  const all = playbookFields.map((f) => ({ key: f.key, label: f.label, stage: f.stage, value: fields[f.key]?.value, provenance: fields[f.key]?.provenance, verified: String(fields[f.key]?.value ?? "").trim() ? verifiedOf(fields[f.key], i.timezone) : undefined }));
   const unknown = (f: { value?: string | null }) => !String(f.value ?? "").trim();
   const strip = ({ stage: _s, ...f }: (typeof all)[number]): PaneField => f;
   const laterUnknown = all.filter((f) => f.stage === "before_order_form" && unknown(f)).map(strip);
+  const shown = all.filter((f) => !(f.stage === "before_order_form" && unknown(f))).map(strip);
   return {
     state: !i.playbook ? "pending" : playbookFields.length === 0 ? "none" : "fields",
-    shown: all.filter((f) => !(f.stage === "before_order_form" && unknown(f))).map(strip),
+    shown,
     laterUnknown,
     missingCount: laterUnknown.length,
     objections: i.deal?.objections ?? [],
     nextStep: nextStepText({ latestOrder: i.latestOrder, stage: i.stage, agentNextStep: i.deal?.nextStep, tradeName: i.tradeName, buyerName: i.buyerName }),
+    formVerified: shown.some((f) => f.verified?.source === "form"),
   };
 }
 
 /** One lead's pane (Conversations). Lead ids of another account find nothing: an empty pane. */
 export async function loadDealPane(db: Db, accountId: string, lead: { id: string; fullName: string }, tradeName: string): Promise<DealPane> {
-  const [playbook, deal, orders, stage] = await Promise.all([
+  const [playbook, deal, orders, stage, [acc]] = await Promise.all([
     currentPlaybook(db, accountId),
     getDealState(db, accountId, lead.id),
     leadOrdersWithSignature(db, accountId, lead.id),
     leadStage(db, accountId, lead.id),
+    db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
   ]);
-  return dealPaneView({ playbook, deal: deal ?? null, latestOrder: orders[0] ?? null, stage, tradeName, buyerName: lead.fullName });
+  return dealPaneView({ playbook, deal: deal ?? null, latestOrder: orders[0] ?? null, stage, tradeName, buyerName: lead.fullName, timezone: acc?.timezone });
 }

@@ -152,7 +152,7 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     const side = conv.split('class="sas-inbox__side"')[1];
     expect(side).toContain('data-testid="deal-pane"');
     for (const v of ["Shapiro Pizza Ltd", "516000111", "Eli Shapiro", "Owner"]) expect(side).toContain(v);
-    expect(side).toContain("Verified");
+    expect(side).toContain('aria-label="From the signed order form, ');
     expect(side).toMatch(/data-testid="next-step"[\s\S]*Order PD-10001 is paid\. Next: delivery\./);
     expect(side).not.toContain("Quote on assumption of 1 site");
     const lead = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.eliLead }) as never));

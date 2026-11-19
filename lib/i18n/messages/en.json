@@ -3090,5 +3090,14 @@
   "overview.markets.open_leads": "Open leads",
   "overview.markets.need_you": "Need you",
   "overview.needs.more": "Show {count} more",
-  "overview.activity.open": "Recent activity"
+  "overview.activity.open": "Recent activity",
+  "lead.card.verified_form": "From the signed order form, {date}",
+  "lead.card.verified_person": "Verified by your team, {date}",
+  "lead.card.verified_note": "Filled in and signed by the buyer on the order form.",
+  "lead.card.no_orders": "No orders yet.",
+  "lead.card.timeline_summary": "{count} events · last: {event}, {time}",
+  "lead.card.timeline_summary_one": "1 event · last: {event}, {time}",
+  "lead.card.timeline_none": "No events yet",
+  "lead.card.timeline_show": "Show",
+  "lead.card.timeline_hide": "Hide"
 }

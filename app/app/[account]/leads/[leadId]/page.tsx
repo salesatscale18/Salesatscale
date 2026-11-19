@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
 import { quoteRef } from "@/components/sas/id-text";
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
@@ -10,7 +11,9 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { nameInitials, personName } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
 import { maskPhone } from "@/lib/leads/rules";
-import { formatDateTimeIn, formatShortDateTimeIn } from "@/lib/format";
+import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn } from "@/lib/format";
+import { TIMELINE_COOKIE, timelineOpen } from "@/lib/leads/timeline-fold";
+import { TimelineFold } from "./timeline-fold";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
 import { ConversationPanel, dealEnded, formNotes, FormNotesOnly } from "./conversation";
@@ -42,6 +45,11 @@ import { formatDueLocal } from "@/lib/follow-ups/rules";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
+
+/** The remembered timeline choice (W3). Outside a request (render tests) there is none: folded. */
+async function timelineCookieValue(): Promise<string | undefined> {
+  try { return (await cookies()).get(TIMELINE_COOKIE)?.value; } catch { return undefined; }
+}
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -137,7 +145,7 @@ export default async function LeadCardPage({
   // The deal pane, one source with Conversations (lib/leads/deal-pane.ts): a signed form fills the company and
   // signer details (verified); after the sale the order's state is the next step; once the quote or the form is
   // with the buyer the stage says what happens next (the agent's free text only before that).
-  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName });
+  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName, timezone: account.timezone });
   const nextStep = pane.nextStep;
   // Quotes an order came from show "Ordered".
   const orderedQuotes = new Set(leadOrders.map(({ order }) => order.quoteId));
@@ -147,13 +155,16 @@ export default async function LeadCardPage({
   const who = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you")));
   /** The same inside a sentence ("added by you"). */
   const whoIn = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you_lower")));
+  /** An event's title as text (the folded timeline's "last:" line). */
+  const eventTitle = (type: string, data: unknown) =>
+    t(type === "conversation.started" && (data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${type}` as MessageKey);
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";
     const ord = won ? orderById.get(String((event.data as { orderId?: string } | null)?.orderId ?? "")) : undefined;
     // A conversation started on the buyer simulator is not a WhatsApp start.
     const startedSim = event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator";
-    const title = t(startedSim ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey);
+    const title = eventTitle(event.type, event.data);
     return {
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
@@ -181,6 +192,23 @@ export default async function LeadCardPage({
     timeTitle: formatDateTimeIn(event.createdAt, tz),
     };
   });
+
+  // The timeline, folded into one row by default; the URL (no JS) wins over the remembered choice (W3).
+  const tlOpen = timelineOpen(sp.timeline, await timelineCookieValue());
+  const tlHref = (state: "open" | "closed") => {
+    const q = new URLSearchParams();
+    for (const [k, v] of Object.entries(sp)) if (k !== "timeline" && typeof v === "string") q.set(k, v);
+    q.set("timeline", state);
+    return `/app/${account.slug}/leads/${lead.id}?${q.toString()}#lead-timeline`;
+  };
+  const lastEvent = events[0];
+  const tlSummary = !lastEvent
+    ? t("lead.card.timeline_none")
+    : t(events.length === 1 ? "lead.card.timeline_summary_one" : "lead.card.timeline_summary", {
+        count: events.length,
+        event: eventTitle(lastEvent.event.type, lastEvent.event.data),
+        time: formatShortDateTimeIn(lastEvent.event.createdAt, tz),
+      });
 
   // Deal fields not known yet (phone summary above the tabs).
   const missingCount = pane.missingCount;
@@ -307,12 +335,14 @@ export default async function LeadCardPage({
               </div>
             )}
             </div>
-            <section aria-labelledby="lq-h" data-tab="deal" style={{ borderBlockEnd: "1px solid var(--line)" }}>
-              <div className="sas-page-head" style={{ padding: "16px 16px 4px" }}>
-                <h2 id="lq-h" className="sas-label" style={{ margin: 0 }}>{t("lead.card.quotes")}</h2>
-                {lead.status !== "opted_out" ? <a className={`${buttonClass("secondary", "sm")} sas-page-head__actions`} href={`/app/${account.slug}/leads/${lead.id}/quote`}><Icon name="file-text" />{t("lead.card.create_quote")}</a> : null}
+            {/* Quotes and Orders: two cards side by side, stacked on a phone (W3). */}
+            <div className="sas-lead-docs" data-tab="deal">
+            <section className="sas-lead-doc" aria-labelledby="lq-h" data-testid="quotes-card">
+              <div className="sas-lead-doc__head">
+                <h2 id="lq-h" className="sas-lead-doc__title">{t("lead.card.quotes")} <span className="sas-lead-doc__count sas-num">{leadQuotes.length}</span></h2>
+                {lead.status !== "opted_out" ? <a className={buttonClass("ghost", "sm")} href={`/app/${account.slug}/leads/${lead.id}/quote`}><Icon name="file-text" />{t("lead.card.create_quote")}</a> : null}
               </div>
-              {leadQuotes.length === 0 ? <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("lead.card.no_quotes")}</p> : (
+              {leadQuotes.length === 0 ? <p className="sas-small sas-lead-doc__empty">{t("lead.card.no_quotes")}</p> : (
                 <ul className="sas-list">
                   {leadQuotes.map(({ quote, version, older }) => (
                     <li key={quote.id}>
@@ -323,6 +353,7 @@ export default async function LeadCardPage({
                           const f = furthestQuoteState(displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id), orderedQuotes.has(quote.id)), docs.get(quote.id));
                           return f.object === "payment" ? <StatusPill object="payment" state={f.state} /> : f.object === "order_form" ? <StatusPill object="order_form" state={f.state} /> : <StatusPill object="quote" state={f.state} />;
                         })()}
+                        <span className="sas-small sas-lead-doc__date" title={formatDateTimeIn(version.createdAt, tz)}>{formatDayMonthIn(version.createdAt, tz)}</span>
                       </a>
                       {older.length ? (
                         <details style={{ padding: "0 16px 8px" }}>
@@ -341,9 +372,11 @@ export default async function LeadCardPage({
                 </ul>
               )}
             </section>
-            {leadOrders.length ? (
-              <section aria-labelledby="lo-h" data-tab="deal" style={{ borderBlockEnd: "1px solid var(--line)" }}>
-                <h2 id="lo-h" className="sas-label" style={{ margin: 0, padding: "16px 16px 4px" }}>{t("lead.card.orders")}</h2>
+            <section className="sas-lead-doc" aria-labelledby="lo-h" data-testid="orders-card">
+              <div className="sas-lead-doc__head">
+                <h2 id="lo-h" className="sas-lead-doc__title">{t("lead.card.orders")} <span className="sas-lead-doc__count sas-num">{leadOrders.length}</span></h2>
+              </div>
+              {leadOrders.length === 0 ? <p className="sas-small sas-lead-doc__empty">{t("lead.card.no_orders")}</p> : (
                 <ul className="sas-list">
                   {leadOrders.map(({ order }) => (
                     <li key={order.id}>
@@ -351,19 +384,26 @@ export default async function LeadCardPage({
                         <span className="sas-id">{orderById.get(order.id)!.label}</span>
                         <span className="sas-list__main sas-num sas-small">{orderById.get(order.id)!.amount}</span>
                         <StatusPill object="payment" state={order.paymentStatus} />
+                        <span className="sas-small sas-lead-doc__date" title={formatDateTimeIn(order.createdAt, tz)}>{formatDayMonthIn(order.createdAt, tz)}</span>
                       </a>
                       {/* The signed form, and its pay page while the order waits for payment (R5 item 8). */}
-                      <div style={{ padding: "0 16px 8px" }}>
+                      <div className="sas-lead-doc__links">
                         <SignedFormLinks url={linkFor({ id: order.orderFormId }).url} pay={payLinkOpen(order.paymentStatus, leadQuotes.find((q) => q.quote.id === order.quoteId)?.quote.status ?? "")} />
                       </div>
                     </li>
                   ))}
                 </ul>
-              </section>
-            ) : null}
-            <div data-tab="timeline">
-              <h2 className="sas-group-label">{t("lead.card.timeline")}</h2>
-              <Timeline label={t("lead.card.timeline")} items={timeline} />
+              )}
+            </section>
+            </div>
+            <div data-tab="timeline" id="lead-timeline">
+              <TimelineFold
+                initialOpen={tlOpen} label={t("lead.card.timeline")} summary={tlSummary}
+                showLabel={t("lead.card.timeline_show")} hideLabel={t("lead.card.timeline_hide")}
+                openHref={tlHref("open")} closeHref={tlHref("closed")}
+              >
+                <Timeline label={t("lead.card.timeline")} items={timeline} />
+              </TimelineFold>
             </div>
           </div>
           <aside className="sas-lead__side">
