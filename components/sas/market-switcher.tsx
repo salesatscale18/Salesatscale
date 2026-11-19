@@ -45,8 +45,10 @@ export function MarketSwitcher({ slug, selection, returnTo, id = "market-switche
         <span className="sas-sr">{t("markets.switcher.label")}</span>
         <select id={id} className="sas-mswitch__select" name={MARKET_PARAM} defaultValue={selection.selected?.id ?? MARKET_ALL}>
           <option value={MARKET_ALL}>{t("markets.switcher.all")}</option>
+          {/* A closed select shows the chosen option's text: the chosen market is its name only, so it is never cut;
+              the other options keep "name · status". */}
           {selection.markets.map((m) => (
-            <option key={m.id} value={m.id}>{marketOptionLabel(m)}</option>
+            <option key={m.id} value={m.id} title={marketOptionLabel(m)}>{m.id === selection.selected?.id ? m.name : marketOptionLabel(m)}</option>
           ))}
         </select>
         <Icon name="chevron-down" className="sas-mswitch__chev" />

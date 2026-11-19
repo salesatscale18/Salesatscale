@@ -126,7 +126,7 @@ describe("W5: UX follow-ups (demo account)", () => {
       const html = renderToStaticMarkup(MarketSwitcher({ slug: "polar", selection: { markets: all, selected: uk, showSwitcher: true }, returnTo: "/app/polar/leads" }));
       expect(html).toMatch(/<form class="sas-mswitch sas-mswitch--compact" data-market-switcher="" action="\/app\/polar\/market" method="get">/);
       expect(html).toContain('<input type="hidden" name="next" value="/app/polar/leads"/>');
-      expect(html).toMatch(new RegExp(`<option value="${uk.id}" selected="">United Kingdom · [A-Z][a-z ]+</option>`));
+      expect(html).toMatch(new RegExp(`<option value="${uk.id}" title="United Kingdom · [A-Z][a-z ]+" selected="">United Kingdom</option>`));
       expect(html).toContain('<label class="sas-mswitch__field" for="market-switcher">');
       expect(html).toMatch(/<noscript><button type="submit" class="sas-btn sas-btn--secondary sas-btn--sm">Apply<\/button><\/noscript>/);
     });

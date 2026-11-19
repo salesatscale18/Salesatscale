@@ -3113,6 +3113,6 @@
   "inbox.empty.market_title": "No conversations in {market} yet",
   "catalog.col.sold_in": "Sold in",
   "catalog.sold_in.none": "Not sold yet",
-  "conv.marker.spend_cap": "Handed to a person: AI limit reached",
+  "conv.marker.spend_cap": "Handed to a person: AI limit reached. A person needs to reply.",
   "lead.event.handoff.spend_cap": "Handed to a person: AI limit reached"
 }

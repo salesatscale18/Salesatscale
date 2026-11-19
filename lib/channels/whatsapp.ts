@@ -363,7 +363,6 @@ export async function inboundConversation(
     [conv] = await db.insert(conversations).values({ accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language, ...(capped ? { status: "human" as const } : {}) }).returning();
     if (capped) {
       await Promise.all([
-        db.insert(messages).values({ accountId, conversationId: conv.id, actor: "system", body: "This month's AI spend cap is reached, so the agent did not start this conversation. A person needs to reply.", language: "en" }),
         db.update(leads).set({ status: "human_handling" }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId), ne(leads.status, "opted_out"))),
         // The thread's "Handed to a person: AI limit reached" marker and the lead's timeline entry (W5).
         // Written only here, when the conversation is created, so once per conversation.

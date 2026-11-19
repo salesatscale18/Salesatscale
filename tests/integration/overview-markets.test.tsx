@@ -200,7 +200,7 @@ describe("W1: Overview home page and the market selection", () => {
       holder.cookies.set(marketCookieName(account.id), uk.id);
       const html = await page(OverviewPage(props(account.slug)));
       expect(html).toContain('data-market-switcher=""');
-      expect(html).toMatch(new RegExp(`<option value="${uk.id}" selected="">United Kingdom · Setting up</option>`));
+      expect(html).toMatch(new RegExp(`<option value="${uk.id}" title="United Kingdom · Setting up" selected="">United Kingdom</option>`));
       expect(html).toContain('<option value="all">All markets</option>');
       expect(html).toContain(`action="/app/${account.slug}/market"`);
       expect(html).toContain('<input type="hidden" name="next" value="/app/' + account.slug + '"/>');

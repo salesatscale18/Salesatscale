@@ -22,6 +22,9 @@ import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
 import { MARKER_EVENT_TYPES, threadMarkers, type ThreadMarker } from "./thread-markers";
 
+/** The system line capped conversations stored before W5; hidden where the spend-cap marker shows. */
+const SPEND_CAP_SYSTEM_LINE = "This month's AI spend cap is reached, so the agent did not start this conversation.";
+
 /** Lead statuses a take-over or hand-back may move. Won, lost and booked meetings stay as they are. */
 const ACTIVE: ReadonlySet<LeadStatus> = new Set(["new", "waiting_for_reply", "agent_handling", "human_handling"]);
 
@@ -199,13 +202,19 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
   const authors = Object.fromEntries(people.map((p) => [p.id, p]));
   // Prefill only until a person has replied after that hand-off.
   const answered = suggested && thread.some(({ message: m }) => m.actor === "human" && m.createdAt >= suggested.at);
+  const markers = threadMarkers(conv.id, thread, events, authors);
+  // A capped chat says it once: the "Handed to a person: AI limit reached" marker replaces the system line
+  // that conversations capped before W5 stored (new ones no longer store it).
+  const shown = markers.some((m) => m.kind === "spend_cap")
+    ? thread.filter(({ message: m }) => !(m.actor === "system" && m.body.startsWith(SPEND_CAP_SYSTEM_LINE)))
+    : thread;
   return {
     conversation: conv,
     takenOverBy: conv.takenOverByUserId ? (authors[conv.takenOverByUserId] ?? null) : null,
-    thread,
+    thread: shown,
     authors,
     suggestedReply: suggested && !answered ? suggested.text : null,
     quoteCards,
-    markers: threadMarkers(conv.id, thread, events, authors),
+    markers,
   };
 }

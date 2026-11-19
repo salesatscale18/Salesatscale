@@ -140,7 +140,7 @@ describe("W2: markets across the workspace", () => {
       expect(counts(html, "Views").slice(0, 3)).toEqual([1, 0, 1]);
       // Links on the page keep the market from the URL; the switcher shows it chosen.
       expect(html).toContain(`?view=new&amp;market=${uk.id}`);
-      expect(html).toMatch(new RegExp(`<option value="${uk.id}" selected="">United Kingdom · Setting up</option>`));
+      expect(html).toMatch(new RegExp(`<option value="${uk.id}" title="United Kingdom · Setting up" selected="">United Kingdom</option>`));
     });
 
     it("the stored cookie filters when the URL has no market; the home market keeps leads without a market id", async () => {
