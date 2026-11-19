@@ -8,10 +8,10 @@ import { FRAME_SAMPLES, FrameChunker, LinearResampler, floatToPcm16, levelOf, pc
 import { PlaybackSchedule } from "@/lib/voice/client/playback";
 import { INITIAL_SNAPSHOT, elapsedSec, voiceReducer, type VoiceEvent, type VoiceSnapshot } from "@/lib/voice/client/state";
 import { barView, clockTime, costText, endReasonText, errorText } from "@/lib/voice/client/view";
-import { answerSpeedText, callClock, callLimitShort, callLimitText, voiceLabAccess, voiceOptions, voiceSettingsSummary } from "@/lib/voice/lab";
+import { answerSpeedText, callClock, callLimitShort, callLimitText, limitOptions, voiceLabAccess, voiceOptions, voiceSettingsSummary } from "@/lib/voice/lab";
 import { parseAuthMessage, parseServerMessage } from "@/lib/voice/protocol";
 import { DEFAULT_VOICE_SETTINGS, voiceCapabilities } from "@/lib/voice/settings";
-import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC, deploymentCallLimitSec, routeDeadlineSec } from "@/lib/voice/socket-limits";
+import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC, ROUTE_MIN_STORE_SEC, deploymentCallLimitSec, routeDeadlineSec } from "@/lib/voice/socket-limits";
 
 const sine = (n: number, rate: number, f = 440, amp = 0.5) => Float32Array.from({ length: n }, (_, i) => amp * Math.sin((2 * Math.PI * f * i) / rate));
 
@@ -250,7 +250,9 @@ describe("voice lab helpers", () => {
   it("the route's deadline: the function's own, less a margin, never above maxDuration", () => {
     const now = new Date("2026-11-19T10:00:00Z");
     expect(routeDeadlineSec(undefined, now)).toBe(ROUTE_MAX_DURATION_SEC - ROUTE_END_MARGIN_SEC);
-    expect(routeDeadlineSec(new Date(now.getTime() + 120_000), now)).toBe(120 - ROUTE_END_MARGIN_SEC);
+    // A fresh invocation (about maxDuration left) gives exactly the cap the pages show.
+    expect(routeDeadlineSec(new Date(now.getTime() + (ROUTE_MAX_DURATION_SEC - 1) * 1000), now)).toBe(ROUTE_MAX_DURATION_SEC - ROUTE_END_MARGIN_SEC);
+    expect(routeDeadlineSec(new Date(now.getTime() + 120_000), now)).toBe(120 - ROUTE_MIN_STORE_SEC);
     expect(routeDeadlineSec(new Date(now.getTime() + 900_000), now)).toBe(ROUTE_MAX_DURATION_SEC - ROUTE_END_MARGIN_SEC);
     expect(routeDeadlineSec(new Date(now.getTime() + 5_000), now)).toBe(1);
     expect(deploymentCallLimitSec({})).toBe(270);
@@ -305,5 +307,25 @@ describe("short limit and refusals", () => {
   it("the relay's typed flag marks a typed line", () => {
     const s = run([srv({ t: "transcript", id: "b1", role: "buyer", text: "Hi", final: true, atMs: 0, typed: true })]);
     expect(s.items[0]).toMatchObject({ typed: true });
+  });
+});
+
+describe("narrow phones and the limit choices", () => {
+  it("every live state has a short sub-line for narrow phones", () => {
+    const now = 100_000;
+    const live = (o: Partial<VoiceSnapshot>): VoiceSnapshot => ({ ...INITIAL_SNAPSHOT, phase: "live", connectedAt: now - 5000, ...o });
+    expect(barView(live({ live: "speaking" }), now).subShort).toBe("Talk to interrupt");
+    expect(barView(live({ live: "listening" }), now).subShort).toBe("Speak when ready");
+    expect(barView(live({ live: "checking" }), now).subShort).toBe("Looking it up");
+    expect(barView(live({ live: "speaking", notice: "limit_soon" }), now).subShort).toBe("Ends soon");
+    expect(barView({ ...INITIAL_SNAPSHOT, phase: "reconnecting" }, now).subShort).toBe("Trying again");
+    expect(barView({ ...INITIAL_SNAPSHOT, phase: "ended", mode: "scripted" }, now, { savedNote: "saved in Recent test chats" }).subShort).toBe("No cost");
+    for (const v of [barView(live({ live: "speaking" }), now), barView({ ...INITIAL_SNAPSHOT, phase: "mic_blocked" }, now)]) expect(v.subShort.length).toBeLessThanOrEqual(26);
+  });
+
+  it("longest call: whole minutes up to the cap, plus the cap", () => {
+    expect(limitOptions(270)).toEqual([60, 120, 180, 240, 270]);
+    expect(limitOptions(null)).toEqual([60, 120, 180, 240, 300, 360, 420, 480, 540, 600]);
+    expect(limitOptions(600)).toHaveLength(10);
   });
 });

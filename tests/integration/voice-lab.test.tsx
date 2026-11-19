@@ -181,7 +181,11 @@ describe("the test lab page", () => {
     let html = await render();
     expect(html).not.toContain("data-voice-starter");
     expect(html).not.toContain("Call the agent");
+    expect(html).not.toContain("Start call");
     expect(html).toContain("New test chat");
+    // The row as it always was: "New test chat" with its Start button.
+    expect(html).toMatch(/<\/svg>Start<\/button>/);
+    expect(html).not.toContain("Start chat");
     vi.stubEnv("VOICE_REALTIME", "off");
     as(admin);
     html = await render({ panel: "voice" });
@@ -195,17 +199,25 @@ describe("the test lab page", () => {
     as(admin);
     const html = await render();
     save("page-test-lab-starter", html);
-    expect(html).toContain("New test chat");
+    // One row of choices with two actions; the limit and the voice line under it.
+    expect(html).toContain("New test chat or call");
+    expect((html.match(/data-new-chat=""/g) ?? []).length).toBe(1);
     expect(html).toContain("data-voice-starter");
+    expect(html).toContain("Start chat");
     expect(html).toContain("Start call");
-    expect(html).toMatch(/English · v\d+ Draft · up to 4 min 30 s/);
-    expect(html).toContain("Voice: Kore · firm, clear · Slower pace");
+    expect(html).toContain("Buyer language");
+    expect(html).toContain("Calls: up to 4 min 30 s · Voice: Kore · firm, clear · Slower pace");
     const panel = await render({ panel: "voice" });
     save("page-settings-panel", panel);
     expect(panel).toContain("Saved in draft v");
     expect(panel).toContain("Save to draft");
     expect(panel).toContain("Reset to defaults");
     expect(panel).not.toContain("Conversation style");
+    // Longest call: only what this deployment allows; the stored 5 min shows as the cap.
+    expect(panel).toContain('<option value="270" selected="">4 min 30 s</option>');
+    expect(panel).toContain('<option value="240">4 min</option>');
+    expect(panel).not.toContain('value="300"');
+    expect(panel).toContain("You hear the voice on your next test call.");
   });
 
   it("reads a saved voice call back: pills, spoken marks, This call, no composer", async () => {
@@ -238,6 +250,13 @@ describe("the test lab page", () => {
     expect(html).toContain("The buyer asked not to be contacted. The chat is closed.");
     expect(html).toContain("Call again");
     expect(html).not.toContain('id="lab-text"');
+    // A finished call: no take-over footer; a scripted call is not counted as a scenario result.
+    expect(html).not.toContain("Take over chat");
+    expect(html).toContain("Scripted test: not counted");
+    expect(html).not.toContain("Keep answering as the buyer");
+    expect(html).toContain("Expected: The agent quotes from the catalog");
+    // Spoken and typed lines show the time in the call only; the system note keeps its timestamp.
+    expect((html.match(/class="sas-msg__time"/g) ?? []).length).toBe(1);
     // The list marks the voice row.
     expect(html).toMatch(/aria-label="Voice call"/);
     // A seller opening it sees the record, not the call controls.

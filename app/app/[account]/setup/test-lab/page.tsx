@@ -44,7 +44,7 @@ import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceModelId }
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
-import { VoiceCallAgainBar, VoiceCallStarter, VoiceLabKeeper, VoiceLabLive, VoiceLabStats } from "./voice-lab";
+import { VoiceCallAgainBar, VoiceLabChoices, VoiceLabKeeper, VoiceLabLive, VoiceLabStats } from "./voice-lab";
 
 // A turn can take several model rounds.
 export const maxDuration = 300;
@@ -146,9 +146,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     ...versions.map((v) => ({ value: v.id, label: versionLabel(v), settings: v.voiceSettings, version: v.version, status: v.status })),
   ];
   const callMax = Object.fromEntries(callVersions.map((v) => [v.value, maxCallSeconds({ settings: v.settings, deadlineSec: callLimit })]));
-  const readyLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.ready.sub", {
-    language: LANG_NAME.en, version: v.version, status: t(`status.agent_version.${v.status}` as MessageKey), limit: callLimitShort(callMax[v.value]),
-  })]));
+  // One source for the limit: the same maxCallSeconds the relay reports in `{t:'call', maxSec}` (lib/voice/socket.ts).
+  const limitLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.settings.limit_line", { limit: callLimitShort(callMax[v.value]) })]));
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), voiceModelId()) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
@@ -213,10 +212,12 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             ) : (
             <ChatMessage
               actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
-              time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}
+              // Spoken and typed lines of a call show the time in the call only (the date is in the header); the full time on hover.
+              time={m.voiceSessionId && m.spokenAtMs !== null ? undefined : (actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}
               spoken={m.voiceSessionId && m.spokenAtMs !== null ? {
                 at: callClock(m.spokenAtMs / 1000), typed: m.typedInCall,
                 label: t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) }),
+                title: `${t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) })} · ${local(m.createdAt)}`,
               } : undefined}>
               {/* R5-2: each message finds its own direction (an English reply in a Hebrew chat reads left to right). */}
               <div dir="auto" data-msg-dir="">
@@ -269,44 +270,46 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
 
       <div className="sas-split lab-split">
         <div className="sas-split__main">
-          <section className="sas-panel" aria-labelledby="lab-new-h">
-            <form action={startChatAction} className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }} data-new-chat="">
-              <h2 id="lab-new-h" className="sas-heading" style={{ flex: "0 0 auto", alignSelf: "center", marginInlineEnd: 4 }}>{t("lab.new_chat")}</h2>
-              <input type="hidden" name="slug" value={account.slug} />
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
-                <select className="sas-select" id="lab-scenario" name="scenario" defaultValue="">
-                  <option value="">{t("lab.scenario_none")}</option>
-                  {scenarios.map((s) => <option key={s.id} value={s.id}>{scenarioLabel(s)}</option>)}
-                </select>
-              </div>
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor="lab-lang">{t("lab.language")}</label>
-                <select className="sas-select" id="lab-lang" name="language" defaultValue={account.languages[0]}>
-                  {account.languages.map((l) => <option key={l} value={l}>{LANG_NAME[l] ?? l}</option>)}
-                </select>
-              </div>
-              <div className="sas-input-group">
-                <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
-                <select className="sas-select" id="lab-ver" name="versionId" defaultValue={draft?.id ?? ""}>
-                  {draft ? null : <option value="">{t("lab.new_draft")}</option>}
-                  {versions.map((v) => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
-                </select>
-              </div>
-              <Button type="submit" variant="primary"><Icon name="plus" />{t("lab.start")}</Button>
-            </form>
-          </section>
           {voice ? (
             <>
               <VoiceLabKeeper />
-              <VoiceCallStarter
+              <VoiceLabChoices
                 slug={account.slug} lab={lab} usageHref={usageHref} settingsLine={settingsLine} settingsHref={settingsHref}
-                scenarios={scenarios.filter((x) => x.language === "en").map((x) => ({ value: x.id, label: scenarioLabel(x) }))}
+                scenarios={scenarios.map((x) => ({ value: x.id, label: scenarioLabel(x), language: x.language }))}
+                languages={account.languages.map((l) => ({ value: l, label: LANG_NAME[l] ?? l }))} defaultLanguage={account.languages[0]}
                 versions={callVersions.map((v) => ({ value: v.value, label: v.label }))} defaultVersionId={draft?.id ?? ""}
-                readyLines={readyLines} readyMax={callMax}
+                callMax={callMax} limitLines={limitLines}
               />
             </>
-          ) : null}
+          ) : (
+            <section className="sas-panel" aria-labelledby="lab-new-h">
+              <form action={startChatAction} className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }} data-new-chat="">
+                <h2 id="lab-new-h" className="sas-heading" style={{ flex: "0 0 auto", alignSelf: "center", marginInlineEnd: 4 }}>{t("lab.new_chat")}</h2>
+                <input type="hidden" name="slug" value={account.slug} />
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
+                  <select className="sas-select" id="lab-scenario" name="scenario" defaultValue="">
+                    <option value="">{t("lab.scenario_none")}</option>
+                    {scenarios.map((s) => <option key={s.id} value={s.id}>{scenarioLabel(s)}</option>)}
+                  </select>
+                </div>
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor="lab-lang">{t("lab.language")}</label>
+                  <select className="sas-select" id="lab-lang" name="language" defaultValue={account.languages[0]}>
+                    {account.languages.map((l) => <option key={l} value={l}>{LANG_NAME[l] ?? l}</option>)}
+                  </select>
+                </div>
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
+                  <select className="sas-select" id="lab-ver" name="versionId" defaultValue={draft?.id ?? ""}>
+                    {draft ? null : <option value="">{t("lab.new_draft")}</option>}
+                    {versions.map((v) => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
+                  </select>
+                </div>
+                <Button type="submit" variant="primary"><Icon name="plus" />{t("lab.start")}</Button>
+              </form>
+            </section>
+          )}
 
           {conv && convVersion ? (
             <section className="sas-panel" aria-labelledby="lab-chat-h" style={{ overflow: onVoice ? "clip" : "hidden" }}>
@@ -355,7 +358,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                       initialText={scenario && thread.length === 0 ? scenario.opening : undefined}
                     />
                   )}
-                  {view ? (
+                  {/* A finished call has Call again instead: no take-over footer. */}
+                  {view && !(onVoice && savedEnded) ? (
                     <ConversationControls
                       slug={account.slug} from="lab" view={view} me={user} buyerName={t("lab.who.buyer")}
                       leadOptedOut={convLead?.lead.status === "opted_out"} notice={notice}
@@ -438,8 +442,18 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           {onVoice && conv && scenario && scenarioCheck ? (
             <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-vsc-h" data-voice-scenario="">
               <h2 id="lab-vsc-h" className="sas-heading">{t("lab.scenario_check", { title: scenario.title })}</h2>
-              <span><ResultChip result={scenarioCheck.result} /></span>
-              <span className="sas-small">{scenarioCheck.reason} {t("lab.scenario_expected", { text: scenario.expected })}</span>
+              {/* A scripted call is never a scenario result for the version: say so instead of a result. */}
+              {voiceSummary?.mode === "scripted" ? (
+                <>
+                  <span><span className="sas-pill" data-scenario-result="scripted"><Icon name="flask-conical" />{t("voice.scenario.scripted")}</span></span>
+                  <span className="sas-small">{t("lab.scenario_expected", { text: scenario.expected })}</span>
+                </>
+              ) : (
+                <>
+                  <span><ResultChip result={scenarioCheck.result} /></span>
+                  <span className="sas-small">{scenarioCheck.reason} {t("lab.scenario_expected", { text: scenario.expected })}</span>
+                </>
+              )}
             </section>
           ) : null}
           {onVoice && conv ? (() => {

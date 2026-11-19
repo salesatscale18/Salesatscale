@@ -136,7 +136,7 @@ async function main() {
       await shot(page, "call-live-desktop");
       check(await page.waitForSelector('[data-voice-tool="send_order_form"][data-tool-status="ok"]', { timeout: 60_000 }).then(() => true, () => false), "Order form sent chip (second buyer turn)");
       const length = await page.textContent("[data-voice-length]");
-      check(/^\d+:\d\d of 10:00$/.test(length ?? ""), `stats show the length against the limit (${length})`);
+      check(/^\d+:\d\d of 4:30$/.test(length ?? ""), `stats show the length against the deployment's limit, as the relay reported (${length})`);
       check((await page.textContent("[data-voice-cost]")) === "No cost", "stats show No cost (scripted)");
       check(/on average/.test((await page.textContent("[data-voice-answer]")) ?? ""), "answer speed shows an average");
       // Mute: no new buyer turns while muted (the fake mic keeps talking).

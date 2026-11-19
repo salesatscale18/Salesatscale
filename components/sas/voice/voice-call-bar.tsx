@@ -84,7 +84,8 @@ export function VoiceCallBar({
       ) : null}
       <span className="sas-vbar__text" role="status" aria-live="polite" aria-atomic="true">
         <b className="sas-vbar__title">{view.title}</b>
-        {view.sub ? <span className="sas-small sas-vbar__sub">{view.sub}</span> : null}
+        {view.sub ? <span className={`sas-small sas-vbar__sub${view.subShort !== view.sub ? " sas-vbar__sub--long" : ""}`}>{view.sub}</span> : null}
+        {view.subShort && view.subShort !== view.sub ? <span className="sas-small sas-vbar__sub sas-vbar__sub--short">{view.subShort}</span> : null}
       </span>
       {view.clock ? <span className="sas-num sas-vbar__clock" data-voice-clock="">{view.clock}</span> : null}
       {a ? (

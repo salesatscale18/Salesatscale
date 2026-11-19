@@ -22,6 +22,7 @@ import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/voice/client/view";
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
 import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
+import { startChatAction } from "./actions";
 
 // ---------------------------------------------------------------------------
 // The lab's call (module level)
@@ -125,22 +126,28 @@ const STARTER_PHASES = new Set(["mic_prompt", "mic_blocked", "no_mic", "starting
 export type StarterOption = { value: string; label: string };
 
 /**
- * "Call the agent" (boards VoiceStates 1 and VoiceSettingsPanel): the Ready
- * bar with the same scenario and version pickers as "New test chat", and
- * the voice settings line. The microphone prompt, a blocked microphone and a
- * refusal ("Calls are paused") show in this bar.
+ * The test lab's one row of choices when voice calls are on: Scenario, Buyer
+ * language and Version, then "Start chat" (the existing test chat, same
+ * server action) and "Start call". Calls are English only: for another
+ * language "Start call" is disabled with the reason (the action enforces it
+ * too). The microphone prompt, a blocked microphone and refusals ("Calls are
+ * paused", "Too many calls…") show in a call bar under the row; the call
+ * limit and the voice settings line close the card.
  */
-export function VoiceCallStarter({
-  slug, lab, scenarios, versions, defaultVersionId, readyLines, readyMax, usageHref, settingsLine, settingsHref,
+export function VoiceLabChoices({
+  slug, lab, scenarios, languages, defaultLanguage, versions, defaultVersionId, callMax, limitLines, usageHref, settingsLine, settingsHref,
 }: {
   slug: string;
   lab: string;
-  scenarios: StarterOption[];
+  scenarios: (StarterOption & { language: string })[];
+  languages: StarterOption[];
+  defaultLanguage: string;
   versions: StarterOption[];
   defaultVersionId: string;
-  /** The Ready line per version id ("English · v2 Draft · up to 10 minutes"). */
-  readyLines: Record<string, string>;
-  readyMax: Record<string, number>;
+  /** The effective longest call per version id (the same value the relay reports). */
+  callMax: Record<string, number>;
+  /** "Calls: up to 4 min 30 s" per version id. */
+  limitLines: Record<string, string>;
   usageHref: string;
   settingsLine: string | null;
   settingsHref: string | null;
@@ -148,45 +155,67 @@ export function VoiceCallStarter({
   const c = labClient();
   const s = useVoiceSnapshot(c);
   const [scenario, setScenario] = useState("");
+  const [language, setLanguage] = useState(defaultLanguage);
   const [versionId, setVersionId] = useState(defaultVersionId);
   const start = useStartCall();
   const busy = !isIdlePhase(s.phase) && !STARTER_PHASES.has(s.phase);
   const own = STARTER_PHASES.has(s.phase);
-  const view: BarView = own
-    ? barView(s, Date.now(), { usageHref })
-    : barView({ ...s, phase: "idle" }, Date.now(), { readyLine: readyLines[versionId] ?? "" });
+  // A scenario brings its own buyer language (as for a chat).
+  const callLanguage = scenarios.find((x) => x.value === scenario)?.language ?? language;
+  const english = callLanguage === "en";
+  const startCall = () => start({ slug, lab, versionId: versionId || null, scenario: scenario || null, maxSec: callMax[versionId] ?? null });
   const onAction = (a: BarAction) => {
     if (a.kind === "cancel") c.cancel();
     else if (a.kind === "end_other") void endOtherCall(slug);
-    else if (a.kind === "start" || a.kind === "try_again") start({ slug, lab, versionId: versionId || null, scenario: scenario || null, maxSec: readyMax[versionId] ?? null });
+    else if (a.kind === "try_again" || a.kind === "start") startCall();
   };
+  const line = [limitLines[versionId], settingsLine].filter(Boolean).join(" · ");
   return (
-    <section className="sas-panel lab-call" aria-labelledby="lab-call-h" data-voice-starter="">
-      <h2 id="lab-call-h" className="sas-sr">{t("lab.voice.call_heading")}</h2>
-      <div className="lab-call__bar">
-        <VoiceCallBar view={view} onAction={onAction} actionDisabled={busy} />
-        {s.phase === "unavailable" ? (
-          <button type="button" className={`${buttonClass("ghost", "sm")} lab-call__dismiss`} onClick={() => c.cancel()}>{t("voice.cancel")}</button>
-        ) : null}
-      </div>
-      <div className="lab-call__pickers">
+    <section className="sas-panel" aria-labelledby="lab-new-h" data-voice-starter="">
+      <form action={startChatAction} className="sas-panel__body lab-choices" data-new-chat="">
+        <h2 id="lab-new-h" className="sas-heading lab-choices__h">{t("lab.voice.choices_heading")}</h2>
+        <input type="hidden" name="slug" value={slug} />
         <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="lab-call-scenario">{t("lab.scenario")}</label>
-          <select className="sas-select" id="lab-call-scenario" value={scenario} onChange={(e) => setScenario(e.target.value)} disabled={busy}>
+          <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
+          <select className="sas-select" id="lab-scenario" name="scenario" value={scenario} onChange={(e) => setScenario(e.target.value)}>
             <option value="">{t("lab.scenario_none")}</option>
             {scenarios.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="lab-call-ver">{t("lab.version_label")}</label>
-          <select className="sas-select" id="lab-call-ver" value={versionId} onChange={(e) => setVersionId(e.target.value)} disabled={busy}>
+          <label className="sas-input-label" htmlFor="lab-lang">{t("lab.language")}</label>
+          <select className="sas-select" id="lab-lang" name="language" value={language} onChange={(e) => setLanguage(e.target.value)}>
+            {languages.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+          </select>
+        </div>
+        <div className="sas-input-group">
+          <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
+          <select className="sas-select" id="lab-ver" name="versionId" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
             {versions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
-      </div>
-      {settingsLine ? (
+        <div className="lab-choices__actions">
+          <button type="submit" className={buttonClass("primary")}><Icon name="plus" />{t("lab.voice.start_chat")}</button>
+          <button
+            type="button" className={buttonClass("secondary")} onClick={startCall} disabled={busy || !english}
+            aria-describedby={english ? undefined : "lab-call-en"} data-voice-start=""
+          >
+            <Icon name="phone-call" />{t("lab.voice.start_call")}
+          </button>
+        </div>
+        {english ? null : <span className="sas-small lab-choices__why" id="lab-call-en" data-call-english-only="">{t("lab.voice.english_only")}</span>}
+      </form>
+      {own ? (
+        <div className="lab-call__bar">
+          <VoiceCallBar view={barView(s, Date.now(), { usageHref })} onAction={onAction} />
+          {s.phase === "unavailable" ? (
+            <button type="button" className={`${buttonClass("ghost", "sm")} lab-call__dismiss`} onClick={() => c.cancel()}>{t("voice.cancel")}</button>
+          ) : null}
+        </div>
+      ) : null}
+      {line ? (
         <div className="lab-call__foot">
-          <span className="sas-small" data-voice-settings-line="">{settingsLine}</span>
+          <span className="sas-small" data-voice-settings-line="">{line}</span>
           {settingsHref ? (
             <a className={buttonClass("secondary", "sm")} href={settingsHref} data-voice-settings-open=""><Icon name="sliders" />{t("voice.settings.open")}</a>
           ) : null}

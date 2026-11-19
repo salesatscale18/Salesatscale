@@ -901,6 +901,11 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vbar__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
 .sas-vbar__title { font-weight: 600; }
 .sas-vbar__clock { font-weight: 600; font-size: 14px; }
+.sas-vbar .sas-vbar__sub--short { display: none; }
+@media (max-width: 420px) {
+  .sas-vbar .sas-vbar__sub--long { display: none; }
+  .sas-vbar .sas-vbar__sub--short { display: block; }
+}
 .sas-vbar__controls { display: inline-flex; gap: var(--space-2); flex: none; }
 .sas-vbar .sas-btn { flex: none; }
 .sas-rb { width: 40px; height: 40px; border-radius: var(--radius-pill); border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--ink); display: inline-grid; place-items: center; flex: none; cursor: pointer; padding: 0; }
@@ -954,8 +959,13 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vstats__kv dt { color: var(--ink-muted); }
 .sas-vstats__kv dd { margin: 0; min-width: 0; }
 .sas-vstats__kv dd.sas-num { font-size: 14px; }
-/* Test lab: "Call the agent" */
-.lab-call__bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); }
+/* Test lab: one row of choices with Start chat and Start call (voice on). */
+.lab-choices { display: flex; gap: var(--space-3); align-items: flex-end; flex-wrap: wrap; }
+.lab-choices__h { flex: 0 0 auto; align-self: center; margin-inline-end: 4px; }
+.lab-choices__actions { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.lab-choices__why { flex-basis: 100%; }
+/* Test lab: the call bar under the choices */
+.lab-call__bar { display: flex; align-items: center; gap: var(--space-2); padding: 0 var(--space-4) var(--space-3); }
 .lab-call__bar > .sas-vbar { flex: 1; min-width: 0; }
 .lab-call__pickers { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: 0 var(--space-4) var(--space-3); }
 .lab-call__pickers .sas-input-group { flex: 1 1 200px; }

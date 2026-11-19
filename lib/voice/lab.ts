@@ -4,7 +4,7 @@
  * plain labels and the time texts. No server imports: client components use
  * them too, and constants live here, never in a "use client" file.
  */
-import { DEFAULT_VOICE_SETTINGS, voiceCapabilities, voiceMode, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
+import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
 
 export type VoiceLabAccess = "ok" | "not_admin" | "voice_off";
 
@@ -125,4 +125,13 @@ export function voiceSettingsSummary(s: ResolvedVoiceSettings, modelId: string):
   if (caps.style) parts.push(STYLE_WORD[s.style]);
   if (!parts.length) parts.push(PACE_WORD[DEFAULT_VOICE_SETTINGS.pace]);
   return parts.join(" · ");
+}
+
+/** "Longest call" choices: whole minutes up to the deployment's cap, plus the cap itself (e.g. 1, 2, 3, 4 min and 4 min 30 s). */
+export function limitOptions(capSec: number | null): number[] {
+  const cap = capSec ? Math.max(MIN_CALL_SEC, Math.min(PLATFORM_MAX_CALL_SEC, Math.floor(capSec))) : PLATFORM_MAX_CALL_SEC;
+  const out: number[] = [];
+  for (let x = MIN_CALL_SEC; x <= cap; x += 60) out.push(x);
+  if (!out.includes(cap)) out.push(cap);
+  return out;
 }

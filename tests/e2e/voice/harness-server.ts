@@ -18,6 +18,7 @@ import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, listVersions, saveDraftPlaybook } from "@/lib/agent/service";
 import { SCENARIOS } from "@/lib/agent/scenarios";
 import { createVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary } from "@/lib/voice/service";
+import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC } from "@/lib/voice/socket-limits";
 import { DEFAULT_VOICE_MODEL, maxCallSeconds, resolveVoiceSettings, voiceCapabilities } from "@/lib/voice/settings";
 import { createTestDb } from "../../helpers/db";
 import { seedCatalog, seedPricing } from "../../helpers/pricing";
@@ -26,6 +27,8 @@ import { attachVoiceSockets } from "../../../scripts/voice-ws";
 const ROOT = path.resolve(__dirname, "../../..");
 /** The only mode the harness runs. */
 const ENV = { VOICE_REALTIME: "scripted" } as const;
+/** The harness mimics the Vercel route: the same deployment cap the real pages and relay use (4 min 30 s). */
+const CAP = ROUTE_MAX_DURATION_SEC - ROUTE_END_MARGIN_SEC;
 
 async function bundlePage(): Promise<string> {
   const r = await build({
@@ -110,7 +113,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const model = url.searchParams.get("model") ?? DEFAULT_VOICE_MODEL;
         return send(200, "application/json", JSON.stringify({
           version: d.version, versionLabel: `v${d.version} Draft`, caps: voiceCapabilities(model), settings: resolveVoiceSettings(d.voiceSettings), scenarios,
-          fx: { currency: "ILS", minorPerUsd: 370 }, maxSec: maxCallSeconds({ settings: d.voiceSettings, env: ENV }),
+          fx: { currency: "ILS", minorPerUsd: 370 }, maxSec: maxCallSeconds({ settings: d.voiceSettings, deadlineSec: CAP, env: ENV }), cap: CAP,
         }));
       }
       if (req.method === "POST" && url.pathname === "/api/call") {
@@ -122,7 +125,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const host = req.headers.host ?? "localhost";
         return send(200, "application/json", JSON.stringify({
           conversationId: c.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: `ws://${host}/api/voice/socket`, mode: s.mode,
-          maxSec: maxCallSeconds({ settings: c.version.voiceSettings, env: ENV }),
+          maxSec: maxCallSeconds({ settings: c.version.voiceSettings, deadlineSec: CAP, env: ENV }),
         }));
       }
       if (req.method === "GET" && url.pathname === "/api/summary") {
@@ -141,7 +144,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       res.writeHead(500).end(String(e));
     }
   });
-  attachVoiceSockets(server, { db, env: ENV });
+  attachVoiceSockets(server, { db, env: ENV, deadlineSec: CAP });
   await new Promise<void>((r) => server.listen(o.port ?? 0, "127.0.0.1", r));
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : o.port;

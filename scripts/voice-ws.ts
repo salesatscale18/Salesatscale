@@ -9,8 +9,8 @@ import type { Db } from "@/db/types";
 import { MAX_CLIENT_AUDIO_BYTES } from "@/lib/voice/protocol";
 import { handleVoiceSocket } from "@/lib/voice/socket";
 
-/** Accepts WebSocket upgrades on `path` and runs each as a voice call. Calls have no hosting deadline here. */
-export function attachVoiceSockets(server: Server, o: { db: Db; path?: string; env?: Record<string, string | undefined> }): WebSocketServer {
+/** Accepts WebSocket upgrades on `path` and runs each as a voice call. `deadlineSec`: a hosting cap to mimic (none by default). */
+export function attachVoiceSockets(server: Server, o: { db: Db; path?: string; env?: Record<string, string | undefined>; deadlineSec?: number | null }): WebSocketServer {
   const wss = new WebSocketServer({ noServer: true, maxPayload: MAX_CLIENT_AUDIO_BYTES + 1024 });
   const path = o.path ?? "/api/voice/socket";
   server.on("upgrade", (req, socket, head) => {
@@ -20,7 +20,7 @@ export function attachVoiceSockets(server: Server, o: { db: Db; path?: string; e
       return;
     }
     wss.handleUpgrade(req, socket, head, (ws) => {
-      void handleVoiceSocket(ws, { db: o.db, deadlineSec: null, env: o.env });
+      void handleVoiceSocket(ws, { db: o.db, deadlineSec: o.deadlineSec ?? null, env: o.env });
     });
   });
   return wss;

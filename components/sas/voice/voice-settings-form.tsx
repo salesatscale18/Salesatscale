@@ -4,12 +4,10 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
-import { callLimitShort, callLimitText, defaultVoiceOf, hasAdvancedTuning, voiceOptions } from "@/lib/voice/lab";
+import { callLimitShort, defaultVoiceOf, hasAdvancedTuning, limitOptions, voiceOptions } from "@/lib/voice/lab";
 import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceCapabilities, type VoiceSettingsErrors } from "@/lib/voice/settings";
 
 export type VoiceSettingsFormState = { ok?: boolean; errors?: VoiceSettingsErrors; failed?: boolean };
-
-const LIMIT_OPTIONS = Array.from({ length: PLATFORM_MAX_CALL_SEC / 60 - MIN_CALL_SEC / 60 + 1 }, (_, i) => MIN_CALL_SEC + i * 60);
 
 /** A segmented choice (real radio buttons, so arrow keys work). */
 function Segmented<T extends string>({ name, label, value, options, onChange, describedBy }: {
@@ -76,7 +74,11 @@ export function VoiceSettingsForm({
   sampleUrl?: (voice: string) => string | null;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
-  const [v, setV] = useState<ResolvedVoiceSettings>(initial);
+  const cap = deploymentLimitSec && deploymentLimitSec < PLATFORM_MAX_CALL_SEC ? deploymentLimitSec : null;
+  const options_ = limitOptions(cap);
+  // A stored value above this deployment's cap shows (and saves) as the cap.
+  const clampMax = (x: ResolvedVoiceSettings) => ({ ...x, maxCallSec: Math.min(x.maxCallSec, options_[options_.length - 1]) });
+  const [v, setV] = useState<ResolvedVoiceSettings>(() => clampMax(initial));
   const set = <K extends keyof ResolvedVoiceSettings>(k: K, val: ResolvedVoiceSettings[K]) => setV((x) => ({ ...x, [k]: val }));
   const options = voiceOptions(caps);
   const voiceValue = v.voice && options.some((o) => o.value === v.voice) ? v.voice : "";
@@ -99,9 +101,9 @@ export function VoiceSettingsForm({
     <div className="sas-input-group">
       <label className="sas-input-label" htmlFor="vs-max">{t("voice.settings.max")}</label>
       <select className="sas-select sas-vs-max" id="vs-max" name="maxCallSec" value={v.maxCallSec} onChange={(ev) => set("maxCallSec", Number(ev.target.value))} aria-invalid={e.maxCallSec ? true : undefined}>
-        {LIMIT_OPTIONS.map((sec) => <option key={sec} value={sec}>{callLimitText(sec)}</option>)}
+        {options_.map((sec) => <option key={sec} value={sec}>{callLimitShort(sec)}</option>)}
       </select>
-      {deploymentLimitSec && deploymentLimitSec < v.maxCallSec ? <span className="sas-small">{t("voice.settings.max_hint", { limit: callLimitShort(deploymentLimitSec) })}</span> : null}
+      {cap ? <span className="sas-small">{t("voice.settings.max_hint", { limit: callLimitShort(cap) })}</span> : null}
       {e.maxCallSec ? <span className="sas-small sas-vs-err" role="alert">{e.maxCallSec}</span> : null}
     </div>
   );
@@ -166,7 +168,7 @@ export function VoiceSettingsForm({
         <div className="sas-vs-actions">
           <button type="submit" className={buttonClass("primary")} disabled={pending} data-voice-save="">{pending ? t("voice.settings.saving") : t("voice.settings.save")}</button>
           <a className={buttonClass("ghost")} href={closeHref}>{t("voice.settings.cancel")}</a>
-          <button type="button" className={`${buttonClass("ghost")} sas-vs-reset`} onClick={() => setV({ ...DEFAULT_VOICE_SETTINGS })}>{t("voice.settings.reset")}</button>
+          <button type="button" className={`${buttonClass("ghost")} sas-vs-reset`} onClick={() => setV(clampMax({ ...DEFAULT_VOICE_SETTINGS }))}>{t("voice.settings.reset")}</button>
         </div>
       </div>
     </form>

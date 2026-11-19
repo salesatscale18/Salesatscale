@@ -30,14 +30,14 @@ export function ChatMessage({
   locale?: Locale;
   trace?: TraceItem[];
   /** Spoken in a voice call: the time in the call ("0:11"), shown with a mic mark. */
-  spoken?: { at: string; label: string; typed?: boolean };
+  spoken?: { at: string; label: string; typed?: boolean; title?: string };
   children: ReactNode;
 }) {
   return (
     <div className={`sas-msg sas-msg--${actor}`}>
       <div className="sas-msg__meta">
         <span className="sas-msg__who">{who}</span>
-        {spoken ? <span className="sas-msg__spoken" title={spoken.label} data-spoken=""><Icon name={spoken.typed ? "keyboard" : "mic"} label={spoken.label} /><span className="sas-num">{spoken.at}</span></span> : null}
+        {spoken ? <span className="sas-msg__spoken" title={spoken.title ?? spoken.label} data-spoken=""><Icon name={spoken.typed ? "keyboard" : "mic"} label={spoken.label} /><span className="sas-num">{spoken.at}</span></span> : null}
         {time ? <span className="sas-msg__time" title={timeTitle}>{time}</span> : null}
       </div>
       <div className="sas-msg__bubble" lang={locale} dir={dir(locale)}>

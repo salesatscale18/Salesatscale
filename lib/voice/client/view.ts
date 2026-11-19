@@ -24,6 +24,8 @@ export type BarView = {
   bars: "mic" | "out" | "checking" | "muted" | null;
   title: string;
   sub: string;
+  /** The sub-line on a narrow phone (under ~420px), where the clock and the buttons leave little room. */
+  subShort: string;
   clock: string | null;
   /** Mute + End (a live call), End only (connecting, reconnecting), or none. */
   controls: "call" | "end_only" | "none";
@@ -70,7 +72,22 @@ export function endedSub(s: VoiceSnapshot, ctx: BarContext): string {
   return [cost, ctx.savedNote].filter(Boolean).join(" · ");
 }
 
+const SHORT: Partial<Record<string, MessageKey>> = {
+  mic_prompt: "voice.short.mic_prompt", mic_blocked: "voice.short.mic_blocked", no_mic: "voice.short.no_mic", connecting: "voice.short.connecting",
+  reconnecting: "voice.short.reconnecting", ending: "voice.short.ending", listening: "voice.short.listening", speaking: "voice.short.speaking",
+  checking: "voice.short.checking", muted: "voice.short.muted",
+};
+
 export function barView(s: VoiceSnapshot, now: number, ctx: BarContext = {}): BarView {
+  const v = fullBarView(s, now, ctx);
+  let subShort = v.sub;
+  if (s.phase === "live" && s.notice) subShort = t(s.notice === "limit_soon" ? "voice.short.limit_soon" : "voice.short.silence_check");
+  else if (v.state === "ended") subShort = endedSub(s, {});
+  else if (SHORT[v.state]) subShort = t(SHORT[v.state]!);
+  return { ...v, subShort };
+}
+
+function fullBarView(s: VoiceSnapshot, now: number, ctx: BarContext): Omit<BarView, "subShort"> {
   const base = { clock: null, controls: "none" as const, endLabel: t("voice.end"), action: null, muted: s.muted, busy: false, bars: null, icon: null };
   switch (s.phase) {
     case "idle":

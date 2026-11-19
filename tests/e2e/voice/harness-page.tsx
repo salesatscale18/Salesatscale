@@ -26,7 +26,7 @@ import type { ResolvedVoiceSettings, VoiceCapabilities } from "@/lib/voice/setti
 
 type Config = {
   versionLabel: string; version: number; caps: VoiceCapabilities; settings: ResolvedVoiceSettings; scenarios: Record<string, { title: string; expected: string }>;
-  fx: CostFormat; maxSec: number;
+  fx: CostFormat; maxSec: number; cap: number;
 };
 
 const params = new URLSearchParams(location.search);
@@ -75,7 +75,7 @@ function CallView({ cfg }: { cfg: Config }) {
         {sc ? (
           <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="hx-sc">
             <h2 id="hx-sc" className="sas-heading">{t("lab.scenario_check", { title: sc.title })}</h2>
-            <span><span className="sas-pill"><Icon name="clock" />{t("lab.scenario_result.not_yet")}</span></span>
+            <span><span className="sas-pill"><Icon name="flask-conical" />{t("voice.scenario.scripted")}</span></span>
             <span className="sas-small">{t("lab.scenario_expected", { text: sc.expected })}</span>
           </section>
         ) : null}
@@ -155,7 +155,7 @@ function SettingsView({ cfg }: { cfg: Config }) {
             <a className="sas-sp__close" aria-label={t("kit.close")} href="?view=call"><Icon name="x" /></a>
           </header>
           <div className="sas-sp__body">
-            <VoiceSettingsForm action={action} slug="harness" caps={cfg.caps} initial={cfg.settings} version={cfg.version} closeHref="?view=call" deploymentLimitSec={270} />
+            <VoiceSettingsForm action={action} slug="harness" caps={cfg.caps} initial={cfg.settings} version={cfg.version} closeHref="?view=call" deploymentLimitSec={cfg.cap} />
           </div>
         </section>
       </div>
