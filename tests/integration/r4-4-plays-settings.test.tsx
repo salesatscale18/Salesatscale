@@ -1,7 +1,7 @@
 /**
  * Round-4 review fixes, lane R4-4 (Sales plays, Company, Settings, Go live, Test lab), rendered on PGlite:
  * - A1 play examples: <placeholders> as grey tags, the new illustration note;
- * - A2 "Finding the real need": the neutral example "How do you handle <this> today?" (card and prompt);
+ * - A2 "Finding the real need": the neutral example "How do you handle <what they asked about> today?" (card and prompt);
  * - A3 the question budget (2–6) in "Stop at N questions." on the card and in the prompt (one rewrite);
  * - A4 the Playbook plays summary adds up to 13;
  * - A5 one disclosure term ("automated assistant"); Company shows the real opener (openerText);
@@ -110,19 +110,19 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
     it("A1/A2: the card shows the neutral need example as a tag, with the new note", async () => {
       const html = await render(PlayPage, { play: "need" });
       save("play-need", html);
-      expect(html).toMatch(/data-part="example"[^>]*>How do you handle <span class="pb-slot-tag" data-slot-tag="">this<\/span> today\?<\/span>/);
+      expect(html).toMatch(/data-part="example"[^>]*>How do you handle <span class="pb-slot-tag" data-slot-tag="">what they asked about<\/span> today\?<\/span>/);
       expect(html).toContain("Illustration. The grey words are filled from your approved facts.");
       expect(html).not.toMatch(/offices|clean/i);
     });
 
     it("A2: no default card or the fallback need example names an industry", () => {
-      expect(DEFAULT_PLAYS.need.example).toBe("How do you handle <this> today?");
-      expect(MIXED_EXAMPLES.plays.need).toBe("How do you handle <this> today?");
+      expect(DEFAULT_PLAYS.need.example).toBe("How do you handle <what they asked about> today?");
+      expect(MIXED_EXAMPLES.plays.need).toBe("How do you handle <what they asked about> today?");
       const all = JSON.stringify(DEFAULT_PLAYS);
       for (const word of ["office", "clean", "fridge", "restaurant", "lift", "generator"]) expect(all.toLowerCase()).not.toContain(word);
       // The prompt reads the same neutral example for a seller without their own.
       expect(playsText({ plays: {}, questionBudget: 3 })).toContain('### Finding the real need\nWhen: You do not yet know enough to recommend one set.\nDo: 1) Start with how they handle it today.');
-      expect(playsText({ plays: {}, questionBudget: 3 })).toContain('Example: "How do you handle <this> today?"');
+      expect(playsText({ plays: {}, questionBudget: 3 })).toContain('Example: "How do you handle <what they asked about> today?"');
     });
 
     it("A3: the budget (2–6) is in the card and the prompt, by one rewrite", async () => {

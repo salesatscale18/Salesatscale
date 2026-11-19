@@ -22,7 +22,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "Finding the real need",
     when: "You do not yet know enough to recommend one set.",
     do: ["Start with how they handle it today.", "Then ask only what decides which products and how many (size, sites, quantity).", "Ask about the problem or its cost only if the answer would change what you recommend.", "Skip anything the buyer already said. Stop at 3 questions."],
-    example: "How do you handle <this> today?",
+    example: "How do you handle <what they asked about> today?",
     notThis: "What is your company name, size and budget?",
     sellerContentHint: "The questions that decide which products fit.",
   },
