@@ -1,7 +1,44 @@
 import type { ReactNode } from "react";
-import { DealStateFields } from "@/components/sas/record";
+import { Icon } from "@/components/sas/icon";
+import { ProvenanceTag } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
-import type { DealPane } from "@/lib/leads/deal-pane";
+import type { DealPane, PaneField } from "@/lib/leads/deal-pane";
+
+/**
+ * The green circle-check after a verified value (W3): on the value's line, with
+ * the source and date as tooltip and accessible label.
+ */
+function VerifiedMark({ title }: { title: string }) {
+  return (
+    <span className="sas-verified" role="img" aria-label={title} title={title} data-verified="">
+      <Icon name="check-circle" />
+    </span>
+  );
+}
+
+/**
+ * Deal fields, as DealStateFields shows them, except a verified value carries
+ * the circle-check right after it instead of the "Verified" pill, so values
+ * stop wrapping. "Agent inferred" and "Buyer said" keep their tags.
+ */
+function PaneFields({ fields }: { fields: PaneField[] }) {
+  return (
+    <dl className="sas-fields">
+      {fields.map((f) => {
+        const missing = f.value === undefined || f.value === null || f.value === "";
+        return (
+          <div key={f.key} className={missing ? "sas-field sas-field--missing" : "sas-field"}>
+            <dt className="sas-field__label">{f.label}</dt>
+            <dd className="sas-field__value">
+              {missing ? t("deal_state.missing") : f.verified ? <span className="sas-verified-value">{f.value}<VerifiedMark title={f.verified.title} /></span> : f.value}
+              {!missing && f.provenance && !f.verified ? <ProvenanceTag kind={f.provenance} /> : null}
+            </dd>
+          </div>
+        );
+      })}
+    </dl>
+  );
+}
 
 /**
  * The deal state as the lead page and Conversations show it (one component,
@@ -20,11 +57,19 @@ export function DealStatePane({ pane, afterNextStep }: { pane: DealPane; afterNe
   }
   return (
     <div className="sas-stack-4" data-testid="deal-pane">
-      <DealStateFields fields={pane.shown} />
+      <div>
+        <PaneFields fields={pane.shown} />
+        {pane.formVerified ? (
+          <p className="sas-small sas-verified-note" data-testid="verified-note">
+            <span className="sas-verified" aria-hidden="true"><Icon name="check-circle" /></span>
+            {t("lead.card.verified_note")}
+          </p>
+        ) : null}
+      </div>
       {pane.laterUnknown.length ? (
         <details className="sas-lead__unknown" data-testid="unknown-group">
           <summary>{t("lead.card.unknown_group", { count: pane.laterUnknown.length })}</summary>
-          <DealStateFields fields={pane.laterUnknown} />
+          <PaneFields fields={pane.laterUnknown} />
         </details>
       ) : null}
       {pane.objections.length ? (

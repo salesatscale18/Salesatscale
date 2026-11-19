@@ -1013,3 +1013,41 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-vt__hint { display: none; }
   .lab-call__bar { flex-wrap: wrap; }
 }
+
+/* W (lane W3): lead page verified details, Quotes and Orders cards, folded timeline. */
+.sas-verified-value { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
+.sas-verified { display: inline-flex; flex: none; color: var(--success); }
+.sas-verified .sas-ico { width: 16px; height: 16px; }
+.sas-verified-note { display: flex; align-items: center; gap: 6px; margin: 8px 0 0; color: var(--ink-muted); }
+.sas-verified-note .sas-verified .sas-ico { width: 14px; height: 14px; }
+.sas-lead-docs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-4); padding: var(--space-4); border-block-end: 1px solid var(--line); align-items: start; }
+.sas-lead-doc { border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-raised); min-width: 0; }
+.sas-lead-doc__head { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 48px; padding: 8px 8px 8px var(--space-4); border-block-end: 1px solid var(--line); }
+[dir="rtl"] .sas-lead-doc__head { padding: 8px var(--space-4) 8px 8px; }
+.sas-lead-doc__title { margin: 0; font: 600 14px/20px var(--font-sans); display: inline-flex; align-items: center; gap: 6px; }
+.sas-lead-doc__count { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--surface-sunken); color: var(--ink-muted); font: 600 12px/20px var(--font-sans); text-align: center; }
+.sas-lead-doc__empty { margin: 0; padding: var(--space-4); }
+.sas-lead-doc .sas-list > li + li { border-block-start: 1px solid var(--line); }
+.sas-lead-doc .sas-list__row { flex-wrap: wrap; row-gap: 4px; }
+.sas-lead-doc .sas-list__main { min-width: 0; }
+.sas-lead-doc__date { color: var(--ink-muted); white-space: nowrap; }
+.sas-lead-doc__links { padding: 0 var(--space-4) var(--space-3); }
+@media (max-width: 900px) { .sas-lead-docs { grid-template-columns: 1fr; } }
+.sas-tl-fold__head { margin: 0; font: inherit; }
+.sas-app a.sas-tl-fold__row { display: flex; align-items: center; gap: var(--space-2); min-height: 48px; padding: 8px var(--space-4); color: var(--ink); text-decoration: none; }
+.sas-app a.sas-tl-fold__row:hover { background: var(--surface-sunken); }
+.sas-tl-fold__chevron { display: inline-flex; color: var(--ink-muted); transition: transform .15s; }
+.sas-tl-fold__chevron .sas-ico { width: 16px; height: 16px; }
+.sas-tl-fold:not([data-open="true"]) .sas-tl-fold__chevron { transform: rotate(-90deg); }
+[dir="rtl"] .sas-tl-fold:not([data-open="true"]) .sas-tl-fold__chevron { transform: rotate(90deg); }
+.sas-tl-fold__label { font-weight: 600; }
+.sas-tl-fold__summary { flex: 1; min-width: 0; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-tl-fold__action { color: var(--primary); font-weight: 600; font-size: 13px; }
+/* Phone: the Timeline tab is the timeline, so it shows open without the row. */
+@media (max-width: 767px) {
+  .sas-lead-docs { padding: var(--space-3); gap: var(--space-3); }
+  .sas-lead-doc .sas-list__main { order: 5; flex-basis: 100%; }
+  .sas-lead-doc .sas-list__row > .sas-pill { margin-inline-start: auto; }
+  .sas-tl-fold__head { display: none; }
+  .sas-tl-fold__list[hidden] { display: block; }
+}

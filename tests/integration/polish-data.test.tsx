@@ -181,7 +181,7 @@ describe("Polish-1: wrong or contradicting data", () => {
     expect(orderRow).toMatch(/sas-pill--success[^>]*>[\s\S]*Paid/);
     // Deal state: filled and verified, no "Not known yet" for the signed fields.
     for (const value of ["Shapiro Pizza Ltd", "516000111", "Eli Shapiro", "Owner"]) expect(html).toContain(value);
-    expect(html).toContain("Verified");
+    expect(html).toContain('aria-label="From the signed order form, ');
     expect(html).not.toContain("Quote on assumption of 1 site");
     expect(html).toContain("Order PD-10001 is paid. Next: delivery.");
     // Paid banner in the success tone (S1); success-toned timeline with the amount. The order ID in the code font (R5 item 6).

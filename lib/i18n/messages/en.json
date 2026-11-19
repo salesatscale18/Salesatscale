@@ -3079,5 +3079,14 @@
   "lab.voice.start_chat": "Start chat",
   "lab.voice.start_call": "Start call",
   "lab.voice.english_only": "Calls are in English only. Choose English to call.",
-  "voice.settings.limit_line": "Calls: up to {limit}"
+  "voice.settings.limit_line": "Calls: up to {limit}",
+  "lead.card.verified_form": "From the signed order form, {date}",
+  "lead.card.verified_person": "Verified by your team, {date}",
+  "lead.card.verified_note": "Filled in and signed by the buyer on the order form.",
+  "lead.card.no_orders": "No orders yet.",
+  "lead.card.timeline_summary": "{count} events · last: {event}, {time}",
+  "lead.card.timeline_summary_one": "1 event · last: {event}, {time}",
+  "lead.card.timeline_none": "No events yet",
+  "lead.card.timeline_show": "Show",
+  "lead.card.timeline_hide": "Hide"
 }
