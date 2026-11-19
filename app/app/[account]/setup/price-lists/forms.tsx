@@ -84,8 +84,10 @@ const META_FORM_ID = "pl-meta-form";
 
 /** Draft settings of one price list. The panel's pinned footer submits it (form="pl-meta-form"). */
 export function MetaForm({ slug, lineageId, d }: { slug: string; lineageId: string; d: MetaDefaults }) {
-  const [state, action] = useActionState<MetaFormState, FormData>(saveMetaAction, { status: "idle" });
+  const [state, action, pending] = useActionState<MetaFormState, FormData>(saveMetaAction, { status: "idle" });
   const errors = state.status === "error" ? state.errors : {};
+  // The Save button lives in the panel's pinned footer, outside this form: tell it while a save runs.
+  useEffect(() => { document.getElementById(META_FORM_ID)?.dispatchEvent(new CustomEvent(PENDING_EVENT, { detail: pending })); }, [pending]);
   return (
     <form id={META_FORM_ID} action={action} className="sas-stack-4" noValidate>
       <input type="hidden" name="slug" value={slug} />
@@ -95,6 +97,20 @@ export function MetaForm({ slug, lineageId, d }: { slug: string; lineageId: stri
       <MetaFields prefix="pl-meta" d={d} errors={errors} />
     </form>
   );
+}
+
+const PENDING_EVENT = "sas-form-pending";
+
+/** The pinned footer's "Save settings": disabled while the settings form saves, so a double click submits once. */
+export function MetaSaveButton({ label }: { label: string }) {
+  const [pending, setPending] = useState(false);
+  useEffect(() => {
+    const form = document.getElementById(META_FORM_ID);
+    const on = (e: Event) => setPending(Boolean((e as CustomEvent<boolean>).detail));
+    form?.addEventListener(PENDING_EVENT, on);
+    return () => form?.removeEventListener(PENDING_EVENT, on);
+  }, []);
+  return <button type="submit" form={META_FORM_ID} className={buttonClass("primary")} disabled={pending} aria-busy={pending || undefined} data-meta-save="">{label}</button>;
 }
 
 /** ⋯ › Rename (a small panel on the list page); the panel's footer button submits it (form="pl-rename"). */

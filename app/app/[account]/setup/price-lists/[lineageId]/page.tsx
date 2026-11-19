@@ -18,7 +18,7 @@ import { entriesOf, entryProblems, itemInOtherLists, listPriceLists, partState, 
 import { unitLabel } from "@/lib/pricing/units";
 import { isUuid } from "@/lib/security/ids";
 import { discardPriceListDraftAction, publishPriceListAction } from "../actions";
-import { EntryForm, EntrySaveBar, EntrySaveScope, MetaForm } from "../forms";
+import { EntryForm, EntrySaveBar, EntrySaveScope, MetaForm, MetaSaveButton } from "../forms";
 import { entryFormDefaults } from "../rules";
 import { formatDay } from "../view";
 
@@ -204,9 +204,9 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                         <tr key={r.sku} data-current={r.sku === selectedSku ? "" : undefined}>
                           <td>
                             <a className="sas-row-link" href={link} aria-current={r.sku === selectedSku ? "true" : undefined}>
-                              {r.item ? <strong>{r.item.name}</strong> : <strong className="sas-num">{r.sku}</strong>}
+                              {r.item ? <strong>{r.item.name}</strong> : <strong className="sas-id">{r.sku}</strong>}
                             </a>
-                            <div className="sas-small">{r.item ? <span className="sas-num sas-nowrap">{r.sku}</span> : t("price_lists.not_in_catalog")}{r.draftOnly ? ` · ${t("price_lists.catalog_draft_only")}` : ""}</div>
+                            <div className="sas-small">{r.item ? <span className="sas-id sas-nowrap">{r.sku}</span> : t("price_lists.not_in_catalog")}{r.draftOnly ? ` · ${t("price_lists.catalog_draft_only")}` : ""}</div>
                           </td>
                           <td className="sas-small" data-label={t("catalog.col.kind_unit")}>{r.item ? kindUnit(r.item) : "—"}</td>
                           {e ? (
@@ -243,7 +243,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
               {versions.map((v) => (
                 <li key={v.id} className="sas-list__row" style={{ flexDirection: "column", alignItems: "stretch", gap: 6 }} data-version={v.status}>
                   <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <strong className="sas-num">v{v.version}</strong>
+                    <strong className="sas-id">v{v.version}</strong>
                     {v.status === "archived" ? <span className="sas-small">{t("price_lists.history.archived")}</span> : <StatusPill object="price_list" state={v.status} />}
                   </span>
                   <span className="sas-small">
@@ -317,7 +317,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
           title={t("price_lists.meta.panel_title")}
           closeHref={close}
           meta={<span>{draft ? t("price_lists.editing_draft", { version: draft.version }) : t("price_lists.editing_live")}</span>}
-          footer={<><button type="submit" form="pl-meta-form" className={buttonClass("primary")} data-meta-save="">{t("price_lists.meta.save")}</button><a className={buttonClass("ghost")} href={close}>{t("common.cancel")}</a></>}
+          footer={<><MetaSaveButton label={t("price_lists.meta.save")} /><a className={buttonClass("ghost")} href={close}>{t("common.cancel")}</a></>}
         >
           <MetaForm
             slug={account.slug}

@@ -338,7 +338,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                       <a className="sas-row-link" href={open(i.id)} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a>
                       {i.plainName ? <span className="sas-small" style={{ display: "block" }}>{t("catalog.in_chat", { name: i.plainName })}</span> : null}
                     </td>
-                    <td className="sas-num" data-label={t("catalog.col.code")}><span className="sas-nowrap">{i.sku}</span></td>
+                    <td className="sas-id" data-label={t("catalog.col.code")}><span className="sas-nowrap">{i.sku}</span></td>
                     <td data-label={t("catalog.col.kind")}>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")}</td>
                     <td data-label={t("catalog.col.charged")} style={{ whiteSpace: "nowrap" }}>{t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}</td>
                     <td data-label={t("catalog.col.price")}><PriceCell row={r} currency={currency} /></td>
@@ -406,7 +406,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
           id="catalog-item"
           wide
           title={selected ? selected.name : t("catalog.edit.title_new")}
-          meta={selected ? <><span className="sas-num sas-nowrap">{selected.sku}</span>{selectedRow ? <StatusPill object="catalog_item" state={selectedRow.status} /> : null}</> : null}
+          meta={selected ? <><span className="sas-id sas-nowrap">{selected.sku}</span>{selectedRow ? <StatusPill object="catalog_item" state={selectedRow.status} /> : null}</> : null}
           closeHref={close}
           tabs={[
             { id: "details", label: t("catalog.sheet.tab_details"), href: tabHref("details") },

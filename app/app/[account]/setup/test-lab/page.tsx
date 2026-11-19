@@ -21,6 +21,7 @@ import { type IconName } from "@/components/sas/icon";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
+import { toolLabel } from "../../leads/[leadId]/conversation";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
 import { AutoSubmit } from "@/components/sas/list-kit-client";
@@ -209,7 +210,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                             return (
                               <li key={c.id} className="sas-stack-2" style={{ background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 12px" }}>
                                 <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                  <strong className="sas-num sas-small">{c.sequence}. {d.label}</strong>
+                                  <strong className="sas-num sas-small" title={showModel ? d.label : undefined}>{c.sequence}. {toolLabel(c.name)}</strong>
                                   {c.outcome === "refused" || c.outcome === "failed" ? <StatusPill object="tool_call" state={c.outcome} /> : null}
                                 </div>
                                 {d.sent ? <span className="sas-small">{t("lab.trace_sent")}: {d.sent}</span> : null}
@@ -354,7 +355,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 {versions.map((v) => (
                   <li key={v.id} className="sas-stack-2">
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <strong className="sas-num">{t("lab.version", { version: v.version })}</strong>
+                      <strong className="sas-id">{t("lab.version", { version: v.version })}</strong>
                       <StatusPill object="agent_version" state={v.status} />
                       {v.status === "retired" ? (
                         <form action={rollbackAction} style={{ marginInlineStart: "auto" }}>

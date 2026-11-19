@@ -32,7 +32,7 @@ export default async function AccountLayout({ children, params }: { children: Re
           mode="seller"
           basePath={`/app/${account.slug}`}
           accountName={account.tradeName}
-          user={{ name: personName(user), initials: initials(user) }}
+          user={{ name: personName(user), initials: initials(user), role: actingAs ? t("settings.users.platform_acting") : undefined }}
           counts={needsYouCount ? { overview: { value: needsYouCount, tone: "human" } } : undefined}
         />
         {/* Banners come first: the top row on a phone (above the menu bar), above the page on wide screens. */}

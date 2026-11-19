@@ -337,7 +337,7 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
                             <Button type="submit" size="sm" variant="ghost">{t("settings.intake.market_link")}</Button>
                           </form>
                         </td>
-                        <td className="sas-num" data-label={t("settings.intake.col.key")}>{k.keyPrefix}…{k.keyLast4 ?? ""}</td>
+                        <td className="sas-id" data-label={t("settings.intake.col.key")}>{k.keyPrefix}…{k.keyLast4 ?? ""}</td>
                         <td className="sas-small" data-label={t("settings.intake.col.created")}><When at={k.createdAt} now={now} tz={account.timezone} /></td>
                         <td className="sas-small" data-label={t("settings.intake.col.last_used")}>{k.lastUsedAt ? <When at={k.lastUsedAt} now={now} tz={account.timezone} /> : t("settings.intake.never")}</td>
                         <td style={{ textAlign: "end" }} data-label="">

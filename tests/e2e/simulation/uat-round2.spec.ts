@@ -442,7 +442,8 @@ test("B4 Playbook", async () => {
   await expect(page.locator("#pb-agentName")).toHaveValue("Maya");
   // Setup → Company shows the agent preview with the new name.
   await page.goto(`${S.appBase}/setup/company`);
-  await expect(page.getByText('"Hi, this is Maya (an automated agent). You asked about…"')).toBeVisible();
+  // Round 4 (A5): Company shows the real opener, built like the agent's, with "automated assistant".
+  await expect(page.getByText(/Maya.*automated assistant/).first()).toBeVisible();
 });
 
 test("B4 Edits survive a refused save", async () => {

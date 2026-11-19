@@ -32,7 +32,8 @@ type NavProps = {
   mode: "seller" | "admin";
   basePath: string;
   accountName?: string;
-  user: { name: string; initials: string };
+  /** `role`: the footer line under the name; defaults to the mode's role ("Seller admin" / "Platform admin"). */
+  user: { name: string; initials: string; role?: string };
   counts?: Record<string, NavCount>;
 };
 

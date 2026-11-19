@@ -68,7 +68,8 @@ export function SideNav({
   basePath: string;
   active: string;
   accountName?: string;
-  user: { name: string; initials: string };
+  /** `role`: the footer line under the name; defaults to the mode's role ("Seller admin" / "Platform admin"). */
+  user: { name: string; initials: string; role?: string };
   counts?: Record<string, NavCount>;
 }) {
   const groups = mode === "admin" ? ADMIN_NAV : SELLER_NAV;
@@ -112,7 +113,7 @@ export function SideNav({
         <Avatar actor="human" initials={user.initials} />
         <span className="sas-nav__user-text">
           <span className="sas-nav__user-name" title={user.name}>{user.name}</span>
-          <span className="sas-nav__sub">{t(mode === "admin" ? "nav.role.platform_admin" : "nav.role.seller_admin")}</span>
+          <span className="sas-nav__sub">{user.role ?? t(mode === "admin" ? "nav.role.platform_admin" : "nav.role.seller_admin")}</span>
         </span>
       </div>
     </nav>
