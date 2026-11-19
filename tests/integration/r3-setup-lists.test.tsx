@@ -33,7 +33,8 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { addFact, startTestConversation, listVersions, saveDraftPlaybook } = await import("@/lib/agent/service");
+const { addFact, answerQuestion, startTestConversation, listVersions, saveDraftPlaybook } = await import("@/lib/agent/service");
+const { OPEN_QUESTIONS } = await import("@/lib/demo/states");
 const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowledge/page");
 const { default: OrderFormSetupPage } = await import("@/app/app/[account]/setup/order-form/page");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
@@ -113,9 +114,12 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       for (const col of ["Fact", "Source", "Status", "Added"]) expect(html).toMatch(new RegExp(`<th scope="col"[^>]*class="sas-th-sort"><a[^>]*>${col}<`));
       // Default sort: facts to review first; the to-review row has Approve in the row and Reject in ⋯.
       const rows = factRows(html);
-      expect(rows[0]).toEqual({ status: "suggested", statement: "Buyers can install the sensors themselves." });
+      // (The demo seed has two facts to review of its own.)
+      expect(rows[0].status).toBe("suggested");
+      expect(rows.filter((r) => r.status === "suggested").map((r) => r.statement)).toContain("Buyers can install the sensors themselves.");
       expect(rows.at(-1)?.status).toBe("rejected");
-      const suggestedRow = html.slice(html.indexOf('data-fact="suggested"'), html.indexOf("</tr>", html.indexOf('data-fact="suggested"')));
+      const at = html.lastIndexOf('data-fact="suggested"', html.indexOf("Approve: Buyers can install"));
+      const suggestedRow = html.slice(at, html.indexOf("</tr>", at));
       expect(suggestedRow).toMatch(/aria-label="Approve: Buyers can install/);
       expect(suggestedRow).toContain(">Reject</button>");
       expect(suggestedRow).not.toContain(">Delete<");
@@ -128,7 +132,8 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
 
     it("filters by status chip, search, source and topic; sorts by a heading", async () => {
       const review = factRows(await render(KnowledgePage, slug, { status: "suggested" }));
-      expect(review.map((r) => r.status)).toEqual(["suggested"]);
+      expect(review.length).toBeGreaterThan(0);
+      expect(review.every((r) => r.status === "suggested")).toBe(true);
       const approved = factRows(await render(KnowledgePage, slug, { status: "approved" }));
       expect(approved.length).toBeGreaterThan(0);
       expect(approved.every((r) => r.status === "approved")).toBe(true);
@@ -190,6 +195,8 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       const live = (await listVersions(db, account.id)).find((v) => v.status === "live")!;
       const c = await startTestConversation(db, account.id, seller.id, { language: "en", versionId: live.id });
       const asked = ["Do you ship to Eilat?", "Is there a night rate?", "Can I pay in euros?"];
+      // The demo seed's own open questions are answered first, so only these three are open.
+      for (const question of OPEN_QUESTIONS) await answerQuestion(db, { userId: seller.id, actingAs: false }, account.id, { question, answer: "Seeded answer." });
       await db.insert(toolCalls).values(asked.map((query, i) => ({
         accountId: account.id, conversationId: c!.conversationId, sequence: i + 1, name: "lookup_knowledge", input: { query }, result: { facts: [] }, outcome: "ok" as const,
         createdAt: new Date(Date.now() - (i + 1) * 60_000),
@@ -309,7 +316,8 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       save("test-lab", html);
       expect(html).toContain("data-new-chat");
       expect(html.indexOf("data-new-chat")).toBeLessThan(html.indexOf("data-scenarios"));
-      expect(html).toMatch(/data-scenarios-passed="">0 of \d+ passed on v1</);
+      // The demo seed has one scenario chat that passes (and one that fails).
+      expect(html).toMatch(/data-scenarios-passed="">1 of \d+ passed on v1</);
       expect(html).toContain(">Result</th>");
       const row = (id: string) => html.slice(html.indexOf(`data-scenario="${id}"`), html.indexOf("</tr>", html.indexOf(`data-scenario="${id}"`)));
       // The chat has no messages yet, so its check is "Not yet" (not "Not run").

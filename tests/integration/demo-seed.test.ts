@@ -77,7 +77,7 @@ describe("one-click demo account", () => {
     if (!r.ok) throw new Error("refused");
     const s = r.summary;
     accountId = s.accountId;
-    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 3, facts: 10, legalSections: 4, leads: 3, simulatedBuyers: 2, live: true });
+    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 7, facts: 12, legalSections: 4, leads: 7, simulatedBuyers: 2, live: true });
     expect(s.tradeName).toBe("Polar Demo 2026-11-17 10:00:00");
 
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
@@ -127,8 +127,10 @@ describe("one-click demo account", () => {
   });
 
   it("has analysed sources and approved facts that point at them", async () => {
-    const rows = await db.select().from(sources).where(eq(sources.accountId, accountId));
-    expect(rows.map((r) => r.title).sort()).toEqual(["Discovery call – café chain, 3 sites", "Polar Demo – product facts", "Pricing and policy"]);
+    // The three original sources (the review states add four more: lib/demo/states.ts, tested in demo-states.test.ts).
+    const rows = (await db.select().from(sources).where(eq(sources.accountId, accountId)))
+      .filter((r) => ["Discovery call – café chain, 3 sites", "Polar Demo – product facts", "Pricing and policy"].includes(r.title));
+    expect(rows).toHaveLength(3);
     for (const r of rows) {
       expect(r.status).toBe("ready");
       expect(r.textHash).toBe(sha256(r.extractedText));
@@ -137,7 +139,7 @@ describe("one-click demo account", () => {
     expect(call.extractedText).toContain("alarm company");
     expect(call.extractedText).toMatch(/waive the installation fee/);
 
-    const facts = await db.select().from(knowledgeFacts).where(eq(knowledgeFacts.accountId, accountId));
+    const facts = await db.select().from(knowledgeFacts).where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "approved")));
     expect(facts).toHaveLength(10);
     const ids = new Set(rows.map((r) => r.id));
     for (const f of facts) {
@@ -179,18 +181,20 @@ describe("one-click demo account", () => {
     expect(Object.values(pb.plays!).some((x) => x?.own)).toBe(false);
 
     const tests = await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.isTest, true)));
-    expect(tests).toHaveLength(1);
-    expect(tests[0].agentVersionId).toBe(live.id);
+    // The empty test chat plus two scenario chats (review states), all on the live version.
+    expect(tests).toHaveLength(3);
+    for (const c of tests) expect(c.agentVersionId).toBe(live.id);
     const drafts = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));
     expect(drafts).toHaveLength(0);
   });
 
-  it("has three consented leads with fictional numbers that are never contacted", async () => {
+  it("has seven consented leads with fictional numbers that are never contacted", async () => {
     const all = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)));
     // Plus two simulated buyers (buyer IDs, no phone), which the simulator tests cover.
     expect(all.filter((l) => l.buyerRef).map((l) => l.buyerRef).sort()).toEqual(["SIM-0001", "SIM-0002"]);
     const rows = all.filter((l) => !l.buyerRef);
-    expect(rows).toHaveLength(3);
+    // Three plain new leads plus four that carry an order, quote or conversation state.
+    expect(rows).toHaveLength(7);
     for (const l of rows) {
       expect(l.phone).toMatch(DEMO_PHONE_RANGE);
       expect(l.phone).toMatch(/^\+97250555\d{4}$/);
@@ -201,7 +205,7 @@ describe("one-click demo account", () => {
     }
     // The opener refuses them like test leads, before any transport is used.
     const send = vi.fn();
-    const r = await startWhatsAppConversation(db, { send, fetchContent: async () => null }, { userId: admin.id, actingAs: true }, accountId, rows[0].id);
+    const r = await startWhatsAppConversation(db, { send, fetchContent: async () => null }, { userId: admin.id, actingAs: true }, accountId, rows.find((l) => l.sourceRef === "demo-seed:1")!.id);
     expect(r).toEqual({ ok: false, reason: "test_lead" });
     expect(send).not.toHaveBeenCalled();
   });
@@ -230,7 +234,7 @@ describe("one-click demo account", () => {
     for (const id of [a.summary.accountId, b.summary.accountId]) {
       const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
       expect(acc.status).toBe("live");
-      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(5);
+      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(9);
     }
   });
 
@@ -253,7 +257,7 @@ describe("one-click demo account", () => {
     h.me = admin;
     const e = await thrown(createDemoAccountAction());
     expect(e.message).toBe("NEXT_REDIRECT");
-    const m = e.url!.match(/^\/sadmin\/accounts\/([0-9a-f-]{36})\?demo=created&items=3&sources=3&facts=10&leads=3$/);
+    const m = e.url!.match(/^\/sadmin\/accounts\/([0-9a-f-]{36})\?demo=created&items=3&sources=7&facts=12&leads=7$/);
     expect(m).not.toBeNull();
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, m![1]));
     expect(acc.status).toBe("live");
@@ -292,7 +296,10 @@ describe("one-click demo account", () => {
     expect(h.anthropic).not.toHaveBeenCalled();
     expect(agentFake.requests).toHaveLength(0);
     expect(pipelineFake.requests).toHaveLength(0);
-    expect(await db.select().from(pipelineRuns)).toHaveLength(0);
+    // Only the recorded analysis runs (two per account): done, no usage and no cost.
+    const runs = await db.select().from(pipelineRuns);
+    expect(runs.length).toBeGreaterThan(0);
+    for (const r of runs) expect(r).toMatchObject({ status: "done", usage: null, costEstimateMicros: null });
     const usage = await aiUsageThisMonth(db, accountId);
     expect(usage.byModel).toHaveLength(0);
     expect(usage.costMicros).toBe(0);

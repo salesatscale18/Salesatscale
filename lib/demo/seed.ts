@@ -2,7 +2,8 @@
  * One-click demo account ("Polar Demo", platform admin). Creates a complete,
  * live seller account in seconds with no AI spend: content is seeded with
  * the same service functions the setup screens call, never with a pipeline
- * run or a model call.
+ * run or a model call. lib/demo/states.ts adds the states a review needs
+ * (stored chats and a recorded analysis run, still no model call).
  *
  * Polar Demo is fictional: wireless temperature monitoring for restaurants.
  * Every name, company ID, address and phone number below is made up; lead
@@ -36,6 +37,7 @@ import { addCall, addNote } from "@/lib/sources/service";
 import { sha256 } from "@/lib/sources/text";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 import { createSimulatedBuyer } from "@/lib/simulator/service";
+import { seedReviewStates } from "./states";
 
 /** Every demo account's trade name starts with this (the audit entry `demo.created` is the real marker). */
 export const DEMO_NAME_PREFIX = "Polar Demo";
@@ -395,6 +397,7 @@ async function fill(db: Db, user: DemoActor, created: { id: string; tradeName: s
   if (!test) throw new Error("Demo seed: test conversation not started");
   const agentVersion = await publishDraftVersion(db, actor, accountId, now);
   if (agentVersion === null) throw new Error("Demo seed: agent version not published");
+  const liveVersion = test.version.id;
 
   // 8. Go live (re-checks every blocking item on the server).
   const live = await goLive(db, actor, accountId, now);
@@ -425,14 +428,18 @@ async function fill(db: Db, user: DemoActor, created: { id: string; tradeName: s
     }
   }
 
+  // 11. Review states (lib/demo/states.ts): more sources, facts to review, drafts, a second
+  // market, orders, conversations, scenario chats, an intake key and the recorded analysis.
+  const states = await seedReviewStates(db, user.id, accountId, { liveVersionId: liveVersion, now });
+
   return {
     catalogVersion: catalog,
     priceListVersion: priceList,
     agentVersion,
-    sources: src.count,
-    facts: src.facts,
+    sources: src.count + states.sources,
+    facts: src.facts + states.facts,
     legalSections: legalCount,
-    leads: leadCount,
+    leads: leadCount + states.leads,
     simulatedBuyers: simCount,
     testConversationId: test.conversationId,
     live: live.ok,

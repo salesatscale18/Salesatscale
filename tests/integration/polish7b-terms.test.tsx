@@ -11,8 +11,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
-import { and, eq } from "drizzle-orm";
-import { markets, sellerAccounts, sources, users, type SellerAccount, type User } from "@/db/schema";
+import { and, eq, sql } from "drizzle-orm";
+import { markets, sellerAccounts, sourceSections, sources, users, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -179,14 +179,17 @@ describe("Polish-7b: plain terms", () => {
     expect(text(html)).toContain(changeText(plan));
     expect(html).toContain(`data-analyze-button="${plan.facts.reuse && plan.playbook.reuse ? "secondary" : "primary"}"`);
     expect(text(html)).not.toMatch(/about [\d,]+ tokens/);
-    const [one] = await db.select().from(sources).where(eq(sources.accountId, account.id)).limit(1);
+    // A source the analysis reads (the demo also has a failed one and one that needs input).
+    const [one] = await db.select().from(sources).where(and(eq(sources.accountId, account.id), eq(sources.status, "ready"))).limit(1);
+    // Its text changed (the demo seed records the analysis that read the old text, so a changed hash alone is not enough).
     await db.update(sources).set({ textHash: null }).where(eq(sources.id, one.id));
+    await db.update(sourceSections).set({ text: sql`${sourceSections.text} || ' (edited)'` }).where(eq(sourceSections.sourceId, one.id));
     const changed = await render(SourcesPage, account.slug);
     save("sources-changed", changed);
-    // Before any finished run the line says so (R4 F3); after one it names what changed.
+    // Before any finished run the line says so (R4 F3); after one (the demo seeds one) it names what changed.
     const changedPlan = (await planAnalysis(db, account.id))!;
     expect(text(changed)).toContain(changeText(changedPlan));
-    if (!changedPlan.firstRun) expect(text(changed)).toContain("Changed since the last analysis: 1 of 3 sources");
+    if (!changedPlan.firstRun) expect(text(changed)).toContain(`Changed since the last analysis: 1 of ${plan.sources.length} sources`);
     else expect(text(changed)).not.toContain("since your last run");
     // B4: the same unit as Settings › AI usage (the demo account is in shekels).
     expect(text(changed)).toMatch(/Estimated cost ₪\d+\.\d{2,3}/);

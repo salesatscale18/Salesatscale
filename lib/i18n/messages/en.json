@@ -1942,7 +1942,7 @@
   "admin.demo.create": "Create demo account",
   "admin.demo.create_hint": "A complete, live Polar Demo account in seconds, with fictional data. No AI cost.",
   "admin.demo.created": "Demo account created and live.",
-  "admin.demo.created_list": "Company details and delivery time · catalog with {items} items and 2 rules · price list (ILS, without VAT) · order form with sample terms in English and Hebrew · {sources} sources and {facts} approved facts · playbook for Maya, live · one test chat · {leads} leads with fictional numbers that are never contacted.",
+  "admin.demo.created_list": "Company details and delivery time · catalog with {items} items and 2 rules, plus a draft · price list (ILS, without VAT) and a draft UK price list · order form with sample terms in English and Hebrew · {sources} sources and {facts} facts (2 to review), with the analysis that found them · playbook for Maya, live · test chats (one passed, one failed) · {leads} leads with fictional numbers that are never contacted, with a bank-transfer order, a quote at the pay step, a human-handled chat and one that needs you · a second market (United Kingdom) · a lead intake key.",
   "admin.demo.failed": "The demo account could not be created. Nothing was sent. If a half-made demo account is listed, it is paused.",
   "admin.demo.badge": "Demo account",
   "admin.demo.remove": "Delete demo account",
