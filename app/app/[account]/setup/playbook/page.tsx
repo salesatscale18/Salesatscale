@@ -10,7 +10,7 @@ import { ensureDraftVersion, liveVersion } from "@/lib/agent/service";
 import { pendingPlaySuggestions } from "@/lib/pipeline/service";
 import { t } from "@/lib/i18n";
 import { PlaybookForm } from "./form";
-import { playCounts, playsOverview } from "./plays/overview";
+import { playsOverview, playsSummary } from "./plays/overview";
 import { PlaybookToc } from "./toc";
 
 /** Setup · Playbook (canvas: Playbook, PlaybookOpening). Always edits the draft version (created from the live one when missing). */
@@ -33,7 +33,6 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
   const here = `${base}/setup/playbook`;
   const lab = `${base}/setup/test-lab`;
   const plays = playsOverview(draft.playbook, pending);
-  const counts = playCounts(plays);
   return (
     <>
       <DraftBanner draft={draft.version} live={live?.version ?? null} />
@@ -59,7 +58,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <div className="pb-main pb-main--spy">
             <PlaybookForm
               slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
-              plays={{ total: plays.length, withFacts: plays.filter((x) => x.factCount > 0).length, own: counts.own, needsFacts: counts.needs, suggested: counts.suggested }}
+              plays={playsSummary(plays)}
               playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
               names={{ rows, source: draft.playbook.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${base}/markets` }}
             />

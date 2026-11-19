@@ -44,6 +44,10 @@ const EXAMPLE = `{
   }
 }`;
 
+/** The intake fields, in the order the sample shows them (R4 E6). Descriptions: settings.intake.field.<name with _>. */
+const INTAKE_REQUIRED = ["full_name", "phone", "consent.source", "consent.text"] as const;
+const INTAKE_OPTIONAL = ["language", "business", "source_id", "consent.at", "email", "country", "source", "consent.page_url"] as const;
+
 const SECTIONS = ["whatsapp", "simulation", "payments", "users", "notifications", "hours", "intake"] as const;
 type Section = (typeof SECTIONS)[number];
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -379,9 +383,22 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
           <span className="sas-small">{t("settings.intake.sends_body")}</span>
           {/* Wraps long values instead of cutting them off. */}
           <pre className="sas-code" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-intake-sample="">{EXAMPLE}</pre>
-          <span className="sas-small">{t("settings.intake.required")}</span>
+          {/* Required and Optional together under the sample (R4 E6): every field the sample shows, the two "source" fields told apart. */}
+          {([["required", INTAKE_REQUIRED], ["optional", INTAKE_OPTIONAL]] as const).map(([kind, fields]) => (
+            <div key={kind} className="sas-stack-2" style={{ gap: 4 }} data-intake-fields={kind}>
+              <strong style={{ fontSize: 13 }}>{t(kind === "required" ? "settings.intake.fields_required" : "settings.intake.fields_optional")}</strong>
+              <dl className="st-fields">
+                {fields.map((f) => (
+                  <div key={f} data-intake-field={f}>
+                    <dt><code className="st-mono">{f}</code></dt>
+                    <dd className="sas-small">{t(`settings.intake.field.${f.replace(".", "_")}` as MessageKey)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </div>
+          ))}
+          <span className="sas-small" id="intake-optional">{t("settings.intake.rules_note")}</span>
           <SampleCheck slug={account.slug} example={EXAMPLE} />
-          <span className="sas-hint" id="intake-optional">{t("settings.intake.optional")}</span>
         </aside>
     </>
   );

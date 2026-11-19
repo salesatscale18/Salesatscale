@@ -6,7 +6,7 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type MessageKey } from "@/lib/i18n";
 import { savePlayAction, type PlayFormState } from "./actions";
-import { missingSlots, slotTitle } from "../slots";
+import { exampleParts, missingSlots, slotTitle } from "../slots";
 
 /** Limits mirrored from lib/agent/playbook.ts (the server checks them again). */
 const FACT_MAX = 600;
@@ -37,8 +37,10 @@ export function CardView({ card }: { card: PlayCard }) {
       </div>
       <div style={SEC}>
         <span style={LABEL}>{t("playbook.play.example")}</span>
-        <span data-part="example" style={{ padding: "8px 12px", borderRadius: 10, borderStartStartRadius: 4, background: "var(--agent-soft)", overflowWrap: "anywhere" }}>{card.example}</span>
-        {/* Default examples show the form only (B8): what goes into <angle brackets> comes from this seller's facts. */}
+        <span data-part="example" style={{ padding: "8px 12px", borderRadius: 10, borderStartStartRadius: 4, background: "var(--agent-soft)", overflowWrap: "anywhere", lineHeight: "24px" }}>
+          {exampleParts(card.example).map((x, i) => (x.slot ? <span key={i} className="pb-slot-tag" data-slot-tag="">{x.text}</span> : x.text))}
+        </span>
+        {/* Default examples show the form only (B8, R4 A1): the grey tags (<placeholders>) are filled from this seller's approved facts. */}
         <span className="sas-small" data-part="example-note">{t("playbook.play.example_note")}</span>
         <span style={{ ...LABEL, marginTop: 4 }}>{t("playbook.play.not_this")}</span>
         <span data-part="not-this" style={{ padding: "8px 12px", borderRadius: 10, background: "var(--danger-soft)", textDecoration: "line-through", textDecorationColor: "color-mix(in srgb, var(--danger) 50%, transparent)", overflowWrap: "anywhere" }}>

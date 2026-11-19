@@ -224,13 +224,23 @@ export async function listAccountUsers(db: Db, accountId: string, viewer?: { use
   return rows;
 }
 
+/**
+ * Open invites of an account. An invite for an email that already belongs to a
+ * member of this account is left out (R4 E5): that person is listed as a user.
+ */
 export async function listPendingInvites(db: Db, accountId: string, now = new Date()) {
-  const rows = await db
-    .select()
-    .from(accountInvites)
-    .where(and(eq(accountInvites.accountId, accountId), isNull(accountInvites.acceptedAt), isNull(accountInvites.revokedAt)))
-    .orderBy(desc(accountInvites.createdAt));
-  return rows.map((invite) => ({ invite, state: inviteState(invite, now) }));
+  const [rows, members] = await Promise.all([
+    db
+      .select()
+      .from(accountInvites)
+      .where(and(eq(accountInvites.accountId, accountId), isNull(accountInvites.acceptedAt), isNull(accountInvites.revokedAt)))
+      .orderBy(desc(accountInvites.createdAt)),
+    listMembers(db, accountId),
+  ]);
+  const memberEmails = new Set(members.map(({ user }) => user.email?.trim().toLowerCase()).filter((e): e is string => !!e));
+  return rows
+    .filter((invite) => !memberEmails.has(invite.email.trim().toLowerCase()))
+    .map((invite) => ({ invite, state: inviteState(invite, now) }));
 }
 
 export async function listAccountAudit(db: Db, accountId: string, limit = 50) {

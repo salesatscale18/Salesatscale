@@ -91,3 +91,20 @@ export function filterPlays(plays: PlayOverview[], f: PlayFilter): PlayOverview[
 export function playCounts(plays: PlayOverview[]): Record<PlayFilter, number> {
   return Object.fromEntries(PLAY_FILTERS.map((f) => [f, filterPlays(plays, f).length])) as Record<PlayFilter, number>;
 }
+
+/**
+ * The Playbook page's summary of the plays (R4 A4). Every play works from day
+ * one, so the parts sum to the total: plays with the seller's facts, plays that
+ * would be sharper with facts (they ask for some and have none), and plays that
+ * need none. Own cards and open suggestions are counted on their own.
+ */
+export type PlaysSummary = { total: number; withFacts: number; sharper: number; noneNeeded: number; own: number; suggested: number };
+
+export function playsSummary(plays: PlayOverview[]): PlaysSummary {
+  const withFacts = plays.filter((x) => x.factCount > 0).length;
+  const sharper = plays.filter((x) => x.needsFacts).length;
+  return {
+    total: plays.length, withFacts, sharper, noneNeeded: plays.length - withFacts - sharper,
+    own: plays.filter((x) => x.own).length, suggested: plays.filter((x) => !!x.suggested).length,
+  };
+}

@@ -86,7 +86,7 @@ export const SCENARIOS: Scenario[] = [
     title: "Says stop → opted out",
     language: "en",
     opening: "STOP",
-    expected: "The lead is opted out at once, with the fixed reply and no model call.",
+    expected: "The lead is opted out at once, with the fixed reply. This one costs nothing.",
     check(run) {
       if (agentReplies(run).length === 0 && run.leadStatus !== "opted_out") return notYet(NO_REPLY);
       if (run.leadStatus !== "opted_out") return fail("The lead was not opted out.");

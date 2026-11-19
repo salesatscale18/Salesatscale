@@ -13,7 +13,8 @@ import { defaultPlaybook } from "@/lib/agent/playbook";
 import { getOrderFormSettings } from "@/lib/orders/settings";
 import { displayName } from "@/lib/auth/display";
 import { currencyLabel, timezoneLabel } from "@/lib/format";
-import { t } from "@/lib/i18n";
+import { isLocale, t, type Locale } from "@/lib/i18n";
+import { sampleOpenerText } from "@/lib/agent/core/opener";
 import { setupProgress } from "@/lib/overview/setup";
 import { saveCompanyAction } from "./actions";
 import { estimateDelivery, formatDeliveryShort, leadTimeOrNull, MAX_LEAD_DAYS } from "@/lib/delivery/eta";
@@ -41,8 +42,9 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   const nameLangs = await marketLanguages(appDb, account.id);
   const tradeRows = tradeNameRows(account, nameLanguages(nameLangs.markets, nameLangs.account, typedLanguage(account.tradeName)));
   const heAgent = playbook.agentNameLocal?.he?.trim();
-  const NAME_MARK = "\u0000name\u0000";
-  const [introBefore, introAfter = ""] = t("company.agent_preview", { name: NAME_MARK }).split(NAME_MARK);
+  // The real opener (R4 A5), built by the code that writes the agent's first message, per buyer language.
+  const openerLangs = account.languages.filter(isLocale);
+  const openers = (openerLangs.length ? openerLangs : (["en"] as Locale[])).map((lang) => ({ lang, text: sampleOpenerText(playbook, account, lang) }));
   const lead = leadTimeOrNull(account.deliveryLeadTime);
   // The example uses the account's own time zone and weekend (a market may differ).
   const plan = deliveryPlanFor(account, { overrides: {}, countries: [] });
@@ -53,9 +55,6 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
       <header className="sas-stack-2">
         <div className="sas-page-head">
           <h1 className="sas-title">{t("company.title")}</h1>
-          <div className="sas-page-head__actions">
-            <Button type="submit" form="company-form" variant="primary">{t("company.save")}</Button>
-          </div>
         </div>
         <span className="sas-small">{t("company.intro")}</span>
         <SetupSteps basePath={base} current="company" completed={progress} />
@@ -103,11 +102,14 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
               <fieldset style={{ border: 0, padding: 0, margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }} aria-describedby="dlv-hint">
                 <legend className="sas-sr">{t("company.delivery.lead_time")}</legend>
                 <span className="sas-input-label" aria-hidden="true">{t("company.delivery.lead_time")}:</span>
-                <span>{t("company.delivery.from")}</span>
-                <input className="sas-input sas-num" type="number" name="minDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" defaultValue={lead ? lead.minDays : ""} aria-label={t("company.delivery.min_label")} style={{ width: 88 }} />
-                <span>{t("company.delivery.to")}</span>
-                <input className="sas-input sas-num" type="number" name="maxDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" defaultValue={lead ? lead.maxDays : ""} aria-label={t("company.delivery.max_label")} style={{ width: 88 }} />
-                <span>{t("company.delivery.days")}</span>
+                {/* "from [5] to [10] days" stays on one line, also on a phone (R4 D4). */}
+                <span className="co-range" data-lead-range="">
+                  <span>{t("company.delivery.from")}</span>
+                  <input className="sas-input sas-num" type="number" name="minDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" defaultValue={lead ? lead.minDays : ""} aria-label={t("company.delivery.min_label")} />
+                  <span>{t("company.delivery.to")}</span>
+                  <input className="sas-input sas-num" type="number" name="maxDays" min={0} max={MAX_LEAD_DAYS} step={1} inputMode="numeric" defaultValue={lead ? lead.maxDays : ""} aria-label={t("company.delivery.max_label")} />
+                  <span>{t("company.delivery.days")}</span>
+                </span>
               </fieldset>
               <span className="sas-hint" id="dlv-hint">{t("company.delivery.hint")}</span>
               <div className="sas-stack-2" style={{ gap: 2 }}>
@@ -152,13 +154,20 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                   <a href={`${base}/setup/playbook`}>{t("company.agent_edit")}</a>
                 </span>
               </div>
-              {/* Set by the platform: the fixed words muted, the seller's agent name tinted (as in the Opening preview). */}
-              <PlatformFixed>
-                <span data-agent-intro="">
-                  {introBefore}<span data-part="seller" style={{ background: "var(--primary-soft)", color: "var(--primary)", borderRadius: 4, paddingInline: 3 }}><bdi>{playbook.agentName}</bdi></span>{introAfter}
-                </span>
-                <span style={{ display: "block", marginTop: 4 }}>{t("company.agent_disclosure")}</span>
-              </PlatformFixed>
+              {/* The opening message a lead gets now (R4 A5): the same text the agent sends, with a sample lead name. */}
+              <div className="sas-stack-2" style={{ gap: 6 }}>
+                <span className="sas-input-label">{t("company.agent_opener")}</span>
+                {openers.map((o) => (
+                  <div
+                    key={o.lang} lang={o.lang} dir={o.lang === "he" ? "rtl" : "ltr"} data-agent-intro={o.lang}
+                    style={{ alignSelf: "flex-start", maxWidth: "100%", background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 12, borderStartStartRadius: 4, padding: "10px 12px", lineHeight: "21px", overflowWrap: "anywhere" }}
+                  >
+                    {o.text}
+                  </div>
+                ))}
+                <span className="sas-small">{t("company.agent_opener_hint")} <a href={`${base}/setup/playbook#pb-opener-h-s`}>{t("company.agent_opener_edit")}</a></span>
+              </div>
+              <PlatformFixed>{t("company.agent_disclosure")}</PlatformFixed>
             </div>
           </section>
         </div>
@@ -201,6 +210,11 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
               </div>
             </div>
           </section>
+        </div>
+        {/* The one Save, in a bar that stays in view at the bottom while the page scrolls (R4 D1). */}
+        <div className="co-savebar" data-savebar="">
+          <Button type="submit" variant="primary">{t("company.save")}</Button>
+          <span className="sas-small">{t("company.save_hint")}</span>
         </div>
       </form>
     </main>
