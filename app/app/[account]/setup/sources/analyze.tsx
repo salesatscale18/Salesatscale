@@ -39,17 +39,20 @@ export function costText(micros: number, currency?: string | null): string {
   return formatMoney(Math.round(major * 100), currency);
 }
 
-type PlanLike = Pick<AnalysisPlan, "changed" | "sources" | "estimate" | "facts" | "playbook">;
+type PlanLike = Pick<AnalysisPlan, "changed" | "sources" | "estimate" | "facts" | "playbook" | "firstRun">;
 
 /**
  * What changed since the last analysis, from the same reuse decision as the
  * confirm step: "Nothing changed since the last analysis", "Changed since the
  * last analysis: 2 of 3 sources", or, when only the analysis itself changed,
- * "We improved the analysis since your last run".
+ * "We improved the analysis since your last run". Before any analysis has
+ * finished there is no last run to compare with (even when facts exist):
+ * "Your sources have not been analyzed yet", as Run history says.
  */
 export function changeText(plan: PlanLike): string {
   const s = analysisSummary(plan);
   if (s.nothingToRerun) return t("pipeline.changed.none");
+  if (s.firstRun) return t("pipeline.changed.first");
   if (s.rulesChanged) return t("pipeline.changed.improved");
   const what = [
     s.changed > 0 ? t("pipeline.changed.sources", { changed: s.changed, total: s.total }) : null,

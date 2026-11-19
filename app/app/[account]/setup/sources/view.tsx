@@ -56,6 +56,16 @@ export function languageWords(code: string | null): string {
   return code.split(",").map((c) => (isLocale(c) ? t(`lang.${c}`) : c)).join(", ");
 }
 
+/**
+ * The locator chip of a section or fact, or null when it says nothing: a
+ * note is one section with the locator "note" (the page already says it is a note).
+ */
+export function shownLocator(kind: string, locator: string | null | undefined): string | null {
+  if (!locator) return null;
+  if (kind === "text" && locator.trim().toLowerCase() === "note") return null;
+  return locator;
+}
+
 /** File size in KB or MB. */
 export function fileSize(bytes: number | undefined): string | null {
   if (!bytes) return null;

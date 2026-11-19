@@ -780,3 +780,23 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 @media (max-width: 767px) {
   .r43-catalog-list .sas-listbar__select:has(select[name="pl"]) { flex: 1 1 100%; }
 }
+/* Round-4 (lane R4-2): Sources and Knowledge, list kit. */
+/* List kit: the toolbar (search, chips, selects) inside the table card, so the rows start higher. */
+.sas-listtable__bar { padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
+/* An open side panel has no focus outline of its own (its controls keep their rings). */
+.sas-app .sas-sp__panel:focus, .sas-app .sas-sp__panel:focus-visible { outline: none; }
+/* Knowledge: a fact's source chip uses the column and wraps instead of being cut. */
+.sas-td-kchip { min-width: 160px; max-width: 360px; white-space: normal !important; }
+.sas-app .sas-kchip { height: auto; min-height: 20px; max-width: 100%; padding-block: 2px; align-items: flex-start; text-decoration: none; }
+.sas-app .sas-kchip > .sas-ico { flex: none; margin-block-start: 2px; }
+.sas-app .sas-kchip > span { min-width: 0; overflow-wrap: anywhere; white-space: normal; }
+/* Phone cards: the value goes under its label (long source chips). */
+@media (max-width: 767px) {
+  .sas-table--stack td.sas-td-under { flex-direction: column; align-items: flex-start; justify-content: flex-start; }
+  .sas-td-kchip { max-width: none; }
+}
+/* A text input with a list of choices (datalist): a visible dropdown arrow. */
+.sas-combo { position: relative; display: block; }
+.sas-combo > .sas-input { padding-inline-end: 32px; }
+.sas-combo > .sas-input::-webkit-calendar-picker-indicator { opacity: 0; }
+.sas-combo__arrow { position: absolute; inset-inline-end: 10px; inset-block-start: 50%; transform: translateY(-50%); pointer-events: none; color: var(--ink-muted); }

@@ -15,7 +15,7 @@ export type SourceSort = (typeof SOURCE_SORTS)[number];
 export const DEFAULT_SOURCE_SORT: SortState<SourceSort> = { key: "updated", dir: "desc" };
 
 /** The status a row shows (see sourceDisplayStatus), in the order the Status sort uses: what needs you first. */
-export const DISPLAY_STATUSES = ["needs_input", "failed", "partly_failed", "processing", "ready", "approved"] as const;
+export const DISPLAY_STATUSES = ["needs_input", "failed", "partly_failed", "processing", "not_analyzed", "ready", "approved"] as const;
 export type DisplayStatus = (typeof DISPLAY_STATUSES)[number];
 /** Statuses that need the seller (footer "n need you"). */
 export const NEEDS_YOU: readonly DisplayStatus[] = ["needs_input", "partly_failed", "failed"];

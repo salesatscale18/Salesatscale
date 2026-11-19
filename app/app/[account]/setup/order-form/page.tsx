@@ -150,7 +150,7 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
                               label={t("ofs.more", { title: r.title })}
                               items={[
                                 { label: t("ofs.new_version"), href: link({ panel: `legal:${r.sectionKey}` }), icon: "pencil" },
-                                { label: t("ofs.remove"), href: hrefWith(here, sp, { confirm: r.sectionKey }, DROP.filter((d) => d !== "confirm")), icon: "x-circle", danger: true },
+                                { label: t("ofs.remove"), href: hrefWith(here, sp, { confirm: r.sectionKey }, DROP.filter((d) => d !== "confirm")), icon: "trash", danger: true },
                               ]}
                             />
                           </td>

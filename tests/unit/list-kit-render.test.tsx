@@ -98,7 +98,7 @@ describe("list kit: RowMenu and ConfirmDelete", () => {
     expect(out).toMatch(/role="alertdialog" aria-labelledby="sas-confirm-title" tabindex="-1" data-focus-on-mount=""/);
     expect(out).toContain('<strong id="sas-confirm-title">Delete acme.com?</strong>');
     expect(out).toMatch(/<form class="sas-confirm__actions" action="\/api\/del" method="post"><input type="hidden" name="id" value="s1"\/>/);
-    expect(out).toMatch(/href="\/p"[^>]*>Cancel<\/a><button type="submit"[^>]*>Delete<\/button>/);
+    expect(out).toMatch(/href="\/p"[^>]*>Cancel<\/a><button type="submit"[^>]*><svg[^>]*lucide-trash[\s\S]*?<\/svg>Delete<\/button>/); // R4 B1: trash icon
     expect(out).not.toContain("confirm(");
   });
 });

@@ -183,7 +183,11 @@ describe("Polish-7b: plain terms", () => {
     await db.update(sources).set({ textHash: null }).where(eq(sources.id, one.id));
     const changed = await render(SourcesPage, account.slug);
     save("sources-changed", changed);
-    expect(text(changed)).toContain("Changed since the last analysis: 1 of 3 sources");
+    // Before any finished run the line says so (R4 F3); after one it names what changed.
+    const changedPlan = (await planAnalysis(db, account.id))!;
+    expect(text(changed)).toContain(changeText(changedPlan));
+    if (!changedPlan.firstRun) expect(text(changed)).toContain("Changed since the last analysis: 1 of 3 sources");
+    else expect(text(changed)).not.toContain("since your last run");
     // B4: the same unit as Settings › AI usage (the demo account is in shekels).
     expect(text(changed)).toMatch(/Estimated cost ₪\d+\.\d{2,3}/);
     expect(changed).toContain('data-analyze-button="primary"');
