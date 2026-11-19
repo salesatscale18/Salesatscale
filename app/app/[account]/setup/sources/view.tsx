@@ -43,7 +43,7 @@ const n = (x: number) => x.toLocaleString("en");
 /** "24 pages read", "14 pages", "11 rows", "18 min", "1,240 characters". */
 export function sizeLine(s: Pick<Row, "kind" | "stats" | "origin">): string {
   const st = s.stats ?? {};
-  if (s.kind === "website") return t("sources.size.pages_read", { n: n(st.pagesRead ?? 0) });
+  if (s.kind === "website") return (st.pagesRead ?? 0) === 1 ? t("sources.size.pages_read_one") : t("sources.size.pages_read", { n: n(st.pagesRead ?? 0) });
   if (s.kind === "call" && s.origin.durationSec) return t("sources.size.duration", { time: formatClock(s.origin.durationSec) });
   if (st.pages) return t("sources.size.pages", { n: n(st.pages) });
   if (st.rows) return t("sources.size.rows", { n: n(st.rows) });

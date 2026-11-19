@@ -866,6 +866,7 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 /* S4: the phone back link in Conversations: a chevron, lined up with the header edge. */
 @media (max-width: 860px) {
   .sas-inbox__back { margin-inline-start: -6px; padding-inline-start: 2px; gap: 2px; }
+}
 /* Round-5 (lane R5b): setup pages */
 /* R5-1: price list detail, the Versions card goes under the prices table when the two do not fit side by side. */
 .r5b-pl-split { container-type: inline-size; }

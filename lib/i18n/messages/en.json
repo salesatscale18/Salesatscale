@@ -2919,5 +2919,6 @@
   "golive.market_progress": "{market}: {passed} of {total} checks.",
   "price_lists.publish_blocked.missing_one": "Not ready to publish: add the missing price above.",
   "price_lists.warning.must_fix": "Must be fixed before publishing:",
-  "price_lists.warning.not_in_list": "Not in this price list yet, so the agent can't quote it here:"
+  "price_lists.warning.not_in_list": "Not in this price list yet, so the agent can't quote it here:",
+  "sources.size.pages_read_one": "1 page read"
 }

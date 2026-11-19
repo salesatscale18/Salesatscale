@@ -47,7 +47,7 @@
   "buyer.simulate_ok": "הדמיית תשלום מוצלח",
   "buyer.simulate_fail": "הדמיית תשלום שנדחה",
   "buyer.bank_title": "תשלום בהעברה בנקאית",
-  "buyer.bank_body": "יש להעביר {amount} עם אסמכתה {ref}. ההזמנה תאושר כשהתשלום יתקבל.",
+  "buyer.bank_body": "יש להעביר {amount} עם אסמכתא {ref}. ההזמנה תאושר כשהתשלום יתקבל.",
   "buyer.bank_choose": "אשלם בהעברה בנקאית",
   "buyer.bank_waiting": "ממתינים להעברה שלך",
   "buyer.failed_title": "הבנק דחה את התשלום",
