@@ -131,7 +131,9 @@ async function PaymentsSection({ account }: { account: SellerAccount }) {
 async function UsersSection({ access, sp }: { access: AccountAccess; sp: Record<string, string | string[] | undefined> }) {
   const { account, user: me } = access;
   // Members plus the signed-in platform admin when acting as, each with their last activity here (one grouped audit query).
-  const [rows, invites] = await Promise.all([listAccountUsers(appDb, account.id, { user: me, actingAs: access.actingAs }), listPendingInvites(appDb, account.id)]);
+  const rows = await listAccountUsers(appDb, account.id, { user: me, actingAs: access.actingAs });
+  // Every person the table lists (the acting platform admin too) has no pending invite row (R5-16).
+  const invites = await listPendingInvites(appDb, account.id, new Date(), rows.map((r) => r.user.email));
   const owners = rows.filter((r) => r.member?.isOwner).length;
   const err = one(sp.error);
   const dateFmt = new Intl.DateTimeFormat("en-GB", { dateStyle: "medium", timeZone: safeTimezone(account.timezone) });
@@ -320,17 +322,18 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
               <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{t("settings.intake.none")}</p>
             ) : (
               <div style={{ overflowX: "auto" }}>
-                <table className="sas-table sas-table--stack" style={{ minWidth: 640, fontSize: 13 }} data-intake-keys="">
+                {/* Fits the card at 1440 (R5-3): tighter cells, the market control wraps; phones keep the stacked cards. */}
+                <table className="sas-table sas-table--stack sas-keys-table" style={{ fontSize: 13 }} data-intake-keys="">
                   <thead><tr><th scope="col">{t("settings.intake.col.name")}</th><th scope="col">{t("settings.intake.col.market")}</th><th scope="col">{t("settings.intake.col.key")}</th><th scope="col">{t("settings.intake.col.created")}</th><th scope="col">{t("settings.intake.col.last_used")}</th><th scope="col"><span className="sas-sr">{t("settings.intake.revoke")}</span></th></tr></thead>
                   <tbody>
                     {keys.map((k) => (
                       <tr key={k.id}>
-                        <td><strong>{k.name}</strong></td>
+                        <td style={{ whiteSpace: "normal" }}><strong>{k.name}</strong></td>
                         <td data-label={t("settings.intake.col.market")}>
-                          <form action={setIntakeKeyMarketAction} style={{ display: "flex", gap: 6, alignItems: "center" }} data-key-market={k.id}>
+                          <form action={setIntakeKeyMarketAction} className="sas-keys-table__market" data-key-market={k.id}>
                             <input type="hidden" name="slug" value={account.slug} />
                             <input type="hidden" name="keyId" value={k.id} />
-                            <select className="sas-select" name="marketId" defaultValue={k.marketId && marketList.some((m) => m.id === k.marketId) ? k.marketId : ""} aria-label={t("settings.intake.market_for", { name: k.name })} style={{ minWidth: 0, width: 160 }}>
+                            <select className="sas-select" name="marketId" defaultValue={k.marketId && marketList.some((m) => m.id === k.marketId) ? k.marketId : ""} aria-label={t("settings.intake.market_for", { name: k.name })}>
                               <option value="">{t("settings.intake.market_auto")}</option>
                               {marketList.map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
                             </select>

@@ -36,7 +36,8 @@ function Part({ entry, charge, currency }: { entry: PriceListEntry | null; charg
 
 /** "£129.00 + £3.00/mo" for the other-price-lists card. */
 function otherPrices(e: PriceListEntry | null, currency: string): string {
-  if (!e) return t("price_lists.part.not_sold");
+  // No entry in the list: one state with an empty price (R5-7), "Price missing".
+  if (!e) return t("catalog.price.missing");
   const parts: string[] = [];
   if (e.oneTimeCharged) parts.push(e.oneTimeMinor === null ? t("price_lists.other.price_missing") : formatMoney(e.oneTimeMinor, currency));
   if (e.recurringCharged) parts.push(e.recurringMinor === null ? t("price_lists.other.price_missing") : formatMoney(e.recurringMinor, currency, { period: e.recurringPeriod ?? "month" }));
@@ -123,7 +124,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
         </div>
         <span className="sas-small" data-priced-line="">
           {t("price_lists.priced_line", { priced: priced.priced, total: priced.total })}
-          {priced.missing > 0 ? ` · ${t("price_lists.priced_missing", { count: priced.missing })}` : ""}
+          {priced.missing > 0 ? ` · ${priced.missing === 1 ? t("price_lists.priced_missing_one") : t("price_lists.priced_missing", { count: priced.missing })}` : ""}
         </span>
         <SetupSteps basePath={`/app/${account.slug}`} current="prices" completed={progress} />
       </header>
@@ -216,7 +217,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                             </>
                           ) : (
                             <>
-                              <td data-label={t("price_lists.col.one_time")}><span className="sas-pill">{t("price_lists.part.not_sold")}</span></td>
+                              <td data-label={t("price_lists.col.one_time")}><StatusPill object="catalog_item" state="price_missing" /></td>
                               <td data-label={t("price_lists.col.recurring")}><span className="sas-small">—</span></td>
                             </>
                           )}

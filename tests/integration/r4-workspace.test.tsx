@@ -191,7 +191,8 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
     save("quote-tamar", html);
     expect(html).toContain('<dt class="sas-kv__total">Monthly incl. VAT</dt>');
     expect(html).not.toContain("Monthly total incl. VAT");
-    expect(html).toContain('data-line-name="">Kitchen hub · monthly service<');
+    // R5-4: the quantity on both lines of one item, 1 included.
+    expect(html).toContain('data-line-name="">1 × Kitchen hub · monthly service<');
     expect(html).toContain('data-line-name="">1 × Kitchen hub<');
     // D11: only the reference is code in the header.
     expect(html).toMatch(/<span class="sas-small"><span class="sas-id">Q-\d+ v1<\/span> · valid until /);

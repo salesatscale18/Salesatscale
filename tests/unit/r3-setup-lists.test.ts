@@ -91,7 +91,7 @@ describe("Order form setup", () => {
     const r = parseSettings(base, ["company_id"]);
     expect(r).toEqual({ ok: true, value: { fields: ["company_name", "company_id"], card: true, bankTransfer: false, bankDetails: null, linkValidDays: 7 } });
     expect(parseSettings({ ...base, brandColor: "#ABCDEF" }, [])).toMatchObject({ ok: true, value: { brandColor: "#abcdef" } });
-    expect(parseSettings({ ...base, brandColor: "blue" }, [])).toEqual({ ok: false, error: "Brand color must look like #0f6b5a." });
+    expect(parseSettings({ ...base, brandColor: "blue" }, [])).toEqual({ ok: false, error: "Brand colour must look like #0f6b5a." });
     expect(parseSettings({ linkValidDays: "7" }, [])).toEqual({ ok: false, error: "Turn on at least one payment method." });
   });
 });

@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { quoteRef } from "@/components/sas/id-text";
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { Timeline, type TimelineItem } from "@/components/sas/record";
@@ -12,13 +13,15 @@ import { maskPhone } from "@/lib/leads/rules";
 import { formatDateTimeIn, formatShortDateTimeIn } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { OptOutButton } from "./opt-out";
-import { ConversationPanel, dealEnded, formNotes } from "./conversation";
+import { ConversationPanel, dealEnded, formNotes, FormNotesOnly } from "./conversation";
 import { latestConversationForLead } from "@/lib/agent/conversation";
 import { WhatsAppStart } from "./whatsapp-start";
 import { conversationWindow, openerFacts } from "@/lib/channels/whatsapp";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { displayQuoteStatus, furthestQuoteState, quotesForLead, quoteTimezones } from "@/lib/quotes/service";
-import { docStatusByQuote, leadOrdersWithSignature, linkFor, orderLabel, personSentForms } from "@/lib/orders/service";
+import { docStatusByQuote, leadOrdersWithSignature, linkFor, orderLabel, payLinkOpen, personSentForms } from "@/lib/orders/service";
+import { SignedFormLinks } from "../../orders/signed-form-links";
+import { ScrollLeadToLatest } from "./scroll-latest";
 import { isolate } from "@/lib/leads/bidi";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { dealPaneView } from "@/lib/leads/deal-pane";
@@ -160,9 +163,10 @@ export default async function LeadCardPage({
     title: won ? <span style={{ color: "var(--success)" }} data-tone="success">{title}</span> : title,
     detail:
       won && ord
-        ? <><span className="sas-id">{ord.label}</span> · <span className="sas-num">{ord.amount}</span>{event.type === "order_form.signed" ? ` · Q-${String((event.data as { number?: number } | null)?.number ?? "")} v${String((event.data as { version?: number } | null)?.version ?? "")}` : ""}</>
+        ? <><span className="sas-id">{ord.label}</span> · <span className="sas-num">{ord.amount}</span>{event.type === "order_form.signed" ? <> · <span className="sas-id">{quoteRef(String((event.data as { number?: number } | null)?.number ?? ""), String((event.data as { version?: number } | null)?.version ?? ""))}</span></> : null}</>
         : event.type.startsWith("quote.") || event.type.startsWith("order_form.")
-        ? `Q-${String((event.data as { number?: number } | null)?.number ?? "")}${(event.data as { version?: number } | null)?.version ? ` v${(event.data as { version?: number }).version}` : ""}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`
+        // The quote reference is one ID in the code font (R5-6).
+        ? <><span className="sas-id">{quoteRef(String((event.data as { number?: number } | null)?.number ?? ""), (event.data as { version?: number } | null)?.version)}</span>{`${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`}</>
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : event.type === "lead.market_changed"
@@ -207,7 +211,7 @@ export default async function LeadCardPage({
           <Avatar actor="buyer" initials={nameInitials(lead.fullName)} />
           <div className="sas-stack-2" style={{ gap: 2, flex: 1, minWidth: 0 }}>
             <div className="sas-page-head" style={{ gap: 8 }}>
-              <h1 className="sas-title"><bdi>{lead.fullName}</bdi>{lead.company ? <> · <bdi>{lead.company}</bdi></> : null}</h1>
+              <h1 className="sas-title" data-lead-title="">{/* Each part one unit, breaking only at " · " (R5-6). */}<bdi className="sas-title-part">{lead.fullName}</bdi>{lead.company ? <> · <bdi className="sas-title-part">{lead.company}</bdi></> : null}</h1>
               {simulated ? <SimulatedChip /> : null}
               <StatusPill object="lead" state={lead.status} />
             </div>
@@ -290,6 +294,11 @@ export default async function LeadCardPage({
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
                 leadStatus={lead.status} notes={notes} rawToolNames={seesPlatformDetails(access)}
               />
+            ) : null}
+            {conversation ? (
+              <ScrollLeadToLatest />
+            ) : notes.length ? (
+              <FormNotesOnly notes={notes} timezone={tz} hint={chatNote} />
             ) : (
               <div className="sas-empty sas-lead__chat">
                 <span className="sas-empty__icon sas-empty__icon--agent"><Icon name="message-circle" /></span>
@@ -343,6 +352,10 @@ export default async function LeadCardPage({
                         <span className="sas-list__main sas-num sas-small">{orderById.get(order.id)!.amount}</span>
                         <StatusPill object="payment" state={order.paymentStatus} />
                       </a>
+                      {/* The signed form, and its pay page while the order waits for payment (R5 item 8). */}
+                      <div style={{ padding: "0 16px 8px" }}>
+                        <SignedFormLinks url={linkFor({ id: order.orderFormId }).url} pay={payLinkOpen(order.paymentStatus, leadQuotes.find((q) => q.quote.id === order.quoteId)?.quote.status ?? "")} />
+                      </div>
                     </li>
                   ))}
                 </ul>

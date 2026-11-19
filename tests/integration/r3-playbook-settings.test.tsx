@@ -217,7 +217,7 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(html).toContain("Not the same as consent.source.");
       expect(html).toContain("Not the same as source.");
       expect(html).toMatch(/<textarea id="sample" name="sample" class="sas-textarea st-mono"/);
-      expect(html).toMatch(/<table class="sas-table sas-table--stack" style="min-width:640px;font-size:13px" data-intake-keys/);
+      expect(html).toMatch(/<table class="sas-table sas-table--stack sas-keys-table" style="font-size:13px" data-intake-keys/);
       for (const l of ["Market", "Key", "Created", "Last used"]) expect(html).toContain(`data-label="${l}"`);
     });
 

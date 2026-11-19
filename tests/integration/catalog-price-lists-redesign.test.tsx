@@ -144,7 +144,7 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(rows.find((r) => r.startsWith("Wireless"))).toContain("Needs Site gateway");
       expect(rows.find((r) => r.startsWith("Remote setup"))).toMatch(/₪0\.00.*Inactive/);
       expect(await cat({ pl: uk })).toContain('data-price="not-priced"');
-      expect(tx).toContain("5 items · 1 has no price in Israel prices, so the agent can't quote it there · Open price lists");
+      expect(tx).toContain("5 items · 1 price missing in Israel prices, so the agent can't quote that item there · Open price lists");
       // Header: no draft yet, so no Publish; Add item opens the sheet.
       expect(tx).not.toContain("Publish v2");
       expect(html).toContain("/setup/catalog?item=new");
@@ -171,7 +171,7 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(text(none)).toContain("No items match.");
       const ukHtml = await cat({ pl: uk });
       expect(ukHtml).toMatch(/<option value="[0-9a-f-]{36}" selected="">Prices from: UK prices<\/option>/);
-      expect(text(ukHtml)).toContain("3 have no price in UK prices, so the agent can't quote them there");
+      expect(text(ukHtml)).toContain("3 prices missing in UK prices, so the agent can't quote those items there");
       expect(tableRows(ukHtml).find((r) => r.startsWith("Wireless"))).toContain("£129.00");
       const byPrice = tableRows(await cat({ sort: "price", dir: "desc" }));
       expect(byPrice[0]).toMatch(/^Site gateway/);
@@ -219,7 +219,7 @@ describe("Setup redesign: Catalog and Price lists", () => {
       const prices = html.split('data-item-prices=""')[1].split("</table>")[0];
       // B5: "without VAT", the same words as the price lists.
       expect(text(prices)).toMatch(/Israel prices.*ILS · without VAT.*₪660\.00.*₪90\.00\/month.*Edit/);
-      expect(text(prices)).toMatch(/UK prices.*GBP · without VAT.*Not priced.*Add price/);
+      expect(text(prices)).toMatch(/UK prices.*GBP · without VAT.*Price missing.*Add price/);
       expect(prices).toContain(`/setup/price-lists/${uk}?sku=GW-10`);
       const rules = text(html.split('data-item-rules=""')[1].split("</ul>")[0]);
       expect(rules).toContain("When a quote has Site gateway (GW-10), add Installation (INST-1)");
@@ -369,7 +369,7 @@ describe("Setup redesign: Catalog and Price lists", () => {
       const html = await detail(israel);
       save("price-list", html);
       const tx = text(html);
-      expect(tx).toContain("4 of 5 items priced · 1 missing");
+      expect(tx).toContain("4 of 5 items priced · 1 price missing");
       const strip = text(html.split('class="sas-summary"')[1].split("</section>")[0]);
       expect(strip).toContain("CurrencyILS · Israeli shekel (₪)");
       expect(strip).toContain("VATPrices without VAT · 18%");

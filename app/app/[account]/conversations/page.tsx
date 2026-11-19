@@ -232,7 +232,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
             ) : (
               <>
                 <header className="sas-inbox__thread-head">
-                  <a className={`${buttonClass("ghost", "sm")} sas-inbox__back`} href={qs({ c: undefined })}>{t("inbox.back")}</a>
+                  <a className={`${buttonClass("ghost", "sm")} sas-inbox__back`} href={qs({ c: undefined })}><Icon name="chevron-left" />{t("inbox.back")}</a>
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
                     <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <strong><bdi>{selected.lead.fullName}</bdi>{selected.lead.company ? <> · <bdi>{selected.lead.company}</bdi></> : null}</strong>

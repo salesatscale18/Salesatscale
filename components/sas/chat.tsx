@@ -4,7 +4,7 @@ import { StatusPill, type Actor } from "./primitives";
 import { Icon, type IconName } from "./icon";
 
 /** A trace chip; `outcome` adds a Refused/Failed pill when the tool did not succeed. */
-export type TraceItem = { kind: "tool" | "knowledge"; label: string; outcome?: "refused" | "failed"; title?: string };
+export type TraceItem = { kind: "tool" | "knowledge"; label: string; outcome?: "refused" | "failed"; title?: string; icon?: IconName };
 
 /**
  * One chat message. Agent messages may carry a trace (tools and knowledge the
@@ -44,7 +44,7 @@ export function ChatMessage({
           {trace.map((item, i) => (
             <span key={i} style={{ display: "inline-flex", gap: 4, alignItems: "center" }} title={item.title}>
               {/* Words, not codes: the plain (text font) chip (round-4 review C1, D11). */}
-              <span className="sas-chip sas-chip--plain"><Icon name={(item.kind === "tool" ? "wrench" : "book-open") satisfies IconName} />{item.label}</span>
+              <span className="sas-chip sas-chip--plain"><Icon name={item.icon ?? ((item.kind === "tool" ? "wrench" : "book-open") satisfies IconName)} />{item.label}</span>
               {item.outcome ? <StatusPill object="tool_call" state={item.outcome} /> : null}
             </span>
           ))}

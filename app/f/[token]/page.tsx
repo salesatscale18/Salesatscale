@@ -23,6 +23,7 @@ import { DeliveryRow } from "./delivery";
 import { brandVars } from "@/lib/simulator/rules";
 import { isolateName } from "@/lib/agent/core/names";
 import { buyerDate, buyerTime, buyerZone } from "./time";
+import { BankDetails } from "./bank";
 import "./buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -44,7 +45,7 @@ const STEP_FORM = "b-step-form";
 /** "Q-1003" for version 1, "Q-1003 v2" from version 2 on (the buyer sees a version only once there is more than one). */
 export const quoteRefText = (q: { number: number; version: number }) => (q.version > 1 ? `Q-${q.number} v${q.version}` : `Q-${q.number}`);
 
-function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number; strip?: boolean }) {
+function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number; strip?: boolean | "bank" }) {
   const tr = translator(props.lang);
   // On the steps, the language switch is a submit button of the step form (form="b-step-form"): it saves
   // what the buyer typed on this step as the draft, without checking it, and reloads the same step in the
@@ -59,7 +60,8 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
   return (
     <div className="b-root" lang={props.lang} dir={dir(props.lang)} style={brandVars(props.brand)}>
       <div className={props.step ? "b-page b-page--wide" : "b-page"}>
-        {fakePaymentsEnabled() && props.strip ? <div className="b-strip" role="note" data-test-strip="">{tr("buyer.test_strip")}</div> : null}
+        {/* No card on the bank-transfer variant: the strip says nothing real is charged (R5-4). */}
+        {fakePaymentsEnabled() && props.strip ? <div className="b-strip" role="note" data-test-strip={props.strip === "bank" ? "bank" : ""}>{tr(props.strip === "bank" ? "buyer.test_strip_bank" : "buyer.test_strip")}</div> : null}
         <header className="b-head">
           <span className="b-logo" aria-hidden="true">{initials}</span>
           <span className="b-head__name"><b style={{ fontSize: 16 }}><bdi>{props.seller}</bdi></b>{props.sub ? <span className="b-mut">{props.sub}</span> : null}</span>
@@ -125,7 +127,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const date = (d: Date | string) => buyerDate(d, zone, lang);
   const time = (d: Date) => buyerTime(d, zone, lang);
   // The test-payment banner only where money moves: the payment and paid pages (step 3 has its own notice).
-  const shell = (sub: string | undefined, children: ReactNode, step?: number, strip = false) => (
+  const shell = (sub: string | undefined, children: ReactNode, step?: number, strip: boolean | "bank" = false) => (
     <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step} strip={strip}>{children}</Shell>
   );
   const quoteRef = quoteRefText(s.quote);
@@ -249,14 +251,14 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             <div className="b-note b-note--warn" style={{ flexDirection: "column", gap: 6 }}>
               <b>{tr("buyer.bank_waiting")}</b>
               <span style={{ fontSize: 14 }}>{tr("buyer.bank_body", { amount: money(s, order.amountDueMinor), ref: label })}</span>
-              {s.bankDetails ? <pre style={{ margin: 0, whiteSpace: "pre-wrap", font: "inherit", fontSize: 14 }}>{s.bankDetails}</pre> : null}
+              <BankDetails details={s.bankDetails} reference={label} tr={tr} />
             </div>
           ) : (
             <form action={payBankAction} style={{ display: "flex", flexDirection: "column", gap: 12 }}>
               {hidden}
               <b>{tr("buyer.bank_title")}</b>
               <span style={{ fontSize: 14 }}>{tr("buyer.bank_body", { amount: money(s, order.amountDueMinor), ref: label })}</span>
-              {s.bankDetails ? <pre style={{ margin: 0, whiteSpace: "pre-wrap", font: "inherit", fontSize: 14 }}>{s.bankDetails}</pre> : null}
+              <BankDetails details={s.bankDetails} reference={label} tr={tr} />
               <button type="submit" className="b-btn">{tr("buyer.bank_choose")}</button>
             </form>
           )}
@@ -264,7 +266,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         <section className="b-sec b-noprint"><a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a></section>
         {help}
       </>
-    ), undefined, true);
+    ), undefined, method === "bank" ? "bank" : true);
   }
 
   // Open: check the price again, then review and sign (canvas: BuyerOrder, BuyerPriceChanged).

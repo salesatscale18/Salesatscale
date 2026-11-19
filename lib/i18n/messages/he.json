@@ -276,5 +276,11 @@
   "buyer.summary.yearly_incl_vat": "שנתי כולל מע״מ",
   "buyer.document_utc": "נרשם {time}",
   "buyer.recurring_total.month_vat_included": "חודשי (כולל מע״מ)",
-  "buyer.recurring_total.year_vat_included": "שנתי (כולל מע״מ)"
+  "buyer.recurring_total.year_vat_included": "שנתי (כולל מע״מ)",
+  "buyer.test_strip_bank": "תשלום לדוגמה. שום דבר אמיתי לא מחויב.",
+  "buyer.bank_reference": "אסמכתא",
+  "buyer.bank_branch": "סניף",
+  "buyer.bank_account": "חשבון",
+  "buyer.copy": "העתקה",
+  "buyer.copied": "הועתק"
 }

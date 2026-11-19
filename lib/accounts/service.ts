@@ -227,8 +227,10 @@ export async function listAccountUsers(db: Db, accountId: string, viewer?: { use
 /**
  * Open invites of an account. An invite for an email that already belongs to a
  * member of this account is left out (R4 E5): that person is listed as a user.
+ * `listedEmails`: other people the Users table lists (the platform admin acting
+ * as the account is listed without being a member, R5-16), left out the same way.
  */
-export async function listPendingInvites(db: Db, accountId: string, now = new Date()) {
+export async function listPendingInvites(db: Db, accountId: string, now = new Date(), listedEmails: readonly (string | null | undefined)[] = []) {
   const [rows, members] = await Promise.all([
     db
       .select()
@@ -237,7 +239,7 @@ export async function listPendingInvites(db: Db, accountId: string, now = new Da
       .orderBy(desc(accountInvites.createdAt)),
     listMembers(db, accountId),
   ]);
-  const memberEmails = new Set(members.map(({ user }) => user.email?.trim().toLowerCase()).filter((e): e is string => !!e));
+  const memberEmails = new Set([...members.map(({ user }) => user.email), ...listedEmails].map((e) => e?.trim().toLowerCase()).filter((e): e is string => !!e));
   return rows
     .filter((invite) => !memberEmails.has(invite.email.trim().toLowerCase()))
     .map((invite) => ({ invite, state: inviteState(invite, now) }));

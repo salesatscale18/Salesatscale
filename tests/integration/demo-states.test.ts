@@ -8,7 +8,7 @@ const h = vi.hoisted(() => ({ anthropic: vi.fn() }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: h.anthropic }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { OPEN_QUESTIONS, STATE_LEADS, UNPRICED_SKU } = await import("@/lib/demo/states");
+const { NEW_NOTE, OPEN_QUESTIONS, PARTLY_WEBSITE, STATE_LEADS, UNPRICED_SKU } = await import("@/lib/demo/states");
 const { listSources } = await import("@/lib/sources/service");
 const { listRuns, planAnalysis, analysisSummary, sourceFactCounts, sourceDisplayStatus } = await import("@/lib/pipeline/service");
 const { unansweredQuestions } = await import("@/lib/agent/service");
@@ -57,14 +57,28 @@ describe("demo account review states", () => {
     expect(failed).toMatchObject({ kind: "website", status: "failed" });
     expect(failed.problems[0].message).toBe("We could not read this website.");
     expect(rows.map((r) => r.status)).not.toContain("processing");
-    // Every source with text the analysis reads is marked analysed.
-    for (const s of full.filter((x) => x.status === "ready")) expect(s.textHash).not.toBeNull();
+    // Every source with text the analysis read is marked analysed (the note added after it is not).
+    for (const s of full.filter((x) => x.status === "ready" && x.title !== NEW_NOTE.title)) expect(s.textHash).not.toBeNull();
+  });
+
+  it("R5-5: has a partly failed website and a note that is not analyzed yet", async () => {
+    const full = await db.select().from(sources).where(eq(sources.accountId, accountId));
+    const partly = full.find((s) => s.origin && (s.origin as { url?: string }).url === PARTLY_WEBSITE.url)!;
+    expect(partly).toMatchObject({ kind: "website", status: "partly_failed" });
+    expect(partly.problems[0].message).toBe("We could not read this page.");
+    const note = full.find((s) => s.title === NEW_NOTE.title)!;
+    expect(note).toMatchObject({ kind: "text", status: "ready", textHash: null });
+    const counts = await sourceFactCounts(db, accountId);
+    expect(counts.get(note.id)).toBeUndefined();
+    expect(sourceDisplayStatus(note.status, counts.get(note.id), { changed: true })).toBe("not_analyzed");
   });
 
   it("has an analysis run record that matches the seeded facts: Run history is not empty and nothing needs a new run", async () => {
     const runs = await listRuns(db, accountId);
     expect(runs.map((r) => [r.kind, r.status]).sort()).toEqual([["facts", "done"], ["playbook", "done"]]);
-    const ready = (await db.select().from(sources).where(and(eq(sources.accountId, accountId), eq(sources.status, "ready")))).map((s) => s.id).sort();
+    // The run read every source with text, except the note added after it (R5-5).
+    const ready = (await db.select().from(sources).where(eq(sources.accountId, accountId)))
+      .filter((s) => (s.status === "ready" || s.status === "partly_failed") && s.title !== NEW_NOTE.title).map((s) => s.id).sort();
     for (const r of runs) {
       expect([...r.sourceIds].sort()).toEqual(ready);
       expect(r.usage).toBeNull();
@@ -72,7 +86,8 @@ describe("demo account review states", () => {
       expect(r.finishedAt).not.toBeNull();
     }
     const plan = (await planAnalysis(db, accountId))!;
-    expect(analysisSummary(plan)).toMatchObject({ nothingToRerun: true, changed: 0, rulesChanged: false });
+    // Only the note added after the run is new (R5-5: the "Not analyzed yet" source).
+    expect(analysisSummary(plan)).toMatchObject({ changed: 1, rulesChanged: false });
     // Every fact with a source comes from a source the run read.
     const facts = await db.select().from(knowledgeFacts).where(eq(knowledgeFacts.accountId, accountId));
     for (const f of facts) if (f.sourceId) expect(ready).toContain(f.sourceId);
@@ -120,6 +135,19 @@ describe("demo account review states", () => {
   it("has an order signed with a bank transfer expected, and a quote at the pay step", async () => {
     const leadOf = async (n: number) => (await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.sourceRef, `demo-seed:${n}`))))[0];
     const bankLead = await leadOf(STATE_LEADS.bankTransfer.n);
+    // S11: every state lead was added before its first chat message.
+    for (const n of Object.values(STATE_LEADS).map((l) => l.n)) {
+      const l = await leadOf(n);
+      const firstMsg = (await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, l.id))))
+        .map((c) => c.createdAt.getTime()).sort()[0];
+      if (firstMsg !== undefined) expect(l.createdAt.getTime()).toBeLessThan(firstMsg);
+    }
+    // R5-5: both had a short chat with the agent first; signing sets no lead status, so they read "Agent handling" (not New).
+    for (const l of [bankLead, await leadOf(STATE_LEADS.payStep.n)]) {
+      expect(l.status).toBe("agent_handling");
+      const convs = await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, l.id)));
+      expect(convs).toHaveLength(1);
+    }
     const [bank] = await db.select().from(orders).where(eq(orders.leadId, bankLead.id));
     expect(bank).toMatchObject({ paymentStatus: "bank_transfer_expected", paymentMethod: "bank_transfer", currency: "ILS" });
     expect(bank.amountDueMinor).toBeGreaterThan(0);

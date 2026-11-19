@@ -61,7 +61,7 @@ export function parseCompany(raw: Record<string, string>): { ok: true; value: Co
     (tradeNameLocal ??= {})[lang] = v;
   }
   const color = s("brandColor", 7);
-  if (!/^#[0-9a-fA-F]{6}$/.test(color)) errors.brandColor = "Brand color must look like #0f6b5a.";
+  if (!/^#[0-9a-fA-F]{6}$/.test(color)) errors.brandColor = "Brand colour must look like #0f6b5a.";
   const rep = s("salesRepUserId", 36);
   if (rep && !UUID.test(rep)) errors.salesRepUserId = "Choose a member of this account.";
   if (Object.keys(errors).length) return { ok: false, errors };

@@ -176,7 +176,8 @@ describe("Playbook navigation and polish (rendered)", () => {
     save("company", html);
     expect(html).toContain("data-platform-fixed");
     // The text the agent sends, from the same builder (openerText), with a sample lead name.
-    expect(html).toMatch(/data-agent-intro="en"[^>]*>Hi Rina, this is Maya, the automated assistant of [^<]+\. /);
+    // The company name is its own bidi run in the preview (R5 item 4).
+    expect(html).toMatch(/data-agent-intro="en"[^>]*>Hi Rina, this is Maya, the automated assistant of <bdi data-opener-company="">[^<]+<\/bdi>\. /);
     expect(html).not.toContain("automated agent");
     expect(html).toContain("The agent always says it is an automated assistant. This cannot be turned off.");
   });

@@ -27,7 +27,7 @@ export function parseSettings(raw: Record<string, string>, fieldsOn: string[]): 
   const days = Number(raw.linkValidDays);
   if (![3, 7, 14, 30].includes(days)) return { ok: false, error: "Choose how long the link stays valid." };
   const color = raw.brandColor === undefined ? undefined : raw.brandColor.trim();
-  if (color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(color)) return { ok: false, error: "Brand color must look like #0f6b5a." };
+  if (color !== undefined && !/^#[0-9a-fA-F]{6}$/.test(color)) return { ok: false, error: "Brand colour must look like #0f6b5a." };
   const bankDetails = (raw.bankDetails ?? "").trim().slice(0, 500) || null;
   if (bankTransfer && !bankDetails) return { ok: false, error: "Add the bank details buyers should pay to." };
   return { ok: true, value: { fields, card, bankTransfer, bankDetails, linkValidDays: days, ...(color !== undefined ? { brandColor: color.toLowerCase() } : {}) } };

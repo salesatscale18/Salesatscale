@@ -58,10 +58,10 @@ function Part({ entry, charge, currency }: { entry: PriceListEntry; charge: "one
   return <span className="sas-num">{formatMoney(minor, currency, charge === "recurring" ? { period: entry.recurringPeriod ?? "month" } : {})}</span>;
 }
 
-/** The Price cell: one-time and recurring from the chosen list ("₪660.00 + ₪90.00/month"), or "Not priced". */
+/** The Price cell: one-time and recurring from the chosen list ("₪660.00 + ₪90.00/month"), or "Price missing" (no entry in the list, R5-7). */
 function PriceCell({ row, currency }: { row: CatalogRow; currency: string | null }) {
   if (!currency || row.price === null) return <span className="sas-small">—</span>;
-  if (row.price === "not_priced" || !row.entry) return <span style={{ color: "var(--warning)", fontWeight: 600 }} data-price="not-priced">{t("catalog.price.not_priced")}</span>;
+  if (row.price === "not_priced" || !row.entry) return <span style={{ color: "var(--warning)", fontWeight: 600 }} data-price="not-priced">{t("catalog.price.missing")}</span>;
   if (row.price === "not_charged") return <span className="sas-small">{t("price_lists.part.not_charged")}</span>;
   const e = row.entry;
   const parts = [
@@ -103,7 +103,7 @@ function PricesAndRules({ item, prices, rules, codes, priceListsPath }: {
                   const one = entry ? partState(entry, "one_time") : "not_sold";
                   const rec = entry ? partState(entry, "recurring") : "not_sold";
                   const cell = (state: string, charge: "one_time" | "recurring") =>
-                    !entry ? <span style={{ color: "var(--warning)", fontWeight: 600 }}>{charge === "one_time" ? t("catalog.price.not_priced") : ""}</span>
+                    !entry ? <span style={{ color: "var(--warning)", fontWeight: 600 }}>{charge === "one_time" ? t("catalog.price.missing") : ""}</span>
                     : state === "not_charged" ? <span className="sas-small">{t("price_lists.part.not_charged")}</span>
                     : <Part entry={entry} charge={charge} currency={pl.shown.currency} />;
                   return (

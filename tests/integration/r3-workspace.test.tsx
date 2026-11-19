@@ -239,7 +239,7 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     const html = await page(OrdersPage(props(account.slug, { tab: "orders", quote: ids.eliQuote })));
     save("order-detail", html);
     const panel = html.split('class="sas-side-panel sas-sheet"')[1];
-    expect(panel).toMatch(/<h2 id="q-h" class="sas-title">Order PD-10001<\/h2>/);
+    expect(panel).toMatch(/<h2 id="q-h" class="sas-title">Order <span class="sas-id" style="font-size:inherit">PD-10001<\/span><\/h2>/);
     // Only the reference is a code (round-4 review D11).
     expect(panel).toContain(`from quote <span class="sas-id">${ids.eliQuoteNo} v1</span>`);
     expect(panel).not.toContain("valid until");

@@ -167,7 +167,8 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
       save("company", html);
       expect(html).toContain('data-agent-intro="en"');
       expect(html).toContain('data-agent-intro="he"');
-      expect(html).toContain("Hi Rina, this is Maya, the automated assistant of Polar. You asked about monitoring your fridges. How do you check them today?");
+      // The company name is its own bidi run in the preview (R5 item 4); the text is the one the agent sends.
+      expect(html).toContain('Hi Rina, this is Maya, the automated assistant of <bdi data-opener-company="">Polar</bdi>. You asked about monitoring your fridges. How do you check them today?');
       expect(html).not.toMatch(/automated agent/);
       expect(tr("playbook.never_hint")).toContain("says it is an automated assistant");
       expect(tr("playbook.never_hint")).not.toContain("automated agent");
@@ -244,6 +245,15 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
       save("settings-users", html);
       expect(html).toContain("new@polar.test");
       expect(html).not.toMatch(/OLGA@polar\.test|>olga@polar\.test<\/span>/);
+    });
+
+    it("R5-16: an invite for the email of a person listed but not a member (acting platform admin) is not listed", async () => {
+      await db.insert(accountInvites).values({ accountId: acc.id, email: "Admin.Acting@platform.test", expiresAt: new Date(Date.now() + 86_400_000), tokenHash: "r5-acting" });
+      const before = (await listPendingInvites(db, acc.id)).map((x) => x.invite.email);
+      expect(before).toContain("Admin.Acting@platform.test");
+      const after = (await listPendingInvites(db, acc.id, new Date(), ["admin.acting@platform.test"])).map((x) => x.invite.email);
+      expect(after).not.toContain("Admin.Acting@platform.test");
+      expect(after).toContain("new@polar.test");
     });
 
     it("E6: Required and Optional under the sample; the sample check in the code font", async () => {

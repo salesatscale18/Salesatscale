@@ -24,7 +24,7 @@ export type DealPane = {
   shown: PaneField[];
   /** Order-form details not known yet: one line that opens. */
   laterUnknown: PaneField[];
-  /** Fields not known yet, of all (phone summary). */
+  /** Order-form details not known yet (phone summary): always `laterUnknown.length`, the count desktop shows. */
   missingCount: number;
   objections: { text: string; handled: boolean }[];
   nextStep: string | null;
@@ -69,11 +69,12 @@ export function dealPaneView(i: {
   const all = playbookFields.map((f) => ({ key: f.key, label: f.label, stage: f.stage, value: fields[f.key]?.value, provenance: fields[f.key]?.provenance }));
   const unknown = (f: { value?: string | null }) => !String(f.value ?? "").trim();
   const strip = ({ stage: _s, ...f }: (typeof all)[number]): PaneField => f;
+  const laterUnknown = all.filter((f) => f.stage === "before_order_form" && unknown(f)).map(strip);
   return {
     state: !i.playbook ? "pending" : playbookFields.length === 0 ? "none" : "fields",
     shown: all.filter((f) => !(f.stage === "before_order_form" && unknown(f))).map(strip),
-    laterUnknown: all.filter((f) => f.stage === "before_order_form" && unknown(f)).map(strip),
-    missingCount: all.filter(unknown).length,
+    laterUnknown,
+    missingCount: laterUnknown.length,
     objections: i.deal?.objections ?? [],
     nextStep: nextStepText({ latestOrder: i.latestOrder, stage: i.stage, agentNextStep: i.deal?.nextStep, tradeName: i.tradeName, buyerName: i.buyerName }),
   };

@@ -133,7 +133,7 @@ const PLAYS = {
   },
   price_early: {
     facts: [
-      { text: "Prices are in ILS without VAT (18%). A sensor is 590 ILS, or 550 ILS each from 10 sensors. Each site needs one hub (660 ILS plus 90 ILS a month for monitoring) and installation (250 ILS per site). The total depends on the number of fridges and sites.", source: "Israel price list" },
+      { text: "Prices are in ILS without VAT (18%). A sensor is 590 ILS, or 550 ILS each from 10 sensors. Each site needs one GW-10 gateway (660 ILS plus 90 ILS a month for monitoring) and installation (250 ILS per site). The total depends on the number of fridges and sites.", source: "Israel price list" },
     ],
   },
 };

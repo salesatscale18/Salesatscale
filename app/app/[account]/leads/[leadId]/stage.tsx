@@ -3,6 +3,7 @@
  * steps, done / current / upcoming, and one sentence on what the agent waits
  * for and what happens next. Read-only; the stage comes from lib/leads/stage.ts.
  */
+import { TextWithId } from "@/components/sas/id-text";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { t, type MessageKey } from "@/lib/i18n";
 import { STAGE_STEPS, type LeadStageView, type StageStep } from "@/lib/leads/stage";
@@ -12,7 +13,7 @@ export const STEP_LABEL: Record<StageStep, MessageKey> = {
   quote: "lead.stage.step.quote", order_form: "lead.stage.step.order_form", after: "lead.stage.step.after",
 };
 
-export type StageTone = "now" | "warning" | "human" | "neutral";
+export type StageTone = "now" | "warning" | "human" | "neutral" | "success";
 
 /** The tone of the current step and of the stage chip in the Leads list. */
 export function stageTone(v: LeadStageView): StageTone {
@@ -27,6 +28,8 @@ const TONE_STYLE: Record<StageTone, { bg: string; fg: string }> = {
   warning: { bg: "var(--warning-soft)", fg: "var(--warning)" },
   human: { bg: "var(--human-soft)", fg: "var(--human)" },
   neutral: { bg: "var(--surface-sunken)", fg: "var(--ink-muted)" },
+  // The paid banner on the lead page: a win (S1).
+  success: { bg: "var(--success-soft)", fg: "var(--success)" },
 };
 
 /** "Recommend", "Recommend · objection", "Order form · person handling", "After · paid", … */
@@ -79,8 +82,8 @@ export type PaidOrder = { label: string; amount: string };
 export function StageStepper({ v, name, paidOrder }: { v: LeadStageView | null; name: string; paidOrder?: PaidOrder | null }) {
   const current = v ? STAGE_STEPS.indexOf(v.step) : -1;
   const paidBanner = !!(v && paidOrder && v.paid && v.step === "after" && !v.human && !v.objection);
-  // A paid deal keeps the primary bar (the Leads list chip stays neutral).
-  const tone = v ? (paidBanner ? "now" : stageTone(v)) : "now";
+  // A paid deal: the green success banner, a win (S1); the Leads list chip stays neutral.
+  const tone: StageTone = v ? (paidBanner ? "success" : stageTone(v)) : "now";
   const s = TONE_STYLE[tone];
   const sentence = v ? stageSentence(v, name) : null;
   return (
@@ -114,7 +117,7 @@ export function StageStepper({ v, name, paidOrder }: { v: LeadStageView | null; 
         <div style={{ display: "flex", gap: 10, alignItems: "flex-start", padding: "10px 12px", borderRadius: 10, background: s.bg, overflowWrap: "anywhere" }} data-testid="stage-sentence">
           <span style={{ color: s.fg, display: "inline-flex", paddingBlockStart: 2 }}><Icon name={sentence.icon} /></span>
           {paidBanner && paidOrder ? (
-            <span data-testid="stage-paid"><strong>{t("lead.stage.after.paid_order", { order: paidOrder.label })}</strong> · <span className="sas-num">{paidOrder.amount}</span>. {sentence.next}</span>
+            <span data-testid="stage-paid"><strong><TextWithId text={t("lead.stage.after.paid_order", { order: paidOrder.label })} id={paidOrder.label} /></strong> · <span className="sas-num">{paidOrder.amount}</span>. {sentence.next}</span>
           ) : (
             <span>
               {v.human || v.objection || v.closed || (v.step === "after" && v.paid) ? <><strong>{stageLabel(v)}.</strong>{" "}</> : null}

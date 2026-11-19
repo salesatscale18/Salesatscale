@@ -137,3 +137,11 @@
   .b-grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
   .b-summary { display: flex; flex-direction: column; gap: 8px; position: sticky; top: 18px; margin-block-start: 18px; border: 1px solid var(--line); border-radius: 12px; padding: 16px; font-size: 14px; }
 }
+
+/* Round-5 (lane R5): bank transfer details with Copy buttons (R5-4). */
+.b-bank { margin: 0; display: flex; flex-direction: column; gap: 6px; font-size: 14px; line-height: 20px; }
+.b-bank > div { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.b-bank dt { color: var(--muted); min-width: 72px; }
+.b-bank dd { margin: 0; display: inline-flex; align-items: center; gap: 8px; }
+.b-copy { min-height: 32px; padding: 0 10px; border: 1px solid #7d8697; border-radius: 8px; background: #fff; color: var(--ink); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+.b-copy:focus-visible { outline: 2px solid #2357d0; outline-offset: 2px; }

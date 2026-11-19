@@ -21,12 +21,14 @@ export function SuggestedReplyBox(props: {
   return (
     <>
       {agentText ? (
-        <span className="sas-small" data-agent-suggestion="" style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", color: "var(--agent)" }}>
+        // One row on a phone too: the label wraps, Clear stays at its end (S5).
+        <span className="sas-small" data-agent-suggestion="" style={{ display: "flex", gap: 8, alignItems: "center", color: "var(--agent)" }}>
           <Icon name="sparkles" />
-          <span>{props.label}</span>
+          <span style={{ flex: "1 1 auto", minWidth: 0 }}>{props.label}</span>
           <button
             type="button"
             className="sas-btn sas-btn--ghost sas-btn--sm"
+            style={{ flex: "none" }}
             onClick={() => {
               if (ref.current) {
                 ref.current.value = "";

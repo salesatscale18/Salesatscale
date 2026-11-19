@@ -189,7 +189,7 @@ describe("Polish-7b: plain terms", () => {
     // Before any finished run the line says so (R4 F3); after one (the demo seeds one) it names what changed.
     const changedPlan = (await planAnalysis(db, account.id))!;
     expect(text(changed)).toContain(changeText(changedPlan));
-    if (!changedPlan.firstRun) expect(text(changed)).toContain(`Changed since the last analysis: 1 of ${plan.sources.length} sources`);
+    if (!changedPlan.firstRun) expect(text(changed)).toContain(`Changed since the last analysis: ${plan.changed + 1} of ${plan.sources.length} sources`);
     else expect(text(changed)).not.toContain("since your last run");
     // B4: the same unit as Settings › AI usage (the demo account is in shekels).
     expect(text(changed)).toMatch(/Estimated cost ₪\d+\.\d{2,3}/);

@@ -6,6 +6,8 @@ import { buyerChat, chatNames, resolveChatLink } from "@/lib/simulator/service";
 import { tg } from "@/lib/agent/core/names";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
 import { ChatClient, type ChatStrings } from "./chat-client";
+import { getMarket } from "@/lib/markets/service";
+import { marketTimezone } from "@/lib/markets/settings";
 import "./chat.css";
 
 export const dynamic = "force-dynamic";
@@ -48,6 +50,8 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
     );
   }
   const chat = await buyerChat(appDb, ctx);
+  // Times in the lead's market time zone, as the pay page and the seller's thread show them (R5-3). Read only: no market is created here.
+  const timeZone = marketTimezone(ctx.account, ctx.lead.marketId ? await getMarket(appDb, ctx.account.id, ctx.lead.marketId) : null);
   const strings: ChatStrings = {
     bannerLead: tr("buyer.sim.banner_lead"),
     banner: tr("buyer.sim.banner"),
@@ -92,7 +96,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
     <div className="c-root" lang={lang} dir="ltr" style={rootStyle}>
       <ChatClient
         token={token} lang={lang} seller={names.seller} initials={initials} strings={strings}
-        initial={chat}
+        initial={chat} timeZone={timeZone}
       />
     </div>
   );

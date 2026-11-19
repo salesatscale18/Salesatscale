@@ -5,6 +5,7 @@ import { SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
+import { statusDef } from "@/lib/domain/status";
 import { firstParam, hrefWith } from "@/lib/list-kit";
 import { setupProgress } from "@/lib/overview/setup";
 import { FILE_ACCEPT, PRICE_LIST_FIX } from "@/lib/sources/files";
@@ -284,8 +285,9 @@ export default async function SourcesPage({ params, searchParams }: { params: Pr
             <ul className="sas-stack-4" aria-label={t("sources.problems")} style={{ listStyle: "none", margin: 0, padding: "12px 20px 16px" }}>
               {withProblems.flatMap((s) => s.problems.slice(0, 3).map((p, i) => (
                 <li key={`${s.id}-${i}`} style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
-                  <span style={{ color: s.status === "needs_input" ? "var(--warning)" : "var(--danger)", display: "inline-flex" }}>
-                    <Icon name={s.status === "needs_input" ? "clock" : "x-circle"} />
+                  {/* The status chip's own icon and tone (lib/domain/status.ts), R5-4. */}
+                  <span style={{ color: statusDef("source", s.status).tone === "warning" ? "var(--warning)" : "var(--danger)", display: "inline-flex" }} data-problem-icon={statusDef("source", s.status).icon}>
+                    <Icon name={statusDef("source", s.status).icon} />
                   </span>
                   <span style={{ flex: "1 1 300px", minWidth: 0, overflowWrap: "anywhere" }}>
                     <strong dir="auto">{s.title}</strong>{p.where && p.where !== "source" && p.where !== s.title ? <span className="sas-chip" style={{ marginInline: 6 }}>{p.where}</span> : ": "}

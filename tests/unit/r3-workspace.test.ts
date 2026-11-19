@@ -41,7 +41,9 @@ describe("deal pane (A1)", () => {
     expect(pane.state).toBe("fields");
     expect(pane.shown.map((f) => f.key)).toEqual(["sites", "how", "company_id"]);
     expect(pane.laterUnknown.map((f) => f.key)).toEqual(["company_name"]);
-    expect(pane.missingCount).toBe(2);
+    // R5-1: the phone line counts order-form details only, as desktop does ("how" is a before-quote field).
+    expect(pane.missingCount).toBe(1);
+    expect(pane.missingCount).toBe(pane.laterUnknown.length);
     expect(pane.objections).toHaveLength(1);
     expect(pane.nextStep).toBe("Ask how they check.");
   });

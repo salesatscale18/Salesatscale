@@ -151,12 +151,12 @@ describe("seller stage stepper: Order form until paid", () => {
     expect(stageSentence(signed, "Eli").wait).toBe("Eli signed the order form. Waiting for the payment.");
     expect(v({ facts: { quote: "ready", orderForm: "sent", signed: true, paid: true } })).toMatchObject({ step: "after", paid: true });
   });
-  it("the paid banner names the order and its amount, on the primary bar", () => {
+  it("the paid banner names the order and its amount, in the success tone (S1)", () => {
     const paid = v({ facts: { quote: "ready", orderForm: "sent", signed: true, paid: true } });
     const html = renderToStaticMarkup(StageStepper({ v: paid, name: "Eli", paidOrder: { label: "PD-10001", amount: "₪1,770.00 + ₪106.20/month" } }));
-    expect(html).toContain("Order PD-10001 paid");
+    expect(html).toContain('Order <span class="sas-id">PD-10001</span> paid');
     expect(html).toContain("₪1,770.00 + ₪106.20/month");
     expect(html).not.toContain("After · paid");
-    expect(html).toContain('data-stage-tone="now"');
+    expect(html).toContain('data-stage-tone="success"');
   });
 });

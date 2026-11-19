@@ -11,11 +11,16 @@
  * transient by design: failStaleSources marks a source that has been
  * processing for 5 minutes as failed when Sources loads, so a seeded one
  * would read as failed by the time anyone looks.
+ *
+ * Source states seeded: ready (website, file), needs input (price sheet),
+ * failed (shop website), partly failed (a website with one page read and one
+ * not) and "Not analyzed yet" (a note added after the recorded analysis: read,
+ * never analyzed, no facts; the status is derived on read, R5-5).
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sources, toolCalls, type DealFieldValue } from "@/db/schema";
+import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sources, toolCalls, type DealFieldValue } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
 import { takeOver } from "@/lib/agent/conversation";
 import { addFact, startTestConversation } from "@/lib/agent/service";
@@ -28,7 +33,7 @@ import { createOrderForm, loadForm, markOpened, signForm, startPayment, type Sig
 import { planAnalysis } from "@/lib/pipeline/service";
 import { createPriceList, setEntry } from "@/lib/pricing/price-lists";
 import { createQuote, type QuoteInput } from "@/lib/quotes/service";
-import { addFile, addWebsite, listSections, saveParse } from "@/lib/sources/service";
+import { addFile, addNote, addWebsite, listSections, saveParse } from "@/lib/sources/service";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 
 // ---------------------------------------------------------------------------
@@ -52,6 +57,21 @@ export const WEBSITE = {
 
 /** A website the read failed for (stored with the same problem text the reader writes). */
 export const FAILED_WEBSITE = "https://shop.polar-demo.example/";
+
+/** A website read in part: one page read, one the reader could not open (status "partly failed"). */
+export const PARTLY_WEBSITE = {
+  url: "https://help.polar-demo.example/",
+  pages: [
+    { locator: "/", heading: "Help centre", text: "Find answers about sensors, alerts and the daily temperature log.\nThe help centre is updated every month." },
+  ],
+  problems: [{ where: "/install", message: "We could not read this page.", fix: "Try again, or upload the content as a file." }],
+} as const;
+
+/** A note added after the last analysis: read, never analyzed, no facts ("Not analyzed yet"). */
+export const NEW_NOTE = {
+  title: "Holiday opening times",
+  body: "Our support line is closed on Yom Kippur. Urgent alerts are still handled by the on-call technician.",
+};
 
 export const APP_GUIDE = {
   name: "Polar Demo – app guide.md",
@@ -106,6 +126,29 @@ const UK_PRICES = [
 ];
 export const UNPRICED_SKU = "INST-1";
 
+/**
+ * Short chats before the order form was sent (Ronit, Avi): stored as the agent
+ * writes them, no model call. The lead then reads "Agent handling", the status
+ * the agent's turn sets (lib/agent/turn.ts); signing sets no lead status, and
+ * only a paid order makes the lead won (R5-5).
+ */
+const ORDER_CHATS = {
+  bankTransfer: {
+    language: "he",
+    thread: [
+      { actor: "buyer", body: "שלום, יש לנו מאפייה עם 3 סניפים ו-15 מקררים. כמה עולה ניטור?" },
+      { actor: "agent", body: "שמחה לעזור! לשלושה סניפים צריך 15 חיישנים ו-3 רכזות. הצוות ישלח לך הצעת מחיר וטופס הזמנה." },
+    ],
+  },
+  payStep: {
+    language: "en",
+    thread: [
+      { actor: "buyer", body: "Hi, we have one deli with 4 fridges. What would sensors cost?" },
+      { actor: "agent", body: "Happy to help! For one site that is 4 sensors and a gateway. The team will send you a quote and the order form." },
+    ],
+  },
+} as const;
+
 /** Leads 4–7 (1–3 are the plain new leads of the seed). Each carries one state. */
 export const STATE_LEADS = {
   bankTransfer: { n: 4, fullName: "רונית דמו", company: "מאפיית דמו רמת גן", email: "ronit@bakery-demo.example", language: "he" },
@@ -138,6 +181,8 @@ export type ReviewStates = {
 };
 
 const min = (now: Date, m: number) => new Date(now.getTime() - m * 60_000);
+/** Minutes before `now` the state leads were added: before their first chat message (180 min ago). */
+export const LEAD_ADDED_MIN = 200;
 
 /**
  * Seeds the review states into a live demo account. `now` anchors every
@@ -162,7 +207,12 @@ export async function seedReviewStates(
   await db.update(sources).set({
     status: "failed", problems: [{ where: "source", message: "We could not read this website.", fix: "Try again, or upload the content as a file." }],
   }).where(and(eq(sources.accountId, accountId), eq(sources.id, failed.id)));
-  for (const [s, want] of [[site, "ready"], [guide, "ready"], [sheet, "needs_input"]] as const) {
+  // A website read in part (one page read, one not), as the reader saves it.
+  const partly = await addWebsite(db, actor, accountId, { url: PARTLY_WEBSITE.url, paths: [] });
+  await saveParse(db, accountId, partly.id, {
+    sections: PARTLY_WEBSITE.pages.map((p) => ({ ...p })), problems: PARTLY_WEBSITE.problems.map((p) => ({ ...p })), stats: { pages: 2, pagesRead: 1 },
+  }, { language: "en" });
+  for (const [s, want] of [[site, "ready"], [guide, "ready"], [sheet, "needs_input"], [partly, "partly_failed"]] as const) {
     const [row] = await db.select({ status: sources.status }).from(sources).where(and(eq(sources.accountId, accountId), eq(sources.id, s.id)));
     if (row?.status !== want) throw new Error(`Demo seed: source "${s.title}" is ${row?.status}, expected ${want}`);
   }
@@ -210,8 +260,17 @@ export async function seedReviewStates(
     if (!r.ok) throw new Error(`Demo seed: lead ${l.fullName} not saved: ${r.reason}`);
     leadIds[name] = r.lead.id;
   }
+  // The leads came in before their chats (the earliest starts 180 min ago): "Lead added" and the consent come first in the timeline (S11).
+  const added = min(now, LEAD_ADDED_MIN);
+  const stateLeadIds = Object.values(leadIds);
+  await db.update(leads).set({ createdAt: added }).where(and(eq(leads.accountId, accountId), inArray(leads.id, stateLeadIds)));
+  await db.update(leadEvents).set({ createdAt: added })
+    .where(and(eq(leadEvents.accountId, accountId), inArray(leadEvents.leadId, stateLeadIds), inArray(leadEvents.type, ["lead.created", "consent.recorded"])));
+  await db.update(consentRecords).set({ capturedAt: added }).where(and(eq(consentRecords.accountId, accountId), inArray(consentRecords.leadId, stateLeadIds)));
 
   // 8. Orders: one signed with a bank transfer expected, one signed and waiting at the pay step.
+  // Each lead first had a short chat with the agent (stored, no model call), as a real order would.
+  for (const k of ["bankTransfer", "payStep"] as const) await orderChat(db, accountId, leadIds[k], liveVersionId, now, ORDER_CHATS[k]);
   const orderId = await signedOrder(db, accountId, userId, leadIds.bankTransfer, { lines: [{ sku: "SNS-200", qty: 15 }, { sku: "GW-10", qty: 3 }], sites: 3, discountBp: 0 }, {
     fields: {
       company_name: "מאפיית דמו בע״מ", company_id: "515550177", billing_address: "רחוב הדמו 5, רמת גן", delivery_address: "רחוב הדמו 5, רמת גן",
@@ -249,8 +308,11 @@ export async function seedReviewStates(
   // 11. The analysis that made the facts, recorded last (its hashes cover the final facts, catalog and playbook).
   const analysisRuns = await recordAnalysis(db, accountId, now);
 
+  // 12. A note added after that analysis: "Not analyzed yet" until Analyze sources runs.
+  await addNote(db, actor, accountId, NEW_NOTE);
+
   return {
-    sources: 4, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
+    sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, passedConversationId, failedConversationId, analysisRuns,
   };
@@ -308,6 +370,18 @@ const fact = (value: string, at: Date): DealFieldValue => ({ value, provenance: 
 async function newConversation(db: Db, accountId: string, leadId: string, versionId: string, language: string, at: Date, status: "open" | "human") {
   const id = randomUUID();
   await db.insert(conversations).values({ id, accountId, leadId, channel: "whatsapp", agentVersionId: versionId, status, language, createdAt: at, updatedAt: at });
+  return id;
+}
+
+/** The chat before an order: the buyer asks, the agent answers (stored, never sent). The lead reads "Agent handling". */
+async function orderChat(
+  db: Db, accountId: string, leadId: string, versionId: string, now: Date,
+  c: { language: string; thread: readonly { actor: "buyer" | "agent"; body: string }[] },
+) {
+  const start = min(now, 30);
+  const id = await newConversation(db, accountId, leadId, versionId, c.language, start, "open");
+  const last = await insertThread(db, accountId, id, c.language, versionId, c.thread.map((m, i) => ({ actor: m.actor, body: m.body, at: min(now, 30 - i) })));
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: last }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   return id;
 }
 

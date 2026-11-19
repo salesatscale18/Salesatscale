@@ -77,7 +77,7 @@ describe("one-click demo account", () => {
     if (!r.ok) throw new Error("refused");
     const s = r.summary;
     accountId = s.accountId;
-    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 7, facts: 12, legalSections: 4, leads: 7, simulatedBuyers: 2, live: true });
+    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 9, facts: 12, legalSections: 4, leads: 7, simulatedBuyers: 2, live: true });
     expect(s.tradeName).toBe("Polar Demo 2026-11-17 10:00:00");
 
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
@@ -257,7 +257,7 @@ describe("one-click demo account", () => {
     h.me = admin;
     const e = await thrown(createDemoAccountAction());
     expect(e.message).toBe("NEXT_REDIRECT");
-    const m = e.url!.match(/^\/sadmin\/accounts\/([0-9a-f-]{36})\?demo=created&items=3&sources=7&facts=12&leads=7$/);
+    const m = e.url!.match(/^\/sadmin\/accounts\/([0-9a-f-]{36})\?demo=created&items=3&sources=9&facts=12&leads=7$/);
     expect(m).not.toBeNull();
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, m![1]));
     expect(acc.status).toBe("live");

@@ -700,7 +700,7 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 
 /* Delete confirm, in the page (a row under the item, or above the list). */
 .sas-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); background: var(--danger-soft); border: 1px solid var(--danger); border-radius: var(--radius-md); white-space: normal; }
-.sas-confirm:focus { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-app .sas-confirm:focus, .sas-app .sas-confirm:focus-visible { outline: none; } /* Takes focus programmatically (R5-4); its buttons keep their rings. */
 .sas-confirm__icon { color: var(--danger); }
 .sas-confirm__text { flex: 1 1 220px; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .sas-confirm__actions { display: flex; gap: var(--space-2); margin-inline-start: auto; }
@@ -842,3 +842,28 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 }
 /* E7: table headings like "One-time" stay on one line. */
 .sas-th-nowrap { white-space: nowrap; }
+
+/* ---------------------------------------------------------------------------
+ * Round-5 (lane R5): review follow-ups
+ * ------------------------------------------------------------------------- */
+/* Settings › Lead intake keys: fit the card at 1440 (tighter cells, the market control wraps). Phones keep the stacked cards. */
+@media (min-width: 768px) {
+  .sas-keys-table th, .sas-keys-table td { padding-inline: 10px; }
+  .sas-keys-table td { white-space: normal; }
+}
+.sas-keys-table__market { display: flex; flex-wrap: wrap; gap: 4px 6px; align-items: center; }
+.sas-keys-table__market .sas-select { min-width: 0; width: auto; max-width: 150px; flex: 1 1 110px; }
+.sas-keys-table td.sas-id { white-space: nowrap; }
+/* Lead intake field list: the description always under the field name (one layout). */
+.sas-app .st-fields > div { flex-direction: column; gap: 2px; }
+.sas-app .st-fields dd { flex: none; }
+/* R5-5: tables beside an open side panel drop their minor columns (wide screens only; below 1100px the panel sits under the table). */
+@media (min-width: 1101px) {
+  .sas-with-panel .sas-table--panel-aware .sas-col-minor { display: none; }
+}
+/* R5-6: a lead title "name · company" breaks only between its parts. */
+.sas-title-part { display: inline-block; max-width: 100%; }
+/* S4: the phone back link in Conversations: a chevron, lined up with the header edge. */
+@media (max-width: 860px) {
+  .sas-inbox__back { margin-inline-start: -6px; padding-inline-start: 2px; gap: 2px; }
+}

@@ -1,5 +1,5 @@
 import { buttonClass } from "@/components/sas/primitives";
-import { Icon } from "@/components/sas/icon";
+import { Icon, type IconName } from "@/components/sas/icon";
 import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
 import { MessageBody } from "@/components/sas/message-body";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
@@ -52,6 +52,15 @@ export function toolLabel(name: string): string {
   return maybe(`conv.tool.${name}`) ?? t("conv.tool.other");
 }
 
+/** The timeline's icon for the same event, where there is one (S3); other tools keep the wrench. */
+const TOOL_ICON: Record<string, IconName> = {
+  hand_off_to_human: "user",
+  send_order_form: "send",
+  create_quote: "file-text",
+  schedule_follow_up: "clock",
+  record_opt_out: "x-circle",
+};
+
 /**
  * Trace chips for an agent message: the seller-readable label, plus Refused/Failed when the tool did not succeed.
  * `raw`: platform admins also get the internal name ("deal_state.update") as the chip's tooltip.
@@ -61,6 +70,7 @@ export function traceChips(calls: ConversationView["thread"][number]["calls"], r
   return calls.filter((c) => c.name !== APP_MESSAGE_CALL).map((c) => ({
     kind: c.name === "lookup_knowledge" ? "knowledge" : "tool",
     label: toolLabel(c.name),
+    ...(TOOL_ICON[c.name] ? { icon: TOOL_ICON[c.name] } : {}),
     outcome: c.outcome === "ok" ? undefined : c.outcome,
     ...(raw ? { title: describeCall(c.name, c.input, c.result, c.outcome).label } : {}),
   }));
@@ -115,6 +125,31 @@ function FormNoteEntry({ note, time, timeTitle }: { note: FormNote; time: string
       ) : note.closed ? <span>{t("conv.form_note.closed")}</span> : null}
       <span style={{ flexBasis: "100%" }}>{t("conv.form_note.only_you")}</span>
     </div>
+  );
+}
+
+/**
+ * A lead with no conversation yet: the forms a person sent still show, as the
+ * thread would show them, in place of "No messages yet" (round-4 review F2 follow-up).
+ */
+export function FormNotesOnly({ notes, timezone, hint }: { notes: FormNote[]; timezone?: string | null; hint?: string }) {
+  let lastDay = "";
+  const sorted = [...notes].sort((a, b) => a.at.getTime() - b.at.getTime());
+  return (
+    <section id="conversation" aria-labelledby="conv-h" data-testid="form-notes-only" style={{ borderBlockEnd: "1px solid var(--line)" }}>
+      <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
+        <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
+      </div>
+      <ChatThread label={t("conv.label")}>
+        {sorted.flatMap((n) => {
+          const day = localDateIso(n.at, timezone);
+          const divider = day === lastDay ? null : <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(n.at, timezone) })}><span>{formatDayIn(n.at, timezone)}</span></div>;
+          lastDay = day;
+          return [divider, <FormNoteEntry key={`note-${n.id}`} note={n} time={formatClockIn(n.at, timezone)} timeTitle={formatDateTimeIn(n.at, timezone)} />];
+        })}
+      </ChatThread>
+      {hint ? <p className="sas-small" style={{ margin: 0, padding: "0 16px 16px" }}>{hint}</p> : null}
+    </section>
   );
 }
 
@@ -174,7 +209,8 @@ export function ConversationControls({
         <>
           <form action={humanReplyAction} className="sas-stack-2">
             {hidden}
-            <span className="sas-small" role="status" style={{ display: "flex", gap: 6, alignItems: "center" }}><Icon name="pause" />{status}</span>
+            {/* Conversations states the pause in its banner: the composer only says "Reply as {name}" there (S2). */}
+            {from === "inbox" ? null : <span className="sas-small" role="status" style={{ display: "flex", gap: 6, alignItems: "center" }}><Icon name="pause" />{status}</span>}
             <label className="sas-input-label" htmlFor={replyId}>{t("conv.reply_as", { name: firstName(me) })}</label>
             <SuggestedReplyBox
               id={replyId}
@@ -277,7 +313,10 @@ export function ConversationPanel({
               locale={m.language && isLocale(m.language) ? m.language : "en"}
               trace={actor === "agent" ? traceChips(calls, rawToolNames) : undefined}
             >
-              <MessageBody body={m.body} kind={kind} />
+              {/* Each message takes its own direction (R5-2): an English reply in a Hebrew chat stays left to right. */}
+              <div dir="auto" data-msg-dir="">
+                <MessageBody body={m.body} kind={kind} />
+              </div>
             </ChatMessage>
           )];
         })}

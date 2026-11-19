@@ -8,7 +8,7 @@ import { ariaSort, nextSort, type SortDir, type TableSort } from "@/lib/domain/t
  * the URL), with aria-sort on the <th>. `href` builds the link for a sort.
  */
 export function SortHeader<K extends string>({
-  label, column, sort, firstDir = "asc", href, style,
+  label, column, sort, firstDir = "asc", href, style, className,
 }: {
   label: ReactNode;
   column: K;
@@ -16,10 +16,11 @@ export function SortHeader<K extends string>({
   firstDir?: SortDir;
   href: (s: TableSort<K>) => string;
   style?: CSSProperties;
+  className?: string;
 }) {
   const state = ariaSort(sort, column);
   return (
-    <th scope="col" aria-sort={state} style={style} data-sort-col={column}>
+    <th scope="col" aria-sort={state} style={style} className={className} data-sort-col={column}>
       <a className="sas-sort" href={href(nextSort(sort, column, firstDir))} title={typeof label === "string" ? t("table.sort_by", { column: label }) : undefined}>
         {label}
         <span className="sas-sort__icon" aria-hidden="true" data-dir={state === "none" ? undefined : state}>

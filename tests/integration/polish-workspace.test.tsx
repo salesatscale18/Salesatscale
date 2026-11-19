@@ -240,7 +240,7 @@ describe("Polish-2+5: seller workspace", () => {
 
     it("quotes: Status column, chat name first, no zero discount, Sent pill inline", async () => {
       const list = await page(OrdersPage(props(account.slug)));
-      expect(list).toMatch(/<th scope="col" aria-sort="none" data-sort-col="status"><a class="sas-sort"[^>]*>Status<[\s\S]*?<\/th><th scope="col">Order form<\/th>/);
+      expect(list).toMatch(/<th scope="col" aria-sort="none" data-sort-col="status"><a class="sas-sort"[^>]*>Status<[\s\S]*?<\/th><th scope="col" class="sas-col-minor">Order form<\/th>/);
       const detail = await page(OrdersPage(props(account.slug, { quote: ids.quote })));
       expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-id">GW-10<\/span>/);
       expect(detail).not.toMatch(/>Discount</);

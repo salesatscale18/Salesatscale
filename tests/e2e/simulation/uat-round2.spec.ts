@@ -326,7 +326,7 @@ test("B2b Price list", async ({ browser }) => {
   await expect(page.locator("tr", { hasText: "SNS-200" })).toContainText("590");
   await expect(page.locator("tr", { hasText: "SNS-200" })).toContainText("No recurring price");
   await expect(page.locator("tr", { hasText: "INST-1" })).toContainText("Price missing");
-  await expect(page.locator("tr", { hasText: "PRB-5" })).toContainText("Not sold in this price list");
+  await expect(page.locator("tr", { hasText: "PRB-5" })).toContainText("Price missing");
   await noHorizontalScroll(page);
   await shot(page, "B2b-states");
   // Publishing with a missing price is refused.

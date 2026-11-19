@@ -197,6 +197,15 @@ export async function createOrderForm(
 }
 
 /** The current link of an open form (the token is derived, never stored). */
+/**
+ * Whether a signed form's buyer link still leads to a payment step: the order
+ * waits for payment (not paid or refunded) and its quote is not cancelled.
+ * The link of a signed form has no expiry (loadForm ignores it once signed). R5 item 8.
+ */
+export function payLinkOpen(paymentStatus: string, quoteStatus: string): boolean {
+  return paymentStatus !== "paid" && paymentStatus !== "refunded" && quoteStatus !== "cancelled";
+}
+
 export function linkFor(form: Pick<OrderForm, "id">) {
   const token = tokenFor(form.id);
   return { token, url: publicUrl(formPath(token)) };

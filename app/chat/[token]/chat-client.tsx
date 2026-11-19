@@ -67,7 +67,8 @@ function Card({ p, s, initials, dir }: { p: LinkPreview; s: ChatStrings; initial
   );
 }
 
-const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
+/** The calendar day in the market's time zone (R5-3), so the date separators match the times. */
+const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 
 /**
  * The buyer's chat: polls `messages?after=<id>` every 2 s while the tab is
@@ -76,8 +77,10 @@ const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC" }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
+  /** The lead's market time zone: times and dates read as on the pay page and the seller's thread (R5-3). */
+  timeZone?: string;
 }) {
   const [items, setItems] = useState<Shown[]>(initial.messages);
   const [cards, setCards] = useState(initial.cards ?? {});
@@ -182,12 +185,13 @@ export function ChatClient({ token, lang, seller, initials, strings, initial }: 
     }
   };
 
+  const dayKey = dayKeyIn(timeZone);
   const now = new Date();
   const yesterday = new Date(now.getTime() - 86_400_000);
   const dateLabel = (d: Date) => dayKey(d) === dayKey(now) ? strings.today
     : dayKey(d) === dayKey(yesterday) ? strings.yesterday
-    : new Intl.DateTimeFormat(locale, { day: "numeric", month: locale.startsWith("he") ? "long" : "short", ...(d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}) }).format(d);
-  const timeOf = (d: Date) => new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+    : new Intl.DateTimeFormat(locale, { timeZone, day: "numeric", month: locale.startsWith("he") ? "long" : "short", ...(dayKey(d).slice(0, 4) !== dayKey(now).slice(0, 4) ? { year: "numeric" } : {}) }).format(d);
+  const timeOf = (d: Date) => new Intl.DateTimeFormat(locale, { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
 
   const rows: ReactNode[] = [];
   let prevDay = "";

@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, Trash2, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, Trash2, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -76,6 +76,8 @@ const ICONS = {
   "list-filter": ListFilter,
   "arrow-up-right": ArrowUpRight,
   "chevron-down": ChevronDown,
+  /** Back links (mirrors in RTL). */
+  "chevron-left": ChevronLeft,
   "arrow-up": ArrowUp,
   "arrow-down": ArrowDown,
   globe: Globe,
@@ -88,7 +90,7 @@ const ICONS = {
 export type IconName = keyof typeof ICONS;
 
 /** Icons that point in a direction and must mirror in RTL. */
-const DIRECTIONAL: ReadonlySet<IconName> = new Set(["send"]);
+const DIRECTIONAL: ReadonlySet<IconName> = new Set(["send", "chevron-left"]);
 
 export function Icon({ name, label, className }: { name: IconName; label?: string; className?: string }) {
   const Cmp = ICONS[name];

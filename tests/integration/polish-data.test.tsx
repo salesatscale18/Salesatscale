@@ -184,9 +184,9 @@ describe("Polish-1: wrong or contradicting data", () => {
     expect(html).toContain("Verified");
     expect(html).not.toContain("Quote on assumption of 1 site");
     expect(html).toContain("Order PD-10001 is paid. Next: delivery.");
-    // Paid banner on the primary bar; success-toned timeline with the amount.
-    expect(html).toMatch(/data-stage="after" data-stage-tone="now"/);
-    expect(html).toContain("Order PD-10001 paid");
+    // Paid banner in the success tone (S1); success-toned timeline with the amount. The order ID in the code font (R5 item 6).
+    expect(html).toMatch(/data-stage="after" data-stage-tone="success"/);
+    expect(html).toContain('Order <span class="sas-id">PD-10001</span> paid');
     expect(html).not.toContain("After · paid.");
     expect(html).toMatch(/data-tone="success">Order paid</);
     expect(html).toMatch(/data-tone="success">Order form signed</);

@@ -5,7 +5,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { listMembers } from "@/lib/accounts/service";
 import { TRADE_NAME_MAX, whiteContrast } from "@/lib/accounts/company";
 import { marketLanguages } from "@/lib/agent/names-auto";
-import { nameLanguages, tradeNameRows, typedLanguage } from "@/lib/agent/core/names";
+import { buyerNames, nameLanguages, tradeNameRows, typedLanguage } from "@/lib/agent/core/names";
 import { LocalNames } from "../local-names";
 import { PlatformFixed } from "../playbook/parts";
 import { listVersions } from "@/lib/agent/service";
@@ -44,7 +44,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   const heAgent = playbook.agentNameLocal?.he?.trim();
   // The real opener (R4 A5), built by the code that writes the agent's first message, per buyer language.
   const openerLangs = account.languages.filter(isLocale);
-  const openers = (openerLangs.length ? openerLangs : (["en"] as Locale[])).map((lang) => ({ lang, text: sampleOpenerText(playbook, account, lang) }));
+  const openers = (openerLangs.length ? openerLangs : (["en"] as Locale[])).map((lang) => ({ lang, text: sampleOpenerText(playbook, account, lang), company: buyerNames(playbook, account, lang).seller }));
   const lead = leadTimeOrNull(account.deliveryLeadTime);
   // The example uses the account's own time zone and weekend (a market may differ).
   const plan = deliveryPlanFor(account, { overrides: {}, countries: [] });
@@ -162,7 +162,7 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                     key={o.lang} lang={o.lang} dir={o.lang === "he" ? "rtl" : "ltr"} data-agent-intro={o.lang}
                     style={{ alignSelf: "flex-start", maxWidth: "100%", background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 12, borderStartStartRadius: 4, padding: "10px 12px", lineHeight: "21px", overflowWrap: "anywhere" }}
                   >
-                    {o.text}
+                    <OpenerWithCompany text={o.text} company={o.company} />
                   </div>
                 ))}
                 <span className="sas-small">{t("company.agent_opener_hint")} <a href={`${base}/setup/playbook#pb-opener-h-s`}>{t("company.agent_opener_edit")}</a></span>
@@ -219,4 +219,15 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
       </form>
     </main>
   );
+}
+
+/**
+ * The opener with the company name as its own bidi run (<bdi>, R5-4): a name with
+ * digits ("Polar Demo 2026-11-19 07:45:09") does not mix with the sentence around it.
+ * The text itself is the one the agent sends; only the preview markup changes.
+ */
+function OpenerWithCompany({ text, company }: { text: string; company: string }) {
+  const at = company ? text.indexOf(company) : -1;
+  if (at < 0) return <>{text}</>;
+  return <>{text.slice(0, at)}<bdi data-opener-company="">{company}</bdi>{text.slice(at + company.length)}</>;
 }
