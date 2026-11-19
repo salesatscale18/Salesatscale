@@ -800,3 +800,22 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-combo > .sas-input { padding-inline-end: 32px; }
 .sas-combo > .sas-input::-webkit-calendar-picker-indicator { opacity: 0; }
 .sas-combo__arrow { position: absolute; inset-inline-end: 10px; inset-block-start: 50%; transform: translateY(-50%); pointer-events: none; color: var(--ink-muted); }
+/* Round-4 (lane R4-4): Company, Test lab, Settings. */
+/* Company: the one Save sits in a bar that stays in view at the bottom of the screen (D1). */
+.sas-app .co-savebar { flex: 1 1 100%; position: sticky; bottom: 0; z-index: 5; display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2) var(--space-3); padding: var(--space-3) var(--space-4); background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 -4px 12px rgb(0 0 0 / 0.06); }
+/* Company: "from [5] to [10] days" stays on one line, also on a phone (D4). */
+.sas-app .co-range { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; }
+.sas-app .co-range .sas-input { width: 72px; flex: none; }
+/* Test lab: the open chat's Deal state sits under the chat when the side column wraps below (D4). */
+.lab-split { container-type: inline-size; }
+.lab-deal--main { display: none; }
+@container (max-width: 903px) {
+  .lab-deal--main { display: block; }
+  .lab-deal--side { display: none; }
+}
+/* Settings › Lead intake: field names in the code font, each with its meaning (E6). */
+.sas-app .st-mono { font-family: var(--font-mono); font-size: 13px; }
+.sas-app .st-fields { margin: 0; display: flex; flex-direction: column; gap: 6px; }
+.sas-app .st-fields > div { display: flex; flex-wrap: wrap; gap: 2px 8px; }
+.sas-app .st-fields dt { flex: 0 0 auto; }
+.sas-app .st-fields dd { margin: 0; flex: 1 1 230px; min-width: 0; }

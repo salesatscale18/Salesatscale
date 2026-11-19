@@ -106,8 +106,28 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const locale = conv && isLocale(conv.language) ? conv.language : "en";
   const table = scenarioTable(scenarios, results);
   const versionLabel = (v: (typeof versions)[number]) => `${t("lab.version", { version: v.version })} · ${t(`status.agent_version.${v.status}` as MessageKey)}`;
-  const scenarioLabel = (s: (typeof scenarios)[number]) => `${s.title}${s.language !== "en" ? ` (${LANG_NAME[s.language] ?? s.language})` : ""}`;
+  // The language is named only when the title does not already say it ("Hebrew buyer", not "Hebrew buyer (Hebrew)").
+  const scenarioLabel = (s: (typeof scenarios)[number]) => {
+    const lang = LANG_NAME[s.language] ?? s.language;
+    return s.language === "en" || s.title.toLowerCase().includes(lang.toLowerCase()) ? s.title : `${s.title} (${lang})`;
+  };
   const now = new Date();
+  // The open chat's Deal state (R4 D4): directly under the chat on a phone, in the side column on a wide screen.
+  const dealCard = (at: "main" | "side") => (conv && convVersion ? (
+            <section className={`sas-panel lab-deal lab-deal--${at}`} aria-labelledby={`lab-deal-h-${at}`} data-deal-card={at}>
+              <div className="sas-panel__body sas-stack-4">
+                <h2 id={`lab-deal-h-${at}`} className="sas-heading">{t("lab.deal_state")}</h2>
+                <DealStateFields fields={convVersion.playbook.fields.map((f) => ({ key: f.key, label: f.label, value: deal?.fields[f.key]?.value, provenance: deal?.fields[f.key]?.provenance }))} />
+                {deal?.objections.length ? (
+                  <div className="sas-stack-2">
+                    <span className="sas-group-label">{t("lead.card.objections")}</span>
+                    <ul style={{ margin: 0, paddingInlineStart: 18 }}>{deal.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
+                  </div>
+                ) : null}
+                {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
+              </div>
+            </section>
+  ) : null);
 
   return (
     <main className="sas-shell__content">
@@ -133,7 +153,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
       {error === "rate_limited" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lab.rate_limited")}</span></div> : null}
       {account.status === "paused" || error === "paused" ? <div className="sas-alert sas-alert--warning" role="status"><Icon name="pause" /><span>{t("lab.paused")}</span></div> : null}
 
-      <div className="sas-split">
+      <div className="sas-split lab-split">
         <div className="sas-split__main">
           <section className="sas-panel" aria-labelledby="lab-new-h">
             <form action={startChatAction} className="sas-panel__body" style={{ display: "flex", gap: 12, alignItems: "flex-end", flexWrap: "wrap" }} data-new-chat="">
@@ -254,6 +274,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               )}
             </section>
           ) : null}
+          {dealCard("main")}
 
           <section className="sas-stack-4" aria-labelledby="lab-sc-h" data-scenarios="">
             <div className="sas-listbar__head">
@@ -323,21 +344,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         </div>
 
         <aside className="sas-split__side sas-stack-4">
-          {conv && convVersion ? (
-            <section className="sas-panel" aria-labelledby="lab-deal-h">
-              <div className="sas-panel__body sas-stack-4">
-                <h2 id="lab-deal-h" className="sas-heading">{t("lab.deal_state")}</h2>
-                <DealStateFields fields={convVersion.playbook.fields.map((f) => ({ key: f.key, label: f.label, value: deal?.fields[f.key]?.value, provenance: deal?.fields[f.key]?.provenance }))} />
-                {deal?.objections.length ? (
-                  <div className="sas-stack-2">
-                    <span className="sas-group-label">{t("lead.card.objections")}</span>
-                    <ul style={{ margin: 0, paddingInlineStart: 18 }}>{deal.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
-                  </div>
-                ) : null}
-                {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
-              </div>
-            </section>
-          ) : null}
+          {dealCard("side")}
 
           <section className="sas-panel" aria-labelledby="lab-ver-h">
             <div className="sas-panel__body sas-stack-4">

@@ -116,7 +116,11 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(card).toContain("add cost of the problem, smaller starting set");
       const pb = await render(PlaybookPage);
       const summary = pb.match(/data-testid="plays-summary">[\s\S]*?<\/ul>/)?.[0] ?? "";
-      expect(summary).toMatch(/1 of 13 plays have your facts/);
+      // R4 A4: the parts sum to 13 (1 with facts, 9 would be sharper, 3 need none); own cards counted apart.
+      expect(summary).toContain('data-summary="facts">1 have your facts</li>');
+      expect(summary).toContain('data-summary="sharper">9 would be sharper with your facts</li>');
+      expect(summary).toContain('data-summary="none">3 need none</li>');
+      expect(summary).toContain('data-summary="own">No cards of your own yet</li>');
     });
   });
 
@@ -161,8 +165,10 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(DEFAULT_PLAYS.proof.example).not.toMatch(/24 hours|replaced/);
       const html = await render(PlayPage, { play: "proof" });
       save("play-proof", html);
-      expect(html).toContain("&lt;One proof point: a fact, a customer example or a guarantee&gt;");
-      expect(html).toContain('data-part="example-note">Illustration: the agent uses only your approved facts.</span>');
+      // R4 A1: the placeholder is a grey tag, without the angle brackets.
+      expect(html).toContain('<span class="pb-slot-tag" data-slot-tag="">One proof point: a fact, a customer example or a guarantee</span>');
+      expect(html).not.toContain("&lt;One proof point");
+      expect(html).toContain('data-part="example-note">Illustration. The grey words are filled from your approved facts.</span>');
     });
   });
 
@@ -201,7 +207,16 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(html).toContain("yoursite.example/contact");
       expect(html).toMatch(/<code id="endpoint" class="sas-num" aria-labelledby="endpoint-label" style="overflow-wrap:anywhere;min-width:0">http:\/\/localhost:3000\/api\/leads\//);
       expect(html).not.toContain("docs/lead-intake.md");
-      expect(html).toContain("Optional: email, country (chooses the market)");
+      // R4 E6: Required and Optional together under the sample, every field the sample shows, the two sources told apart.
+      expect(html.indexOf('data-intake-sample')).toBeLessThan(html.indexOf('data-intake-fields="required"'));
+      expect(html.indexOf('data-intake-fields="required"')).toBeLessThan(html.indexOf('data-intake-fields="optional"'));
+      expect(html.indexOf('data-intake-fields="optional"')).toBeLessThan(html.indexOf('id="sample"'));
+      for (const f of ["full_name", "phone", "language", "business", "source_id", "consent.source", "consent.text", "consent.at", "email", "country", "source", "consent.page_url"]) {
+        expect(html).toContain(`data-intake-field="${f}"`);
+      }
+      expect(html).toContain("Not the same as consent.source.");
+      expect(html).toContain("Not the same as source.");
+      expect(html).toMatch(/<textarea id="sample" name="sample" class="sas-textarea st-mono"/);
       expect(html).toMatch(/<table class="sas-table sas-table--stack" style="min-width:640px;font-size:13px" data-intake-keys/);
       for (const l of ["Market", "Key", "Created", "Last used"]) expect(html).toContain(`data-label="${l}"`);
     });

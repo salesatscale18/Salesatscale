@@ -14,7 +14,7 @@ export function SampleCheck({ slug, example }: { slug: string; example: string }
       <strong>{t("settings.sample.title")}</strong>
       <span className="sas-small">{t("settings.sample.body")}</span>
       <label className="sas-sr" htmlFor="sample">{t("settings.sample.label")}</label>
-      <textarea id="sample" name="sample" className="sas-textarea sas-num" rows={8} defaultValue={example} spellCheck={false} dir="ltr" />
+      <textarea id="sample" name="sample" className="sas-textarea st-mono" rows={8} defaultValue={example} spellCheck={false} dir="ltr" />
       <div><button type="submit" className={buttonClass("secondary", "sm")} disabled={pending}>{t("settings.sample.check")}</button></div>
       {state.status === "checked" ? (
         <div className="sas-stack-2" role="status" aria-live="polite">

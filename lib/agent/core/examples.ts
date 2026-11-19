@@ -44,7 +44,7 @@ export const MIXED_EXAMPLES: ConversationExamples = {
   assumed: "I've quoted for 10 users; tell me if that's different.",
   twoQuestions: "How many people will use it, and is it one office?",
   plays: {
-    need: "How do you keep your offices clean today?",
+    need: "How do you handle <this> today?",
     fit: "For one building site for a week, two scissor lifts and one generator cover it.",
     value: "Everyone sees the same schedule on their phone, so nobody works from an old copy.",
   },

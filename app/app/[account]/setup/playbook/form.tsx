@@ -13,6 +13,7 @@ import { OpeningSection, type OpeningValues } from "./opening";
 import { LocalNames } from "../local-names";
 import { PlatformFixed, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
+import type { PlaysSummary } from "./plays/overview";
 
 /** "Names in other languages" for the agent (C2): rows from the account's markets, built on the server. */
 export type AgentNamesView = { rows: NameRow[]; source: string; notice: string | null; marketsHref: string };
@@ -113,7 +114,6 @@ function QuestionCounting({ max }: { max: number }) {
   );
 }
 
-export type PlaysSummary ={ total: number; withFacts: number; own: number; needsFacts: number; suggested: number };
 
 /**
  * Playbook editor (canvas: Playbook, PlaybookOpening). Rows live in local
@@ -353,10 +353,12 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         <a className={buttonClass("secondary", "sm")} href={playsHref}>{t("playbook.plays.open")}</a>
       ), (
         <ul className="sas-small" style={{ margin: 0, paddingInlineStart: 18 }} data-testid="plays-summary">
-          <li>{t("playbook.plays.summary_facts", { n: plays.withFacts, total: plays.total })}</li>
-          <li>{t("playbook.plays.summary_own", { n: plays.own })}</li>
-          {plays.needsFacts ? <li>{t("playbook.plays.summary_needs", { n: plays.needsFacts })}</li> : null}
-          {plays.suggested ? <li>{t("playbook.plays.summary_suggested", { n: plays.suggested })}</li> : null}
+          {/* R4 A4: the first three parts sum to the total; own cards and suggestions are counted on their own. */}
+          <li data-summary="facts">{t("playbook.plays.summary_facts", { n: plays.withFacts })}</li>
+          <li data-summary="sharper">{t("playbook.plays.summary_sharper", { n: plays.sharper })}</li>
+          <li data-summary="none">{t("playbook.plays.summary_none", { n: plays.noneNeeded })}</li>
+          <li data-summary="own">{plays.own ? t(plays.own === 1 ? "playbook.plays.summary_own_one" : "playbook.plays.summary_own", { n: plays.own }) : t("playbook.plays.summary_own_none")}</li>
+          {plays.suggested ? <li data-summary="suggested">{t("playbook.plays.summary_suggested", { n: plays.suggested })}</li> : null}
         </ul>
       ), isNew)}
 

@@ -171,11 +171,13 @@ describe("Playbook navigation and polish (rendered)", () => {
     expect(html).toContain('data-testid="draft-banner"');
   });
 
-  it("Company: how the agent introduces itself is set by the platform, the name tinted", async () => {
+  it("Company: the real opening message (R4 A5), and the fixed disclosure says \"automated assistant\"", async () => {
     const html = await render(CompanyPage as Page, acc);
     save("company", html);
     expect(html).toContain("data-platform-fixed");
-    expect(html).toMatch(/data-agent-intro="">&quot;Hi, this is <span data-part="seller"[^>]*><bdi>Maya<\/bdi><\/span> \(an automated agent\)\. You asked about…&quot;/);
-    expect(html).toContain("The agent always says it is automated. This cannot be turned off.");
+    // The text the agent sends, from the same builder (openerText), with a sample lead name.
+    expect(html).toMatch(/data-agent-intro="en"[^>]*>Hi Rina, this is Maya, the automated assistant of [^<]+\. /);
+    expect(html).not.toContain("automated agent");
+    expect(html).toContain("The agent always says it is an automated assistant. This cannot be turned off.");
   });
 });

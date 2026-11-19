@@ -32,3 +32,11 @@ export function missingSlots(hint: string, facts: { text: string; source?: strin
   const text = real.map((f) => `${f.text} ${f.source ?? ""}`).join(" ").toLowerCase();
   return slots.filter((s) => !stems(s).some((w) => text.includes(w)));
 }
+
+/** A play example split into plain text and <placeholders> (shown as grey tags, without the brackets). */
+export function exampleParts(example: string): { text: string; slot: boolean }[] {
+  return example.split(/(<[^<>]+>)/g).filter(Boolean).map((part) => {
+    const m = part.match(/^<([^<>]+)>$/);
+    return m ? { text: m[1].trim(), slot: true } : { text: part, slot: false };
+  });
+}

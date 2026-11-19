@@ -22,7 +22,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     title: "Finding the real need",
     when: "You do not yet know enough to recommend one set.",
     do: ["Start with how they handle it today.", "Then ask only what decides which products and how many (size, sites, quantity).", "Ask about the problem or its cost only if the answer would change what you recommend.", "Skip anything the buyer already said. Stop at 3 questions."],
-    example: "How do you keep your offices clean today?",
+    example: "How do you handle <this> today?",
     notThis: "What is your company name, size and budget?",
     sellerContentHint: "The questions that decide which products fit.",
   },
@@ -168,8 +168,17 @@ export function effectivePlay(playbook: Pick<Playbook, "plays">, key: PlayKey): 
 
 export const allPlayKeys = (): readonly PlayKey[] => PLAY_KEYS;
 
+/**
+ * A default card's moves with the seller's question budget in them ("Stop at N
+ * questions."). The one rewrite both the playbook card and the prompt use, so
+ * the seller reads the number the agent is told.
+ */
+export function withQuestionBudget(steps: readonly string[], budget: number): string[] {
+  return steps.map((step) => step.replace(/\bStop at 3 questions\./, `Stop at ${budget} questions.`));
+}
+
 /** A default card with the seller's question budget in it ("Stop at N questions."). A seller's own card is never rewritten. */
 export function defaultPlayFor<K extends PlayKey>(key: K, budget: number): DefaultPlay {
   const d = DEFAULT_PLAYS[key];
-  return { ...d, do: d.do.map((step) => step.replace(/\bStop at 3 questions\./, `Stop at ${budget} questions.`)) };
+  return { ...d, do: withQuestionBudget(d.do, budget) };
 }

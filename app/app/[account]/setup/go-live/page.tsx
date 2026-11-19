@@ -111,6 +111,8 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
                   <span className="sas-sr"> · {c.state === "later" ? t("golive.state.later") : checkStateWord(c.state)}</span>
                   <span className="sas-small" style={{ display: "block" }}>{detail(c)}</span>
                 </span>
+                {/* Payments pass in test mode: the check stays green, test mode is a neutral note (R4 E3). */}
+                {c.id === "payments" && c.state === "pass" ? <span className="sas-pill" data-test-mode=""><Icon name="info" />{t("golive.check.payments.test_mode")}</span> : null}
                 {(c.state === "fail" || c.state === "optional") && c.fixPath ? (
                   <a className={buttonClass("secondary", "sm")} href={`${base}${c.fixPath}`}>{t(`golive.fix.${c.id}` as MessageKey)}</a>
                 ) : null}

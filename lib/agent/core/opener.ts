@@ -13,7 +13,7 @@
  */
 import type { OpenerText, Playbook } from "@/db/schema";
 import { t, type Locale } from "@/lib/i18n";
-import { isolateName, tg, type AgentGender } from "./names";
+import { buyerNames, isolateName, tg, type AgentGender } from "./names";
 
 const HEBREW = /[֐-׿]/;
 
@@ -99,4 +99,19 @@ export function openerParts(o: OpenerInput): { intro: string; interest: string; 
 export function openerText(o: OpenerInput): string {
   const p = openerParts(o);
   return [p.intro, p.interest, p.question].join(" ");
+}
+
+/**
+ * The opener a sample lead in this language would get (Company preview, R4 A5):
+ * built by `openerText`, the same code that writes the agent's first message,
+ * from the playbook's opener and the names a buyer in this language sees.
+ */
+export function sampleOpenerText(
+  playbook: Pick<Playbook, "agentName" | "agentNameLocal" | "agentNameAuto" | "agentGender" | "opener">,
+  account: { tradeName: string; tradeNameLocal?: Partial<Record<string, string>> | null },
+  language: Locale,
+): string {
+  const names = buyerNames(playbook, account, language);
+  const name = t(language === "he" ? "playbook.opening.sample_lead_he" : "playbook.opening.sample_lead");
+  return openerText({ name, agent: names.agent, company: names.seller, gender: names.gender, language, opener: playbook.opener });
 }
