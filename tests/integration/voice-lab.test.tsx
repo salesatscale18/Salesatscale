@@ -10,6 +10,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import type { ReactElement } from "react";
 import { and, eq } from "drizzle-orm";
 import { agentVersions, conversations, messages, sellerAccounts, users, voiceSessions, type SellerAccount, type User } from "@/db/schema";
+import fs from "node:fs";
+import path from "node:path";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -33,12 +35,21 @@ const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion } = await import("@/lib/agent/service");
 const { createVoiceSession, startVoiceTestConversation } = await import("@/lib/voice/service");
-const { startVoiceCallAction, saveVoiceSettingsAction } = await import("@/app/app/[account]/setup/test-lab/voice-actions");
+const { endMyVoiceCallAction, startVoiceCallAction, saveVoiceSettingsAction } = await import("@/app/app/[account]/setup/test-lab/voice-actions");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
 
 type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
 const render = async (sp: Record<string, string> = {}) =>
   renderToStaticMarkup(await (TestLabPage as unknown as Page)({ params: Promise.resolve({ account: slug }), searchParams: Promise.resolve(sp) }));
+
+/** With VOICE_RENDER_DIR set, the rendered pages are also written there as HTML (screenshots: tests/e2e/voice/harness-run.ts). */
+const save = (name: string, html: string) => {
+  const dir = process.env.VOICE_RENDER_DIR;
+  if (!dir) return;
+  const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${name}.html`), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css} body{margin:0}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:block">${html}</div></div></body></html>`);
+};
 
 let tdb: Awaited<ReturnType<typeof createTestDb>>;
 let db: TestDb;
@@ -97,10 +108,38 @@ describe("startVoiceCallAction", () => {
     expect(conv).toMatchObject({ channel: "voice", isTest: true, scenario: "ready_buyer", language: "en" });
     const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
     expect(s).toMatchObject({ status: "pending", mode: "scripted", startedByUserId: admin.id });
+    // One test call per account at a time: the same admin is offered to end it; someone else just waits.
+    expect(await startVoiceCallAction({ slug })).toEqual({ ok: false, reason: "already_in_call", ownCall: true });
+    const [other] = await db.insert(users).values({ clerkId: "c", email: "other@p.test", firstName: "Oz", role: "super_admin" }).returning();
+    as(other);
+    expect(await startVoiceCallAction({ slug })).toEqual({ ok: false, reason: "already_in_call", ownCall: false });
+    expect(await endMyVoiceCallAction({ slug })).toEqual({ ok: true });
+    expect((await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId)))[0].status).toBe("pending"); // not theirs
+    as(seller);
+    expect(await endMyVoiceCallAction({ slug })).toEqual({ ok: false });
+    as(admin);
+    expect(await endMyVoiceCallAction({ slug })).toEqual({ ok: true });
+    expect((await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId)))[0]).toMatchObject({ status: "ended", endReason: "user_hangup" });
     // The local dev relay: its URL, and no hosting deadline.
     vi.stubEnv("VOICE_WS_URL", "ws://localhost:8787/api/voice/socket");
     const local = await startVoiceCallAction({ slug });
     expect(local).toMatchObject({ ok: true, wsUrl: "ws://localhost:8787/api/voice/socket", maxSec: 600 });
+    await endMyVoiceCallAction({ slug });
+  });
+
+  it("over the hourly limit: says when to try again", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(admin);
+    const { rateLimits } = await import("@/db/schema");
+    const start = Math.floor(Date.now() / 3_600_000) * 3_600_000;
+    await db.insert(rateLimits).values({ key: `voice:${account.id}`, windowStart: new Date(start), count: 999 })
+      .onConflictDoUpdate({ target: [rateLimits.key, rateLimits.windowStart], set: { count: 999 } });
+    const r = await startVoiceCallAction({ slug });
+    expect(r).toMatchObject({ ok: false, reason: "rate_limited" });
+    if (r.ok) throw new Error();
+    expect(new Date(r.retryAt!).getTime() - (start + 3_600_000)).toBeGreaterThanOrEqual(0);
+    expect(new Date(r.retryAt!).getTime() - (start + 3_600_000)).toBeLessThan(1000);
+    await db.delete(rateLimits);
   });
 });
 
@@ -155,12 +194,14 @@ describe("the test lab page", () => {
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
     const html = await render();
+    save("page-test-lab-starter", html);
     expect(html).toContain("New test chat");
     expect(html).toContain("data-voice-starter");
     expect(html).toContain("Start call");
-    expect(html).toMatch(/English · v\d+ Draft · up to 4 minutes 30 seconds/);
+    expect(html).toMatch(/English · v\d+ Draft · up to 4 min 30 s/);
     expect(html).toContain("Voice: Kore · firm, clear · Slower pace");
     const panel = await render({ panel: "voice" });
+    save("page-settings-panel", panel);
     expect(panel).toContain("Saved in draft v");
     expect(panel).toContain("Save to draft");
     expect(panel).toContain("Reset to defaults");
@@ -177,14 +218,18 @@ describe("the test lab page", () => {
     await db.insert(messages).values([
       { accountId: account.id, conversationId: c.conversationId, actor: "agent", body: "Hi, this is the assistant.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 0, createdAt: new Date(t0) },
       { accountId: account.id, conversationId: c.conversationId, actor: "buyer", body: "Hello there.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 11_000, createdAt: new Date(t0 + 1) },
-      { accountId: account.id, conversationId: c.conversationId, actor: "agent", body: "Sure.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 15_000, answerMs: 900, createdAt: new Date(t0 + 2) },
-      { accountId: account.id, conversationId: c.conversationId, actor: "system", body: "Voice call ended · 0:38", language: "en", createdAt: new Date(t0 + 3) },
+      { accountId: account.id, conversationId: c.conversationId, actor: "buyer", body: "Typed it.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 13_000, typedInCall: true, createdAt: new Date(t0 + 2) },
+      { accountId: account.id, conversationId: c.conversationId, actor: "agent", body: "Sure.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 15_000, answerMs: 900, createdAt: new Date(t0 + 3) },
+      { accountId: account.id, conversationId: c.conversationId, actor: "system", body: "Voice call ended · 0:38", language: "en", createdAt: new Date(t0 + 4) },
     ]);
     await db.update(voiceSessions).set({ status: "ended", endReason: "opt_out", durationSec: 38, answerMsAvg: 900, settings: { maxCallSec: 270 } }).where(eq(voiceSessions.id, s.sessionId));
     const html = await render({ c: c.conversationId });
+    save("page-saved-call", html);
     expect(html).toContain("data-voice-pill");
     expect(html).toContain("Scripted test");
-    expect((html.match(/data-spoken=""/g) ?? []).length).toBe(3);
+    expect((html.match(/data-spoken=""/g) ?? []).length).toBe(4);
+    expect(html).toContain('aria-label="Typed at 0:13 in the call"');
+    expect(html).toContain('aria-label="Spoken at 0:11 in the call"');
     expect(html).toContain("0:11");
     expect(html).toContain("Call ended · 0:38");
     expect(html).toContain("No cost");

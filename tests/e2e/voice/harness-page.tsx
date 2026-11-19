@@ -21,7 +21,7 @@ import { t } from "@/lib/i18n";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { INITIAL_SNAPSHOT, elapsedSec, type VoiceSnapshot } from "@/lib/voice/client/state";
 import { barView, type CostFormat } from "@/lib/voice/client/view";
-import { callLimitText } from "@/lib/voice/lab";
+import { callLimitShort } from "@/lib/voice/lab";
 import type { ResolvedVoiceSettings, VoiceCapabilities } from "@/lib/voice/settings";
 
 type Config = {
@@ -67,7 +67,7 @@ function CallView({ cfg }: { cfg: Config }) {
         </div>
         <VoiceCall
           client={client} onStart={start}
-          context={{ readyLine: `English · ${cfg.versionLabel} · up to ${callLimitText(cfg.maxSec)}`, savedNote: t("voice.ended.saved"), usageHref: "#usage", fx: cfg.fx }}
+          context={{ readyLine: `English · ${cfg.versionLabel} · up to ${callLimitShort(cfg.maxSec)}`, savedNote: t("voice.ended.saved"), usageHref: "#usage", fx: cfg.fx }}
           emptyText={t("voice.transcript.empty")}
         />
       </section>
@@ -94,7 +94,7 @@ function CallView({ cfg }: { cfg: Config }) {
 function StatesView({ cfg }: { cfg: Config }) {
   const now = Date.now();
   const live = (o: Partial<VoiceSnapshot>): VoiceSnapshot => ({ ...INITIAL_SNAPSHOT, phase: "live", connectedAt: now - 38_000, durationSec: 38, maxSec: cfg.maxSec, mode: "scripted", ...o });
-  const ctx = { readyLine: `English · ${cfg.versionLabel} · up to ${callLimitText(cfg.maxSec)}`, savedNote: t("voice.ended.saved"), usageHref: "#usage", fx: cfg.fx };
+  const ctx = { readyLine: `English · ${cfg.versionLabel} · up to ${callLimitShort(cfg.maxSec)}`, savedNote: t("voice.ended.saved"), usageHref: "#usage", fx: cfg.fx };
   const states: [string, VoiceSnapshot][] = [
     ["1 · Ready", INITIAL_SNAPSHOT],
     ["2 · Microphone permission", { ...INITIAL_SNAPSHOT, phase: "mic_prompt" }],
@@ -110,7 +110,9 @@ function StatesView({ cfg }: { cfg: Config }) {
     ["9b · Ended (live)", { ...INITIAL_SNAPSHOT, phase: "ended", durationSec: 252, mode: "live", costMicros: 373_000, endReason: "user_hangup" }],
     ["9c · Ended · connection lost", { ...INITIAL_SNAPSHOT, phase: "ended", durationSec: 80, mode: "scripted", endReason: "connection_lost" }],
     ["10 · Calls are paused", { ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "spend_cap" }],
-    ["10b · Too many calls", { ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "rate_limited" }],
+    ["10b · Too many calls", { ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "rate_limited", retryAt: new Date(Math.ceil(now / 3_600_000) * 3_600_000).toISOString() }],
+    ["10c · Call already running (yours)", { ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "already_in_call", ownCall: true }],
+    ["10d · Call already running (someone else)", { ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "already_in_call", ownCall: false }],
     ["Notice · limit soon", live({ live: "speaking", notice: "limit_soon", connectedAt: now - 230_000, durationSec: 230 })],
   ];
   return (

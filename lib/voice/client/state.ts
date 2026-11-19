@@ -62,20 +62,24 @@ export type VoiceSnapshot = {
   dealChanges: number;
   /** The socket dropped before the call ended (shown as "Reconnecting…", then "connection lost"). */
   lost: boolean;
+  /** Rate limited: when the person may try again (ISO). */
+  retryAt: string | null;
+  /** A call already runs and this person started it (they may end it). */
+  ownCall: boolean;
   /** Lines typed as the buyer, waiting for the relay to echo them (they show a keyboard mark, not a mic). */
   typedPending: string[];
 };
 
 export const INITIAL_SNAPSHOT: VoiceSnapshot = {
   phase: "idle", live: null, muted: false, mode: null, maxSec: null, connectedAt: null, durationSec: 0, costMicros: 0, answerMsAvg: null,
-  items: [], speakingKey: null, notice: null, endReason: null, errorCode: null, unavailable: null, appMessages: 0, dealChanges: 0, lost: false, typedPending: [],
+  items: [], speakingKey: null, notice: null, endReason: null, errorCode: null, unavailable: null, appMessages: 0, dealChanges: 0, lost: false, typedPending: [], retryAt: null, ownCall: false,
 };
 
 export type VoiceEvent =
   | { type: "server"; msg: ServerMessage; now: number }
   | { type: "phase"; phase: "idle" | "mic_prompt" | "mic_blocked" | "no_mic" | "starting" | "connecting" | "ending" }
   | { type: "reset"; maxSec?: number | null; mode?: "scripted" | "live" | null }
-  | { type: "unavailable"; reason: VoiceUnavailableReason }
+  | { type: "unavailable"; reason: VoiceUnavailableReason; retryAt?: string | null; ownCall?: boolean }
   | { type: "mute"; on: boolean }
   /** The person typed a line as the buyer. */
   | { type: "typed"; text: string }
@@ -139,7 +143,7 @@ function onTranscript(s: VoiceSnapshot, m: Extract<ServerMessage, { t: "transcri
   // A buyer turn answers the agent's "are you still there?".
   const notice = m.role === "buyer" && s.notice === "silence_check" ? null : s.notice;
   let typedPending = s.typedPending;
-  if (m.role === "buyer" && m.final && typedPending.includes(m.text)) {
+  if (m.role === "buyer" && m.final && (m.typed || typedPending.includes(m.text))) {
     typedPending = typedPending.filter((x, i) => i !== typedPending.indexOf(m.text));
     items = items.map((i) => (i.kind === "line" && i.turnId === m.id ? { ...i, typed: true } : i));
   }
@@ -153,7 +157,7 @@ export function voiceReducer(s: VoiceSnapshot, e: VoiceEvent): VoiceSnapshot {
     case "phase":
       return { ...s, phase: e.phase, ...(e.phase === "starting" || e.phase === "mic_prompt" ? { unavailable: null } : {}) };
     case "unavailable":
-      return { ...s, phase: "unavailable", unavailable: e.reason, live: null };
+      return { ...s, phase: "unavailable", unavailable: e.reason, live: null, retryAt: e.retryAt ?? null, ownCall: !!e.ownCall };
     case "mute":
       return { ...s, muted: e.on };
     case "typed":

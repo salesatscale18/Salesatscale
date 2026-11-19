@@ -151,10 +151,10 @@ export class VoiceClient {
   }
 
   /** The server refused to create the call. */
-  unavailable(reason: VoiceUnavailableReason) {
+  unavailable(reason: VoiceUnavailableReason, detail: { retryAt?: string | null; ownCall?: boolean } = {}) {
     this.attempt++;
     this.teardown();
-    this.dispatch({ type: "unavailable", reason });
+    this.dispatch({ type: "unavailable", reason, ...detail });
   }
 
   /** Opens the socket and starts the call (after `begin` and a successful `prepare`). */

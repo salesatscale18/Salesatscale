@@ -12,7 +12,7 @@ import { elapsedSec, type VoiceSnapshot, type VoiceUnavailableReason } from "./s
 export type BarTone = "plain" | "me" | "agent" | "warn" | "off";
 export type BarIcon = "phone-call" | "mic" | "mic-off" | "loader" | "wifi-off" | "phone-off" | "alert-triangle";
 export type BarAction =
-  | { kind: "start" | "try_again" | "cancel" | "call_again"; label: string }
+  | { kind: "start" | "try_again" | "cancel" | "call_again" | "end_other"; label: string }
   | { kind: "link"; label: string; href: string };
 
 export type BarView = {
@@ -41,6 +41,11 @@ export type CostFormat = { currency: string; minorPerUsd: number | null };
 export function costText(micros: number, fx: CostFormat | null): string {
   if (fx && fx.minorPerUsd !== null && fx.currency) return formatMoney(Math.round((micros / 1_000_000) * fx.minorPerUsd), fx.currency);
   return formatMoney(Math.round(micros / 10_000), "USD");
+}
+
+/** "14:05": a time of day in the viewer's own time zone (the bar runs in their browser). */
+export function clockTime(iso: string, timeZone?: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) });
 }
 
 export type BarContext = {
@@ -96,8 +101,12 @@ export function barView(s: VoiceSnapshot, now: number, ctx: BarContext = {}): Ba
     }
     case "unavailable": {
       const reason = s.unavailable ?? "error";
-      const action: BarAction | null = reason === "spend_cap" && ctx.usageHref ? { kind: "link", label: t("voice.open_ai_usage"), href: ctx.usageHref } : null;
-      return { ...base, state: "unavailable", tone: "warn", icon: "alert-triangle", title: t(UNAVAILABLE_TITLE[reason]), sub: t(`voice.unavailable.${reason}` as MessageKey), action };
+      const action: BarAction | null = reason === "spend_cap" && ctx.usageHref ? { kind: "link", label: t("voice.open_ai_usage"), href: ctx.usageHref }
+        : reason === "already_in_call" && s.ownCall ? { kind: "end_other", label: t("voice.end_that_call") } : null;
+      let sub = t(`voice.unavailable.${reason}` as MessageKey);
+      if (reason === "rate_limited" && s.retryAt) sub = t("voice.unavailable.rate_limited_at", { time: clockTime(s.retryAt) });
+      if (reason === "already_in_call") sub = t(s.ownCall ? "voice.unavailable.already_in_call" : "voice.unavailable.already_in_call_other");
+      return { ...base, state: "unavailable", tone: "warn", icon: "alert-triangle", title: t(UNAVAILABLE_TITLE[reason]), sub, action };
     }
     case "live": {
       const clock = callClock(elapsedSec(s, now));

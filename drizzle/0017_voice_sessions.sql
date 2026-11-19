@@ -31,6 +31,7 @@ ALTER TABLE "consent_records" ADD COLUMN "recording_consent_at" timestamp with t
 ALTER TABLE "messages" ADD COLUMN "voice_session_id" uuid;--> statement-breakpoint
 ALTER TABLE "messages" ADD COLUMN "spoken_at_ms" integer;--> statement-breakpoint
 ALTER TABLE "messages" ADD COLUMN "answer_ms" integer;--> statement-breakpoint
+ALTER TABLE "messages" ADD COLUMN "typed_in_call" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "seller_accounts" ADD COLUMN "voice_buyer_calls" boolean DEFAULT false NOT NULL;--> statement-breakpoint
 ALTER TABLE "voice_sessions" ADD CONSTRAINT "voice_sessions_account_id_seller_accounts_id_fk" FOREIGN KEY ("account_id") REFERENCES "public"."seller_accounts"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "voice_sessions" ADD CONSTRAINT "voice_sessions_conversation_id_conversations_id_fk" FOREIGN KEY ("conversation_id") REFERENCES "public"."conversations"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

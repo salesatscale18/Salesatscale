@@ -94,6 +94,8 @@ export class VoiceEngine {
   private gen = 0;
   private started = false;
   private ended = false;
+  /** The session row was ended from outside (the starter's "End that call"): this call stops and still stores its figures. */
+  private endedExternally = false;
   private stopping: Promise<void> | null = null;
   private queue: Promise<void> = Promise.resolve();
   private state: VoiceState | null = null;
@@ -286,7 +288,17 @@ export class VoiceEngine {
     this.timer("stats", this.limits.statsEveryMs, () => {
       this.sendStats();
       this.statsLoop();
+      void this.enqueue(() => this.checkEndedExternally());
     });
+  }
+
+  /** On each stats tick: a session row ended elsewhere ("End that call") stops this call. */
+  private async checkEndedExternally() {
+    const [row] = await this.db.select({ status: voiceSessions.status, endReason: voiceSessions.endReason }).from(voiceSessions)
+      .where(eq(voiceSessions.id, this.sessionId));
+    if (row?.status !== "ended" || this.ended) return;
+    this.endedExternally = true;
+    void this.stop(row.endReason ?? "user_hangup");
   }
 
   private fail(reason: VoiceEndReason, code: VoiceErrorCode) {
@@ -502,10 +514,10 @@ export class VoiceEngine {
     this.buyerTurn = null;
     await this.db.insert(messages).values({
       accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: conv.language,
-      voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, createdAt: await this.stamp(),
+      voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, typedInCall: typed, createdAt: await this.stamp(),
     });
     this.lines.push({ role: "buyer", text: masked.text });
-    this.send({ t: "transcript", id: turn.id, role: "buyer", text: masked.text, final: true, atMs: turn.startMs });
+    this.send({ t: "transcript", id: turn.id, role: "buyer", text: masked.text, final: true, atMs: turn.startMs, ...(typed ? { typed: true as const } : {}) });
     this.buyerEndedAt = this.clock.now();
     this.buyerActivity();
     if (!this.conn) return;
@@ -724,7 +736,7 @@ export class VoiceEngine {
     await this.db.update(voiceSessions).set({
       status: "ended", endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,
       usage, costMicros, answerMsAvg, providerSessionId: this.providerSessionId,
-    }).where(and(eq(voiceSessions.id, this.sessionId), ne(voiceSessions.status, "ended")));
+    }).where(this.endedExternally ? eq(voiceSessions.id, this.sessionId) : and(eq(voiceSessions.id, this.sessionId), ne(voiceSessions.status, "ended")));
     if (connected && this.loaded) {
       // Like the other operational notes in a thread (system messages): when and how long.
       const { conv, account } = this.loaded;

@@ -14,7 +14,7 @@ import { scenarioById } from "@/lib/agent/scenarios";
 import { isUuid } from "@/lib/security/ids";
 import { spendCapped, platformBudget } from "@/lib/ai/usage";
 import { usdRate } from "@/lib/ai/models";
-import { createVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } from "@/lib/voice/service";
+import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } from "@/lib/voice/service";
 import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceMode, voiceModelId } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
@@ -29,7 +29,11 @@ export type StartVoiceCallResult =
       ok: true; conversationId: string; sessionId: string; ticket: string; wsUrl: string; mode: "scripted" | "live"; maxSec: number;
       fx: { currency: string; minorPerUsd: number | null };
     }
-  | { ok: false; reason: VoiceUnavailableReason };
+  /**
+   * `retryAt` (ISO): when a rate-limited caller may try again. `ownCall`: the
+   * running call that blocks a new one was started by this user (they may end it).
+   */
+  | { ok: false; reason: VoiceUnavailableReason; retryAt?: string; ownCall?: boolean };
 
 /** Starts a test-lab call: a new voice test conversation on the chosen version and scenario, and its one-time socket ticket. */
 export async function startVoiceCallAction(input: { slug: string; versionId?: string | null; scenario?: string | null }): Promise<StartVoiceCallResult> {
@@ -44,6 +48,9 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
     if (await spendCapped(appDb, a.account.id)) return { ok: false, reason: "spend_cap" };
     if ((await platformBudget(appDb)).exceeded) return { ok: false, reason: "platform_budget" };
   }
+  // One test call per account at a time (release 1); the caller may end their own.
+  const running = await runningTestVoiceSession(appDb, a.account.id);
+  if (running) return { ok: false, reason: "already_in_call", ownCall: running.startedByUserId === a.user.id };
   // Calls are English only: an English scenario, or none.
   const scenario = scenarioById(String(input?.scenario ?? ""));
   const rawVersion = input?.versionId;
@@ -55,7 +62,7 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
     const reason: VoiceUnavailableReason =
       s.reason === "spend_cap" || s.reason === "platform_budget" || s.reason === "rate_limited" || s.reason === "voice_off" || s.reason === "account_paused" || s.reason === "already_in_call"
         ? s.reason : "error";
-    return { ok: false, reason };
+    return { ok: false, reason, ...(s.retryAt ? { retryAt: s.retryAt.toISOString() } : {}) };
   }
   revalidatePath(path(a.account.slug));
   const maxSec = maxCallSeconds({ settings: conv.version.voiceSettings, deadlineSec: deploymentCallLimitSec() });
@@ -63,6 +70,15 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
     fx: { currency: a.account.currency, minorPerUsd: minorPerUsd(usdRate(a.account.currency)) },
   };
+}
+
+/** "End that call": ends this user's running test calls on the account (the relay notices within a few seconds). */
+export async function endMyVoiceCallAction(input: { slug: string }): Promise<{ ok: boolean }> {
+  const a = await requireAccount(String(input?.slug ?? ""));
+  if (voiceLabAccess(a.user) !== "ok") return { ok: false };
+  await endUserTestVoiceSessions(appDb, a.account.id, a.user.id);
+  revalidatePath(path(a.account.slug));
+  return { ok: true };
 }
 
 /** Saves the draft version's voice settings from the side panel, then closes it. */

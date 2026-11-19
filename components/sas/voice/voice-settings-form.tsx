@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
-import { callLimitText, defaultVoiceOf, hasAdvancedTuning, voiceOptions } from "@/lib/voice/lab";
+import { callLimitShort, callLimitText, defaultVoiceOf, hasAdvancedTuning, voiceOptions } from "@/lib/voice/lab";
 import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceCapabilities, type VoiceSettingsErrors } from "@/lib/voice/settings";
 
 export type VoiceSettingsFormState = { ok?: boolean; errors?: VoiceSettingsErrors; failed?: boolean };
@@ -101,7 +101,7 @@ export function VoiceSettingsForm({
       <select className="sas-select sas-vs-max" id="vs-max" name="maxCallSec" value={v.maxCallSec} onChange={(ev) => set("maxCallSec", Number(ev.target.value))} aria-invalid={e.maxCallSec ? true : undefined}>
         {LIMIT_OPTIONS.map((sec) => <option key={sec} value={sec}>{callLimitText(sec)}</option>)}
       </select>
-      {deploymentLimitSec && deploymentLimitSec < v.maxCallSec ? <span className="sas-small">{t("voice.settings.max_hint", { limit: callLimitText(deploymentLimitSec) })}</span> : null}
+      {deploymentLimitSec && deploymentLimitSec < v.maxCallSec ? <span className="sas-small">{t("voice.settings.max_hint", { limit: callLimitShort(deploymentLimitSec) })}</span> : null}
       {e.maxCallSec ? <span className="sas-small sas-vs-err" role="alert">{e.maxCallSec}</span> : null}
     </div>
   );
@@ -115,7 +115,7 @@ export function VoiceSettingsForm({
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="vs-voice">{t("voice.settings.voice")}</label>
             <span className="sas-vs-row">
-              <select className="sas-select" id="vs-voice" name="voice" value={voiceValue} onChange={(ev) => set("voice", ev.target.value || null)} aria-invalid={e.voice ? true : undefined}>
+              <select className="sas-select" id="vs-voice" name="voice" aria-describedby={sample ? undefined : "vs-voice-hint"} value={voiceValue} onChange={(ev) => set("voice", ev.target.value || null)} aria-invalid={e.voice ? true : undefined}>
                 {options.map((o) => <option key={o.value || "default"} value={o.value}>{o.isDefault ? t("voice.settings.default", { label: o.label }) : o.label}</option>)}
               </select>
               {sample ? (
@@ -124,6 +124,7 @@ export function VoiceSettingsForm({
                 </button>
               ) : null}
             </span>
+            {sample ? null : <span className="sas-small" id="vs-voice-hint">{t("voice.settings.voice_hint")}</span>}
             {e.voice ? <span className="sas-small sas-vs-err" role="alert">{e.voice}</span> : null}
           </div>
         ) : null}

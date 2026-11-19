@@ -38,7 +38,7 @@ import { VoiceSettingsForm } from "@/components/sas/voice/voice-settings-form";
 import { usdRate } from "@/lib/ai/models";
 import { INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
 import { barView } from "@/lib/voice/client/view";
-import { callClock, callLimitText, voiceLabAccess, voiceSettingsSummary } from "@/lib/voice/lab";
+import { callClock, callLimitShort, voiceLabAccess, voiceSettingsSummary } from "@/lib/voice/lab";
 import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
 import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceModelId } from "@/lib/voice/settings";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
@@ -147,7 +147,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   ];
   const callMax = Object.fromEntries(callVersions.map((v) => [v.value, maxCallSeconds({ settings: v.settings, deadlineSec: callLimit })]));
   const readyLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.ready.sub", {
-    language: LANG_NAME.en, version: v.version, status: t(`status.agent_version.${v.status}` as MessageKey), limit: callLimitText(callMax[v.value]),
+    language: LANG_NAME.en, version: v.version, status: t(`status.agent_version.${v.status}` as MessageKey), limit: callLimitShort(callMax[v.value]),
   })]));
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), voiceModelId()) }) : null;
@@ -214,7 +214,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             <ChatMessage
               actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
               time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}
-              spoken={m.voiceSessionId && m.spokenAtMs !== null ? { at: callClock(m.spokenAtMs / 1000), label: t("voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) }) } : undefined}>
+              spoken={m.voiceSessionId && m.spokenAtMs !== null ? {
+                at: callClock(m.spokenAtMs / 1000), typed: m.typedInCall,
+                label: t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) }),
+              } : undefined}>
               {/* R5-2: each message finds its own direction (an English reply in a Hebrew chat reads left to right). */}
               <div dir="auto" data-msg-dir="">
                 <MessageBody body={m.body} kind={kinds.get(m.id)} />
@@ -484,11 +487,19 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   const v = versions.find((x) => x.id === c.agentVersionId);
                   return (
                     <li key={c.id}>
-                      <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined} style={c.channel === "voice" ? { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontWeight: c.id === conv?.id ? 600 : undefined } : { display: "block", fontWeight: c.id === conv?.id ? 600 : undefined }} data-chat-name="">
-                        {c.channel === "voice" ? <Icon name="phone-call" label={t("voice.pill.call")} /> : null}
-                        {scenarioById(c.scenario)?.title ?? t("lab.free_chat")}
-                        {voiceModes.get(c.id) === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
-                      </a>
+                      {c.channel === "voice" ? (
+                        <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
+                          <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined} style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: c.id === conv?.id ? 600 : undefined }} data-chat-name="">
+                            <Icon name="phone-call" label={t("voice.pill.call")} />
+                            {scenarioById(c.scenario)?.title ?? t("lab.free_chat")}
+                          </a>
+                          {voiceModes.get(c.id) === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
+                        </div>
+                      ) : (
+                        <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined} style={{ display: "block", fontWeight: c.id === conv?.id ? 600 : undefined }} data-chat-name="">
+                          {scenarioById(c.scenario)?.title ?? t("lab.free_chat")}
+                        </a>
+                      )}
                       <span className="sas-small" style={{ display: "block" }}>
                         {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}{c.channel === "whatsapp" ? ` · ${t("conv.channel.whatsapp")}` : ""} ·{" "}
                         <time dateTime={c.updatedAt.toISOString()} title={`${local(c.updatedAt)} · ${zoneTitle(c.updatedAt, tz)}`}>{timeAgo(c.updatedAt, now, tz)}</time>

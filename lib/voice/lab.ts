@@ -98,6 +98,15 @@ export function callLimitText(sec: number): string {
   return m ? `${min} ${secs}` : secs;
 }
 
+/** "10 min", "4 min 30 s", "45 s": a call limit where space is short (the Ready line, hints). */
+export function callLimitShort(sec: number): string {
+  const s = Math.max(0, Math.floor(sec));
+  const m = Math.floor(s / 60);
+  const r = s % 60;
+  if (!m) return `${r} s`;
+  return r ? `${m} min ${r} s` : `${m} min`;
+}
+
 /** "0.9 s": an answer time. */
 export function answerSpeedText(ms: number): string {
   return `${(Math.max(0, ms) / 1000).toFixed(1)} s`;

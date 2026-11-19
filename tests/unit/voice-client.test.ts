@@ -7,8 +7,8 @@ import { describe, expect, it } from "vitest";
 import { FRAME_SAMPLES, FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "@/lib/voice/client/audio";
 import { PlaybackSchedule } from "@/lib/voice/client/playback";
 import { INITIAL_SNAPSHOT, elapsedSec, voiceReducer, type VoiceEvent, type VoiceSnapshot } from "@/lib/voice/client/state";
-import { barView, costText, endReasonText, errorText } from "@/lib/voice/client/view";
-import { answerSpeedText, callClock, callLimitText, voiceLabAccess, voiceOptions, voiceSettingsSummary } from "@/lib/voice/lab";
+import { barView, clockTime, costText, endReasonText, errorText } from "@/lib/voice/client/view";
+import { answerSpeedText, callClock, callLimitShort, callLimitText, voiceLabAccess, voiceOptions, voiceSettingsSummary } from "@/lib/voice/lab";
 import { parseAuthMessage, parseServerMessage } from "@/lib/voice/protocol";
 import { DEFAULT_VOICE_SETTINGS, voiceCapabilities } from "@/lib/voice/settings";
 import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC, deploymentCallLimitSec, routeDeadlineSec } from "@/lib/voice/socket-limits";
@@ -278,5 +278,32 @@ describe("typed lines", () => {
     ]);
     expect(s.items.map((i) => (i.kind === "line" ? !!i.typed : null))).toEqual([true, false]);
     expect(s.typedPending).toEqual([]);
+  });
+});
+
+describe("short limit and refusals", () => {
+  it("short limit copy", () => {
+    expect(callLimitShort(270)).toBe("4 min 30 s");
+    expect(callLimitShort(600)).toBe("10 min");
+    expect(callLimitShort(45)).toBe("45 s");
+  });
+
+  it("too many calls says when to try again; a running call of your own can be ended", () => {
+    const iso = "2026-11-19T13:00:00.000Z";
+    const rl = barView({ ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "rate_limited", retryAt: iso }, 0);
+    expect(`${rl.title}. ${rl.sub}`).toBe(`Too many calls this hour. Try again after ${clockTime(iso)}.`);
+    expect(clockTime(iso, "Asia/Jerusalem")).toBe("15:00");
+    const own = barView({ ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "already_in_call", ownCall: true }, 0);
+    expect(own.title).toBe("A call is already running");
+    expect(own.action).toEqual({ kind: "end_other", label: "End that call" });
+    const other = barView({ ...INITIAL_SNAPSHOT, phase: "unavailable", unavailable: "already_in_call", ownCall: false }, 0);
+    expect(other.action).toBeNull();
+    expect(other.sub).toMatch(/Someone else/);
+    expect(run([{ type: "unavailable", reason: "rate_limited", retryAt: iso }])).toMatchObject({ retryAt: iso, ownCall: false });
+  });
+
+  it("the relay's typed flag marks a typed line", () => {
+    const s = run([srv({ t: "transcript", id: "b1", role: "buyer", text: "Hi", final: true, atMs: 0, typed: true })]);
+    expect(s.items[0]).toMatchObject({ typed: true });
   });
 });

@@ -13,6 +13,7 @@
  * "No cost"), says_stop (the call ends by itself) and a blocked microphone.
  * Screenshots at 2x go to VOICE_SHOTS (default: test-results/voice-shots).
  */
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -97,6 +98,10 @@ async function main() {
       }
       console.log(`        shot ${SHOTS}/state-*.png`);
       await page.context().close();
+      const phone = await newPage(browser, `${h.url}/?view=states`, 390, 844);
+      await phone.waitForSelector("[data-state-cell]");
+      await shot(phone, "states-phone", { fullPage: true });
+      await phone.context().close();
     }
 
     // ---------------------------------------------------------- ready_buyer
@@ -119,6 +124,10 @@ async function main() {
       check(await waitState(page, "listening", 20_000) || await waitState(page, "speaking", 5_000), "connects and goes live");
       check(await page.waitForSelector('[data-voice-line="agent"]', { timeout: 20_000 }).then(() => true, () => false), "the agent's opener shows in the transcript");
       check(await waitState(page, "speaking", 20_000), "Agent speaking while the opener plays");
+      await page.locator("[data-voice-call] .sas-vcall__bar").screenshot({ path: path.join(SHOTS, "live-bar-speaking.png") });
+      if (await waitState(page, "listening", 20_000)) await page.locator("[data-voice-call] .sas-vcall__bar").screenshot({ path: path.join(SHOTS, "live-bar-listening.png") });
+      if (await waitState(page, "checking", 20_000)) await page.locator("[data-voice-call] .sas-vcall__bar").screenshot({ path: path.join(SHOTS, "live-bar-checking.png") });
+      console.log(`        shot ${SHOTS}/live-bar-*.png`);
       await shot(page, "call-speaking-desktop");
       check(await page.waitForSelector('[data-voice-line="buyer"]', { timeout: 40_000 }).then(() => true, () => false), "the buyer's speech becomes a transcript line");
       check(await page.waitForSelector('[data-voice-tool="update_deal_state"]', { timeout: 40_000 }).then(() => true, () => false), "Deal details chip");
@@ -138,6 +147,7 @@ async function main() {
       await page.waitForTimeout(1500);
       const before = await buyerLines(page);
       await shot(page, "call-muted-desktop");
+      await page.locator("[data-voice-call] .sas-vcall__bar").screenshot({ path: path.join(SHOTS, "live-bar-muted.png") });
       await page.waitForTimeout(14_000);
       check((await buyerLines(page)) === before, `no buyer turns while muted (${before})`);
       await page.click("[data-voice-mute]");
@@ -243,6 +253,30 @@ async function main() {
     check((await page.textContent("[data-voice-call] .sas-vbar__title")) === "The microphone is blocked", "blocked copy");
     await shot(page, "call-mic-blocked-desktop");
     await denied.close();
+  }
+
+  // ------------------------------------------- the real test lab page (server render)
+  // The real page component rendered by tests/integration/voice-lab.test.tsx (real components, PGlite,
+  // mocked sign-in), saved as HTML with sas.css and photographed here. Static: no client hydration.
+  console.log("real test lab page renders");
+  {
+    const dir = path.join(tmp, "pages");
+    execFileSync("npx", ["vitest", "run", "tests/integration/voice-lab.test.tsx"], { env: { ...process.env, VOICE_RENDER_DIR: dir }, stdio: "ignore" });
+    const b = await chromium.launch();
+    for (const name of ["page-test-lab-starter", "page-saved-call", "page-settings-panel"]) {
+      const file = path.join(dir, `${name}.html`);
+      check(fs.existsSync(file), `${name} rendered`);
+      if (!fs.existsSync(file)) continue;
+      for (const [w, hgt, suffix] of [[1440, 900, "desktop"], [390, 844, "phone"]] as const) {
+        const ctx = await b.newContext({ viewport: { width: w, height: hgt }, deviceScaleFactor: 2 });
+        const page = await ctx.newPage();
+        await page.goto(`file://${file}`);
+        await page.waitForTimeout(300);
+        await shot(page, `${name}-${suffix}`, { fullPage: name !== "page-settings-panel" });
+        await ctx.close();
+      }
+    }
+    await b.close();
   }
 
   await h.close();

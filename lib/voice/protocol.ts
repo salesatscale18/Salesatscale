@@ -124,7 +124,7 @@ export type ServerMessage =
   | { t: "call"; maxSec: number; mode: "scripted" | "live" }
   | { t: "state"; state: VoiceState }
   /** `text` is the whole text of that turn so far (card numbers masked). */
-  | { t: "transcript"; id: string; role: "buyer" | "agent"; text: string; final: boolean; atMs: number }
+  | { t: "transcript"; id: string; role: "buyer" | "agent"; text: string; final: boolean; atMs: number; typed?: true }
   | { t: "tool"; id: string; name: string; label: string; status: ToolStatus }
   /** The app stored a message (a quote card, the order form link): refetch the thread. */
   | { t: "message"; messageId: string }

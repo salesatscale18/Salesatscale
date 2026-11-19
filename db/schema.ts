@@ -1078,6 +1078,8 @@ export const messages = pgTable(
     spokenAtMs: integer("spoken_at_ms"),
     /** Spoken agent turns: ms from the end of the buyer's turn to the agent's first audio. Null when the agent spoke first. */
     answerMs: integer("answer_ms"),
+    /** A buyer turn in a voice call that was typed ("Type instead"), not spoken. */
+    typedInCall: boolean("typed_in_call").notNull().default(false),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (t) => [

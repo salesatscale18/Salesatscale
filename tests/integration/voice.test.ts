@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { conversations, dealStates, leads, messages, quotes, toolCalls, users, voiceSessions, type User } from "@/db/schema";
+import { conversations, dealStates, leads, messages, quotes, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, listVersions, publishDraftVersion, rollbackTo, saveDraftPlaybook } from "@/lib/agent/service";
@@ -302,9 +302,25 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await c.run(30_000);
     await hangUp(c);
     const rows = await thread(c.conversationId);
-    expect(rows[1]).toMatchObject({ actor: "buyer", body: "Is there training on site?" });
+    expect(rows[1]).toMatchObject({ actor: "buyer", body: "Is there training on site?", typedInCall: true });
+    expect(rows.filter((m) => m.actor !== "buyer").every((m) => m.typedInCall === false)).toBe(true);
+    expect(c.json().some((m) => m.t === "transcript" && m.role === "buyer" && m.final && m.typed === true)).toBe(true);
     expect(c.model.connections[0].sent.texts).toEqual(["Is there training on site?"]);
     expect((await calls(c.conversationId)).map((x) => x.name)).toEqual(["lookup_knowledge"]);
+  });
+
+  it("a session ended from outside (End that call) stops the running call on its next stats tick and keeps its figures", async () => {
+    await db.delete(rateLimits); // this file starts more test calls than the hourly limit allows
+    const c = await newCall(null);
+    await c.run(8_000);
+    await db.update(voiceSessions).set({ status: "ended", endedAt: new Date(), endReason: "user_hangup" }).where(eq(voiceSessions.id, c.sessionId));
+    await c.run(6_000);
+    expect(c.engine.isEnded).toBe(true);
+    expect(c.json().find((m) => m.t === "ended")).toMatchObject({ reason: "user_hangup" });
+    expect(c.conn().closed).toBe(true);
+    const s = await sessionRow(c.sessionId);
+    expect(s).toMatchObject({ status: "ended", endReason: "user_hangup" });
+    expect(s.durationSec).toBeGreaterThan(0);
   });
 
   it("barge-in: the browser is told to flush, the agent message keeps only what was spoken", async () => {

@@ -35,7 +35,8 @@ export type CreateVoiceSessionRefusal =
 
 export type CreateVoiceSessionResult =
   | { ok: true; sessionId: string; ticket: string; expiresAt: Date; mode: Exclude<VoiceMode, "off"> }
-  | { ok: false; reason: CreateVoiceSessionRefusal };
+  /** `retryAt`: when a rate-limited caller may try again. */
+  | { ok: false; reason: CreateVoiceSessionRefusal; retryAt?: Date };
 
 /**
  * A new call on a conversation: checks the gates, closes this account's stale
@@ -67,8 +68,9 @@ export async function createVoiceSession(
     if (await spendCapped(db, a.accountId, now)) return { ok: false, reason: "spend_cap" };
     if ((await platformBudget(db, now)).exceeded) return { ok: false, reason: "platform_budget" };
   }
-  if (a.isTest && !(await rateLimit(db, `voice:${a.accountId}`, { limit: TEST_CALLS_PER_HOUR, windowSeconds: 3600 }, now)).ok) {
-    return { ok: false, reason: "rate_limited" };
+  if (a.isTest) {
+    const rl = await rateLimit(db, `voice:${a.accountId}`, { limit: TEST_CALLS_PER_HOUR, windowSeconds: 3600 }, now);
+    if (!rl.ok) return { ok: false, reason: "rate_limited", retryAt: new Date(now.getTime() + rl.retryAfterSeconds * 1000) };
   }
   await closeStaleVoiceSessions(db, a.accountId, now);
   // A call not yet connected on this conversation is replaced; a live one blocks a second call.
@@ -187,6 +189,40 @@ export async function conversationVoiceModes(db: Db, accountId: string, conversa
     .orderBy(asc(voiceSessions.createdAt));
   for (const r of rows) out.set(r.conversationId, r.mode);
   return out;
+}
+
+/**
+ * A test call already running on this account (live, or pending within the
+ * ticket's lifetime), after closing stale ones: who started it. Release 1
+ * runs one test call per account at a time.
+ */
+export async function runningTestVoiceSession(db: Db, accountId: string, now = new Date()): Promise<{ id: string; startedByUserId: string | null } | null> {
+  await closeStaleVoiceSessions(db, accountId, now);
+  const rows = await db.select({ id: voiceSessions.id, status: voiceSessions.status, createdAt: voiceSessions.createdAt, startedByUserId: voiceSessions.startedByUserId })
+    .from(voiceSessions)
+    .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.isTest, true), inArray(voiceSessions.status, ["pending", "live"])))
+    .orderBy(desc(voiceSessions.createdAt));
+  const fresh = rows.find((r) => r.status === "live" || r.createdAt.getTime() > now.getTime() - TICKET_TTL_SEC * 1000);
+  return fresh ? { id: fresh.id, startedByUserId: fresh.startedByUserId } : null;
+}
+
+/**
+ * Ends this user's running test calls on the account ("End that call"): the
+ * rows are marked ended (user_hangup); a relay still running one notices on
+ * its next stats tick, stops the model and stores the call's figures.
+ */
+export async function endUserTestVoiceSessions(db: Db, accountId: string, userId: string, now = new Date()): Promise<number> {
+  const rows = await db.select().from(voiceSessions)
+    .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.isTest, true), eq(voiceSessions.startedByUserId, userId), inArray(voiceSessions.status, ["pending", "live"])));
+  for (const s of rows) {
+    const durationSec = s.connectedAt ? Math.min(PLATFORM_MAX_CALL_SEC, Math.max(0, Math.round((now.getTime() - s.connectedAt.getTime()) / 1000))) : 0;
+    // Priced like a stale call, in case no relay is left to store its own figures (a running one overwrites these).
+    const usage: VoiceUsage | null = s.mode === "live" && s.connectedAt ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
+    const costMicros = s.mode === "live" && usage ? estimateRealtimeCostMicros(s.model, usage) ?? 0 : 0;
+    await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "user_hangup", durationSec, usage, costMicros })
+      .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.accountId, accountId), inArray(voiceSessions.status, ["pending", "live"])));
+  }
+  return rows.length;
 }
 
 /**

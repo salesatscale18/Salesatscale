@@ -2972,7 +2972,7 @@
   "voice.unavailable.rate_limited": "Try again later.",
   "voice.unavailable.voice_off": "Voice calls are turned off for this deployment.",
   "voice.unavailable.not_allowed": "Only platform admins can call the agent for now.",
-  "voice.unavailable.already_in_call": "End it before you start a new one.",
+  "voice.unavailable.already_in_call": "Your earlier call is still open, maybe in another tab. End it to start a new one.",
   "voice.unavailable.error": "Something went wrong. Try again.",
   "voice.end_reason.user_hangup": "You ended the call.",
   "voice.end_reason.agent_closed": "The agent ended the call.",
@@ -3056,5 +3056,10 @@
   "voice.settings.error": "Check the fields marked below.",
   "voice.settings.summary": "Voice: {summary}",
   "voice.settings.saved": "Voice settings saved in draft v{version}.",
-  "lab.voice.call_heading": "Call the agent"
+  "lab.voice.call_heading": "Call the agent",
+  "voice.unavailable.rate_limited_at": "Try again after {time}.",
+  "voice.unavailable.already_in_call_other": "Someone else on this account is on a test call. Try again when it ends.",
+  "voice.end_that_call": "End that call",
+  "voice.typed_at": "Typed at {time} in the call",
+  "voice.settings.voice_hint": "You hear the voice on your next test call."
 }

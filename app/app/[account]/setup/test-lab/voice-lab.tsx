@@ -21,7 +21,7 @@ import { t } from "@/lib/i18n";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/voice/client/view";
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
-import { startVoiceCallAction } from "./voice-actions";
+import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 
 // ---------------------------------------------------------------------------
 // The lab's call (module level)
@@ -95,7 +95,7 @@ function useStartCall() {
         return;
       }
       if (!r.ok) {
-        c.unavailable(r.reason);
+        c.unavailable(r.reason, { retryAt: r.retryAt, ownCall: r.ownCall });
         return;
       }
       setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false });
@@ -103,6 +103,16 @@ function useStartCall() {
       router.push(`${input.lab}?c=${r.conversationId}`, { scroll: false });
     })();
   };
+}
+
+/** "End that call": ends this user's running call on the server, then back to Ready to start again. */
+async function endOtherCall(slug: string) {
+  const c = labClient();
+  try {
+    await endMyVoiceCallAction({ slug });
+  } finally {
+    c.cancel();
+  }
 }
 
 /** Phases the starter shows itself (before the call has its own place on the page). */
@@ -147,6 +157,7 @@ export function VoiceCallStarter({
     : barView({ ...s, phase: "idle" }, Date.now(), { readyLine: readyLines[versionId] ?? "" });
   const onAction = (a: BarAction) => {
     if (a.kind === "cancel") c.cancel();
+    else if (a.kind === "end_other") void endOtherCall(slug);
     else if (a.kind === "start" || a.kind === "try_again") start({ slug, lab, versionId: versionId || null, scenario: scenario || null, maxSec: readyMax[versionId] ?? null });
   };
   return (
@@ -284,6 +295,7 @@ export function VoiceCallAgainBar({ view, slug, lab, versionId, scenario, usageH
       actionDisabled={busy}
       onAction={(a) => {
         if (a.kind === "cancel") c.cancel();
+        else if (a.kind === "end_other") void endOtherCall(slug);
         else if (a.kind === "call_again" || a.kind === "try_again" || a.kind === "start") {
           setMine(true);
           start({ slug, lab, versionId, scenario });
