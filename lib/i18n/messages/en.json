@@ -3112,5 +3112,7 @@
   "orders.empty.orders_market": "No orders in {market} yet.",
   "inbox.empty.market_title": "No conversations in {market} yet",
   "catalog.col.sold_in": "Sold in",
-  "catalog.sold_in.none": "Not sold yet"
+  "catalog.sold_in.none": "Not sold yet",
+  "conv.marker.spend_cap": "Handed to a person: AI limit reached",
+  "lead.event.handoff.spend_cap": "Handed to a person: AI limit reached"
 }

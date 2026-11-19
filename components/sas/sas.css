@@ -1132,3 +1132,17 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-leads-actions > .sas-mswitch .sas-mswitch__field { flex: 1; }
   .sas-leads-actions > .sas-mswitch .sas-mswitch__select { width: 100%; max-width: none; }
 }
+
+/* ------------------------------------------------------------------------- */
+/* W (lane W5): UX follow-ups after workspace and markets                    */
+/* ------------------------------------------------------------------------- */
+/* Market switcher: as wide as the chosen option (field-sizing), never wider than 200px.
+   Browsers without field-sizing size a select to its widest option: the max-width caps it, the text truncates. */
+.sas-mswitch--compact .sas-mswitch__select { field-sizing: content; max-width: 200px; min-width: 0; overflow: hidden; white-space: nowrap; }
+@media (max-width: 767px) {
+  .sas-leads-actions > .sas-mswitch .sas-mswitch__select { field-sizing: fixed; }
+}
+/* Catalog "Sold in": a narrow column ("Israel, UK +2") that may wrap at the comma. */
+@media (min-width: 768px) {
+  .sas-table th.sas-catalog__soldin, .sas-table td.sas-catalog__soldin { width: 160px; min-width: 120px; white-space: normal; }
+}

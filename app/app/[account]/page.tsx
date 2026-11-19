@@ -43,7 +43,7 @@ const NEEDS_SHOWN = 2;
 const EVENT_ICON: Record<string, IconName> = {
   "lead.created": "user-plus", "lead.updated": "file-text", "consent.recorded": "shield-check", "lead.opted_out": "x-circle",
   "quote.created": "file-text", "quote.versioned": "file-text", "quote.approved": "check-circle", "quote.cancelled": "file-x",
-  "handoff.requested": "user", "deal.verified": "shield-check", "order_form.sent": "send", "order_form.opened": "eye",
+  "handoff.requested": "user", "handoff.spend_cap": "user", "deal.verified": "shield-check", "order_form.sent": "send", "order_form.opened": "eye",
   "order_form.signed": "pen", "payment.bank_transfer": "clock", "payment.failed": "x-circle", "order.paid": "credit-card",
   "follow_up.scheduled": "clock", "follow_up.sent": "send", "follow_up.cancelled": "alarm-clock-off", "follow_up.failed": "x-circle",
 };
@@ -273,6 +273,31 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         />
       </section>
 
+      {/* Not live yet: setting up is the first thing to act on, so it comes before "Your markets". */}
+      {account.status !== "live" ? (
+        <section className="sas-panel" aria-labelledby="setup-h" style={{ minWidth: 0, overflow: "hidden" }}>
+          <div className="sas-panel__head">
+            <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
+            <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
+          </div>
+          <ol className="sas-list">
+            {SETUP_STEPS.map((s, i) => {
+              const complete = (done as ReadonlySet<string>).has(s.id);
+              return (
+                <li key={s.id}>
+                  <a className="sas-list__row" href={`${base}${s.path}`} aria-current={s.id === firstOpen ? "step" : undefined}>
+                    <span className="sas-av" style={complete ? { background: "var(--success-soft)", color: "var(--success)" } : undefined}>
+                      {complete ? <Icon name="check" label="Done" /> : i + 1}
+                    </span>
+                    <span className="sas-list__main" style={complete ? undefined : { fontWeight: s.id === firstOpen ? 600 : undefined }}>{t(s.label)}</span>
+                  </a>
+                </li>
+              );
+            })}
+          </ol>
+        </section>
+      ) : null}
+
       <MarketCards
         base={base}
         markets={selection.markets}
@@ -321,30 +346,6 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           )}
         </section>
       </div>
-
-      {account.status !== "live" ? (
-        <section className="sas-panel" aria-labelledby="setup-h" style={{ minWidth: 0, overflow: "hidden" }}>
-          <div className="sas-panel__head">
-            <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
-            <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
-          </div>
-          <ol className="sas-list">
-            {SETUP_STEPS.map((s, i) => {
-              const complete = (done as ReadonlySet<string>).has(s.id);
-              return (
-                <li key={s.id}>
-                  <a className="sas-list__row" href={`${base}${s.path}`} aria-current={s.id === firstOpen ? "step" : undefined}>
-                    <span className="sas-av" style={complete ? { background: "var(--success-soft)", color: "var(--success)" } : undefined}>
-                      {complete ? <Icon name="check" label="Done" /> : i + 1}
-                    </span>
-                    <span className="sas-list__main" style={complete ? undefined : { fontWeight: s.id === firstOpen ? 600 : undefined }}>{t(s.label)}</span>
-                  </a>
-                </li>
-              );
-            })}
-          </ol>
-        </section>
-      ) : null}
 
       {showActivity ? (
         <SidePanel

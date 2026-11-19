@@ -20,7 +20,7 @@
  *    smaller polygon stays when it lies within max(600 km, a sixth of the
  *    largest polygon's size) of a polygon kept so far;
  *  - Mercator rotated to the country's centre (no antimeridian split), fitted
- *    into [12,12]–[188,138];
+ *    into [12,38]–[188,138] (the top margin keeps the status pill clear);
  *  - rings simplified (Douglas–Peucker, 0.5 px), slivers under 1.2 px² dropped,
  *    coordinates rounded to 0.1 px and written as relative path commands.
  * `fit` maps the local path back to a shared Mercator plane, so several
@@ -37,7 +37,10 @@ const d3 = await load("d3-geo");
 const iso = require("i18n-iso-countries");
 
 const topo = JSON.parse(readFileSync(require.resolve("world-atlas/countries-50m.json"), "utf8"));
-const W = 200, H = 150, PAD = 12;
+// PAD_TOP leaves room for the status pill in the card's top-start corner
+// (10px inset + 24px pill + 4px gap), so tall shapes (the UK) never run under it.
+// Keep in step with lib/markets/outline.ts, which fits merged markets into the same box.
+const W = 200, H = 150, PAD = 12, PAD_TOP = 38;
 const EARTH_KM = 6371;
 const TOLERANCE = 0.5;
 const MIN_RING_AREA = 1.2;
@@ -142,7 +145,7 @@ for (const geom of topo.objects.countries.geometries) {
   if (!polys.length) continue;
   const shape = mainShape(polys);
   const c = d3.geoCentroid(shape)[0];
-  const projection = d3.geoMercator().rotate([-c, 0]).fitExtent([[PAD, PAD], [W - PAD, H - PAD]], shape);
+  const projection = d3.geoMercator().rotate([-c, 0]).fitExtent([[PAD, PAD_TOP], [W - PAD, H - PAD]], shape);
   const rings = [];
   let cur = null;
   const ctx = {

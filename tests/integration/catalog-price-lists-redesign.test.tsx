@@ -127,12 +127,14 @@ describe("Setup redesign: Catalog and Price lists", () => {
       save("catalog", html);
       const tx = text(html);
       expect(html).toMatch(/<option value="[0-9a-f-]{36}" selected="">Prices from: Israel prices<\/option>/);
-      for (const h of ["Item", "Code", "Kind", "Charged", "Price", "Rules", "Status"]) expect(html).toMatch(new RegExp(`<th[^>]*>(<a[^>]*>)?${h}`));
+      for (const h of ["Item", "Code", "Price", "Rules", "Status"]) expect(html).toMatch(new RegExp(`<th[^>]*>(<a[^>]*>)?${h}`));
+      // W5: Kind and unit fold into a second line under the item name.
+      for (const h of ["Kind", "Charged"]) expect(html).not.toMatch(new RegExp(`<th[^>]*>(<a[^>]*>)?${h}<`));
       const rows = tableRows(html);
       expect(rows).toHaveLength(5);
       // Sorted by name by default (aria-sort on Item).
       expect(html).toMatch(/<th scope="col" aria-sort="ascending" class="sas-th-sort"><a[^>]*>Item/);
-      expect(rows[0]).toMatch(/^Cold room probeCRP-40Productper devicePrice missing—Price missing/);
+      expect(rows[0]).toMatch(/^Cold room probeProduct · per deviceCRP-40Price missing—Price missing/);
       const gw = rows.find((r) => r.startsWith("Site gateway"))!;
       // C7: the chat name exactly as stored (lower case), not capitalised.
       expect(gw).toContain("In chat: kitchen hub");
@@ -164,7 +166,7 @@ describe("Setup redesign: Catalog and Price lists", () => {
     });
 
     it("filters and sort: kind chip, status filter, search, Prices from another list, sort by price", async () => {
-      expect(tableRows(await cat({ kind: "service" })).map((r) => r.split("INST")[0].split("SVC")[0])).toEqual(["Installation", "Remote setup"]);
+      expect(tableRows(await cat({ kind: "service" })).map((r) => r.split("Service · ")[0])).toEqual(["Installation", "Remote setup"]);
       expect(tableRows(await cat({ status: "price_missing" }))).toHaveLength(1);
       expect(tableRows(await cat({ q: "kitchen" }))[0]).toMatch(/^Site gateway/);
       const none = await cat({ q: "nothing-like-this" });

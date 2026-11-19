@@ -15,6 +15,8 @@ import { COUNTRY_OUTLINES, type CountryOutline } from "./outlines.generated";
 
 export const OUTLINE_VIEWBOX = { width: 200, height: 150 } as const;
 const PAD = 12;
+/** Room for the status pill in the card's top-start corner (as in scripts/gen-country-outlines.mjs). */
+export const OUTLINE_PAD_TOP = 38;
 const TAU = 2 * Math.PI;
 
 const round = (v: number) => {
@@ -60,10 +62,10 @@ export function marketOutlinePath(countries: readonly string[]): string | null {
   const X1 = Math.max(...parts.map((p) => p.box[2]));
   const Y1 = Math.max(...parts.map((p) => p.box[3]));
   const innerW = OUTLINE_VIEWBOX.width - 2 * PAD;
-  const innerH = OUTLINE_VIEWBOX.height - 2 * PAD;
+  const innerH = OUTLINE_VIEWBOX.height - OUTLINE_PAD_TOP - PAD;
   const k = Math.min(innerW / Math.max(X1 - X0, 1e-9), innerH / Math.max(Y1 - Y0, 1e-9));
   const ox = PAD + (innerW - k * (X1 - X0)) / 2;
-  const oy = PAD + (innerH - k * (Y1 - Y0)) / 2;
+  const oy = OUTLINE_PAD_TOP + (innerH - k * (Y1 - Y0)) / 2;
   // Local x → plane (x - tx)/s + c → box k·(plane - X0) + ox, i.e. a·x + e.
   return parts
     .map(({ o, s, tx, ty, c }) => {

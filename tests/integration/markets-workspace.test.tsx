@@ -274,7 +274,7 @@ describe("W2: markets across the workspace", () => {
     it("0, 1, 2 and more than 2 markets", async () => {
       // The demo: Israel's live list prices GW-10 and others; the UK list has no live version; PRB-30 is in no list.
       let html = await page(CatalogPage(props(account.slug)));
-      expect(html).toContain('<th scope="col">Sold in</th>');
+      expect(html).toContain('<th scope="col" class="sas-catalog__soldin">Sold in</th>');
       expect(cell(html, "PRB-30")).toBe('data-sold-in="none">Not sold yet<');
       expect(cell(html, "GW-10")).toBe('data-sold-in="1">Israel<');
       // DACH sells from Israel's list: two markets.

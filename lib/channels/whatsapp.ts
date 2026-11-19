@@ -28,6 +28,7 @@ import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, w
 import { whatsappAddressToE164, type TwilioTransport } from "./twilio";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { SPEND_CAP_HANDOFF_EVENT } from "@/lib/agent/thread-markers";
 import type { Conversation, Lead } from "@/db/schema";
 
 export type Delivery = { delivered: true } | { delivered: false; reason: string };
@@ -364,6 +365,12 @@ export async function inboundConversation(
       await Promise.all([
         db.insert(messages).values({ accountId, conversationId: conv.id, actor: "system", body: "This month's AI spend cap is reached, so the agent did not start this conversation. A person needs to reply.", language: "en" }),
         db.update(leads).set({ status: "human_handling" }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId), ne(leads.status, "opted_out"))),
+        // The thread's "Handed to a person: AI limit reached" marker and the lead's timeline entry (W5).
+        // Written only here, when the conversation is created, so once per conversation.
+        db.insert(leadEvents).values({
+          accountId, leadId: lead.id, type: SPEND_CAP_HANDOFF_EVENT, actor: "system",
+          data: { conversationId: conv.id, reason: "spend_cap" }, createdAt: conv.createdAt,
+        }),
       ]);
     }
   }

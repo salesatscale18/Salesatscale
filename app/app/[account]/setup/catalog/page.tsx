@@ -193,7 +193,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
   // "Sold in": only with more than one market (one market sells everything it prices, as Price shows).
   const showSoldIn = markets.length > 1;
   const sold = showSoldIn ? await marketSkus(appDb, account.id, markets) : [];
-  const cols = showSoldIn ? 9 : 8;
+  const cols = showSoldIn ? 7 : 6;
 
   const kind = firstParam(sp, "kind");
   const status = firstParam(sp, "status");
@@ -332,10 +332,8 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
               <tr>
                 <SortableTh column="name" path={base} params={sp} sort={sort}>{t("catalog.col.product")}</SortableTh>
                 <SortableTh column="code" path={base} params={sp} sort={sort}>{t("catalog.col.code")}</SortableTh>
-                <SortableTh column="kind" path={base} params={sp} sort={sort}>{t("catalog.col.kind")}</SortableTh>
-                <SortableTh column="charged" path={base} params={sp} sort={sort}>{t("catalog.col.charged")}</SortableTh>
                 <SortableTh column="price" path={base} params={sp} sort={sort} firstDir="desc">{t("catalog.col.price")}</SortableTh>
-                {showSoldIn ? <th scope="col">{t("catalog.col.sold_in")}</th> : null}
+                {showSoldIn ? <th scope="col" className="sas-catalog__soldin">{t("catalog.col.sold_in")}</th> : null}
                 <th scope="col">{t("catalog.col.rules")}</th>
                 <SortableTh column="status" path={base} params={sp} sort={sort}>{t("catalog.col.status")}</SortableTh>
                 <th scope="col"><span className="sas-sr">{t("catalog.col.actions")}</span></th>
@@ -351,13 +349,15 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                   <tr key={i.id} data-current={i.id === selectedId ? "" : undefined}>
                     <td>
                       <a className="sas-row-link" href={open(i.id)} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a>
+                      {/* Kind and unit fold into a second line, so the table fits at 1440 without scrolling sideways. */}
+                      <span className="sas-small" style={{ display: "block" }} data-item-kind={i.kind ?? "product"}>
+                        {t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")} · {t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}
+                      </span>
                       {i.plainName ? <span className="sas-small" style={{ display: "block" }}>{t("catalog.in_chat", { name: i.plainName })}</span> : null}
                     </td>
                     <td className="sas-id" data-label={t("catalog.col.code")}><span className="sas-nowrap">{i.sku}</span></td>
-                    <td data-label={t("catalog.col.kind")}>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")}</td>
-                    <td data-label={t("catalog.col.charged")} style={{ whiteSpace: "nowrap" }}>{t("catalog.per", { unit: unitLabel(i.unit, i.unitCustom, "en", 1) })}</td>
                     <td data-label={t("catalog.col.price")}><PriceCell row={r} currency={currency} /></td>
-                    {showSoldIn ? <td data-label={t("catalog.col.sold_in")}><SoldInCell sku={i.sku} markets={sold} /></td> : null}
+                    {showSoldIn ? <td className="sas-catalog__soldin" data-label={t("catalog.col.sold_in")}><SoldInCell sku={i.sku} markets={sold} /></td> : null}
                     <td data-label={t("catalog.col.rules")}>
                       {r.chips.length === 0 ? <span className="sas-small">—</span> : (
                         <span className="sas-chips" data-rule-chips="">{r.chips.map((c) => <span key={c} className="sas-chip sas-chip--plain">{c}</span>)}</span>

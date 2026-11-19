@@ -7,7 +7,7 @@ import { describe, expect, it } from "vitest";
 import {
   MARKET_ALL, inMarket, marketCookieName, marketSwitchTarget, resolveMarketId, safeReturnPath, showMarketSwitcher, switcherReturnTo, withMarketParam,
 } from "@/lib/markets/selection";
-import { marketOutlinePath, transformPath } from "@/lib/markets/outline";
+import { marketOutlinePath, OUTLINE_PAD_TOP, transformPath } from "@/lib/markets/outline";
 import { COUNTRY_OUTLINES } from "@/lib/markets/outlines.generated";
 import { CALLING_CODES, COUNTRY_TIMEZONE, STANDARD_VAT_BP } from "@/lib/markets/rules";
 
@@ -97,6 +97,18 @@ describe("country outlines", () => {
     }
     // Across the antimeridian (Fiji and New Zealand) the shape still fits the box.
     for (const m of marketOutlinePath(["FJ", "NZ"])!.matchAll(/M([-\d.]+) ([-\d.]+)/g)) expect(Number(m[1])).toBeLessThanOrEqual(200);
+  });
+  it("W5: every outline leaves the top margin free for the status pill (generated and merged)", () => {
+    // Fitted into [12, 38]–[188, 138]: the pill sits in the top-start corner, above y = 38.
+    for (const [code, o] of Object.entries(COUNTRY_OUTLINES)) {
+      expect(o.b[1], code).toBeGreaterThanOrEqual(OUTLINE_PAD_TOP - 0.5);
+      expect(o.b[3], code).toBeLessThanOrEqual(138.5);
+      expect(o.b[0], code).toBeGreaterThanOrEqual(11.5);
+      expect(o.b[2], code).toBeLessThanOrEqual(188.5);
+    }
+    // The UK (tall) starts below the pill.
+    expect(COUNTRY_OUTLINES.GB.b[1]).toBeGreaterThanOrEqual(OUTLINE_PAD_TOP);
+    for (const m of marketOutlinePath(["GB", "IE"])!.matchAll(/M([-\d.]+) ([-\d.]+)/g)) expect(Number(m[2])).toBeGreaterThanOrEqual(OUTLINE_PAD_TOP - 0.5);
   });
   it("transformPath scales relative steps and moves only the start points", () => {
     expect(transformPath("M10 20l1 -2 .5-1z", 2, 5, -5)).toBe("M25 35l2 -4 1 -2z");

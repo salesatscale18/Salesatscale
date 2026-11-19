@@ -74,6 +74,7 @@ export function traceChips(calls: ConversationView["thread"][number]["calls"], r
 export function markerText(m: ThreadMarker, meId: string | null): string {
   if (m.kind === "handoff") return t("conv.marker.handoff");
   if (m.kind === "handed_back") return t("conv.marker.handed_back");
+  if (m.kind === "spend_cap") return t("conv.marker.spend_cap");
   return m.by ? t("conv.marker.taken_over", { name: isolate(personName(m.by, meId, t("people.you_lower"))) }) : t("conv.marker.taken_over_unknown");
 }
 

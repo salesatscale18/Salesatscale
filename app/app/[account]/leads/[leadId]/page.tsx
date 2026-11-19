@@ -65,6 +65,7 @@ const EVENT_ICON: Record<string, IconName> = {
   "quote.approved": "check-circle",
   "quote.cancelled": "file-x",
   "handoff.requested": "user",
+  "handoff.spend_cap": "user",
   "deal.verified": "shield-check",
   "order_form.sent": "send",
   "order_form.opened": "eye",
@@ -390,7 +391,7 @@ export default async function LeadCardPage({
                       </a>
                       {/* The signed form, and its pay page while the order waits for payment (R5 item 8). */}
                       <div className="sas-lead-doc__links">
-                        <SignedFormLinks url={linkFor({ id: order.orderFormId }).url} pay={payLinkOpen(order.paymentStatus, leadQuotes.find((q) => q.quote.id === order.quoteId)?.quote.status ?? "")} />
+                        <SignedFormLinks url={linkFor({ id: order.orderFormId }).url} pay={payLinkOpen(order.paymentStatus, leadQuotes.find((q) => q.quote.id === order.quoteId)?.quote.status ?? "")} payVariant="ghost" />
                       </div>
                     </li>
                   ))}

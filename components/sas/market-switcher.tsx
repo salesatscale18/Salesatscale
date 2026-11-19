@@ -14,6 +14,9 @@
  *   with `?market=` set. With JS a change submits at once (AutoSubmit);
  *   without JS an Apply button shows (<noscript>).
  * - Put it in the page header; the page reads the same selection to filter.
+ * - Compact (W5): the select is as wide as the chosen option, at most 200px,
+ *   with the text truncated (sas.css, .sas-mswitch--compact); the options
+ *   keep their full labels.
  */
 import type { Market } from "@/db/schema";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -35,7 +38,7 @@ export function MarketSwitcher({ slug, selection, returnTo, id = "market-switche
 }) {
   if (!selection.showSwitcher) return null;
   return (
-    <form method="get" action={`/app/${slug}/market`} className="sas-mswitch" data-market-switcher="">
+    <form method="get" action={`/app/${slug}/market`} className="sas-mswitch sas-mswitch--compact" data-market-switcher="">
       <input type="hidden" name="next" value={returnTo} />
       <label className="sas-mswitch__field" htmlFor={id}>
         <Icon name="globe" />
