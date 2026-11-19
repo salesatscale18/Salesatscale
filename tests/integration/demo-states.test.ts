@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentVersions, auditLog, conversations, knowledgeFacts, leadIntakeKeys, leads, orderForms, orders, sources, users, type User } from "@/db/schema";
+import { agentVersions, auditLog, conversations, knowledgeFacts, leadEvents, leadIntakeKeys, leads, messages, orderForms, orders, sources, toolCalls, users, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 // No real model client may be built: the review states spend nothing.
@@ -8,7 +8,8 @@ const h = vi.hoisted(() => ({ anthropic: vi.fn() }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: h.anthropic }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { NEW_NOTE, OPEN_QUESTIONS, PARTLY_WEBSITE, STATE_LEADS, UNPRICED_SKU } = await import("@/lib/demo/states");
+const { NEW_NOTE, OPEN_QUESTIONS, PARTLY_WEBSITE, STATE_LEADS, STEPS_CHAT, UNPRICED_SKU } = await import("@/lib/demo/states");
+const { conversationView } = await import("@/lib/agent/conversation");
 const { listSources } = await import("@/lib/sources/service");
 const { listRuns, planAnalysis, analysisSummary, sourceFactCounts, sourceDisplayStatus } = await import("@/lib/pipeline/service");
 const { unansweredQuestions } = await import("@/lib/agent/service");
@@ -175,9 +176,9 @@ describe("demo account review states", () => {
     expect(eff.contactHours.value[0].on).toBe(false);
   });
 
-  it("has one human-handled and one needs-you conversation", async () => {
+  it("has one human-handled and two needs-you conversations (the agent handed off; one started at the spend cap)", async () => {
     const inbox = await listInbox(db, accountId, { now: NOW });
-    expect(inbox.counts).toMatchObject({ needs_you: 1, human: 1, test: 3 });
+    expect(inbox.counts).toMatchObject({ needs_you: 2, human: 1, test: 4 });
     const needs = inbox.rows.find((r) => r.group === "needs_you")!;
     const human = inbox.rows.find((r) => r.group === "human")!;
     expect(needs).toBeDefined();
@@ -186,6 +187,55 @@ describe("demo account review states", () => {
     expect(conv.takenOverByUserId).toBe(admin.id);
     // Nothing was sent: the stored messages have no delivery outcome.
     expect(conv.channel).toBe("whatsapp");
+  });
+
+  const leadBy = async (n: number) => (await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.sourceRef, `demo-seed:${n}`))))[0];
+  const convOf = async (leadId: string) => (await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId))))[0];
+
+  it("W6: has a chat that started at the AI spend cap: waits for a person, with the handoff.spend_cap event and its marker", async () => {
+    const lead = await leadBy(STATE_LEADS.spendCap.n);
+    expect(lead.status).toBe("human_handling");
+    const conv = await convOf(lead.id);
+    expect(conv).toMatchObject({ status: "human", channel: "whatsapp", takenOverByUserId: null, isTest: false });
+    const events = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, lead.id), eq(leadEvents.type, "handoff.spend_cap")));
+    expect(events).toHaveLength(1);
+    expect(events[0].data).toEqual({ conversationId: conv.id, reason: "spend_cap" });
+    const view = await conversationView(db, accountId, conv);
+    expect(view.markers?.map((m) => m.kind)).toEqual(["spend_cap"]);
+    // The buyer's message is kept; nobody answered (no agent reply: the cap stops the agent).
+    expect(view.thread.map((r) => r.message.actor)).toEqual(["buyer"]);
+  });
+
+  it("W6: has a chat taken over by a person and handed back, with both events and markers between the messages", async () => {
+    const lead = await leadBy(STATE_LEADS.handBack.n);
+    expect(lead.status).toBe("agent_handling");
+    const conv = await convOf(lead.id);
+    expect(conv).toMatchObject({ status: "open", takenOverByUserId: null });
+    const events = await db.select().from(leadEvents).where(eq(leadEvents.leadId, lead.id));
+    for (const type of ["conversation.taken_over", "conversation.handed_back"]) {
+      const e = events.filter((x) => x.type === type);
+      expect(e).toHaveLength(1);
+      expect(e[0]).toMatchObject({ actor: "human", actorUserId: admin.id, data: { conversationId: conv.id } });
+    }
+    const view = await conversationView(db, accountId, conv);
+    expect(view.markers?.map((m) => m.kind)).toEqual(["taken_over", "handed_back"]);
+    // Dated inside the chat: after the person's takeover point, before the agent's next reply.
+    const times = view.thread.map((r) => r.message.createdAt.getTime());
+    for (const m of view.markers ?? []) {
+      expect(m.at.getTime()).toBeGreaterThan(times[0]);
+      expect(m.at.getTime()).toBeLessThan(times.at(-1)!);
+    }
+    expect(view.thread.map((r) => r.message.actor)).toEqual(["buyer", "agent", "buyer", "human", "buyer", "agent"]);
+  });
+
+  it("W6: has a saved test-lab chat whose agent reply has recorded steps", async () => {
+    const [msg] = await db.select().from(messages).where(and(eq(messages.accountId, accountId), eq(messages.body, STEPS_CHAT.agent)));
+    expect(msg.actor).toBe("agent");
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, msg.conversationId));
+    expect(conv).toMatchObject({ isTest: true, channel: "testlab", scenario: null });
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.messageId, msg.id));
+    expect(calls.map((c) => c.name).sort()).toEqual(["lookup_knowledge", "search_catalog", "update_deal_state"]);
+    expect(calls.every((c) => c.outcome === "ok")).toBe(true);
   });
 
   it("has a lead intake key generated per account, and only its hash is stored", async () => {

@@ -16,6 +16,40 @@ function VerifiedMark({ title }: { title: string }) {
   );
 }
 
+/** A last word longer than this keeps only its last TAIL_CHARS characters with the check, so a long email can still wrap. */
+const TAIL_WORD_MAX = 12;
+const TAIL_CHARS = 6;
+
+/**
+ * Splits a value so its end can stay on one line with the check (W6): the
+ * last word, or for a long last word only its short end (".example" of
+ * "ronit@bakery-demo.example", else its last few characters). The head keeps
+ * wrapping as before.
+ */
+export function verifiedTail(value: string): { head: string; tail: string } {
+  const m = /^([\s\S]*\s)?(\S+)$/.exec(value);
+  if (!m) return { head: value, tail: "" };
+  const before = m[1] ?? "";
+  const word = m[2];
+  if (word.length <= TAIL_WORD_MAX) return { head: before, tail: word };
+  // A long word: from its last ".", "@", "-", "_" or "/" when that end is short (".example"), else its last few characters.
+  const cut = Math.max(...[".", "@", "-", "_", "/"].map((c) => word.lastIndexOf(c)));
+  if (cut > 0 && word.length - cut <= TAIL_WORD_MAX) return { head: before + word.slice(0, cut), tail: word.slice(cut) };
+  const chars = Array.from(word);
+  return { head: before + chars.slice(0, -TAIL_CHARS).join(""), tail: chars.slice(-TAIL_CHARS).join("") };
+}
+
+/** A verified value with the check inline after its last word, never alone on a line or at the row's far edge (W6). */
+function VerifiedValue({ value, title }: { value: unknown; title: string }) {
+  const { head, tail } = verifiedTail(String(value).trimEnd());
+  return (
+    <span className="sas-verified-value">
+      {head}
+      <span className="sas-verified-tail">{tail}<VerifiedMark title={title} /></span>
+    </span>
+  );
+}
+
 /**
  * Deal fields, as DealStateFields shows them, except a verified value carries
  * the circle-check right after it instead of the "Verified" pill, so values
@@ -30,7 +64,7 @@ function PaneFields({ fields }: { fields: PaneField[] }) {
           <div key={f.key} className={missing ? "sas-field sas-field--missing" : "sas-field"}>
             <dt className="sas-field__label">{f.label}</dt>
             <dd className="sas-field__value">
-              {missing ? t("deal_state.missing") : f.verified ? <span className="sas-verified-value">{f.value}<VerifiedMark title={f.verified.title} /></span> : f.value}
+              {missing ? t("deal_state.missing") : f.verified ? <VerifiedValue value={f.value} title={f.verified.title} /> : f.value}
               {!missing && f.provenance && !f.verified ? <ProvenanceTag kind={f.provenance} /> : null}
             </dd>
           </div>

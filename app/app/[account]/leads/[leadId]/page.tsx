@@ -35,6 +35,7 @@ import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
+import { leadEventIcon } from "@/lib/leads/event-icons";
 import { contactHoursFixHref } from "@/lib/markets/lead-settings";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
@@ -54,35 +55,7 @@ async function timelineCookieValue(): Promise<string | undefined> {
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const EVENT_ICON: Record<string, IconName> = {
-  "lead.created": "user-plus",
-  "lead.updated": "file-text",
-  "consent.recorded": "shield-check",
-  "lead.opted_out": "x-circle",
-  "lead.market_changed": "layers",
-  "quote.created": "file-text",
-  "quote.versioned": "file-text",
-  "quote.approved": "check-circle",
-  "quote.cancelled": "file-x",
-  "handoff.requested": "user",
-  "handoff.spend_cap": "user",
-  "deal.verified": "shield-check",
-  "order_form.sent": "send",
-  "order_form.opened": "eye",
-  "order_form.signed": "pen",
-  "payment.bank_transfer": "clock",
-  "payment.failed": "x-circle",
-  "order.paid": "credit-card",
-  "conversation.taken_over": "user",
-  "conversation.handed_back": "sparkles",
-  "conversation.human_reply": "message-square",
-  "conversation.started": "send",
-  "conversation.started_sim": "flask-conical",
-  "follow_up.scheduled": "clock",
-  "follow_up.sent": "send",
-  "follow_up.cancelled": "alarm-clock-off",
-  "follow_up.failed": "x-circle",
-};
+/** Event icons: one map with Overview's Recent activity (lib/leads/event-icons.ts, W6). */
 
 /** Lead card (canvas: Main, LeadEmpty): the latest conversation with take over / hand back, deal state, quotes and timeline. */
 export default async function LeadCardPage({
@@ -170,7 +143,7 @@ export default async function LeadCardPage({
     return {
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
-    icon: EVENT_ICON[startedSim ? "conversation.started_sim" : event.type] ?? "cog",
+    icon: leadEventIcon(event.type, { simulator: startedSim }),
     // Wins get the filled green circle (round-4 review E7).
     tone: won ? ("success" as const) : undefined,
     title: won ? <span style={{ color: "var(--success)" }} data-tone="success">{title}</span> : title,
@@ -349,14 +322,19 @@ export default async function LeadCardPage({
                 <ul className="sas-list">
                   {leadQuotes.map(({ quote, version, older }) => (
                     <li key={quote.id}>
-                      <a className="sas-list__row" href={`/app/${account.slug}/orders?quote=${quote.id}`}>
-                        <span className="sas-id">Q-{quote.number} v{quote.currentVersion}</span>
-                        <span className="sas-list__main sas-num sas-small">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : quoteTotals(version)}</span>
-                        {(() => {
-                          const f = furthestQuoteState(displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id), orderedQuotes.has(quote.id)), docs.get(quote.id));
-                          return f.object === "payment" ? <StatusPill object="payment" state={f.state} /> : f.object === "order_form" ? <StatusPill object="order_form" state={f.state} /> : <StatusPill object="quote" state={f.state} />;
-                        })()}
-                        <span className="sas-small sas-lead-doc__date" title={formatDateTimeIn(version.createdAt, tz)}>{formatDayMonthIn(version.createdAt, tz)}</span>
+                      {/* Two lines, as the order rows (W6): ID and status, then amounts and date. */}
+                      <a className="sas-list__row sas-lead-doc__row" href={`/app/${account.slug}/orders?quote=${quote.id}`} data-quote-row={quote.id}>
+                        <span className="sas-lead-doc__line">
+                          <span className="sas-id">Q-{quote.number} v{quote.currentVersion}</span>
+                          {(() => {
+                            const f = furthestQuoteState(displayQuoteStatus(quote.status, version.validUntil, now, tzOf.get(quote.id), orderedQuotes.has(quote.id)), docs.get(quote.id));
+                            return f.object === "payment" ? <StatusPill object="payment" state={f.state} /> : f.object === "order_form" ? <StatusPill object="order_form" state={f.state} /> : <StatusPill object="quote" state={f.state} />;
+                          })()}
+                        </span>
+                        <span className="sas-lead-doc__line">
+                          <span className="sas-num sas-lead-doc__amount">{version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId ? t("quote.to_price") : quoteTotals(version)}</span>
+                          <span className="sas-small sas-lead-doc__date" title={formatDateTimeIn(version.createdAt, tz)}>{formatDayMonthIn(version.createdAt, tz)}</span>
+                        </span>
                       </a>
                       {older.length ? (
                         <details style={{ padding: "0 16px 8px" }}>
@@ -383,11 +361,16 @@ export default async function LeadCardPage({
                 <ul className="sas-list">
                   {leadOrders.map(({ order }) => (
                     <li key={order.id}>
-                      <a className="sas-list__row" href={`/app/${account.slug}/orders?tab=orders&quote=${order.quoteId}`} data-order-row={order.id}>
-                        <span className="sas-id">{orderById.get(order.id)!.label}</span>
-                        <span className="sas-list__main sas-num sas-small">{orderById.get(order.id)!.amount}</span>
-                        <StatusPill object="payment" state={order.paymentStatus} />
-                        <span className="sas-small sas-lead-doc__date" title={formatDateTimeIn(order.createdAt, tz)}>{formatDayMonthIn(order.createdAt, tz)}</span>
+                      {/* Line 1: ID and status; line 2: amounts (one line) and date; line 3: the links (W6). */}
+                      <a className="sas-list__row sas-lead-doc__row" href={`/app/${account.slug}/orders?tab=orders&quote=${order.quoteId}`} data-order-row={order.id}>
+                        <span className="sas-lead-doc__line">
+                          <span className="sas-id">{orderById.get(order.id)!.label}</span>
+                          <StatusPill object="payment" state={order.paymentStatus} />
+                        </span>
+                        <span className="sas-lead-doc__line">
+                          <span className="sas-num sas-lead-doc__amount">{orderById.get(order.id)!.amount}</span>
+                          <span className="sas-small sas-lead-doc__date" title={formatDateTimeIn(order.createdAt, tz)}>{formatDayMonthIn(order.createdAt, tz)}</span>
+                        </span>
                       </a>
                       {/* The signed form, and its pay page while the order waits for payment (R5 item 8). */}
                       <div className="sas-lead-doc__links">

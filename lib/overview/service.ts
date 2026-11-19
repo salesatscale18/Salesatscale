@@ -8,6 +8,7 @@ import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notI
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
+import { priceListVersions } from "@/lib/pricing/price-lists";
 import {
   followUps, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
   type ApprovalReason, type LeadEvent, type Market, type User,
@@ -322,4 +323,17 @@ export function needsYouByMarket(items: readonly Pick<NeedsYouItem, "marketId">[
     out.set(k, (out.get(k) ?? 0) + 1);
   }
   return out;
+}
+
+/**
+ * The currency a market sells in: its price list's (the live version, else the
+ * newest one not archived, as the market's settings read it), else `fallback`
+ * (the account currency). Overview's "Paid revenue" shows 0 in it when the
+ * market has nothing paid yet (W6: £0.00 for the UK, not ₪0.00).
+ */
+export async function marketCurrency(db: Db, accountId: string, market: Pick<Market, "priceListLineageId">, fallback: string): Promise<string> {
+  if (!market.priceListLineageId) return fallback;
+  const versions = await priceListVersions(db, accountId, market.priceListLineageId);
+  const list = versions.find((v) => v.status === "live") ?? versions.find((v) => v.status !== "archived");
+  return list?.currency ?? fallback;
 }

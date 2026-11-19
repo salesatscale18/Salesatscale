@@ -119,7 +119,8 @@ describe("W3: lead page verified details, Quotes and Orders cards, folded timeli
     save("lead-eli", html);
     const pane = html.split('data-testid="deal-pane"')[1];
     // The value, then the icon, on one line; no "Verified" pill.
-    expect(pane).toMatch(/<span class="sas-verified-value">Shapiro Pizza Ltd<span class="sas-verified" role="img" aria-label="From the signed order form, \d{1,2} \w{3} \d{4}" title="From the signed order form, \d{1,2} \w{3} \d{4}" data-verified="">/);
+    // W6: the last word and the check stay together on one line.
+    expect(pane).toMatch(/<span class="sas-verified-value">Shapiro Pizza <span class="sas-verified-tail">Ltd<span class="sas-verified" role="img" aria-label="From the signed order form, \d{1,2} \w{3} \d{4}" title="From the signed order form, \d{1,2} \w{3} \d{4}" data-verified="">/);
     expect(pane).not.toContain("sas-prov--verified");
     expect(pane).not.toMatch(/>Verified</);
     // Buyer said stays a tag.
@@ -166,7 +167,7 @@ describe("W3: lead page verified details, Quotes and Orders cards, folded timeli
     expect(quotes).toMatch(/class="sas-small sas-lead-doc__date" title="[^"]+">\d{1,2} \w{3}</);
     const ordersCard = section(html, "orders-card");
     expect(ordersCard).toMatch(/Orders <span class="sas-lead-doc__count sas-num">1<\/span>/);
-    const row = ordersCard.match(/<a class="sas-list__row"[^>]*data-order-row[^>]*>[\s\S]*?<\/a>/)?.[0] ?? "";
+    const row = ordersCard.match(/<a class="sas-list__row sas-lead-doc__row"[^>]*data-order-row[^>]*>[\s\S]*?<\/a>/)?.[0] ?? "";
     expect(row).toContain("PD-10001");
     expect(row).toContain("₪");
     expect(row).toContain("sas-pill");

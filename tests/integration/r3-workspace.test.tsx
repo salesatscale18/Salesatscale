@@ -151,7 +151,8 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     save("conv-eli", conv);
     const side = conv.split('class="sas-inbox__side"')[1];
     expect(side).toContain('data-testid="deal-pane"');
-    for (const v of ["Shapiro Pizza Ltd", "516000111", "Eli Shapiro", "Owner"]) expect(side).toContain(v);
+    // As text: the check keeps the last word in its own span (W6).
+    for (const v of ["Shapiro Pizza Ltd", "516000111", "Eli Shapiro", "Owner"]) expect(side.replace(/<[^>]+>/g, "")).toContain(v);
     expect(side).toContain('aria-label="From the signed order form, ');
     expect(side).toMatch(/data-testid="next-step"[\s\S]*Order PD-10001 is paid\. Next: delivery\./);
     expect(side).not.toContain("Quote on assumption of 1 site");
@@ -257,7 +258,7 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
 
   it("B1: the quote an order came from shows Ordered, on the lead page and in the Quotes list", async () => {
     const lead = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.eliLead }) as never));
-    const row = lead.match(/<a class="sas-list__row" href="[^"]*orders\?quote=[^"]*">[\s\S]*?<\/a>/)?.[0] ?? "";
+    const row = lead.match(/<a class="sas-list__row sas-lead-doc__row" href="[^"]*orders\?quote=[^"]*"[^>]*>[\s\S]*?<\/a>/)?.[0] ?? "";
     // The lead page shows the furthest state: the order is paid (round-4 review F2).
     expect(row).toContain('data-status="payment.paid"');
     expect(row).toContain(">Paid<");

@@ -3087,6 +3087,7 @@
   "overview.markets.manage": "Manage markets",
   "overview.markets.add": "Add market",
   "overview.markets.card_label": "{name}: open this market",
+  "overview.markets.card_label_selected": "{name}: shown now. Show all markets",
   "overview.markets.open_leads": "Open leads",
   "overview.markets.need_you": "Need you",
   "overview.needs.more": "Show {count} more",

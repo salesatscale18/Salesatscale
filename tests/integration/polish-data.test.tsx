@@ -180,7 +180,8 @@ describe("Polish-1: wrong or contradicting data", () => {
     expect(orderRow).toContain("₪1,770.00 + ₪106.20/month");
     expect(orderRow).toMatch(/sas-pill--success[^>]*>[\s\S]*Paid/);
     // Deal state: filled and verified, no "Not known yet" for the signed fields.
-    for (const value of ["Shapiro Pizza Ltd", "516000111", "Eli Shapiro", "Owner"]) expect(html).toContain(value);
+    // As text: the check keeps the last word in its own span (W6).
+    for (const value of ["Shapiro Pizza Ltd", "516000111", "Eli Shapiro", "Owner"]) expect(html.replace(/<[^>]+>/g, "")).toContain(value);
     expect(html).toContain('aria-label="From the signed order form, ');
     expect(html).not.toContain("Quote on assumption of 1 site");
     expect(html).toContain("Order PD-10001 is paid. Next: delivery.");

@@ -155,7 +155,7 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
   });
 
   it("F2: the quote row shows the furthest state: Sent, then Opened once the buyer opens the form; Paid for a paid order", async () => {
-    const row = (html: string) => html.match(/<a class="sas-list__row" href="[^"]*orders\?quote=[^"]*">[\s\S]*?<\/a>/)?.[0] ?? "";
+    const row = (html: string) => html.match(/<a class="sas-list__row sas-lead-doc__row" href="[^"]*orders\?quote=[^"]*"[^>]*>[\s\S]*?<\/a>/)?.[0] ?? "";
     expect(row(await page(LeadCardPage(props(account.slug, {}, { leadId: ids.tamarLead }) as never)))).toContain('data-status="quote.sent"');
     const view = await loadForm(db, ids.tamarToken);
     if (!view || view.state !== "open") throw new Error("form not open");

@@ -360,20 +360,36 @@ export async function inboundConversation(
     // the buyer's message is kept and the conversation waits for a person (Needs you).
     // Open conversations above keep replying.
     const capped = await spendCapped(db, accountId, opts.now ?? new Date());
-    [conv] = await db.insert(conversations).values({ accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language, ...(capped ? { status: "human" as const } : {}) }).returning();
-    if (capped) {
-      await Promise.all([
-        db.update(leads).set({ status: "human_handling" }).where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId), ne(leads.status, "opted_out"))),
-        // The thread's "Handed to a person: AI limit reached" marker and the lead's timeline entry (W5).
-        // Written only here, when the conversation is created, so once per conversation.
-        db.insert(leadEvents).values({
-          accountId, leadId: lead.id, type: SPEND_CAP_HANDOFF_EVENT, actor: "system",
-          data: { conversationId: conv.id, reason: "spend_cap" }, createdAt: conv.createdAt,
-        }),
-      ]);
-    }
+    conv = capped
+      ? await startConversationAtSpendCap(db, { accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language })
+      : (await db.insert(conversations).values({ accountId, leadId: lead.id, channel, agentVersionId: live.id, language: lead.language }).returning())[0];
   }
   return { ok: true, conv };
+}
+
+/**
+ * A new conversation started at the monthly AI spend cap: it waits for a
+ * person (status human), the lead reads Human handling, and the lead event
+ * handoff.spend_cap gives the thread its "Handed to a person: AI limit
+ * reached" marker and the timeline its entry (W5). Written only when the
+ * conversation is created, so once per conversation. Used by
+ * inboundConversation, and by the demo seed to show the state (`at` dates it).
+ */
+export async function startConversationAtSpendCap(
+  db: Db, input: { accountId: string; leadId: string; channel: string; agentVersionId: string; language: string; at?: Date },
+): Promise<Conversation> {
+  const { accountId, leadId, channel, agentVersionId, language, at } = input;
+  const [conv] = await db.insert(conversations).values({
+    accountId, leadId, channel, agentVersionId, language, status: "human" as const, ...(at ? { createdAt: at, updatedAt: at } : {}),
+  }).returning();
+  await Promise.all([
+    db.update(leads).set({ status: "human_handling" }).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId), ne(leads.status, "opted_out"))),
+    db.insert(leadEvents).values({
+      accountId, leadId, type: SPEND_CAP_HANDOFF_EVENT, actor: "system",
+      data: { conversationId: conv.id, reason: "spend_cap" }, createdAt: conv.createdAt,
+    }),
+  ]);
+  return conv;
 }
 
 /** Stores one inbound message from a real lead after `inboundConversation`'s checks. `channelMessageId` deduplicates retries. */

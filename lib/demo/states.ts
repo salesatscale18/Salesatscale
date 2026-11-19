@@ -7,6 +7,12 @@
  * the same services the buyer pages call (quote, order form, sign, bank
  * transfer), with fictional leads that are never contacted.
  *
+ * Conversation states (W6): a chat a person took over, one handed back to the
+ * agent (take-over and hand-back markers), one that needs you after the agent
+ * handed off, one that started at the AI spend cap (written by the same helper
+ * as a real capped inbound message; the cap itself is not reached), and a saved
+ * test-lab chat with recorded agent steps.
+ *
  * Not seeded: a source in "processing". The status exists, but it is
  * transient by design: failStaleSources marks a source that has been
  * processing for 5 minutes as failed when Sources loads, so a seeded one
@@ -22,13 +28,14 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sources, toolCalls, type DealFieldValue } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
-import { takeOver } from "@/lib/agent/conversation";
+import { handBack, takeOver } from "@/lib/agent/conversation";
 import { addFact, startTestConversation } from "@/lib/agent/service";
 import { parseItemEdit } from "@/lib/catalog/rules";
 import { saveDraftItem } from "@/lib/catalog/service";
 import { parseLead } from "@/lib/leads/rules";
 import { createIntakeKey, upsertLead } from "@/lib/leads/service";
 import { createMarket } from "@/lib/markets/service";
+import { startConversationAtSpendCap } from "@/lib/channels/whatsapp";
 import { createOrderForm, loadForm, markOpened, signForm, startPayment, type SignInput } from "@/lib/orders/service";
 import { planAnalysis } from "@/lib/pipeline/service";
 import { createPriceList, setEntry } from "@/lib/pricing/price-lists";
@@ -155,6 +162,14 @@ export const STATE_LEADS = {
   payStep: { n: 5, fullName: "Avi Demo", company: "Deli Demo Jaffa", email: "avi@deli-demo.example", language: "en" },
   human: { n: 6, fullName: "אורי דמו", company: "קפה דמו חיפה", email: "uri@cafe-demo.example", language: "he" },
   needsYou: { n: 7, fullName: "Lior Demo", company: "Kitchen Demo Herzliya", email: "lior@kitchen-demo.example", language: "en" },
+  spendCap: { n: 8, fullName: "Tal Demo", company: "Pizza Demo Ashdod", email: "tal@pizza-demo.example", language: "en" },
+  handBack: { n: 9, fullName: "Noam Demo", company: "Grill Demo Netanya", email: "noam@grill-demo.example", language: "en" },
+} as const;
+
+/** The saved test-lab chat whose agent reply carries recorded steps (W6): the switch shows them by default there. */
+export const STEPS_CHAT = {
+  buyer: "Hi, we have 2 restaurants with 12 fridges in total. What would monitoring cost, and does it work with our app?",
+  agent: "For 2 sites you need 12 wireless sensors and 2 gateways, and alerts come by WhatsApp. The Polar Demo app works on iPhone and Android. Shall I prepare a quote?",
 } as const;
 
 /** The questions the agent could not answer (open in Knowledge). */
@@ -175,6 +190,9 @@ export type ReviewStates = {
   payStepOrderId: string;
   humanConversationId: string;
   needsYouConversationId: string;
+  spendCapConversationId: string;
+  handedBackConversationId: string;
+  stepsConversationId: string;
   passedConversationId: string;
   failedConversationId: string;
   analysisRuns: number;
@@ -289,6 +307,9 @@ export async function seedReviewStates(
   // 9. Conversations: one a person handles, one that needs you (the agent handed off).
   const humanConversationId = await humanHandled(db, actor, accountId, leadIds.human, liveVersionId, now);
   const needsYouConversationId = await needsYou(db, accountId, leadIds.needsYou, liveVersionId, now);
+  // W6: one started at the AI spend cap (waits for a person), one taken over and handed back to the agent.
+  const spendCapConversationId = await spendCapChat(db, accountId, leadIds.spendCap, liveVersionId, now);
+  const handedBackConversationId = await handedBack(db, actor, accountId, leadIds.handBack, liveVersionId, now);
 
   // 10. Test lab: one scenario chat that passes its check and one that fails it.
   const passedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
@@ -305,6 +326,9 @@ export async function seedReviewStates(
     agent: "Hi! The price depends on how many fridges and freezers you have. How many are there at your site?",
   });
 
+  // W6: a saved test-lab chat (no scenario) whose agent reply has recorded steps.
+  const stepsConversationId = await stepsChat(db, accountId, userId, liveVersionId, now);
+
   // 11. The analysis that made the facts, recorded last (its hashes cover the final facts, catalog and playbook).
   const analysisRuns = await recordAnalysis(db, accountId, now);
 
@@ -314,7 +338,8 @@ export async function seedReviewStates(
   return {
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
-    orderId, payStepOrderId, humanConversationId, needsYouConversationId, passedConversationId, failedConversationId, analysisRuns,
+    orderId, payStepOrderId, humanConversationId, needsYouConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
+    passedConversationId, failedConversationId, analysisRuns,
   };
 }
 
@@ -434,6 +459,78 @@ async function needsYou(db: Db, accountId: string, leadId: string, versionId: st
     data: { reason, summary: "2 kitchens; asks about a BMS connection before anything else.", suggestedReply },
   });
   return id;
+}
+
+/**
+ * The buyer wrote while the account was at its AI spend cap: the conversation
+ * starts waiting for a person, with the "AI limit reached" marker (the same
+ * helper as a real capped inbound message; no cap is actually reached).
+ */
+async function spendCapChat(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
+  const conv = await startConversationAtSpendCap(db, { accountId, leadId, channel: "whatsapp", agentVersionId: versionId, language: "en", at: min(now, 40) });
+  const last = await insertThread(db, accountId, conv.id, "en", versionId, [
+    { actor: "buyer", at: min(now, 40), body: "Hi, I run a pizzeria with 5 fridges. Can someone tell me what the sensors cost?" },
+  ]);
+  await db.update(leads).set({ lastActivityAt: last }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return conv.id;
+}
+
+/**
+ * A chat a person took over, answered, and handed back to the agent, which
+ * went on (the same services as the Take over and Hand back buttons). The
+ * lead events are dated to the chat, so the markers sit between its messages.
+ */
+async function handedBack(db: Db, actor: Actor & { userId: string }, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 140), "open");
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 140), body: "Hi, we have one grill restaurant with 3 fridges and a cold room. Do you install too?" },
+    { actor: "agent", at: min(now, 139), body: "Yes, installation is part of the offer. How many sites do you have, just the one in Netanya?" },
+    { actor: "buyer", at: min(now, 135), body: "Just one. Can I talk to someone about a visit first?" },
+  ]);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 135) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 125)) } });
+  const taken = await takeOver(db, actor, accountId, id, min(now, 130));
+  if (!taken.ok) throw new Error(`Demo seed: take over refused: ${taken.reason}`);
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "human", userId: actor.userId, at: min(now, 128), body: "Hi Noam, this is the Polar Demo team. A technician can visit on Sunday at 10:00. The assistant will help with the rest." },
+  ]);
+  await db.insert(leadEvents).values({
+    accountId, leadId, type: "conversation.human_reply", actor: "human", actorUserId: actor.userId, data: { conversationId: id, channel: "whatsapp" }, createdAt: min(now, 128),
+  });
+  const back = await handBack(db, actor, accountId, id, min(now, 127));
+  if (!back.ok) throw new Error(`Demo seed: hand back refused: ${back.reason}`);
+  // The services date their events when they run: date them to the chat, as the seed does for lead.created.
+  for (const [type, at] of [["conversation.taken_over", min(now, 130)], ["conversation.handed_back", min(now, 127)]] as const) {
+    await db.update(leadEvents).set({ createdAt: at })
+      .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), eq(leadEvents.type, type), sql`${leadEvents.data}->>'conversationId' = ${id}`));
+  }
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 126), body: "Sunday works. And what would 4 sensors cost?" },
+    {
+      actor: "agent", at: min(now, 125), body: "Great, Sunday at 10:00 it is. For one site with 4 sensors you need one gateway; I'll prepare the quote for you.",
+      calls: [{ name: "update_deal_state", input: { updates: [{ key: "sites", value: "1", provenance: "buyer" }] }, result: { ok: true, saved: ["sites"] } }],
+    },
+  ]);
+  await db.update(leads).set({ lastActivityAt: min(now, 125) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return id;
+}
+
+/** A saved test-lab chat on the live version (no scenario) whose agent reply has recorded steps. */
+async function stepsChat(db: Db, accountId: string, userId: string, versionId: string, now: Date) {
+  const test = await startTestConversation(db, accountId, userId, { language: "en", versionId });
+  if (!test) throw new Error("Demo seed: test chat with steps not started");
+  await insertThread(db, accountId, test.conversationId, "en", versionId, [
+    { actor: "buyer", at: min(now, 50), body: STEPS_CHAT.buyer },
+    {
+      actor: "agent", at: min(now, 49), body: STEPS_CHAT.agent,
+      calls: [
+        { name: "update_deal_state", input: { updates: [{ key: "sites", value: "2", provenance: "buyer" }] }, result: { ok: true, saved: ["sites"] } },
+        { name: "search_catalog", input: { query: "sensor gateway" }, result: { ok: true, items: [{ sku: "SNS-200", sold_here: true }, { sku: "GW-10", sold_here: true }] } },
+        { name: "lookup_knowledge", input: { query: "app iPhone Android" }, result: { ok: true, facts: [{ topic: "App", statement: "The Polar Demo app works on iPhone and Android." }] } },
+      ],
+    },
+  ]);
+  return test.conversationId;
 }
 
 /** A test-lab chat on the live version for one scenario: the buyer's opening and the agent's stored reply. */

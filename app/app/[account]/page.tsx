@@ -12,8 +12,9 @@ import { formatMoney } from "@/lib/domain/money";
 import { relativeTime, timeAgo } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { orderLabel } from "@/lib/orders/service";
+import { leadEventIcon } from "@/lib/leads/event-icons";
 import {
-  PERIODS, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewKpis, parsePeriod, periodRange, recentActivity,
+  PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewKpis, parsePeriod, periodRange, recentActivity,
   type CurrencyTotal, type NeedsYouItem,
 } from "@/lib/overview/service";
 import { inMarket, MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
@@ -40,13 +41,7 @@ const overviewQuery = (period: number, sim: boolean, market?: string, panel?: st
 /** How many "Needs you" items show before "Show N more". */
 const NEEDS_SHOWN = 2;
 
-const EVENT_ICON: Record<string, IconName> = {
-  "lead.created": "user-plus", "lead.updated": "file-text", "consent.recorded": "shield-check", "lead.opted_out": "x-circle",
-  "quote.created": "file-text", "quote.versioned": "file-text", "quote.approved": "check-circle", "quote.cancelled": "file-x",
-  "handoff.requested": "user", "handoff.spend_cap": "user", "deal.verified": "shield-check", "order_form.sent": "send", "order_form.opened": "eye",
-  "order_form.signed": "pen", "payment.bank_transfer": "clock", "payment.failed": "x-circle", "order.paid": "credit-card",
-  "follow_up.scheduled": "clock", "follow_up.sent": "send", "follow_up.cancelled": "alarm-clock-off", "follow_up.failed": "x-circle",
-};
+/** Event icons: one map with the lead page timeline (lib/leads/event-icons.ts, W6). */
 
 const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | "warning" | "danger" | "neutral" }> = {
   human_handling: { icon: "message-circle", tone: "human" },
@@ -92,7 +87,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const market = selection.selected;
   const homeId = selection.markets.find((m) => m.isHome)?.id ?? selection.markets[0]?.id ?? "";
   const urlMarket = one(sp[MARKET_PARAM]);
-  const [allItems, kpis, realKpis, activity, done, agent, spend, openLeads] = await Promise.all([
+  const [allItems, kpis, realKpis, activity, done, agent, spend, openLeads, currency] = await Promise.all([
     needsYouForRequest(appDb, account.id),
     overviewKpis(appDb, account.id, range, { includeSimulated, market }),
     // With simulated data included, the real-only numbers give the "incl. N simulated" lines.
@@ -102,14 +97,16 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     liveVersion(appDb, account.id),
     spendStateForRequest(appDb, account.id),
     openLeadsByMarket(appDb, account.id, homeId, { includeSimulated }),
+    // With one market selected, money is in that market's currency (its price list's), even with nothing paid yet (W6).
+    market ? marketCurrency(appDb, account.id, market, account.currency) : Promise.resolve(account.currency),
   ]);
   const items = allItems.filter((it) => inMarket(it.marketId, market));
   // The account's AI spend at 80% or more of the cap is a "Needs you" item of its own (not about a lead or a market).
   const spendAlert = spend && spend.state !== "ok" ? spend : null;
   const spendText = spendAlert ? spendTexts(spendAlert) : null;
   const needCount = items.length + (spendAlert ? 1 : 0);
-  // Amounts are never added across currencies: one line per currency (nothing paid yet: the account currency).
-  const revenue: CurrencyTotal[] = kpis.paidByCurrency.length ? kpis.paidByCurrency : [{ currency: account.currency, oneTimeMinor: 0, recurringMinor: 0 }];
+  // Amounts are never added across currencies: one line per currency (nothing paid yet: the selected market's currency, else the account's).
+  const revenue: CurrencyTotal[] = kpis.paidByCurrency.length ? kpis.paidByCurrency : [{ currency, oneTimeMinor: 0, recurringMinor: 0 }];
   const sim = realKpis ? {
     leads: kpis.newLeads - realKpis.newLeads, quotes: kpis.quotesCreated - realKpis.quotesCreated, signed: kpis.formsSigned - realKpis.formsSigned,
     paid: kpis.paidOrders - realKpis.paidOrders,
@@ -158,7 +155,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const timeline: TimelineItem[] = activity.map(({ event, lead, user: by }) => ({
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
-    icon: event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "flask-conical" : EVENT_ICON[event.type] ?? "cog",
+    icon: leadEventIcon(event.type, { simulator: (event.data as { channel?: string } | null)?.channel === "simulator" }),
     // A conversation started on the buyer simulator is not a WhatsApp start.
     title: t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey),
     detail: (
@@ -304,6 +301,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         openLeads={openLeads}
         needYou={needsYouByMarket(allItems, homeId)}
         returnTo={`${base}${overviewQuery(period, includeSimulated)}`}
+        selectedId={market?.id ?? null}
       />
 
       {/* Phone (sas.css): this row dissolves so "Needs you" can come first, under the greeting. */}

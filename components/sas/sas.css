@@ -1146,3 +1146,22 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 @media (min-width: 768px) {
   .sas-table th.sas-catalog__soldin, .sas-table td.sas-catalog__soldin { width: 160px; min-width: 120px; white-space: normal; }
 }
+/* ------------------------------------------------------------------------- */
+/* W (lane W6): fixes after the workspace and markets review                  */
+/* ------------------------------------------------------------------------- */
+/* Lead page Quotes and Orders cards: one layout for both. Line 1: ID and status;
+   line 2: amounts (never wrapped) and date; order links on a third line. */
+.sas-app .sas-lead-doc a.sas-lead-doc__row { flex-direction: column; align-items: stretch; flex-wrap: nowrap; gap: 4px; }
+.sas-lead-doc__line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-width: 0; }
+.sas-lead-doc__line > .sas-pill { flex: none; }
+.sas-lead-doc__amount { min-width: 0; color: var(--ink); white-space: nowrap; }
+.sas-lead-doc__links { padding: 0 6px var(--space-3); }
+.sas-lead-doc__links .sas-btn--sm { padding-inline: 6px; gap: 6px; }
+/* The cards grow to keep the amounts on one line (side by side only from 901px). */
+@media (min-width: 901px) { .sas-lead-docs { grid-template-columns: repeat(2, minmax(min-content, 1fr)); } }
+/* Verified check: inline after the last word, never pushed to the row's far edge when the value wraps. */
+.sas-verified-value { display: inline; overflow-wrap: anywhere; }
+.sas-verified-tail { white-space: nowrap; }
+.sas-verified-value .sas-verified { display: inline-flex; vertical-align: -3px; margin-inline-start: 6px; }
+/* Overview: the selected market's card. */
+.sas-app a.sas-mcard--selected, .sas-app a.sas-mcard--selected:hover { border: 2px solid var(--primary); }
