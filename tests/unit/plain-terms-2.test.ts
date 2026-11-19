@@ -43,7 +43,7 @@ describe("catalog rule sentences (7.1.6)", () => {
 
 describe("knowledge source chips (7.1.11)", () => {
   it("note, call and other sources", () => {
-    expect(evidenceChipText({ kind: "text", title: "Pricing and policy", locator: "note" })).toBe("Note: Pricing and policy");
+    expect(evidenceChipText({ kind: "text", title: "Pricing and policy", locator: "note" })).toBe("Pricing and policy");
     expect(evidenceChipText({ kind: "call", title: "Discovery call", locator: "02:11" })).toBe("Call · 02:11");
     expect(evidenceChipText({ kind: "file", title: "Product sheet", locator: "p.2" })).toBe("Product sheet · p.2");
   });

@@ -125,7 +125,9 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       expect(suggestedRow).not.toContain(">Delete<");
       // Source chips stay in words, normal font.
       expect(html).toContain("sas-chip sas-chip--plain");
-      expect(text(html)).toMatch(/Note: [^·<]+/);
+      // R5 S7: a note chip has no "Note:" prefix; its sticky-note icon shows the type.
+      expect(html).toMatch(/data-kind="text"><svg[^>]*lucide-sticky-note/);
+      expect(text(html)).not.toMatch(/Note: /);
       // Questions we couldn't answer sit under the table.
       expect(html.indexOf("data-questions")).toBeGreaterThan(html.indexOf("sas-listtable"));
     });
@@ -204,7 +206,7 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       // Newest asked first: Eilat, night rate, euros.
       const first = await render(KnowledgePage, slug, { panel: "answer", question: asked[0] });
       save("knowledge-answer", first);
-      expect(first).toMatch(/<button type="submit" form="kq-form" value="Is there a night rate\?"[^>]*data-answer-next="" name="next">Save and answer next</);
+      expect(first).toMatch(/<button type="submit" form="kq-form" value="Is there a night rate\?"[^>]*data-answer-next="" name="next">Save and next</);
       // The per-question Answer button stays.
       expect(first).toContain('aria-label="Answer: Can I pay in euros?"');
       const url = await go(knowledge.answerQuestionsAction(form({ slug, list: "topic=Installation", panel: "answer", next: asked[1], "q.0.question": asked[0], "q.0.answer": "Yes, in 3 days.", "q.0.topic": "Delivery" })));
@@ -218,7 +220,9 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       await go(knowledge.answerQuestionsAction(form({ slug, list: "", panel: "answer", "q.0.question": asked[1], "q.0.answer": "No.", "q.0.topic": "Pricing" })));
       const last = await render(KnowledgePage, slug, { panel: "answer", question: asked[2] });
       expect(last).not.toContain("data-answer-next");
-      expect(last).toContain(">Save answer</button>");
+      expect(last).toContain(">Save</button>");
+      // R5-11: the Topic starts empty (no made-up "General") when neither the question nor the side list gives one.
+      expect(last.match(/<input[^>]*id="kq-topic"[^>]*>/)?.[0]).toMatch(/value=""/);
     });
 
     it("Delete asks to confirm in the page; Approve and Reject keep the filters", async () => {

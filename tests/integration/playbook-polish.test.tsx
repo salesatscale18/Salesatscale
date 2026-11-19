@@ -121,7 +121,7 @@ describe("Playbook navigation and polish (rendered)", () => {
     expect(html.match(/data-platform-fixed=""/g)?.length).toBe(2);
     expect(html).toContain("Set by the platform");
     // 5/7. The draft banner: file icon, not the flask (the flask stays on "Test in lab").
-    expect(html).toMatch(/data-testid="draft-banner"><svg[^>]*lucide-file-text/);
+    expect(html).toMatch(/data-testid="draft-banner"><svg[^>]*lucide-file-pen/);
     // Phone header class (one full-width primary button).
     expect(html).toContain("sas-page-head__actions pb-head-actions");
   });

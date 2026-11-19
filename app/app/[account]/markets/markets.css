@@ -14,3 +14,10 @@
 @media (max-width: 767px) {
   [data-market-detail] [data-row-end] { min-width: 0 !important; flex: 1 1 100% !important; flex-wrap: wrap; justify-content: space-between !important; }
 }
+
+/* R5-10: "Set for this market" in the Trust Blue soft tint (a changed value), not the agent violet. */
+.mk-pill--set { background: var(--primary-soft); color: var(--primary); }
+/* R5-10: on a phone every row action sits under the value, start-aligned (pill, then action). */
+@media (max-width: 767px) {
+  [data-market-detail] [data-row-end] { justify-content: flex-start !important; }
+}

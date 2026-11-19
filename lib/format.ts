@@ -204,7 +204,9 @@ export function timezoneLabel(timezone: string | null | undefined, at = new Date
   const tz = safeTimezone(timezone);
   if (tz === "UTC" || tz === "Etc/UTC") return "UTC";
   const plain = zonePlainName(tz, at);
-  const coded = `${tz} (${zoneLabel(at, tz)})`;
+  // One offset format for every named zone: "GMT+0" for London in winter, as "GMT+2" for Israel (R5-7).
+  const offset = zoneLabel(at, tz);
+  const coded = `${tz} (${offset === "UTC" ? "GMT+0" : offset})`;
   return plain ? `${plain} · ${coded}` : coded;
 }
 

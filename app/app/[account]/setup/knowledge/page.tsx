@@ -358,7 +358,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
           </section>
           <datalist id="kf-topics">{[...new Set(["General", ...topicNames])].map((x) => <option key={x} value={x} />)}</datalist>
 
-          <section className="sas-stack-2" aria-labelledby="kq-h" data-questions="">
+          {/* R5-11: on a phone the Answer button sits under the question, not over it (sas.css, lane R5b). */}
+          <section className="sas-stack-2 r5b-questions" aria-labelledby="kq-h" data-questions="">
             <h2 id="kq-h" className="sas-heading">{t("knowledge.questions.title", { count: questions.length })}</h2>
             <span className="sas-small">{t("knowledge.questions.intro")}</span>
             {questions.length === 0 ? (
@@ -448,7 +449,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
       {answering ? (
         <SidePanel title={t("knowledge.answer_title")} closeHref={link()} footer={
           <>
-            {/* Primary first: "Save and answer next" while more questions remain, then "Save", then Cancel (which wraps at 400px). */}
+            {/* Primary first: "Save and next" while more questions remain, then "Save", then Cancel: short labels, so all three fit the 400px footer (R5-11). */}
             {nextQuestion ? (
               <button type="submit" form="kq-form" name="next" value={nextQuestion.question} className={buttonClass("primary")} data-answer-next="">{t("knowledge.answer_next")}</button>
             ) : null}
@@ -467,7 +468,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
               {answering.times > 1 ? <span className="sas-hint">{t("knowledge.questions.times", { n: answering.times })}</span> : null}
               {answering.times === 0 && answering.topic ? <span className="sas-hint">{t("knowledge.questions.from_sources")}</span> : null}
             </div>
-            {topicInput("kq-topic", "q.0.topic", answering.topic ?? current?.topic ?? "General")}
+            {/* R5-11: Topic starts empty (as in Add fact) unless the question or the side list gives one; "General" is not a real topic. */}
+            {topicInput("kq-topic", "q.0.topic", answering.topic ?? current?.topic ?? "")}
             <div className="sas-input-group">
               <label className="sas-input-label" htmlFor="kq-answer">{t("knowledge.statement")}</label>
               <textarea className="sas-textarea" id="kq-answer" name="q.0.answer" rows={5} required maxLength={1000} dir="auto" data-autofocus="" />

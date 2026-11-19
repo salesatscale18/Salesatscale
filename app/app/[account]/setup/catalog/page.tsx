@@ -229,7 +229,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
         <div className="sas-page-head">
           <h1 className="sas-title">{t("catalog.title")}</h1>
           {state.published ? <span className="sas-pill sas-pill--success"><Icon name="check-circle" />{t("catalog.live", { version: state.published.version })}</span> : null}
-          {state.draft ? <span className="sas-pill" data-draft-pill=""><Icon name="file-text" />{state.draftChanges === 1 ? t("catalog.draft_one", { version: state.draft.version }) : t("catalog.draft", { version: state.draft.version, changes: state.draftChanges })}</span> : null}
+          {state.draft ? <span className="sas-pill" data-draft-pill=""><Icon name="file-pen" />{state.draftChanges === 1 ? t("catalog.draft_one", { version: state.draft.version }) : t("catalog.draft", { version: state.draft.version, changes: state.draftChanges })}</span> : null}
           <div className="sas-page-head__actions">
             <a className={buttonClass("ghost")} href={priceListsPath}>{t("nav.price_lists")}</a>
             {state.draft ? (
@@ -238,7 +238,8 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                 <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="secondary">{t("catalog.publish", { version: nextVersion })}</Button></form>
               </>
             ) : null}
-            <a className={buttonClass("primary")} href={open("new")}><Icon name="plus" />{t("catalog.add")}</a>
+            {/* S8: on a phone "Add item" comes first, so it never sits alone on a second row (sas.css, lane R5b). */}
+            <a className={`${buttonClass("primary")} r5b-add-first`} href={open("new")} data-add-item=""><Icon name="plus" />{t("catalog.add")}</a>
           </div>
         </div>
         <span className="sas-small">{t("catalog.intro")}</span>

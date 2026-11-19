@@ -99,7 +99,8 @@ describe("Polish-7b: plain terms", () => {
     expect(s).toContain("Lead form: country is Israel (IL)");
     expect(html).toMatch(/<span class="sas-pill"[^>]*data-home-market="">Home market</);
     expect(html).not.toContain('class="sas-chip"');
-    expect(s).toMatch(/English · .+ v1/);
+    // R5-7: "v1" stays with its title (no-break space).
+    expect(s).toMatch(/English · .+\u00a0v1/);
     expect(s).not.toMatch(/\bEN v1\b/);
     // R4 D6: row actions all as ghost buttons; legal texts not changed for the market say "Change for this market";
     // the price list button says what it saves.
@@ -221,7 +222,8 @@ describe("Polish-7b: plain terms", () => {
     const html = await render(KnowledgePage, account.slug);
     save("knowledge", html);
     expect(html).toContain("sas-chip sas-chip--plain");
-    expect(text(html)).toMatch(/Note: [^·<]+/);
+    expect(html).toMatch(/data-kind="text"><svg[^>]*lucide-sticky-note/);
+    expect(text(html)).not.toMatch(/Note: /);
     expect(text(html)).toMatch(/Call · \d{2}:\d{2}/);
     expect(text(html)).not.toMatch(/· note\b/);
   });

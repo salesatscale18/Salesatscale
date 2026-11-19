@@ -76,7 +76,7 @@ export default async function GoLivePage({ params, searchParams }: { params: Pro
           </div>
         </div>
         <span className="sas-small">
-          {goLiveSummary(account.status, result.passed, result.total, result.ready)}
+          {goLiveSummary(account.status, result.passed, result.total, result.ready, marketViews.map(({ market, checks }) => ({ name: market.name, ...checkCount(checks) })))}
         </span>
         <SetupSteps basePath={`/app/${account.slug}`} current="go-live" completed={await setupProgress(appDb, account)} />
       </header>

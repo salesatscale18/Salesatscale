@@ -87,6 +87,14 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
   const problems = entries.flatMap(entryProblems);
   const missing = problems.filter((p) => p.kind === "price_missing").length;
   const nextVersion = draft?.version ?? (live ? live.version + 1 : 1);
+  // R5-8: catalog items with no entry in this list have no price either. The header and the chip count them,
+  // so the warning lists them too (they do not block publishing: only a charged part without a price does).
+  const unpriced = itemRows.filter((r) => !r.entry);
+  // R5-9: Publish is secondary and disabled, with the reason, while the draft cannot be published.
+  const publishBlocked = entries.length === 0 ? t("price_lists.publish_blocked.empty")
+    : missing > 0 ? t(missing === 1 ? "price_lists.publish_blocked.missing_one" : "price_lists.publish_blocked.missing")
+    : problems.length > 0 ? t("price_lists.publish_blocked.problems")
+    : null;
 
   // The prices table: search, chips, sort (without a sort param the rows keep the catalog's order).
   const show = firstParam(sp, "show");
@@ -135,12 +143,15 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
       {sp.saved && !entryOpen ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.entry.saved")}</span></div> : null}
       {firstParam(sp, "publish") === "no_entries" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("price_lists.publish_empty")}</span></div> : null}
       {firstParam(sp, "publish") === "problems" && problems.length === 0 ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("price_lists.publish_failed")}</span></div> : null}
-      {problems.length > 0 ? (
-        <div className={firstParam(sp, "publish") === "problems" ? "sas-alert sas-alert--danger" : "sas-alert sas-alert--warning"} role={firstParam(sp, "publish") === "problems" ? "alert" : "status"}>
+      {problems.length > 0 || unpriced.length > 0 ? (
+        <div className={firstParam(sp, "publish") === "problems" ? "sas-alert sas-alert--danger" : "sas-alert sas-alert--warning"} role={firstParam(sp, "publish") === "problems" ? "alert" : "status"} data-price-problems="">
           <Icon name="alert-triangle" />
           <div className="sas-stack-2" style={{ gap: 4 }}>
-            <span>{missing > 0 ? (missing === 1 ? t("price_lists.problems_missing_one") : t("price_lists.problems_missing", { count: missing })) : t("price_lists.problems")}</span>
-            <ul style={{ margin: 0, paddingInlineStart: 18 }}>{problems.map((p) => <li key={`${p.sku}-${p.charge}-${p.kind}`} className="sas-small">{p.message}</li>)}</ul>
+            <span>{missing > 0 ? (missing === 1 ? t("price_lists.problems_missing_one") : t("price_lists.problems_missing", { count: missing })) : problems.length > 0 ? t("price_lists.problems") : t("price_lists.problems_unpriced")}</span>
+            <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+              {problems.map((p) => <li key={`${p.sku}-${p.charge}-${p.kind}`} className="sas-small">{p.message}</li>)}
+              {unpriced.map((r) => <li key={`${r.sku}-none`} className="sas-small" data-unpriced={r.sku}>{t("price_lists.problem_no_price", { sku: r.sku })}</li>)}
+            </ul>
           </div>
         </div>
       ) : null}
@@ -151,13 +162,15 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
         editLabel={t("price_lists.meta.edit")}
         items={[
           { label: t("price_lists.field.currency"), value: currencyLabel(shown.currency) },
-          { label: t("price_lists.col.vat"), value: `${vat.mode} · ${vat.rate}` },
+          // S9: the list's order, "20% · prices without VAT".
+          { label: t("price_lists.col.vat"), value: `${vat.rate} · ${vat.line}` },
           { label: t("price_lists.col.used_by"), value: usedBy.length > 0 ? usedBy.map((m) => m.name).join(", ") : t("price_lists.used_by_none") },
           { label: t("price_lists.field.valid_from"), value: shown.validFrom ? formatDay(shown.validFrom) : t("price_lists.valid_from_none") },
         ]}
       />
 
-      <div className="sas-split">
+      {/* R5-1: the Versions card goes under the table when the split is too narrow for both (sas.css, lane R5b). */}
+      <div className="sas-split r5b-pl-split">
         <div className="sas-split__main">
           <section className="sas-stack-2" aria-label={t("price_lists.prices_title")}>
             {allRows.length === 0 ? (
@@ -176,7 +189,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                     label: t("price_lists.prices_title"),
                     items: [
                       { value: null, label: t("catalog.filter.all"), count: counts.all },
-                      { value: "missing", label: t("price_lists.filter.missing"), count: counts.missing },
+                      { value: "missing", label: t("catalog.price.missing"), count: counts.missing },
                       { value: "tiers", label: t("price_lists.filter.tiers"), count: counts.tiers },
                       { value: "recurring", label: t("price_lists.filter.recurring"), count: counts.recurring },
                     ],
@@ -250,10 +263,14 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
                     {v.publishedAt ? t("price_lists.history.published_cap", { time: formatLocalDateTime(v.publishedAt, account.timezone) }) : t("price_lists.history.started_cap", { time: formatLocalDateTime(v.createdAt, account.timezone) })}
                   </span>
                   {v.status === "draft" ? (
-                    <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                      <form action={publishPriceListAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="lineageId" value={lineageId} /><Button type="submit" size="sm" variant="primary">{t("catalog.publish", { version: nextVersion })}</Button></form>
-                      {live ? <form action={discardPriceListDraftAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="lineageId" value={lineageId} /><Button type="submit" size="sm" variant="ghost">{t("catalog.discard")}</Button></form> : null}
-                    </span>
+                    <>
+                      <span style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                        <form action={publishPriceListAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="lineageId" value={lineageId} /><Button type="submit" size="sm" variant="secondary" disabled={!!publishBlocked} aria-describedby={publishBlocked ? "pl-publish-why" : undefined} data-publish="">{t("catalog.publish", { version: nextVersion })}</Button></form>
+                        {/* A list that was never published has no live version to go back to (Delete is on the Price lists page). */}
+                        {live ? <form action={discardPriceListDraftAction}><input type="hidden" name="slug" value={account.slug} /><input type="hidden" name="lineageId" value={lineageId} /><Button type="submit" size="sm" variant="ghost" data-discard="">{t("catalog.discard")}</Button></form> : null}
+                      </span>
+                      {publishBlocked ? <span className="sas-small" id="pl-publish-why" data-publish-blocked="">{publishBlocked}</span> : null}
+                    </>
                   ) : null}
                 </li>
               ))}

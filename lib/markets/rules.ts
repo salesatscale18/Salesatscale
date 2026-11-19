@@ -67,6 +67,23 @@ export function formCountryLabel(value: string): string {
   return name.toUpperCase() === v.toUpperCase() ? v : `${name} (${v.toUpperCase()})`;
 }
 
+/**
+ * The lead-form country values on the Markets screen, each country once:
+ * ["United Kingdom", "UK"] reads "United Kingdom (UK)", not "United Kingdom,
+ * United Kingdom (UK)" (R5-7). A typed name that a code already names is left out.
+ */
+export function formCountryLabels(values: string[]): string[] {
+  const labels = values.map(formCountryLabel);
+  const named = new Set(values.map((v) => v.trim()).filter((v) => /^[A-Za-z]{2}$/.test(v)).map((v) => regionName(v).toLowerCase()));
+  const out: string[] = [];
+  values.forEach((v, i) => {
+    const plain = !/^[A-Za-z]{2}$/.test(v.trim());
+    if (plain && named.has(v.trim().toLowerCase())) return;
+    if (!out.some((x) => x.toLowerCase() === labels[i].toLowerCase())) out.push(labels[i]);
+  });
+  return out;
+}
+
 export function countryName(code: string): string {
   try {
     return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;

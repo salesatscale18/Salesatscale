@@ -72,15 +72,25 @@ export function parseContactHours(raw: Record<string, string>): ContactHoursResu
 
 const LABEL = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
-/** "Sun–Thu 08:30–20:00 · Fri 08:30–13:00 · Sat off": consecutive days with the same hours are grouped. */
+/**
+ * "Sun–Thu 08:30–20:00 · Fri 08:30–13:00 · Sat off": consecutive days with the
+ * same hours are grouped. The week wraps round, so Saturday and Sunday off in
+ * a Monday-to-Friday market read "Mon–Thu … · Fri … · Sat–Sun off" (R5-7).
+ */
 export function summarizeContactHours(hours: ContactHours | null | undefined): string {
   const h = contactHoursOrDefault(hours);
   const key = (d: ContactHoursDay) => (d.on ? `${d.from}–${d.to}` : "off");
+  // Start after Sunday's group when that group goes on from Saturday (the week is a circle).
+  const first = h.findIndex((d) => key(d) !== key(h[0]));
+  const start = first > 0 && key(h[6]) === key(h[0]) ? first : 0;
+  const at = (n: number) => h[(start + n) % 7];
   const out: string[] = [];
   for (let i = 0; i < 7; ) {
     let j = i;
-    while (j + 1 < 7 && key(h[j + 1]) === key(h[i])) j++;
-    out.push(`${i === j ? LABEL[i] : `${LABEL[i]}–${LABEL[j]}`} ${key(h[i])}`);
+    while (j + 1 < 7 && key(at(j + 1)) === key(at(i))) j++;
+    const a = LABEL[(start + i) % 7];
+    const b = LABEL[(start + j) % 7];
+    out.push(`${i === j ? a : `${a}–${b}`} ${key(at(i))}`);
     i = j + 1;
   }
   return out.join(" · ");

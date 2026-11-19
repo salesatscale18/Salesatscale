@@ -23,7 +23,7 @@ export const STATUS = {
     opted_out: { tone: "danger", icon: "x-circle" },
   },
   quote: {
-    draft: { tone: "neutral", icon: "file-text" },
+    draft: { tone: "neutral", icon: "file-pen" },
     awaiting_approval: { tone: "warning", icon: "alert-triangle" },
     sent: { tone: "neutral", icon: "send" },
     expires_today: { tone: "warning", icon: "clock" },
@@ -48,7 +48,7 @@ export const STATUS = {
     bank_transfer_expected: { tone: "warning", icon: "clock" },
   },
   agent_version: {
-    draft: { tone: "neutral", icon: "file-text" },
+    draft: { tone: "neutral", icon: "file-pen" },
     testing: { tone: "warning", icon: "flask-conical" },
     live: { tone: "success", icon: "check-circle" },
     retired: { tone: "neutral", icon: "archive" },
@@ -64,7 +64,7 @@ export const STATUS = {
     failed: { tone: "danger", icon: "x-circle" },
   },
   catalog_version: {
-    draft: { tone: "neutral", icon: "file-text" },
+    draft: { tone: "neutral", icon: "file-pen" },
     live: { tone: "success", icon: "check-circle" },
   },
   // Active is neutral: green is only for wins and verified data.
@@ -85,7 +85,7 @@ export const STATUS = {
     disconnected: { tone: "danger", icon: "x-circle" },
   },
   price_list: {
-    draft: { tone: "neutral", icon: "file-text" },
+    draft: { tone: "neutral", icon: "file-pen" },
     live: { tone: "success", icon: "check-circle" },
   },
   market: {

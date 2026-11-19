@@ -390,6 +390,8 @@ async function recordAnalysis(db: Db, accountId: string, now: Date): Promise<num
   await db.update(sources).set({ textHash: sql`encode(sha256(convert_to(${sources.extractedText}, 'UTF8')), 'hex')` })
     .where(and(eq(sources.accountId, accountId), inArray(sources.id, ids)));
   const started = min(now, 240);
+  // R5-12: every source was added and last changed before that run, so "Updated" agrees with "nothing changed".
+  await db.update(sources).set({ createdAt: min(now, 250), updatedAt: min(now, 245) }).where(eq(sources.accountId, accountId));
   await db.insert(pipelineRuns).values([
     {
       id: randomUUID(), accountId, kind: "facts", status: "done", model: plan.large ? plan.lightModel : plan.model, sourceIds: ids, inputHash: plan.facts.hash,

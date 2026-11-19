@@ -30,6 +30,14 @@ const DONE: Record<string, MessageKey> = {
 /** "Use of recording confirmed · personal details masked": the first letter upper case. */
 const sentenceCase = (text: string) => text.charAt(0).toLocaleUpperCase("en") + text.slice(1);
 
+/** "Facts from this <nowrap>source · 0</nowrap>": the last word and the count never wrap apart. */
+function keepTail(text: string): ReactNode {
+  const dot = text.lastIndexOf(" · ");
+  const cut = dot > 0 ? text.lastIndexOf(" ", dot - 1) : -1;
+  if (cut < 0) return <span className="sas-nowrap">{text}</span>;
+  return <>{text.slice(0, cut + 1)}<span className="sas-nowrap">{text.slice(cut + 1)}</span></>;
+}
+
 /** Text with every match of `q` (case-insensitive) wrapped in <mark>. */
 function highlight(text: string, q: string): ReactNode {
   if (!q) return text;
@@ -101,7 +109,8 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
   const firstMatch = q ? sections.find((s) => countMatches(`${s.heading ?? ""} ${s.text}`, q) > 0) : undefined;
   const kindTitle = t(`sources.kind_long.${source.kind}`);
 
-  const meta: string[] = [t(`sources.kind.${source.kind}`), sizeLine(source), languageWords(source.language)];
+  // R5-13: no stray "—" in the line when the language is not known yet.
+  const meta: string[] = [t(`sources.kind.${source.kind}`), sizeLine(source), source.language ? languageWords(source.language) : ""].filter((x) => x && x !== "—");
   meta.push(t("sources.detail.updated", { when: timeAgo(source.updatedAt, now, account.timezone) }));
 
   const fields = { slug: account.slug, sourceId: source.id, from: "detail" };
@@ -204,11 +213,21 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
       {source.problems.length > 0 && source.status !== "processing" ? (
         <section className="sas-panel" aria-labelledby="sp-h">
           <div className="sas-panel__body sas-stack-4">
-            <h2 id="sp-h" className="sas-heading">{t("sources.problems")}</h2>
+            <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, justifyContent: "space-between" }}>
+              <h2 id="sp-h" className="sas-heading">{t("sources.problems")}</h2>
+              {/* R5-13: the same Re-read as the list's problem box, for a website. */}
+              {source.kind === "website" ? (
+                <form action={rereadWebsiteAction}>
+                  {Object.entries(fields).map(([k, v]) => <input key={k} type="hidden" name={k} value={v} />)}
+                  <button type="submit" className={buttonClass("secondary", "sm")} data-problem-reread=""><Icon name="refresh-cw" />{t("sources.reread")}</button>
+                </form>
+              ) : null}
+            </div>
             <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
               {source.problems.map((p, i) => (
                 <li key={i} style={{ display: "flex", gap: 10, alignItems: "baseline", flexWrap: "wrap" }}>
-                  {p.where && p.where !== "source" ? <span className="sas-chip sas-chip--plain">{p.where}</span> : null}
+                  {/* R5-13: no chip that only repeats the source's own name (the page title says it). */}
+                  {p.where && p.where !== "source" && p.where !== source.title && p.where !== o.fileName ? <span className="sas-chip sas-chip--plain">{p.where}</span> : null}
                   <span style={{ flex: "1 1 260px", minWidth: 0 }}>{p.message} <span className="sas-small">{p.fix === PRICE_LIST_FIX ? <a href={`/app/${account.slug}/setup/price-lists`}>{p.fix}</a> : p.fix}</span></span>
                 </li>
               ))}
@@ -329,7 +348,8 @@ export default async function SourcePage({ params, searchParams }: { params: Pro
           <section className="sas-panel" aria-labelledby="sf-h">
             <div className="sas-panel__body sas-stack-4">
               <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-                <h2 id="sf-h" className="sas-heading" style={{ flex: 1 }}>{t("sources.detail.facts", { count: facts.length })}</h2>
+                {/* R5-13: "· 0" stays on the title line, with the word before it. */}
+                <h2 id="sf-h" className="sas-heading" style={{ flex: 1, minWidth: 0 }}>{keepTail(t("sources.detail.facts", { count: facts.length }))}</h2>
                 <a href={`/app/${account.slug}/setup/knowledge`} className="sas-small" data-review-knowledge="">{t("sources.review_knowledge")}</a>
               </div>
               {facts.length === 0 ? <span className="sas-small">{t("sources.detail.facts_empty")}</span> : (
