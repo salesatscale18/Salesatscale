@@ -52,6 +52,22 @@ export function effectiveLegal(rows: LegalSection[], marketId: string | null): E
   return out.sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.sectionKey.localeCompare(b.sectionKey) || a.language.localeCompare(b.language));
 }
 
+/**
+ * A market's legal texts grouped by language for the Markets screen, in the
+ * same order as the Order form: languages in the selling-language order
+ * (then any other), sections in the order of their first text (as the Order
+ * form table rows).
+ */
+export function legalByLanguage<S extends Pick<LegalSection, "sectionKey" | "language">>(sections: S[], languages: string[]): { language: string; sections: S[] }[] {
+  const keys = [...new Set(sections.map((s) => s.sectionKey))];
+  const present = new Set(sections.map((s) => s.language));
+  const langs = [...languages.filter((l) => present.has(l)), ...[...present].filter((l) => !languages.includes(l))];
+  return langs.map((language) => ({
+    language,
+    sections: keys.flatMap((k) => sections.filter((s) => s.sectionKey === k && s.language === language)),
+  }));
+}
+
 /** Selling languages that have no legal text in this market. */
 export function languagesWithoutLegal(sections: Pick<LegalSection, "language">[], languages: string[]): string[] {
   const have = new Set(sections.map((s) => s.language));

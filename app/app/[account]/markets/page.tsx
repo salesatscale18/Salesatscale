@@ -5,12 +5,12 @@ import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { contactHoursOrDefault, summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { ContactHoursFields } from "@/components/sas/contact-hours-fields";
 import { countLeadsByMarket, listIntakeKeys } from "@/lib/leads/service";
-import { marketLegal } from "@/lib/markets/legal";
-import { canGoLive, checkCount, countryName } from "@/lib/markets/rules";
+import { legalByLanguage, marketLegal } from "@/lib/markets/legal";
+import { canGoLive, checkCount, countryName, formCountryLabel } from "@/lib/markets/rules";
 import { ensureHomeMarket, getMarketView, listMarkets, type MarketView } from "@/lib/markets/service";
 import { overriddenCount, type AccountDefaults, type EffectiveSettings, type SettingKey } from "@/lib/markets/settings";
 import { listPriceLists } from "@/lib/pricing/price-lists";
-import { countryValueLabel, currencyLabel, localDateIso, timezoneLabel } from "@/lib/format";
+import { currencyLabel, localDateIso, timezoneLabel } from "@/lib/format";
 import { LOCALES, t, type MessageKey } from "@/lib/i18n";
 import { leadTimeText, MAX_LEAD_DAYS, weekendFor } from "@/lib/delivery/eta";
 import type { LeadIntakeKey, Market } from "@/db/schema";
@@ -343,7 +343,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
             <Row
               label={t("markets.setting.countries")}
               value={selected.countries.map(countryName).join(", ") || t("markets.no_countries")}
-              action={editing === "where" ? null : <a className="sas-small" href={`${here}?m=${selected.id}&edit=where#where`}>{t("markets.edit")}</a>}
+              action={editing === "where" ? null : <a className={buttonClass("ghost", "sm")} href={`${here}?m=${selected.id}&edit=where#where`} data-row-action="">{t("markets.edit")}</a>}
               id="where"
             />
             <Row
@@ -352,7 +352,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                 ? t("markets.routing_home")
                 : [
                     selected.phonePrefixes.length ? t("markets.routing.phone", { prefixes: selected.phonePrefixes.join(", ") }) : null,
-                    selected.formCountryValues.length ? t("markets.routing.form", { values: selected.formCountryValues.map(countryValueLabel).join(", ") }) : null,
+                    selected.formCountryValues.length ? t("markets.routing.form", { values: selected.formCountryValues.map(formCountryLabel).join(", ") }) : null,
                     ...selected.intakeKeyIds.map((id) => (keyName(id) ? t("markets.routing.key", { name: keyName(id)! }) : null)),
                   ].filter(Boolean).join(" · ") || t("markets.routing_none")}
             />
@@ -371,7 +371,8 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                         <option value="">{t("markets.no_price_list")}</option>
                         {lists.map((l) => (
                           <option key={l.lineageId} value={l.lineageId}>
-                            {l.shown.name} · {currencyLabel(l.shown.currency)} · {l.live ? t("markets.price_list_live", { version: l.live.version }) : t("markets.price_list_draft")}
+                            {/* Short, so it is not cut on a phone: "Israel 2026 · ILS · live v3". */}
+                            {l.shown.name} · {l.shown.currency} · {l.live ? t("markets.price_list_live", { version: l.live.version }) : t("markets.price_list_draft_short")}
                           </option>
                         ))}
                       </select>
@@ -381,7 +382,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                         <a href={`${base}/setup/price-lists`}>{t("markets.price_lists_link")}</a>
                       </span>
                     </span>
-                    <Button type="submit" variant="secondary" size="sm">{t("markets.change")}</Button>
+                    <Button type="submit" variant="secondary" size="sm">{t("markets.save_price_list")}</Button>
                   </form>
                 ) : null}
                 {g.keys.map((k) => {
@@ -396,7 +397,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                         <Row
                           id={`set-${k}`}
                           label={t("markets.setting.holidays")}
-                          value={holidaysText(dates, localDateIso(new Date(), view.settings.timezone.value))}
+                          value={overriding === k ? null : holidaysText(dates, localDateIso(new Date(), view.settings.timezone.value))}
                           muted={dates.length === 0}
                           action={overriding === k ? null : <a className={buttonClass("ghost", "sm")} href={formHref}>{t(dates.length ? "markets.edit" : "markets.holidays_add")}</a>}
                         />
@@ -443,21 +444,21 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
               value={legal.length === 0 ? t("markets.legal_none") : (
                 // One line per language; each title in <bdi> so Hebrew titles don't flip the reading order.
                 <span className="sas-stack-2" style={{ gap: 4 }}>
-                  {[...new Set(legal.map((s) => s.language))].map((lang) => (
+                  {legalByLanguage(legal, view.settings.languages.value).map(({ language: lang, sections }) => (
                     <span key={lang} data-legal-lang={lang}>
                       {/* "English · Sales terms v1, Privacy notice v1 · from account" */}
                       {LANG_NAME[lang] ?? lang}{" · "}
-                      {legal.filter((s) => s.language === lang).map((s, i, all) => (
+                      {sections.map((s, i, all) => (
                         <span key={s.id}>{i > 0 ? ", " : null}<bdi>{s.title}</bdi>{` v${s.version}`}{s.source === "account" && !all.every((x) => x.source === "account") ? ` (${t("markets.from_account")})` : ""}</span>
                       ))}
                       {/* Only when some texts are the market's own: otherwise the "Same as account default" pill says it. */}
-                      {ownLegal > 0 && legal.filter((s) => s.language === lang).every((s) => s.source === "account") ? ` · ${t("markets.from_account")}` : null}
+                      {ownLegal > 0 && sections.every((s) => s.source === "account") ? ` · ${t("markets.from_account")}` : null}
                     </span>
                   ))}
                 </span>
               )}
               pill={ownLegal === 0 ? <SourcePill source="account" /> : <span className="sas-pill sas-pill--agent">{ownLegal === legal.length ? t("markets.overridden") : t("markets.partly_overridden")}</span>}
-              action={<a className="sas-small" href={`${base}/setup/order-form?market=${selected.id}`}>{t("markets.edit")}</a>}
+              action={<a className={buttonClass("ghost", "sm")} href={`${base}/setup/order-form?market=${selected.id}`} data-row-action="" data-legal-action="">{t(ownLegal === 0 ? "markets.override" : "markets.edit")}</a>}
             />
 
             <Group>{t("markets.group.golive")}</Group>

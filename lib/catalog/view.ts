@@ -15,6 +15,18 @@ import type { FitRule } from "./fit";
 export const capFirst = (s: string) => (s ? s[0].toLocaleUpperCase() + s.slice(1) : s);
 
 /**
+ * The icon in front of a rule (rules card and item sheet): "plus" adds an
+ * item, "link-2" a "needs" rule (as on the board; "check" means Active),
+ * "info" advice, "check" a limit.
+ */
+export function ruleIcon(kind: FitRule["kind"] | AutoAddRule["kind"]): "plus" | "info" | "link-2" | "check" {
+  if (kind === "auto_add") return "plus";
+  if (kind === "advice") return "info";
+  if (kind === "requires") return "link-2";
+  return "check";
+}
+
+/**
  * An item's price in one price list:
  * - not_priced: the list has no entry for it (not sold there);
  * - price_missing: a charged part has no price yet;

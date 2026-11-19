@@ -269,7 +269,7 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
           id="pl-entry"
           title={selectedItem?.name ?? t("price_lists.not_in_catalog")}
           closeHref={close}
-          footer={<EntrySaveBar />}
+          footer={<EntrySaveBar cancelHref={close} />}
           meta={
             <span className="sas-stack-2" style={{ gap: 2 }}>
               <span className="sas-small sas-num">{selectedSku}{selectedItem ? ` · ${kindUnit(selectedItem)}` : ""}</span>
@@ -312,7 +312,13 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
       ) : null}
 
       {settingsOpen ? (
-        <SidePanel id="pl-settings" title={t("price_lists.meta.panel_title")} closeHref={close} meta={<span>{draft ? t("price_lists.editing_draft", { version: draft.version }) : t("price_lists.editing_live")}</span>}>
+        <SidePanel
+          id="pl-settings"
+          title={t("price_lists.meta.panel_title")}
+          closeHref={close}
+          meta={<span>{draft ? t("price_lists.editing_draft", { version: draft.version }) : t("price_lists.editing_live")}</span>}
+          footer={<><button type="submit" form="pl-meta-form" className={buttonClass("primary")} data-meta-save="">{t("price_lists.meta.save")}</button><a className={buttonClass("ghost")} href={close}>{t("common.cancel")}</a></>}
+        >
           <MetaForm
             slug={account.slug}
             lineageId={lineageId}

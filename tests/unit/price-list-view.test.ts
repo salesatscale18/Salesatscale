@@ -36,8 +36,8 @@ describe("price list helpers", () => {
   });
 
   it("VAT parts and the updated date", () => {
-    expect(vatParts(list({}))).toEqual({ rate: "18%", mode: "Prices without VAT" });
-    expect(vatParts(list({ pricesIncludeTax: true, taxRateBp: 1750 }))).toEqual({ rate: "17.5%", mode: "Prices include VAT" });
+    expect(vatParts(list({}))).toEqual({ rate: "18%", mode: "Prices without VAT", line: "prices without VAT" });
+    expect(vatParts(list({ pricesIncludeTax: true, taxRateBp: 1750 }))).toEqual({ rate: "17.5%", mode: "Prices include VAT", line: "prices include VAT" });
     const live = list({ publishedAt: new Date("2026-11-10T00:00:00Z") });
     const draft = list({ status: "draft", createdAt: new Date("2026-11-15T00:00:00Z") });
     expect(listUpdatedAt({ live, draft: null }).toISOString()).toBe("2026-11-10T00:00:00.000Z");

@@ -754,3 +754,29 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-app a.sas-typetile[data-dragover] { outline: 2px dashed var(--primary); outline-offset: -2px; }
 .sas-app a.sas-typetile[data-dragover] .sas-typetile__drop { display: grid; place-items: center; position: absolute; inset: 0; border-radius: inherit; background: var(--primary-soft); color: var(--primary); font-weight: 600; }
 @media (max-width: 767px) { .sas-typetiles { grid-template-columns: repeat(2, minmax(0, 1fr)); } .sas-typetile__line { white-space: normal; } }
+
+/* ------------------------------------------------------------------------- *
+ * Round-4 (lane R4-3): Catalog, Price lists, Markets, Order form setup
+ * ------------------------------------------------------------------------- */
+
+/* Fieldset legends ("Kind", "Charged per", "Quantity", "Payment methods") line up and space like field labels. */
+.r43-fs { gap: 6px; }
+.r43-fs > legend { padding: 0; margin: 0 0 6px; }
+
+/* Price lists table: currency and VAT as code/rate over a note on desktop, one value on phone cards
+ * ("ILS · Israeli shekel", "18% · prices without VAT"). */
+.r43-pl-sep, .r43-pl-phone { display: none; }
+.r43-pl-sub { display: block; }
+@media (max-width: 767px) {
+  .r43-pl-val { text-align: end; }
+  .r43-pl-sep { display: inline; }
+  .r43-pl-sub { display: inline; }
+  .r43-pl-desk { display: none; }
+  .r43-pl-phone { display: inline; }
+  .r43-pl-val .sas-small { font-size: inherit; color: inherit; }
+}
+
+/* Catalog on a phone: "Prices from" gets its own full-width row so the list name is not cut. */
+@media (max-width: 767px) {
+  .r43-catalog-list .sas-listbar__select:has(select[name="pl"]) { flex: 1 1 100%; }
+}

@@ -59,10 +59,10 @@ describe("tier editor rules (both price blocks)", () => {
   });
 
   it("summarises the tiers, with the period for recurring prices", () => {
-    expect(tierSummary(59_000, [{ minQty: 10, priceMinor: 55_000 }], 20, "ILS")).toBe("1–9: ₪590 · 10–19: ₪550 · 20+: custom pricing");
-    expect(tierSummary(1_500, [{ minQty: 10, priceMinor: 1_250 }], 20, "ILS", "month")).toBe("1–9: ₪15/month · 10–19: ₪12.50/month · 20+: custom pricing");
-    expect(tierSummary(19_000, [], null, "GBP", "year")).toBe("1+: £190/year");
-    expect(tierSummary(59_000, [{ minQty: 10, priceMinor: 55_000 }], null, "ILS")).toBe("1–9: ₪590 · 10+: ₪550");
+    expect(tierSummary(59_000, [{ minQty: 10, priceMinor: 55_000 }], 20, "ILS")).toBe("1–9: ₪590.00 · 10–19: ₪550.00 · 20+: custom pricing");
+    expect(tierSummary(1_500, [{ minQty: 10, priceMinor: 1_250 }], 20, "ILS", "month")).toBe("1–9: ₪15.00/month · 10–19: ₪12.50/month · 20+: custom pricing");
+    expect(tierSummary(19_000, [], null, "GBP", "year")).toBe("1+: £190.00/year");
+    expect(tierSummary(59_000, [{ minQty: 10, priceMinor: 55_000 }], null, "ILS")).toBe("1–9: ₪590.00 · 10+: ₪550.00");
   });
 
   it("round-trips rows through the hidden form field", () => {

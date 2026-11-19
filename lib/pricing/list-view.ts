@@ -43,9 +43,16 @@ export function tierChip(e: PriceListEntry | null | undefined, currency: string)
 export const hasTiers = (e: PriceListEntry | null | undefined) => !!e && ((e.oneTimeCharged && e.oneTimeTiers.length > 0) || (e.recurringCharged && e.recurringTiers.length > 0));
 export const hasRecurring = (e: PriceListEntry | null | undefined) => !!e && e.recurringCharged;
 
-/** "18%" and "Prices include VAT" / "Prices without VAT". */
-export function vatParts(l: Pick<PriceList, "pricesIncludeTax" | "taxRateBp">): { rate: string; mode: string } {
-  return { rate: `${l.taxRateBp / 100}%`, mode: t(l.pricesIncludeTax ? "price_lists.vat_included" : "price_lists.vat_excluded") };
+/**
+ * "18%" and "Prices include VAT" / "Prices without VAT"; `line` is the
+ * lower-case form for one value after the rate ("18% · prices without VAT").
+ */
+export function vatParts(l: Pick<PriceList, "pricesIncludeTax" | "taxRateBp">): { rate: string; mode: string; line: string } {
+  return {
+    rate: `${l.taxRateBp / 100}%`,
+    mode: t(l.pricesIncludeTax ? "price_lists.vat_included" : "price_lists.vat_excluded"),
+    line: t(l.pricesIncludeTax ? "price_lists.entry.vat_incl" : "price_lists.entry.vat_excl"),
+  };
 }
 
 /** When the list last changed: its draft was started, or its live version was published. */

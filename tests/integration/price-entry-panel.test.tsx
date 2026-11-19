@@ -102,8 +102,8 @@ describe("price list item panel: tiers on both charges, custom pricing, other li
     const ot = checkPriceBlock(d.oneTimePrice, tierLines(d.oneTimeTiers), 20, "ILS");
     const rc = checkPriceBlock(d.recurringPrice, tierLines(d.recurringTiers), 20, "ILS");
     expect([ot.errorCount, rc.errorCount]).toEqual([0, 0]);
-    expect(tierSummary(ot.baseMinor, ot.tiers, 20, "ILS")).toBe("1–9: ₪590 · 10–19: ₪550 · 20+: custom pricing");
-    expect(tierSummary(rc.baseMinor, rc.tiers, 20, "ILS", "month")).toBe("1–9: ₪15/month · 10–19: ₪12.50/month · 20+: custom pricing");
+    expect(tierSummary(ot.baseMinor, ot.tiers, 20, "ILS")).toBe("1–9: ₪590.00 · 10–19: ₪550.00 · 20+: custom pricing");
+    expect(tierSummary(rc.baseMinor, rc.tiers, 20, "ILS", "month")).toBe("1–9: ₪15.00/month · 10–19: ₪12.50/month · 20+: custom pricing");
   });
 
   it("refuses on the server what the editor blocks, and keeps the saved entry", async () => {
@@ -163,10 +163,11 @@ describe("price list item panel: tiers on both charges, custom pricing, other li
     expect(html).toContain('id="pe-ot"');
     expect(html).toContain('id="pe-rc"');
     expect(html).toContain('id="pe-rp"');
-    expect(html).toContain("1–9: ₪590 · 10–19: ₪550 · 20+: custom pricing");
-    expect(html).toContain("1–9: ₪15/month · 10–19: ₪12.50/month · 20+: custom pricing");
+    expect(html).toContain("1–9: ₪590.00 · 10–19: ₪550.00 · 20+: custom pricing");
+    expect(html).toContain("1–9: ₪15.00/month · 10–19: ₪12.50/month · 20+: custom pricing");
     expect(html).toContain("Custom pricing, set per quote");
-    expect(html).toContain("devices in one quote, you set the price yourself.");
+    expect(html).toContain("Custom pricing from (devices in one quote)");
+    expect(html).toContain("From this quantity you set the price yourself.");
     expect(html).toContain("Applies to both prices above. Leave empty to always use the tiers.");
     expect(html).toContain("This item in your other price lists");
     expect(html).toContain(`/app/alpha/setup/price-lists/${gbp}?sku=SNS-200`);

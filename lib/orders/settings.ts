@@ -94,6 +94,19 @@ export function legalTable(legal: Pick<LegalSection, "sectionKey" | "language" |
   });
 }
 
+/**
+ * The buyer preview's legal texts per language, in the table's row order
+ * (legalTable), so the table and the preview list them the same way.
+ */
+export function legalByLanguage(
+  rows: Pick<LegalRow, "sectionKey">[], legal: Pick<LegalSection, "sectionKey" | "language" | "title" | "version">[], languages: string[],
+): Record<string, { title: string; version: number }[]> {
+  return Object.fromEntries(languages.map((l) => [
+    l,
+    rows.flatMap((r) => legal.filter((s) => s.sectionKey === r.sectionKey && s.language === l).map((s) => ({ title: s.title, version: s.version }))),
+  ]));
+}
+
 export function sectionKeyOf(title: string): string {
   return title.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 40) || `section_${Date.now()}`;
 }

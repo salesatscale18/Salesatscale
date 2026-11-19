@@ -8,7 +8,7 @@ import { SetupSteps } from "@/components/sas/nav";
 import { ConfirmDelete, ListTable, RowMenu, SidePanel } from "@/components/sas/list-kit";
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { currentLegal, getOrderFormSettings, legalTable, REQUIRED_FIELDS } from "@/lib/orders/settings";
+import { currentLegal, getOrderFormSettings, legalByLanguage, legalTable, REQUIRED_FIELDS } from "@/lib/orders/settings";
 import { ORDER_FORM_FIELDS } from "@/db/schema";
 import { formatLocalDateTime, zoneTitle } from "@/lib/format";
 import { firstParam, hrefWith, type SearchParamsLike } from "@/lib/list-kit";
@@ -62,7 +62,8 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
         return [l, { label: tr("buyer.delivery.label", { range: formatDeliveryBuyer(eta, l) }), lead: leadFromSigning(tr, plan.leadTime, l === "he") }];
       }))
     : null;
-  const sectionsByLang = Object.fromEntries(account.languages.map((l) => [l, legal.filter((s) => s.language === l).map((s) => ({ title: s.title, version: s.version }))]));
+  // The preview lists each language's texts in the table's row order.
+  const sectionsByLang = legalByLanguage(rows, legal, account.languages);
   const error = firstParam(sp, "error");
   const panelOpen = !marketView && (panel === "legal" || Boolean(editKey));
 
@@ -212,11 +213,11 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
                     <span className="sas-input-label">{t("ofs.brand_color")}</span>
                     <span style={{ display: "flex", alignItems: "center", gap: 8, minHeight: 36, flexWrap: "wrap" }}>
                       <span aria-hidden="true" style={{ width: 24, height: 24, borderRadius: 6, background: settings.brandColor, border: "1px solid var(--line)", flex: "none" }} />
-                      <span className="sas-num">{settings.brandColor}</span>
                       <a href={`${base}/setup/company`} data-brand-change="">{t("ofs.brand_change")}</a>
+                      <span className="sas-small sas-num" data-brand-hex="">{settings.brandColor}</span>
                     </span>
                   </div>
-                  <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
+                  <fieldset className="sas-stack-2 r43-fs" style={{ border: 0, padding: 0, margin: 0 }}>
                     <legend className="sas-input-label">{t("ofs.methods")}</legend>
                     <label className="sas-check"><input type="checkbox" name="card" defaultChecked={settings.card} />{t("ofs.method.card")}</label>
                     <label className="sas-check"><input type="checkbox" name="bankTransfer" defaultChecked={settings.bankTransfer} />{t("ofs.method.bank")}</label>
@@ -230,7 +231,8 @@ export default async function OrderFormSetupPage({ params, searchParams }: { par
             </section>
           </form>
         </div>
-        <aside className="sas-split__side">
+        <aside className="sas-split__side sas-stack-2" aria-labelledby="ofs-prev-h">
+          <h2 id="ofs-prev-h" className="sas-heading">{t("ofs.preview")}</h2>
           <BuyerPreview seller={account.tradeName} brand={settings.brandColor} languages={account.languages} sections={sectionsByLang} fields={settings.fields} fieldOrder={ORDER_FORM_FIELDS} delivery={delivery} noDeliveryHint={t("ofs.preview_no_delivery")} />
         </aside>
       </div>
@@ -278,9 +280,9 @@ function LegalPanel({ slug, languages, legal, editKey, lang: wanted, close, tabH
           <input className="sas-input" id="ls-title" name="title" defaultValue={editing?.title ?? (known ? title : "")} required maxLength={80} dir="auto" data-autofocus="" />
         </div>
         <div className="sas-input-group">
-          <label className="sas-input-label" htmlFor="ls-lang">{t("ofs.language")}</label>
+          {known ? <span className="sas-input-label">{t("ofs.language")}</span> : <label className="sas-input-label" htmlFor="ls-lang">{t("ofs.language")}</label>}
           {known ? (
-            <><input type="hidden" name="language" value={lang} /><input className="sas-input" id="ls-lang" value={langName(lang)} readOnly /></>
+            <><input type="hidden" name="language" value={lang} /><span id="ls-lang" data-lang-fixed="">{langName(lang)}</span></>
           ) : (
             <select className="sas-select" id="ls-lang" name="language" defaultValue={lang}>{languages.map((l) => <option key={l} value={l}>{langName(l)}</option>)}</select>
           )}

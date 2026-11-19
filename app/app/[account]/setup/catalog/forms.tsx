@@ -139,7 +139,7 @@ const CHOICE_CSS = `
 .ci-choice input { position: absolute; opacity: 0; width: 1px; height: 1px; }
 .ci-choice:has(input:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 `;
-const segWrap = { display: "inline-flex", border: "1px solid var(--line-strong)", borderRadius: "var(--radius-md)", overflow: "hidden" } as const;
+const segWrap = { display: "inline-flex", alignSelf: "flex-start", maxWidth: "100%", border: "1px solid var(--line-strong)", borderRadius: "var(--radius-md)", overflow: "hidden" } as const;
 const seg = (on: boolean) => ({
   position: "relative", display: "inline-flex", alignItems: "center", height: 34, padding: "0 16px", cursor: "pointer", fontWeight: 600,
   background: on ? "var(--primary-soft)" : "var(--surface-raised)", color: on ? "var(--primary)" : "var(--ink)",
@@ -217,7 +217,7 @@ export function ItemForm({ slug, d, unitLanguages, suggestion, tab: initialTab =
       {state.status === "error" && !state.formError ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.edit.fix_errors")}</span></div> : null}
 
       <div hidden={tab !== "details"} data-tab-pane="details"><div className="sas-stack-4">
-        <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-kind-hint">
+        <fieldset className="sas-stack-2 r43-fs" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-kind-hint">
           <legend className="sas-input-label">{t("catalog.edit.kind")}</legend>
           <div style={segWrap}>
             {(["product", "service"] as const).map((k, i) => (
@@ -246,7 +246,7 @@ export function ItemForm({ slug, d, unitLanguages, suggestion, tab: initialTab =
           <label className="sas-input-label" htmlFor="ci-desc">{t("catalog.edit.description")}</label>
           <textarea className="sas-textarea" id="ci-desc" name="description" rows={2} defaultValue={d.description} />
         </div>
-        <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-unit-hint">
+        <fieldset className="sas-stack-2 r43-fs" style={{ border: 0, padding: 0, margin: 0 }} aria-describedby="ci-unit-hint">
           <legend className="sas-input-label">{t("catalog.edit.unit")}</legend>
           <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }} {...(e.unit ? { "aria-invalid": true } : {})}>
             {UNIT_OPTIONS.map((o) => (
@@ -260,7 +260,7 @@ export function ItemForm({ slug, d, unitLanguages, suggestion, tab: initialTab =
           {err("unit")}
         </fieldset>
         {unit === CUSTOM_UNIT ? (
-          <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
+          <fieldset className="sas-stack-2 r43-fs" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="sas-input-label">{t("catalog.unit.custom_title")}</legend>
             {unitLanguages.map((l) => (
               <div key={l} className="sas-grid-2" style={{ gap: 12 }}>
@@ -352,7 +352,7 @@ export function RuleForm({ slug, items, d }: { slug: string; items: { sku: strin
       </div>
       {kind === "auto_add" ? (
         <>
-          <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
+          <fieldset className="sas-stack-2 r43-fs" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="sas-input-label">{t("catalog.rules.auto.when")}</legend>
             <div className="sas-stack-2">
               {items.filter((i) => i.sku !== sku).map((i) => (
@@ -360,7 +360,7 @@ export function RuleForm({ slug, items, d }: { slug: string; items: { sku: strin
               ))}
             </div>
           </fieldset>
-          <fieldset className="sas-stack-2" style={{ border: 0, padding: 0, margin: 0 }}>
+          <fieldset className="sas-stack-2 r43-fs" style={{ border: 0, padding: 0, margin: 0 }}>
             <legend className="sas-input-label">{t("catalog.rules.auto.qty")}</legend>
             <div className="sas-stack-2">
               <label className="sas-check"><input type="radio" name="qty" value="sites" defaultChecked={(d?.qty ?? "sites") === "sites"} />{t("catalog.rules.auto.qty.sites")}</label>

@@ -53,13 +53,13 @@ function MetaFields({ prefix, d, errors, currencies, resetKey }: { prefix: strin
           <DateField id={`${prefix}-from`} name="validFrom" defaultValue={d.validFrom} key={`${resetKey}-from`} {...aria(`${prefix}-from`, errors.validFrom)} />
         </Field>
       </div>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 16, alignItems: "flex-end" }}>
-        <label className="sas-check"><input type="checkbox" name="pricesIncludeTax" defaultChecked={d.pricesIncludeTax} key={resetKey} />{t("price_lists.field.incl_vat")}</label>
+      <div className="sas-stack-2" data-vat-fields="">
         <div style={{ width: 140 }}>
           <Field id={`${prefix}-tax`} label={t("price_lists.field.tax_rate")} error={errors.taxRate}>
             <input className="sas-input sas-num" id={`${prefix}-tax`} name="taxRate" inputMode="decimal" defaultValue={d.taxRate} key={resetKey} {...aria(`${prefix}-tax`, errors.taxRate)} />
           </Field>
         </div>
+        <label className="sas-check"><input type="checkbox" name="pricesIncludeTax" defaultChecked={d.pricesIncludeTax} key={resetKey} />{t("price_lists.field.incl_vat")}</label>
       </div>
     </>
   );
@@ -80,18 +80,19 @@ export function CreateForm({ slug, d, currencies, first }: { slug: string; d: Me
   );
 }
 
-/** Draft settings of one price list. */
+const META_FORM_ID = "pl-meta-form";
+
+/** Draft settings of one price list. The panel's pinned footer submits it (form="pl-meta-form"). */
 export function MetaForm({ slug, lineageId, d }: { slug: string; lineageId: string; d: MetaDefaults }) {
-  const [state, action, pending] = useActionState<MetaFormState, FormData>(saveMetaAction, { status: "idle" });
+  const [state, action] = useActionState<MetaFormState, FormData>(saveMetaAction, { status: "idle" });
   const errors = state.status === "error" ? state.errors : {};
   return (
-    <form action={action} className="sas-stack-4" noValidate>
+    <form id={META_FORM_ID} action={action} className="sas-stack-4" noValidate>
       <input type="hidden" name="slug" value={slug} />
       <input type="hidden" name="lineageId" value={lineageId} />
       <FormError text={state.status === "error" ? state.formError : undefined} />
       {state.status === "saved" ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.meta.saved")}</span></div> : null}
       <MetaFields prefix="pl-meta" d={d} errors={errors} />
-      <div><button type="submit" className={buttonClass("secondary", "sm")} disabled={pending}>{t("price_lists.meta.save")}</button></div>
     </form>
   );
 }
@@ -196,7 +197,7 @@ function TierBlock(props: {
             </button>
           </div>
           {summary ? <div className="sas-num" id={`pe-${part}-summary`} style={{ padding: "8px 12px", borderRadius: 8, background: "var(--surface)", fontSize: 13, overflowWrap: "anywhere" }}>{summary}</div> : null}
-          <span className="sas-hint" id={`pe-${part}-hint`}>{t("price_lists.entry.price_hint")}</span>
+          <span className="sas-hint" id={`pe-${part}-hint`}>{t(props.period ? "price_lists.entry.price_hint_recurring" : "price_lists.entry.price_hint")}</span>
           {baseErr ? <span className="sas-error" id={`pe-${part}-error`}>{baseErr}</span> : null}
           {check.errorCount === 0 ? props.serverErrors.map((m) => <span key={m} className="sas-error" role="alert">{m}</span>) : null}
         </>
@@ -216,19 +217,20 @@ export function EntrySaveScope({ children }: { children: React.ReactNode }) {
   return <EntrySaveContext.Provider value={{ save, setSave }}>{children}</EntrySaveContext.Provider>;
 }
 
-function SaveBarContent({ pending, errorCount, formId }: EntrySave & { formId?: string }) {
+function SaveBarContent({ pending, errorCount, formId, cancelHref }: EntrySave & { formId?: string; cancelHref?: string }) {
   return (
     <>
       <button type="submit" form={formId} className={buttonClass("primary")} disabled={pending || errorCount > 0} data-entry-save="">{t("price_lists.entry.save")}</button>
+      {cancelHref ? <a className={buttonClass("ghost")} href={cancelHref} data-entry-cancel="">{t("common.cancel")}</a> : null}
       {errorCount > 0 ? <span className="sas-error" role="status" style={{ fontSize: 13 }}>{errorCount === 1 ? t("price_lists.entry.fix_one") : t("price_lists.entry.fix_many", { count: errorCount })}</span> : null}
     </>
   );
 }
 
 /** "Save to draft" pinned at the bottom of the price entry panel (desktop and phone), like the other panels. */
-export function EntrySaveBar() {
+export function EntrySaveBar({ cancelHref }: { cancelHref?: string }) {
   const ctx = useContext(EntrySaveContext);
-  return <SaveBarContent {...(ctx?.save ?? { pending: false, errorCount: 0 })} formId={ENTRY_FORM_ID} />;
+  return <SaveBarContent {...(ctx?.save ?? { pending: false, errorCount: 0 })} formId={ENTRY_FORM_ID} cancelHref={cancelHref} />;
 }
 
 /**
@@ -270,7 +272,7 @@ export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { s
       <input type="hidden" name="lineageId" value={lineageId} />
       <input type="hidden" name="sku" value={sku} />
       <FormError text={state.status === "error" ? state.formError : undefined} />
-      <fieldset style={{ ...plain, ...section, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }}>
+      <fieldset style={{ ...plain, display: "flex", flexWrap: "wrap", alignItems: "center", gap: 16 }} data-sold-row="">
         <legend className="sas-sr">{t("price_lists.entry.sold")}</legend>
         <strong aria-hidden="true">{t("price_lists.entry.sold")}</strong>
         <label className="sas-check"><input type="radio" name="sold" value="yes" checked={sold} onChange={() => setSold(true)} />{t("price_lists.entry.sold_yes")}</label>
@@ -300,16 +302,15 @@ export function EntryForm({ slug, lineageId, sku, currency, d, unitPlural }: { s
           />
           <section className="sas-stack-2" style={section} aria-labelledby="cp-h">
             <h3 id="cp-h" className="sas-heading" style={{ fontSize: 15 }}>{t("price_lists.entry.custom_title")}</h3>
-            <label htmlFor="pe-cf" style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-              <span>{t("price_lists.entry.custom_before")}</span>
+            <div className="sas-input-group">
+              <label className="sas-input-label" htmlFor="pe-cf">{t("price_lists.entry.custom_label", { units: unitPlural })}</label>
               <input
                 className="sas-input sas-num" id="pe-cf" name="customPricingFromQty" inputMode="numeric" value={customText} onChange={(e) => setCustomText(e.target.value)}
-                style={{ width: 90 }} aria-invalid={customErr ? true : undefined} aria-describedby={`pe-cf-hint${customErr ? " pe-cf-error" : ""}`}
+                style={{ width: 120 }} aria-invalid={customErr ? true : undefined} aria-describedby={`pe-cf-hint${customErr ? " pe-cf-error" : ""}`}
               />
-              <span>{t("price_lists.entry.custom_after", { units: unitPlural })}</span>
-            </label>
-            <span className="sas-hint" id="pe-cf-hint">{t("price_lists.entry.custom_hint")}</span>
-            {customErr ? <span className="sas-error" id="pe-cf-error">{customErr}</span> : null}
+              <span className="sas-hint" id="pe-cf-hint">{t("price_lists.entry.custom_hint")}</span>
+              {customErr ? <span className="sas-error" id="pe-cf-error">{customErr}</span> : null}
+            </div>
           </section>
         </>
       ) : <span className="sas-small">{t("price_lists.entry.not_sold_hint")}</span>}

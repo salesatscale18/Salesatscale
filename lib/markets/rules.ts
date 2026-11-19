@@ -2,6 +2,7 @@
 import type { MarketStatus } from "@/db/schema";
 import type { EffectiveSettings } from "./settings";
 import { whatsappStatus, type OpenerStatus, type WhatsappStatus } from "@/lib/channels/rules";
+import { regionName } from "@/lib/format";
 
 /** Country calling codes, used to suggest phone prefixes for a new market. */
 /**
@@ -55,6 +56,17 @@ export function newMarketTimezone(countries: string[], accountTimezone: string):
 }
 
 /** "GB" → "United Kingdom". Falls back to the code. */
+/**
+ * A lead-form country value on the Markets screen: "Israel (IL)" for a
+ * two-letter code (name first, code after), anything else as typed.
+ */
+export function formCountryLabel(value: string): string {
+  const v = value.trim();
+  if (!/^[A-Za-z]{2}$/.test(v)) return v;
+  const name = regionName(v);
+  return name.toUpperCase() === v.toUpperCase() ? v : `${name} (${v.toUpperCase()})`;
+}
+
 export function countryName(code: string): string {
   try {
     return new Intl.DisplayNames(["en"], { type: "region" }).of(code) ?? code;

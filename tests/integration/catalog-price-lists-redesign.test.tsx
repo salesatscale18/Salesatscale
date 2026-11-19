@@ -134,7 +134,11 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(html).toMatch(/<th scope="col" aria-sort="ascending" class="sas-th-sort"><a[^>]*>Item/);
       expect(rows[0]).toMatch(/^Cold room probeCRP-40Productper devicePrice missing—Price missing/);
       const gw = rows.find((r) => r.startsWith("Site gateway"))!;
-      expect(gw).toContain("In chat: Kitchen hub");
+      // C7: the chat name exactly as stored (lower case), not capitalised.
+      expect(gw).toContain("In chat: kitchen hub");
+      expect(rows.find((r) => r.startsWith("Wireless"))).toContain("In chat: wireless fridge sensor");
+      // D10: the list section carries the class that gives "Prices from" its own row on a phone.
+      expect(html).toContain('class="sas-stack-2 r43-catalog-list"');
       expect(gw).toContain("₪660.00 + ₪90.00/month");
       expect(gw).toContain("Adds Installation");
       expect(rows.find((r) => r.startsWith("Wireless"))).toContain("Needs Site gateway");
@@ -147,6 +151,10 @@ describe("Setup redesign: Catalog and Price lists", () => {
       // Rules card: sentences with Edit and remove, the form is not on the page.
       expect(tx).toContain("Rules · 2");
       expect(tx).toMatch(/When a quote has Site gateway \(GW-10\), add Installation \(INST-1\) × number of sites\./);
+      // B4: the "needs" rule uses the link icon, not the check of Active.
+      const rulesCard = html.split('id="rules-h"')[1];
+      const needsRow = rulesCard.split('</li>').find((li) => li.includes("needs one"))!;
+      expect(needsRow).toContain('<line x1="8" x2="16" y1="12" y2="12"></line>');
       expect(html).toMatch(/<span class="sas-nowrap">\(GW-10\)<\/span>/);
       expect(html).toMatch(/href="\/app\/polar\/setup\/catalog\?panel=rule&amp;rule=[0-9a-f-]{36}"/);
       expect(html).not.toContain('id="rule-form"');
@@ -209,8 +217,9 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(html).toMatch(/<div data-tab-pane="prices">/);
       expect(html).toMatch(/<a class="sas-sp__tab"[^>]*aria-current="page"[^>]*>Prices and rules<\/a>/);
       const prices = html.split('data-item-prices=""')[1].split("</table>")[0];
-      expect(text(prices)).toMatch(/Israel prices.*ILS · excl\. VAT.*₪660\.00.*₪90\.00\/month.*Edit/);
-      expect(text(prices)).toMatch(/UK prices.*GBP · excl\. VAT.*Not priced.*Add price/);
+      // B5: "without VAT", the same words as the price lists.
+      expect(text(prices)).toMatch(/Israel prices.*ILS · without VAT.*₪660\.00.*₪90\.00\/month.*Edit/);
+      expect(text(prices)).toMatch(/UK prices.*GBP · without VAT.*Not priced.*Add price/);
       expect(prices).toContain(`/setup/price-lists/${uk}?sku=GW-10`);
       const rules = text(html.split('data-item-rules=""')[1].split("</ul>")[0]);
       expect(rules).toContain("When a quote has Site gateway (GW-10), add Installation (INST-1)");
@@ -275,13 +284,18 @@ describe("Setup redesign: Catalog and Price lists", () => {
       save("price-lists", html);
       const rows = tableRows(html);
       const il = rows.find((r) => r.startsWith("Israel prices"))!;
-      expect(il).toMatch(/ILSIsraeli shekel.*18%Prices without VAT.*Israel.*4 of 5.*Live.*v1 · draft v2/);
+      // Desktop: code over name; phone cards show one value each ("ILS · Israeli shekel", "18% · prices without VAT") (R4 D4).
+      expect(il).toMatch(/ILS · Israeli shekel.*18% · Prices without VATprices without VAT.*Israel.*4 of 5.*Live.*v1 · draft v2/);
+      expect(html).toMatch(/<span class="sas-small r43-pl-phone">prices without VAT<\/span>/);
       const gb = rows.find((r) => r.startsWith("UK prices"))!;
-      expect(gb).toMatch(/GBPBritish pound.*20%Prices without VAT.*No market yet.*1 of 5.*Draft.*v1/);
+      expect(gb).toMatch(/GBP · British pound.*20% · Prices without VAT.*No market yet.*1 of 5.*Draft.*v1/);
       expect(html).toContain('data-priced="incomplete"');
       expect(html).toContain(`/setup/price-lists?copy=${israel}`);
       expect(html).toContain(`/setup/price-lists?rename=${uk}`);
       expect(html).toContain(`/setup/price-lists?confirm=${uk}`);
+      // F4: Delete on a list a market sells from goes straight to the refusal, with no confirm.
+      expect(html).toContain(`/setup/price-lists?delete=in_use&amp;list=${israel}`);
+      expect(html).not.toContain(`/setup/price-lists?confirm=${israel}`);
       expect(text(html)).toContain("New price list");
       expect(text(html)).toContain("Each market sells from one price list.");
       expect(tableRows(await lists({ status: "live" }))).toHaveLength(1);
@@ -298,10 +312,13 @@ describe("Setup redesign: Catalog and Price lists", () => {
       save("price-lists-rename", rename);
       expect(rename).toMatch(/id="pl-rename-name"[^>]*value="UK prices"/);
       expect(rename).toMatch(/<button type="submit" form="pl-rename"/);
-      const confirm = await lists({ confirm: israel });
+      const confirm = await lists({ confirm: uk });
       save("price-lists-confirm", confirm);
-      expect(text(confirm)).toContain("Delete Israel prices?");
-      expect(text(confirm)).toContain("Israel sells from this list. Choose another price list for that market first.");
+      expect(text(confirm)).toContain("Delete UK prices?");
+      // F4: an old confirm link to a list in use shows the refusal with Open Markets, never a red Delete.
+      const inUse = await lists({ confirm: israel });
+      expect(inUse).not.toContain("sas-confirm-row");
+      expect(text(inUse)).toContain("Can't delete Israel prices. Israel sells from this list. Choose another price list for that market first. Open Markets");
     });
 
     it("rename goes into the draft; delete is refused while a market uses the list or quotes were priced from it", async () => {
@@ -386,6 +403,11 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(settings).toContain('id="pl-meta-name"');
       expect(settings).toContain('id="pl-meta-from"');
       expect(settings).toContain('name="pricesIncludeTax"');
+      // D2: pinned footer with Save settings and Cancel; "Prices include VAT" under the VAT rate.
+      const foot = settings.split('class="sas-sp__foot"')[1];
+      expect(foot).toMatch(/^[^]*form="pl-meta-form"[^>]*>Save settings<\/button><a class="[^"]*" href="[^"]*">Cancel<\/a>/);
+      expect(settings).toContain('<form id="pl-meta-form"');
+      expect(settings.indexOf('name="taxRate"')).toBeLessThan(settings.indexOf('name="pricesIncludeTax"'));
       const entry = await detail(israel, { sku: "CRP-40" });
       save("price-list-entry", entry);
       expect(entry).toContain("Sold in this price list");
@@ -393,6 +415,11 @@ describe("Setup redesign: Catalog and Price lists", () => {
       expect(entry).toContain('id="rc-block"');
       expect(entry).toContain("Custom pricing");
       expect(entry).toContain("This item in your other price lists");
+      // D2: Cancel next to Save to draft; the first row has no top line; the hints name the price publishing needs.
+      expect(entry.split('class="sas-sp__foot"')[1]).toMatch(/Save to draft<\/button><a class="[^"]*" href="[^"]*" data-entry-cancel="">Cancel<\/a>/);
+      expect(entry).toMatch(/<fieldset style="border:0;padding:0;margin:0;display:flex[^"]*" data-sold-row="">/);
+      expect(text(entry)).toContain("Leave the price empty to add it later. You can't publish without a one-time price.");
+      expect(entry).toMatch(/<label class="sas-input-label" for="pe-cf">Custom pricing from \(devices in one quote\)<\/label>/);
       expect(entry).toMatch(/<tr data-current="">/);
     });
   });

@@ -96,11 +96,24 @@ describe("Polish-7b: plain terms", () => {
     const s = text(html);
     expect(s).toMatch(/Israel time · Asia\/Jerusalem \(GMT\+[23]\)/);
     expect(s).toContain("ILS · Israeli shekel (₪)");
-    expect(s).toContain("Lead form: country is IL (Israel)");
+    expect(s).toContain("Lead form: country is Israel (IL)");
     expect(html).toMatch(/<span class="sas-pill"[^>]*data-home-market="">Home market</);
     expect(html).not.toContain('class="sas-chip"');
     expect(s).toMatch(/English · .+ v1/);
     expect(s).not.toMatch(/\bEN v1\b/);
+    // R4 D6: row actions all as ghost buttons; legal texts not changed for the market say "Change for this market";
+    // the price list button says what it saves.
+    expect(html).not.toMatch(/<a class="sas-small" href="[^"]*(edit=where|order-form\?market)/);
+    expect(html).toMatch(/<a class="sas-btn sas-btn--ghost sas-btn--sm" href="[^"]*order-form\?market=[^"]*" data-row-action="" data-legal-action="">Change for this market<\/a>/);
+    expect(s).toContain("Save price list");
+    // E8: legal texts listed in the selling-language order (English, then Hebrew).
+    expect(html.indexOf('data-legal-lang="en"')).toBeLessThan(html.indexOf('data-legal-lang="he"'));
+    // While the holidays editor is open the row shows no "None" above it.
+    const hol = await render(MarketsPage, account.slug, { override: "holidays" });
+    const holRow = (h: string) => h.split('id="set-holidays"')[1].split("</div>")[0];
+    expect(holRow(html)).toContain("None");
+    expect(holRow(hol)).toContain("Holidays");
+    expect(holRow(hol)).not.toContain("None");
     // The zone select names every zone the same way.
     const tz = await render(MarketsPage, account.slug, { override: "timezone" });
     save("markets-timezone", tz);
@@ -132,6 +145,15 @@ describe("Polish-7b: plain terms", () => {
     const m = await render(OrderFormSetupPage, account.slug, { market: home.id });
     save("order-form-market", m);
     expect(m).toMatch(/data-legal-version="en\.1"[^>]*>English · v1</);
+    // R4 D13: the Preview heading, "Brand colour" with the hex code secondary.
+    expect(html).toMatch(/<h2 id="ofs-prev-h" class="sas-heading">Preview<\/h2>/);
+    expect(text(html)).toContain("Brand colour");
+    expect(html).toMatch(/<span class="sas-small sas-num" data-brand-hex="">#[0-9a-f]{6}<\/span>/);
+    // The legal panel of an existing text shows its language as plain text.
+    const key = /panel=legal%3A([a-z_]+)&amp;lang=en/.exec(html)![1];
+    const panel = await render(OrderFormSetupPage, account.slug, { panel: `legal:${key}`, lang: "he" });
+    expect(panel).toMatch(/<span id="ls-lang" data-lang-fixed="">Hebrew<\/span>/);
+    expect(panel).not.toMatch(/id="ls-lang"[^>]*readOnly|<input[^>]*id="ls-lang"/i);
   });
 
   it("Versions and test lab: the model line only for platform admins", async () => {

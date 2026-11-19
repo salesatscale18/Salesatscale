@@ -14,6 +14,7 @@
  */
 import type { VolumeTier } from "@/db/schema";
 import { t } from "@/lib/i18n";
+import { formatMoney } from "@/lib/domain/money";
 
 /** Minor-unit digits of a currency (ILS 2, JPY 0). */
 export function currencyDigits(currency: string): number {
@@ -141,7 +142,7 @@ export function serializeTierRows(rows: { qty: string; price: string }[]): strin
   return rows.map((r) => `${r.qty.trim()}: ${r.price.trim()}`).join("\n");
 }
 
-/** ₪590, ₪12.50: whole amounts without decimals (the summary line). */
+/** ₪590, ₪12.50: whole amounts without decimals (the tier error texts). */
 export function moneyText(minor: number, currency: string): string {
   const digits = currencyDigits(currency);
   const whole = minor % 10 ** digits === 0;
@@ -161,7 +162,8 @@ export function moneyText(minor: number, currency: string): string {
 export function tierSummary(baseMinor: number | null, tiers: VolumeTier[], customFrom: number | null, currency: string, period: "month" | "year" | null = null): string {
   const price = (m: number | null) => {
     if (m === null) return "—";
-    const text = moneyText(m, currency);
+    // Full minor digits ("₪590.00"), as the prices table shows them.
+    const text = formatMoney(m, currency);
     return period ? t(period === "year" ? "catalog.tiers.per_year" : "catalog.tiers.per_month", { price: text }) : text;
   };
   const steps = [{ from: 1, price: baseMinor }, ...[...tiers].sort((a, b) => a.minQty - b.minQty).map((x) => ({ from: x.minQty, price: x.priceMinor as number | null }))].filter(

@@ -635,8 +635,8 @@ test("M3 Second market", async ({ browser }) => {
   await expect(d.getByRole("heading", { name: /Europe/ })).toBeVisible();
   await expect(d).toContainText("+49");
   // "EU prices" is still a draft here (published in D1a, to see the quote editor without a live list first).
-  await d.locator("#mk-pl").selectOption({ label: "EU prices · EUR · draft, not live yet" });
-  await d.getByRole("button", { name: "Change" }).click();
+  await d.locator("#mk-pl").selectOption({ label: "EU prices · EUR · draft" });
+  await d.getByRole("button", { name: "Save price list" }).click();
   await expect(page.getByText("Saved.", { exact: true })).toBeVisible();
   await expect(page.locator("[data-market-row]").filter({ hasText: "Europe" })).toContainText("EU prices");
   await expect(d).toContainText("This price list has no live version yet.");

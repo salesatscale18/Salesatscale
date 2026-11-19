@@ -9,7 +9,7 @@ import { pendingCatalogSuggestion } from "@/lib/pipeline/service";
 import { describeFitRule, type FitRule } from "@/lib/catalog/fit";
 import { unitLanguages } from "@/lib/catalog/rules";
 import {
-  CATALOG_SORTS, CATALOG_STATUSES, capFirst, catalogRows, catalogSortAccessors, filterCatalogRows, rulesMentioning, type CatalogRow,
+  CATALOG_SORTS, CATALOG_STATUSES, catalogRows, ruleIcon, catalogSortAccessors, filterCatalogRows, rulesMentioning, type CatalogRow,
 } from "@/lib/catalog/view";
 import { formatMoney } from "@/lib/domain/money";
 import { splitCodes } from "@/lib/format";
@@ -79,7 +79,7 @@ function RuleText({ text, codes }: { text: string; codes: string[] }) {
 /** The sheet's "Prices and rules" tab: one row per price list, and the rules naming this item (read only). */
 function PricesAndRules({ item, prices, rules, codes, priceListsPath }: {
   item: CatalogItem | undefined; prices: { pl: PriceListSummary; entry: PriceListEntry | null }[];
-  rules: { id: string; icon: "plus" | "info" | "check"; text: string }[]; codes: string[]; priceListsPath: string;
+  rules: { id: string; icon: ReturnType<typeof ruleIcon>; text: string }[]; codes: string[]; priceListsPath: string;
 }) {
   if (!item) return <span className="sas-small">{t("catalog.sheet.prices_after_save")}</span>;
   return (
@@ -142,12 +142,12 @@ function PricesAndRules({ item, prices, rules, codes, priceListsPath }: {
   );
 }
 
-type RuleRow = { id: string; rule: FitRule | AutoAddRule; icon: "plus" | "info" | "check"; text: string };
+type RuleRow = { id: string; rule: FitRule | AutoAddRule; icon: ReturnType<typeof ruleIcon>; text: string };
 
 function ruleRows(state: CatalogState, nameOf: (s: string) => string | undefined): RuleRow[] {
   return [
-    ...state.autoAdd.map((r) => ({ id: r.id, rule: r.rule as FitRule | AutoAddRule, icon: "plus" as const, text: describeAutoAddRule(r.rule, nameOf) })),
-    ...state.rules.map((r) => ({ id: r.id, rule: r.rule as FitRule | AutoAddRule, icon: r.rule.kind === "advice" ? ("info" as const) : ("check" as const), text: describeFitRule(r.rule, nameOf) })),
+    ...state.autoAdd.map((r) => ({ id: r.id, rule: r.rule as FitRule | AutoAddRule, icon: ruleIcon(r.rule.kind), text: describeAutoAddRule(r.rule, nameOf) })),
+    ...state.rules.map((r) => ({ id: r.id, rule: r.rule as FitRule | AutoAddRule, icon: ruleIcon(r.rule.kind), text: describeFitRule(r.rule, nameOf) })),
   ];
 }
 
@@ -257,7 +257,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
           <a className={buttonClass("primary", "sm")} href={open("new")}>{t("catalog.add")}</a>
         </section>
       ) : (
-        <section className="sas-stack-2" aria-label={t("catalog.items_title")}>
+        <section className="sas-stack-2 r43-catalog-list" aria-label={t("catalog.items_title")}>
           <ListToolbar
             path={base}
             params={sp}
@@ -336,7 +336,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
                   <tr key={i.id} data-current={i.id === selectedId ? "" : undefined}>
                     <td>
                       <a className="sas-row-link" href={open(i.id)} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a>
-                      {i.plainName ? <span className="sas-small" style={{ display: "block" }}>{t("catalog.in_chat", { name: capFirst(i.plainName) })}</span> : null}
+                      {i.plainName ? <span className="sas-small" style={{ display: "block" }}>{t("catalog.in_chat", { name: i.plainName })}</span> : null}
                     </td>
                     <td className="sas-num" data-label={t("catalog.col.code")}><span className="sas-nowrap">{i.sku}</span></td>
                     <td data-label={t("catalog.col.kind")}>{t(i.kind === "service" ? "catalog.kind.service" : "catalog.kind.product")}</td>

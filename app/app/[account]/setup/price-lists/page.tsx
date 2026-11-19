@@ -51,8 +51,10 @@ export default async function PriceListsPage({ params, searchParams }: { params:
   const renaming = lists.find((l) => l.lineageId === renameId);
   const panel = copyParam && lists.length > 0 ? "copy" : firstParam(sp, "new") ? "new" : renaming ? "rename" : null;
   const confirm = firstParam(sp, "confirm");
-  const deleteError = firstParam(sp, "delete");
-  const deleteList = lists.find((l) => l.lineageId === firstParam(sp, "list"));
+  // A list a market sells from cannot be deleted: Delete (or an old confirm link) shows the refusal at once, with no confirm.
+  const confirmInUse = lists.find((l) => l.lineageId === confirm && l.usedBy.length > 0);
+  const deleteError = confirmInUse ? "in_use" : firstParam(sp, "delete");
+  const deleteList = confirmInUse ?? lists.find((l) => l.lineageId === firstParam(sp, "list"));
   const refusal = deleteRefusalText(deleteError, deleteList?.usedBy.map((m) => m.name) ?? []);
   // Rename of a list that is live: the new name waits in draft vN until Publish.
   const renamed = lists.find((l) => l.lineageId === firstParam(sp, "renamed"));
@@ -162,8 +164,14 @@ export default async function PriceListsPage({ params, searchParams }: { params:
                 const row = (
                   <tr key={l.lineageId} data-current={renaming?.lineageId === l.lineageId || (panel === "copy" && copyParam === l.lineageId) ? "" : undefined}>
                     <td><a className="sas-row-link" href={href}><strong>{l.shown.name}</strong></a>{l.shown.validFrom ? <span className="sas-small" style={{ display: "block" }}>{t("price_lists.valid_from_short", { date: formatDay(l.shown.validFrom) })}</span> : null}</td>
-                    <td data-label={t("price_lists.field.currency")}><strong className="sas-num">{l.shown.currency}</strong><span className="sas-small" style={{ display: "block" }}>{currencyName(l.shown.currency)}</span></td>
-                    <td data-label={t("price_lists.col.vat")}><span className="sas-num">{vat.rate}</span><span className="sas-small" style={{ display: "block" }}>{vat.mode}</span></td>
+                    <td data-label={t("price_lists.field.currency")} data-pl-currency="">
+                      {/* Desktop: code over name; phone cards: one value, "ILS · Israeli shekel". */}
+                      <span className="r43-pl-val"><strong className="sas-num">{l.shown.currency}</strong><span className="r43-pl-sep"> · </span><span className="sas-small r43-pl-sub">{currencyName(l.shown.currency)}</span></span>
+                    </td>
+                    <td data-label={t("price_lists.col.vat")} data-pl-vat="">
+                      {/* Desktop: rate over "Prices without VAT"; phone cards: "18% · prices without VAT". */}
+                      <span className="r43-pl-val"><span className="sas-num">{vat.rate}</span><span className="r43-pl-sep"> · </span><span className="sas-small r43-pl-sub r43-pl-desk">{vat.mode}</span><span className="sas-small r43-pl-phone">{vat.line}</span></span>
+                    </td>
                     <td data-label={t("price_lists.col.used_by")}>{l.usedBy.length > 0 ? l.usedBy.map((m) => m.name).join(", ") : <span className="sas-small">{t("price_lists.no_market")}</span>}</td>
                     <td data-label={t("price_lists.col.priced")}>
                       <span className="sas-num" data-priced={priced.missing > 0 ? "incomplete" : "complete"} style={priced.missing > 0 ? { color: "var(--warning)", fontWeight: 600 } : undefined}>
@@ -185,14 +193,14 @@ export default async function PriceListsPage({ params, searchParams }: { params:
                           items={[
                             { label: t("price_lists.menu.open"), href, icon: "eye" },
                             { label: t("price_lists.menu.rename"), href: withPanel({ rename: l.lineageId }), icon: "pencil" },
-                            { label: t("kit.delete"), href: withPanel({ confirm: l.lineageId }), icon: "x-circle", danger: true },
+                            { label: t("kit.delete"), href: l.usedBy.length > 0 ? withPanel({ delete: "in_use", list: l.lineageId }) : withPanel({ confirm: l.lineageId }), icon: "x-circle", danger: true },
                           ]}
                         />
                       </span>
                     </td>
                   </tr>
                 );
-                if (confirm !== l.lineageId) return [row];
+                if (confirm !== l.lineageId || l.usedBy.length > 0) return [row];
                 return [
                   row,
                   <tr key={`${l.lineageId}-confirm`} className="sas-confirm-row">
@@ -203,7 +211,7 @@ export default async function PriceListsPage({ params, searchParams }: { params:
                         fields={{ slug: account.slug, lineageId: l.lineageId }}
                         cancelHref={hrefWith(base, sp, { confirm: null })}
                       >
-                        {l.usedBy.length > 0 ? deleteRefusalText("in_use", l.usedBy.map((m) => m.name)) : t("price_lists.delete.body")}
+                        {t("price_lists.delete.body")}
                       </ConfirmDelete>
                     </td>
                   </tr>,
