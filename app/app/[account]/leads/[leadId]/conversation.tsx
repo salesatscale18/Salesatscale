@@ -17,6 +17,7 @@ import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { SimulatedChip, TestLabChip } from "../simulated-chip";
 import { CopyButton } from "@/components/sas/copy-button";
 import { isolate } from "@/lib/leads/bidi";
+import { TOOL_ICON } from "@/components/sas/tool-chip";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -51,17 +52,6 @@ const maybe = (key: string) => messages.en[key as MessageKey] ?? null;
 export function toolLabel(name: string): string {
   return maybe(`conv.tool.${name}`) ?? t("conv.tool.other");
 }
-
-/** The timeline's icon for the same event, where there is one (S3), plus deal details and fit; other tools keep the wrench. */
-const TOOL_ICON: Record<string, IconName> = {
-  update_deal_state: "clipboard-list",
-  check_fit: "list-checks",
-  hand_off_to_human: "user",
-  send_order_form: "send",
-  create_quote: "file-text",
-  schedule_follow_up: "clock",
-  record_opt_out: "x-circle",
-};
 
 /**
  * Trace chips for an agent message: the seller-readable label, plus Refused/Failed when the tool did not succeed.

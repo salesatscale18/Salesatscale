@@ -31,6 +31,20 @@ import { WindowTimer } from "@/components/sas/record";
 import { conversationWindow } from "@/lib/channels/whatsapp";
 import { listConnections } from "@/lib/channels/connections";
 import { twilioConfig } from "@/lib/channels/twilio";
+import { SidePanel } from "@/components/sas/list-kit";
+import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
+import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
+import { VoiceSettingsForm } from "@/components/sas/voice/voice-settings-form";
+import { usdRate } from "@/lib/ai/models";
+import { INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
+import { barView } from "@/lib/voice/client/view";
+import { callClock, callLimitText, voiceLabAccess, voiceSettingsSummary } from "@/lib/voice/lab";
+import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
+import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceModelId } from "@/lib/voice/settings";
+import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
+import { saveVoiceSettingsAction } from "./voice-actions";
+import { minorPerUsd } from "./voice-server";
+import { VoiceCallAgainBar, VoiceCallStarter, VoiceLabKeeper, VoiceLabLive, VoiceLabStats } from "./voice-lab";
 
 // A turn can take several model rounds.
 export const maxDuration = 300;
@@ -85,6 +99,15 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   ]);
   const testerNumbers = waNumbers.filter((c) => c.status === "active" && c.testerNumbers.length > 0);
   const onWhatsapp = conv?.channel === "whatsapp";
+  // Voice calls (release 1): platform admins only, and only while VOICE_REALTIME is not off. Checked here, on the server.
+  const voice = voiceLabAccess(user) === "ok";
+  const onVoice = conv?.channel === "voice";
+  const [voiceSummary, voiceModes] = await Promise.all([
+    onVoice && conv ? voiceSessionSummary(appDb, account.id, conv.id) : Promise.resolve(null),
+    conversationVoiceModes(appDb, account.id, chats.filter((c) => c.channel === "voice").map((c) => c.id)),
+  ]);
+  const fx = { currency: account.currency, minorPerUsd: minorPerUsd(usdRate(account.currency)) };
+  const usageHref = `${base}/settings`;
   const waWindow = onWhatsapp && conv && conv.status !== "closed" ? await conversationWindow(appDb, account.id, conv.id) : null;
   const draft = versions.find((v) => v.status === "draft");
   const scenario = conv?.isTest ? scenarioById(conv.scenario) : null;
@@ -115,6 +138,27 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     return s.language === "en" || s.title.toLowerCase().includes(lang.toLowerCase()) ? s.title : `${s.title} (${lang})`;
   };
   const now = new Date();
+  // "Call the agent": the same pickers as a new test chat (calls are English only), the Ready line per version.
+  const callLimit = deploymentCallLimitSec();
+  const liveVersion = versions.find((v) => v.status === "live");
+  const callVersions = [
+    ...(draft ? [] : [{ value: "", label: t("lab.new_draft"), settings: liveVersion?.voiceSettings ?? null, version: (versions[0]?.version ?? 0) + 1, status: "draft" as const }]),
+    ...versions.map((v) => ({ value: v.id, label: versionLabel(v), settings: v.voiceSettings, version: v.version, status: v.status })),
+  ];
+  const callMax = Object.fromEntries(callVersions.map((v) => [v.value, maxCallSeconds({ settings: v.settings, deadlineSec: callLimit })]));
+  const readyLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.ready.sub", {
+    language: LANG_NAME.en, version: v.version, status: t(`status.agent_version.${v.status}` as MessageKey), limit: callLimitText(callMax[v.value]),
+  })]));
+  const settingsVersion = draft ?? liveVersion;
+  const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), voiceModelId()) }) : null;
+  const keep = conv ? `c=${conv.id}&` : "";
+  const settingsHref = draft ? `${lab}?${keep}panel=voice` : null;
+  const voicePanel = voice && draft && one(sp.panel) === "voice";
+  // The saved call (a voice conversation opened later): its ended bar and "This call" card.
+  const savedEnded = voiceSummary?.status === "ended" ? voiceSummary : null;
+  const endedView = savedEnded ? barView({
+    ...INITIAL_SNAPSHOT, phase: "ended", endReason: savedEnded.endReason, durationSec: savedEnded.durationSec ?? 0, costMicros: savedEnded.costMicros, mode: savedEnded.mode,
+  }, now.getTime(), { savedNote: t("voice.ended.saved"), fx }) : null;
   // The open chat's Deal state (R4 D4): directly under the chat on a phone, in the side column on a wide screen.
   const dealCard = (at: "main" | "side") => (conv && convVersion ? (
             <section className={`sas-panel lab-deal lab-deal--${at}`} aria-labelledby={`lab-deal-h-${at}`} data-deal-card={at}>
@@ -131,6 +175,69 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               </div>
             </section>
   ) : null);
+
+  const threadEl = conv && convVersion ? (
+    <ChatThread label={t("lab.chat_with", { version: convVersion.version })}>
+      {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("lab.chat_empty")}</p> : null}
+      {thread.map(({ message: m, calls: allCalls }) => {
+        // The app's own messages (after a seller approval) are linked by an app_message row: not a tool call.
+        const calls = allCalls.filter((c) => c.name !== APP_MESSAGE_CALL);
+        const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
+        const trace: TraceItem[] = [];
+        const usage = m.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number } | null;
+        return (
+          <Fragment key={m.id}>
+            {calls.length ? (
+              <ol className="sas-stack-2" aria-label={t("lab.trace")} style={{ margin: 0, paddingInlineStart: 0, listStyle: "none", alignSelf: "flex-end", maxWidth: "78%", width: "100%" }}>
+                {calls.map((c) => {
+                  const d = describeCall(c.name, c.input, c.result, c.outcome);
+                  return (
+                    <li key={c.id} className="sas-stack-2" style={{ background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 12px" }}>
+                      <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                        <strong className="sas-num sas-small" title={showModel ? d.label : undefined}>{c.sequence}. {toolLabel(c.name)}</strong>
+                        {c.outcome === "refused" || c.outcome === "failed" ? <StatusPill object="tool_call" state={c.outcome} /> : null}
+                      </div>
+                      {d.sent ? <span className="sas-small">{t("lab.trace_sent")}: {d.sent}</span> : null}
+                      {d.got ? <span className="sas-small">{t("lab.trace_got")}: {d.got}{d.missing.length ? ` — ${t("lab.trace_missing")}: ${d.missing.join(", ")}` : ""}</span> : null}
+                      <details>
+                        <summary className="sas-small">{t("lab.show_raw")}</summary>
+                        <pre className="sas-code" dir="ltr">{json({ input: c.input, result: c.result })}</pre>
+                      </details>
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : null}
+            {view?.quoteCards[m.id] ? (
+              <QuoteCardMessage card={view.quoteCards[m.id]} time={local(m.createdAt)} slug={null} approve={null} />
+            ) : (
+            <ChatMessage
+              actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
+              time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}
+              spoken={m.voiceSessionId && m.spokenAtMs !== null ? { at: callClock(m.spokenAtMs / 1000), label: t("voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) }) } : undefined}>
+              {/* R5-2: each message finds its own direction (an English reply in a Hebrew chat reads left to right). */}
+              <div dir="auto" data-msg-dir="">
+                <MessageBody body={m.body} kind={kinds.get(m.id)} />
+              </div>
+            </ChatMessage>
+            )}
+            {isAdmin && usage?.inputTokens !== undefined ? (
+              <span className="sas-small sas-num" style={{ alignSelf: "flex-end" }}>{t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}</span>
+            ) : null}
+          </Fragment>
+        );
+      })}
+      <span id="end" />
+    </ChatThread>
+  ) : null;
+  // A saved call's ended bar; Call again only for whoever may call (the role is checked again in the action).
+  const endedBar = endedView && conv ? (
+    <div className="lab-vc-bar" data-voice-saved="">
+      {voice ? (
+        <VoiceCallAgainBar view={endedView} slug={account.slug} lab={lab} versionId={conv.agentVersionId} scenario={conv.scenario} usageHref={usageHref} />
+      ) : <VoiceCallBar view={{ ...endedView, action: null }} />}
+    </div>
+  ) : null;
 
   return (
     <main className="sas-shell__content">
@@ -150,6 +257,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.published", { version: one(sp.published) })}</span></div> : null}
       {sp.rolledback ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.rolled_back", { version: one(sp.rolledback) })}</span></div> : null}
+      {voice && sp.voice_saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("voice.settings.saved", { version: one(sp.voice_saved) })}</span></div> : null}
       {!llmConfigured() || error === "no_key" ? <div className="sas-alert sas-alert--warning" role="alert"><Icon name="alert-triangle" /><span>{t("lab.no_key")}</span></div> : null}
       {error === "model" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lab.error")}</span></div> : null}
       {error === "spend_cap" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("lab.spend_cap")}</span></div> : null}
@@ -185,69 +293,42 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <Button type="submit" variant="primary"><Icon name="plus" />{t("lab.start")}</Button>
             </form>
           </section>
+          {voice ? (
+            <>
+              <VoiceLabKeeper />
+              <VoiceCallStarter
+                slug={account.slug} lab={lab} usageHref={usageHref} settingsLine={settingsLine} settingsHref={settingsHref}
+                scenarios={scenarios.filter((x) => x.language === "en").map((x) => ({ value: x.id, label: scenarioLabel(x) }))}
+                versions={callVersions.map((v) => ({ value: v.value, label: v.label }))} defaultVersionId={draft?.id ?? ""}
+                readyLines={readyLines} readyMax={callMax}
+              />
+            </>
+          ) : null}
 
           {conv && convVersion ? (
-            <section className="sas-panel" aria-labelledby="lab-chat-h" style={{ overflow: "hidden" }}>
+            <section className="sas-panel" aria-labelledby="lab-chat-h" style={{ overflow: onVoice ? "clip" : "hidden" }}>
               <div className="sas-panel__body" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <h2 id="lab-chat-h" className="sas-heading">{t("lab.chat_with", { version: convVersion.version })}</h2>
                 <StatusPill object="agent_version" state={convVersion.status} />
+                {onVoice ? <span className="sas-pill" data-voice-pill=""><Icon name="phone-call" />{t("voice.pill.call")}</span> : null}
+                {onVoice && voiceSummary?.mode === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
                 {/* R5-14: when the chat started (its first message), not when the conversation row was made. */}
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
                 {waWindow ? <WindowTimer {...windowTimerProps(waWindow, new Date())} /> : null}
               </div>
-              <ChatThread label={t("lab.chat_with", { version: convVersion.version })}>
-                {thread.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("lab.chat_empty")}</p> : null}
-                {thread.map(({ message: m, calls: allCalls }) => {
-                  // The app's own messages (after a seller approval) are linked by an app_message row: not a tool call.
-                  const calls = allCalls.filter((c) => c.name !== APP_MESSAGE_CALL);
-                  const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
-                  const trace: TraceItem[] = [];
-                  const usage = m.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number } | null;
-                  return (
-                    <Fragment key={m.id}>
-                      {calls.length ? (
-                        <ol className="sas-stack-2" aria-label={t("lab.trace")} style={{ margin: 0, paddingInlineStart: 0, listStyle: "none", alignSelf: "flex-end", maxWidth: "78%", width: "100%" }}>
-                          {calls.map((c) => {
-                            const d = describeCall(c.name, c.input, c.result, c.outcome);
-                            return (
-                              <li key={c.id} className="sas-stack-2" style={{ background: "var(--surface-raised)", border: "1px solid var(--line)", borderRadius: 8, padding: "8px 12px" }}>
-                                <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                                  <strong className="sas-num sas-small" title={showModel ? d.label : undefined}>{c.sequence}. {toolLabel(c.name)}</strong>
-                                  {c.outcome === "refused" || c.outcome === "failed" ? <StatusPill object="tool_call" state={c.outcome} /> : null}
-                                </div>
-                                {d.sent ? <span className="sas-small">{t("lab.trace_sent")}: {d.sent}</span> : null}
-                                {d.got ? <span className="sas-small">{t("lab.trace_got")}: {d.got}{d.missing.length ? ` — ${t("lab.trace_missing")}: ${d.missing.join(", ")}` : ""}</span> : null}
-                                <details>
-                                  <summary className="sas-small">{t("lab.show_raw")}</summary>
-                                  <pre className="sas-code" dir="ltr">{json({ input: c.input, result: c.result })}</pre>
-                                </details>
-                              </li>
-                            );
-                          })}
-                        </ol>
-                      ) : null}
-                      {view?.quoteCards[m.id] ? (
-                        <QuoteCardMessage card={view.quoteCards[m.id]} time={local(m.createdAt)} slug={null} approve={null} />
-                      ) : (
-                      <ChatMessage
-                        actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
-                        time={(actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}>
-                        {/* R5-2: each message finds its own direction (an English reply in a Hebrew chat reads left to right). */}
-                        <div dir="auto" data-msg-dir="">
-                          <MessageBody body={m.body} kind={kinds.get(m.id)} />
-                        </div>
-                      </ChatMessage>
-                      )}
-                      {isAdmin && usage?.inputTokens !== undefined ? (
-                        <span className="sas-small sas-num" style={{ alignSelf: "flex-end" }}>{t("lab.tokens", { input: usage.inputTokens, output: usage.outputTokens ?? 0, cached: usage.cacheReadTokens ?? 0 })}</span>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-                <span id="end" />
-              </ChatThread>
-              {scenario && scenarioCheck ? (
+              {onVoice && voice ? (
+                <VoiceLabLive conversationId={conv.id} slug={account.slug} lab={lab} usageHref={usageHref}>
+                  {endedBar}
+                  {threadEl}
+                </VoiceLabLive>
+              ) : (
+                <>
+                  {onVoice ? endedBar : null}
+                  {threadEl}
+                </>
+              )}
+              {scenario && scenarioCheck && !onVoice ? (
                 <div className="sas-stack-2" role="status" aria-label={t("lab.scenario_check", { title: scenario.title })} style={{ padding: 16, borderBlockStart: "1px solid var(--line)" }}>
                   <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                     <strong className="sas-small">{t("lab.scenario_check", { title: scenario.title })}</strong>
@@ -260,7 +341,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 <div className="sas-alert" role="status" style={{ margin: 16 }}><Icon name="pause" /><span>{t("lab.closed")}</span></div>
               ) : (
                 <>
-                  {onWhatsapp ? (
+                  {onVoice ? null : onWhatsapp ? (
                     <p className="sas-small" role="status" style={{ margin: 0, padding: 16, borderBlockStart: "1px solid var(--line)", display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
                       <Icon name="message-circle" />{t("lab.wa.reply_from_phone", { phone: conv.channelAddress ?? "" })}
                       <a href={`${lab}?c=${conv.id}#end`}>{t("lab.wa.refresh")}</a>
@@ -351,6 +432,22 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         </div>
 
         <aside className="sas-split__side sas-stack-4">
+          {onVoice && conv && scenario && scenarioCheck ? (
+            <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-vsc-h" data-voice-scenario="">
+              <h2 id="lab-vsc-h" className="sas-heading">{t("lab.scenario_check", { title: scenario.title })}</h2>
+              <span><ResultChip result={scenarioCheck.result} /></span>
+              <span className="sas-small">{scenarioCheck.reason} {t("lab.scenario_expected", { text: scenario.expected })}</span>
+            </section>
+          ) : null}
+          {onVoice && conv ? (() => {
+            const saved = savedEnded ? (
+              <VoiceCallStats
+                durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
+                answerMsAvg={savedEnded.answerMsAvg} live={false} costEstimated={savedEnded.costEstimated} endReason={savedEnded.endReason} errorCode={savedEnded.errorCode}
+              />
+            ) : null;
+            return voice ? <VoiceLabStats conversationId={conv.id}>{saved}</VoiceLabStats> : saved;
+          })() : null}
           {dealCard("side")}
 
           <section className="sas-panel" aria-labelledby="lab-ver-h">
@@ -387,8 +484,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   const v = versions.find((x) => x.id === c.agentVersionId);
                   return (
                     <li key={c.id}>
-                      <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined} style={{ display: "block", fontWeight: c.id === conv?.id ? 600 : undefined }} data-chat-name="">
+                      <a href={`${lab}?c=${c.id}`} aria-current={c.id === conv?.id ? "page" : undefined} style={c.channel === "voice" ? { display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap", fontWeight: c.id === conv?.id ? 600 : undefined } : { display: "block", fontWeight: c.id === conv?.id ? 600 : undefined }} data-chat-name="">
+                        {c.channel === "voice" ? <Icon name="phone-call" label={t("voice.pill.call")} /> : null}
                         {scenarioById(c.scenario)?.title ?? t("lab.free_chat")}
+                        {voiceModes.get(c.id) === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
                       </a>
                       <span className="sas-small" style={{ display: "block" }}>
                         {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}{c.channel === "whatsapp" ? ` · ${t("conv.channel.whatsapp")}` : ""} ·{" "}
@@ -419,6 +518,17 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           </section>
         </aside>
       </div>
+      {voicePanel && draft ? (
+        <SidePanel
+          id="lab-voice-settings" title={t("voice.settings.title")} meta={t("voice.settings.meta", { version: draft.version })}
+          closeHref={conv ? `${lab}?c=${conv.id}` : lab}
+        >
+          <VoiceSettingsForm
+            action={saveVoiceSettingsAction} slug={account.slug} caps={voiceCapabilities(voiceModelId())} initial={resolveVoiceSettings(draft.voiceSettings)}
+            version={draft.version} closeHref={conv ? `${lab}?c=${conv.id}` : lab} deploymentLimitSec={callLimit}
+          />
+        </SidePanel>
+      ) : null}
     </main>
   );
 }

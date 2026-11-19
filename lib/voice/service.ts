@@ -178,6 +178,26 @@ export async function conversationVoiceMode(db: Db, accountId: string, conversat
   return s?.mode ?? null;
 }
 
+/** The latest voice session mode of each of these conversations (the test lab list's "Scripted test" pill). */
+export async function conversationVoiceModes(db: Db, accountId: string, conversationIds: string[]): Promise<Map<string, VoiceSessionMode>> {
+  const out = new Map<string, VoiceSessionMode>();
+  if (!conversationIds.length) return out;
+  const rows = await db.select({ conversationId: voiceSessions.conversationId, mode: voiceSessions.mode }).from(voiceSessions)
+    .where(and(eq(voiceSessions.accountId, accountId), inArray(voiceSessions.conversationId, conversationIds)))
+    .orderBy(asc(voiceSessions.createdAt));
+  for (const r of rows) out.set(r.conversationId, r.mode);
+  return out;
+}
+
+/**
+ * Ends a session whose ticket was redeemed but whose call never started (the
+ * relay could not build the model), so it does not wait to be closed as stale.
+ */
+export async function endUnstartedVoiceSession(db: Db, sessionId: string, errorCode: string, now = new Date()): Promise<void> {
+  await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "error", errorCode, durationSec: 0 })
+    .where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.status, "pending")));
+}
+
 export type VoiceSessionSummary = {
   sessionId: string;
   status: VoiceSession["status"];
@@ -193,6 +213,8 @@ export type VoiceSessionSummary = {
   endReason: VoiceEndReason | null;
   errorCode: string | null;
   answerMsAvg: number | null;
+  /** The longest call this call had (the settings snapshot), or null. */
+  maxSec: number | null;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
 };
@@ -214,7 +236,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
   return sessions.map((s) => ({
     sessionId: s.id, status: s.status, mode: s.mode, model: s.model, startedAt: s.createdAt, connectedAt: s.connectedAt, endedAt: s.endedAt,
     durationSec: s.durationSec, costMicros: s.costMicros, costEstimated: !!s.usage?.estimated, endReason: s.endReason ?? null, errorCode: s.errorCode,
-    answerMsAvg: s.answerMsAvg,
+    answerMsAvg: s.answerMsAvg, maxSec: s.settings?.maxCallSec ?? null,
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

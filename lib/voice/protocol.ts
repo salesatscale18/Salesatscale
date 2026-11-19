@@ -58,6 +58,43 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
   }
 }
 
+/**
+ * The first frame on a new socket (JSON text): the one-time ticket the
+ * browser got from the server action that created the call. Nothing else is
+ * accepted before it, and it must arrive within AUTH_TIMEOUT_MS.
+ */
+export type VoiceAuthMessage = { t: "auth"; sessionId: string; ticket: string };
+/** The relay closes a socket that has not authenticated after this long. */
+export const AUTH_TIMEOUT_MS = 5_000;
+
+/** The first frame as an auth message, or null (untrusted input; shape only, the ticket is checked in the database). */
+export function parseAuthMessage(raw: unknown): VoiceAuthMessage | null {
+  if (typeof raw !== "string" || raw.length > 400) return null;
+  let v: unknown;
+  try {
+    v = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  if (o.t !== "auth" || typeof o.sessionId !== "string" || typeof o.ticket !== "string") return null;
+  if (o.sessionId.length > 64 || o.ticket.length > 128) return null;
+  return { t: "auth", sessionId: o.sessionId, ticket: o.ticket };
+}
+
+/** WebSocket close codes the relay uses. */
+export const VOICE_CLOSE = {
+  /** The call ended. */
+  normal: 1000,
+  /** No traffic from the browser for too long (it went away). */
+  goingAway: 1001,
+  /** Bad, used or expired ticket; no auth in time; a frame before auth. */
+  policy: 1008,
+  /** The relay failed. */
+  internal: 1011,
+} as const;
+
 // ---------------------------------------------------------------------------
 // Relay → browser
 // ---------------------------------------------------------------------------
@@ -79,6 +116,12 @@ export const VOICE_ERROR_CODES = [
 export type VoiceErrorCode = (typeof VOICE_ERROR_CODES)[number];
 
 export type ServerMessage =
+  /**
+   * Sent by the relay once the ticket is accepted, before the call starts:
+   * the effective longest call in seconds (platform maximum, the version's
+   * setting, VOICE_MAX_CALL_SECONDS and the hosting function's deadline) and the mode.
+   */
+  | { t: "call"; maxSec: number; mode: "scripted" | "live" }
   | { t: "state"; state: VoiceState }
   /** `text` is the whole text of that turn so far (card numbers masked). */
   | { t: "transcript"; id: string; role: "buyer" | "agent"; text: string; final: boolean; atMs: number }
@@ -109,6 +152,8 @@ export function parseServerMessage(raw: unknown): ServerMessage | null {
   const num = (k: string) => typeof o[k] === "number" && Number.isFinite(o[k] as number);
   const numOrNull = (k: string) => o[k] === null || num(k);
   switch (o.t) {
+    case "call":
+      return num("maxSec") && (o.mode === "scripted" || o.mode === "live") ? (o as ServerMessage) : null;
     case "state":
       return (VOICE_STATES as readonly unknown[]).includes(o.state) ? (o as ServerMessage) : null;
     case "transcript":

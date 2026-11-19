@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, ClipboardList, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, Trash2, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -86,6 +86,20 @@ const ICONS = {
   globe: Globe,
   "sticky-note": StickyNote,
   "phone-call": PhoneCall,
+  /** Voice calls: End call, ended. */
+  "phone-off": PhoneOff,
+  /** Voice calls: the microphone, a spoken line. */
+  mic: Mic,
+  /** Voice calls: muted, microphone blocked. */
+  "mic-off": MicOff,
+  /** Voice calls: the connection dropped. */
+  "wifi-off": WifiOff,
+  /** Voice calls: connecting. */
+  loader: Loader,
+  /** Voice calls: "Type instead". */
+  keyboard: Keyboard,
+  /** Voice settings: Listen to a voice sample. */
+  play: Play,
   /** Delete (row menus, delete confirms). Never x-circle, which means Failed. */
   trash: Trash2,
 } satisfies Record<string, LucideIcon>;

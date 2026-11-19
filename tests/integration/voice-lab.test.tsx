@@ -1,0 +1,205 @@
+/**
+ * Live voice in the test lab (release 1), on PGlite: the server actions give
+ * nothing to anyone but a platform admin with voice on; the page shows no
+ * voice UI otherwise (exactly as before); a saved voice conversation reads
+ * back with its call (pills, spoken marks, This call, no composer). Scripted
+ * mode only: no paid call.
+ */
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import type { ReactElement } from "react";
+import { and, eq } from "drizzle-orm";
+import { agentVersions, conversations, messages, sellerAccounts, users, voiceSessions, type SellerAccount, type User } from "@/db/schema";
+import { createTestDb, type TestDb } from "../helpers/db";
+
+const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
+vi.mock("@/lib/auth/account", () => ({
+  get appDb() { return holder.db; },
+  requireAccount: async () => holder.access,
+  actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "app.example.com" }) }));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
+  notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
+  usePathname: () => "/",
+  useRouter: () => ({ refresh: () => {}, push: () => {}, replace: () => {} }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+const { parseCreateAccount } = await import("@/lib/accounts/rules");
+const { createAccount } = await import("@/lib/accounts/service");
+const { ensureDraftVersion } = await import("@/lib/agent/service");
+const { createVoiceSession, startVoiceTestConversation } = await import("@/lib/voice/service");
+const { startVoiceCallAction, saveVoiceSettingsAction } = await import("@/app/app/[account]/setup/test-lab/voice-actions");
+const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
+
+type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
+const render = async (sp: Record<string, string> = {}) =>
+  renderToStaticMarkup(await (TestLabPage as unknown as Page)({ params: Promise.resolve({ account: slug }), searchParams: Promise.resolve(sp) }));
+
+let tdb: Awaited<ReturnType<typeof createTestDb>>;
+let db: TestDb;
+let admin: User;
+let seller: User;
+let account: SellerAccount;
+let slug: string;
+
+const as = (user: User) => {
+  holder.access = { account, user, actingAs: user.role === "super_admin", role: user.role === "super_admin" ? "platform_admin" : "seller_admin" };
+};
+const convCount = async () => (await db.select({ id: conversations.id }).from(conversations).where(eq(conversations.accountId, account.id))).length;
+
+beforeAll(async () => {
+  tdb = await createTestDb();
+  db = tdb.db;
+  holder.db = db;
+  [admin] = await db.insert(users).values({ clerkId: "a", email: "admin@p.test", firstName: "Ada", role: "super_admin" }).returning();
+  [seller] = await db.insert(users).values({ clerkId: "b", email: "seller@p.test", firstName: "Sol", role: "user" }).returning();
+  const p = parseCreateAccount({ tradeName: "Acme", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "o@x.test" });
+  if (!p.ok) throw new Error();
+  const id = (await createAccount(db, { userId: admin.id, actingAs: false }, p.value)).account.id;
+  await ensureDraftVersion(db, id);
+  [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
+  slug = account.slug;
+});
+afterAll(async () => tdb.close());
+afterEach(() => vi.unstubAllEnvs());
+
+describe("startVoiceCallAction", () => {
+  it("gives a seller nothing, even with voice on, and creates nothing", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(seller);
+    const before = await convCount();
+    expect(await startVoiceCallAction({ slug, scenario: "ready_buyer" })).toEqual({ ok: false, reason: "not_allowed" });
+    expect(await convCount()).toBe(before);
+  });
+
+  it("gives a platform admin nothing while voice is off", async () => {
+    vi.stubEnv("VOICE_REALTIME", "off");
+    as(admin);
+    const before = await convCount();
+    expect(await startVoiceCallAction({ slug })).toEqual({ ok: false, reason: "voice_off" });
+    expect(await convCount()).toBe(before);
+  });
+
+  it("starts a scripted call for a platform admin: a voice test conversation, a one-time ticket, the socket on this host", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    as(admin);
+    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", versionId: "not-a-uuid" });
+    if (!r.ok) throw new Error(r.reason);
+    expect(r).toMatchObject({ mode: "scripted", wsUrl: "wss://app.example.com/api/voice/socket", maxSec: 270, fx: { currency: "ILS" } });
+    expect(r.ticket).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, r.conversationId));
+    expect(conv).toMatchObject({ channel: "voice", isTest: true, scenario: "ready_buyer", language: "en" });
+    const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
+    expect(s).toMatchObject({ status: "pending", mode: "scripted", startedByUserId: admin.id });
+    // The local dev relay: its URL, and no hosting deadline.
+    vi.stubEnv("VOICE_WS_URL", "ws://localhost:8787/api/voice/socket");
+    const local = await startVoiceCallAction({ slug });
+    expect(local).toMatchObject({ ok: true, wsUrl: "ws://localhost:8787/api/voice/socket", maxSec: 600 });
+  });
+});
+
+describe("saveVoiceSettingsAction", () => {
+  const form = (o: Record<string, string>) => {
+    const f = new FormData();
+    f.set("slug", slug);
+    for (const [k, v] of Object.entries(o)) f.set(k, v);
+    return f;
+  };
+
+  it("refuses a seller and a voice-off deployment", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(seller);
+    expect(await saveVoiceSettingsAction({}, form({ pace: "slower", maxCallSec: "300" }))).toEqual({ failed: true });
+    vi.stubEnv("VOICE_REALTIME", "off");
+    as(admin);
+    expect(await saveVoiceSettingsAction({}, form({ pace: "slower", maxCallSec: "300" }))).toEqual({ failed: true });
+    const [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
+    expect(draft.voiceSettings).toBeNull();
+  });
+
+  it("saves the draft's settings for a platform admin (only what the model offers) and closes the panel", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(admin);
+    expect(await saveVoiceSettingsAction({}, form({ voice: "Nope", pace: "slower", maxCallSec: "300" }))).toMatchObject({ errors: { voice: expect.any(String) } });
+    const err = await saveVoiceSettingsAction({}, form({ voice: "Kore", pace: "slower", fillers: "on", maxCallSec: "300", style: "quick" })).catch((e: { url?: string }) => e);
+    expect((err as { url?: string }).url).toMatch(/\/setup\/test-lab\?voice_saved=\d+$/);
+    const [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
+    // Gemini (the default model) has no conversation style: it is not taken from the form.
+    expect(draft.voiceSettings).toEqual({ voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300 });
+  });
+});
+
+describe("the test lab page", () => {
+  it("shows no voice UI to a seller, nor to an admin while voice is off", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(seller);
+    let html = await render();
+    expect(html).not.toContain("data-voice-starter");
+    expect(html).not.toContain("Call the agent");
+    expect(html).toContain("New test chat");
+    vi.stubEnv("VOICE_REALTIME", "off");
+    as(admin);
+    html = await render({ panel: "voice" });
+    expect(html).not.toContain("data-voice-starter");
+    expect(html).not.toContain("Voice settings");
+  });
+
+  it("shows Call the agent next to New test chat for an admin with voice on, and the settings panel", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    as(admin);
+    const html = await render();
+    expect(html).toContain("New test chat");
+    expect(html).toContain("data-voice-starter");
+    expect(html).toContain("Start call");
+    expect(html).toMatch(/English · v\d+ Draft · up to 4 minutes 30 seconds/);
+    expect(html).toContain("Voice: Kore · firm, clear · Slower pace");
+    const panel = await render({ panel: "voice" });
+    expect(panel).toContain("Saved in draft v");
+    expect(panel).toContain("Save to draft");
+    expect(panel).toContain("Reset to defaults");
+    expect(panel).not.toContain("Conversation style");
+  });
+
+  it("reads a saved voice call back: pills, spoken marks, This call, no composer", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(admin);
+    const c = (await startVoiceTestConversation(db, account.id, admin.id, { scenario: "ready_buyer" }))!;
+    const s = await createVoiceSession(db, { accountId: account.id, conversationId: c.conversationId, userId: admin.id, isTest: true }, { env: { VOICE_REALTIME: "scripted" } });
+    if (!s.ok) throw new Error(s.reason);
+    const t0 = Date.now();
+    await db.insert(messages).values([
+      { accountId: account.id, conversationId: c.conversationId, actor: "agent", body: "Hi, this is the assistant.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 0, createdAt: new Date(t0) },
+      { accountId: account.id, conversationId: c.conversationId, actor: "buyer", body: "Hello there.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 11_000, createdAt: new Date(t0 + 1) },
+      { accountId: account.id, conversationId: c.conversationId, actor: "agent", body: "Sure.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 15_000, answerMs: 900, createdAt: new Date(t0 + 2) },
+      { accountId: account.id, conversationId: c.conversationId, actor: "system", body: "Voice call ended · 0:38", language: "en", createdAt: new Date(t0 + 3) },
+    ]);
+    await db.update(voiceSessions).set({ status: "ended", endReason: "opt_out", durationSec: 38, answerMsAvg: 900, settings: { maxCallSec: 270 } }).where(eq(voiceSessions.id, s.sessionId));
+    const html = await render({ c: c.conversationId });
+    expect(html).toContain("data-voice-pill");
+    expect(html).toContain("Scripted test");
+    expect((html.match(/data-spoken=""/g) ?? []).length).toBe(3);
+    expect(html).toContain("0:11");
+    expect(html).toContain("Call ended · 0:38");
+    expect(html).toContain("No cost");
+    expect(html).toContain("0:38 of 4:30");
+    expect(html).toContain("0.9 s on average");
+    expect(html).toContain("The buyer asked not to be contacted. The chat is closed.");
+    expect(html).toContain("Call again");
+    expect(html).not.toContain('id="lab-text"');
+    // The list marks the voice row.
+    expect(html).toMatch(/aria-label="Voice call"/);
+    // A seller opening it sees the record, not the call controls.
+    as(seller);
+    const sellerHtml = await render({ c: c.conversationId });
+    expect(sellerHtml).toContain("Call ended · 0:38");
+    expect(sellerHtml).not.toContain("Call again");
+    expect(sellerHtml).not.toContain('id="lab-text"');
+  });
+});

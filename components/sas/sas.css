@@ -882,3 +882,124 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .r5b-questions .sas-table--stack tr:has(> td.sas-td-actions) > td:first-child { padding-inline-end: 0 !important; }
   .r5b-questions .sas-table--stack td.sas-td-actions { position: static; justify-content: flex-start; padding: 4px 0 !important; }
 }
+/* Voice calls (live voice, boards VoiceStates, VoiceLab, VoiceSettingsPanel).
+ * One call component for the test lab and, later, the buyer page. The state is always a word and an icon;
+ * colour supports it: blue = the person's turn, violet = the agent, warning = the person must act, grey = muted or ended. */
+.sas-vcall { display: flex; flex-direction: column; min-width: 0; }
+.sas-vcall__bar, .lab-vc-bar { padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); background: var(--surface-raised); }
+.sas-vbar { display: flex; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-radius: var(--radius-lg); border: 1px solid var(--line); background: var(--surface-raised); min-height: 66px; }
+.sas-vbar--me { background: var(--primary-soft); border-color: color-mix(in srgb, var(--primary) 22%, var(--primary-soft)); }
+.sas-vbar--agent { background: var(--agent-soft); border-color: color-mix(in srgb, var(--agent) 22%, var(--agent-soft)); }
+.sas-vbar--warn { background: var(--warning-soft); border-color: color-mix(in srgb, var(--warning) 30%, var(--warning-soft)); }
+.sas-vbar--off { background: var(--surface-sunken); }
+.sas-vbar__tile { width: 32px; height: 32px; border-radius: var(--radius-md); display: grid; place-items: center; flex: none; background: var(--primary-soft); color: var(--primary); }
+.sas-vbar__icon { display: inline-grid; place-items: center; flex: none; color: var(--ink-muted); }
+.sas-vbar--me .sas-vbar__icon { color: var(--primary); }
+.sas-vbar--warn .sas-vbar__icon { color: var(--warning); }
+.sas-vbar__icon--spin .sas-ico { animation: sas-vspin 1.2s linear infinite; }
+@keyframes sas-vspin { to { transform: rotate(360deg); } }
+.sas-vbar__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.sas-vbar__title { font-weight: 600; }
+.sas-vbar__clock { font-weight: 600; font-size: 14px; }
+.sas-vbar__controls { display: inline-flex; gap: var(--space-2); flex: none; }
+.sas-vbar .sas-btn { flex: none; }
+.sas-rb { width: 40px; height: 40px; border-radius: var(--radius-pill); border: 1px solid var(--line-strong); background: var(--surface-raised); color: var(--ink); display: inline-grid; place-items: center; flex: none; cursor: pointer; padding: 0; }
+.sas-rb:hover { background: var(--surface-sunken); }
+.sas-rb--end { background: var(--danger); border-color: var(--danger); color: #fff; }
+.sas-rb--end:hover { background: color-mix(in srgb, var(--danger) 85%, #000); }
+.sas-rb--on { background: var(--ink); border-color: var(--ink); color: var(--surface-raised); }
+.sas-rb--on:hover { background: var(--ink); }
+.sas-rb--slot { visibility: hidden; }
+.sas-rb[disabled] { opacity: .5; cursor: not-allowed; }
+.sas-vbars { display: inline-flex; align-items: center; gap: 3px; height: 28px; flex: none; }
+.sas-vbars i { width: 3px; border-radius: 2px; background: currentColor; display: block; transition: height 80ms linear; }
+.sas-vbars--mic { color: var(--primary); }
+.sas-vbars--out, .sas-vbars--checking { color: var(--agent); }
+.sas-vbars--muted { color: var(--ink-muted); }
+.sas-vbars--checking i { animation: sas-vpulse 900ms ease-in-out infinite alternate; }
+@keyframes sas-vpulse { from { opacity: .35; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .sas-vbars i, .sas-vbar__icon--spin .sas-ico { animation: none; transition: none; }
+}
+/* Live transcript */
+.sas-vt-wrap { position: relative; display: flex; flex-direction: column; min-width: 0; }
+.sas-vt { display: flex; flex-direction: column; gap: 6px; padding: 14px var(--space-4); background: var(--surface); height: min(500px, 62vh); overflow-y: auto; overscroll-behavior: contain; }
+.sas-vt:focus-visible { outline-offset: -2px; }
+.sas-vt__empty { margin: auto 0; text-align: center; }
+.sas-vt__item { display: flex; flex-direction: column; gap: 4px; }
+.sas-vt__item--agent { align-items: flex-end; }
+.sas-vt__item--buyer { align-items: flex-start; }
+.sas-vt__who { font-size: 12px; line-height: 16px; color: var(--ink-muted); display: inline-flex; gap: 6px; align-items: center; }
+.sas-vt__who .sas-ico { width: 12px; height: 12px; }
+.sas-vt__name { font-weight: 600; color: var(--ink); }
+.sas-vt__item--agent .sas-vt__name { color: var(--agent); }
+.sas-vt__msg { max-width: 78%; padding: var(--space-2) var(--space-3); border-radius: var(--radius-lg); font-size: 14px; line-height: 20px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.sas-vt__item--agent .sas-vt__msg { background: var(--agent-soft); border-end-end-radius: var(--radius-sm); }
+.sas-vt__item--buyer .sas-vt__msg { background: var(--surface-raised); border: 1px solid var(--line); border-end-start-radius: var(--radius-sm); }
+.sas-vt__msg--speaking { outline: 2px solid var(--agent); outline-offset: 1px; }
+.sas-vt__tool { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; line-height: 16px; color: var(--ink-muted); padding: 2px var(--space-2); border-radius: var(--radius-pill); background: var(--surface-sunken); align-self: flex-end; max-width: 100%; }
+.sas-vt__tool .sas-ico { width: 12px; height: 12px; }
+.sas-vt__tool[data-tool-status="running"] .sas-ico { animation: sas-vspin 1.2s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .sas-vt__tool[data-tool-status="running"] .sas-ico { animation: none; } }
+.sas-vt__jump { position: absolute; inset-inline-end: var(--space-4); bottom: 64px; box-shadow: var(--shadow-pop); }
+.sas-vt__foot { display: flex; align-items: center; gap: 10px; padding: 10px var(--space-4); border-block-start: 1px solid var(--line); background: var(--surface-raised); min-height: 52px; }
+.sas-vt__hint { flex: 1; min-width: 0; }
+.sas-vt__type { flex: 1; display: flex; gap: var(--space-2); align-items: center; min-width: 0; }
+.sas-vt__type .sas-input { flex: 1; min-width: 0; height: 32px; }
+/* A spoken line in a saved thread: the mic mark and the time in the call. */
+.sas-msg__spoken { display: inline-flex; align-items: center; gap: 4px; }
+.sas-msg__spoken .sas-ico { width: 12px; height: 12px; }
+/* "This call" */
+.sas-vstats__kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: var(--space-2) var(--space-3); margin: 0; font-size: 14px; }
+.sas-vstats__kv dt { color: var(--ink-muted); }
+.sas-vstats__kv dd { margin: 0; min-width: 0; }
+.sas-vstats__kv dd.sas-num { font-size: 14px; }
+/* Test lab: "Call the agent" */
+.lab-call__bar { display: flex; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); }
+.lab-call__bar > .sas-vbar { flex: 1; min-width: 0; }
+.lab-call__pickers { display: flex; flex-wrap: wrap; gap: var(--space-3); padding: 0 var(--space-4) var(--space-3); }
+.lab-call__pickers .sas-input-group { flex: 1 1 200px; }
+.lab-call__foot { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 10px var(--space-4); border-block-start: 1px solid var(--line); }
+.lab-call__foot > .sas-small { flex: 1 1 220px; }
+/* Voice settings panel */
+.sas-sp__body:has(> .sas-vs-form) { padding-block-end: 0; }
+.sas-vs-form { flex: 1; display: flex; flex-direction: column; gap: var(--space-4); min-height: 100%; }
+.sas-vs-body { flex: 1; display: flex; flex-direction: column; gap: 14px; }
+.sas-vs-foot { position: sticky; bottom: 0; margin-inline: calc(-1 * var(--space-4)); background: var(--surface-raised); border-block-start: 1px solid var(--line); }
+.sas-vs-note { margin: 0; padding: 10px var(--space-4); background: var(--surface); border-block-end: 1px solid var(--line); }
+.sas-vs-actions { display: flex; flex-wrap: wrap; gap: var(--space-2); align-items: center; padding: var(--space-3) var(--space-4); }
+.sas-vs-reset { margin-inline-start: auto; }
+.sas-vs-field { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.sas-vs-field legend { padding: 0; margin-block-end: 6px; }
+.sas-vs-row { display: flex; gap: var(--space-2); }
+.sas-vs-row .sas-select { flex: 1; min-width: 0; }
+.sas-vs-max { max-width: 200px; }
+.sas-vs-err { color: var(--danger); }
+.sas-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
+.sas-seg__opt { padding: 7px var(--space-2); text-align: center; font-weight: 600; cursor: pointer; color: var(--ink); }
+.sas-seg__opt + .sas-seg__opt { border-inline-start: 1px solid var(--line-strong); }
+.sas-seg__opt[data-on] { background: var(--primary-soft); color: var(--primary); }
+.sas-seg__opt:focus-within { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sas-vs-adv { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sas-vs-adv > summary { display: flex; align-items: center; gap: var(--space-2); padding: 10px var(--space-3); background: var(--surface); font-weight: 600; cursor: pointer; list-style: none; }
+.sas-vs-adv > summary::-webkit-details-marker { display: none; }
+.sas-vs-adv:not([open]) > summary .sas-ico { transform: rotate(-90deg); }
+.sas-vs-adv__title { flex: 1; }
+.sas-vs-adv__body { display: flex; flex-direction: column; gap: 14px; padding: var(--space-3); }
+.sas-vs-meter { position: relative; display: block; height: 20px; }
+.sas-vs-meter::before { content: ""; position: absolute; inset-inline: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--line); }
+.sas-vs-meter__fill { position: absolute; inset-inline-start: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--primary); }
+.sas-vs-meter__knob { position: absolute; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: var(--surface-raised); border: 2px solid var(--primary); }
+.sas-vs-meter__scale { display: flex; justify-content: space-between; }
+.sas-vs-meter__scale b { color: var(--ink); }
+/* On a phone the call bar stays at the top of the chat (under the app's top bar) and the transcript stays usable. */
+@media (max-width: 767px) {
+  .sas-vcall__bar { position: sticky; top: var(--voice-bar-top, 52px); z-index: 5; padding: var(--space-2); }
+  .sas-vbar { gap: 10px; padding: 10px var(--space-3); }
+  .sas-vbar__sub { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  .sas-vt { height: auto; min-height: 50vh; max-height: none; overflow: visible; }
+  .sas-vt__msg { max-width: 88%; }
+  .sas-vt__foot { position: sticky; bottom: 0; z-index: 4; }
+  .sas-vt__hint { display: none; }
+  .lab-call__bar { flex-wrap: wrap; }
+}
