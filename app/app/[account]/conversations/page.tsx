@@ -23,6 +23,7 @@ import { activeChatToken } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -106,6 +107,8 @@ export default async function ConversationsPage({ params, searchParams }: { para
     : null;
 
   const notice = one(sp.notice) || undefined;
+  // "Show agent steps" in the thread header: the URL wins, else this person's workspace choice (off by default).
+  const showSteps = await agentStepsFor("workspace", me.id, sp.steps);
   const templateError = one(sp.template_error) || undefined;
   const rows = list?.rows ?? [];
   const groups = filter === "all"
@@ -269,6 +272,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                       from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone}
                       leadOptedOut={selected.lead.status === "opted_out"} notice={notice === "template_sent" ? undefined : notice}
                       leadStatus={selected.lead.status} notes={thread.notes} rawToolNames={seesPlatformDetails(access)}
+                      steps={{ show: showSteps, back: `${qs({})}#thread` }}
                     />
                     {thread.chatWindow && !thread.chatWindow.open && selected.lead.status !== "opted_out" ? (
                       <section className="sas-stack-2 sas-inbox__templates" aria-labelledby="tpl-h">

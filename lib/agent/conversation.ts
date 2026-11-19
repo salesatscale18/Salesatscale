@@ -8,7 +8,7 @@
  * Scoped by account id everywhere.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { conversations, leadEvents, leads, messages, users, type Conversation, type LeadStatus } from "@/db/schema";
@@ -20,6 +20,7 @@ import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
+import { MARKER_EVENT_TYPES, threadMarkers, type ThreadMarker } from "./thread-markers";
 
 /** Lead statuses a take-over or hand-back may move. Won, lost and booked meetings stay as they are. */
 const ACTIVE: ReadonlySet<LeadStatus> = new Set(["new", "waiting_for_reply", "agent_handling", "human_handling"]);
@@ -164,6 +165,8 @@ export type ConversationView = {
   suggestedReply: string | null;
   /** Quote messages as designed cards (seller view), by message id. */
   quoteCards: Record<string, QuoteCardView>;
+  /** Hand-off, take-over and hand-back markers (lib/agent/thread-markers.ts), oldest first. */
+  markers?: ThreadMarker[];
 };
 
 /** The lead's most recent conversation with its messages and tool calls, or null when there is none. */
@@ -180,12 +183,16 @@ export async function latestConversationForLead(db: Db, accountId: string, leadI
 
 export async function conversationView(db: Db, accountId: string, conv: Conversation): Promise<ConversationView> {
   // Messages (with their tool calls) and the suggested reply load in parallel.
-  const [thread, suggested, quoteCards] = await Promise.all([
+  const [thread, suggested, quoteCards, events] = await Promise.all([
     conversationMessages(db, accountId, conv.id),
     conv.status === "human" ? latestSuggestedReply(db, accountId, conv.leadId) : Promise.resolve(null),
     loadQuoteCards(db, accountId, [conv.id], { audience: "seller" }),
+    // Take-over and hand-back on this conversation (the event names it in data.conversationId).
+    db.select({ type: leadEvents.type, createdAt: leadEvents.createdAt, actorUserId: leadEvents.actorUserId, data: leadEvents.data })
+      .from(leadEvents)
+      .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, conv.leadId), inArray(leadEvents.type, [...MARKER_EVENT_TYPES]), gte(leadEvents.createdAt, conv.createdAt))),
   ]);
-  const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId)].filter((x): x is string => !!x))];
+  const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId), ...events.map((e) => e.actorUserId)].filter((x): x is string => !!x))];
   const people = ids.length
     ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email }).from(users).where(inArray(users.id, ids))
     : [];
@@ -199,5 +206,6 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
     authors,
     suggestedReply: suggested && !answered ? suggested.text : null,
     quoteCards,
+    markers: threadMarkers(conv.id, thread, events, authors),
   };
 }

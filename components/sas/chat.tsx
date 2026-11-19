@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { dir, type Locale } from "@/lib/i18n";
+import { dir, t, type Locale } from "@/lib/i18n";
+import { agentStepsAction, type StepsScope } from "@/lib/conversations/agent-steps";
 import { StatusPill, type Actor } from "./primitives";
 import { Icon, type IconName } from "./icon";
 
@@ -63,5 +64,40 @@ export function ChatThread({ label, children }: { label: string; children: React
     <section className="sas-chat" aria-label={label}>
       {children}
     </section>
+  );
+}
+
+/**
+ * "Show agent steps" (board ConvSteps): a GET form that works without JS. The
+ * route stores the choice (per user, workspace or test lab) and comes back to `back`.
+ */
+export function AgentStepsSwitch({ slug, scope, show, back }: { slug: string; scope: StepsScope; show: boolean; back: string }) {
+  return (
+    <form method="get" action={agentStepsAction(slug)} className="sas-steps-switch" data-agent-steps={show ? "on" : "off"}>
+      <input type="hidden" name="scope" value={scope} />
+      <input type="hidden" name="show" value={show ? "0" : "1"} />
+      <input type="hidden" name="back" value={back} />
+      <button type="submit" role="switch" aria-checked={show} className="sas-steps-switch__btn">
+        <span className="sas-steps-switch__track" aria-hidden="true" />
+        <span>{t("conv.steps.show")}</span>
+      </button>
+    </form>
+  );
+}
+
+export type MarkerKind = "handoff" | "taken_over" | "handed_back";
+const MARKER_ICON: Record<MarkerKind, IconName> = { handoff: "user-plus", taken_over: "user", handed_back: "sparkles" };
+
+/** A centred dashed marker in the thread: "Chat taken over by Dana · 14:02". Shown whether or not the steps are. */
+export function ThreadMarkerLine({ kind, text, time, timeTitle, dateTime }: { kind: MarkerKind; text: string; time: string; timeTitle?: string; dateTime?: string }) {
+  return (
+    <div className="sas-thread-marker" role="note" data-thread-marker={kind}>
+      <span className="sas-thread-marker__body">
+        <Icon name={MARKER_ICON[kind]} />
+        <span>{text}</span>
+        <span aria-hidden="true">·</span>
+        <time className="sas-num" dateTime={dateTime} title={timeTitle}>{time}</time>
+      </span>
+    </div>
   );
 }

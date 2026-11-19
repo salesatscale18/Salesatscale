@@ -3099,5 +3099,10 @@
   "lead.card.timeline_summary_one": "1 event · last: {event}, {time}",
   "lead.card.timeline_none": "No events yet",
   "lead.card.timeline_show": "Show",
-  "lead.card.timeline_hide": "Hide"
+  "lead.card.timeline_hide": "Hide",
+  "conv.steps.show": "Show agent steps",
+  "conv.marker.handoff": "The agent asked for a person",
+  "conv.marker.taken_over": "Chat taken over by {name}",
+  "conv.marker.taken_over_unknown": "Chat taken over by a person",
+  "conv.marker.handed_back": "Handed back to the agent"
 }

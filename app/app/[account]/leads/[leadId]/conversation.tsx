@@ -1,6 +1,8 @@
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
-import { ChatMessage, ChatThread, type TraceItem } from "@/components/sas/chat";
+import type { ReactNode } from "react";
+import { AgentStepsSwitch, ChatMessage, ChatThread, ThreadMarkerLine, type TraceItem } from "@/components/sas/chat";
+import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import { MessageBody } from "@/components/sas/message-body";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
 import type { ConversationView } from "@/lib/agent/conversation";
@@ -66,6 +68,25 @@ export function traceChips(calls: ConversationView["thread"][number]["calls"], r
     outcome: c.outcome === "ok" ? undefined : c.outcome,
     ...(raw ? { title: describeCall(c.name, c.input, c.result, c.outcome).label } : {}),
   }));
+}
+
+/** A marker's words (board ConvSteps). The person is named as everywhere else: never a raw email, "you" for the viewer. */
+export function markerText(m: ThreadMarker, meId: string | null): string {
+  if (m.kind === "handoff") return t("conv.marker.handoff");
+  if (m.kind === "handed_back") return t("conv.marker.handed_back");
+  return m.by ? t("conv.marker.taken_over", { name: isolate(personName(m.by, meId, t("people.you_lower"))) }) : t("conv.marker.taken_over_unknown");
+}
+
+/** Markers placed by time (take-over, hand-back) and those that follow one reply (the agent's hand-off). */
+export function splitMarkers(markers: ThreadMarker[] | undefined) {
+  const timed = (markers ?? []).filter((m) => m.kind !== "handoff").sort((a, b) => a.at.getTime() - b.at.getTime());
+  const after = new Map<string, ThreadMarker[]>();
+  for (const m of markers ?? []) if (m.kind === "handoff") after.set(m.afterMessageId, [...(after.get(m.afterMessageId) ?? []), m]);
+  return { timed, after };
+}
+
+export function MarkerEntry({ marker, meId, time, timeTitle }: { marker: ThreadMarker; meId: string | null; time: string; timeTitle: string }) {
+  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId)} time={time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
 }
 
 /** Lead statuses whose deal is over while the agent still answers in the chat. */
@@ -234,8 +255,14 @@ export function ConversationControls({
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
   slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead", timezone, takeOverInHeader = false,
-  leadStatus = null, notes = [], rawToolNames = false,
+  leadStatus = null, notes = [], rawToolNames = false, steps,
 }: {
+  /**
+   * "Show agent steps" (board ConvSteps): off hides the tool chips under agent
+   * replies; markers, quote cards, form notes and voice entries always show.
+   * `back` is where the switch returns to. Without it the chips show and there is no switch.
+   */
+  steps?: { show: boolean; back: string };
   /** The lead's status (won or lost: the status line says the deal is over). */
   leadStatus?: string | null;
   /** Order forms a person sent, placed in the thread by time (round-4 review F2). */
@@ -270,14 +297,23 @@ export function ConversationPanel({
     lastDay = day;
     return <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(d, timezone) })}><span>{formatDayIn(d, timezone)}</span></div>;
   };
-  let pending = [...notes].sort((a, b) => a.at.getTime() - b.at.getTime());
-  const noteNode = (n: FormNote) => [divider(n.at), <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} />];
+  const showSteps = steps?.show ?? true;
+  const { timed, after } = splitMarkers(view.markers);
+  // Form notes and take-over / hand-back markers, merged by time and placed before the first later message.
+  let pending: { at: Date; node: () => ReactNode }[] = [
+    ...notes.map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
+    ...timed.map((mk, i) => ({ at: mk.at, node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} /> })),
+  ].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
+  // The agent's hand-off: right after the reply that made it.
+  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} />);
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
         <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
         {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : c.channel === "testlab" ? <TestLabChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
         {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
+        {steps ? <span className="sas-steps-switch__slot"><AgentStepsSwitch slug={slug} scope="workspace" show={steps.show} back={steps.back} /></span> : null}
       </div>
       <ChatThread label={t("conv.label")}>
         {thread.length === 0 && notes.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
@@ -291,9 +327,12 @@ export function ConversationPanel({
           const card = view.quoteCards?.[m.id];
           if (card) {
             const back = from === "inbox" ? `/app/${slug}/conversations?c=${c.id}` : `/app/${slug}/leads/${c.leadId}#conversation`;
-            return [...noteNodes, day, <QuoteCardMessage key={m.id} card={card} time={clock(m.createdAt)} timeTitle={full(m.createdAt)} slug={slug} approve={{ back }} />];
+            return [...noteNodes, day, <QuoteCardMessage key={m.id} card={card} time={clock(m.createdAt)} timeTitle={full(m.createdAt)} slug={slug} approve={{ back }} />, ...afterNodes(m.id)];
           }
           const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
+          // Voice call entries (m.voiceSessionId): only test lab calls exist today, and the test lab renders their
+          // spoken/typed marks itself. When calls reach leads, pass ChatMessage's `spoken` here as the test lab does;
+          // like quote cards and form notes they must show whether or not the agent steps are shown.
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
           const kind = kinds.get(m.id);
@@ -303,14 +342,14 @@ export function ConversationPanel({
             <ChatMessage
               key={m.id} actor={actor} who={who} time={delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)} timeTitle={full(m.createdAt)}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
-              trace={actor === "agent" ? traceChips(calls, rawToolNames) : undefined}
+              trace={actor === "agent" && showSteps ? traceChips(calls, rawToolNames) : undefined}
             >
               {/* Each message takes its own direction (R5-2): an English reply in a Hebrew chat stays left to right. */}
               <div dir="auto" data-msg-dir="">
                 <MessageBody body={m.body} kind={kind} />
               </div>
             </ChatMessage>
-          )];
+          ), ...afterNodes(m.id)];
         })}
         {pending.flatMap(noteNode)}
       </ChatThread>
