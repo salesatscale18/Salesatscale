@@ -1069,6 +1069,7 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-ov__tools { margin-inline-start: 0; width: 100%; }
   .sas-mcards__list > li { width: 100%; }
   .sas-mcard--add { min-height: 72px; flex-direction: row; }
+}
 /* W (lane W3): lead page verified details, Quotes and Orders cards, folded timeline. */
 .sas-verified-value { display: inline-flex; align-items: center; gap: 6px; min-width: 0; overflow-wrap: anywhere; }
 .sas-verified { display: inline-flex; flex: none; color: var(--success); }
