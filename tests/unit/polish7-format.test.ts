@@ -91,7 +91,7 @@ describe("quote text names", () => {
       recurringPeriod: null, validUntil: new Date("2026-11-24T12:00:00Z"), timezone: "Asia/Jerusalem", language: "en",
     });
     expect(body).toContain("1 × Kitchen hub (GW-10)");
-    expect(body).toContain("\nInstallation: ");
+    expect(body).toContain("\n1 × Installation: ");
     expect(body).toContain("2 × חיישן מקרר (HE-1)");
   });
 });

@@ -42,8 +42,8 @@ export function itemName(l: Pick<SnapshotLine, "name" | "plainName">): string {
 }
 
 /**
- * A line's label: "2 × <item name>"; the monthly charge of an item
- * also bought once names the service ("<item name> · monthly service"), so the
+ * A line's label: "2 × <item name>", "1 ×" included; the monthly charge of an item
+ * also bought once names the service ("1 × <item name> · monthly service"), so the
  * item does not read as charged twice. `isolate` is the part shown as one bidi
  * run, so a Latin name in a Hebrew line still reads quantity first.
  */
@@ -51,9 +51,9 @@ export function lineLabel(s: Pick<FormSnapshot, "lines" | "recurringPeriod">, l:
   const name = itemName(l);
   const counted = `${l.qty} × ${name}`;
   if (chargeOf(l) === "recurring" && s.lines.some((o) => o.sku === l.sku && chargeOf(o) === "one_time")) {
-    const isolate = l.qty === 1 ? name : counted;
+    // Every line shows its quantity, 1 included ("1 × <item name> · monthly service"), as on the seller side.
     const year = (l.period ?? s.recurringPeriod) === "year";
-    return { label: tr(year ? "buyer.line.service_year" : "buyer.line.service_month", { name: isolate }), isolate };
+    return { label: tr(year ? "buyer.line.service_year" : "buyer.line.service_month", { name: counted }), isolate: counted };
   }
   return { label: counted, isolate: counted };
 }

@@ -21,7 +21,7 @@ export type QuoteMessageLine = {
   /** Null = price missing (such a quote waits for the seller and gets no message). */
   lineTotalMinor: number | null;
   priceSource: string;
-  /** Services bought once ("Installation") read as "Installation: ₪250", without quantity and SKU. */
+  /** A service bought once ("Installation") reads "1 × Installation: ₪250", without its SKU. */
   service: boolean;
 };
 
@@ -119,7 +119,8 @@ export function quoteMessageText(q: QuoteMessageInput): string {
     const price = one && rec ? tr("buyer.quote.plus", { one_time: one, recurring: rec }) : one ?? rec ?? tr("buyer.quote.included");
     // The chat name, first letter capitalised as on the quote card (lib/agent/quote-card.ts).
     const name = capFirst(first.name);
-    const label = first.service && first.qty === 1 ? name : `${first.qty} × ${name} (${sku})`;
+    // Every line shows its quantity, 1 included, as on the quote card; a single service still leaves out its code.
+    const label = first.service && first.qty === 1 ? `1 × ${name}` : `${first.qty} × ${name} (${sku})`;
     out.push(`${label}: ${price}`);
   }
   if (q.oneTime.discountMinor > 0) out.push(`${tr("buyer.quote.discount", { rate: percentText(q.discountBp) })}: ${money(-q.oneTime.discountMinor)}`);

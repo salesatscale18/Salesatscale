@@ -100,8 +100,8 @@ export type QuoteCardState = "sent" | "held" | "replaced" | "expired" | "withdra
 export type QuoteCardRow = { label: string; amount: string; muted?: boolean };
 /**
  * One line. `isolate` is the part of the label shown as its own bidi run: the
- * whole "2 × <item name>" (so a Latin name in a Hebrew card still
- * reads quantity first), or only the name inside "<item name> · monthly service".
+ * whole "2 × <item name>" ("1 ×" included, so a Latin name in a Hebrew card still
+ * reads quantity first), also inside "1 × <item name> · monthly service".
  */
 export type QuoteCardLine = { label: string; isolate: string; amount: string; was: string | null };
 
@@ -356,7 +356,8 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
     const counted = `${l.qty} × ${name}`;
     // The monthly charge of an item also bought once names the service, so the same item does not read as charged twice.
     const serviceOf = l.charge === "recurring" && lines.some((o) => o.sku === l.sku && o.charge === "one_time");
-    const isolate = serviceOf ? (l.qty === 1 ? name : counted) : l.service && l.qty === 1 ? name : counted;
+    // Every line shows its quantity, 1 included ("1 × <item name> · monthly service"), as on the seller side.
+    const isolate = counted;
     const label = serviceOf ? tr(year ? "buyer.qcard.service_year" : "buyer.qcard.service_month", { name: isolate }) : isolate;
     const amount = l.lineTotalMinor === null ? "—" : charged(l) ? money(l.lineTotalMinor) : tr("buyer.qcard.included");
     let was: string | null = null;

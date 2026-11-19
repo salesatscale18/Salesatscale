@@ -97,7 +97,7 @@ describe("card states", () => {
       lines: [
         { label: "2 × Wireless fridge sensor", amount: "₪1,180.00", was: null },
         { label: "1 × Kitchen hub", amount: "₪660.00", was: null },
-        { label: "Installation", amount: "₪250.00", was: null },
+        { label: "1 × Installation", amount: "₪250.00", was: null },
       ],
       rows: [{ label: "Subtotal", amount: "₪2,090.00", muted: true }, { label: "VAT 18%", amount: "₪376.20", muted: true }],
       total: { label: "Today", amount: "₪2,466.20" },
@@ -105,7 +105,7 @@ describe("card states", () => {
       monthly: {
         heading: "Then monthly, from activation",
         // The monthly charge of an item also bought once names the service (live review, Package 3 item 2).
-        lines: [{ label: "Kitchen hub · monthly service", isolate: "Kitchen hub", amount: "₪90.00", was: null }],
+        lines: [{ label: "1 × Kitchen hub · monthly service", isolate: "1 × Kitchen hub", amount: "₪90.00", was: null }],
         rows: [{ label: "VAT 18%", amount: "₪16.20", muted: true }],
         total: { label: "Monthly incl. VAT", amount: "₪106.20" },
       },
@@ -248,7 +248,12 @@ describe("mixed-direction text (UX sign-off F6)", () => {
     expect(html).toContain('<div class="sas-qc__headline"><bdi>Polar sensor</bdi> ועוד 2</div>');
     // The whole "2 × name" is one isolated run: quantity first in a Hebrew card too (Package 3 item 1).
     expect(html).toContain("<span><bdi>2 × Polar sensor</bdi></span>");
-    expect(html).toContain("<span><bdi>התקנה</bdi></span>");
+    expect(html).toContain("<span><bdi>1 × התקנה</bdi></span>");
+    // Quantity 1 on every line, one-time and monthly, in Hebrew too: "1 × <name> · שירות חודשי" with "1 × <name>" isolated.
+    const hub = { v1: [line("GW-10", "Kitchen hub", 1, "one_time", 66_000), line("GW-10", "Kitchen hub", 1, "recurring", 9_000)] };
+    const heHub = renderToStaticMarkup(createElement(QuoteCard, { card: cards([q1], [standard.v], hub, [link("m1", "q1", 1001, 1)], { language: "he" }).m1 }));
+    expect(heHub).toContain("<span><bdi>1 × Kitchen hub</bdi></span>");
+    expect(heHub).toContain("<span><bdi>1 × Kitchen hub</bdi> · שירות חודשי</span>");
     // The agent's own headline takes its direction from its text.
     const own = cards([q1], [standard.v], lines, [link("m1", "q1", 1001, 1, { headline: "2 Polar sensors for your kitchen" })], { language: "he" }).m1;
     expect(own.headlineName).toBeNull();

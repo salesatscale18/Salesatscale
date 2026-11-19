@@ -861,7 +861,7 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 @media (min-width: 1101px) {
   .sas-with-panel .sas-table--panel-aware .sas-col-minor { display: none; }
 }
-/* R5-6: a lead title "name · company" breaks only between its parts. */
+/* R5-6: a lead title "name · company" (lead page, Conversations thread header) breaks only between its parts. */
 .sas-title-part { display: inline-block; max-width: 100%; }
 /* S4: the phone back link in Conversations: a chevron, lined up with the header edge. */
 @media (max-width: 860px) {

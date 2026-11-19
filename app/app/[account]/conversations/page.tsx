@@ -235,7 +235,8 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <a className={`${buttonClass("ghost", "sm")} sas-inbox__back`} href={qs({ c: undefined })}><Icon name="chevron-left" />{t("inbox.back")}</a>
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
                     <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <strong><bdi>{selected.lead.fullName}</bdi>{selected.lead.company ? <> · <bdi>{selected.lead.company}</bdi></> : null}</strong>
+                      {/* As on the lead page (R5-6): each part one isolated unit, breaking only at " · ". */}
+                      <strong data-thread-title="" style={{ minWidth: 0, maxWidth: "100%" }}><bdi className="sas-title-part">{selected.lead.fullName}</bdi>{selected.lead.company ? <> · <bdi className="sas-title-part">{selected.lead.company}</bdi></> : null}</strong>
                       {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : selected.conv.isTest ? <TestLabChip /> : null}
                     </span>
                     <span className="sas-small">

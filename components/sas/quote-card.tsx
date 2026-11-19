@@ -110,8 +110,8 @@ function Headline({ card }: { card: QuoteCardView }) {
 
 /**
  * The line's label (lib/agent/quote-card.ts lineView). Its `isolate` part is one
- * bidi run: "2 × <item name>" reads quantity first in a Hebrew card
- * too, and only the name is isolated inside "<item name> · שירות חודשי".
+ * bidi run: "2 × <item name>" (and "1 × <item name>") reads quantity first in a
+ * Hebrew card too, also inside "1 × <item name> · שירות חודשי".
  */
 function LineLabel({ label, isolate }: { label: string; isolate?: string }) {
   const at = isolate ? label.indexOf(isolate) : -1;

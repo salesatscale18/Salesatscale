@@ -3,7 +3,7 @@ import type { PriceList, PriceListEntry } from "@/db/schema";
 import { sortRows } from "@/lib/list-kit";
 import {
   deleteRefusalText, entryPriced, filterPriceLists, joinNames, filterPriceRows, hasRecurring, hasTiers, itemsPriced, listUpdatedAt, priceListSortAccessors, priceRowCounts,
-  priceRowSortAccessors, tierChip, vatParts, type PriceListRow, type PriceRow,
+  priceRowSortAccessors, priceWarningGroups, tierChip, vatParts, type PriceListRow, type PriceRow,
 } from "@/lib/pricing/list-view";
 import type { PriceListSummary } from "@/lib/pricing/price-lists";
 
@@ -91,5 +91,14 @@ describe("price list delete refusal", () => {
     expect(deleteRefusalText("quoted", [])).toMatch(/^Quotes were priced from this list, so it can.t be deleted\./);
     expect(deleteRefusalText("not_found", [])).toBeNull();
     expect(deleteRefusalText(undefined, [])).toBeNull();
+  });
+  it("price warning: blocking problems first, then catalog items not in the list (each once); empty groups stay empty", () => {
+    const problems = [{ sku: "INST-1", charge: "one_time", kind: "price_missing", message: "INST-1: the one-time price is missing." }];
+    const rows = [{ sku: "GW-1", entry: entry("GW-1") }, { sku: "INST-1", entry: entry("INST-1", { oneTimeMinor: null }) }, { sku: "PRB-30", entry: null }, { sku: "PRB-30", entry: null }];
+    expect(priceWarningGroups(problems, rows)).toEqual({
+      mustFix: [{ key: "INST-1-one_time-price_missing", text: "INST-1: the one-time price is missing." }],
+      notInList: ["PRB-30"],
+    });
+    expect(priceWarningGroups([], [{ sku: "A", entry: entry("A") }])).toEqual({ mustFix: [], notInList: [] });
   });
 });

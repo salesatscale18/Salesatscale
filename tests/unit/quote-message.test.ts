@@ -33,7 +33,7 @@ describe("the app's quote message (P11.2)", () => {
       "*Quote Q-1001*",
       "2 × Wireless fridge sensor (SNS-200): ₪1,180",
       "1 × Kitchen hub (GW-10): ₪660, plus ₪90 a month",
-      "Installation: ₪250",
+      "1 × Installation: ₪250",
       "VAT 18%: ₪376.20",
       "*Today: ₪2,466.20 including VAT*",
       "*Then: ₪106.20 a month including VAT*",
@@ -46,7 +46,7 @@ describe("the app's quote message (P11.2)", () => {
       "*הצעת מחיר Q-1001*",
       "2 × Wireless fridge sensor (SNS-200): ₪1,180",
       "1 × Kitchen hub (GW-10): ₪660, ועוד ₪90 לחודש",
-      "Installation: ₪250",
+      "1 × Installation: ₪250",
       "מע״מ 18%: ₪376.20",
       "*היום: ₪2,466.20 כולל מע״מ*",
       "*לאחר מכן: ₪106.20 לחודש כולל מע״מ*",
@@ -80,7 +80,7 @@ describe("the app's quote message (P11.2)", () => {
       ],
       oneTime: computeTotals(50_000, 0, false, 0), recurring: computeTotals(0, 0, false, 0),
     });
-    expect(quoteMessageText(included)).toBe("*Quote Q-1001*\n1 × Starter kit (KIT): ₪500\nSetup: included\n*Today: ₪500*\nValid until 24 Nov");
+    expect(quoteMessageText(included)).toBe("*Quote Q-1001*\n1 × Starter kit (KIT): ₪500\n1 × Setup: included\n*Today: ₪500*\nValid until 24 Nov");
   });
 
   it("chat amounts drop .00 only; rates are plain percents", () => {

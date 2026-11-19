@@ -12,7 +12,7 @@ import { currencyLabel, formatLocalDateTime } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { firstParam, hrefWith, sortParams, sortRows, type SortState } from "@/lib/list-kit";
 import {
-  PRICE_ROW_SORTS, entryPriced, filterPriceRows, itemsPriced, priceRowCounts, priceRowSortAccessors, tierChip, vatParts, type PriceRow,
+  PRICE_ROW_SORTS, entryPriced, filterPriceRows, itemsPriced, priceRowCounts, priceRowSortAccessors, priceWarningGroups, tierChip, vatParts, type PriceRow,
 } from "@/lib/pricing/list-view";
 import { entriesOf, entryProblems, itemInOtherLists, listPriceLists, partState, priceListVersions } from "@/lib/pricing/price-lists";
 import { unitLabel } from "@/lib/pricing/units";
@@ -89,8 +89,8 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
   const missing = problems.filter((p) => p.kind === "price_missing").length;
   const nextVersion = draft?.version ?? (live ? live.version + 1 : 1);
   // R5-8: catalog items with no entry in this list have no price either. The header and the chip count them,
-  // so the warning lists them too (they do not block publishing: only a charged part without a price does).
-  const unpriced = itemRows.filter((r) => !r.entry);
+  // so the warning lists them too, in their own group: they do not block publishing (only the first group does).
+  const warning = priceWarningGroups(problems, itemRows);
   // R5-9: Publish is secondary and disabled, with the reason, while the draft cannot be published.
   const publishBlocked = entries.length === 0 ? t("price_lists.publish_blocked.empty")
     : missing > 0 ? t(missing === 1 ? "price_lists.publish_blocked.missing_one" : "price_lists.publish_blocked.missing")
@@ -144,15 +144,26 @@ export default async function PriceListEditorPage({ params, searchParams }: { pa
       {sp.saved && !entryOpen ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("price_lists.entry.saved")}</span></div> : null}
       {firstParam(sp, "publish") === "no_entries" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("price_lists.publish_empty")}</span></div> : null}
       {firstParam(sp, "publish") === "problems" && problems.length === 0 ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("price_lists.publish_failed")}</span></div> : null}
-      {problems.length > 0 || unpriced.length > 0 ? (
+      {warning.mustFix.length > 0 || warning.notInList.length > 0 ? (
         <div className={firstParam(sp, "publish") === "problems" ? "sas-alert sas-alert--danger" : "sas-alert sas-alert--warning"} role={firstParam(sp, "publish") === "problems" ? "alert" : "status"} data-price-problems="">
           <Icon name="alert-triangle" />
-          <div className="sas-stack-2" style={{ gap: 4 }}>
-            <span>{missing > 0 ? (missing === 1 ? t("price_lists.problems_missing_one") : t("price_lists.problems_missing", { count: missing })) : problems.length > 0 ? t("price_lists.problems") : t("price_lists.problems_unpriced")}</span>
-            <ul style={{ margin: 0, paddingInlineStart: 18 }}>
-              {problems.map((p) => <li key={`${p.sku}-${p.charge}-${p.kind}`} className="sas-small">{p.message}</li>)}
-              {unpriced.map((r) => <li key={`${r.sku}-none`} className="sas-small" data-unpriced={r.sku}>{t("price_lists.problem_no_price", { sku: r.sku })}</li>)}
-            </ul>
+          <div className="sas-stack-2" style={{ gap: 8, minWidth: 0 }}>
+            {warning.mustFix.length > 0 ? (
+              <div data-warning-group="must-fix">
+                <strong>{t("price_lists.warning.must_fix")}</strong>
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {warning.mustFix.map((p) => <li key={p.key} className="sas-small">{p.text}</li>)}
+                </ul>
+              </div>
+            ) : null}
+            {warning.notInList.length > 0 ? (
+              <div data-warning-group="not-in-list">
+                <strong>{t("price_lists.warning.not_in_list")}</strong>
+                <ul style={{ margin: 0, paddingInlineStart: 18 }}>
+                  {warning.notInList.map((sku) => <li key={sku} className="sas-small" data-unpriced={sku}><span className="sas-id">{sku}</span></li>)}
+                </ul>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -108,12 +108,13 @@ describe("buyer pages after the live review", () => {
   });
   afterAll(async () => t.close());
 
-  it("names start with a capital, the monthly line names the service, no 'v1', and step 1 has no side summary", async () => {
+  it("names start with a capital, every line shows its quantity (1 included), the monthly line names the service, no 'v1', and step 1 has no side summary", async () => {
     const f = await newForm("0525550701");
     const html = await page(f.token);
     expect(html).toContain("<bdi>2 × Wireless fridge sensor</bdi>");
     expect(html).toContain("<bdi>1 × Kitchen hub</bdi>");
-    expect(html).toContain('<span data-line-name=""><bdi>Kitchen hub</bdi> · monthly service</span>');
+    // Quantity on every line, 1 included, monthly too (as on the seller side).
+    expect(html).toContain('<span data-line-name=""><bdi>1 × Kitchen hub</bdi> · monthly service</span>');
     expect(html).not.toContain("wireless fridge sensor");
     expect(html).toContain(`Order form · Q-${f.number}</span>`);
     expect(html).not.toContain(" v1");
@@ -124,7 +125,8 @@ describe("buyer pages after the live review", () => {
     expect(he).toContain("₪90.00 לחודש");
     expect(he).not.toContain("/חודש");
     expect(he).toContain("מה בהזמנה");
-    expect(he).toContain('<span data-line-name=""><bdi>Kitchen hub</bdi> · שירות חודשי</span>');
+    expect(he).toContain('<span data-line-name=""><bdi>1 × Kitchen hub</bdi> · שירות חודשי</span>');
+    expect(he).toContain("<bdi>2 × Wireless fridge sensor</bdi>");
   });
 
   it("step 2: summary with 'Monthly incl. VAT', placeholders on empty fields, the error banner and inline errors on Continue", async () => {
@@ -192,6 +194,8 @@ describe("buyer pages after the live review", () => {
     expect(html).toContain("Paid today · Card");
     expect(html).not.toContain("Due today");
     expect(html.match(/Paid today/g)).toHaveLength(1);
+    // The paid page and the signed document show the quantity on every line too, 1 included.
+    expect(html).toContain("<bdi>1 × Kitchen hub</bdi>");
 
     const d = await doc(f.token);
     expect(d).toContain('data-doc-seller=""');
@@ -201,6 +205,8 @@ describe("buyer pages after the live review", () => {
     expect(d).toMatch(/recorded <bdi data-doc-utc="">\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC<\/bdi>/);
     expect(d).toMatch(/Document fingerprint \(SHA-256\): <span class="b-mono" data-doc-hash="">[0-9a-f]{64}<\/span>/);
     expect(d).toContain("<bdi>2 × Wireless fridge sensor</bdi>");
+    expect(d).toContain('<span data-line-name=""><bdi>1 × Kitchen hub</bdi> · monthly service</span>');
+    expect(await doc(f.token, { lang: "he" })).toContain('<span data-line-name=""><bdi>1 × Kitchen hub</bdi> · שירות חודשי</span>');
     // The buyer's details in the form's field order.
     const order = [...d.matchAll(/data-doc-field="([a-z_]+)"/g)].map((m) => m[1]);
     expect(order).toEqual(["company_name", "company_id", "billing_address", "delivery_address", "signatory_role", "invoice_email"].filter((k) => order.includes(k)));

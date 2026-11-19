@@ -156,10 +156,16 @@ describe("pages (demo account)", () => {
     const counted = Number(tx.match(/Price missing(\d+)With tiers/)?.[1]);
     expect(counted).toBe(2);
     expect(tx).toMatch(/2 of 4 items priced · 2/);
-    const warning = html.split("data-price-problems")[1].split("</ul>")[0];
+    // Two groups: what blocks publishing, then the items not in the list yet (the header count stays 2).
+    expect(tx).toContain("2 prices missing");
+    const warning = html.split("data-price-problems")[1].split("</ul></div></div></div>")[0];
     expect((warning.match(/<li /g) ?? []).length).toBe(counted);
-    expect(text(warning)).toContain("INST-1: the one-time price is missing.");
-    expect(text(warning)).toContain("PRB-30: no price in this list yet.");
+    const mustFix = warning.split('data-warning-group="must-fix"')[1].split("</ul>")[0];
+    const notInList = warning.split('data-warning-group="not-in-list"')[1].split("</ul>")[0];
+    expect(text(mustFix).replace(/^>/, "")).toBe("Must be fixed before publishing:INST-1: the one-time price is missing.");
+    expect(text(notInList).replace(/^>/, "")).toBe("Not in this price list yet, so the agent can't quote it here:PRB-30");
+    expect(notInList).toContain('<span class="sas-id">PRB-30</span>');
+    expect(warning.indexOf("must-fix")).toBeLessThan(warning.indexOf("not-in-list"));
     expect(tx).toContain("VAT20% · prices without VAT");
     expect(html).toContain('class="sas-split r5b-pl-split"');
     expect(css).toMatch(/@container \(max-width: 1399px\) \{\s*\.r5b-pl-split > \.sas-split__side \{ flex-basis: 100%; \}/);

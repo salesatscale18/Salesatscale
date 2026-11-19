@@ -1170,9 +1170,6 @@
   "price_lists.discarded": "Draft discarded. The live version is unchanged.",
   "price_lists.publish_empty": "Add at least one price before publishing.",
   "price_lists.publish_failed": "This price list could not be published. Check its prices.",
-  "price_lists.problems": "Fix these prices to publish this price list.",
-  "price_lists.problems_missing": "Add the {count} missing prices, or mark those parts as not charged, to publish this price list.",
-  "price_lists.problems_missing_one": "Add the missing price, or mark that part as not charged, to publish this price list.",
   "price_lists.items": "Items · {count}",
   "price_lists.editing_draft": "Changes go into draft v{version}.",
   "price_lists.editing_live": "Your first change starts a new draft.",
@@ -2921,6 +2918,6 @@
   "golive.account_ready": "Your account is ready.",
   "golive.market_progress": "{market}: {passed} of {total} checks.",
   "price_lists.publish_blocked.missing_one": "Not ready to publish: add the missing price above.",
-  "price_lists.problems_unpriced": "These items have no price in this list yet, so they can't be quoted where it applies.",
-  "price_lists.problem_no_price": "{sku}: no price in this list yet."
+  "price_lists.warning.must_fix": "Must be fixed before publishing:",
+  "price_lists.warning.not_in_list": "Not in this price list yet, so the agent can't quote it here:"
 }

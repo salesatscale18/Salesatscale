@@ -155,3 +155,19 @@ export function deleteRefusalText(reason: string | null | undefined, markets: st
   if (reason === "quoted") return t("price_lists.delete.quoted");
   return null;
 }
+
+/**
+ * The price list warning, in two groups (R5 follow-up): what must be fixed
+ * before publishing (a charged part without its price, tiers that break the
+ * rule) and the catalog items not in the list yet (the agent can't quote them
+ * from this list, but they don't block publishing). Empty groups are left out.
+ */
+export function priceWarningGroups(
+  problems: { sku: string; charge: string; kind: string; message: string }[],
+  rows: Pick<PriceRow, "sku" | "entry">[],
+): { mustFix: { key: string; text: string }[]; notInList: string[] } {
+  return {
+    mustFix: problems.map((p) => ({ key: `${p.sku}-${p.charge}-${p.kind}`, text: p.message })),
+    notInList: [...new Set(rows.filter((r) => !r.entry).map((r) => r.sku))],
+  };
+}

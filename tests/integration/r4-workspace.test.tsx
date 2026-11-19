@@ -220,8 +220,12 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
     expect(lead).not.toContain("The agent is handling this conversation.");
     expect(lead).toMatch(/class="sas-btn sas-btn--secondary sas-btn--sm" data-testid="header-take-over" data-take-over="secondary"/);
     const conv = await page(ConversationsPage(props(account.slug, { c: ids.noaConv })));
+    save("conv-noa", conv);
     expect(conv).toContain("This deal is won.");
     expect(conv).toContain('data-take-over="secondary"');
+    // The thread header follows the lead page's title rule (R5-6): each Hebrew part one isolated unit, breaking only at " · ".
+    expect(conv).toMatch(/<strong data-thread-title="" style="[^"]*"><bdi class="sas-title-part">נועה כהן<\/bdi> · <bdi class="sas-title-part">קפה נועה<\/bdi><\/strong>/);
+    expect(lead).toContain('<bdi class="sas-title-part">נועה כהן</bdi> · <bdi class="sas-title-part">קפה נועה</bdi>');
     // An open deal keeps the primary Take over.
     const tamar = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.tamarLead }) as never));
     expect(tamar).toContain('data-take-over="primary"');
