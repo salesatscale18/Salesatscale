@@ -751,6 +751,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
   });
 
   it("order form: the agent says the buyer can fill it in now and stays on the line, quiet (no silence check while they fill it in)", async () => {
+    await db.delete(rateLimits); // this file starts more test calls than the hourly limit allows
     const c = await newCall("ready_buyer", { limits: { env: {}, silenceAskMs: 25_000, silenceEndMs: 20_000, orderFormQuietMs: 240_000 } });
     await c.run(15_000);
     await c.speak();
