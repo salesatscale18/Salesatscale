@@ -94,6 +94,7 @@ export const TOOL_LABELS: Record<string, string> = {
   record_opt_out: "Recording the opt-out",
   schedule_follow_up: "Scheduling a follow-up",
   request_callback: "Requesting a call",
+  ask_team: "Noting the question",
   hand_off_to_human: "Passing to the team",
 };
 

@@ -302,8 +302,8 @@ describe("Park and continue: questions to the team (O4)", () => {
     expect((openai.parameters as { properties: Record<string, { type: unknown }> }).properties.must_have.type).toEqual(["boolean", "null"]);
     expect(openai.description).toContain("silently");
     expect(VOICE_TOOL_NAMES.has("ask_team")).toBe(true);
-    // No call-screen label yet (lib/voice is the Voice session's): the generic one shows.
-    expect(toolLabel("ask_team")).toBe("Checking");
+    // The call screen's label while it runs (lib/voice/tool-schema.ts).
+    expect(toolLabel("ask_team")).toBe("Noting the question");
     // The voice version of the method keeps the new line (no chat-only wording to replace).
     expect(coreDesign({ tradeName: "Polar", meeting: false }, undefined, "voice")).toContain("call ask_team with the question");
   });

@@ -3,10 +3,12 @@
  * hand-moved clock: the engine runs the real tools, stores the call as
  * messages and tool calls, and every scenario check passes. No paid call.
  */
+import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
 import { conversations, dealStates, leadEvents, leads, messages, quotes, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { leadCallback } from "@/lib/callbacks/service";
+import { recordTeamAnswer } from "@/lib/team-questions/service";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, listVersions, publishDraftVersion, rollbackTo, saveDraftPlaybook } from "@/lib/agent/service";
@@ -393,14 +395,53 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
   });
 
-  it("no approved answer: looks it up, finds nothing, does not guess", async () => {
+  it("no approved answer: looks it up, sends it to the team silently (ask_team), promises the outcome and carries on; the call stays live", async () => {
     const c = await newCall("no_approved_answer");
     await c.run(15_000);
     await c.speak();
     await c.run(30_000);
+    // After ask_team the call is still live and the conversation stays with the agent.
+    expect(c.engine.isEnded).toBe(false);
+    expect((await sessionRow(c.sessionId)).status).toBe("live");
+    expect((await conv(c.conversationId)).status).toBe("open");
+    const asked = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "team_question.asked")));
+    expect(asked).toHaveLength(1);
+    expect(asked[0].data).toMatchObject({ conversationId: c.conversationId, buyerWords: "on-site training in our city, and how long it takes" });
+    expect(c.json()).toContainEqual({ t: "tool", id: expect.any(String), name: "ask_team", label: "Noting the question", status: "running" });
+    await c.speak(); // "Good to know, really."
+    await c.run(20_000);
+    expect(c.engine.isEnded).toBe(false);
     await hangUp(c);
-    expect((await calls(c.conversationId)).map((x) => x.name)).toEqual(["lookup_knowledge"]);
-    expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
+    expect((await calls(c.conversationId)).map((x) => [x.name, x.outcome])).toEqual([["lookup_knowledge", "ok"], ["ask_team", "ok"], ["ask_team", "ok"]]);
+    // Nothing the model was told to say, and nothing the agent said, mentions sending or waiting.
+    const told = c.conn().sent.toolResults.filter((r) => r.name === "lookup_knowledge" || r.name === "ask_team")
+      .map((r) => String((r.result as { message?: string }).message ?? ""));
+    expect(told).toHaveLength(3);
+    // (Prohibitions such as "Do not tell the buyer you sent it" are fine; an instruction to say it is not.)
+    for (const m of told) {
+      const positive = m.replace(/\b(?:do not|don't|never)\b[^.]*\./gi, "");
+      expect(positive, m).not.toMatch(/\b(?:tell|say)\b[^.]*\b(?:sent|passed|waiting|wait)\b/i);
+    }
+    const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent").map((m) => m.body);
+    for (const line of agent) expect(line, line).not.toMatch(/\b(?:sent|passed|forwarded|asked)\b[^.?!]*\b(?:team|colleague)\b|\bwait(?:ing)?\b|\bget back to you\b/i);
+    expect(agent).toContain("One moment, I'm checking that. I don't have that detail yet. I'll make sure you get an exact answer on that. Is it a must-have for you, or good to know?");
+    expect(await check(c.conversationId)).toMatchObject({ result: "passed", reason: expect.stringContaining("Sent to the team silently") });
+
+    // The team answers in Knowledge: the next call on this conversation has the answer in its first instructions.
+    const answers = await recordTeamAnswer(db, acc, { question: "Do you offer on-site training in the buyer's city, and how long does it take?", answer: "Yes: one day on site, booked two weeks ahead.", factId: randomUUID(), userId: me.id });
+    expect(answers).toHaveLength(1);
+    const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
+    if (!s.ok) throw new Error(s.reason);
+    const clock = new ManualClock();
+    const model = new ScriptedRealtime({ clock });
+    const e = new VoiceEngine({ db, model, sessionId: s.sessionId, send: () => {}, clock, limits: QUIET });
+    await e.start();
+    await e.idle();
+    const first = model.connections[0].cfg.instructions;
+    expect(first).toContain("## Questions sent to the team");
+    expect(first).toContain('- Answer from the team to the buyer\'s question "on-site training in our city, and how long it takes": Yes: one day on site, booked two weeks ahead.');
+    expect(first).toContain('- An answer under "Questions sent to the team": give it when it is relevant, in one short sentence in your own words, once. Do not say the team replied or that you were waiting for it.');
+    await e.stop("user_hangup");
   });
 
   it("typed text during a call is the buyer's turn, verbatim, and goes to the model", async () => {
@@ -414,7 +455,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(rows.filter((m) => m.actor !== "buyer").every((m) => m.typedInCall === false)).toBe(true);
     expect(c.json().some((m) => m.t === "transcript" && m.role === "buyer" && m.final && m.typed === true)).toBe(true);
     expect(c.model.connections[0].sent.texts).toEqual(["Is there training on site?"]);
-    expect((await calls(c.conversationId)).map((x) => x.name)).toEqual(["lookup_knowledge"]);
+    expect((await calls(c.conversationId)).map((x) => x.name)).toEqual(["lookup_knowledge", "ask_team"]);
   });
 
   it("a session ended from outside (End that call) stops the running call on its next stats tick and keeps its figures", async () => {

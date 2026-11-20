@@ -182,7 +182,19 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     expectBuyer("Do you offer on-site training in our city, and how long does it take?"),
     say("One moment, I'm checking that."),
     tool("lookup_knowledge", { query: "on-site training in our city and how long it takes" }),
-    say("I don't have details on that. I can check with the team and get back to you. Would that help?"),
+    // Nothing approved: the question goes to the team silently (park and continue); the buyer is not told.
+    onlyIf((ctx) => (ctx.last("lookup_knowledge")?.facts as unknown[] | undefined)?.length === 0, tool("ask_team", {
+      question: "Do you offer on-site training in the buyer's city, and how long does it take?",
+      buyer_words: "on-site training in our city, and how long it takes", must_have: null,
+    })),
+    say("I don't have that detail yet. I'll make sure you get an exact answer on that. Is it a must-have for you, or good to know?"),
+    expectBuyer("Good to know, really."),
+    // The buyer said it is good to know: the same question again, with the flag.
+    onlyIf((ctx) => ctx.last("ask_team")?.sent === true, tool("ask_team", {
+      question: "Do you offer on-site training in the buyer's city, and how long does it take?",
+      buyer_words: "on-site training in our city, and how long it takes", must_have: false,
+    })),
+    say("Got it. Then let's carry on: how many people would use it?"),
   ],
 };
 

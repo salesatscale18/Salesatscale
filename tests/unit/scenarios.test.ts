@@ -90,9 +90,9 @@ describe("scenario checks", () => {
     const asked = call("ask_team", { ok: true, sent: true, must_have: null }, { question: "Do the sensors work at -40?", buyer_words: "minus 40 degrees", must_have: null });
     const park = "I don't have that detail yet. What do you need it for: is it a must-have, or good to know? I'll make sure you get an exact answer on that.";
     expect(check("no_approved_answer", run({ messages: [q, agent(park)], calls: [empty, asked] })).result).toBe("passed");
-    // Nothing sent to the team: not the new behaviour (a voice call keeps the old check until voice adds ask_team).
+    // Nothing sent to the team: not the new behaviour, on a voice call as in chat.
     expect(check("no_approved_answer", run({ messages: [q, agent(park)], calls: [empty] })).result).toBe("failed");
-    expect(check("no_approved_answer", run({ channel: "voice", messages: [q, agent("I don't have details on that.")], calls: [empty] })).result).toBe("passed");
+    expect(check("no_approved_answer", run({ channel: "voice", messages: [q, agent("I don't have details on that.")], calls: [empty] })).result).toBe("failed");
     // The old hand-off, and the "Not this" replies, fail.
     expect(check("no_approved_answer", run({ messages: [q, agent("I don't know, I'll pass you to a colleague.")], calls: [empty, call("hand_off_to_human", { ok: true })], conversationStatus: "human" })).result).toBe("failed");
     expect(check("no_approved_answer", run({ messages: [q, agent("I've sent that to the team, let's wait for their answer.")], calls: [empty, asked] })).result).toBe("failed");

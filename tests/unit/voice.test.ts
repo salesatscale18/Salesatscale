@@ -13,6 +13,7 @@ import { applyVoiceReplacements, CORE_DESIGN_VOICE, voiceStageText, voiceToolRes
 import { deriveStage, NO_STAGE_FACTS } from "@/lib/agent/core/stage";
 import { TOOL_DEFS } from "@/lib/agent/tools";
 import { OBJECTION_PLAYS } from "@/lib/agent/core/objections";
+import { teamQuestionLines } from "@/lib/team-questions/rules";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PLAY_KEYS, type StoredObjection } from "@/db/schema";
 import {
@@ -182,6 +183,12 @@ describe("voice instructions", () => {
           playbook: pb, voiceSettings: null, seller, catalog, deal: { fields: {}, objections, nextStep: null, summary: null }, stage, agentMessages: 2,
           names: { agent: "Ava", seller: "Acme", gender: "neutral", language: "en" }, opener: "Hi, this is Ava.", localNow: null,
           followUp: { dueLocal: "Wed 18 Nov 10:00", topic: "the quote" }, recap: [],
+          callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: false },
+          teamQuestions: teamQuestionLines(
+            [{ key: "q2", question: "Open question?", buyerWords: "open one", mustHave: true, conversationId: "c", leadId: "l", askedAt: new Date(0) }] as never,
+            [{ key: "q1", question: "Training?", buyerWords: "training", answer: "One day on site.", delivery: "sent", conversationId: "c", leadId: "l" }] as never,
+            new Set(),
+          ),
         });
         expect(chatOnly(text), play).toEqual([]);
       }
@@ -225,7 +232,8 @@ describe("voice instructions", () => {
       "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
       '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
       '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
-      "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found the team already sees the question: do not say you passed it on, and never say you are waiting for an answer.",
+      "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",
+      '- An answer under "Questions sent to the team": give it when it is relevant, in one short sentence in your own words, once. Do not say the team replied or that you were waiting for it.',
       "Tell the buyer the team will confirm the time by message. The call goes on after the request: keep helping, and never use hand_off_to_human for a call.",
       "- Find the real objection. One question, in the same turn as the acknowledgement.",
     ]) expect(block, line).toContain(line);
@@ -731,5 +739,23 @@ describe("call requests on a call (request_callback)", () => {
   it("onlyIf skips a step when its condition does not hold", () => {
     const step = onlyIf(() => false, say("never"));
     expect(step.when?.({ results: {}, last: () => undefined, fields: [], localNow: null })).toBe(false);
+  });
+});
+
+describe("questions for the team on a call (ask_team)", () => {
+  it("the tool's description and results read correctly when spoken", () => {
+    const d = realtimeTools("gemini").find((t) => t.name === "ask_team")!.description;
+    expect(d).toContain("the buyer is not told and the conversation does not pause");
+    expect(d).not.toMatch(/\bchat\b/);
+    const sent = "Sent to the team. Do not tell the buyer you sent it and do not say you are waiting. Promise an exact answer in one short line and move the sale forward. The answer will show in your context when it arrives.";
+    expect(voiceToolResultMessage(sent)).toBe(sent);
+    expect(toolLabel("ask_team")).toBe("Noting the question");
+  });
+
+  it("the team's answers block in call wording", () => {
+    const block = teamQuestionLines([], [{ key: "q1", question: "Training?", buyerWords: "training", answer: "One day on site.", delivery: "sent", conversationId: "c", leadId: "l" }] as never, new Set());
+    const ctx = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", teamQuestions: block }));
+    expect(ctx).toContain('- Answer from the team to the buyer\'s question "training": One day on site. (already sent to the buyer by message: do not repeat it unless they ask)');
+    expect(ctx).toContain("A must-have still open at the close: book a short call with the right person (request_callback)");
   });
 });

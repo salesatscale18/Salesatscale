@@ -232,8 +232,6 @@ export const SCENARIOS: Scenario[] = [
       if (replies.some((m) => TOLD_SENT.test(m.body))) return fail("The agent told the buyer it sent the question to the team. It should send it silently and promise an answer.");
       if (asks.some((c) => c.result.sent === true)) return pass("Sent to the team silently; no guess, and the chat stays with the agent.");
       if (lookups.length === 0) return fail("The agent answered without checking approved information.");
-      // A live voice call does not send questions to the team yet (lib/voice scripts), until the voice session adds ask_team.
-      if (run.channel === "voice") return pass("No approved information found and no guess made.");
       return fail("Nothing approved was found, but the question was not sent to the team.");
     },
   },
