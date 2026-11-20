@@ -89,8 +89,8 @@ export const sellerAccounts = pgTable(
     simulateWhatsappRules: boolean("simulate_whatsapp_rules").notNull().default(false),
     /** Buyer simulator: "Add simulated buyer" is offered (and allowed on the server). On by default. */
     allowSimulatedBuyers: boolean("allow_simulated_buyers").notNull().default(true),
-    /** Voice calls on the buyer chat page (live voice, release 2). Off by default; the test lab does not need it. */
-    voiceBuyerCalls: boolean("voice_buyer_calls").notNull().default(false),
+    /** Voice calls on the buyer chat page (live voice, release 2). On by default (owner decision; 0019 turned it on for existing accounts); Settings › Voice turns it off. */
+    voiceBuyerCalls: boolean("voice_buyer_calls").notNull().default(true),
     rollout: rolloutMode("rollout").notNull().default("test_only"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),

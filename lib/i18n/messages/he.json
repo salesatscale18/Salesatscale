@@ -352,7 +352,6 @@
   "buyer.voice.mode": "מצב קול",
   "buyer.voice.first_note": "מה שנאמר מופיע כטקסט בצ'אט הזה. לא נשמרת הקלטה.",
   "buyer.voice.why.buyer_calls_off": "שיחות קוליות כבויות. אפשר להפעיל ב'הגדרות › קול'.",
-  "buyer.voice.why.outside_hours": "מחוץ לשעות הפעילות ({hours}).",
   "buyer.voice.why.not_english": "בינתיים קול זמין רק בצ'אטים באנגלית.",
   "buyer.voice.why.not_agent": "אדם מהצוות מטפל בצ'אט הזה.",
   "buyer.voice.why.spend_cap": "הגעתם למגבלת ה-AI.",

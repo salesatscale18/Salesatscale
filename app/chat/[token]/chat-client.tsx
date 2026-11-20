@@ -264,7 +264,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       try {
         const res = await fetch(`/chat/${token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
         const r = (await res.json().catch(() => ({}))) as {
-          ok?: boolean; reason?: string; gate?: BuyerVoiceState["reason"]; hours?: string;
+          ok?: boolean; reason?: string; gate?: BuyerVoiceState["reason"];
           sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live"; firstInConversation?: boolean;
         };
         if (r.ok && r.sessionId && r.ticket && r.wsUrl) {
@@ -275,7 +275,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
         if (r.gate) {
           // A simulated chat: the button turns disabled with the reason (the server said why).
           c.cancel();
-          setVoiceState({ available: false, reason: r.gate, ...(r.hours ? { hours: r.hours } : {}) });
+          setVoiceState({ available: false, reason: r.gate });
           return;
         }
       } catch {
@@ -300,7 +300,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
   // A simulated chat with a gate off: the button stays, disabled, with the reason under the composer.
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
-    ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey, { hours: `\u2068${voiceState.hours ?? ""}\u2069` }) : null;
+    ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey) : null;
 
   const dayKey = dayKeyIn(timeZone);
   const now = new Date();

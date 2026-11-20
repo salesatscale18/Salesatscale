@@ -289,7 +289,6 @@ async function main() {
       // Each reason the button is off, on a simulated link (the tester sees why).
       const reasons: [string, RegExp][] = [
         ["buyer_calls_off", /Buyer calls are off\. Turn them on in Settings › Voice\./],
-        ["outside_hours", /Outside contact hours \(.+\)\./],
         ["not_english", /Voice works in English chats only for now\./],
         ["not_agent", /This chat is handled by a person\./],
         ["spend_cap", /AI limit reached\./],

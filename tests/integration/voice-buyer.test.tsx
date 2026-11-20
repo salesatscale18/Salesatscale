@@ -116,8 +116,9 @@ describe("the gates", () => {
     await set({ voiceBuyerCalls: true, status: "paused" });
     expect(await gate()).toEqual({ ok: false, reason: "account_not_live" });
     await set({ status: "live", contactHours: null });
-    expect(await gate(SCRIPTED, SATURDAY)).toEqual({ ok: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00 · Fri 08:30–13:00 · Sat off" });
-    expect((await gate(SCRIPTED, IN_HOURS)).ok).toBe(true);
+    // Contact hours do not limit a buyer's call: Saturday (hours off) and the middle of the night both work.
+    expect((await gate(SCRIPTED, SATURDAY)).ok).toBe(true);
+    expect((await gate(SCRIPTED, new Date("2026-11-19T01:00:00Z"))).ok).toBe(true);
     // Live mode at the spend cap (only the gate runs: nothing is called).
     await set({ monthlySpendCapMinor: 0 });
     expect(await gate({ VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "test-key-not-used" })).toEqual({ ok: false, reason: "spend_cap" });
@@ -158,10 +159,9 @@ describe("why the button is off (a simulated chat's tester sees it; a real buyer
     await set({ status: "setting_up" });
     expect(await state()).toEqual({ available: true });
     await set({ status: "live", contactHours: null });
-    expect(await state(SCRIPTED, SATURDAY)).toEqual({ available: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00 · Fri 08:30–13:00 · Sat off" });
-    // The lead's market time zone decides: 07:00 UTC Thursday is 09:00 in Jerusalem (open), 05:00 UTC is 07:00 there (closed).
-    expect((await state(SCRIPTED, new Date("2026-11-19T07:00:00Z"))).available).toBe(true);
-    expect((await state(SCRIPTED, new Date("2026-11-19T05:00:00Z"))).reason).toBe("outside_hours");
+    // Outside contact hours the button stays on (contact hours are only for what the agent starts).
+    expect(await state(SCRIPTED, SATURDAY)).toEqual({ available: true });
+    expect(await state(SCRIPTED, new Date("2026-11-19T05:00:00Z"))).toEqual({ available: true });
     await set({ monthlySpendCapMinor: 0 });
     expect(await state({ VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "test-key-not-used" })).toEqual({ available: false, reason: "spend_cap" });
     await set({ monthlySpendCapMinor: account.monthlySpendCapMinor, contactHours: ALWAYS });
@@ -393,18 +393,18 @@ describe("no chat turn beside a call", () => {
   });
 });
 
-describe("buyer calls are off by default", () => {
-  it("a new account and a demo account never have buyer calls on", async () => {
+describe("buyer calls are on by default", () => {
+  it("a new account and a demo account have buyer calls on (Settings › Voice turns them off)", async () => {
     const p = parseCreateAccount({ tradeName: "Fresh", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "f@x.test" });
     if (!p.ok) throw new Error();
     const fresh = (await createAccount(db, { userId: me.id, actingAs: false }, p.value)).account;
-    expect(fresh.voiceBuyerCalls).toBe(false);
+    expect(fresh.voiceBuyerCalls).toBe(true);
     const [admin] = await db.insert(users).values({ clerkId: "sa", email: "sa@p.test", firstName: "Sam", role: "super_admin" }).returning();
     const { createDemoAccount } = await import("@/lib/demo/seed");
     const demo = await createDemoAccount(db, { id: admin.id, role: "super_admin" }, { ownerEmail: "demo-owner@x.test" });
     if (!demo.ok) throw new Error("demo");
     const [row] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, demo.summary.accountId));
-    expect(row.voiceBuyerCalls).toBe(false);
+    expect(row.voiceBuyerCalls).toBe(true);
   });
 });
 
@@ -483,9 +483,9 @@ describe("the buyer sees state words only", () => {
     const off = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(off).not.toContain("Switch to voice");
     // A simulated chat with a gate off: the button stays, disabled, and says why under the composer.
-    const why = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00" } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+    const why = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, reason: "not_english" } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(why).toContain('aria-disabled="true"');
-    expect(why).toContain("Outside contact hours (\u2068Sun–Thu 08:30–20:00\u2069).");
+    expect(why).toContain("Voice works in English chats only for now.");
     const voiceOff = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" />);
     expect(voiceOff).not.toContain("Switch to voice");
   });

@@ -29,8 +29,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   if (link.state === "expired") return json({ ok: false, reason: "expired" }, 410);
   const r = await startBuyerVoiceCall(appDb, link.ctx, token, { deadlineSec: deploymentCallLimitSec() });
   if (!r.ok) {
-    const shown = r.gate ? buyerVoiceState({ ok: false, reason: r.gate, hours: r.hours }, link.ctx.lead) : null;
-    return json({ ok: false, reason: r.reason, ...(shown?.reason ? { gate: shown.reason, hours: shown.hours } : {}) }, r.reason === "rate_limited" ? 429 : 409);
+    const shown = r.gate ? buyerVoiceState({ ok: false, reason: r.gate }, link.ctx.lead) : null;
+    return json({ ok: false, reason: r.reason, ...(shown?.reason ? { gate: shown.reason } : {}) }, r.reason === "rate_limited" ? 429 : 409);
   }
   return json({ ok: true, sessionId: r.sessionId, ticket: r.ticket, mode: r.mode, maxSec: r.maxSec, firstInConversation: r.firstInConversation, wsUrl: voiceSocketUrlFrom(req.headers) });
 }

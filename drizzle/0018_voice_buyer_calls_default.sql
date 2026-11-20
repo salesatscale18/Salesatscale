@@ -1,0 +1,1 @@
+ALTER TABLE "seller_accounts" ALTER COLUMN "voice_buyer_calls" SET DEFAULT true;

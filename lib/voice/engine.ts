@@ -100,7 +100,8 @@ export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "
 
 type Loaded = { session: VoiceSession; conv: Conversation; lead: Lead; version: AgentVersion; account: SellerAccount };
 
-const CALL_ENDED_TEXT = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+/** The engine's closing system note, "Voice call ended · m:ss" (exported for the demo seeds). */
+export const CALL_ENDED_TEXT = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
 export class VoiceEngine {
   private readonly db: Db;

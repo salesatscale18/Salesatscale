@@ -4,11 +4,12 @@
  * Server-only.
  *
  * "Switch to voice" is offered only when every gate holds: voice is on; the account
- * lets buyers call (`voiceBuyerCalls`) and is live; it is inside the contact
- * hours of the lead's market; under the spend cap and the platform budget
+ * lets buyers call (`voiceBuyerCalls`, on by default) and is live; under the
+ * spend cap and the platform budget
  * (live mode); the chat's conversation is open and held by the agent (not a
  * person, not closed, the buyer not opted out); and it is in English (calls
- * are English only). A real buyer never sees why it is not there; on a
+ * are English only). Contact hours do not apply: a buyer can chat or talk at
+ * any hour (they limit only what the agent starts). A real buyer never sees why it is not there; on a
  * simulated chat (the seller's own test link) the button shows disabled with
  * the reason (buyerVoiceReason), so the tester can fix it.
  *
@@ -19,9 +20,7 @@ import { and, asc, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm
 import type { Db } from "@/db/types";
 import { agentVersions, consentRecords, conversations, leads, sellerAccounts, voiceSessions, type Conversation } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
-import { isWithinContactHours, summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
-import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import type { ChatContext } from "@/lib/simulator/service";
@@ -32,16 +31,15 @@ import { maxCallSeconds, voiceMode } from "./settings";
 export const BUYER_CALLS_PER_HOUR = 6;
 
 export type BuyerVoiceBlock =
-  | "voice_off" | "buyer_calls_off" | "account_not_live" | "outside_hours" | "spend_cap" | "platform_budget"
+  | "voice_off" | "buyer_calls_off" | "account_not_live" | "spend_cap" | "platform_budget"
   | "no_conversation" | "not_agent" | "opted_out" | "not_english";
 
 export type BuyerVoiceGate =
   | { ok: true; conversation: Conversation; consented: boolean }
-  /** `hours`: the contact hours as text, when the reason is outside_hours. */
-  | { ok: false; reason: BuyerVoiceBlock; hours?: string };
+  | { ok: false; reason: BuyerVoiceBlock };
 
 /** Reasons a tester on a simulated chat is shown (the others hide the button: no chat yet, the buyer opted out, voice off). */
-export const SHOWN_BLOCKS: ReadonlySet<BuyerVoiceBlock> = new Set(["buyer_calls_off", "account_not_live", "outside_hours", "spend_cap", "platform_budget", "not_agent", "not_english"]);
+export const SHOWN_BLOCKS: ReadonlySet<BuyerVoiceBlock> = new Set(["buyer_calls_off", "account_not_live", "spend_cap", "platform_budget", "not_agent", "not_english"]);
 
 /** English, whatever the case or region ("en", "EN", "en-US", "en_GB"). */
 export const isEnglish = (lang: string | null | undefined) => (lang ?? "").trim().toLowerCase().split(/[-_]/)[0] === "en";
@@ -107,9 +105,8 @@ export async function buyerVoiceGate(db: Db, ctx: Pick<ChatContext, "lead" | "ac
   if (!conversation) return { ok: false, reason: "no_conversation" };
   if (conversation.status !== "open") return { ok: false, reason: "not_agent" };
   if (!isEnglish(conversation.language)) return { ok: false, reason: "not_english" };
-  // The lead's market hours in its time zone, as the agreed follow-ups use them (lib/follow-ups/scheduler.ts).
-  const contact = await leadContactSettings(db, account, lead.marketId);
-  if (!isWithinContactHours(contact.contactHours, contact.timezone, now)) return { ok: false, reason: "outside_hours", hours: summarizeContactHours(contact.contactHours) };
+  // No contact-hours gate: contact hours limit only when the agent contacts the buyer (openers, follow-ups,
+  // callback times it proposes). A buyer can chat or talk at any hour (owner decision).
   if (mode === "live") {
     if (await spendCapped(db, account.id, now)) return { ok: false, reason: "spend_cap" };
     if ((await platformBudget(db, now)).exceeded) return { ok: false, reason: "platform_budget" };
@@ -121,7 +118,7 @@ export type StartBuyerCallResult =
   /** `firstInConversation`: the buyer's first switch to voice in this conversation (the bar shows the transcript note). */
   | { ok: true; conversationId: string; sessionId: string; ticket: string; mode: "scripted" | "live"; maxSec: number; firstInConversation: boolean }
   /** A gate failed (`gate`: why, for a simulated chat's tester), or too many calls, or one is already running. */
-  | { ok: false; reason: "unavailable" | "rate_limited" | "already_in_call"; gate?: BuyerVoiceBlock; hours?: string };
+  | { ok: false; reason: "unavailable" | "rate_limited" | "already_in_call"; gate?: BuyerVoiceBlock };
 
 /**
  * Starts a buyer call on the chat's conversation: a switch from text to voice,
@@ -135,7 +132,7 @@ export async function startBuyerVoiceCall(
 ): Promise<StartBuyerCallResult> {
   const now = opts.now ?? new Date();
   const gate = await buyerVoiceGate(db, ctx, { now, env: opts.env });
-  if (!gate.ok) return { ok: false, reason: "unavailable", gate: gate.reason, ...(gate.hours ? { hours: gate.hours } : {}) };
+  if (!gate.ok) return { ok: false, reason: "unavailable", gate: gate.reason };
   if (!(await rateLimit(db, `voice-buyer:${hashKey(token)}`, { limit: BUYER_CALLS_PER_HOUR, windowSeconds: 3600 }, now)).ok) return { ok: false, reason: "rate_limited" };
   if (!gate.consented) await recordVoiceConsent(db, ctx.account.id, ctx.lead.id, now);
   // The first switch in this conversation: no earlier call that connected.
@@ -152,13 +149,13 @@ export async function startBuyerVoiceCall(
 }
 
 /** What the chat page gets about voice: available, or (simulated chats only) why not. */
-export type BuyerVoiceState = { available: boolean; reason?: BuyerVoiceBlock; hours?: string };
+export type BuyerVoiceState = { available: boolean; reason?: BuyerVoiceBlock };
 
 /** The page's voice state from a gate: reasons only for a simulated chat (a real buyer just sees no button). */
 export function buyerVoiceState(gate: BuyerVoiceGate, lead: Parameters<typeof isSimulatedLead>[0]): BuyerVoiceState {
   if (gate.ok) return { available: true };
   if (!isSimulatedLead(lead) || !SHOWN_BLOCKS.has(gate.reason)) return { available: false };
-  return { available: false, reason: gate.reason, ...(gate.hours ? { hours: gate.hours } : {}) };
+  return { available: false, reason: gate.reason };
 }
 
 /**
