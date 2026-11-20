@@ -133,3 +133,14 @@
   .c-voice .sas-rb--back .sas-rb__text { display: inline; }
   .c-voice .sas-rb--back { width: auto; padding-inline: 12px; }
 }
+/* The voice bubble's dock (components/sas/voice/voice-bubble.tsx): zero height between the messages and the
+   composer, so the bubble sits at the bottom-end of the messages, just above the composer, and never covers Send. */
+.c-bubble-dock { position: relative; height: 0; flex: none; z-index: 3; }
+/* Once the call is live the bubble holds the controls (Mute, Speaker, Back to text) and the composer keeps Back to text:
+   the bar above the chat becomes a slim status strip (waveform, state word, clock, Voice mode). It is the full bar while
+   connecting, at the microphone prompt, on an error, reconnecting and after the call. The chat is a phone-sized frame on
+   every screen, so this holds on desktop too. */
+.c-voice[data-voice-phase="live"] .sas-vbar__controls, .c-voice[data-voice-phase="live"] .sas-vbar__sub { display: none; }
+.c-root .c-voice[data-voice-phase="live"].sas-app { padding-block: 6px 4px; }
+.c-root .c-voice[data-voice-phase="live"] .sas-vbar { padding-block: 6px; min-height: 0; }
+.c-voice[data-voice-phase="live"] .c-voice__meta { margin-block-start: 2px; }

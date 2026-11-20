@@ -1,0 +1,66 @@
+/* The voice bubble (components/sas/voice/voice-bubble.tsx) on the buyer pages: the chat and the order form.
+   Seller-branded via --brand (both pages set it); logical properties only, so Hebrew mirrors. */
+.vb { --vb-size: 56px; --vb-brand: var(--brand, #0f6b5a); --vb-on: var(--brand-on, #fff); --vb-ink: var(--ink, #0f1420);
+  --vb-muted: var(--muted, #566073); --vb-line: var(--line, #dde1e8);
+  z-index: 30; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none;
+  font-family: inherit; font-size: 14px; line-height: 20px; color: var(--vb-ink); }
+.vb > * { pointer-events: auto; }
+/* In the chat: bottom-end of the messages, just above the composer (the dock sits between them). */
+.vb--dock { position: absolute; inset-block-end: 12px; inset-inline-end: max(12px, env(safe-area-inset-right)); }
+/* On the order form: the page's bottom-end corner, clear of the home indicator. */
+.vb--fixed { position: fixed; inset-block-end: calc(16px + env(safe-area-inset-bottom)); inset-inline-end: calc(16px + env(safe-area-inset-right)); }
+.vb[dir="rtl"].vb--fixed { inset-inline-end: calc(16px + env(safe-area-inset-left)); }
+
+.vb-btn { position: relative; width: var(--vb-size); height: var(--vb-size); border-radius: 999px; border: 0; padding: 0; cursor: pointer;
+  background: var(--vb-brand); color: var(--vb-on); display: grid; place-items: center;
+  box-shadow: 0 6px 18px rgba(15, 20, 32, .22), 0 1px 3px rgba(15, 20, 32, .18); }
+.vb-btn:focus-visible { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 3px; }
+/* The agent speaks: a soft ring breathes around the bubble. */
+.vb--speaking .vb-btn::after { content: ""; position: absolute; inset: -6px; border-radius: 999px; border: 2px solid var(--vb-brand); opacity: .45;
+  animation: vb-ring 1.4s ease-out infinite; }
+@keyframes vb-ring { from { transform: scale(.92); opacity: .55; } to { transform: scale(1.12); opacity: 0; } }
+.vb--ended .vb-btn { background: var(--vb-muted); cursor: default; }
+.vb--muted .vb-btn { background: var(--vb-ink); }
+.vb-btn__muted { position: absolute; inset-block-start: -2px; inset-inline-end: -2px; width: 20px; height: 20px; border-radius: 999px; background: #fff;
+  color: var(--danger, #c0392b); display: grid; place-items: center; box-shadow: 0 1px 3px rgba(15, 20, 32, .25); }
+.vb-btn__muted .sas-ico, .vb-btn__muted svg { width: 12px; height: 12px; }
+
+.vb-wave { display: flex; align-items: center; gap: 3px; height: 26px; }
+.vb-wave i { display: block; width: 4px; border-radius: 2px; background: currentColor; transition: height 80ms linear; }
+.vb-wave--flat i { height: 4px !important; opacity: .8; }
+.vb-wave--pulse i { animation: vb-pulse 1.1s ease-in-out infinite; }
+@keyframes vb-pulse { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .vb-wave--pulse i, .vb--speaking .vb-btn::after { animation: none; }
+  .vb-wave i { transition: none; }
+}
+
+.vb-menu { min-width: 216px; max-width: min(280px, calc(100vw - 32px)); background: #fff; border: 1px solid var(--vb-line); border-radius: 14px; padding: 6px;
+  box-shadow: 0 12px 32px rgba(15, 20, 32, .2); display: flex; flex-direction: column; gap: 2px; }
+.vb-menu__state { margin: 0; padding: 8px 10px 6px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
+.vb-menu__left { color: var(--vb-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.vb-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent;
+  font: inherit; color: var(--vb-ink); text-align: start; cursor: pointer; width: 100%; }
+.vb-item:hover:not(:disabled), .vb-item:focus-visible { background: var(--soft, #f2f4f3); outline: none; }
+.vb-item:focus-visible { box-shadow: inset 0 0 0 2px var(--focus, #2b6cb0); }
+.vb-item:disabled { color: var(--vb-muted); cursor: default; }
+.vb-item .sas-ico, .vb-item > svg { width: 18px; height: 18px; flex: none; }
+.vb-item--end { color: var(--vb-ink); font-weight: 600; border-block-start: 1px solid var(--vb-line); border-radius: 0 0 10px 10px; margin-block-start: 2px; }
+.vb-group { display: flex; flex-direction: column; border-block-start: 1px solid var(--vb-line); padding-block-start: 4px; margin-block-start: 2px; }
+.vb-group__title { padding: 4px 10px 2px; font-size: 12px; color: var(--vb-muted); font-weight: 600; }
+.vb-item--radio { min-height: 40px; }
+.vb-radio { width: 16px; height: 16px; border-radius: 999px; border: 2px solid var(--vb-line); flex: none; box-sizing: border-box; }
+.vb-item--radio[aria-checked="true"] .vb-radio { border: 5px solid var(--vb-brand); }
+
+/* The agent's line on the order form: one line next to the bubble; tap for the whole line. */
+.vb-caption { max-width: min(320px, calc(100vw - 32px)); border: 0; border-radius: 14px 14px 4px 14px; padding: 8px 12px; background: var(--vb-ink); color: #fff;
+  font: inherit; font-size: 13px; line-height: 18px; text-align: start; cursor: pointer; box-shadow: 0 6px 18px rgba(15, 20, 32, .2); }
+.vb[dir="rtl"] .vb-caption { border-radius: 14px 14px 14px 4px; }
+.vb-caption span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.vb-caption--open span { white-space: normal; }
+.vb-caption:focus-visible { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 2px; }
+
+.vb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media print { .vb { display: none; } }
+/* The order form keeps room at the bottom so the bubble never covers its last button. */
+.b-root:has(.vb--fixed) .b-page { padding-block-end: calc(88px + env(safe-area-inset-bottom)); }

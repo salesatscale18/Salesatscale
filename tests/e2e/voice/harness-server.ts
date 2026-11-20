@@ -29,6 +29,8 @@ import { DEFAULT_VOICE_MODEL, maxCallSeconds, resolveVoiceSettings, voiceCapabil
 import { createTestDb } from "../../helpers/db";
 import { seedCatalog, seedPricing } from "../../helpers/pricing";
 import { attachVoiceSockets } from "../../../scripts/voice-ws";
+import { ScriptedRealtime } from "@/lib/voice/scripted-realtime";
+import { voiceTabKey } from "@/lib/voice/tab-key";
 
 const ROOT = path.resolve(__dirname, "../../..");
 /** The only mode the harness runs. */
@@ -74,6 +76,10 @@ const BUYER_HTML = `<!doctype html><html lang="en" dir="ltr"><head><meta charset
 <title>Buyer chat harness</title><link rel="stylesheet" href="/buyer.css"><style>body{margin:0}</style></head>
 <body><div id="root"></div><script type="module" src="/buyer.js"></script></body></html>`;
 
+const FORM_HTML = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Order form harness</title><link rel="stylesheet" href="/form.css"><style>body{margin:0}</style></head>
+<body><div id="root"></div><script type="module" src="/form.js"></script></body></html>`;
+
 const HTML = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voice harness</title><link rel="stylesheet" href="/sas.css"><style>${HARNESS_CSS}</style></head>
 <body><div id="root"></div><script type="module" src="/harness.js"></script></body></html>`;
@@ -112,7 +118,12 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
 
   const { js } = await bundlePage();
   const buyerBundle = await bundlePage("buyer-page.tsx");
+  const formBundle = await bundlePage("form-page.tsx");
   const chatCss = fs.readFileSync(path.join(ROOT, "app/chat/[token]/chat.css"), "utf8");
+  const bubbleCss = fs.readFileSync(path.join(ROOT, "components/sas/voice/voice-bubble.css"), "utf8");
+  const formCss = fs.readFileSync(path.join(ROOT, "app/f/[token]/buyer.css"), "utf8");
+  // Each call's scripted model, so /api/notes can show what the model was told (the order form's step).
+  const models: ScriptedRealtime[] = [];
   // Buyers (release 2): an English chat, and a Hebrew page whose conversation is in English (the call bar in RTL).
   const ALWAYS = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
   let gateEnv: Record<string, string | undefined> = ENV;
@@ -143,7 +154,25 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       if (req.method === "GET" && url.pathname === "/sas.css") return send(200, "text/css; charset=utf-8", css);
       if (req.method === "GET" && url.pathname === "/buyer") return send(200, "text/html; charset=utf-8", BUYER_HTML);
       if (req.method === "GET" && url.pathname === "/buyer.js") return send(200, "text/javascript; charset=utf-8", buyerBundle.js);
-      if (req.method === "GET" && url.pathname === "/buyer.css") return send(200, "text/css; charset=utf-8", `${css}\n${chatCss}\n${buyerBundle.css}`);
+      if (req.method === "GET" && url.pathname === "/buyer.css") return send(200, "text/css; charset=utf-8", `${css}\n${chatCss}\n${bubbleCss}\n${buyerBundle.css}`);
+      if (req.method === "GET" && url.pathname === "/form") return send(200, "text/html; charset=utf-8", FORM_HTML);
+      if (req.method === "GET" && url.pathname === "/form.js") return send(200, "text/javascript; charset=utf-8", formBundle.js);
+      if (req.method === "GET" && url.pathname === "/form.css") return send(200, "text/css; charset=utf-8", `${formCss}\n${bubbleCss}\n${formBundle.css}`);
+      if (req.method === "GET" && url.pathname === "/api/form-config") {
+        // The order form tab of a buyer's conversation: the same key the chat page gets (lib/voice/tab-key.ts).
+        const lang = url.searchParams.get("lang") === "he" ? "he" : "en";
+        const link = await resolveChatLink(db, buyers[lang].token);
+        if (!link) return send(404, "application/json", "{}");
+        const names = await chatNames(db, link.ctx.account, lang);
+        return send(200, "application/json", JSON.stringify({
+          lang, tabKey: voiceTabKey(buyers[lang].conversationId), agentName: (await chatNames(db, link.ctx.account, "en")).agent, seller: names.seller,
+          rootStyle: brandVars(link.ctx.brandColor),
+        }));
+      }
+      if (req.method === "GET" && url.pathname === "/api/notes") {
+        // What the last call's model was told about the order form (notes it does not answer).
+        return send(200, "application/json", JSON.stringify(models.at(-1)?.connections.flatMap((c) => c.notes) ?? []));
+      }
       if (req.method === "POST" && url.pathname === "/api/buyer-gate") {
         // Harness only: turn one gate off (or reset all) to show why the button is disabled on a simulated chat.
         const which = url.searchParams.get("off") ?? "";
@@ -175,7 +204,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         return send(200, "application/json", JSON.stringify({
           token: buyers[lang].token, lang, seller: names.seller, initials: names.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
           strings: chatStrings(tr, names, lang), initial: chat, timeZone: "Asia/Jerusalem",
-          voice: { agentName: (await chatNames(db, ctx.account, "en")).agent, gender: names.gender },
+          voice: { agentName: (await chatNames(db, ctx.account, "en")).agent, gender: names.gender, tabKey: voiceTabKey(buyers[lang].conversationId) },
           rootStyle: { ...brandVars(ctx.brandColor), "--bubble": buyerBubbleColor(ctx.brandColor) },
         }));
       }
@@ -240,7 +269,11 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       res.writeHead(500).end(String(e));
     }
   });
-  attachVoiceSockets(server, { db, env: ENV, deadlineSec: CAP });
+  attachVoiceSockets(server, { db, env: ENV, deadlineSec: CAP, makeModel: () => {
+    const m = new ScriptedRealtime();
+    models.push(m);
+    return m;
+  } });
   await new Promise<void>((r) => server.listen(o.port ?? 0, "127.0.0.1", r));
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : o.port;

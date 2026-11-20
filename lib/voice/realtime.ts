@@ -54,6 +54,8 @@ export interface RealtimeConnection {
   sendToolResult(callId: string, name: string, result: unknown): void;
   /** Make the model speak now (the opener, the limit announcement), optionally with a one-off instruction. */
   requestResponse(instructions?: string): void;
+  /** A note from the app the model reads but does not answer (no response is requested): the order form's step. */
+  sendNote?(note: string): void;
   /** Closes the provider socket. Safe to call more than once. */
   close(): void;
 }

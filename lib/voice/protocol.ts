@@ -15,6 +15,11 @@ export const VOICE_SAMPLE_RATE = 24_000;
 export const MAX_CLIENT_AUDIO_BYTES = VOICE_SAMPLE_RATE * 2;
 /** Longest text a caller may type during a call (like a chat message). */
 export const MAX_CLIENT_TEXT = 4000;
+/** Largest `context` frame (JSON text): a step id and a short label, never form values. */
+export const MAX_CONTEXT_FRAME = 400;
+/** The order form events a context message reports (lib/voice/form-context.ts). */
+export const FORM_CONTEXT_EVENTS = ["opened", "step", "submitted"] as const;
+export type FormContextEvent = (typeof FORM_CONTEXT_EVENTS)[number];
 
 // ---------------------------------------------------------------------------
 // Browser → relay
@@ -26,7 +31,12 @@ export type ClientMessage =
   /** Text typed during the call: used verbatim as the buyer's turn. */
   | { t: "text"; text: string }
   | { t: "end" }
-  | { t: "ping" };
+  | { t: "ping" }
+  /**
+   * The order form open in another tab of the buyer's browser (relayed by the chat tab): which step it shows.
+   * `step` is a fixed id, `label` the step's name as the page shows it; never what the buyer typed.
+   */
+  | { t: "context"; kind: "order_form"; step: string; label: string; event: FormContextEvent };
 
 /** A text frame from the browser as a message, or null when it is not one (untrusted input). */
 export function parseClientMessage(raw: unknown): ClientMessage | null {
@@ -53,9 +63,21 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
       const text = o.text.trim();
       return text && text.length <= MAX_CLIENT_TEXT ? { t: "text", text } : null;
     }
+    case "context":
+      return parseContext(o, typeof raw === "string" ? raw.length : JSON.stringify(o).length);
     default:
       return null;
   }
+}
+
+/** A context message: a known kind and event, a step id of [a-z0-9_] (≤ 32), a one-line label (≤ 80), the whole frame ≤ MAX_CONTEXT_FRAME. */
+function parseContext(o: Record<string, unknown>, size: number): ClientMessage | null {
+  if (size > MAX_CONTEXT_FRAME || o.kind !== "order_form") return null;
+  if (typeof o.step !== "string" || !/^[a-z0-9_]{1,32}$/.test(o.step)) return null;
+  if (typeof o.label !== "string" || !(FORM_CONTEXT_EVENTS as readonly unknown[]).includes(o.event)) return null;
+  const label = o.label.replace(/[\u0000-\u001f\u007f]+/g, " ").replace(/\s+/g, " ").trim();
+  if (label.length > 80) return null;
+  return { t: "context", kind: "order_form", step: o.step, label, event: o.event as FormContextEvent };
 }
 
 /**

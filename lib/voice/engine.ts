@@ -30,6 +30,7 @@ import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
 import { maxCallSeconds, resolveVoiceSettings, turnTakingFor } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./tool-schema";
+import { FormContextNotes } from "./form-context";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -189,7 +190,19 @@ export class VoiceEngine {
         return;
       case "ping":
         return;
+      case "context":
+        this.onFormContext(msg);
+        return;
     }
+  }
+
+  /** The order form open in another tab (lib/voice/form-context.ts): a quiet note to the model, throttled, never answered aloud. */
+  private formNotes: FormContextNotes | null = null;
+  private onFormContext(msg: Extract<import("./protocol").ClientMessage, { t: "context" }>): void {
+    this.formNotes ??= new FormContextNotes(this.clock, (note) => {
+      if (!this.ended && !this.reconnecting) this.conn?.sendNote?.(note);
+    });
+    this.formNotes.push({ step: msg.step, event: msg.event });
   }
 
   onClientAudio(bytes: Uint8Array): void {

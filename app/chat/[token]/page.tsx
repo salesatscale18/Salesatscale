@@ -8,11 +8,13 @@ import { ChatClient } from "./chat-client";
 import { chatStrings } from "./strings";
 import { getMarket } from "@/lib/markets/service";
 import { marketTimezone } from "@/lib/markets/settings";
-import { buyerVoiceGate, buyerVoiceView } from "@/lib/voice/buyer";
+import { buyerConversation, buyerVoiceGate, buyerVoiceView } from "@/lib/voice/buyer";
+import { voiceTabKey } from "@/lib/voice/tab-key";
 import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { voiceMode } from "@/lib/voice/settings";
 // The call bar is the design system's component (components/sas/voice): its styles and tokens.
 import "@/components/sas/sas.css";
+import "@/components/sas/voice/voice-bubble.css";
 import "./chat.css";
 
 export const dynamic = "force-dynamic";
@@ -57,6 +59,9 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
   const chat = await buyerChat(appDb, ctx);
   // "Talk to us" (live voice): every gate on the server; the page only shows the button when they all hold.
   const voiceOn = voiceMode() !== "off";
+  // The voice bubble's link to an order form tab of this conversation: a name only the server can make.
+  const conv = voiceOn ? await buyerConversation(appDb, ctx) : null;
+  const tabKey = conv ? voiceTabKey(conv.id) : null;
   if (voiceOn) {
     const gate = await buyerVoiceGate(appDb, ctx);
     // The reason it is off: a simulated chat, or a viewer signed in as the seller's staff or a platform admin.
@@ -72,7 +77,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
         token={token} lang={lang} seller={names.seller} initials={initials} strings={strings}
         initial={chat} timeZone={timeZone}
         // The call is English: the agent's English name, as it says it on the call.
-        voice={voiceOn ? { agentName: (await chatNames(appDb, ctx.account, "en")).agent, gender: names.gender } : null}
+        voice={voiceOn ? { agentName: (await chatNames(appDb, ctx.account, "en")).agent, gender: names.gender, tabKey } : null}
       />
     </div>
   );

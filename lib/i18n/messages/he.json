@@ -356,5 +356,13 @@
   "buyer.voice.why.not_agent": "אדם מהצוות מטפל בצ'אט הזה.",
   "buyer.voice.why.spend_cap": "הגעתם למגבלת ה-AI.",
   "buyer.voice.why.platform_budget": "הגעתם למגבלת ה-AI.",
-  "buyer.voice.why.account_not_live": "החשבון מושהה."
+  "buyer.voice.why.account_not_live": "החשבון מושהה.",
+  "buyer.voice.bubble.label": "שיחה קולית: {state}. פקדי השיחה",
+  "buyer.voice.bubble.menu": "פקדי השיחה",
+  "buyer.voice.bubble.speaker": "רמקול",
+  "buyer.voice.bubble.speaker_n": "רמקול {n}",
+  "buyer.voice.bubble.ended": "השיחה הסתיימה",
+  "buyer.voice.bubble.left": "נותרו {time}",
+  "buyer.voice.bubble.caption_more": "הצגת המשפט המלא",
+  "buyer.voice.bubble.caption_less": "הצגה מקוצרת"
 }

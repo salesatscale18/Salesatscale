@@ -10,7 +10,7 @@ import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
 import { callClock } from "@/lib/voice/lab";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
-import { BuyerCallBar } from "./voice";
+import { BuyerCallBar, ChatVoiceBubble } from "./voice";
 import { Icon } from "@/components/sas/icon";
 import type { BuyerVoiceState } from "@/lib/voice/buyer";
 
@@ -92,7 +92,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   /** The lead's market time zone: times and dates read as on the pay page and the seller's thread (R5-3). */
   timeZone?: string;
   /** Buyer calls (live voice): null while voice calls are off for the platform (nothing changes on the page). */
-  voice?: { agentName: string; gender: string } | null;
+  voice?: { agentName: string; gender: string; /** The voice bubble's tab link to this conversation's order form tabs (lib/voice/tab-key.ts). */ tabKey?: string | null } | null;
 }) {
   const [items, setItems] = useState<Shown[]>(initial.messages);
   const [cards, setCards] = useState(initial.cards ?? {});
@@ -417,6 +417,10 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
         {showTyping ? <div className="c-msg c-msg--in"><div className="c-bubble c-dots" role="status" aria-label={strings.typingLabel}><i /><i /><i /></div></div> : null}
       </div>
       <div className="c-sr" aria-live="polite">{announce}</div>
+      {voice && clientRef.current ? (
+        // The voice bubble, above the composer at the bottom-end; it also links an order form tab to this call.
+        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={showBar || inCall} />
+      ) : null}
       {notice ? <div className="c-notice" role="status" dir={dir}>{notice}</div> : null}
       {ended ? (
         <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{expired ? strings.expired : strings.ended}</div>

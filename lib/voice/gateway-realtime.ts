@@ -198,6 +198,8 @@ export const clientEvents = {
    * requested: `response-create` options.instructions is not known to reach
    * Gemini through the Gateway.
    */
+  /** A note the model reads with the conversation but does not answer: an item, and no response-create. */
+  note: (note: string): SdkClientEvent => ({ type: "conversation-item-create", item: { type: "text-message", role: "user", text: note } }),
   respond: (instructions?: string): SdkClientEvent[] => [
     ...(instructions ? [{ type: "conversation-item-create" as const, item: { type: "text-message" as const, role: "user" as const, text: `(Note from the system, not from the buyer: ${instructions})` } }] : []),
     { type: "response-create" },
@@ -299,6 +301,7 @@ export class GatewayRealtime implements RealtimeModel {
         sendAll(events);
       },
       requestResponse: (instructions) => sendAll(clientEvents.respond(instructions)),
+      sendNote: (note) => sendAll([clientEvents.note(note)]),
       close: () => {
         if (closedByUs) return;
         closedByUs = true;

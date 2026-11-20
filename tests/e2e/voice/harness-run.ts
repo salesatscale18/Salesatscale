@@ -75,6 +75,115 @@ async function newPage(browser: Browser, url: string, width = 1440, height = 900
   return page;
 }
 
+/**
+ * The voice bubble (step 2): a buyer call in the chat page and the order form in a second page (tab) of the same
+ * browser. The form's bubble appears, mirrors the call, mutes and ends it from there, its step reaches the model
+ * as a note, and the agent's line shows as a caption. Screenshots `bubble-…` (phone and desktop, English and Hebrew).
+ */
+async function bubbleSection(browser: Browser, base: string) {
+  console.log("voice bubble: the chat tab and an order form tab");
+  await fetch(`${base}/api/buyer-gate?off=`, { method: "POST" });
+  const shapes = [
+    { name: "desktop", w: 1440, hgt: 900, lang: "en" as const, full: true },
+    { name: "phone", w: 390, hgt: 844, lang: "en" as const, full: false },
+    { name: "phone-he", w: 390, hgt: 844, lang: "he" as const, full: false },
+    { name: "desktop-he", w: 1440, hgt: 900, lang: "he" as const, full: false },
+  ];
+  for (const sh of shapes) {
+    const chat = await newPage(browser, `${base}/buyer?lang=${sh.lang}`, sh.w, sh.hgt);
+    await chat.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 });
+    await chat.click("[data-voice-talk]");
+    const live = await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 }).then(() => true, () => false);
+    check(live, `${sh.name}: the bubble shows in the chat once the call is live`);
+    const box = await chat.locator("[data-bubble-button]").boundingBox();
+    const send = await chat.locator(".c-bar").boundingBox();
+    check(!!box && !!send && box.y + box.height <= send.y, `${sh.name}: the bubble sits above the composer`);
+    const endSide = sh.lang === "he" ? (box?.x ?? 999) < sh.w / 2 || sh.w > 600 : true;
+    check(endSide, `${sh.name}: bottom-end (left in Hebrew)`);
+    await chat.waitForTimeout(2500);
+    await shot(chat, `bubble-chat-${sh.name}`);
+    await chat.click("[data-bubble-button]");
+    check(await chat.locator("[data-bubble-menu]").isVisible(), `${sh.name}: tapping the bubble opens the call controls`);
+    check((await chat.locator("[data-bubble-end]").textContent())?.includes(sh.lang === "he" ? "חזרה לטקסט" : "Back to text") ?? false, `${sh.name}: Back to text in the menu`);
+    check((await chat.locator("[data-bubble-speaker]").count()) === 0, `${sh.name}: no Speaker item where the client offers no choice`);
+    await shot(chat, `bubble-chat-menu-${sh.name}`);
+    await chat.keyboard.press("Escape");
+
+    // The order form in a second tab of the same browser.
+    const form = await chat.context().newPage();
+    form.on("pageerror", (e) => console.log("        form page error:", e.message));
+    await form.goto(`${base}/form?lang=${sh.lang}&step=order`);
+    const mirrored = await form.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 10_000 }).then(() => true, () => false);
+    check(mirrored, `${sh.name}: the form tab shows the same bubble, mirroring the call`);
+    const caption = await form.waitForSelector("[data-bubble-caption]", { timeout: 30_000 }).then(() => true, () => false);
+    check(caption, `${sh.name}: the agent's line shows as a caption on the form`);
+    await shot(form, `bubble-form-caption-${sh.name}`);
+    if (sh.full) {
+      // Expand the caption, then the controls from the form tab: mute, unmute.
+      await form.click("[data-bubble-caption]");
+      check((await form.getAttribute("[data-bubble-caption]", "aria-expanded")) === "true", `${sh.name}: tapping the caption expands the line`);
+      await form.click("[data-bubble-button]");
+      await form.click("[data-bubble-mute]");
+      check(await chat.waitForSelector("[data-voice-bubble][data-bubble-muted]", { timeout: 5000 }).then(() => true, () => false), "Mute from the form tab mutes the call in the chat tab");
+      check(await form.waitForSelector("[data-voice-bubble][data-bubble-muted]", { timeout: 5000 }).then(() => true, () => false), "the form bubble shows muted");
+      await form.click("[data-bubble-mute]");
+      check(await chat.waitForSelector("[data-voice-bubble]:not([data-bubble-muted])", { timeout: 5000 }).then(() => true, () => false), "Unmute from the form tab");
+      await form.keyboard.press("Escape");
+      // The step note reaches the model (the scripted model records notes).
+      const notes = async () => (await (await fetch(`${base}/api/notes`)).json()) as string[];
+      await form.waitForTimeout(500);
+      check((await notes()).some((n) => n.includes("opened the order form, on step: Your order")), "the model got a note: the form opened, on Your order");
+      await form.click("[data-form-next]");
+      await form.waitForSelector('[data-order-step="company"]');
+      check(await form.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 10_000 }).then(() => true, () => false), "the bubble comes back after a step (a new page load)");
+      await form.waitForTimeout(6000);
+      const all = await notes();
+      check(all.some((n) => n.includes("on step: Company details")), "the model got a note: on Company details");
+      check(!all.some((n) => /Cohen Shop Ltd|Dizengoff/.test(n)), "no form values in the notes");
+      console.log(`        notes: ${all.length}`);
+    }
+    await form.click("[data-bubble-button]");
+    check(await form.locator("[data-bubble-menu]").isVisible(), `${sh.name}: the form bubble opens the same controls`);
+    await shot(form, `bubble-form-menu-${sh.name}`);
+    if (sh.full) {
+      await form.click("[data-bubble-end]");
+      check(await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), "Back to text from the form tab ends the call in the chat tab");
+      check(await form.waitForSelector('[data-voice-bubble][data-bubble-phase="ended"]', { timeout: 5000 }).then(() => true, () => false), "the form bubble says the call ended");
+      await shot(form, `bubble-form-ended-${sh.name}`);
+      check(await form.waitForSelector("[data-voice-bubble]", { state: "detached", timeout: 10_000 }).then(() => true, () => false), "then it goes");
+    } else {
+      await form.keyboard.press("Escape");
+      await chat.bringToFront();
+      await chat.click("[data-voice-back]");
+      await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
+    }
+    // The chat tab closes during a call: the form bubble goes (gone, then hidden).
+    await chat.context().close();
+  }
+  // A form opened with no call in the chat tab: no bubble at all.
+  {
+    const page = await newPage(browser, `${base}/form?lang=en&step=company`, 390, 844);
+    await page.waitForTimeout(2500);
+    check((await page.locator("[data-voice-bubble]").count()) === 0 && (await page.locator('[data-voice-form-link="none"]').count()) === 1, "no call in a chat tab: the form shows no bubble");
+    await shot(page, "bubble-form-no-call-phone");
+    await page.context().close();
+  }
+  // The chat tab goes away mid-call: the form's bubble follows.
+  {
+    const chat = await newPage(browser, `${base}/buyer?lang=en`, 390, 844);
+    await chat.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 });
+    await chat.click("[data-voice-talk]");
+    await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 });
+    const form = await chat.context().newPage();
+    await form.goto(`${base}/form?lang=en&step=sign`);
+    await form.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 10_000 });
+    await chat.close();
+    check(await form.waitForSelector('[data-voice-bubble][data-bubble-phase="ended"]', { timeout: 6000 }).then(() => true, () => false), "the chat tab closes: the form bubble shows the call ended");
+    check(await form.waitForSelector("[data-voice-bubble]", { state: "detached", timeout: 10_000 }).then(() => true, () => false), "and then goes");
+    await form.context().close();
+  }
+}
+
 async function main() {
   const h = await startVoiceHarness();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "voice-harness-"));
@@ -84,6 +193,8 @@ async function main() {
     args: ["--use-fake-ui-for-media-stream", "--use-fake-device-for-media-stream", `--use-file-for-fake-audio-capture=${wav}`, "--autoplay-policy=no-user-gesture-required"],
   });
   try {
+    // The existing sections first: they check the buyer's first switch in a fresh conversation.
+    if (process.env.VOICE_ONLY !== "bubble") {
     // ---------------------------------------------------------------- states
     console.log("call bar states");
     {
@@ -307,8 +418,16 @@ async function main() {
       }
       await gateOff("");
     }
+    }
+    await bubbleSection(browser, h.url);
   } finally {
     await browser.close();
+  }
+  if (process.env.VOICE_ONLY === "bubble") {
+    await h.close();
+    fs.rmSync(tmp, { recursive: true, force: true });
+    console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");
+    process.exit(failures ? 1 : 0);
   }
 
   // ------------------------------------------------------------ mic blocked

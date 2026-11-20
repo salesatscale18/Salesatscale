@@ -578,6 +578,12 @@ export class ScriptedConnection implements RealtimeConnection {
     this.wake();
   }
 
+  /** Notes from the app (the order form's step): recorded, never answered (tests and the harness read them). */
+  readonly notes: string[] = [];
+  sendNote(note: string): void {
+    if (!this.closed) this.notes.push(note);
+  }
+
   close(): void {
     this.closeCalls++;
     if (this.closed) return;
