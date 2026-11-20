@@ -7,7 +7,7 @@ import { QuoteCard } from "@/components/sas/quote-card";
 import { replyButtonsAfter } from "@/lib/agent/quote-replies";
 import { translator, type Locale } from "@/lib/i18n";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
-import { CALL_PHASES, callLength } from "@/lib/voice/client/buyer-ui";
+import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
 import { callClock } from "@/lib/voice/lab";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { BuyerCallBar, VoiceSheet } from "./voice";
@@ -109,6 +109,11 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   if (voice && !clientRef.current && typeof window !== "undefined") clientRef.current = new VoiceClient();
   const callSnap = useVoiceSnapshot(clientRef.current);
   const inCall = CALL_PHASES.has(callSnap.phase);
+  // The call's phase as of now (quick-reply handlers may be older than the last render).
+  const phaseRef = useRef(callSnap.phase);
+  phaseRef.current = callSnap.phase;
+  /** Text sent while a call was starting: waits for it (see send). */
+  const queued = useRef<{ id: string; text: string }[]>([]);
   const tr = translator((lang === "he" ? "he" : "en") as Locale);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -170,22 +175,10 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
   };
 
-  /** Sends the draft, or a reply button's text (a normal buyer message: the agent answers as if it was typed). */
-  const send = async (quick?: string) => {
-    const text = (quick ?? draft).trim();
-    if (!text || ended) return;
-    // During a call, what the buyer types goes into the call (the agent answers by voice; stored once, by the call).
-    if (inCall && clientRef.current) {
-      if (callSnap.phase === "live" && clientRef.current.sendText(text)) {
-        if (quick === undefined) setDraft("");
-        requestAnimationFrame(grow);
-      }
-      return;
-    }
+  /** A normal chat message (the agent answers in the chat). */
+  const chatSend = async (text: string) => {
     const clientId = crypto.randomUUID();
-    if (quick === undefined) setDraft("");
     setNotice(null);
-    requestAnimationFrame(grow);
     setItems((cur) => [...cur, { id: clientId, from: "buyer", body: text, at: new Date().toISOString(), status: null, name: null, previews: [], pending: "sending" }]);
     let reason: string | null = null;
     try {
@@ -205,6 +198,45 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     }
     void poll();
   };
+
+  /**
+   * Sends the draft, or a reply button's text: every send on the page goes
+   * through here. During a call it goes into the call as a typed buyer turn
+   * (the agent answers by voice; the call stores it once); while the call is
+   * still starting it waits and goes into the call once live, or into the chat
+   * if the call never starts (routeBuyerText).
+   */
+  const send = async (quick?: string) => {
+    const text = (quick ?? draft).trim();
+    if (!text || ended) return;
+    if (quick === undefined) setDraft("");
+    requestAnimationFrame(grow);
+    const c = clientRef.current;
+    const route = c ? routeBuyerText(phaseRef.current) : "chat";
+    if (route === "call" && c?.sendText(text)) return;
+    if (route === "queue" || (route === "call" && c)) {
+      // Shown as on its way until the call stores it (the poll brings it back once).
+      const id = `queued-${crypto.randomUUID()}`;
+      queued.current.push({ id, text });
+      setItems((cur) => [...cur, { id, from: "buyer", body: text, at: new Date().toISOString(), status: null, name: null, previews: [], pending: "sending" }]);
+      return;
+    }
+    await chatSend(text);
+  };
+
+  // Queued text: into the call once it is live, or into the chat if the call never got there.
+  useEffect(() => {
+    const action = flushQueued(callSnap.phase);
+    if (action === "wait" || !queued.current.length) return;
+    const list = queued.current;
+    queued.current = [];
+    const ids = new Set(list.map((q) => q.id));
+    setItems((cur) => cur.filter((m) => !ids.has(m.id)));
+    for (const q of list) {
+      if (action === "call" && clientRef.current?.sendText(q.text)) continue;
+      void chatSend(q.text);
+    }
+  }, [callSnap.phase]);
 
   const onKey = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {

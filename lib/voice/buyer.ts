@@ -24,7 +24,7 @@ import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import type { ChatContext } from "@/lib/simulator/service";
-import { createVoiceSession } from "./service";
+import { createVoiceSession, STALE_PENDING_SEC } from "./service";
 import { maxCallSeconds, voiceMode } from "./settings";
 
 /** Buyer calls per chat link per hour. */
@@ -138,11 +138,15 @@ export async function startBuyerVoiceCall(
   };
 }
 
-/** A running call on this conversation (a chat message sent elsewhere waits for it to end). */
-export async function liveVoiceSessionOn(db: Db, accountId: string, conversationId: string): Promise<boolean> {
-  const [s] = await db.select({ id: voiceSessions.id }).from(voiceSessions)
-    .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conversationId), eq(voiceSessions.status, "live")));
-  return !!s;
+/**
+ * A buyer call running or about to run on this conversation (live, or pending
+ * for less than STALE_PENDING_SEC): a chat send for it is refused meanwhile
+ * (the page sends that text into the call), so the agent never answers twice.
+ */
+export async function liveVoiceSessionOn(db: Db, accountId: string, conversationId: string, now = new Date()): Promise<boolean> {
+  const rows = await db.select({ status: voiceSessions.status, createdAt: voiceSessions.createdAt }).from(voiceSessions)
+    .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conversationId), eq(voiceSessions.isTest, false), inArray(voiceSessions.status, ["pending", "live"])));
+  return rows.some((r) => r.status === "live" || r.createdAt.getTime() > now.getTime() - STALE_PENDING_SEC * 1000);
 }
 
 export type BuyerCallRow = { id: string; at: string; durationSec: number };
