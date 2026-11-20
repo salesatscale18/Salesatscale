@@ -27,7 +27,7 @@ import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallUsageRecord } fr
 import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
-import { loadVoiceInstructions, openerInstruction, RECAP_LINES, type TranscriptLine } from "./instructions";
+import { loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
 import { maxCallSeconds, resolveVoiceSettings, turnTakingFor } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./tool-schema";
 
@@ -365,7 +365,8 @@ export class VoiceEngine {
     this.statsLoop();
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
-    this.conn.requestResponse(openerInstruction(ctx.opener));
+    // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
+    this.conn.requestResponse(ctx.openerPrompt);
   }
 
   private sessionConfig(instructions: string): RealtimeSessionConfig {

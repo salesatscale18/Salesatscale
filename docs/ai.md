@@ -110,6 +110,17 @@ lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run o
   `cost_micros`, answer times, how it ended). Live sessions' `cost_micros` count toward the account
   spend cap, the usage display and the platform budget (`lib/ai/usage.ts`). Spoken turns are
   conversation messages with `voice_session_id`, `spoken_at_ms` and, for agent turns, `answer_ms`.
+- **Buyer calls** (release 2, `lib/voice/buyer.ts`): "Talk to us" on the buyer chat page, offered only
+  when every gate holds (voice on, the account's `voiceBuyerCalls`, account live, inside the lead's
+  market contact hours, under the spend cap and platform budget in live mode, the chat open and held
+  by the agent, the conversation in English). The chat token is the only credential
+  (`POST /chat/<token>/voice`, 6 calls per link per hour). The first call asks once and records
+  `consent_records.voice_consent_at`. The call joins the chat's own conversation: with agent messages
+  already there the call starts with the fixed disclosure line ("Hi Dana, it's Maya, the automated
+  assistant of Acme, on the call now.") instead of a new introduction, and the instructions carry the
+  last 20 chat lines. Text typed in the chat during a call goes into the call (stored once, marked
+  `typed_in_call`); a chat POST meanwhile is refused (`in_call`). The relay never sends tool messages
+  to a buyer's call. Settings › Voice holds the switch.
 
 ## Tests
 

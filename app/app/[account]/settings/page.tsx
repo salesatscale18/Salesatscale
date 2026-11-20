@@ -21,6 +21,8 @@ import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
 import { WhatsAppSection } from "./whatsapp";
 import { SimulationSection } from "./simulation";
+import { VoiceSection } from "./voice";
+import { voiceMode } from "@/lib/voice/settings";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 
 async function baseUrl() {
@@ -48,7 +50,7 @@ const EXAMPLE = `{
 const INTAKE_REQUIRED = ["full_name", "phone", "consent.source", "consent.text"] as const;
 const INTAKE_OPTIONAL = ["language", "business", "source_id", "consent.at", "email", "country", "source", "consent.page_url"] as const;
 
-const SECTIONS = ["whatsapp", "simulation", "payments", "users", "notifications", "hours", "intake"] as const;
+const SECTIONS = ["whatsapp", "simulation", "voice", "payments", "users", "notifications", "hours", "intake"] as const;
 type Section = (typeof SECTIONS)[number];
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -59,7 +61,9 @@ export default async function SettingsPage({ params, searchParams }: { params: P
   const access = await requireAccount(slug);
   const { account } = access;
   const asked = one(sp.section);
-  const section: Section = (SECTIONS as readonly string[]).includes(asked) ? (asked as Section) : "users";
+  // Voice (live voice) only while voice calls are on for the platform; otherwise the settings are as before.
+  const sections = SECTIONS.filter((s) => s !== "voice" || voiceMode() !== "off");
+  const section: Section = (sections as readonly string[]).includes(asked) ? (asked as Section) : "users";
   const href = (s: Section) => `/app/${account.slug}/settings?section=${s}`;
   const spend = await spendStateForRequest(appDb, account.id);
   const spendText = spend ? spendTexts(spend) : null;
@@ -78,7 +82,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
       ) : null}
       <div className="sas-split">
         <nav aria-label={t("settings.sections")} className="sas-subnav">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <a key={s} className="sas-subnav__item" href={href(s)} aria-current={s === section ? "page" : undefined}>{t(`settings.section.${s}` as MessageKey)}</a>
           ))}
           <ScrollCurrentIntoView selector=".sas-subnav" />
@@ -89,6 +93,7 @@ export default async function SettingsPage({ params, searchParams }: { params: P
           <div className="sas-split__main" style={{ flexBasis: 520 }}>
             {section === "whatsapp" ? await WhatsAppSection({ account, sp, baseUrl: await baseUrl() }) : null}
             {section === "simulation" ? <SimulationSection account={account} saved={one(sp.saved) === "simulation"} /> : null}
+            {section === "voice" ? await VoiceSection({ account, saved: one(sp.saved) === "voice" }) : null}
             {section === "payments" ? await PaymentsSection({ account }) : null}
             {section === "users" ? await UsersSection({ access, sp }) : null}
             {section === "notifications" ? <NotificationsSection account={account} saved={!!sp.saved} /> : null}

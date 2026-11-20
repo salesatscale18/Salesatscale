@@ -32,6 +32,9 @@ export type BarView = {
   endLabel: string;
   action: BarAction | null;
   muted: boolean;
+  /** Labels of the mute button (the bar's language). */
+  muteLabel: string;
+  unmuteLabel: string;
   /** The bar is busy: buttons wait (ending). */
   busy: boolean;
 };
@@ -50,6 +53,20 @@ export function clockTime(iso: string, timeZone?: string): string {
   return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hourCycle: "h23", ...(timeZone ? { timeZone } : {}) });
 }
 
+/** A translator for the bar's words: English for the test lab; the buyer's language on the chat page. */
+type Tr = (key: MessageKey, vars?: Record<string, string | number>) => string;
+
+/**
+ * The bar's words. On the buyer page (`audience: "buyer"`) every key is read
+ * from its `buyer.` copy (buyer.voice.…) in the buyer's language, and the
+ * agent speaks by name ("Maya is speaking"); the test lab reads voice.… in English.
+ */
+function words(ctx: BarContext): Tr {
+  if (ctx.audience !== "buyer") return t;
+  const tr: Tr = ctx.tr ?? t;
+  return (key, vars) => tr(`buyer.${key}` as MessageKey, vars);
+}
+
 export type BarContext = {
   /** The Ready line: "English · v2 Draft · up to 10 minutes". */
   readyLine?: string;
@@ -58,6 +75,12 @@ export type BarContext = {
   /** Where "Open AI usage" goes when calls are paused (seller pages only; hidden for buyers). */
   usageHref?: string | null;
   fx?: CostFormat | null;
+  /** The buyer page: the buyer's words, no cost, no Call again (the composer's button starts the next call). */
+  audience?: "lab" | "buyer";
+  /** Translator for the buyer page (the lead's language). */
+  tr?: Tr;
+  /** The agent's name, for "Maya is speaking" on the buyer page. */
+  agentName?: string;
 };
 
 const UNAVAILABLE_TITLE: Record<VoiceUnavailableReason, MessageKey> = {
@@ -68,7 +91,9 @@ const UNAVAILABLE_TITLE: Record<VoiceUnavailableReason, MessageKey> = {
 
 /** The ended line's second part: cost or "No cost", plus the saved note. */
 export function endedSub(s: VoiceSnapshot, ctx: BarContext): string {
-  const cost = s.mode === "scripted" ? t("voice.no_cost") : t("voice.ended.cost", { cost: costText(s.costMicros, ctx.fx ?? null) });
+  const T = words(ctx);
+  if (ctx.audience === "buyer") return T("voice.ended.chat_continues" as MessageKey);
+  const cost = s.mode === "scripted" ? T("voice.no_cost") : T("voice.ended.cost", { cost: costText(s.costMicros, ctx.fx ?? null) });
   return [cost, ctx.savedNote].filter(Boolean).join(" · ");
 }
 
@@ -79,60 +104,65 @@ const SHORT: Partial<Record<string, MessageKey>> = {
 };
 
 export function barView(s: VoiceSnapshot, now: number, ctx: BarContext = {}): BarView {
+  const T = words(ctx);
   const v = fullBarView(s, now, ctx);
   let subShort = v.sub;
-  if (s.phase === "live" && s.notice) subShort = t(s.notice === "limit_soon" ? "voice.short.limit_soon" : "voice.short.silence_check");
-  else if (v.state === "ended") subShort = endedSub(s, {});
-  else if (SHORT[v.state]) subShort = t(SHORT[v.state]!);
+  if (s.phase === "live" && s.notice) subShort = T(s.notice === "limit_soon" ? "voice.short.limit_soon" : "voice.short.silence_check");
+  else if (v.state === "ended") subShort = endedSub(s, { ...ctx, savedNote: undefined });
+  else if (SHORT[v.state]) subShort = T(SHORT[v.state]!);
   return { ...v, subShort };
 }
 
 function fullBarView(s: VoiceSnapshot, now: number, ctx: BarContext): Omit<BarView, "subShort"> {
-  const base = { clock: null, controls: "none" as const, endLabel: t("voice.end"), action: null, muted: s.muted, busy: false, bars: null, icon: null };
+  const T = words(ctx);
+  const buyer = ctx.audience === "buyer";
+  const base = { clock: null, controls: "none" as const, endLabel: T("voice.end"), muteLabel: T("voice.mute"), unmuteLabel: T("voice.unmute"), action: null, muted: s.muted, busy: false, bars: null, icon: null };
   switch (s.phase) {
     case "idle":
-      return { ...base, state: "ready", tone: "plain", icon: "phone-call", title: t("voice.ready.title"), sub: ctx.readyLine ?? "", action: { kind: "start", label: t("voice.ready.start") } };
+      return { ...base, state: "ready", tone: "plain", icon: "phone-call", title: T("voice.ready.title"), sub: ctx.readyLine ?? "", action: { kind: "start", label: T("voice.ready.start") } };
     case "mic_prompt":
-      return { ...base, state: "mic_prompt", tone: "me", icon: "mic", title: t("voice.mic_prompt.title"), sub: t("voice.mic_prompt.sub"), action: { kind: "cancel", label: t("voice.cancel") } };
+      return { ...base, state: "mic_prompt", tone: "me", icon: "mic", title: T("voice.mic_prompt.title"), sub: T("voice.mic_prompt.sub"), action: { kind: "cancel", label: T("voice.cancel") } };
     case "mic_blocked":
-      return { ...base, state: "mic_blocked", tone: "warn", icon: "mic-off", title: t("voice.mic_blocked.title"), sub: t("voice.mic_blocked.sub"), action: { kind: "try_again", label: t("voice.try_again") } };
+      return { ...base, state: "mic_blocked", tone: "warn", icon: "mic-off", title: T("voice.mic_blocked.title"), sub: T("voice.mic_blocked.sub"), action: { kind: "try_again", label: T("voice.try_again") } };
     case "no_mic":
-      return { ...base, state: "no_mic", tone: "warn", icon: "mic-off", title: t("voice.no_mic.title"), sub: t("voice.no_mic.sub"), action: { kind: "try_again", label: t("voice.try_again") } };
+      return { ...base, state: "no_mic", tone: "warn", icon: "mic-off", title: T("voice.no_mic.title"), sub: T("voice.no_mic.sub"), action: { kind: "try_again", label: T("voice.try_again") } };
     case "starting":
     case "connecting":
-      return { ...base, state: "connecting", tone: "plain", icon: "loader", title: t("voice.connecting.title"), sub: t("voice.connecting.sub"), controls: "end_only", endLabel: t("voice.cancel_call") };
+      return { ...base, state: "connecting", tone: "plain", icon: "loader", title: T("voice.connecting.title"), sub: T("voice.connecting.sub"), controls: "end_only", endLabel: T("voice.cancel_call") };
     case "reconnecting":
       return {
-        ...base, state: "reconnecting", tone: "warn", icon: "wifi-off", title: t("voice.reconnecting.title"), sub: t("voice.reconnecting.sub"),
+        ...base, state: "reconnecting", tone: "warn", icon: "wifi-off", title: T("voice.reconnecting.title"), sub: T("voice.reconnecting.sub"),
         clock: callClock(elapsedSec(s, now)), controls: "end_only",
       };
     case "ending":
-      return { ...base, state: "ending", tone: "off", icon: "phone-off", title: t("voice.ending.title"), sub: t("voice.ending.sub"), clock: callClock(elapsedSec(s, now)), controls: "end_only", busy: true };
+      return { ...base, state: "ending", tone: "off", icon: "phone-off", title: T("voice.ending.title"), sub: T("voice.ending.sub"), clock: callClock(elapsedSec(s, now)), controls: "end_only", busy: true };
     case "ended": {
       const lost = s.endReason === "connection_lost";
       return {
         ...base, state: "ended", tone: "off", icon: "phone-off",
-        title: lost ? t("voice.ended.title_lost") : t("voice.ended.title", { time: callClock(s.durationSec) }),
-        sub: endedSub(s, ctx), action: { kind: "call_again", label: t("voice.call_again") }, muted: false,
+        title: lost ? T("voice.ended.title_lost") : T("voice.ended.title", { time: callClock(s.durationSec) }),
+        sub: endedSub(s, ctx), action: buyer ? null : { kind: "call_again", label: T("voice.call_again") }, muted: false,
       };
     }
     case "unavailable": {
+      // The buyer is never told why (no reasons, no links): calls are simply not available now.
+      if (buyer) return { ...base, state: "unavailable", tone: "warn", icon: "alert-triangle", title: T("voice.unavailable.buyer_title" as MessageKey), sub: T("voice.unavailable.buyer_sub" as MessageKey) };
       const reason = s.unavailable ?? "error";
-      const action: BarAction | null = reason === "spend_cap" && ctx.usageHref ? { kind: "link", label: t("voice.open_ai_usage"), href: ctx.usageHref }
-        : reason === "already_in_call" && s.ownCall ? { kind: "end_other", label: t("voice.end_that_call") } : null;
-      let sub = t(`voice.unavailable.${reason}` as MessageKey);
-      if (reason === "rate_limited" && s.retryAt) sub = t("voice.unavailable.rate_limited_at", { time: clockTime(s.retryAt) });
-      if (reason === "already_in_call") sub = t(s.ownCall ? "voice.unavailable.already_in_call" : "voice.unavailable.already_in_call_other");
-      return { ...base, state: "unavailable", tone: "warn", icon: "alert-triangle", title: t(UNAVAILABLE_TITLE[reason]), sub, action };
+      const action: BarAction | null = reason === "spend_cap" && ctx.usageHref ? { kind: "link", label: T("voice.open_ai_usage"), href: ctx.usageHref }
+        : reason === "already_in_call" && s.ownCall ? { kind: "end_other", label: T("voice.end_that_call") } : null;
+      let sub = T(`voice.unavailable.${reason}` as MessageKey);
+      if (reason === "rate_limited" && s.retryAt) sub = T("voice.unavailable.rate_limited_at", { time: clockTime(s.retryAt) });
+      if (reason === "already_in_call") sub = T(s.ownCall ? "voice.unavailable.already_in_call" : "voice.unavailable.already_in_call_other");
+      return { ...base, state: "unavailable", tone: "warn", icon: "alert-triangle", title: T(UNAVAILABLE_TITLE[reason]), sub, action };
     }
     case "live": {
       const clock = callClock(elapsedSec(s, now));
       const call = { ...base, clock, controls: "call" as const };
-      const noticeSub = s.notice === "limit_soon" ? t("voice.notice.limit_soon") : s.notice === "silence_check" ? t("voice.notice.silence_check") : null;
-      if (s.muted) return { ...call, state: "muted", tone: "off", bars: "muted", title: t("voice.muted.title"), sub: noticeSub ?? t("voice.muted.sub") };
-      if (s.live === "speaking") return { ...call, state: "speaking", tone: "agent", bars: "out", title: t("voice.speaking.title"), sub: noticeSub ?? t("voice.speaking.sub") };
-      if (s.live === "checking") return { ...call, state: "checking", tone: "agent", bars: "checking", title: t("voice.checking.title"), sub: noticeSub ?? t("voice.checking.sub") };
-      return { ...call, state: "listening", tone: "me", bars: "mic", title: t("voice.listening.title"), sub: noticeSub ?? t("voice.listening.sub") };
+      const noticeSub = s.notice === "limit_soon" ? T("voice.notice.limit_soon") : s.notice === "silence_check" ? T("voice.notice.silence_check") : null;
+      if (s.muted) return { ...call, state: "muted", tone: "off", bars: "muted", title: T("voice.muted.title"), sub: noticeSub ?? T("voice.muted.sub") };
+      if (s.live === "speaking") return { ...call, state: "speaking", tone: "agent", bars: "out", title: buyer && ctx.agentName ? T("voice.speaking.named" as MessageKey, { agent: `\u2068${ctx.agentName}\u2069` }) : T("voice.speaking.title"), sub: noticeSub ?? T("voice.speaking.sub") };
+      if (s.live === "checking") return { ...call, state: "checking", tone: "agent", bars: "checking", title: T("voice.checking.title"), sub: noticeSub ?? T("voice.checking.sub") };
+      return { ...call, state: "listening", tone: "me", bars: "mic", title: T("voice.listening.title"), sub: noticeSub ?? T("voice.listening.sub") };
     }
   }
 }

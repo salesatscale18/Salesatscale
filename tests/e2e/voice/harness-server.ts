@@ -12,10 +12,16 @@ import { createServer, type IncomingMessage, type Server } from "node:http";
 import fs from "node:fs";
 import path from "node:path";
 import { build } from "esbuild";
-import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
+import { conversations, sellerAccounts, users } from "@/db/schema";
+import { translator } from "@/lib/i18n";
+import { buyerChat, chatNames, createSimulatedBuyer, receiveSimulatorInbound, resolveChatLink, startSimulatorConversation } from "@/lib/simulator/service";
+import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
+import { buyerConversation, buyerVoiceGate, liveVoiceSessionOn, startBuyerVoiceCall } from "@/lib/voice/buyer";
+import { chatStrings } from "../../../app/chat/[token]/strings";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { ensureDraftVersion, listVersions, saveDraftPlaybook } from "@/lib/agent/service";
+import { ensureDraftVersion, listVersions, publishDraftVersion, saveDraftPlaybook } from "@/lib/agent/service";
 import { SCENARIOS } from "@/lib/agent/scenarios";
 import { createVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary } from "@/lib/voice/service";
 import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC } from "@/lib/voice/socket-limits";
@@ -30,15 +36,18 @@ const ENV = { VOICE_REALTIME: "scripted" } as const;
 /** The harness mimics the Vercel route: the same deployment cap the real pages and relay use (4 min 30 s). */
 const CAP = ROUTE_MAX_DURATION_SEC - ROUTE_END_MARGIN_SEC;
 
-async function bundlePage(): Promise<string> {
+async function bundlePage(entry = "harness-page.tsx"): Promise<{ js: string; css: string }> {
   const r = await build({
-    entryPoints: [path.join(__dirname, "harness-page.tsx")],
+    entryPoints: [path.join(__dirname, entry)], outdir: path.join(ROOT, ".harness-out"),
     bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", jsx: "automatic",
     tsconfig: path.join(ROOT, "tsconfig.json"), sourcemap: "inline", logLevel: "warning",
     define: { "process.env.NODE_ENV": '"development"' },
     banner: { js: "globalThis.process ??= { env: {} };" },
   });
-  return r.outputFiles[0].text;
+  return {
+    js: r.outputFiles.find((f) => f.path.endsWith(".js"))!.text,
+    css: r.outputFiles.filter((f) => f.path.endsWith(".css")).map((f) => f.text).join("\n"),
+  };
 }
 
 const HARNESS_CSS = `
@@ -61,6 +70,10 @@ body { margin: 0; }
 }
 `;
 
+const BUYER_HTML = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Buyer chat harness</title><link rel="stylesheet" href="/buyer.css"><style>body{margin:0}</style></head>
+<body><div id="root"></div><script type="module" src="/buyer.js"></script></body></html>`;
+
 const HTML = `<!doctype html><html lang="en" dir="ltr"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Voice harness</title><link rel="stylesheet" href="/sas.css"><style>${HARNESS_CSS}</style></head>
 <body><div id="root"></div><script type="module" src="/harness.js"></script></body></html>`;
@@ -74,7 +87,7 @@ function body(req: IncomingMessage): Promise<string> {
   });
 }
 
-export type Harness = { url: string; server: Server; close: () => Promise<void>; accountId: string; summary: (conversationId: string) => ReturnType<typeof voiceSessionSummary> };
+export type Harness = { url: string; server: Server; close: () => Promise<void>; accountId: string; buyers: Record<string, { token: string; conversationId: string }>; summary: (conversationId: string) => ReturnType<typeof voiceSessionSummary> };
 
 /** Starts the harness on `port` (0 = any free port). */
 export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harness> {
@@ -97,7 +110,25 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
   const draft = await ensureDraftVersion(db, acc);
   await saveDraftPlaybook(db, acc, { ...draft.playbook, maxDiscountBp: 700 });
 
-  const js = await bundlePage();
+  const { js } = await bundlePage();
+  const buyerBundle = await bundlePage("buyer-page.tsx");
+  const chatCss = fs.readFileSync(path.join(ROOT, "app/chat/[token]/chat.css"), "utf8");
+  // Buyers (release 2): an English chat, and a Hebrew page whose conversation is in English (the call bar in RTL).
+  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCalls: true, allowSimulatedBuyers: true, contactHours: Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" })) })
+    .where(eq(sellerAccounts.id, acc));
+  await publishDraftVersion(db, { userId: me.id, actingAs: false }, acc);
+  await ensureDraftVersion(db, acc);
+  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc));
+  const buyers: Record<string, { token: string; conversationId: string }> = {};
+  for (const [lang, name] of [["en", "Dana Cohen"], ["he", "דנה כהן"]] as const) {
+    const made = await createSimulatedBuyer(db, { userId: me.id, actingAs: false }, account, { fullName: name, company: "Cohen Shop", language: lang, country: "IL" });
+    if (!made.ok) throw new Error("buyer");
+    const started = await startSimulatorConversation(db, { userId: me.id, actingAs: false }, acc, made.lead.id);
+    if (!started.ok) throw new Error(`buyer start ${started.reason}`);
+    // The scripted model plays the ready buyer's call; the Hebrew page's conversation is English so the call is offered.
+    await db.update(conversations).set({ scenario: "ready_buyer", language: "en" }).where(eq(conversations.id, started.conversationId));
+    buyers[lang] = { token: made.token, conversationId: started.conversationId };
+  }
   const css = fs.readFileSync(path.join(ROOT, "components/sas/sas.css"), "utf8");
   const scenarios = Object.fromEntries(SCENARIOS.filter((s) => s.language === "en").map((s) => [s.id, { title: s.title, expected: s.expected }]));
 
@@ -108,6 +139,47 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       if (req.method === "GET" && url.pathname === "/") return send(200, "text/html; charset=utf-8", HTML);
       if (req.method === "GET" && url.pathname === "/harness.js") return send(200, "text/javascript; charset=utf-8", js);
       if (req.method === "GET" && url.pathname === "/sas.css") return send(200, "text/css; charset=utf-8", css);
+      if (req.method === "GET" && url.pathname === "/buyer") return send(200, "text/html; charset=utf-8", BUYER_HTML);
+      if (req.method === "GET" && url.pathname === "/buyer.js") return send(200, "text/javascript; charset=utf-8", buyerBundle.js);
+      if (req.method === "GET" && url.pathname === "/buyer.css") return send(200, "text/css; charset=utf-8", `${css}\n${chatCss}\n${buyerBundle.css}`);
+      if (req.method === "GET" && url.pathname === "/api/buyer-config") {
+        const lang = url.searchParams.get("lang") === "he" ? "he" : "en";
+        const link = await resolveChatLink(db, buyers[lang].token);
+        if (!link) return send(404, "application/json", "{}");
+        const ctx = link.ctx;
+        const tr = translator(lang);
+        const names = await chatNames(db, ctx.account, lang);
+        const chat = await buyerChat(db, ctx);
+        const gate = await buyerVoiceGate(db, ctx, { env: ENV });
+        chat.voice = { available: gate.ok, consented: gate.ok && gate.consented };
+        return send(200, "application/json", JSON.stringify({
+          token: buyers[lang].token, lang, seller: names.seller, initials: names.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+          strings: chatStrings(tr, names, lang), initial: chat, timeZone: "Asia/Jerusalem",
+          voice: { agentName: (await chatNames(db, ctx.account, "en")).agent, gender: names.gender },
+          rootStyle: { ...brandVars(ctx.brandColor), "--bubble": buyerBubbleColor(ctx.brandColor) },
+        }));
+      }
+      const chatPath = /^\/chat\/([^/]+)\/(messages|voice)$/.exec(url.pathname);
+      if (chatPath) {
+        // The same functions as app/chat/[token]/messages and ./voice (no agent reply: no model call).
+        const link = await resolveChatLink(db, decodeURIComponent(chatPath[1]));
+        if (!link || link.state !== "live") return send(404, "application/json", JSON.stringify({ ok: false, reason: "not_found" }));
+        const ctx = link.ctx;
+        if (chatPath[2] === "voice") {
+          const b = JSON.parse((await body(req)) || "{}") as { consent?: boolean };
+          const r = await startBuyerVoiceCall(db, ctx, chatPath[1], { consent: b.consent === true, deadlineSec: CAP, env: ENV });
+          return send(200, "application/json", JSON.stringify(r.ok ? { ...r, wsUrl: `ws://${req.headers.host}/api/voice/socket` } : r));
+        }
+        if (req.method === "POST") {
+          const b = JSON.parse((await body(req)) || "{}") as { text?: string; clientId?: string };
+          const conv = await buyerConversation(db, ctx);
+          if (conv && (await liveVoiceSessionOn(db, ctx.account.id, conv.id))) return send(409, "application/json", JSON.stringify({ ok: false, reason: "in_call" }));
+          await receiveSimulatorInbound(db, ctx, b.text ?? "", b.clientId ?? "");
+          return send(200, "application/json", JSON.stringify({ ok: true }));
+        }
+        const [chat, gate] = await Promise.all([buyerChat(db, ctx, { after: url.searchParams.get("after") }), buyerVoiceGate(db, ctx, { env: ENV })]);
+        return send(200, "application/json", JSON.stringify({ ...chat, voice: { available: gate.ok, consented: gate.ok && gate.consented } }));
+      }
       if (req.method === "GET" && url.pathname === "/api/config") {
         const d = (await listVersions(db, acc)).find((v) => v.status === "draft")!;
         const model = url.searchParams.get("model") ?? DEFAULT_VOICE_MODEL;
@@ -149,7 +221,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
   const addr = server.address();
   const port = typeof addr === "object" && addr ? addr.port : o.port;
   return {
-    url: `http://127.0.0.1:${port}`, server, accountId: acc,
+    url: `http://127.0.0.1:${port}`, server, accountId: acc, buyers,
     summary: (conversationId) => voiceSessionSummary(db, acc, conversationId),
     close: async () => {
       server.closeAllConnections();

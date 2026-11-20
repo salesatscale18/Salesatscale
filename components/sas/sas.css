@@ -1187,3 +1187,9 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-verified-value .sas-verified { display: inline-flex; vertical-align: -3px; margin-inline-start: 6px; }
 /* Overview: the selected market's card. */
 .sas-app a.sas-mcard--selected, .sas-app a.sas-mcard--selected:hover { border: 2px solid var(--primary); }
+/* Settings › Voice (board VoiceSettings): rows of a setting and its value or switch. */
+.st-voice { display: flex; flex-direction: column; }
+.st-voice__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-4); align-items: center; padding: 14px var(--space-4); border-block-start: 1px solid var(--line); }
+label.st-voice__row { cursor: pointer; }
+.st-voice__value { max-width: 260px; text-align: end; }
+.st-voice__foot { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--line); }

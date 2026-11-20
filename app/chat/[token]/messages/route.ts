@@ -2,7 +2,8 @@
  * Buyer simulator chat API (public; the token is the credential).
  *
  * GET  ?after=<message id>  → the buyer's view of the chat (newer messages only with `after`)
- * POST { text, clientId }   → the buyer sends a message
+ * POST { text, clientId }   → the buyer sends a message (refused with "in_call" while a voice call runs:
+ *                              the page sends typed text into the call then)
  *
  * A link idle for 14 days (lib/simulator/rules chatLinkExpiresAt) answers
  * 410 { reason: "expired" }. Per link: 20 messages a minute and 100 a day.
@@ -19,6 +20,7 @@ import { replyToBuyer } from "@/lib/channels/whatsapp";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { CHAT_RATE_PER_DAY, CHAT_RATE_PER_MINUTE } from "@/lib/simulator/rules";
 import { buyerChat, receiveSimulatorInbound, resolveChatLink } from "@/lib/simulator/service";
+import { buyerConversation, buyerVoiceGate, liveVoiceSessionOn } from "@/lib/voice/buyer";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -33,7 +35,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   if (link.state === "expired") return json({ error: "expired" }, 410);
   const ctx = link.ctx;
   const afterId = new URL(req.url).searchParams.get("after");
-  return json(await buyerChat(appDb, ctx, { after: afterId }));
+  const [chat, gate] = await Promise.all([buyerChat(appDb, ctx, { after: afterId }), buyerVoiceGate(appDb, ctx)]);
+  // "Talk to us" follows the gates as they change (contact hours, a person taking over, the setting).
+  return json({ ...chat, voice: { available: gate.ok, consented: gate.ok && gate.consented } });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {
@@ -48,6 +52,9 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const body = (await req.json().catch(() => null)) as { text?: unknown; clientId?: unknown } | null;
   const text = typeof body?.text === "string" ? body.text : "";
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";
+  // During a call the page sends typed text into the call; a chat turn now would answer twice.
+  const conv = await buyerConversation(appDb, ctx);
+  if (conv && (await liveVoiceSessionOn(appDb, ctx.account.id, conv.id))) return json({ ok: false, reason: "in_call" }, 409);
   const r = await receiveSimulatorInbound(appDb, ctx, text, clientId);
   if (r.kind === "ignored") return json({ ok: false, reason: r.reason }, 409);
   if (r.kind === "stored") {

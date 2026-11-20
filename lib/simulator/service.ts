@@ -33,6 +33,7 @@ import { loadForm } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
 import { APP_MESSAGE_CALL, appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
 import { loadQuoteCards } from "@/lib/agent/quote-card-data";
+import { buyerCallRows, type BuyerCallRow } from "@/lib/voice/buyer";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { openerText } from "@/lib/agent/core/opener";
@@ -401,6 +402,8 @@ export type BuyerMessage = {
   previews: LinkPreview[];
   /** A message the app wrote (the quote message), shown with its bold lines; absent for ordinary messages. */
   kind?: AppMessageKind;
+  /** Said (or typed) in a voice call: the time in the call, in ms. Absent for chat messages. */
+  call?: { atMs: number; typed: boolean };
 };
 
 export type BuyerChat = {
@@ -417,6 +420,10 @@ export type BuyerChat = {
    * replaced by a newer version, expired).
    */
   cards: Record<string, QuoteCardView>;
+  /** The chat's finished voice calls (every poll, like the cards): a "Voice call · 3 min 48 s" row each. */
+  calls: BuyerCallRow[];
+  /** "Talk to us" (lib/voice/buyer.ts): set by the page and the messages route, which check the gates. */
+  voice?: { available: boolean; consented: boolean };
 };
 
 const CHAT_LIMIT = 200;
@@ -453,7 +460,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const latest = convs.at(-1) ?? null;
   const ended = lead?.status === "opted_out" || latest?.status === "closed";
   const closedAt = latest?.status === "closed" ? latest.updatedAt.toISOString() : null;
-  if (convs.length === 0) return { messages: [], typing: false, ended, closedAt, cards: {} };
+  if (convs.length === 0) return { messages: [], typing: false, ended, closedAt, cards: {}, calls: [] };
   const ids = convs.map((c) => c.id);
   const scope = and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["buyer", "agent", "human"]));
 
@@ -478,11 +485,12 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"]), eq(messages.deliveryStatus, "delivered")));
 
   const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
-  const [previews, calls, cards] = await Promise.all([
+  const [previews, calls, cards, callRows] = await Promise.all([
     linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
     db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result }).from(toolCalls)
       .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL]))),
     loadQuoteCards(db, accountId, ids, { audience: "buyer", now }),
+    buyerCallRows(db, accountId, ids),
   ]);
   const kinds = appMessageKinds(calls);
   return {
@@ -490,6 +498,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     closedAt,
     ended,
     cards,
+    calls: callRows,
     messages: rows.map(({ m, firstName }) => ({
       id: m.id,
       from: m.actor as BuyerMessage["from"],
@@ -499,6 +508,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
       name: m.actor === "human" ? (firstName || t("buyer.sim.team", undefined, lang)) : null,
       previews: m.actor === "buyer" ? [] : orderFormLinks(m.body).map((l) => previews.get(l.url)).filter((p): p is LinkPreview => !!p),
       ...(kinds.has(m.id) ? { kind: kinds.get(m.id) } : {}),
+      ...(m.voiceSessionId && m.spokenAtMs !== null ? { call: { atMs: m.spokenAtMs, typed: m.typedInCall } } : {}),
     })),
   };
 }

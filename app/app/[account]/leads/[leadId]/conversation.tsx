@@ -20,6 +20,7 @@ import { SimulatedChip, TestLabChip } from "../simulated-chip";
 import { CopyButton } from "@/components/sas/copy-button";
 import { isolate } from "@/lib/leads/bidi";
 import { TOOL_ICON } from "@/components/sas/tool-chip";
+import { callClock } from "@/lib/voice/lab";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -342,7 +343,14 @@ export function ConversationPanel({
           const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author && !isTeamText(kind) ? personName({ id: m.actorUserId ?? "", ...author }, meId, t("people.you")) : t("conv.who.team")) : t("conv.who.system");
           return [...noteNodes, day, (
             <ChatMessage
-              key={m.id} actor={actor} who={who} time={delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)} timeTitle={full(m.createdAt)}
+              key={m.id} actor={actor} who={who} timeTitle={full(m.createdAt)}
+              // A line of a voice call shows the time in the call with a mic (or keyboard) mark; the clock time stays on hover.
+              time={m.voiceSessionId && m.spokenAtMs !== null ? undefined : delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)}
+              spoken={m.voiceSessionId && m.spokenAtMs !== null ? {
+                at: callClock(m.spokenAtMs / 1000), typed: m.typedInCall,
+                label: t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) }),
+                title: `${t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) })} · ${full(m.createdAt)}`,
+              } : undefined}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
               trace={actor === "agent" && showSteps ? traceChips(calls, rawToolNames) : undefined}
             >

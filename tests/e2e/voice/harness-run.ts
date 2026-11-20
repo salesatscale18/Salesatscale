@@ -237,6 +237,93 @@ async function main() {
       await shot(page, "settings-phone");
       await page.context().close();
     }
+
+    // -------------------------------------------------- buyer calls (release 2)
+    console.log("buyer call on the chat page");
+    {
+      const phase = (page: Page) => page.getAttribute("[data-buyer-call]", "data-voice-phase").catch(() => null);
+      const waitPhase = (page: Page, want: string, timeout = 30_000) =>
+        page.waitForSelector(`[data-buyer-call][data-voice-phase="${want}"]`, { timeout }).then(() => true, () => false);
+      // Desktop (the phone frame): the button and the sheet before the first call.
+      const desk = await newPage(browser, `${h.url}/buyer?lang=en`);
+      check(await desk.waitForSelector("[data-voice-talk]", { timeout: 15_000 }).then(() => true, () => false), "Talk to us shows on an English chat with every gate on");
+      await shot(desk, "buyer-button-desktop");
+      await desk.click("[data-voice-talk]");
+      check(await desk.waitForSelector("[data-voice-sheet]", { timeout: 5000 }).then(() => true, () => false), "the sheet comes before the first call");
+      await shot(desk, "buyer-sheet-desktop");
+      await desk.click("text=Not now");
+      await desk.context().close();
+
+      // Phone: the whole call.
+      const page = await newPage(browser, `${h.url}/buyer?lang=en`, 390, 844);
+      await page.waitForSelector("[data-voice-talk]");
+      await shot(page, "buyer-button-phone");
+      await page.click("[data-voice-talk]");
+      await page.waitForSelector("[data-voice-sheet]");
+      await shot(page, "buyer-sheet-phone");
+      await page.click("[data-voice-sheet-start]");
+      check(await waitPhase(page, "live", 20_000), "the call connects");
+      check(await page.locator("[data-voice-talk]").count() === 0, "no Talk button during the call");
+      await page.waitForTimeout(3000);
+      await shot(page, "buyer-call-live-phone");
+      check(await page.waitForSelector(".c-msg--card", { timeout: 60_000 }).then(() => true, () => false), "the quote card appears in the chat during the call");
+      await page.waitForTimeout(1500);
+      await shot(page, "buyer-call-quote-phone");
+      check((await page.locator("[data-voice-tool]").count()) === 0, "no tool chips for the buyer");
+      check(await page.locator('[data-buyer-call] .sas-vbar__title:has-text("One moment")').count() >= 0, "checking state words only");
+      // Typed in the chat during the call: goes into the call, stored once.
+      if ((await phase(page)) === "live") {
+        await page.fill("#c-input", "Does it include setup?");
+        await page.keyboard.press("Enter");
+        check(await page.waitForSelector('.c-bubble:has-text("Does it include setup?")', { timeout: 15_000 }).then(() => true, () => false), "text typed during the call shows as the buyer's line");
+        await page.waitForTimeout(2500);
+        check((await page.locator('.c-bubble:has-text("Does it include setup?")').count()) === 1, "it is stored once");
+      }
+      await page.click("[data-voice-end]");
+      check(await waitPhase(page, "ended", 15_000), "End ends the call");
+      await page.fill("#c-input", "Great, will sign after lunch");
+      await page.keyboard.press("Enter");
+      check(await page.waitForSelector("[data-call-row]", { timeout: 15_000 }).then(() => true, () => false), "a call row shows in the chat after the call");
+      await page.waitForTimeout(2500);
+      await shot(page, "buyer-ended-chat-phone");
+      check(await page.locator("[data-voice-talk]").count() === 1, "Talk to us is back after the call");
+      await page.context().close();
+
+      // Desktop: a later call skips the sheet.
+      const desk2 = await newPage(browser, `${h.url}/buyer?lang=en`);
+      await desk2.waitForSelector("[data-voice-talk]");
+      await desk2.click("[data-voice-talk]");
+      check((await desk2.locator("[data-voice-sheet]").count()) === 0, "later calls skip the sheet");
+      await waitPhase(desk2, "live", 20_000);
+      await desk2.waitForTimeout(4000);
+      await shot(desk2, "buyer-call-live-desktop");
+      await desk2.click("[data-voice-end]");
+      await waitPhase(desk2, "ended", 15_000);
+      await desk2.waitForTimeout(2500);
+      await shot(desk2, "buyer-ended-chat-desktop");
+      await desk2.context().close();
+
+      // Hebrew page (RTL), English call.
+      const he = await newPage(browser, `${h.url}/buyer?lang=he`, 390, 844);
+      await he.waitForSelector("[data-voice-talk]");
+      await shot(he, "buyer-button-phone-he");
+      await he.click("[data-voice-talk]");
+      await he.waitForSelector("[data-voice-sheet]");
+      await shot(he, "buyer-sheet-phone-he");
+      await he.click("[data-voice-sheet-start]");
+      check(await waitPhase(he, "live", 20_000), "a Hebrew page calls too (its conversation is in English)");
+      await he.waitForTimeout(3000);
+      await shot(he, "buyer-call-live-phone-he");
+      await he.click("[data-voice-end]");
+      await waitPhase(he, "ended", 15_000);
+      await he.waitForTimeout(2500);
+      await shot(he, "buyer-ended-chat-phone-he");
+      await he.context().close();
+      const deskHe = await newPage(browser, `${h.url}/buyer?lang=he`);
+      await deskHe.waitForSelector("[data-voice-talk]");
+      await shot(deskHe, "buyer-button-desktop-he");
+      await deskHe.context().close();
+    }
   } finally {
     await browser.close();
   }
@@ -263,7 +350,8 @@ async function main() {
     const dir = path.join(tmp, "pages");
     execFileSync("npx", ["vitest", "run", "tests/integration/voice-lab.test.tsx"], { env: { ...process.env, VOICE_RENDER_DIR: dir }, stdio: "ignore" });
     const b = await chromium.launch();
-    for (const name of ["page-test-lab-starter", "page-saved-call", "page-settings-panel"]) {
+    execFileSync("npx", ["vitest", "run", "tests/integration/voice-buyer.test.tsx", "-t", "Settings"], { env: { ...process.env, VOICE_RENDER_DIR: dir }, stdio: "ignore" });
+    for (const name of ["page-test-lab-starter", "page-saved-call", "page-settings-panel", "page-settings-voice"]) {
       const file = path.join(dir, `${name}.html`);
       check(fs.existsSync(file), `${name} rendered`);
       if (!fs.existsSync(file)) continue;
@@ -272,7 +360,7 @@ async function main() {
         const page = await ctx.newPage();
         await page.goto(`file://${file}`);
         await page.waitForTimeout(300);
-        await shot(page, `${name}-${suffix}`, { fullPage: name !== "page-settings-panel" });
+        await shot(page, `${name === "page-settings-voice" ? "buyer-settings-voice" : name}-${suffix}`, { fullPage: name !== "page-settings-panel" });
         await ctx.close();
       }
     }

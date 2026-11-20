@@ -5,6 +5,12 @@ import type { BuyerChat, BuyerMessage, LinkPreview } from "@/lib/simulator/servi
 import { boldSegments } from "@/lib/agent/app-message";
 import { QuoteCard } from "@/components/sas/quote-card";
 import { replyButtonsAfter } from "@/lib/agent/quote-replies";
+import { translator, type Locale } from "@/lib/i18n";
+import { VoiceClient } from "@/lib/voice/client/voice-client";
+import { CALL_PHASES, callLength } from "@/lib/voice/client/buyer-ui";
+import { callClock } from "@/lib/voice/lab";
+import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
+import { BuyerCallBar, VoiceSheet } from "./voice";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
@@ -77,10 +83,12 @@ const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC" }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", voice = null }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
   /** The lead's market time zone: times and dates read as on the pay page and the seller's thread (R5-3). */
   timeZone?: string;
+  /** Buyer calls (live voice): null while voice calls are off for the platform (nothing changes on the page). */
+  voice?: { agentName: string; gender: string } | null;
 }) {
   const [items, setItems] = useState<Shown[]>(initial.messages);
   const [cards, setCards] = useState(initial.cards ?? {});
@@ -92,6 +100,16 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const [draft, setDraft] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
+  const [calls, setCalls] = useState(initial.calls ?? []);
+  // "Talk to us" (live voice): the server's gates, refreshed on every poll.
+  const [voiceState, setVoiceState] = useState(initial.voice ?? { available: false, consented: false });
+  const [sheet, setSheet] = useState(false);
+  const [barHidden, setBarHidden] = useState(false);
+  const clientRef = useRef<VoiceClient | null>(null);
+  if (voice && !clientRef.current && typeof window !== "undefined") clientRef.current = new VoiceClient();
+  const callSnap = useVoiceSnapshot(clientRef.current);
+  const inCall = CALL_PHASES.has(callSnap.phase);
+  const tr = translator((lang === "he" ? "he" : "en") as Locale);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const lastId = useRef<string | null>(initial.messages.at(-1)?.id ?? null);
@@ -113,6 +131,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       setClosedAt(data.closedAt);
       // Every card comes back on every poll: an approved, replaced or expired quote changes in place.
       setCards(data.cards ?? {});
+      setCalls(data.calls ?? []);
+      if (data.voice) setVoiceState(data.voice);
       // Messages confirmed by the server before this poll started are now in its answer.
       setItems((cur) => {
         const known = new Set(cur.map((m) => m.id));
@@ -141,7 +161,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [items.length, typing]);
+  }, [items.length, typing, calls.length]);
 
   const grow = () => {
     const el = inputRef.current;
@@ -154,6 +174,14 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const send = async (quick?: string) => {
     const text = (quick ?? draft).trim();
     if (!text || ended) return;
+    // During a call, what the buyer types goes into the call (the agent answers by voice; stored once, by the call).
+    if (inCall && clientRef.current) {
+      if (callSnap.phase === "live" && clientRef.current.sendText(text)) {
+        if (quick === undefined) setDraft("");
+        requestAnimationFrame(grow);
+      }
+      return;
+    }
     const clientId = crypto.randomUUID();
     if (quick === undefined) setDraft("");
     setNotice(null);
@@ -185,6 +213,46 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     }
   };
 
+  /** Starts a call: audio unlocked in this click, the microphone, then the server checks the gates and gives the ticket. */
+  const startCall = (consent: boolean) => {
+    const c = clientRef.current;
+    if (!c) return;
+    setSheet(false);
+    setBarHidden(false);
+    c.begin();
+    void (async () => {
+      if (!(await c.prepare())) return;
+      try {
+        const res = await fetch(`/chat/${token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consent }) });
+        const r = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string; sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live" };
+        if (r.ok && r.sessionId && r.ticket && r.wsUrl) {
+          if (consent) setVoiceState((v) => ({ ...v, consented: true }));
+          c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec ?? null, mode: r.mode ?? null });
+          return;
+        }
+        if (r.reason === "consent_needed") {
+          c.cancel();
+          setSheet(true);
+          return;
+        }
+      } catch {
+        // Shown as not available below.
+      }
+      c.unavailable("error");
+    })();
+  };
+  const onTalk = () => (voiceState.consented ? startCall(false) : setSheet(true));
+  // When a call ends: fetch its stored lines and the call row now, then let the bar go after a moment.
+  useEffect(() => {
+    if (callSnap.phase !== "ended") return;
+    void poll();
+    const id = window.setTimeout(() => setBarHidden(true), 8000);
+    return () => window.clearTimeout(id);
+  }, [callSnap.phase, poll]);
+  useEffect(() => () => clientRef.current?.dispose(), []);
+  const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && !barHidden;
+  const showTalk = !!voice && voiceState.available && !inCall && !ended;
+
   const dayKey = dayKeyIn(timeZone);
   const now = new Date();
   const yesterday = new Date(now.getTime() - 86_400_000);
@@ -201,8 +269,20 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     rows.push(<div key={key} className="c-date" role="separator" dir={dir} suppressHydrationWarning>{dateLabel(d)}</div>);
   };
   const repliesAfter = ended || typing ? null : replyButtonsAfter(items, cards);
+  // Finished calls as rows between the messages, at the time each call ended.
+  const callRows = [...calls].sort((a, b) => a.at.localeCompare(b.at));
+  const pushCall = (c: (typeof calls)[number]) => {
+    separator(new Date(c.at), `d-${c.id}`);
+    rows.push(
+      <div key={`call-${c.id}`} className="c-call" dir={dir} data-call-row="">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+        <span>{tr("buyer.voice.call_row", { length: callLength(c.durationSec, tr), time: timeOf(new Date(c.at)) })}</span>
+      </div>,
+    );
+  };
   items.forEach((m, i) => {
     const d = new Date(m.at);
+    while (callRows.length && callRows[0].at <= m.at) pushCall(callRows.shift()!);
     separator(d, `d-${m.id}`);
     const card = cards[m.id];
     if (card) {
@@ -227,7 +307,15 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
           <div className={`c-bubble${m.kind ? ` c-bubble--${m.kind}` : ""}`} dir="auto" data-kind={m.kind}>
             {m.kind === "quote" ? <Bolded text={m.body} /> : <Linked text={m.previews.length ? text : m.body} />}
             <span className="c-meta">
-              <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>
+              {m.call ? (
+                // Said (or typed) in a call: the time in the call, with a mark (board VoiceBuyer 3).
+                <span className="c-spoken" title={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: callClock(m.call.atMs / 1000) })} data-spoken="">
+                  <svg viewBox="0 0 24 24" role="img" aria-label={tr(m.call.typed ? "buyer.voice.typed_at" : "buyer.voice.spoken_at", { time: callClock(m.call.atMs / 1000) })}>
+                    <path d={m.call.typed ? "M2 6h20v12H2zM6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10" : "M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3ZM19 10v2a7 7 0 0 1-14 0v-2M12 19v3"} />
+                  </svg>
+                  {callClock(m.call.atMs / 1000)}
+                </span>
+              ) : <time dateTime={m.at} suppressHydrationWarning>{timeOf(d)}</time>}
               {m.pending === "failed" ? <span>· {strings.notSent}</span> : null}
               {state ? <Tick state={state} label={strings[state]} /> : null}
             </span>
@@ -245,6 +333,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       );
     }
   });
+  callRows.forEach(pushCall);
   if (closedAt) {
     separator(new Date(closedAt), "d-closed");
     rows.push(
@@ -266,6 +355,12 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
           <span className={`c-head__sub${showTyping ? " c-head__sub--typing" : ""}`}>{showTyping ? strings.typing : strings.automated}</span>
         </span>
       </header>
+      {showBar && clientRef.current ? (
+        <BuyerCallBar
+          client={clientRef.current} tr={tr} agentName={voice!.agentName} dir={dir}
+          onStartAgain={() => startCall(false)} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); }}
+        />
+      ) : null}
       <div className="c-log" ref={logRef} role="log" aria-label={strings.messages} dir={dir}>
         {items.length === 0 && !closedAt ? <p className="c-empty" dir={dir}>{strings.empty}</p> : rows}
         {showTyping ? <div className="c-msg c-msg--in"><div className="c-bubble c-dots" role="status" aria-label={strings.typingLabel}><i /><i /><i /></div></div> : null}
@@ -281,11 +376,19 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
             id="c-input" ref={inputRef} className="c-input" rows={1} dir="auto" placeholder={strings.placeholder} value={draft} maxLength={4000}
             onChange={(e) => { setDraft(e.target.value); grow(); }} onKeyDown={onKey}
           />
+          {showTalk ? (
+            <button type="button" className="c-talk" aria-label={tr("buyer.voice.talk")} title={tr("buyer.voice.talk_hint")} onClick={onTalk} data-voice-talk="">
+              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+            </button>
+          ) : null}
           <button type="submit" className="c-send" aria-label={strings.send} disabled={!draft.trim()}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4z" /><path d="M22 2 11 13" /></svg>
           </button>
         </form>
       )}
+      {sheet && voice ? (
+        <VoiceSheet tr={tr} agentName={voice.agentName} seller={seller} gender={voice.gender} dir={dir} onStart={() => startCall(true)} onClose={() => setSheet(false)} />
+      ) : null}
     </div>
   );
 }

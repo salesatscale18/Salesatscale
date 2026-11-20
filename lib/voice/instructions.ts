@@ -32,6 +32,8 @@ import { paceInstruction, resolveVoiceSettings } from "./settings";
 
 /** Most earlier conversation lines given to the model (a recap, not the whole history). */
 export const RECAP_LINES = 10;
+/** A call that continues a chat (the buyer pressed "Talk to us"): more of the chat, so nothing is asked twice. */
+export const CHAT_RECAP_LINES = 20;
 
 export type TranscriptLine = { role: "buyer" | "agent" | "human"; text: string };
 
@@ -58,6 +60,11 @@ export type VoiceInstructionInput = {
   recap: TranscriptLine[];
   /** After a reconnect: the opener was already spoken. */
   resumed?: boolean;
+  /**
+   * The call continues a chat that already has agent messages: `opener` is
+   * the short disclosure line (continuingLine), not a first introduction.
+   */
+  continuing?: boolean;
 };
 
 const ROLE: Record<TranscriptLine["role"], string> = { buyer: "Buyer", agent: "You", human: "A person from the team" };
@@ -73,12 +80,14 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
     stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed ? null : i.opener, catalog: i.catalog, names: i.names,
     followUp: i.followUp, callback: i.callback ?? null, teamQuestions: i.teamQuestions ?? null, priceApproval: i.priceApproval ?? null, localNow: i.localNow, channel: "voice",
   }));
-  const recap = i.recap.slice(-RECAP_LINES).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
+  const recap = i.recap.slice(-(i.continuing ? CHAT_RECAP_LINES : RECAP_LINES)).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
   const call = [
     "## This call",
     i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
-      : "When the call connects, say your opening line, then listen.",
+      : i.continuing
+        ? "This call continues the chat below with the same buyer: you already introduced yourself in the chat, and the conversation so far is listed here. When the call connects, say your opening line (it tells the buyer it is you, an automated assistant, now on the call), then one short sentence that picks up from where the chat stopped, then listen. Do not introduce yourself again, do not repeat the chat's opening question, and never ask again for anything the buyer already answered in the chat."
+        : "When the call connects, say your opening line, then listen.",
     paceInstruction(settings.pace),
     i.deal?.summary ? `Summary so far: ${i.deal.summary}` : "",
     recap.length ? `Conversation so far (latest last):\n${recap.join("\n")}` : "",
@@ -91,7 +100,27 @@ export function openerInstruction(opener: string): string {
   return `The call has just connected. Say your opening line now, in your own voice: "${opener}"`;
 }
 
-export type VoiceCallContext = { instructions: string; opener: string };
+/**
+ * The platform's fixed disclosure when a call continues a chat: who is
+ * speaking and that it is an automated assistant, said at the start of every
+ * call, without a first-time introduction.
+ */
+export function continuingLine(o: { firstName: string; agent: string; seller: string }): string {
+  return `Hi ${o.firstName}, it's ${o.agent}, the automated assistant of ${o.seller}, on the call now.`;
+}
+
+/** The instruction that starts a call continuing a chat: the disclosure line, then one line picking up from the chat. */
+export function continuingInstruction(line: string): string {
+  return `The call has just connected and continues the chat. Say this first, in your own voice: "${line}" Then add one short sentence that picks up from where the chat stopped. Do not introduce yourself again and do not repeat questions the buyer already answered.`;
+}
+
+export type VoiceCallContext = {
+  instructions: string;
+  opener: string;
+  /** What the engine asks the model to say first (the opener, or the continuing line). */
+  openerPrompt: string;
+  continuing: boolean;
+};
 
 /** Loads what the instructions need for this conversation and builds them. */
 export async function loadVoiceInstructions(
@@ -106,7 +135,7 @@ export async function loadVoiceInstructions(
     scheduledFollowUp(db, account.id, lead.id),
     leadContactSettings(db, account, lead.marketId),
     db.select({ actor: messages.actor, body: messages.body }).from(messages)
-      .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id))).orderBy(desc(messages.createdAt)).limit(RECAP_LINES),
+      .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id))).orderBy(desc(messages.createdAt)).limit(CHAT_RECAP_LINES),
     db.select({ id: messages.id }).from(messages).where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))),
     // The open call request (requested or confirmed), as in a chat turn (lib/agent/turn.ts).
     leadCallback(db, account.id, lead.id, a.now),
@@ -118,7 +147,11 @@ export async function loadVoiceInstructions(
   // A call is English only (decision: release 1).
   const names = buyerNames(version.playbook, account, "en");
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
-  const opener = openerText({ name: firstName, agent: names.agent, company: names.seller, gender: names.gender, language: "en", opener: version.playbook.opener });
+  // A chat that already has agent messages continues by voice: the disclosure line, not a new introduction.
+  const continuing = !opts.resumed && agentCount.length > 0;
+  const opener = continuing
+    ? continuingLine({ firstName, agent: names.agent, seller: names.seller })
+    : openerText({ name: firstName, agent: names.agent, company: names.seller, gender: names.gender, language: "en", opener: version.playbook.opener });
   const recap = opts.recap ?? earlier.reverse()
     .filter((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human")
     .map((m) => ({ role: m.actor as TranscriptLine["role"], text: m.body }));
@@ -133,7 +166,7 @@ export async function loadVoiceInstructions(
     callback: callback ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
     teamQuestions: teamQuestions || null,
     priceApproval: priceApproval || null,
-    recap, resumed: opts.resumed,
+    recap, resumed: opts.resumed, continuing,
   });
-  return { instructions, opener };
+  return { instructions, opener, openerPrompt: continuing ? continuingInstruction(opener) : openerInstruction(opener), continuing };
 }

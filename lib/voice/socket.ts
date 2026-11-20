@@ -220,6 +220,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
           safeSend(msg);
           return;
         }
+        // A buyer's browser never learns which tools the agent ran (only the "checking" state): tool messages are for the test lab.
+        if (msg.t === "tool" && !session.isTest) return;
         sendJson(msg);
         // The call is over and stored: close the socket (queued frames are sent first).
         if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);

@@ -94,3 +94,36 @@
 /* Expired link (14 days without messages): who it belongs to and what to do next. */
 .c-expired__title { margin: 0 0 6px; font-size: 16px; line-height: 22px; font-weight: 700; color: var(--ink); }
 .c-expired__body { margin: 0; }
+
+/* Buyer voice calls (board VoiceBuyer): the call bar above the chat (it stays at the top: the chat scrolls
+   under it), "Talk to us" next to Send, the sheet before the first call, call rows and spoken marks. */
+.c-frame { position: relative; }
+.c-root .c-voice.sas-app { min-height: 0; background: var(--raised); flex: none; position: relative; z-index: 2; padding: 8px 10px;
+  border-block-end: 1px solid var(--line); font-size: 14px; line-height: 20px; }
+.c-root .c-voice .sas-vbar { padding: 10px 12px; gap: 10px; min-height: 0; }
+.c-voice__close { position: absolute; inset-block-start: 50%; transform: translateY(-50%); inset-inline-end: 20px; width: 32px; height: 32px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--muted); display: grid; place-items: center; cursor: pointer; }
+.c-voice__close:hover { background: var(--raised); }
+/* Room for the close button next to the ended (or refused) bar's words. */
+.c-voice[data-voice-phase="ended"] .sas-vbar, .c-voice[data-voice-phase="unavailable"] .sas-vbar,
+.c-voice[data-voice-phase="mic_blocked"] .sas-vbar, .c-voice[data-voice-phase="no_mic"] .sas-vbar { padding-inline-end: 44px; }
+.c-voice__close svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; }
+.c-voice__close:focus-visible, .c-talk:focus-visible, .c-sheet button:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.c-talk { flex: none; width: 38px; height: 38px; border-radius: 999px; border: 1.5px solid var(--brand); background: var(--raised);
+  color: var(--brand-text, var(--brand)); display: grid; place-items: center; cursor: pointer; }
+.c-talk svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.c-scrim { position: absolute; inset: 0; background: rgba(15, 20, 32, .45); z-index: 5; }
+.c-sheet { position: absolute; inset-inline: 0; inset-block-end: 0; z-index: 6; background: var(--raised); border-radius: 20px 20px 0 0;
+  padding: 18px 16px 16px; display: flex; flex-direction: column; gap: 12px; box-shadow: 0 -12px 40px rgba(15, 20, 32, .22); }
+.c-sheet__title { font-size: 16px; line-height: 22px; }
+.c-sheet__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.c-sheet__list li { display: flex; gap: 10px; align-items: flex-start; }
+.c-sheet__ico { width: 18px; height: 18px; flex: none; margin-block-start: 1px; fill: none; stroke: var(--brand-text, var(--brand)); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.c-sheet__start { height: 44px; border: 0; border-radius: 10px; background: var(--brand); color: var(--brand-on, #fff); font: inherit; font-weight: 600; cursor: pointer; }
+.c-sheet__later { height: 36px; border: 0; background: transparent; color: var(--muted); font: inherit; font-weight: 600; cursor: pointer; }
+.c-sheet__note { font-size: 12px; line-height: 16px; color: var(--muted); text-align: center; }
+.c-call { align-self: center; display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 999px; background: var(--raised);
+  color: var(--muted); font-size: 12px; line-height: 16px; margin: 4px 0; }
+.c-call svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.c-spoken { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
+.c-spoken svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }

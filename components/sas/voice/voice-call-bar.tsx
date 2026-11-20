@@ -110,7 +110,7 @@ export function VoiceCallBar({
             <button
               type="button"
               className={`sas-rb${view.muted ? " sas-rb--on" : ""}`}
-              aria-label={view.muted ? t("voice.unmute") : t("voice.mute")}
+              aria-label={view.muted ? view.unmuteLabel : view.muteLabel}
               aria-pressed={view.muted}
               onClick={() => onMute?.(!view.muted)}
               disabled={view.busy}
