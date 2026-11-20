@@ -42,15 +42,16 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
   const cost = minor === null ? formatMoney(Math.round(month.costMicros / 10_000), "USD") : formatMoney(minor, account.currency);
   const base = `/app/${account.slug}`;
   return (
-    <>
+    // One form and one Save for the page (the switch is its only setting), in a bar that stays at the bottom.
+    <form action={saveVoiceBuyerCallsAction} className="sas-stack-4 st-voice-page">
+      <input type="hidden" name="slug" value={account.slug} />
       {saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("settings.voice.saved")}</span></div> : null}
       <section className="sas-panel" aria-labelledby="voice-h" data-settings-voice="">
         <div className="sas-panel__body sas-stack-2">
           <h2 id="voice-h" className="sas-heading">{t("settings.voice.title")}</h2>
           <span className="sas-small">{t("settings.voice.intro")}</span>
         </div>
-        <form action={saveVoiceBuyerCallsAction} className="st-voice">
-          <input type="hidden" name="slug" value={account.slug} />
+        <div className="st-voice">
           <label className="st-voice__row">
             <span className="sas-stack-2" style={{ gap: 2 }}>
               <b>{t("settings.voice.buyer_calls")}</b>
@@ -60,13 +61,18 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
           </label>
           <Row id="voice-lang" title={t("settings.voice.language")} hint={t("settings.voice.language_hint")}><span className="sas-pill">{t("settings.voice.english")}</span></Row>
           <Row id="voice-voice" title={t("settings.voice.voice")} hint={t("settings.voice.voice_hint")}>
-            <span className="sas-small st-voice__value">{voiceSettingsSummary(settings, voiceModelId())}</span>
+            <span className="st-voice__value">
+              <span className="sas-small">{voiceSettingsSummary(settings, voiceModelId())}</span>
+              <span className="sas-small st-voice__ro">{t("settings.voice.voice_ro")}</span>
+            </span>
           </Row>
           <Row id="voice-max" title={t("settings.voice.longest")} hint={t("settings.voice.longest_hint")}>
-            <span className="sas-num st-voice__value" data-voice-longest="">{callLimitShort(limit)}</span>
+            <span className="st-voice__value">
+              <span className="sas-num" data-voice-longest="">{callLimitShort(limit)}</span>
+              <span className="sas-small st-voice__ro">{t("settings.voice.longest_ro")}</span>
+            </span>
           </Row>
-          <div className="st-voice__foot"><Button type="submit" variant="primary">{t("settings.voice.save")}</Button></div>
-        </form>
+        </div>
       </section>
       <section className="sas-panel" aria-labelledby="voice-told-h">
         <div className="sas-panel__body sas-stack-2">
@@ -92,6 +98,7 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
         </dl>
         <span className="sas-small">{t("settings.voice.month_note")} <a href={`${base}/settings`}>{t("settings.voice.usage_link")}</a></span>
       </section>
-    </>
+      <div className="st-voice__save"><Button type="submit" variant="primary" data-voice-save="">{t("settings.voice.save")}</Button></div>
+    </form>
   );
 }

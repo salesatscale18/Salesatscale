@@ -1191,5 +1191,8 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .st-voice { display: flex; flex-direction: column; }
 .st-voice__row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--space-4); align-items: center; padding: 14px var(--space-4); border-block-start: 1px solid var(--line); }
 label.st-voice__row { cursor: pointer; }
-.st-voice__value { max-width: 260px; text-align: end; }
-.st-voice__foot { display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--line); }
+.st-voice__value { max-width: 280px; text-align: end; display: flex; flex-direction: column; align-items: flex-end; gap: 2px; }
+.st-voice__ro { color: var(--ink-muted); font-style: italic; }
+/* One Save for the page, in a bar that stays at the bottom of the viewport while the page scrolls. */
+.st-voice__save { position: sticky; bottom: 0; z-index: 5; display: flex; justify-content: flex-end; padding: var(--space-3) var(--space-4);
+  background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); box-shadow: 0 -4px 12px rgb(0 0 0 / 0.06); }

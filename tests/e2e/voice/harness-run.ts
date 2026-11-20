@@ -271,6 +271,15 @@ async function main() {
       await shot(page, "buyer-call-quote-phone");
       check((await page.locator("[data-voice-tool]").count()) === 0, "no tool chips for the buyer");
       check(await page.locator('[data-buyer-call] .sas-vbar__title:has-text("One moment")').count() >= 0, "checking state words only");
+      // A quick reply during the call goes into the call too (a typed turn, stored once, never a chat send).
+      const quick = page.locator('.c-reply:has-text("Sounds good")');
+      if ((await quick.count()) && (await phase(page)) === "live") {
+        await quick.click();
+        check(await page.waitForSelector('.c-bubble:has-text("Sounds good")', { timeout: 15_000 }).then(() => true, () => false), "a quick reply during the call becomes the buyer's line in the call");
+        await page.waitForTimeout(2500);
+        check((await page.locator('.c-bubble:has-text("Sounds good")').count()) === 1, "the quick reply is stored once");
+        check((await page.locator('.c-msg--out:has-text("Sounds good") [data-spoken]').count()) === 1, "the quick reply carries the call mark (typed in the call)");
+      }
       // Typed in the chat during the call: goes into the call, stored once.
       if ((await phase(page)) === "live") {
         await page.fill("#c-input", "Does it include setup?");
@@ -301,6 +310,13 @@ async function main() {
       await waitPhase(desk2, "ended", 15_000);
       await desk2.waitForTimeout(2500);
       await shot(desk2, "buyer-ended-chat-desktop");
+      // The ended bar stays while the pointer is over it, then goes 8 s after the pointer leaves.
+      await desk2.hover("[data-buyer-call]");
+      await desk2.waitForTimeout(9000);
+      check((await desk2.locator("[data-buyer-call]").count()) === 1, "the ended bar stays while the pointer is over it");
+      await desk2.mouse.move(5, 5);
+      await desk2.waitForTimeout(9000);
+      check((await desk2.locator("[data-buyer-call]").count()) === 0, "it hides 8 s after the pointer leaves");
       await desk2.context().close();
 
       // Hebrew page (RTL), English call.
@@ -356,11 +372,13 @@ async function main() {
       check(fs.existsSync(file), `${name} rendered`);
       if (!fs.existsSync(file)) continue;
       for (const [w, hgt, suffix] of [[1440, 900, "desktop"], [390, 844, "phone"]] as const) {
-        const ctx = await b.newContext({ viewport: { width: w, height: hgt }, deviceScaleFactor: 2 });
+        // Settings › Voice has a sticky Save bar: a viewport as tall as the page shows it where it rests (a full-page capture would stamp it mid-page).
+        const tall = name === "page-settings-voice";
+        const ctx = await b.newContext({ viewport: { width: w, height: tall ? (suffix === "desktop" ? 1120 : 2100) : hgt }, deviceScaleFactor: 2 });
         const page = await ctx.newPage();
         await page.goto(`file://${file}`);
         await page.waitForTimeout(300);
-        await shot(page, `${name === "page-settings-voice" ? "buyer-settings-voice" : name}-${suffix}`, { fullPage: name !== "page-settings-panel" });
+        await shot(page, `${tall ? "buyer-settings-voice" : name}-${suffix}`, { fullPage: name !== "page-settings-panel" && !tall });
         await ctx.close();
       }
     }

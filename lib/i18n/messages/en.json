@@ -3330,5 +3330,7 @@
   "settings.voice.minutes": "Minutes",
   "settings.voice.cost": "Estimated cost",
   "settings.voice.month_note": "Buyer calls count toward your monthly AI limit.",
-  "settings.voice.usage_link": "AI usage"
+  "settings.voice.usage_link": "AI usage",
+  "settings.voice.voice_ro": "Change it in Versions and test lab.",
+  "settings.voice.longest_ro": "Set by your plan."
 }

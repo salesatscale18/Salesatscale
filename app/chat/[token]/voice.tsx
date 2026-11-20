@@ -20,9 +20,15 @@ import type { Tr } from "@/lib/voice/client/buyer-ui";
  * the call itself is English. After the call, or when the microphone is
  * blocked or calls are not available, a close button hides it.
  */
-export function BuyerCallBar({ client, tr, agentName, dir, onStartAgain, onClose }: {
+export function BuyerCallBar({ client, tr, agentName, dir, onStartAgain, onClose, onHoldChange }: {
   client: VoiceClient; tr: Tr; agentName: string; dir: "ltr" | "rtl"; onStartAgain: () => void; onClose: () => void;
+  /** The pointer is over the bar or focus is inside it: the page holds it open (no auto-hide). */
+  onHoldChange?: (hold: boolean) => void;
 }) {
+  const hover = useRef(false);
+  const box = useRef<HTMLDivElement>(null);
+  // Focus is read from the page itself: a focused button that disappears (End, when the call ends) sends no blur.
+  const hold = () => onHoldChange?.(hover.current || !!box.current?.contains(document.activeElement));
   const s = useVoiceSnapshot(client);
   const now = useNow(s.phase === "live" || s.phase === "reconnecting");
   const view = barView(s, now, { audience: "buyer", tr, agentName });
@@ -33,7 +39,11 @@ export function BuyerCallBar({ client, tr, agentName, dir, onStartAgain, onClose
   const closable = s.phase === "ended" || s.phase === "unavailable" || s.phase === "mic_blocked" || s.phase === "no_mic";
   return (
     // The design system's tokens for the bar (light only), inside the chat's own styles.
-    <div className="c-voice sas-app" data-theme="light" dir={dir} data-buyer-call="" data-voice-phase={s.phase}>
+    <div
+      className="c-voice sas-app" data-theme="light" dir={dir} data-buyer-call="" data-voice-phase={s.phase}
+      onMouseEnter={() => { hover.current = true; hold(); }} onMouseLeave={() => { hover.current = false; hold(); }}
+      ref={box} onFocus={hold} onBlur={() => setTimeout(hold, 0)}
+    >
       <VoiceCallBar view={view} levels={client.levels} onMute={(on) => client.mute(on)} onEnd={() => client.end()} onAction={onAction} />
       {closable ? (
         <button type="button" className="c-voice__close" aria-label={tr("buyer.voice.close")} onClick={onClose}>

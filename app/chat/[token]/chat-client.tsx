@@ -26,6 +26,8 @@ export type ChatStrings = {
 type Shown = BuyerMessage & { pending?: "sending" | "confirmed" | "failed" };
 
 const POLL_MS = 2000;
+/** The ended call bar hides after this long (paused while hovered or focused). */
+const BAR_HIDE_MS = 8000;
 const URL_RE = /(https?:\/\/[^\s<>()]+[^\s<>().,;:!?'"])/g;
 
 /** One inline double-check (single when only sent): grey, or the brand colour once read. */
@@ -276,11 +278,15 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const onTalk = () => (voiceState.consented ? startCall(false) : setSheet(true));
   // When a call ends: fetch its stored lines and the call row now, then let the bar go after a moment.
   useEffect(() => {
-    if (callSnap.phase !== "ended") return;
-    void poll();
-    const id = window.setTimeout(() => setBarHidden(true), 8000);
-    return () => window.clearTimeout(id);
+    if (callSnap.phase === "ended") void poll();
   }, [callSnap.phase, poll]);
+  // The ended bar goes after 8 s, but never while the pointer is over it or focus is in it (the timer starts again after).
+  const [barHold, setBarHold] = useState(false);
+  useEffect(() => {
+    if (callSnap.phase !== "ended" || barHold) return;
+    const id = window.setTimeout(() => setBarHidden(true), BAR_HIDE_MS);
+    return () => window.clearTimeout(id);
+  }, [callSnap.phase, barHold]);
   useEffect(() => () => clientRef.current?.dispose(), []);
   const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && !barHidden;
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
@@ -390,7 +396,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       {showBar && clientRef.current ? (
         <BuyerCallBar
           client={clientRef.current} tr={tr} agentName={voice!.agentName} dir={dir}
-          onStartAgain={() => startCall(false)} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); }}
+          onStartAgain={() => startCall(false)} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); setBarHold(false); }} onHoldChange={setBarHold}
         />
       ) : null}
       <div className="c-log" ref={logRef} role="log" aria-label={strings.messages} dir={dir}>

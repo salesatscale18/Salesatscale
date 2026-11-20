@@ -24,6 +24,8 @@ vi.mock("@/lib/auth/account", () => ({
   actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+// The chat route runs the agent's reply after the response: not here (no model call in tests).
+vi.mock("next/server", async (orig) => ({ ...(await orig<typeof import("next/server")>()), after: () => {} }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "app.example.com" }) }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
@@ -264,6 +266,49 @@ describe("the call continues the chat", () => {
   });
 });
 
+describe("no chat turn beside a call", () => {
+  it("every send path routes like the composer: into a live call, queued while it starts, chat otherwise", async () => {
+    const { routeBuyerText, flushQueued } = await import("@/lib/voice/client/buyer-ui");
+    expect(routeBuyerText("live")).toBe("call");
+    for (const p of ["starting", "mic_prompt", "connecting", "reconnecting", "ending"]) expect(routeBuyerText(p)).toBe("queue");
+    for (const p of ["idle", "ended", "unavailable", "mic_blocked", "no_mic"]) expect(routeBuyerText(p)).toBe("chat");
+    expect(flushQueued("live")).toBe("call");
+    expect(flushQueued("connecting")).toBe("wait");
+    // The call never got there: the queued text goes to the chat.
+    for (const p of ["ended", "unavailable", "mic_blocked", "idle"]) expect(flushQueued(p)).toBe("chat");
+  });
+
+  it("the server refuses a chat send while a buyer call is pending (just created) or live, and allows it once the pending one is stale", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    const b = await newBuyer("Pat Moss");
+    const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { consent: true, deadlineSec: 270, env: SCRIPTED, now: new Date() });
+    if (!r.ok) throw new Error(r.reason);
+    const send = () => post("messages", b.token, { text: "Sounds good", clientId: crypto.randomUUID() }, messagesRoute);
+    const refused = await send();
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ ok: false, reason: "in_call" });
+    expect((await db.select().from(messages).where(and(eq(messages.conversationId, b.conversationId), eq(messages.actor, "buyer")))).length).toBe(0);
+    // A pending call that never connected stops blocking the chat after STALE_PENDING_SEC.
+    await db.update(voiceSessions).set({ createdAt: new Date(Date.now() - 5 * 60_000) }).where(eq(voiceSessions.id, r.sessionId));
+    expect((await send()).status).toBe(200);
+  });
+});
+
+describe("buyer calls are off by default", () => {
+  it("a new account and a demo account never have buyer calls on", async () => {
+    const p = parseCreateAccount({ tradeName: "Fresh", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "f@x.test" });
+    if (!p.ok) throw new Error();
+    const fresh = (await createAccount(db, { userId: me.id, actingAs: false }, p.value)).account;
+    expect(fresh.voiceBuyerCalls).toBe(false);
+    const [admin] = await db.insert(users).values({ clerkId: "sa", email: "sa@p.test", firstName: "Sam", role: "super_admin" }).returning();
+    const { createDemoAccount } = await import("@/lib/demo/seed");
+    const demo = await createDemoAccount(db, { id: admin.id, role: "super_admin" }, { ownerEmail: "demo-owner@x.test" });
+    if (!demo.ok) throw new Error("demo");
+    const [row] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, demo.summary.accountId));
+    expect(row.voiceBuyerCalls).toBe(false);
+  });
+});
+
 describe("the buyer sees state words only", () => {
   it("the socket never sends tool messages to a buyer's call; the bar says One moment…", async () => {
     const b = await newBuyer("Lee Park");
@@ -353,6 +398,10 @@ describe("Settings › Voice", () => {
     expect(html).toContain("4 min 30 s");
     expect(html).toContain("on the call now.");
     expect(html).toContain('data-voice-recordings="off"');
+    // One Save for the page; read-only rows say where they are set.
+    expect((html.match(/data-voice-save=""/g) ?? []).length).toBe(1);
+    expect(html).toContain("Change it in Versions and test lab.");
+    expect(html).toContain("Set by your plan.");
     const dir = process.env.VOICE_RENDER_DIR;
     if (dir) {
       const fs = await import("node:fs");
