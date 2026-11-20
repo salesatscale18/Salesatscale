@@ -8,11 +8,14 @@
  * The buyer sees state words only: no tool names, no cost, no stats; Mute and
  * End, which reads "Back to text". Spoken lines arrive in the chat as messages.
  */
-import { useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
+import { VoiceBubble } from "@/components/sas/voice/voice-bubble";
 import { useNow, useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import type { VoiceClient } from "@/lib/voice/client/voice-client";
 import { barView, type BarAction } from "@/lib/voice/client/view";
+import { mirrorFromSnapshot } from "@/lib/voice/client/bubble";
+import { openTabChannel, TabHost, type MirrorState, type OutputDevice, type TabCommand, type TabContext } from "@/lib/voice/client/tab-link";
 
 import type { Tr } from "@/lib/voice/client/buyer-ui";
 
@@ -61,6 +64,78 @@ export function BuyerCallBar({ client, tr, agentName, dir, firstNote, onStartAga
           {firstNote ? <span className="c-voice__note" data-voice-first-note="">{tr("buyer.voice.first_note")}</span> : null}
         </p>
       ) : null}
+    </div>
+  );
+}
+
+/** Runs a bubble command on the call (from this tab's bubble or an order form tab's). */
+function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) => void) {
+  if (c.cmd === "mute" || c.cmd === "unmute") client.mute(c.cmd === "mute");
+  else if (c.cmd === "end") client.end();
+  else if (c.cmd === "wake") client.wake();
+  else void client.setOutputDevice(c.deviceId).then((ok) => { if (ok) setOutput(c.deviceId); }).catch(() => undefined);
+}
+
+/**
+ * The chat tab's bubble while a call is on (above the composer, bottom-end), and the tab link that lets an
+ * order form tab of this conversation show and control the same call (lib/voice/client/tab-link.ts). The form's
+ * step reaches the call as a context message; the latest one is sent again once the call is live.
+ */
+export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble }: {
+  client: VoiceClient; tabKey: string | null; tr: Tr; agentName: string; dir: "ltr" | "rtl";
+  /** Show the bubble here (the tab link runs either way while a call is on). */
+  showBubble: boolean;
+}) {
+  const s = useVoiceSnapshot(client);
+  const now = useNow(s.phase === "live");
+  const [outputs, setOutputs] = useState<OutputDevice[]>([]);
+  const [output, setOutput] = useState<string | null>(null);
+  const live = s.phase === "live";
+  // The speakers, once the call is live and whenever devices change (two or more, where the page can switch).
+  useEffect(() => {
+    if (!live) return;
+    let off = false;
+    // Empty where the page cannot pick (iOS, most Android: the system routes audio; lib/voice/client/output.ts).
+    const load = () => void client.outputDevices().then((d) => { if (!off) setOutputs(d.map((x) => ({ id: x.deviceId, label: x.label }))); }).catch(() => undefined);
+    load();
+    navigator.mediaDevices?.addEventListener?.("devicechange", load);
+    return () => {
+      off = true;
+      navigator.mediaDevices?.removeEventListener?.("devicechange", load);
+    };
+  }, [client, live]);
+  // Read by the tab host on its own timer (no re-render per level).
+  const latest = useRef({ outputs, output });
+  latest.current = { outputs, output };
+  const context = useRef<TabContext | null>(null);
+  useEffect(() => {
+    if (!tabKey) return;
+    const channel = openTabChannel(tabKey);
+    if (!channel) return;
+    const host = new TabHost(channel, {
+      getState: () => mirrorFromSnapshot(client.getSnapshot(), { now: Date.now(), levels: client.levels(), ...latest.current }),
+      onCommand: (c) => runCommand(client, c, setOutput),
+      onContext: (c) => {
+        context.current = c;
+        client.sendContext(c);
+      },
+    });
+    const bye = () => host.close();
+    window.addEventListener("pagehide", bye);
+    return () => {
+      window.removeEventListener("pagehide", bye);
+      host.close();
+    };
+  }, [client, tabKey]);
+  // A form step that arrived before the call was live goes in once it is.
+  useEffect(() => {
+    if (live && context.current) client.sendContext(context.current);
+  }, [client, live]);
+  const state: MirrorState | null = mirrorFromSnapshot(s, { now, levels: { mic: 0, out: 0 }, outputs, output });
+  if (!showBubble || !state || state.phase === "ended") return null;
+  return (
+    <div className="c-bubble-dock" dir={dir}>
+      <VoiceBubble state={state} agentName={agentName} tr={tr} dir={dir} levels={client.levels} onCommand={(c) => runCommand(client, c, setOutput)} placement="dock" />
     </div>
   );
 }

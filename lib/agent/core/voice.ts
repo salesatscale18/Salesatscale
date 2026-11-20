@@ -214,6 +214,7 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- After send_order_form: say in one short sentence, in the language of the call, that the buyer can fill in the order form now while you stay on the line. Do not end the call, say goodbye or wind down. Then stay quiet while they fill it in; answer only when they speak or ask something.",
     "- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.",
     "- Near the time limit, when the system tells you, say the call is about to end and offer to continue in the chat.",
+    "- A note from the system may say which step of the order form the buyer has open (\"The buyer has the order form open, on step: …\"). Do not answer it aloud; stay quiet unless asked. When the buyer asks about the form, help with the step they are on. Never ask for or repeat card or payment details.",
   ].join("\n");
 }
 

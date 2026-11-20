@@ -341,6 +341,12 @@ export class VoiceClient {
     return true;
   }
 
+  /** The order form's step, from a form tab (the voice bubble's tab link): a quiet note for the call. Only while live. */
+  sendContext(c: { step: string; label: string; event: "opened" | "step" | "submitted" }): boolean {
+    if (this.snap.phase !== "live") return false;
+    return this.sendMsg({ t: "context", kind: "order_form", step: c.step, label: c.label.slice(0, 80), event: c.event });
+  }
+
   /** Ends the call (or cancels it before it connected). */
   end() {
     const phase = this.snap.phase;

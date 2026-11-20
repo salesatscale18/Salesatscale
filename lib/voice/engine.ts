@@ -33,6 +33,7 @@ import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./to
 import { CALL_RULES } from "./call-rules";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
+import { FormContextNotes } from "./form-context";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -253,7 +254,28 @@ export class VoiceEngine {
         return;
       case "ping":
         return;
+      case "context":
+        this.onFormContext(msg);
+        return;
     }
+  }
+
+  /**
+   * The order form open in another tab (lib/voice/form-context.ts): a quiet note to the model, throttled, never
+   * answered aloud. The form being open also lifts standby's idle end (noteOrderFormOpen). A note that arrives
+   * while the model is not connected (standby, a wake or a reconnect under way) never wakes it: the latest one
+   * is held and goes in with the next connection (modelUp), after its fresh instructions and recap.
+   */
+  private formNotes: FormContextNotes | null = null;
+  private heldFormNote: string | null = null;
+  private onFormContext(msg: Extract<import("./protocol").ClientMessage, { t: "context" }>): void {
+    this.noteOrderFormOpen();
+    this.formNotes ??= new FormContextNotes(this.clock, (note) => {
+      if (this.ended) return;
+      if (this.conn && !this.reconnecting && !this.waking && this.standbySince === null) this.conn.sendNote?.(note);
+      else this.heldFormNote = note;
+    });
+    this.formNotes.push({ step: msg.step, event: msg.event });
   }
 
   onClientAudio(bytes: Uint8Array): void {
@@ -401,6 +423,11 @@ export class VoiceEngine {
     this.conn = conn;
     this.activeSince = this.clock.now();
     this.usageAcc.newSession();
+    // A form note held while the model was away (standby, wake, reconnect): it reads it now, with the recap.
+    if (this.heldFormNote) {
+      conn.sendNote?.(this.heldFormNote);
+      this.heldFormNote = null;
+    }
   }
 
   /** Cost so far, from the latest usage snapshot and the model-connected time (0 for the scripted model). */

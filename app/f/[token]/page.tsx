@@ -24,6 +24,11 @@ import { brandVars } from "@/lib/simulator/rules";
 import { isolateName } from "@/lib/agent/core/names";
 import { buyerDate, buyerTime, buyerZone } from "./time";
 import { BankDetails } from "./bank";
+import { FormVoiceBubble } from "./voice-bubble";
+import { voiceTabKeyForForm } from "@/lib/voice/tab-key";
+import { chatNames } from "@/lib/simulator/service";
+import type { MessageKey } from "@/lib/i18n";
+import "@/components/sas/voice/voice-bubble.css";
 import "./buyer.css";
 
 export const dynamic = "force-dynamic";
@@ -45,7 +50,10 @@ const STEP_FORM = "b-step-form";
 /** "Q-1003" for version 1, "Q-1003 v2" from version 2 on (the buyer sees a version only once there is more than one). */
 export const quoteRefText = (q: { number: number; version: number }) => (q.version > 1 ? `Q-${q.number} v${q.version}` : `Q-${q.number}`);
 
-function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number; strip?: boolean | "bank" }) {
+/** The voice bubble on this page: the tab link's key, and the page's step (an id for the call, a name in the page's language). */
+type FormVoice = { tabKey: string; agentName: string; step: string; label: string };
+
+function Shell(props: { lang: Locale; token: string; brand: string; seller: string; sub?: string; children: ReactNode; switcher?: boolean; step?: number; strip?: boolean | "bank"; voice?: FormVoice | null }) {
   const tr = translator(props.lang);
   // On the steps, the language switch is a submit button of the step form (form="b-step-form"): it saves
   // what the buyer typed on this step as the draft, without checking it, and reloads the same step in the
@@ -79,6 +87,8 @@ function Shell(props: { lang: Locale; token: string; brand: string; seller: stri
         <main style={{ display: "flex", flexDirection: "column", flex: 1 }}>{props.children}</main>
         <footer className="b-foot"><Lock />{tr("buyer.secured_by")}</footer>
       </div>
+      {/* A call running in the chat tab shows here too (nothing when there is none). */}
+      {props.voice ? <FormVoiceBubble tabKey={props.voice.tabKey} step={props.voice.step} label={props.voice.label} lang={props.lang} agentName={props.voice.agentName} /> : null}
     </div>
   );
 }
@@ -115,11 +125,16 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const period = s.recurringPeriod === "year" ? "year" as const : "month" as const;
   // One parallel step after loadForm: the account, and for an open form the first-view mark and the price check.
   const isOpen = view.state === "open";
-  const [[account], , priced] = await Promise.all([
+  const [[account], , priced, tabKey] = await Promise.all([
     appDb.select().from(sellerAccounts).where(eq(sellerAccounts.id, form.accountId)),
     isOpen ? markOpened(appDb, form) : null,
     isOpen ? priceCheck(appDb, form) : null,
+    // The voice bubble: only when this form's lead has the chat conversation a call runs in (the form token authorises it).
+    voiceTabKeyForForm(appDb, form),
   ]);
+  const agentName = tabKey ? (await chatNames(appDb, account, "en")).agent : "";
+  /** The bubble's props for the page shown: the step's fixed id and its name. */
+  const voiceAt = (step: string, key: MessageKey): FormVoice | null => (tabKey ? { tabKey, agentName, step, label: tr(key) } : null);
   // A paused account takes no signatures or payments: show "unavailable".
   const paused = account.status === "paused";
   // Dates and times in the buyer's (market's) time zone, the same source as the chat's quote card; times name the zone.
@@ -127,8 +142,8 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
   const date = (d: Date | string) => buyerDate(d, zone, lang);
   const time = (d: Date) => buyerTime(d, zone, lang);
   // The test-payment banner only where money moves: the payment and paid pages (step 3 has its own notice).
-  const shell = (sub: string | undefined, children: ReactNode, step?: number, strip: boolean | "bank" = false) => (
-    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step} strip={strip}>{children}</Shell>
+  const shell = (sub: string | undefined, children: ReactNode, step?: number, strip: boolean | "bank" = false, voice: FormVoice | null = null) => (
+    <Shell lang={lang} token={token} brand={s.seller.brandColor} seller={displaySeller(form, lang)} sub={sub} step={step} strip={strip} voice={voice}>{children}</Shell>
   );
   const quoteRef = quoteRefText(s.quote);
   // Older snapshots have no supportContact: show nothing then.
@@ -164,7 +179,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         </div>
         {n ? help : null}
       </>
-    ));
+    ), undefined, false, voiceAt(view.state, view.state === "updated" ? "buyer.updated_title" : "buyer.expired_title"));
   }
 
   // Signed: payment, bank transfer, failed or paid (canvas: BuyerPay, BuyerPayFailed, BuyerPaid).
@@ -206,7 +221,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
             {support(true)}
           </section>
         </>
-      ), undefined, true);
+      ), undefined, true, voiceAt("paid", "buyer.paid_title"));
     }
     // Card needs a provider: today only the test provider exists (off when PAYMENTS_MODE=live).
     const cardOn = s.paymentMethods.card && fakePaymentsEnabled();
@@ -266,7 +281,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         <section className="b-sec b-noprint"><a className="b-btn b-btn--2" href={`/f/${token}/document?lang=${lang}`}>{tr("buyer.signed_form")}</a></section>
         {help}
       </>
-    ), undefined, method === "bank" ? "bank" : true);
+    ), undefined, method === "bank" ? "bank" : true, voiceAt("pay", "buyer.step_pay"));
   }
 
   // Open: check the price again, then review and sign (canvas: BuyerOrder, BuyerPriceChanged).
@@ -332,7 +347,7 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         </form>
         {help}
       </>
-    ));
+    ), undefined, false, voiceAt("price_changed", "buyer.price_title"));
   }
   // Viewing in another language than the form's: section titles come from that language's version, when there is one.
   const titles = lang !== form.language
@@ -473,5 +488,5 @@ export default async function BuyerFormPage({ params, searchParams }: { params: 
         {step > 1 ? <Summary s={s} tr={tr} lang={lang} eta={choices?.eta ?? null} validUntil={date(s.validUntil)} /> : null}
       </div>
     </>
-  ), step);
+  ), step, false, voiceAt(step === 1 ? "order" : step === 2 ? "company" : "sign", step === 1 ? "buyer.steps.order" : step === 2 ? "buyer.steps.company" : "buyer.steps.sign"));
 }

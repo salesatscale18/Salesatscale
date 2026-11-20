@@ -3472,5 +3472,16 @@
   "buyer.sms_stop.title": "Stop text messages from {seller}?",
   "buyer.sms_stop.body": "You can still write to {seller} in the chat.",
   "buyer.sms_stop.button": "Stop text messages",
-  "buyer.sms_stop.done": "You won't get more text messages from {seller}."
+  "buyer.sms_stop.done": "You won't get more text messages from {seller}.",
+  "buyer.voice.bubble.label": "Voice call: {state}. Call controls",
+  "buyer.voice.bubble.menu": "Call controls",
+  "buyer.voice.bubble.speaker": "Speaker",
+  "buyer.voice.bubble.speaker_n": "Speaker {n}",
+  "buyer.voice.bubble.ended": "Call ended",
+  "buyer.voice.bubble.ended_idle": "Call ended · it was quiet",
+  "buyer.voice.bubble.ended_agent": "Call ended by the agent",
+  "buyer.voice.bubble.ended_limit": "Call ended · time limit",
+  "buyer.voice.bubble.left": "{time} left",
+  "buyer.voice.bubble.caption_more": "Show the whole line",
+  "buyer.voice.bubble.caption_less": "Show less"
 }

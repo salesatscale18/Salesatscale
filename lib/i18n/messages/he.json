@@ -364,5 +364,16 @@
   "buyer.sms_stop.title": "להפסיק הודעות SMS מ־{seller}?",
   "buyer.sms_stop.body": "עדיין אפשר לכתוב ל־{seller} בצ׳אט.",
   "buyer.sms_stop.button": "הפסקת הודעות SMS",
-  "buyer.sms_stop.done": "לא יישלחו אליך עוד הודעות SMS מ־{seller}."
+  "buyer.sms_stop.done": "לא יישלחו אליך עוד הודעות SMS מ־{seller}.",
+  "buyer.voice.bubble.label": "שיחה קולית: {state}. פקדי השיחה",
+  "buyer.voice.bubble.menu": "פקדי השיחה",
+  "buyer.voice.bubble.speaker": "רמקול",
+  "buyer.voice.bubble.speaker_n": "רמקול {n}",
+  "buyer.voice.bubble.ended": "השיחה הסתיימה",
+  "buyer.voice.bubble.ended_idle": "השיחה הסתיימה · היה שקט",
+  "buyer.voice.bubble.ended_agent": "העוזר סיים את השיחה",
+  "buyer.voice.bubble.ended_limit": "השיחה הסתיימה · נגמר הזמן",
+  "buyer.voice.bubble.left": "נותרו {time}",
+  "buyer.voice.bubble.caption_more": "הצגת המשפט המלא",
+  "buyer.voice.bubble.caption_less": "הצגה מקוצרת"
 }
