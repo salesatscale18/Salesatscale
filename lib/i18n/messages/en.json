@@ -1052,7 +1052,7 @@
   "playbook.limits": "Limits",
   "playbook.limits_hint": "The discount limit is enforced by the system, not just suggested to the agent.",
   "playbook.max_discount_unit": "% maximum",
-  "playbook.handoff_always": "The agent always hands over when the buyer asks for a person.",
+  "playbook.handoff_always": "When the buyer asks for a person, the agent says yes, offers once to help, then books a call. It hands over at once when the buyer is upset.",
   "playbook.never.add": "Add rule",
   "playbook.never.rule": "Rule {n}",
   "playbook.never_empty": "No extra rules yet.",
