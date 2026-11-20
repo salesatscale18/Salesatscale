@@ -110,11 +110,30 @@ lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run o
   `cost_micros`, answer times, how it ended). Live sessions' `cost_micros` count toward the account
   spend cap, the usage display and the platform budget (`lib/ai/usage.ts`). Spoken turns are
   conversation messages with `voice_session_id`, `spoken_at_ms` and, for agent turns, `answer_ms`.
+- **Language**: starts in the chat's language; the buyer can switch. The call starts in the
+  conversation's language (English if the model cannot speak it) and goes on in any language the
+  buyer speaks or asks for; product names are said as the seller wrote them, tool arguments follow
+  the chat rules. The instructions name the likely languages (the conversation's, the account's
+  selling languages, English). Gemini Live takes no input-transcription language, so that hint is in
+  the instructions only; OpenAI's transcription gets it as a prompt. Each stored line carries the
+  language it was spoken in.
+- **Order form and ending**: after `send_order_form` the agent says, in one sentence, that the
+  buyer can fill it in now while it stays on the line, then stays quiet unless asked (no "are you
+  still there?" for 4 minutes, `orderFormQuietMs`). When the buyer asks to end the call, the agent
+  says a short goodbye and calls `end_call`, a voice-only tool the engine handles (never in the
+  chat's tools or prompt); the call ends as `agent_closed` and the conversation stays open.
+- **Loudspeaker** (`lib/voice/client/output.ts`): the agent plays through an `<audio>` element fed
+  by a `MediaStreamAudioDestinationNode` (as a WebRTC call does), falling back to the AudioContext
+  output. The mic keeps echo cancellation. `setOutputDevice` / `outputDevices` switch the output
+  where the browser allows it (desktop Chrome/Edge); iOS Safari and most Android phones list no
+  choice and route by the system. To check on real phones: speaker (not earpiece) on iOS Safari and
+  Android Chrome, volume, echo on speaker and barge-in while the agent talks, a Bluetooth headset,
+  the screen locked and back.
 - **Buyer calls** (release 2, `lib/voice/buyer.ts`): "Switch to voice" at the edge of the buyer chat's
   composer, a channel switch from text to voice and back (End reads "Back to text"), with no notice
   in between. Offered only when every gate holds (voice on, buyer calls not turned off for the account (`voiceBuyerCallsOff`, an opt-out: on for every account unless a seller turns it off in Settings › Voice), account
   live (a simulated chat counts a setting-up account as live), under the spend cap and platform budget in live mode, the chat open
-  and held by the agent, the conversation in English, any case or region). Contact hours do not apply: a buyer can chat or talk at any hour (they limit only what the agent starts). On a simulated chat a
+  and held by the agent, any chat language, case or region). Contact hours do not apply: a buyer can chat or talk at any hour (they limit only what the agent starts). On a simulated chat a
   failed gate shows the button disabled with the reason; a real buyer sees no button. The chat token
   is the only credential (`POST /chat/<token>/voice`, 6 calls per link per hour; it refuses with the
   same reason). The first call records `consent_records.voice_consent_at` silently. The call joins

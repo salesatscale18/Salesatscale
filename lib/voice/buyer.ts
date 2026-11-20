@@ -8,8 +8,8 @@
  * `voiceBuyerCallsOff`) and is live; under the
  * spend cap and the platform budget
  * (live mode); the chat's conversation is open and held by the agent (not a
- * person, not closed, the buyer not opted out); and it is in English (calls
- * are English only). Contact hours do not apply: a buyer can chat or talk at
+ * person, not closed, the buyer not opted out). Any chat language: a call starts in
+ * the chat's language and the buyer can switch (lib/voice/instructions.ts). Contact hours do not apply: a buyer can chat or talk at
  * any hour (they limit only what the agent starts). A real buyer never sees why it is not there; on a
  * simulated chat (the seller's own test link), or when the person viewing the chat is signed in as a
  * member of the seller's account or as a platform admin (lib/voice/chat-viewer.ts, checked on the
@@ -34,17 +34,14 @@ export const BUYER_CALLS_PER_HOUR = 6;
 
 export type BuyerVoiceBlock =
   | "voice_off" | "buyer_calls_off" | "account_not_live" | "spend_cap" | "platform_budget"
-  | "no_conversation" | "not_agent" | "opted_out" | "not_english";
+  | "no_conversation" | "not_agent" | "opted_out";
 
 export type BuyerVoiceGate =
   | { ok: true; conversation: Conversation; consented: boolean }
   | { ok: false; reason: BuyerVoiceBlock };
 
 /** Reasons a tester on a simulated chat is shown (the others hide the button: no chat yet, the buyer opted out, voice off). */
-export const SHOWN_BLOCKS: ReadonlySet<BuyerVoiceBlock> = new Set(["buyer_calls_off", "account_not_live", "spend_cap", "platform_budget", "not_agent", "not_english"]);
-
-/** English, whatever the case or region ("en", "EN", "en-US", "en_GB"). */
-export const isEnglish = (lang: string | null | undefined) => (lang ?? "").trim().toLowerCase().split(/[-_]/)[0] === "en";
+export const SHOWN_BLOCKS: ReadonlySet<BuyerVoiceBlock> = new Set(["buyer_calls_off", "account_not_live", "spend_cap", "platform_budget", "not_agent"]);
 
 /** The chat's conversation (the latest on the chat page's channel), or null. */
 export async function buyerConversation(db: Db, ctx: Pick<ChatContext, "lead" | "account">): Promise<Conversation | null> {
@@ -106,7 +103,6 @@ export async function buyerVoiceGate(db: Db, ctx: Pick<ChatContext, "lead" | "ac
   const conversation = await buyerConversation(db, { lead, account });
   if (!conversation) return { ok: false, reason: "no_conversation" };
   if (conversation.status !== "open") return { ok: false, reason: "not_agent" };
-  if (!isEnglish(conversation.language)) return { ok: false, reason: "not_english" };
   // No contact-hours gate: contact hours limit only when the agent contacts the buyer (openers, follow-ups,
   // callback times it proposes). A buyer can chat or talk at any hour (owner decision).
   if (mode === "live") {

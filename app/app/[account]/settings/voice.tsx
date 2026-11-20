@@ -55,7 +55,7 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
             </span>
             <input type="checkbox" role="switch" className="sas-switch" name="buyerCalls" defaultChecked={!account.voiceBuyerCallsOff} aria-describedby="voice-calls-hint" data-voice-buyer-calls="" />
           </label>
-          <Row id="voice-lang" title={t("settings.voice.language")} hint={t("settings.voice.language_hint")}><span className="sas-pill">{t("settings.voice.english")}</span></Row>
+          <Row id="voice-lang" title={t("settings.voice.language")} hint={t("settings.voice.language_hint")}><span className="sas-pill">{t("settings.voice.language_value")}</span></Row>
           <Row id="voice-voice" title={t("settings.voice.voice")} hint={t("settings.voice.voice_hint")}>
             <span className="st-voice__value">
               <span className="sas-small">{voiceSettingsSummary(settings, voiceModelId())}</span>

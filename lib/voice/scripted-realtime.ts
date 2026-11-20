@@ -178,7 +178,7 @@ const lookupThenAsk = (mustHave: boolean | null): ScriptStep[] => [
 const askTeam = (mustHave: boolean | null) => tool("ask_team", { question: UNKNOWN.question, buyer_words: UNKNOWN.words, must_have: mustHave });
 const asked = (ctx: ScriptCtx) => ctx.last("ask_team")?.sent === true;
 const PROMISE = "I don't have that detail yet, and I'll make sure you get an exact answer. Is it a must-have for you, or good to know?";
-const orderFormSay = say("The order form is in the chat. Fill in your company details, sign and pay; it takes about two minutes.");
+const orderFormSay = say("The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I'm staying on the line.");
 
 /** A time tool refused with another time to offer: offer it, hear the yes, use it. */
 const offerSuggested = (name: "request_callback" | "schedule_follow_up", key: "suggested_time" | "suggested_due_at", args: (time: string) => Record<string, unknown>): ScriptStep[] => {
@@ -314,7 +314,7 @@ function objectionScripts(): Record<string, Script> {
   };
 }
 
-/** One script per test-lab scenario (lib/agent/scenarios.ts). Calls are English only. */
+/** One script per test-lab scenario (lib/agent/scenarios.ts). A call starts in the conversation's language. */
 export const VOICE_SCRIPTS: Record<string, Script> = {
   ready_buyer: [
     expectBuyer("Hi, I run a business with one location. I decide on purchases. Please send me a price and the order form so I can sign today."),
@@ -325,7 +325,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     say(totalLine),
     expectBuyer("Yes, please send it."),
     tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
-    say("The order form is in the chat. Fill in your company details, sign and pay; it takes about two minutes."),
+    say("The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I'm staying on the line."),
   ],
   discount_push: [
     expectBuyer("We have one location. I want your basic package, but only with 15% off."),
@@ -375,9 +375,10 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
   ],
   hebrew_buyer: [
     expectBuyer("שלום, יש לנו עסק עם סניף אחד. כמה זה עולה?"),
-    say("I can only continue in English on this call, or we can go on in the chat in Hebrew. Which would you prefer?"),
-    expectBuyer("English is fine."),
-    say("Great, thank you. How do you handle it today?"),
+    // The call starts in the conversation's language (Hebrew here) and stays in it.
+    say("תודה. המחיר תלוי בכמה דברים. איך אתם מנהלים את זה היום?"),
+    expectBuyer("עם טבלה משותפת."),
+    say("הבנתי. כמה אנשים משתמשים בה?"),
   ],
   no_approved_answer: [
     expectBuyer("Do you offer on-site training in our city, and how long does it take?"),
@@ -479,6 +480,11 @@ export class ScriptedRealtime implements RealtimeModel {
 }
 
 type Waiter = () => void;
+
+/** A buyer asking to end the call (typed in a scripted call), in English or Hebrew. */
+export const END_CALL_ASK = /\b(?:bye|goodbye|end (?:the|this) call|hang up)\b|(?:^|\s)(?:ביי|להתראות|לסיים את השיחה)/i;
+/** The scripted agent's goodbye before end_call. */
+export const END_CALL_GOODBYE = { en: "Of course. Thanks for your time, goodbye.", he: "בטח. תודה על הזמן, להתראות." } as const;
 type BuyerTurn = { typed: boolean; text?: string };
 
 export class ScriptedConnection implements RealtimeConnection {
@@ -688,7 +694,9 @@ export class ScriptedConnection implements RealtimeConnection {
         this.endTurn();
         continue;
       }
-      this.buyerSaid(this.buyerTurns.shift()!, AFTER_SCRIPT.buyer);
+      const turn = this.buyerTurns.shift()!;
+      if (await this.endIfAsked(turn)) return;
+      this.buyerSaid(turn, AFTER_SCRIPT.buyer);
       await this.speak(AFTER_SCRIPT.agent);
       this.endTurn();
     }
@@ -699,11 +707,31 @@ export class ScriptedConnection implements RealtimeConnection {
     while (!this.closed) {
       await this.until(() => this.interjections.length > 0 || this.buyerTurns.length > 0);
       if (this.closed) return null;
-      if (this.buyerTurns.length) return this.buyerTurns.shift()!;
+      if (this.buyerTurns.length) {
+        const turn = this.buyerTurns.shift()!;
+        if (await this.endIfAsked(turn)) return null;
+        return turn;
+      }
       await this.speak(lineForInstruction(this.interjections.shift()));
       this.endTurn();
     }
     return null;
+  }
+
+  /**
+   * A typed request to end the call ("bye", "end the call"): a short goodbye, then end_call, as the
+   * voice block asks. True when it handled the turn (the script stops: the engine ends the call).
+   */
+  private async endIfAsked(turn: BuyerTurn): Promise<boolean> {
+    if (!turn.typed || !turn.text || !END_CALL_ASK.test(turn.text)) return false;
+    const he = /[\u0590-\u05FF]/.test(turn.text);
+    await this.speak(he ? END_CALL_GOODBYE.he : END_CALL_GOODBYE.en);
+    const callId = `call_${++this.callSeq}_end`;
+    this.turnOpen = true;
+    this.emit({ type: "tool-call", callId, name: "end_call", args: {} });
+    await this.until(() => this.toolResults.has(callId));
+    this.endTurn();
+    return true;
   }
 
   /** The buyer's turn as transcribed: the scripted line for speech, nothing for typed text (the engine has it). */

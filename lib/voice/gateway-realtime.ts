@@ -23,6 +23,11 @@ import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionC
 import { schemaFamilyOf } from "./tool-schema";
 import { voiceModelId } from "./settings";
 
+/** "he" → "Hebrew" (the code itself when unknown). */
+const languageName = (code: string) => {
+  try { return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code; } catch { return code; }
+};
+
 type SdkTool = NonNullable<SdkSessionConfig["tools"]>[number];
 
 /** How long the socket may take to open before the call gives up. */
@@ -42,7 +47,10 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
     outputModalities: ["audio"],
     inputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
     outputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
-    inputAudioTranscription: {},
+    // A language hint, never a lock (the buyer may switch). Gemini Live's input transcription takes no
+    // language setting, so for Gemini the expected languages go in the instructions only (lib/voice/instructions.ts);
+    // OpenAI's transcription takes a prompt.
+    inputAudioTranscription: !gemini && cfg.expectedLanguages?.length ? { prompt: `The speaker most likely speaks ${cfg.expectedLanguages.map(languageName).join(" or ")}.` } : {},
     outputAudioTranscription: {},
     // Gemini Live: server voice activity detection is always on and not tunable here.
     turnDetection: gemini || !tt

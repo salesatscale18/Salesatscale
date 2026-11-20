@@ -149,7 +149,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     return s.language === "en" || s.title.toLowerCase().includes(lang.toLowerCase()) ? s.title : `${s.title} (${lang})`;
   };
   const now = new Date();
-  // "Call the agent": the same pickers as a new test chat (calls are English only), the Ready line per version.
+  // "Call the agent": the same pickers as a new test chat (a call starts in the chosen language), the Ready line per version.
   const callLimit = deploymentCallLimitSec();
   const liveVersion = versions.find((v) => v.status === "live");
   const callVersions = [

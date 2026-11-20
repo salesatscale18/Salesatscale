@@ -138,18 +138,17 @@ describe("the gates", () => {
     await db.update(leads).set({ status: "opted_out" }).where(eq(leads.id, b.leadId));
     expect(await gate()).toEqual({ ok: false, reason: "opted_out" });
 
+    // Any chat language gets the button: a Hebrew chat too (the call starts in Hebrew).
     const he = await newBuyer("Dana Levi", "he");
-    expect(await buyerVoiceGate(db, await ctxOf(he), { env: SCRIPTED, now: IN_HOURS })).toEqual({ ok: false, reason: "not_english" });
+    expect(await buyerVoiceGate(db, await ctxOf(he), { env: SCRIPTED, now: IN_HOURS })).toMatchObject({ ok: true });
     // A refused buyer gets no session.
-    expect(await startBuyerVoiceCall(db, await ctxOf(he), he.token, { deadlineSec: 270, env: SCRIPTED, now: IN_HOURS })).toEqual({ ok: false, reason: "unavailable", gate: "not_english" });
-    expect(await sessions(he.conversationId)).toEqual([]);
     expect(await sessions(b.conversationId)).toEqual([]);
   });
 });
 
 describe("why the button is off (a simulated chat's tester sees it; a real buyer does not)", () => {
   it("each reason, the hours text, the language check and the simulated-only rule", async () => {
-    const { buyerVoiceState, isEnglish } = await import("@/lib/voice/buyer");
+    const { buyerVoiceState } = await import("@/lib/voice/buyer");
     const b = await newBuyer("Sim Tester");
     const ctx = await ctxOf(b);
     const lead = ctx.lead;
@@ -173,15 +172,12 @@ describe("why the button is off (a simulated chat's tester sees it; a real buyer
     await set({ monthlySpendCapMinor: account.monthlySpendCapMinor, contactHours: ALWAYS });
     await db.update(conversations).set({ status: "human" }).where(eq(conversations.id, b.conversationId));
     expect(await state()).toEqual({ available: false, reason: "not_agent" });
-    await db.update(conversations).set({ status: "open", language: "he" }).where(eq(conversations.id, b.conversationId));
-    expect(await state()).toEqual({ available: false, reason: "not_english" });
-    // English whatever the case or region.
-    for (const l of ["en", "EN", "en-US", "en_GB", " en "]) {
-      await db.update(conversations).set({ language: l }).where(eq(conversations.id, b.conversationId));
+    // Any chat language: Hebrew, English with a region, or another language the model speaks.
+    for (const l of ["he", "en", "en-US", "ar", "fr"]) {
+      await db.update(conversations).set({ status: "open", language: l }).where(eq(conversations.id, b.conversationId));
       expect((await state()).available, l).toBe(true);
     }
-    expect(isEnglish("eng")).toBe(false);
-    expect(isEnglish(null)).toBe(false);
+    await db.update(conversations).set({ language: "en" }).where(eq(conversations.id, b.conversationId));
     // A real (non-simulated) buyer is never told why.
     await set({ voiceBuyerCallsOff: true });
     const real = { ...lead, buyerRef: null, phone: "+972501234567" };
@@ -326,8 +322,9 @@ describe("the call continues the chat", () => {
     expect(reAskLine("Does the CRM integration matter?")).toBe("So, does the CRM integration matter?");
     expect(reAskLine("Okay. So, which plan fits you?")).toBe("So, which plan fits you?");
     expect(reAskLine("The quote is in the chat.")).toBeNull();
-    // A question in another script (a Hebrew chat) is not mixed into the English call: the fallback line instead.
-    expect(reAskLine("היי דנה. מה גרם לך לפנות אלינו היום?")).toBeNull();
+    // A Hebrew chat: the question is re-asked in Hebrew ("אז, ..."), as the call starts in Hebrew.
+    expect(reAskLine("היי דנה. מה גרם לך לפנות אלינו היום?")).toBe("אז, מה גרם לך לפנות אלינו היום?");
+    expect(reAskLine("אז, מה גרם לך לפנות אלינו היום?")).toBe("אז, מה גרם לך לפנות אלינו היום?");
   });
 
   it("the agent's open question when it wrote last; the fallback when the buyer did", async () => {
@@ -552,9 +549,9 @@ describe("the buyer sees state words only", () => {
     const off = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(off).not.toContain("Switch to voice");
     // A simulated chat with a gate off: the button stays, disabled, and says why under the composer.
-    const why = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, reason: "not_english" } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+    const why = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, reason: "not_agent" } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(why).toContain('aria-disabled="true"');
-    expect(why).toContain("Voice works in English chats only for now.");
+    expect(why).toContain("This chat is handled by a person.");
     const voiceOff = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" />);
     expect(voiceOff).not.toContain("Switch to voice");
   });

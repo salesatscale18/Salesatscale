@@ -53,7 +53,7 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   { from: "Not this: writing the quote lines or totals yourself, or repeating them after the quote.", to: "Not this: reading out the quote lines, or saying the totals more than once." },
   {
     from: '5. Order form. When the buyer agrees: call send_order_form at once and send the link with one line on what to do there.\n   Example: "Here it is. Fill in your company details, sign and pay; it takes about 2 minutes."',
-    to: '5. Order form. When the buyer agrees: call send_order_form at once, then say the order form link is in the chat, with one line on what to do there. Never read the link aloud.\n   Example: "The order form is in the chat. Fill in your company details, sign and pay; it takes about 2 minutes."',
+    to: '5. Order form. When the buyer agrees: call send_order_form at once, then say the order form link is in the chat, with one line on what to do there, and that they can fill it in now while you stay on the line. Never read the link aloud.\n   Example: "The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I\'m staying on the line."',
   },
   { from: "- Filled in the order form (company and signer details): never ask in chat.", to: "- Filled in the order form (company and signer details): never ask by voice." },
   {
@@ -135,7 +135,7 @@ export const PLAYS_VOICE: readonly VoiceReplacement[] = [
 /** lib/agent/prompt.ts stableSystemPrompt (the parts outside the core design). */
 export const STABLE_PROMPT_VOICE: readonly VoiceReplacement[] = [
   { from: "talking with a business buyer on a messaging channel.", to: "talking with a business buyer on a live voice call." },
-  { from: /^- Answer in the buyer's language \(.*\)\. Product names and SKUs stay as they are\.$/m, to: "- Speak English only on a call. Say product names as the seller wrote them; SKUs are never said aloud." },
+  { from: /^- Answer in the buyer's language \((.*)\)\. Product names and SKUs stay as they are\.$/m, to: "- Speak the buyer's language: the call starts in the conversation's language ($1), or English if you cannot speak it, and goes on in any language the buyer speaks or asks for. Say product names as the seller wrote them; SKUs are never said aloud." },
   { from: "do not ask for it in chat, unless send_order_form is refused", to: "do not ask for it by voice, unless send_order_form is refused" },
   { from: "- Never ask for or accept payment card details in chat. Payment happens on a secure page.", to: "- Never ask for or accept payment card details on the call. Payment happens on a secure page." },
   { from: "call record_opt_out at once, then send only the reply it gives you.", to: "call record_opt_out at once, then say only the reply it gives you." },
@@ -193,7 +193,7 @@ export function voiceStageText(instruction: string): string {
 export function voiceCallBlock(o: { fillers: boolean }): string {
   return [
     "### On a voice call (always)",
-    "- This is a live voice call in English. If the buyer speaks another language, say in English that you can continue in English, or in the chat in their language.",
+    "- Language: start the call in the conversation's language (\"Conversation language\" at the end; English if you cannot speak it). If the buyer speaks another language, or asks to switch, continue in that language from then on. Product names stay as the seller wrote them. Tool arguments are as always: the buyer's own words in their language, a quote headline in the language you speak with them.",
     "- Open with your name, the seller's name and that you are an automated assistant. Say again that you are an automated assistant whenever the buyer asks.",
     "- Say prices naturally, as a person would say them out loud; say a total once.",
     "- Never spell out or ask for an email, a company ID or an address by voice: the buyer fills those in the order form.",
@@ -210,6 +210,8 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- Times: say them naturally, as a person would (\"tomorrow at ten\", \"Friday 20 November at half past twelve\"); the tools and your context give them in full (\"Friday 20 November at 12:30\"). Work out the date from \"Local time now\" in your context. Pass the time to request_callback and schedule_follow_up as a local date and time, for example \"2026-11-18T10:00\".",
     "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
     "- If the buyer says stop or asks not to be contacted: confirm, call record_opt_out, and say only the reply it gives you.",
+    "- If the buyer asks to end the call (or says goodbye): say a short goodbye in the language of the call, then call end_call. Never end the call otherwise; a request not to be contacted is record_opt_out.",
+    "- After send_order_form: say in one short sentence, in the language of the call, that the buyer can fill in the order form now while you stay on the line. Do not end the call, say goodbye or wind down. Then stay quiet while they fill it in; answer only when they speak or ask something.",
     "- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.",
     "- Near the time limit, when the system tells you, say the call is about to end and offer to continue in the chat.",
   ].join("\n");

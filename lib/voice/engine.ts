@@ -49,9 +49,14 @@ export type VoiceLimits = {
   endGraceMs?: number;
   /** How often `{t:'stats'}` goes out. */
   statsEveryMs?: number;
+  /** After the order form is sent, the buyer may fill it in quietly this long before a silence check. */
+  orderFormQuietMs?: number;
 };
 
-const DEFAULTS = { limitWarnSec: 45, silenceAskMs: 25_000, silenceEndMs: 20_000, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000 };
+/** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
+const END_AFTER_GOODBYE_MS = 2_500;
+
+const DEFAULTS = { limitWarnSec: 45, silenceAskMs: 25_000, silenceEndMs: 20_000, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, orderFormQuietMs: 240_000 };
 
 export type VoiceEngineDeps = {
   db: Db;
@@ -86,6 +91,19 @@ type FinalizeReason = "done" | "interrupted" | "buyer" | "stop";
 
 /** The last agent line this call stored, to merge a resumed line into it or drop a repeated cut copy. */
 type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number };
+
+/**
+ * The language a spoken line is stored with: the buyer may switch languages on a call. Cheap, by script:
+ * Hebrew letters → "he"; Arabic letters → "ar"; Latin text in a conversation whose language is written in
+ * another script → "en"; otherwise the conversation's language (chat stores the conversation's language too).
+ */
+export function lineLanguage(text: string, conversationLanguage: string | null): string {
+  const conv = conversationLanguage || "en";
+  if (/[\u0590-\u05FF]/.test(text)) return "he";
+  if (/[\u0600-\u06FF]/.test(text)) return "ar";
+  if (/[A-Za-z]/.test(text) && /^(?:he|ar|fa|ur|ru|uk|bg|el|yi)\b/i.test(conv)) return "en";
+  return conv;
+}
 
 /** Text compared for "the same line": lower case, words only. */
 export const normLine = (s: string) => s.toLowerCase().replace(/…/g, " ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
@@ -145,6 +163,8 @@ export class VoiceEngine {
   private reconnectUsed = false;
   private reconnecting = false;
   private silenceChecked = false;
+  /** Clock time until which a quiet buyer is taken to be filling in the order form. */
+  private orderFormQuietUntil = 0;
   private lastStamp = 0;
   private errorCode: VoiceErrorCode | null = null;
   private timers: Record<"warn" | "limit" | "silenceAsk" | "silenceEnd" | "grace" | "stats" | "reconnect", TimerHandle | null> = {
@@ -371,7 +391,7 @@ export class VoiceEngine {
     const gen = ++this.gen;
     let conn: RealtimeConnection;
     try {
-      conn = await this.model.connect(this.sessionConfig(ctx.instructions), (e) => this.onModelEvent(e, gen));
+      conn = await this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
     } catch (e) {
       console.error("[voice] model connect failed", e);
       return this.fail("error", "model_unavailable");
@@ -395,13 +415,16 @@ export class VoiceEngine {
     this.conn.requestResponse(ctx.openerPrompt);
   }
 
-  private sessionConfig(instructions: string): RealtimeSessionConfig {
+  private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
     const version = this.loaded!.version;
     const settings = resolveVoiceSettings(version.voiceSettings);
     const family = schemaFamilyOf(this.model.modelId);
     const tt = turnTakingFor(settings.style, this.model.modelId);
     return {
-      instructions, tools: realtimeTools(family), language: "en", toolBehavior: "blocking", pace: settings.pace,
+      instructions, tools: realtimeTools(family), toolBehavior: "blocking", pace: settings.pace,
+      // The call starts in the conversation's language; the buyer may switch (never locked).
+      language: languages?.language ?? (this.loaded!.conv.language || "en"),
+      ...(languages ? { expectedLanguages: languages.expectedLanguages } : {}),
       ...(settings.voice ? { voice: settings.voice } : {}),
       ...(tt ? { turnTaking: tt } : {}),
       scenario: this.loaded!.conv.scenario,
@@ -515,7 +538,9 @@ export class VoiceEngine {
   private startSilence() {
     if (this.ended || this.pendingEnd) return;
     if (this.silenceChecked) return; // already asked: the end timer runs
-    this.timer("silenceAsk", this.limits.silenceAskMs, () => {
+    // The buyer may be filling in the order form while the agent stays on the line: no "are you still there?" meanwhile.
+    const formQuiet = Math.max(0, this.orderFormQuietUntil - this.clock.now());
+    this.timer("silenceAsk", formQuiet + this.limits.silenceAskMs, () => {
       this.silenceChecked = true;
       this.send({ t: "notice", kind: "silence_check" });
       this.conn?.requestResponse("The buyer has been quiet for a while. Ask once, briefly, whether they are still there.");
@@ -552,7 +577,7 @@ export class VoiceEngine {
     const turn = this.buyerTurn ?? { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
     this.buyerTurn = null;
     await this.db.insert(messages).values({
-      accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: conv.language,
+      accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: lineLanguage(masked.text, conv.language),
       voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, typedInCall: typed, createdAt: await this.stamp(),
     });
     this.lines.push({ role: "buyer", text: masked.text });
@@ -593,11 +618,11 @@ export class VoiceEngine {
   }
 
   /** The call ends once the agent finishes its sentence, at most endGraceMs from now. */
-  private endSoon(reason: VoiceEndReason) {
+  private endSoon(reason: VoiceEndReason, graceMs = this.limits.endGraceMs) {
     this.pendingEnd = reason;
     this.clearSilence();
     this.clearTimer("silenceEnd");
-    this.timer("grace", this.limits.endGraceMs, () => void this.stop(reason));
+    this.timer("grace", graceMs, () => void this.stop(reason));
   }
 
   private async runRecorded(turn: AgentTurn, callId: string, name: string, args: unknown): Promise<ToolResult> {
@@ -605,6 +630,9 @@ export class VoiceEngine {
     await this.stamp(); // rows the tool writes come after everything stored so far
     if (!VOICE_TOOL_NAMES.has(name)) {
       r = { outcome: "failed", result: { ok: false, error: `Unknown tool ${name}` } };
+    } else if (name === "end_call") {
+      // Voice-only: nothing to run; handleTool ends the call after the goodbye.
+      r = { outcome: "ok", result: { ok: true } };
     } else {
       try {
         r = await runTool(name, args, this.toolCtx(callId, turn.memo));
@@ -631,9 +659,11 @@ export class VoiceEngine {
         // The link goes into the chat; the model is told it is there and never reads it out.
         const id = await this.storeAppMessage(`Your order form: ${r.result.link}`);
         this.send({ t: "message", messageId: id });
+        // The buyer can fill it in now while the agent stays on the line (quiet unless asked; no silence check meanwhile).
+        this.orderFormQuietUntil = this.clock.now() + this.limits.orderFormQuietMs;
         forModel = {
           ...r.result, link: "shown in the chat",
-          message: "The order form link is in the chat. Say so in one short sentence, with what the buyer does there: fill in their company details, sign and pay. Never read the link aloud.",
+          message: "The order form link is in the chat. Say so in one short sentence, with what the buyer does there (fill in their company details, sign and pay), and say they can fill it in now while you stay on the line. Never read the link aloud. Do not end the call, say goodbye or wind down: stay quiet while they fill it in, and answer only when they speak.",
         };
       }
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
@@ -646,6 +676,13 @@ export class VoiceEngine {
           message: "Done: the team takes over and this call ends now. Say in one short sentence that someone from the team will get back to them (to confirm the time, if a call was requested), then say goodbye. Do not say the call continues or that someone will join it, and do not continue selling.",
         };
         this.endSoon("handoff");
+      }
+      if (name === "end_call") {
+        // The buyer asked to end the call: the goodbye is spoken (or finished), then the call ends.
+        forModel = { ...r.result, message: "The call ends now. If you have not said goodbye yet, say one short goodbye; say nothing else." };
+        // Goodbye already said before the tool: a short wait for anything the model adds; else the usual grace for the goodbye.
+        // The browser plays out the audio it has before it closes (voice-client onEnded).
+        this.endSoon("agent_closed", turn.text.trim() ? Math.min(END_AFTER_GOODBYE_MS, this.limits.endGraceMs) : this.limits.endGraceMs);
       }
     }
     // Every result message in call wording ("confirm it here" → "by message", …).
@@ -746,7 +783,7 @@ export class VoiceEngine {
     const now = await this.stamp();
     await atomic(this.db, (q) => [
       q.insert(messages).values({
-        id: messageId, accountId: account.id, conversationId: conv.id, actor: "agent", body, language: conv.language, agentVersionId: version.id,
+        id: messageId, accountId: account.id, conversationId: conv.id, actor: "agent", body, language: lineLanguage(body, conv.language), agentVersionId: version.id,
         voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, answerMs: turn.answerMs, createdAt: now,
       }),
       ...(turn.tools.length ? [q.insert(toolCalls).values(toolRows(messageId, 0))] : []),
@@ -789,7 +826,7 @@ export class VoiceEngine {
       const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
         recap: this.lines.slice(-RECAP_LINES), resumed: true,
       });
-      return this.model.connect(this.sessionConfig(ctx.instructions), (e) => this.onModelEvent(e, gen));
+      return this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
     })().catch((e) => {
       console.error("[voice] reconnect failed", e);
       return null;

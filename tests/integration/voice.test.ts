@@ -14,6 +14,7 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, listVersions, publishDraftVersion, rollbackTo, saveDraftPlaybook } from "@/lib/agent/service";
 import { conversationScenarioCheck, latestScenarioResults } from "@/lib/agent/scenario-results";
+import { scenarioById } from "@/lib/agent/scenarios";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { aiUsageThisMonth, platformUsageThisMonth } from "@/lib/ai/usage";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
@@ -63,7 +64,8 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
   };
 
   async function newCall(scenario: string | null, o: { limits?: VoiceLimits; model?: ScriptedRealtime; clock?: ManualClock } = {}): Promise<Call> {
-    const c = (await startVoiceTestConversation(db, acc, me.id, { scenario }))!;
+    // A scenario brings its own buyer language (as in the test lab): the call starts in it.
+    const c = (await startVoiceTestConversation(db, acc, me.id, { scenario, language: scenarioById(scenario)?.language ?? "en" }))!;
     const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
     if (!s.ok) throw new Error(s.reason);
     const clock = o.clock ?? new ManualClock();
@@ -459,13 +461,23 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     }
   });
 
-  it("other language: the agent offers English or the chat (calls are English only); scenario passed", async () => {
+  it("a Hebrew conversation: the call starts and goes on in Hebrew, judged as chat is; lines stored with their language", async () => {
     const c = await newCall("hebrew_buyer");
-    expect((await conv(c.conversationId)).language).toBe("en");
+    expect((await conv(c.conversationId)).language).toBe("he");
     await c.run(15_000);
     await c.speak();
     await c.run(30_000);
     await hangUp(c);
+    const rows = (await thread(c.conversationId)).filter((m) => m.voiceSessionId);
+    // The opening line is the chat opener in Hebrew; every agent line is in Hebrew.
+    expect(rows[0].actor).toBe("agent");
+    expect(rows[0].body).toMatch(/[\u0590-\u05FF]/);
+    expect(rows.filter((m) => m.actor === "agent").every((m) => m.language === "he")).toBe(true);
+    // The instructions start the call in Hebrew and name the likely languages.
+    const instr = c.model.connections[0].cfg.instructions;
+    expect(instr).toContain("Language: start in Hebrew (if you cannot speak it, in English). The buyer most likely speaks Hebrew or English;");
+    expect(instr.endsWith("Conversation language: he.")).toBe(true);
+    expect(c.model.connections[0].cfg.language).toBe("he");
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
   });
 
@@ -736,6 +748,57 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(c.engine.isEnded).toBe(true);
     expect((await sessionRow(c.sessionId)).endReason).toBe("silence");
     expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(1);
+  });
+
+  it("order form: the agent says the buyer can fill it in now and stays on the line, quiet (no silence check while they fill it in)", async () => {
+    const c = await newCall("ready_buyer", { limits: { env: {}, silenceAskMs: 25_000, silenceEndMs: 20_000, orderFormQuietMs: 240_000 } });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(30_000);
+    await c.speak();
+    await c.run(30_000);
+    const formResult = c.conn().sent.toolResults.find((r) => r.name === "send_order_form")!.result as Record<string, unknown>;
+    expect(formResult.message).toBe("The order form link is in the chat. Say so in one short sentence, with what the buyer does there (fill in their company details, sign and pay), and say they can fill it in now while you stay on the line. Never read the link aloud. Do not end the call, say goodbye or wind down: stay quiet while they fill it in, and answer only when they speak.");
+    const spoken = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).at(-1)!;
+    expect(spoken.body).toContain("Go ahead now, I'm staying on the line.");
+    // Three quiet minutes while the buyer fills it in: no "are you still there?", the call is on.
+    await c.run(180_000);
+    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(0);
+    expect(c.engine.isEnded).toBe(false);
+    // After the quiet window the usual silence check comes back.
+    await c.run(90_000);
+    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(1);
+    await hangUp(c);
+  });
+
+  it("the buyer asks to end the call: a short goodbye, end_call, the call ends as agent_closed (conversation stays open)", async () => {
+    const c = await newCall(null);
+    await c.run(15_000);
+    c.engine.onClientMessage({ t: "text", text: "Thanks, I have to go. Can we end the call?" });
+    await c.settle();
+    await c.run(10_000);
+    expect(c.engine.isEnded).toBe(true);
+    const s = await sessionRow(c.sessionId);
+    expect(s.endReason).toBe("agent_closed");
+    const rows = await thread(c.conversationId);
+    const lastAgent = rows.filter((m) => m.actor === "agent").at(-1)!;
+    expect(lastAgent.body).toBe("Of course. Thanks for your time, goodbye.");
+    expect((await calls(c.conversationId)).map((x) => [x.name, x.outcome])).toContainEqual(["end_call", "ok"]);
+    expect(c.json().filter((m) => m.t === "tool" && (m as { name: string }).name === "end_call").map((m) => (m as { label: string }).label)).toContain("Ending the call");
+    expect(c.json().find((m) => m.t === "ended")).toMatchObject({ reason: "agent_closed" });
+    expect((await conv(c.conversationId)).status).toBe("open");
+  });
+
+  it("end_call in a Hebrew call: the goodbye is in Hebrew", async () => {
+    const c = await newCall("hebrew_buyer");
+    await c.run(15_000);
+    c.engine.onClientMessage({ t: "text", text: "תודה, אפשר לסיים את השיחה" });
+    await c.settle();
+    await c.run(10_000);
+    expect((await sessionRow(c.sessionId)).endReason).toBe("agent_closed");
+    const lastAgent = (await thread(c.conversationId)).filter((m) => m.actor === "agent").at(-1)!;
+    expect(lastAgent.body).toBe("בטח. תודה על הזמן, להתראות.");
+    expect(lastAgent.language).toBe("he");
   });
 
   it("silence check is reset when the buyer talks", async () => {

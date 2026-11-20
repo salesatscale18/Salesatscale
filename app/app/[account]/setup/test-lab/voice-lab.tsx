@@ -76,7 +76,7 @@ export function VoiceLabKeeper() {
   return null;
 }
 
-type StartInput = { slug: string; lab: string; versionId: string | null; scenario: string | null; maxSec?: number | null };
+type StartInput = { slug: string; lab: string; versionId: string | null; scenario: string | null; language?: string | null; maxSec?: number | null };
 
 /** Starts a call: audio unlocked in the click, the mic, then the server creates the call, then the socket. */
 function useStartCall() {
@@ -90,7 +90,7 @@ function useStartCall() {
       if (!(await c.prepare())) return;
       let r: Awaited<ReturnType<typeof startVoiceCallAction>>;
       try {
-        r = await startVoiceCallAction({ slug: input.slug, versionId: input.versionId, scenario: input.scenario });
+        r = await startVoiceCallAction({ slug: input.slug, versionId: input.versionId, scenario: input.scenario, language: input.language ?? null });
       } catch {
         c.unavailable("error");
         return;
@@ -128,9 +128,8 @@ export type StarterOption = { value: string; label: string };
 /**
  * The test lab's one row of choices when voice calls are on: Scenario, Buyer
  * language and Version, then "Start chat" (the existing test chat, same
- * server action) and "Start call". Calls are English only: for another
- * language "Start call" is disabled with the reason (the action enforces it
- * too). The microphone prompt, a blocked microphone and refusals ("Calls are
+ * server action) and "Start call". A call starts in the chosen buyer language
+ * (a scenario brings its own) and the buyer can switch. The microphone prompt, a blocked microphone and refusals ("Calls are
  * paused", "Too many calls…") show in a call bar under the row; the call
  * limit and the voice settings line close the card.
  */
@@ -162,8 +161,7 @@ export function VoiceLabChoices({
   const own = STARTER_PHASES.has(s.phase);
   // A scenario brings its own buyer language (as for a chat).
   const callLanguage = scenarios.find((x) => x.value === scenario)?.language ?? language;
-  const english = callLanguage === "en";
-  const startCall = () => start({ slug, lab, versionId: versionId || null, scenario: scenario || null, maxSec: callMax[versionId] ?? null });
+  const startCall = () => start({ slug, lab, versionId: versionId || null, scenario: scenario || null, language: callLanguage, maxSec: callMax[versionId] ?? null });
   const onAction = (a: BarAction) => {
     if (a.kind === "cancel") c.cancel();
     else if (a.kind === "end_other") void endOtherCall(slug);
@@ -197,13 +195,11 @@ export function VoiceLabChoices({
         <div className="lab-choices__actions">
           <button type="submit" className={buttonClass("primary")}><Icon name="plus" />{t("lab.voice.start_chat")}</button>
           <button
-            type="button" className={buttonClass("secondary")} onClick={startCall} disabled={busy || !english}
-            aria-describedby={english ? undefined : "lab-call-en"} data-voice-start=""
+            type="button" className={buttonClass("secondary")} onClick={startCall} disabled={busy} data-voice-start=""
           >
             <Icon name="phone-call" />{t("lab.voice.start_call")}
           </button>
         </div>
-        {english ? null : <span className="sas-small lab-choices__why" id="lab-call-en" data-call-english-only="">{t("lab.voice.english_only")}</span>}
       </form>
       {own ? (
         <div className="lab-call__bar">

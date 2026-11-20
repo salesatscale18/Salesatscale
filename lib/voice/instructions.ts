@@ -28,6 +28,7 @@ import { priceApprovalContext } from "@/lib/agent/price-approval";
 import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { maskCardNumbers } from "./safety";
+import { isLocale } from "@/lib/i18n";
 import { paceInstruction, resolveVoiceSettings } from "./settings";
 
 /** Most earlier conversation lines given to the model (a recap, not the whole history). */
@@ -66,14 +67,36 @@ export type VoiceInstructionInput = {
    * picks up from the chat in one short line (continuingInstruction).
    */
   continuing?: boolean;
+  /** The conversation's language: the call starts in it (English when missing). */
+  language?: string;
+  /** Languages the buyer most likely speaks: the conversation's, the seller's selling languages and English. */
+  expectedLanguages?: string[];
 };
+
+/** "Hebrew", "English", … (English names, for the instructions). */
+export function languageNameEn(code: string): string {
+  try {
+    return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code;
+  } catch {
+    return code;
+  }
+}
+
+/** The languages the buyer most likely speaks on a call: the conversation's first, then the selling languages, then English. */
+export function expectedCallLanguages(conversationLanguage: string, sellingLanguages: readonly string[]): string[] {
+  const base = (l: string) => l.trim().toLowerCase().split(/[-_]/)[0];
+  return [...new Set([conversationLanguage, ...sellingLanguages, "en"].map(base).filter(Boolean))];
+}
 
 const ROLE: Record<TranscriptLine["role"], string> = { buyer: "Buyer", agent: "You", human: "A person from the team" };
 
 /** The session instructions (pure). */
 export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   const settings = resolveVoiceSettings(i.voiceSettings);
-  const stable = stableSystemPrompt(i.playbook, { ...i.seller, languages: ["en"] }, i.catalog, { channel: "voice", fillers: settings.fillers });
+  const language = i.language ?? "en";
+  const expected = i.expectedLanguages ?? expectedCallLanguages(language, i.seller.languages);
+  const stable = stableSystemPrompt(i.playbook, i.seller, i.catalog, { channel: "voice", fillers: settings.fillers });
+  const fallback = continueFallback(language);
   // The opener counts as an agent turn: the stage moves on once the buyer answers it.
   // The whole per-turn context in call wording: turnContext converts the stage block, and the
   // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
@@ -87,22 +110,36 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
     i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
       : i.continuing
-        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Open with one short line that picks up from where the chat stopped: if your own last chat message asked the buyer something they have not answered yet, ask it again briefly, in spoken form${i.opener && i.opener !== CONTINUE_FALLBACK ? ` (here: "${i.opener}")` : ""}; if the buyer wrote last, or nothing is open, say "${CONTINUE_FALLBACK}" Then listen. Never ask again for anything the buyer already answered in the chat.`
+        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Open with one short line that picks up from where the chat stopped: if your own last chat message asked the buyer something they have not answered yet, ask it again briefly, in spoken form${i.opener && i.opener !== fallback ? ` (here: "${i.opener}")` : ""}; if the buyer wrote last, or nothing is open, ${fallback ? `say "${fallback}"` : `say briefly, in ${languageNameEn(language)}, that you are here and they can go ahead.`} Then listen. Never ask again for anything the buyer already answered in the chat.`
         : "When the call connects, say your opening line, then listen.",
+    `Language: start in ${languageNameEn(language)} (if you cannot speak it, in English). The buyer most likely speaks ${expected.map(languageNameEn).join(" or ")}; if they speak or ask for another language, continue in that one.`,
     paceInstruction(settings.pace),
     i.deal?.summary ? `Summary so far: ${i.deal.summary}` : "",
     recap.length ? `Conversation so far (latest last):\n${recap.join("\n")}` : "",
   ].filter(Boolean).join("\n");
-  return `${stable}\n\n${context}\n${call}\nConversation language: en.`;
+  return `${stable}\n\n${context}\n${call}\nConversation language: ${language}.`;
 }
 
-/** The instruction that makes the model speak the opener. */
-export function openerInstruction(opener: string): string {
-  return `The call has just connected. Say your opening line now, in your own voice: "${opener}"`;
+/**
+ * The instruction that makes the model speak the opener. `language`: the call's;
+ * the opener is written in English or Hebrew, so in another language the model says it in that language.
+ */
+export function openerInstruction(opener: string, language = "en"): string {
+  return isLocale(language)
+    ? `The call has just connected. Say your opening line now, in your own voice: "${opener}"`
+    : `The call has just connected. Say your opening line now, in your own voice and in ${languageNameEn(language)}: "${opener}"`;
 }
 
 /** The short line when a call continues a chat with nothing to pick up (the buyer only switched to voice). */
 export const CONTINUE_FALLBACK = "I'm here, go ahead.";
+/** The same line in Hebrew. */
+export const CONTINUE_FALLBACK_HE = "אני כאן, אפשר להמשיך.";
+
+/** The pick-up line in the call's language, or null for a language with no fixed line (the model is told what to say instead). */
+export function continueFallback(language: string): string | null {
+  const l = language.trim().toLowerCase().split(/[-_]/)[0];
+  return l === "en" ? CONTINUE_FALLBACK : l === "he" ? CONTINUE_FALLBACK_HE : null;
+}
 
 /**
  * The spoken re-ask of the agent's own open question, when the agent wrote
@@ -111,8 +148,6 @@ export const CONTINUE_FALLBACK = "I'm here, go ahead.";
  */
 export function reAskLine(lastAgentMessage: string): string | null {
   const text = lastAgentMessage.replace(/\s+/g, " ").trim();
-  // A call is English: a question written in another script (a Hebrew chat) is not re-asked word for word.
-  if (/[\u0590-\u08FF]/.test(text)) return null;
   const end = text.lastIndexOf("?");
   if (end < 0) return null;
   // The sentence the last "?" ends: from just after the previous sentence end (or a line start).
@@ -120,6 +155,9 @@ export function reAskLine(lastAgentMessage: string): string | null {
   const start = Math.max(before.lastIndexOf(". "), before.lastIndexOf("! "), before.lastIndexOf("? "), before.lastIndexOf(": ")) + 2;
   let q = text.slice(start >= 2 ? start : 0, end + 1).trim().replace(/^["'“‘(]+/, "");
   if (q.length < 3) return null;
+  // A Hebrew question is re-asked in Hebrew; another script (Arabic, …) as it is, with no English "So,".
+  if (/[\u0590-\u05FF]/.test(q)) return /^אז,?\s/.test(q) ? q : `אז, ${q}`;
+  if (/[\u0600-\u08FF]/.test(q)) return q;
   if (/^so,?\s/i.test(q)) return q.charAt(0).toUpperCase() + q.slice(1);
   // Lower-case the first letter, except "I" and words in capitals (names stay as they are only when written in capitals).
   const first = q.split(/\s/)[0];
@@ -133,10 +171,12 @@ export function reAskLine(lastAgentMessage: string): string | null {
  * `line`: the agent's open question re-asked briefly (reAskLine), or
  * CONTINUE_FALLBACK when the buyer spoke last or nothing is open.
  */
-export function continuingInstruction(line: string = CONTINUE_FALLBACK): string {
-  return line === CONTINUE_FALLBACK
-    ? `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. The buyer spoke last or nothing is open, so say: "${CONTINUE_FALLBACK}"`
-    : `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. Your last chat message asked something still unanswered: ask it again briefly, in spoken form: "${line}"`;
+export function continuingInstruction(line: string | null = CONTINUE_FALLBACK, language = "en"): string {
+  const start = "The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant.";
+  if (line === null) return `${start} The buyer spoke last or nothing is open, so say briefly, in ${languageNameEn(language)}, that you are here and they can go ahead.`;
+  return line === CONTINUE_FALLBACK || line === CONTINUE_FALLBACK_HE
+    ? `${start} The buyer spoke last or nothing is open, so say: "${line}"`
+    : `${start} Your last chat message asked something still unanswered: ask it again briefly, in spoken form: "${line}"`;
 }
 
 export type VoiceCallContext = {
@@ -144,6 +184,9 @@ export type VoiceCallContext = {
   opener: string;
   /** What the engine asks the model to say first (the opener, or a short pick-up line when the call continues a chat). */
   openerPrompt: string;
+  /** The call's starting language, and the languages the buyer most likely speaks (a transcription hint where the model takes one). */
+  language: string;
+  expectedLanguages: string[];
   continuing: boolean;
 };
 
@@ -169,16 +212,20 @@ export async function loadVoiceInstructions(
     // The team's latest decline of a special price (as in a chat turn).
     priceApprovalContext(db, account.id, lead.id),
   ]);
-  // A call is English only (decision: release 1).
-  const names = buyerNames(version.playbook, account, "en");
+  // A call starts in the conversation's language (the opener is written in English or Hebrew; another language is spoken by the model).
+  const language = conv.language || "en";
+  const locale = isLocale(language) ? language : "en";
+  const names = buyerNames(version.playbook, account, locale);
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
   // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
   const continuing = !opts.resumed && agentCount.length > 0;
   // The pick-up line: the agent's own unanswered question re-asked, when the agent wrote last; else the fallback.
   const lastChat = earlier.find((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human");
+  const reAsk = continuing && lastChat?.actor === "agent" ? reAskLine(lastChat.body) : null;
+  const fallback = continueFallback(language);
   const opener = continuing
-    ? (lastChat?.actor === "agent" ? reAskLine(lastChat.body) : null) ?? CONTINUE_FALLBACK
-    : openerText({ name: firstName, agent: names.agent, company: names.seller, gender: names.gender, language: "en", opener: version.playbook.opener });
+    ? reAsk ?? fallback ?? ""
+    : openerText({ name: firstName, agent: names.agent, company: names.seller, gender: names.gender, language: locale, opener: version.playbook.opener });
   const recap = opts.recap ?? earlier.reverse()
     .filter((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human")
     .map((m) => ({ role: m.actor as TranscriptLine["role"], text: m.body }));
@@ -194,6 +241,10 @@ export async function loadVoiceInstructions(
     teamQuestions: teamQuestions || null,
     priceApproval: priceApproval || null,
     recap, resumed: opts.resumed, continuing,
+    language, expectedLanguages: expectedCallLanguages(language, contact.languages),
   });
-  return { instructions, opener, openerPrompt: continuing ? continuingInstruction(opener) : openerInstruction(opener), continuing };
+  return {
+    instructions, opener, language, expectedLanguages: expectedCallLanguages(language, contact.languages),
+    openerPrompt: continuing ? continuingInstruction(reAsk ?? fallback, language) : openerInstruction(opener, language), continuing,
+  };
 }

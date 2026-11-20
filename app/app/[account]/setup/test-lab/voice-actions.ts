@@ -36,7 +36,7 @@ export type StartVoiceCallResult =
   | { ok: false; reason: VoiceUnavailableReason; retryAt?: string; ownCall?: boolean };
 
 /** Starts a test-lab call: a new voice test conversation on the chosen version and scenario, and its one-time socket ticket. */
-export async function startVoiceCallAction(input: { slug: string; versionId?: string | null; scenario?: string | null }): Promise<StartVoiceCallResult> {
+export async function startVoiceCallAction(input: { slug: string; versionId?: string | null; scenario?: string | null; language?: string | null }): Promise<StartVoiceCallResult> {
   const a = await requireAccount(String(input?.slug ?? ""));
   const gate = voiceLabAccess(a.user);
   if (gate === "not_admin") return { ok: false, reason: "not_allowed" };
@@ -51,11 +51,13 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   // One test call per account at a time (release 1); the caller may end their own.
   const running = await runningTestVoiceSession(appDb, a.account.id);
   if (running) return { ok: false, reason: "already_in_call", ownCall: running.startedByUserId === a.user.id };
-  // Calls are English only: an English scenario, or none.
+  // The call starts in the buyer language picked (a scenario brings its own, as for a chat), if the account speaks it.
   const scenario = scenarioById(String(input?.scenario ?? ""));
+  const wanted = scenario?.language ?? String(input?.language ?? "en");
+  const language = a.account.languages.includes(wanted) ? wanted : "en";
   const rawVersion = input?.versionId;
   const versionId = isUuid(rawVersion) ? rawVersion : undefined;
-  const conv = await startVoiceTestConversation(appDb, a.account.id, a.user.id, { scenario: scenario?.language === "en" ? scenario.id : null, versionId });
+  const conv = await startVoiceTestConversation(appDb, a.account.id, a.user.id, { scenario: scenario && scenario.language === language ? scenario.id : null, versionId, language });
   if (!conv) return { ok: false, reason: "error" };
   const s = await createVoiceSession(appDb, { accountId: a.account.id, conversationId: conv.conversationId, userId: a.user.id, isTest: true });
   if (!s.ok) {

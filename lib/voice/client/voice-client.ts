@@ -2,7 +2,10 @@
  * The browser side of a voice call (live voice), framework-free: microphone
  * capture (AudioWorklet → 24 kHz PCM16 frames of 40 ms), the socket to our
  * relay, gapless playback of the agent's audio with barge-in flushes, and the
- * call state (lib/voice/client/state.ts) for the UI to render. One instance
+ * call state (lib/voice/client/state.ts) for the UI to render. The agent
+ * plays on the loudspeaker by default (lib/voice/client/output.ts), with
+ * `outputDevices()` / `setOutputDevice()` where the browser lets a page pick
+ * the output. One instance
  * can run several calls one after another.
  *
  * Release 1 has no resume: when the socket drops before the call ended, the
@@ -12,6 +15,7 @@
 import { MAX_CLIENT_TEXT, VOICE_SAMPLE_RATE, parseServerMessage, type ClientMessage } from "../protocol";
 import { FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "./audio";
 import { PlaybackSchedule } from "./playback";
+import { outputChoices, playbackRoute, type OutputDevice, type PlaybackRoute } from "./output";
 import { INITIAL_SNAPSHOT, isIdlePhase, voiceReducer, type VoiceEvent, type VoiceSnapshot, type VoiceUnavailableReason } from "./state";
 import { CAPTURE_PROCESSOR, CAPTURE_WORKLET_SOURCE } from "./worklet";
 
@@ -51,6 +55,12 @@ export class VoiceClient {
   private micAnalyser: AnalyserNode | null = null;
   private outGain: GainNode | null = null;
   private outAnalyser: AnalyserNode | null = null;
+  /** Loudspeaker path (lib/voice/client/output.ts): the agent's audio as a stream, played by an <audio> element. */
+  private outDest: MediaStreamAudioDestinationNode | null = null;
+  private outEl: HTMLAudioElement | null = null;
+  private route: PlaybackRoute = "context";
+  /** The output the buyer picked (setOutputDevice), kept for the next call; "" = system default. */
+  private sinkId = "";
   private resampler: LinearResampler | null = null;
   private chunker = new FrameChunker();
   private schedule = new PlaybackSchedule();
@@ -111,6 +121,106 @@ export class VoiceClient {
     } catch {
       this.ctx = null;
     }
+    if (this.ctx) this.wireOutput(this.ctx);
+  }
+
+  /** Which way the agent's voice plays this call: "element" (loudspeaker by default) or "context". */
+  get playbackRoute(): PlaybackRoute {
+    return this.route;
+  }
+
+  /**
+   * The outputs the buyer can pick from, or [] where the page cannot choose (iOS Safari, most
+   * Android phones: the system routes audio; see output.ts). Labels need the mic permission.
+   */
+  async outputDevices(): Promise<OutputDevice[]> {
+    try {
+      const devices = (await navigator.mediaDevices?.enumerateDevices?.()) ?? [];
+      return outputChoices(devices, this.canSwitchOutput());
+    } catch {
+      return [];
+    }
+  }
+
+  /** Plays the agent on this output (setSinkId). False where the browser cannot switch, or the device is gone. */
+  async setOutputDevice(deviceId: string): Promise<boolean> {
+    if (!this.canSwitchOutput()) return false;
+    try {
+      if (this.route === "element" && this.outEl) await (this.outEl as HTMLAudioElement & { setSinkId(id: string): Promise<void> }).setSinkId(deviceId);
+      else if (this.ctx) await (this.ctx as AudioContext & { setSinkId(id: string): Promise<void> }).setSinkId(deviceId);
+      this.sinkId = deviceId;
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private canSwitchOutput(): boolean {
+    if (this.route === "element") return !!this.outEl && typeof (this.outEl as { setSinkId?: unknown }).setSinkId === "function";
+    return !!this.ctx && typeof (this.ctx as { setSinkId?: unknown }).setSinkId === "function";
+  }
+
+  /**
+   * The agent's audio: one gain (flushes stop the sources), an analyser for the bars, then the
+   * loudspeaker path (a MediaStream played by an <audio> element), or straight to the context
+   * where that is missing or the element may not play. Built inside the click (begin) so the
+   * element's play() counts as started by the user.
+   */
+  private wireOutput(ctx: AudioContext) {
+    this.outGain = ctx.createGain();
+    this.outAnalyser = ctx.createAnalyser();
+    this.outAnalyser.fftSize = 512;
+    this.outGain.connect(this.outAnalyser);
+    const route = playbackRoute({
+      streamDestination: typeof ctx.createMediaStreamDestination === "function",
+      elementSrcObject: typeof document !== "undefined" && typeof HTMLMediaElement !== "undefined" && "srcObject" in HTMLMediaElement.prototype,
+    });
+    if (route === "element") {
+      try {
+        const dest = ctx.createMediaStreamDestination();
+        const el = document.createElement("audio");
+        el.autoplay = true;
+        el.setAttribute("playsinline", "");
+        el.srcObject = dest.stream;
+        this.outAnalyser.connect(dest);
+        this.outDest = dest;
+        this.outEl = el;
+        this.route = "element";
+        const analyser = this.outAnalyser;
+        const my = this.attempt;
+        if (this.sinkId) void this.setOutputDevice(this.sinkId);
+        void el.play().catch(() => {
+          // Autoplay refused: play through the context instead (the default output of the page).
+          if (my !== this.attempt || this.outEl !== el) return;
+          this.dropElement();
+          try {
+            analyser.connect(ctx.destination);
+          } catch {
+            // Closed context.
+          }
+        });
+        return;
+      } catch {
+        this.dropElement();
+      }
+    }
+    this.route = "context";
+    this.outAnalyser.connect(ctx.destination);
+  }
+
+  private dropElement() {
+    try {
+      if (this.outDest) this.outAnalyser?.disconnect(this.outDest);
+    } catch {
+      // Not connected.
+    }
+    if (this.outEl) {
+      this.outEl.pause();
+      this.outEl.srcObject = null;
+    }
+    this.outEl = null;
+    this.outDest = null;
+    this.route = "context";
   }
 
   /**
@@ -301,12 +411,8 @@ export class VoiceClient {
     this.resampler = new LinearResampler(ctx.sampleRate, VOICE_SAMPLE_RATE);
     this.chunker.reset();
     this.worklet.port.onmessage = (ev: MessageEvent<Float32Array>) => this.onMicSamples(ev.data);
-    // Agent audio: one gain (flushes stop the sources) and an analyser for the bars.
-    this.outGain = ctx.createGain();
-    this.outAnalyser = ctx.createAnalyser();
-    this.outAnalyser.fftSize = 512;
-    this.outGain.connect(this.outAnalyser);
-    this.outAnalyser.connect(ctx.destination);
+    // The agent's output was wired in begin() (wireOutput).
+    if (!this.outGain) this.wireOutput(ctx);
   }
 
   private onMicSamples(samples: Float32Array) {
@@ -377,7 +483,9 @@ export class VoiceClient {
 
   private onVisibility = () => {
     // iOS and some browsers suspend audio in the background: resume when the tab is back.
-    if (document.visibilityState === "visible" && this.ctx?.state === "suspended" && !isIdlePhase(this.snap.phase)) void this.ctx.resume().catch(() => undefined);
+    if (document.visibilityState !== "visible" || isIdlePhase(this.snap.phase)) return;
+    if (this.ctx?.state === "suspended") void this.ctx.resume().catch(() => undefined);
+    if (this.outEl?.paused) void this.outEl.play().catch(() => undefined);
   };
 
   private releaseMic() {
@@ -418,6 +526,7 @@ export class VoiceClient {
     }
     this.releaseMic();
     this.flushPlayback();
+    this.dropElement();
     try {
       this.outGain?.disconnect();
       this.outAnalyser?.disconnect();

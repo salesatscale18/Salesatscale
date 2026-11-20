@@ -153,7 +153,6 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         gateEnv = ENV;
         if (which === "buyer_calls_off") await db.update(sellerAccounts).set({ voiceBuyerCallsOff: true }).where(eq(sellerAccounts.id, acc));
         if (which === "account_not_live") await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, acc));
-        if (which === "not_english") for (const id of convIds) await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, id));
         if (which === "not_agent") for (const id of convIds) await db.update(conversations).set({ status: "human" }).where(eq(conversations.id, id));
         if (which === "spend_cap") {
           // Only the gate runs in "live" mode here (it reads the cap); no call is started and nothing is paid.

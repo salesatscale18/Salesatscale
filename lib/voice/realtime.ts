@@ -15,7 +15,10 @@ export type RealtimeSessionConfig = {
   instructions: string;
   tools: RealtimeToolDef[];
   voice?: string;
-  language: "en";
+  /** The language the call starts in (the conversation's); the buyer may switch. */
+  language: string;
+  /** Languages the buyer most likely speaks (a transcription hint where the provider takes one). */
+  expectedLanguages?: string[];
   /** The model waits for a tool's result before it continues (Gemini: defaultToolBehavior BLOCKING). */
   toolBehavior: "blocking";
   /** Speaking rate hint for the instructions-level pace (no provider takes a numeric rate today). */

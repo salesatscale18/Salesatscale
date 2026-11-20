@@ -70,8 +70,24 @@ export function voiceToolDescription(description: string): string {
   return applyVoiceReplacements(description, TOOL_DESCRIPTION_VOICE, "tool description");
 }
 
-/** Every agent tool as a realtime function definition for this schema family. */
-export function realtimeTools(family: SchemaFamily, defs: readonly ToolDef[] = TOOL_DEFS): RealtimeToolDef[] {
+/**
+ * Voice-only tool: the engine handles it itself (lib/voice/engine.ts); it never runs through
+ * lib/agent/tools.ts and is not in the chat's tools or prompt. When the buyer asks to end the
+ * call, the agent says a short goodbye and calls it; the call ends ("agent_closed") once the
+ * goodbye is spoken. The conversation stays open.
+ */
+export const END_CALL_TOOL: ToolDef = {
+  name: "end_call",
+  description: "End this call. Only when the buyer asks to end the call or says goodbye: say a short goodbye in the language of the call first, then call this. Never use it to end a call yourself while the buyer is still talking with you, or while they fill in the order form. The conversation stays open; the buyer can still write.",
+  strict: true,
+  input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+};
+
+/** The tools a call has besides the chat's: handled by the engine, never by runTool. */
+export const VOICE_ONLY_TOOL_DEFS: readonly ToolDef[] = [END_CALL_TOOL];
+
+/** Every agent tool (and the voice-only ones) as a realtime function definition for this schema family. */
+export function realtimeTools(family: SchemaFamily, defs: readonly ToolDef[] = [...TOOL_DEFS, ...VOICE_ONLY_TOOL_DEFS]): RealtimeToolDef[] {
   return defs.map((d) => ({
     name: d.name,
     description: voiceToolDescription(d.description ?? ""),
@@ -80,7 +96,7 @@ export function realtimeTools(family: SchemaFamily, defs: readonly ToolDef[] = T
 }
 
 /** The names the model may call: anything else is an unknown tool (failed result). */
-export const VOICE_TOOL_NAMES: ReadonlySet<string> = new Set(TOOL_DEFS.map((d) => d.name));
+export const VOICE_TOOL_NAMES: ReadonlySet<string> = new Set([...TOOL_DEFS, ...VOICE_ONLY_TOOL_DEFS].map((d) => d.name));
 
 /** Short labels the call screen shows while a tool runs. */
 export const TOOL_LABELS: Record<string, string> = {
@@ -96,6 +112,7 @@ export const TOOL_LABELS: Record<string, string> = {
   request_callback: "Requesting a call",
   ask_team: "Noting the question",
   hand_off_to_human: "Passing to the team",
+  end_call: "Ending the call",
 };
 
 export const toolLabel = (name: string) => TOOL_LABELS[name] ?? "Checking";

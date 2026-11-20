@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { FRAME_SAMPLES, FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "@/lib/voice/client/audio";
 import { PlaybackSchedule } from "@/lib/voice/client/playback";
+import { outputChoices, playbackRoute } from "@/lib/voice/client/output";
 import { INITIAL_SNAPSHOT, elapsedSec, voiceReducer, type VoiceEvent, type VoiceSnapshot } from "@/lib/voice/client/state";
 import { barView, clockTime, costText, endReasonText, errorText } from "@/lib/voice/client/view";
 import { answerSpeedText, callClock, callLimitShort, callLimitText, limitOptions, voiceLabAccess, voiceOptions, voiceSettingsSummary } from "@/lib/voice/lab";
@@ -327,5 +328,24 @@ describe("narrow phones and the limit choices", () => {
     expect(limitOptions(270)).toEqual([60, 120, 180, 240, 270]);
     expect(limitOptions(null)).toEqual([60, 120, 180, 240, 300, 360, 420, 480, 540, 600]);
     expect(limitOptions(600)).toHaveLength(10);
+  });
+});
+
+describe("where the agent's voice plays (loudspeaker by default)", () => {
+  it("plays through an <audio> element fed by a MediaStream when the browser has both; else straight to the context", () => {
+    expect(playbackRoute({ streamDestination: true, elementSrcObject: true })).toBe("element");
+    expect(playbackRoute({ streamDestination: false, elementSrcObject: true })).toBe("context");
+    expect(playbackRoute({ streamDestination: true, elementSrcObject: false })).toBe("context");
+  });
+
+  it("output choices: none where the page cannot switch or only one output is listed (iOS, most Android)", () => {
+    const d = (deviceId: string, label = "", kind: MediaDeviceKind = "audiooutput") => ({ deviceId, label, kind });
+    const desktop = [d("mic1", "Mic", "audioinput"), d("abc", "Headphones"), d("default", "Default - Speakers"), d("abc", "Headphones"), d("xyz")];
+    expect(outputChoices(desktop, true)).toEqual([
+      { deviceId: "default", label: "Default - Speakers" }, { deviceId: "abc", label: "Headphones" }, { deviceId: "xyz", label: "Speaker 3" },
+    ]);
+    expect(outputChoices(desktop, false)).toEqual([]);
+    expect(outputChoices([d("default", "Speaker")], true)).toEqual([]);
+    expect(outputChoices([d("mic1", "Mic", "audioinput")], true)).toEqual([]);
   });
 });

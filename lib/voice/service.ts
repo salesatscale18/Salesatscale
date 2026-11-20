@@ -133,10 +133,11 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string, now = n
 
 /**
  * A test-lab voice call's conversation: the test lab's own (hidden test lead,
- * draft or chosen version) with channel "voice". Calls are English only.
+ * draft or chosen version) with channel "voice". The call starts in `language`
+ * (English by default) and the buyer can switch.
  */
-export function startVoiceTestConversation(db: Db, accountId: string, userId: string | null, opts: { scenario?: string | null; versionId?: string } = {}) {
-  return startTestConversation(db, accountId, userId, { language: "en", scenario: opts.scenario ?? null, versionId: opts.versionId, channel: "voice" });
+export function startVoiceTestConversation(db: Db, accountId: string, userId: string | null, opts: { scenario?: string | null; versionId?: string; language?: string } = {}) {
+  return startTestConversation(db, accountId, userId, { language: opts.language ?? "en", scenario: opts.scenario ?? null, versionId: opts.versionId, channel: "voice" });
 }
 
 /**

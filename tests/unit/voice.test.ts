@@ -23,8 +23,10 @@ import {
 import { checkScenario, type ScenarioRun } from "@/lib/agent/scenarios";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { parseClientMessage, parseServerMessage, pcmDurationMs } from "@/lib/voice/protocol";
-import { geminiSchema, realtimeTools, schemaFamilyOf, toolLabel, voiceToolDescription } from "@/lib/voice/tool-schema";
-import { buildVoiceInstructions, openerInstruction } from "@/lib/voice/instructions";
+import { geminiSchema, realtimeTools, schemaFamilyOf, toolLabel, VOICE_ONLY_TOOL_DEFS, VOICE_TOOL_NAMES, voiceToolDescription } from "@/lib/voice/tool-schema";
+import { voiceCallBlock } from "@/lib/agent/core/voice";
+import { buildVoiceInstructions, continueFallback, continuingInstruction, CONTINUE_FALLBACK_HE, expectedCallLanguages, openerInstruction, reAskLine } from "@/lib/voice/instructions";
+import { lineLanguage } from "@/lib/voice/engine";
 import { isSpokenOptOut, safeTranscript } from "@/lib/voice/safety";
 import {
   maxCallSeconds, resolveVoiceSettings, turnTakingFor, validateVoiceSettings, voiceCapabilities, voiceMode, voiceModelId,
@@ -88,7 +90,8 @@ describe("tool schemas", () => {
 
   it("every tool, Gemini dialect: one type per node, nullable flags, no unsupported keywords", () => {
     const tools = realtimeTools("gemini");
-    expect(tools.map((t) => t.name)).toEqual(TOOL_DEFS.map((d) => d.name));
+    // The chat's tools, then the voice-only end_call.
+    expect(tools.map((t) => t.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call"]);
     const allowed = new Set(["type", "description", "properties", "required", "items", "enum", "nullable", "format", "minimum", "maximum", "minItems", "maxItems"]);
     for (const t of tools) {
       walk(t.parameters, (n) => {
@@ -117,7 +120,8 @@ describe("tool schemas", () => {
 
   it("every tool, OpenAI dialect: plain JSON Schema as defined", () => {
     const tools = realtimeTools("openai");
-    for (const [i, t] of tools.entries()) expect(t.parameters).toEqual(TOOL_DEFS[i].input_schema);
+    const defs = [...TOOL_DEFS, ...VOICE_ONLY_TOOL_DEFS];
+    for (const [i, t] of tools.entries()) expect(t.parameters).toEqual(defs[i].input_schema);
   });
 
   it("descriptions use call wording", () => {
@@ -616,6 +620,13 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     });
   });
 
+  it("transcription language hint: a prompt for OpenAI (never a lock); nothing for Gemini, which takes no language there", () => {
+    const langs = { ...cfg, language: "he", expectedLanguages: ["he", "en"] };
+    expect(toSdkSessionConfig(langs, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({ prompt: "The speaker most likely speaks Hebrew or English." });
+    expect(toSdkSessionConfig(langs, "google/gemini-3.8-live").inputAudioTranscription).toEqual({});
+    expect(toSdkSessionConfig(cfg, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({});
+  });
+
   it("session config for OpenAI: turn-taking values, no Google options", () => {
     const c = toSdkSessionConfig({ ...cfg, turnTaking: { silenceMs: 900, threshold: 0.6, prefixPaddingMs: 300 } }, "openai/gpt-realtime-2");
     expect(c.turnDetection).toEqual({ type: "server-vad", threshold: 0.6, silenceDurationMs: 900, prefixPaddingMs: 300 });
@@ -822,5 +833,74 @@ describe("Gateway mapper: a cut line never carries into the next answer", () => 
     m.map({ type: "audio-transcript-delta", responseId: "r3", itemId: "i", delta: "Left over", raw: {} });
     m.map({ type: "response-created", responseId: "r4", raw: {} });
     expect(m.map({ type: "audio-transcript-delta", responseId: "r4", itemId: "i", delta: "Fresh", raw: {} })).toEqual([{ type: "agent-transcript", text: "Fresh", final: false }]);
+  });
+});
+
+describe("call language (any chat language; the buyer can switch)", () => {
+  const base = {
+    playbook: pb, voiceSettings: { fillers: true }, seller, catalog, deal: null, stage: NO_STAGE_FACTS, agentMessages: 0,
+    names: { agent: "Ava", seller: "Acme", gender: "neutral" as const, language: "en" }, opener: "Hi Dana, this is Ava.",
+    localNow: "Tue 17 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)", followUp: null, recap: [],
+  };
+
+  it("expected languages: the conversation's first, then the selling languages, then English (no repeats)", () => {
+    expect(expectedCallLanguages("he", ["en", "he"])).toEqual(["he", "en"]);
+    expect(expectedCallLanguages("fr-CA", ["he"])).toEqual(["fr", "he", "en"]);
+    expect(expectedCallLanguages("en", [])).toEqual(["en"]);
+  });
+
+  it("the call starts in the conversation's language; English only when the model cannot speak it", () => {
+    const he = buildVoiceInstructions({ ...base, language: "he" });
+    expect(he).toContain("Language: start in Hebrew (if you cannot speak it, in English). The buyer most likely speaks Hebrew or English; if they speak or ask for another language, continue in that one.");
+    expect(he.endsWith("Conversation language: he.")).toBe(true);
+    const fr = buildVoiceInstructions({ ...base, language: "fr" });
+    expect(fr).toContain("Language: start in French (if you cannot speak it, in English). The buyer most likely speaks French or English or Hebrew;");
+    // No English-only rule is left, and the stable prompt names the switch.
+    for (const text of [he, fr]) {
+      expect(text).not.toMatch(/English only|offer English|calls are in English/i);
+      expect(text).toContain("- Speak the buyer's language: the call starts in the conversation's language (");
+      expect(text).toContain("- Language: start the call in the conversation's language (\"Conversation language\" at the end; English if you cannot speak it). If the buyer speaks another language, or asks to switch, continue in that language from then on.");
+    }
+  });
+
+  it("the opening / pick-up line in the call's language", () => {
+    expect(openerInstruction("Hi.", "he")).toBe('The call has just connected. Say your opening line now, in your own voice: "Hi."');
+    expect(openerInstruction("Hi.", "fr")).toContain('in your own voice and in French: "Hi."');
+    expect(continueFallback("he")).toBe(CONTINUE_FALLBACK_HE);
+    expect(continueFallback("fr")).toBeNull();
+    expect(continuingInstruction(null, "fr")).toContain("say briefly, in French, that you are here and they can go ahead.");
+    expect(continuingInstruction(CONTINUE_FALLBACK_HE, "he")).toContain(`say: "${CONTINUE_FALLBACK_HE}"`);
+    expect(reAskLine("מעולה. כמה סניפים יש לכם?")).toBe("אז, כמה סניפים יש לכם?");
+  });
+
+  it("each stored line carries its own language (the buyer may switch mid-call)", () => {
+    expect(lineLanguage("כמה זה עולה?", "en")).toBe("he");
+    expect(lineLanguage("How much is it?", "he")).toBe("en");
+    expect(lineLanguage("How much is it?", "en")).toBe("en");
+    expect(lineLanguage("Combien ça coûte ?", "fr")).toBe("fr");
+  });
+});
+
+describe("voice-only end_call and the order form on the line", () => {
+  it("end_call is a call tool only: not in the chat tools or the chat prompt", () => {
+    expect(TOOL_DEFS.some((d) => d.name === "end_call")).toBe(false);
+    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("end_call");
+    expect(VOICE_TOOL_NAMES.has("end_call")).toBe(true);
+    const gemini = realtimeTools("gemini").find((t) => t.name === "end_call")!;
+    expect(gemini.parameters).toEqual({ type: "object" });
+    expect(gemini.description).toMatch(/^End this call\. Only when the buyer asks to end the call or says goodbye/);
+    expect(realtimeTools("openai").find((t) => t.name === "end_call")!.parameters).toEqual({ type: "object", properties: {}, required: [], additionalProperties: false });
+    expect(toolLabel("end_call")).toBe("Ending the call");
+  });
+
+  it("the voice block: end the call on the buyer's request; stay on the line for the order form", () => {
+    const block = voiceCallBlock({ fillers: true });
+    expect(block).toContain("- If the buyer asks to end the call (or says goodbye): say a short goodbye in the language of the call, then call end_call. Never end the call otherwise; a request not to be contacted is record_opt_out.");
+    expect(block).toContain("- After send_order_form: say in one short sentence, in the language of the call, that the buyer can fill in the order form now while you stay on the line. Do not end the call, say goodbye or wind down. Then stay quiet while they fill it in; answer only when they speak or ask something.");
+    // The payment rule is unchanged.
+    expect(block).toContain("- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.");
+    const voice = stableSystemPrompt(pb, seller, catalog, { channel: "voice" });
+    expect(voice).toContain("and that they can fill it in now while you stay on the line. Never read the link aloud.");
+    expect(voice).toContain('Example: "The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I\'m staying on the line."');
   });
 });
