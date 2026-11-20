@@ -261,6 +261,12 @@ async function main() {
         check(await waitPhase(page, "live", 20_000), `${sh.name}: the call connects`);
         check(await page.waitForSelector("[data-voice-back]", { timeout: 5000 }).then(() => true, () => false), `${sh.name}: Back to text at the composer's edge`);
         check((await page.getAttribute("[data-buyer-call] [data-voice-end]", "aria-label")) === (sh.lang === "he" ? "חזרה לטקסט" : "Back to text"), `${sh.name}: End reads Back to text`);
+        check((await page.locator("[data-buyer-call] .sas-rb--end").count()) === 0 && (await page.locator("[data-buyer-call] .sas-rb--back").count()) === 1, `${sh.name}: Back to text is neutral, not the red hang-up`);
+        // Typing during the call: the composer's button becomes Send, and Back to text again when the field is empty.
+        await page.fill("#c-input", "x");
+        check((await page.locator("[data-voice-back]").count()) === 0 && (await page.locator(".c-send:not(.c-send--hidden)").count()) === 1, `${sh.name}: typing turns the composer button into Send`);
+        await page.fill("#c-input", "");
+        check((await page.locator("[data-voice-back]").count()) === 1, `${sh.name}: an empty field shows Back to text again`);
         check((await page.locator("[data-voice-meta]").textContent())?.includes(sh.lang === "he" ? "מצב קול" : "Voice mode") ?? false, `${sh.name}: Voice mode label`);
         check((await page.locator("[data-voice-first-note]").count()) === (first ? 1 : 0), `${sh.name}: the transcript note only on the first switch in the conversation`);
         check(!/automated assistant/i.test((await page.locator("[data-buyer-call]").textContent()) ?? ""), `${sh.name}: no bot notice in the bar`);
@@ -270,6 +276,7 @@ async function main() {
           // The call's first line picks up from the chat: no greeting or introduction.
           const firstLine = await page.locator(".c-msg--in .c-bubble:has([data-spoken])").first().textContent().catch(() => "");
           check(!!firstLine && !/automated assistant|^Hi /i.test(firstLine), `the call's first line has no greeting or bot notice (${(firstLine ?? "").slice(0, 40)})`);
+          check(/^So, what made you get in touch today\?/.test(firstLine ?? ""), "it re-asks the agent's open question from the chat");
         }
         await page.click("[data-voice-back]");
         check(await waitPhase(page, "ended", 15_000), `${sh.name}: Back to text ends the call`);

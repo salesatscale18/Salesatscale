@@ -119,9 +119,15 @@ export function VoiceCallBar({
               <Icon name={view.muted ? "mic-off" : "mic"} />
             </button>
           ) : <span className="sas-rb sas-rb--slot" aria-hidden="true" />}
-          <button type="button" className="sas-rb sas-rb--end" aria-label={view.endLabel} onClick={() => onEnd?.()} disabled={view.busy} data-voice-end="">
-            <Icon name="phone-off" />
-          </button>
+          {view.endStyle === "back" ? (
+            <button type="button" className="sas-rb sas-rb--back" aria-label={view.endLabel} title={view.endLabel} onClick={() => onEnd?.()} disabled={view.busy} data-voice-end="">
+              <Icon name="keyboard" /><span className="sas-rb__text" aria-hidden="true">{view.endLabel}</span>
+            </button>
+          ) : (
+            <button type="button" className="sas-rb sas-rb--end" aria-label={view.endLabel} onClick={() => onEnd?.()} disabled={view.busy} data-voice-end="">
+              <Icon name="phone-off" />
+            </button>
+          )}
         </span>
       ) : null}
     </div>

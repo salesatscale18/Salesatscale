@@ -931,6 +931,9 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-rb--on { background: var(--ink); border-color: var(--ink); color: var(--surface-raised); }
 .sas-rb--on:hover { background: var(--ink); }
 .sas-rb--slot { visibility: hidden; }
+/* The buyer's "Back to text": neutral (secondary), never the red hang-up; the words beside the keyboard where there is room. */
+.sas-rb--back { width: auto; min-width: 40px; padding-inline: 12px; gap: 6px; display: inline-flex; align-items: center; justify-content: center; font: 600 13px/18px var(--font-sans); }
+.sas-rb__text { white-space: nowrap; }
 .sas-rb[disabled] { opacity: .5; cursor: not-allowed; }
 .sas-vbars { display: inline-flex; align-items: center; gap: 3px; height: 28px; flex: none; }
 .sas-vbars i { width: 3px; border-radius: 2px; background: currentColor; display: block; transition: height 80ms linear; }

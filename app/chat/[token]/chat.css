@@ -126,3 +126,10 @@
 .c-call svg { width: 13px; height: 13px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .c-spoken { display: inline-flex; align-items: center; gap: 3px; font-variant-numeric: tabular-nums; }
 .c-spoken svg { width: 11px; height: 11px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+/* "Back to text" in the call bar: icon only on a phone (the aria-label names it), the words too on a desktop. */
+.c-voice .sas-rb--back .sas-rb__text { display: none; }
+.c-voice .sas-rb--back { padding-inline: 0; width: 40px; }
+@media (min-width: 600px) {
+  .c-voice .sas-rb--back .sas-rb__text { display: inline; }
+  .c-voice .sas-rb--back { width: auto; padding-inline: 12px; }
+}

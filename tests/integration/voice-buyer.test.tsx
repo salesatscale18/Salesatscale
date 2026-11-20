@@ -38,7 +38,7 @@ const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { createSimulatedBuyer, startSimulatorConversation, buyerChat, resolveChatLink } = await import("@/lib/simulator/service");
 const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
-const { buildVoiceInstructions, loadVoiceInstructions, CHAT_RECAP_LINES, CONTINUE_FALLBACK } = await import("@/lib/voice/instructions");
+const { buildVoiceInstructions, loadVoiceInstructions, reAskLine, CHAT_RECAP_LINES, CONTINUE_FALLBACK } = await import("@/lib/voice/instructions");
 const { VoiceEngine } = await import("@/lib/voice/engine");
 const { ManualClock, flushAsync } = await import("@/lib/voice/realtime");
 const { ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
@@ -246,6 +246,39 @@ describe("starting a call", () => {
 });
 
 describe("the call continues the chat", () => {
+  it("the pick-up line: the agent's own open question re-asked, else I'm here, go ahead", () => {
+    expect(reAskLine("Hi Dana, this is Maya, the automated assistant of Acme. You asked to hear from us. What made you get in touch today?")).toBe("So, what made you get in touch today?");
+    expect(reAskLine("Thanks. How many locations do you have? I can then prepare a quote.")).toBe("So, how many locations do you have?");
+    expect(reAskLine("Great. Is it one site or more?")).toBe("So, is it one site or more?");
+    expect(reAskLine("Should I send the order form now?")).toBe("So, should I send the order form now?");
+    expect(reAskLine("I see. I'd like to know: do you need setup help?")).toBe("So, do you need setup help?");
+    // "I" and capitals stay; a question already starting with So is not doubled.
+    expect(reAskLine("Got it. I can do Tuesday, would that work?")).toBe("So, I can do Tuesday, would that work?");
+    expect(reAskLine("Does the CRM integration matter?")).toBe("So, does the CRM integration matter?");
+    expect(reAskLine("Okay. So, which plan fits you?")).toBe("So, which plan fits you?");
+    expect(reAskLine("The quote is in the chat.")).toBeNull();
+    // A question in another script (a Hebrew chat) is not mixed into the English call: the fallback line instead.
+    expect(reAskLine("היי דנה. מה גרם לך לפנות אלינו היום?")).toBeNull();
+  });
+
+  it("the agent's open question when it wrote last; the fallback when the buyer did", async () => {
+    const b = await newBuyer("Open Question");
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
+    const [lead] = await db.select().from(leads).where(eq(leads.id, b.leadId));
+    const { agentVersions } = await import("@/db/schema");
+    const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, conv.agentVersionId));
+    const load = () => loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
+    const asked = await load();
+    expect(asked.opener).toBe("So, what made you get in touch today?");
+    expect(asked.openerPrompt).toContain('ask it again briefly, in spoken form: "So, what made you get in touch today?"');
+    expect(asked.instructions).toContain('(here: "So, what made you get in touch today?")');
+    await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "buyer", body: "Our fridges keep failing.", language: "en", createdAt: new Date(Date.now() + 5) });
+    const answered = await load();
+    expect(answered.opener).toBe(CONTINUE_FALLBACK);
+    await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "agent", body: "Sorry to hear that. I'll check what fits.", language: "en", createdAt: new Date(Date.now() + 10) });
+    expect((await load()).opener).toBe(CONTINUE_FALLBACK);
+  });
+
   it("a call on a chat with agent messages opens with no greeting, no introduction and no bot notice, with the chat in its instructions", async () => {
     const b = await newBuyer("Rina Grey");
     await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "buyer", body: "We have three shops in Haifa.", language: "en", createdAt: new Date(Date.now() + 5) });
@@ -255,9 +288,11 @@ describe("the call continues the chat", () => {
     const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, conv.agentVersionId));
     const ctx = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
     expect(ctx.continuing).toBe(true);
+    // The buyer wrote last: nothing of the agent's is open, so the fallback line.
     expect(ctx.opener).toBe(CONTINUE_FALLBACK);
+    expect(ctx.openerPrompt).toContain(`"${CONTINUE_FALLBACK}"`);
     expect(ctx.openerPrompt).toMatch(/Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant/);
-    expect(ctx.openerPrompt).toMatch(/picks up from where the chat stopped/);
+    expect(ctx.openerPrompt).toMatch(/The buyer spoke last or nothing is open/);
     expect(ctx.openerPrompt).not.toMatch(/Hi Rina|on the call now/);
     expect(ctx.instructions).toContain("The buyer switched this chat from text to voice");
     expect(ctx.instructions).toContain("say so only if the buyer asks");
@@ -307,7 +342,8 @@ describe("the call continues the chat", () => {
     await clock.advance(15_000, settle);
     // The opener of a continuing call is the disclosure line.
     const [opener] = await db.select().from(messages).where(and(eq(messages.conversationId, b.conversationId), eq(messages.voiceSessionId, r.sessionId)));
-    expect(opener.body).toBe(CONTINUE_FALLBACK);
+    // The agent wrote last (its chat opener, a question not yet answered): the call re-asks it, spoken.
+    expect(opener.body).toBe("So, what made you get in touch today?");
     // The chat route refuses a separate chat turn while the call runs.
     const refused = await post("messages", b.token, { text: "hello?", clientId: crypto.randomUUID() }, messagesRoute);
     expect(refused.status).toBe(409);

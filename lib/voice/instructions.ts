@@ -87,7 +87,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
     i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
       : i.continuing
-        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Say one short line that picks up from where the chat stopped: acknowledge the last topic and carry it on, or, when there is nothing to pick up, "${CONTINUE_FALLBACK}" Then listen. Never ask again for anything the buyer already answered in the chat.`
+        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Open with one short line that picks up from where the chat stopped: if your own last chat message asked the buyer something they have not answered yet, ask it again briefly, in spoken form${i.opener && i.opener !== CONTINUE_FALLBACK ? ` (here: "${i.opener}")` : ""}; if the buyer wrote last, or nothing is open, say "${CONTINUE_FALLBACK}" Then listen. Never ask again for anything the buyer already answered in the chat.`
         : "When the call connects, say your opening line, then listen.",
     paceInstruction(settings.pace),
     i.deal?.summary ? `Summary so far: ${i.deal.summary}` : "",
@@ -105,12 +105,38 @@ export function openerInstruction(opener: string): string {
 export const CONTINUE_FALLBACK = "I'm here, go ahead.";
 
 /**
- * The instruction that starts a call continuing a chat: no greeting, no
- * introduction and no bot notice (the buyer only switched from text to voice),
- * one short line that picks up from the chat.
+ * The spoken re-ask of the agent's own open question, when the agent wrote
+ * last in the chat: its last question ("…? "), as "So, what made you get in
+ * touch today?". Null when the message asks nothing.
  */
-export function continuingInstruction(): string {
-  return `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. Say one short line that picks up from where the chat stopped, or, when there is nothing to pick up: "${CONTINUE_FALLBACK}"`;
+export function reAskLine(lastAgentMessage: string): string | null {
+  const text = lastAgentMessage.replace(/\s+/g, " ").trim();
+  // A call is English: a question written in another script (a Hebrew chat) is not re-asked word for word.
+  if (/[\u0590-\u08FF]/.test(text)) return null;
+  const end = text.lastIndexOf("?");
+  if (end < 0) return null;
+  // The sentence the last "?" ends: from just after the previous sentence end (or a line start).
+  const before = text.slice(0, end);
+  const start = Math.max(before.lastIndexOf(". "), before.lastIndexOf("! "), before.lastIndexOf("? "), before.lastIndexOf(": ")) + 2;
+  let q = text.slice(start >= 2 ? start : 0, end + 1).trim().replace(/^["'“‘(]+/, "");
+  if (q.length < 3) return null;
+  if (/^so,?\s/i.test(q)) return q.charAt(0).toUpperCase() + q.slice(1);
+  // Lower-case the first letter, except "I" and words in capitals (names stay as they are only when written in capitals).
+  const first = q.split(/\s/)[0];
+  if (!/^I(\b|')/.test(first) && !/^[A-Z]{2,}/.test(first)) q = q.charAt(0).toLowerCase() + q.slice(1);
+  return `So, ${q}`;
+}
+
+/**
+ * The instruction that starts a call continuing a chat: no greeting, no
+ * introduction and no bot notice (the buyer only switched from text to voice).
+ * `line`: the agent's open question re-asked briefly (reAskLine), or
+ * CONTINUE_FALLBACK when the buyer spoke last or nothing is open.
+ */
+export function continuingInstruction(line: string = CONTINUE_FALLBACK): string {
+  return line === CONTINUE_FALLBACK
+    ? `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. The buyer spoke last or nothing is open, so say: "${CONTINUE_FALLBACK}"`
+    : `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. Your last chat message asked something still unanswered: ask it again briefly, in spoken form: "${line}"`;
 }
 
 export type VoiceCallContext = {
@@ -148,8 +174,10 @@ export async function loadVoiceInstructions(
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
   // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
   const continuing = !opts.resumed && agentCount.length > 0;
+  // The pick-up line: the agent's own unanswered question re-asked, when the agent wrote last; else the fallback.
+  const lastChat = earlier.find((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human");
   const opener = continuing
-    ? CONTINUE_FALLBACK
+    ? (lastChat?.actor === "agent" ? reAskLine(lastChat.body) : null) ?? CONTINUE_FALLBACK
     : openerText({ name: firstName, agent: names.agent, company: names.seller, gender: names.gender, language: "en", opener: version.playbook.opener });
   const recap = opts.recap ?? earlier.reverse()
     .filter((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human")
@@ -167,5 +195,5 @@ export async function loadVoiceInstructions(
     priceApproval: priceApproval || null,
     recap, resumed: opts.resumed, continuing,
   });
-  return { instructions, opener, openerPrompt: continuing ? continuingInstruction() : openerInstruction(opener), continuing };
+  return { instructions, opener, openerPrompt: continuing ? continuingInstruction(opener) : openerInstruction(opener), continuing };
 }

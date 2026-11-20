@@ -30,6 +30,12 @@ export type BarView = {
   /** Mute + End (a live call), End only (connecting, reconnecting), or none. */
   controls: "call" | "end_only" | "none";
   endLabel: string;
+  /**
+   * "end": the red hang-up button (test lab, "End call"). "back": the buyer's neutral
+   * "Back to text" (a keyboard, the words beside it where there is room): the call is
+   * a switch of the chat to voice, and this switches it back.
+   */
+  endStyle: "end" | "back";
   action: BarAction | null;
   muted: boolean;
   /** Labels of the mute button (the bar's language). */
@@ -116,7 +122,7 @@ export function barView(s: VoiceSnapshot, now: number, ctx: BarContext = {}): Ba
 function fullBarView(s: VoiceSnapshot, now: number, ctx: BarContext): Omit<BarView, "subShort"> {
   const T = words(ctx);
   const buyer = ctx.audience === "buyer";
-  const base = { clock: null, controls: "none" as const, endLabel: T("voice.end"), muteLabel: T("voice.mute"), unmuteLabel: T("voice.unmute"), action: null, muted: s.muted, busy: false, bars: null, icon: null };
+  const base = { clock: null, controls: "none" as const, endLabel: T("voice.end"), endStyle: (buyer ? "back" : "end") as BarView["endStyle"], muteLabel: T("voice.mute"), unmuteLabel: T("voice.unmute"), action: null, muted: s.muted, busy: false, bars: null, icon: null };
   switch (s.phase) {
     case "idle":
       return { ...base, state: "ready", tone: "plain", icon: "phone-call", title: T("voice.ready.title"), sub: ctx.readyLine ?? "", action: { kind: "start", label: T("voice.ready.start") } };
