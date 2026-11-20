@@ -9,6 +9,7 @@ import { listMarkets } from "@/lib/markets/service";
 import { marketContactSettings } from "@/lib/markets/settings";
 import { agentSmsEnabled, SENDER_NAME_MAX, smsConfig, smsSender } from "@/lib/sms/rules";
 import { accountSmsTestNumbers, MAX_SMS_TEST_NUMBERS } from "@/lib/sms/settings";
+import { formatPhone } from "@/lib/leads/rules";
 import { addSmsTestNumberAction, removeSmsTestNumberAction } from "./channels-actions";
 
 const maybe = (key: string) => (t(key as MessageKey) as string | undefined) ?? null;
@@ -36,8 +37,8 @@ function Row({ icon, title, pill, children, side }: { icon: IconName; title: str
  * and how they are reached. Web chat is always on; SMS shows its mode (Test
  * mode / Live), the registered sender and its registration state, and the
  * account's test numbers (add/remove, stored per account: lib/sms/settings);
- * WhatsApp is a platform switch, off by default (WHATSAPP_ENABLED); email is
- * the fallback. Next to it, the read-only "Team calls · Fixed for now" card.
+ * WhatsApp is a read-only platform state (WHATSAPP_ENABLED; "Off" with no
+ * switch while off); email as a fallback is planned ("Not yet"). Next to it, the read-only "Team calls · Fixed for now" card.
  * Going live with SMS waits for the approved sender (TWILIO_SMS_SENDER_STATUS)
  * and the platform's SMS_MODE=live.
  */
@@ -68,7 +69,10 @@ export async function ChannelsSection({ account, saved, error }: { account: Sell
             icon="message-square" title={t("settings.channels.sms")}
             pill={live ? <Pill tone="success" icon="check">{t("settings.channels.live")}</Pill> : <Pill tone="warning" icon="flask-conical">{t("settings.channels.test_mode")}</Pill>}
             side={live ? null : (
-              <button type="button" className={buttonClass("secondary", "sm")} disabled aria-describedby="sms-golive-why" data-sms-go-live="">{t("settings.channels.go_live")}</button>
+              <div className="sas-channel-golive">
+                <button type="button" className={buttonClass("secondary", "sm")} disabled aria-describedby="sms-golive-reason" data-sms-go-live="">{t("settings.channels.go_live")}</button>
+                <span className="sas-small" id="sms-golive-reason" data-sms-go-live-why="">{t("settings.channels.go_live_why")}</span>
+              </div>
             )}
           >
             <p className="sas-small">{t("settings.channels.sms_body")}</p>
@@ -89,11 +93,11 @@ export async function ChannelsSection({ account, saved, error }: { account: Sell
                 <ul className="sas-channel-testers" aria-labelledby="sms-testers-h">
                   {config.testNumbers.map((n) => (
                     <li key={n} className="sas-channel-tester">
-                      <span className="sas-num">{n}</span>
+                      <span className="sas-num" title={n}>{formatPhone(n)}</span>
                       <form action={removeSmsTestNumberAction}>
                         {hidden}
                         <input type="hidden" name="number" value={n} />
-                        <button type="submit" className="sas-channel-tester__x" aria-label={t("settings.channels.remove_number", { number: n })} title={t("settings.channels.remove_number", { number: n })}><Icon name="x" /></button>
+                        <button type="submit" className="sas-channel-tester__x" aria-label={t("settings.channels.remove_number", { number: formatPhone(n) })} title={t("settings.channels.remove_number", { number: formatPhone(n) })}><Icon name="x" /></button>
                       </form>
                     </li>
                   ))}
@@ -114,24 +118,24 @@ export async function ChannelsSection({ account, saved, error }: { account: Sell
                 {config.testNumbers.length === 0 ? <span className="sas-small">{t("settings.channels.no_test_numbers")}</span> : null}
               </dd>
             </dl>
-            <div className="sas-channel-hint" id="sms-golive-why"><Icon name="info" /><span>{t(live ? "settings.channels.sms_live_hint" : "settings.channels.sms_hint")}</span></div>
+            <div className="sas-channel-hint"><Icon name="info" /><span>{t(live ? "settings.channels.sms_live_hint" : "settings.channels.sms_hint")}</span></div>
             {agentSmsEnabled() ? null : <p className="sas-small">{t("settings.channels.followup_off")}</p>}
           </Row>
 
           <Row
             icon="phone-call" title={t("settings.channels.whatsapp")}
             pill={waOn ? <Pill tone="info" icon="check">{t("settings.channels.on")}</Pill> : <Pill tone="neutral" icon="pause">{t("settings.channels.off")}</Pill>}
-            side={<input type="checkbox" role="switch" className="sas-switch" checked={waOn} disabled readOnly aria-label={t("settings.channels.whatsapp")} aria-describedby="wa-switch-why" />}
           >
-            <p className="sas-small" id="wa-switch-why">{t("settings.channels.whatsapp_body")} {t("settings.channels.whatsapp_platform")}</p>
+            {waOn
+              ? <p className="sas-small">{t("settings.channels.whatsapp_body")} {t("settings.channels.whatsapp_platform")}</p>
+              : <div className="sas-channel-hint" data-whatsapp-off=""><Icon name="info" /><span>{t("settings.channels.whatsapp_off_hint")}</span></div>}
           </Row>
 
           <Row
             icon="file-text" title={t("settings.channels.email")}
-            pill={<Pill tone="info" icon="check">{t("settings.channels.on")}</Pill>}
-            side={<input type="checkbox" role="switch" className="sas-switch" checked disabled readOnly aria-label={t("settings.channels.email")} />}
+            pill={<Pill tone="neutral" icon="clock">{t("settings.channels.not_yet")}</Pill>}
           >
-            <p className="sas-small">{t("settings.channels.email_body")}</p>
+            <div className="sas-channel-hint" data-email-planned=""><Icon name="info" /><span>{t("settings.channels.email_planned")}</span></div>
           </Row>
         </section>
 

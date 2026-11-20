@@ -304,8 +304,26 @@ describe("Reach RA: web chat for real leads and SMS on the outbound paths", () =
     try {
       expect(smsSender()).toEqual({ name: "PolarDemo", approved: false });
       const html = renderToStaticMarkup(await ChannelsSection({ account: await accountRow(acc), saved: "", error: "" }));
-      for (const s of ["Web chat", "Always on", "Test mode", "PolarDemo", "9 of 11 letters · registration pending", "+447700900123", "Go live", "WhatsApp", "Email", "Team calls", "Fixed for now", "Next 7 days", "15 min", "Hidden from buyers", "Change contact hours"]) expect(html).toContain(s);
-      expect(html).toMatch(/<button[^>]*disabled=""[^>]*data-sms-go-live=""/);
+      for (const s of ["Web chat", "Always on", "Test mode", "PolarDemo", "9 of 11 letters · registration pending", "+44 7700 900123", "Go live", "WhatsApp", "Email", "Team calls", "Fixed for now", "Next 7 days", "15 min", "Hidden from buyers", "Change contact hours"]) expect(html).toContain(s);
+      expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="sms-golive-reason"[^>]*data-sms-go-live=""/);
+      expect(html).toContain('id="sms-golive-reason" data-sms-go-live-why="">SMS go live for the whole platform once the sender name is approved.</span>');
+      // Test numbers show formatted; the remove form still posts E.164.
+      expect(html).toContain('name="number" value="+447700900123"');
+      expect(html).toContain('aria-label="Remove +44 7700 900123"');
+      // No switches: WhatsApp is a read-only state, email is "Not yet".
+      expect(html).not.toContain("sas-switch");
+      expect(html).toContain("Not yet");
+      expect(html).toContain("Email as a fallback is planned.");
+      expect(html).not.toContain("Used when there is no mobile number");
+      // WhatsApp off (the platform default): a neutral "Off" pill and the per-account hint.
+      vi.stubEnv("WHATSAPP_ENABLED", "");
+      await saveSmsTestNumbers(db, actor(), { id: acc, market: "IL" }, ["+972501112233"]);
+      const off = renderToStaticMarkup(await ChannelsSection({ account: await accountRow(acc), saved: "", error: "" }));
+      expect(off).toMatch(/<span class="sas-pill">(?:(?!<\/span>).)*Off<\/span>/);
+      expect(off).toContain("Off for every account for now. Turning it on per account comes with WhatsApp setup.");
+      expect(off).toContain("+972 50-111-2233");
+      expect(off).toContain('value="+972501112233"');
+      expect(off).not.toContain("sas-switch");
     } finally {
       vi.unstubAllEnvs();
       vi.stubEnv("WHATSAPP_ENABLED", "1");

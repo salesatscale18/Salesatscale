@@ -3551,7 +3551,6 @@
   "settings.channels.whatsapp_body": "Off by default. Turn on after you connect a WhatsApp sender; then WhatsApp is used before SMS.",
   "settings.channels.whatsapp_platform": "For now the platform turns it on for every account.",
   "settings.channels.email": "Email",
-  "settings.channels.email_body": "Used when there is no mobile number, or SMS fails.",
   "settings.channels.saved.added": "Test number added.",
   "settings.channels.saved.removed": "Test number removed.",
   "settings.channels.saved.numbers": "Test numbers saved.",
@@ -3573,5 +3572,9 @@
   "settings.team_calls.hint": "Editing times, call length and who calls comes with the team calendar.",
   "settings.team_calls.hours_link": "Change contact hours",
   "settings.intake.consent_line": "Consent line for your form",
-  "settings.intake.consent_line_hint": "Put this line above your form's send button. It names every way the agent may reach the buyer."
+  "settings.intake.consent_line_hint": "Put this line above your form's send button. It names every way the agent may reach the buyer.",
+  "settings.channels.whatsapp_off_hint": "Off for every account for now. Turning it on per account comes with WhatsApp setup.",
+  "settings.channels.not_yet": "Not yet",
+  "settings.channels.email_planned": "Email as a fallback is planned.",
+  "settings.channels.go_live_why": "SMS go live for the whole platform once the sender name is approved."
 }
