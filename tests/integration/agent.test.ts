@@ -148,14 +148,14 @@ describe("agent turns (scripted model)", () => {
   it("a discount above the limit becomes a quote awaiting the seller's approval", async () => {
     const c = await newConv();
     const llm = new ScriptedLlm([
-      step(use("a", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: { text: "Too expensive", handled: false } })),
+      step(use("a", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: { play: "too_expensive", buyer_words: "15% off or no deal", step: 5, attempt: true, status: "open" } })),
       step(use("b", "create_quote", { lines: [{ sku: "GW-10", qty: 1 }], discount_percent: 15, sites: 1 })),
       step(say("I'm confirming that price with the team.")),
     ]);
     await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: "15% off or no deal" });
     const [q] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
     expect(q.status).toBe("awaiting_approval");
-    expect((await getDealState(db, acc, c.leadId))?.objections).toEqual([{ text: "Too expensive", handled: false }]);
+    expect((await getDealState(db, acc, c.leadId))?.objections).toEqual([{ play: "too_expensive", words: "15% off or no deal", steps: [5], status: "open", attempts: 1 }]);
   });
 
   it("never overwrites a field a person verified; unknown keys are reported", async () => {

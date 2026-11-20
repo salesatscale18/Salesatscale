@@ -19,7 +19,7 @@ export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playb
     objections: [],
     maxDiscountBp,
     offerMeetingWhen: "The buyer asks to talk to a person, needs approval from a partner, or the deal is large or unusual.",
-    handOffWhen: "The buyer asks for a person, is upset, or asks something you cannot answer from approved information.",
+    handOffWhen: "The buyer is upset, complains, raises a legal or existing-customer issue, or insists on a person.",
     neverDo: [],
   };
 }

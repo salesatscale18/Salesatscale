@@ -173,7 +173,7 @@ describe("lane H: playbook, plays and stage", () => {
     it("matches the one-lead read for every state, reads only this account's leads, and skips leads without a conversation", async () => {
       const fresh = await start();
       const objection = await start();
-      await runTool("update_deal_state", { updates: [], next_step: null, objection: { text: "Too expensive", handled: false } }, objection.ctx("o1"));
+      await runTool("update_deal_state", { updates: [], next_step: null, objection: { play: "too_expensive", buyer_words: "Too expensive", step: 1, attempt: false, status: "open" } }, objection.ctx("o1"));
       const quoted = await start();
       await runTool("update_deal_state", { ...qualify, recommendation_confirmed: true, price_asked: null }, quoted.ctx("q1"));
       const q = await runTool("create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1, remove_auto_added: null, exception: null }, quoted.ctx("q2"));

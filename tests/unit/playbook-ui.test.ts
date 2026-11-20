@@ -144,8 +144,8 @@ describe("Sales plays overview", () => {
   }, pending);
   const by = (k: string) => plays.find((p) => p.key === k)!;
 
-  it("13 cards with status, one line and the facts line", () => {
-    expect(plays).toHaveLength(13);
+  it("19 cards with status, one line and the facts line", () => {
+    expect(plays).toHaveLength(19);
     expect(by("too_expensive")).toMatchObject({ own: true, line: "Ask. Compare.", factsLine: { kind: "facts", n: 2 } });
     expect(by("price_early")).toMatchObject({ own: false, factsLine: { kind: "facts", n: 1 } });
     expect(by("existing_solution").factsLine).toEqual({ kind: "suggested", facts: 2, card: false });
@@ -159,7 +159,7 @@ describe("Sales plays overview", () => {
     expect(filterPlays(plays, "suggested").map((p) => p.key).sort()).toEqual(["existing_solution", "fit"]);
     expect(filterPlays(plays, "needs").every((p) => p.hint && p.facts.length === 0)).toBe(true);
     expect(filterPlays(plays, "needs").map((p) => p.key)).not.toContain("price_early");
-    expect(playCounts(plays).all).toBe(13);
+    expect(playCounts(plays).all).toBe(19);
   });
 });
 

@@ -102,7 +102,7 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
   describe("A9. Too expensive counts its filled discount limit", () => {
     it("overview: 1 fact (the discount limit), still asking for the named facts; none at 0%", () => {
       const at = (bp: number) => playsOverview({ plays: {}, questionBudget: 3, maxDiscountBp: bp }, new Map()).find((x) => x.key === "too_expensive")!;
-      expect(at(500)).toMatchObject({ factCount: 1, needsFacts: false, factsLine: { kind: "facts", n: 1, missing: ["cost of the problem", "smaller starting set"] } });
+      expect(at(500)).toMatchObject({ factCount: 1, needsFacts: false, factsLine: { kind: "facts", n: 1, missing: ["what the problem costs a typical customer", "smaller starting set", "what a discount can be traded for", "what the price includes"] } });
       expect(at(0)).toMatchObject({ factCount: 0, needsFacts: true, factsLine: { kind: "needs" } });
       // Other plays are unchanged by the discount limit.
       expect(playsOverview({ plays: {}, questionBudget: 3, maxDiscountBp: 500 }, new Map()).find((x) => x.key === "proof")!.factCount).toBe(0);
@@ -113,12 +113,12 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       const card = plays.match(/data-play="too_expensive"[\s\S]*?<\/a>/)?.[0] ?? "";
       expect(card).toContain('data-facts="facts"');
       expect(card).toContain("1 fact");
-      expect(card).toContain("add cost of the problem, smaller starting set");
+      expect(card).toContain("add what the problem costs a typical customer, smaller starting set, what a discount can be traded for, what the price includes");
       const pb = await render(PlaybookPage);
       const summary = pb.match(/data-testid="plays-summary">[\s\S]*?<\/ul>/)?.[0] ?? "";
-      // R4 A4: the parts sum to 13 (1 with facts, 9 would be sharper, 3 need none); own cards counted apart.
+      // R4 A4: the parts sum to 19 since O1 (1 with facts, 15 would be sharper, 3 need none); own cards counted apart.
       expect(summary).toContain('data-summary="facts">1 have your facts</li>');
-      expect(summary).toContain('data-summary="sharper">9 would be sharper with your facts</li>');
+      expect(summary).toContain('data-summary="sharper">15 would be sharper with your facts</li>');
       expect(summary).toContain('data-summary="none">3 need none</li>');
       expect(summary).toContain('data-summary="own">No cards of your own yet</li>');
     });
@@ -165,10 +165,12 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       expect(DEFAULT_PLAYS.proof.example).not.toMatch(/24 hours|replaced/);
       const html = await render(PlayPage, { play: "proof" });
       save("play-proof", html);
-      // R4 A1: the placeholder is a grey tag, without the angle brackets.
-      expect(html).toContain('<span class="pb-slot-tag" data-slot-tag="">One proof point: a fact, a customer example or a guarantee</span>');
-      expect(html).not.toContain("&lt;One proof point");
       expect(html).toContain('data-part="example-note">Illustration. The grey words are filled from your approved facts.</span>');
+      // R4 A1: the placeholder is a grey tag, without the angle brackets. Since O1 the proof example asks
+      // a question with no placeholder, so the tag is checked on a card that still has one.
+      const existing = await render(PlayPage, { play: "existing_solution" });
+      expect(existing).toContain('<span class="pb-slot-tag" data-slot-tag="">what it does well</span>');
+      expect(existing).not.toContain("&lt;what it does well");
     });
   });
 

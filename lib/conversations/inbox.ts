@@ -6,7 +6,8 @@
  */
 import { and, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { conversations, leadEvents, leads, markets, messages, type LeadStatus } from "@/db/schema";
+import { conversations, leadEvents, leads, markets, messages, type DealObjection, type LeadStatus, type StoredObjection } from "@/db/schema";
+import { readObjections } from "@/lib/agent/core/objections";
 import { windowState, type WindowState } from "@/lib/channels/rules";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { marketWhere } from "@/lib/markets/selection";
@@ -162,13 +163,15 @@ export async function inboxConversation(db: Db, accountId: string, conversationI
 }
 
 /** The agent's latest hand-off request for a lead (the handoff brief), or null. */
-export async function latestHandoff(db: Db, accountId: string, leadId: string): Promise<{ reason: string; summary: string; at: Date } | null> {
+export async function latestHandoff(db: Db, accountId: string, leadId: string): Promise<{ reason: string; summary: string; objections: DealObjection[]; at: Date } | null> {
   const [ev] = await db.select({ data: leadEvents.data, at: leadEvents.createdAt }).from(leadEvents)
     .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), eq(leadEvents.type, "handoff.requested")))
     .orderBy(desc(leadEvents.createdAt)).limit(1);
   if (!ev) return null;
-  const d = (ev.data ?? {}) as { reason?: unknown; summary?: unknown };
+  const d = (ev.data ?? {}) as { reason?: unknown; summary?: unknown; objections?: unknown };
   const reason = typeof d.reason === "string" ? d.reason.trim() : "";
   const summary = typeof d.summary === "string" ? d.summary.trim() : "";
-  return reason || summary ? { reason, summary, at: ev.at } : null;
+  // O1: the objections as they stood at the hand-over (briefs written before O1 have none).
+  const objections = Array.isArray(d.objections) ? readObjections(d.objections as StoredObjection[]) : [];
+  return reason || summary || objections.length ? { reason, summary, objections, at: ev.at } : null;
 }

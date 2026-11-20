@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { ProvenanceTag } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
-import type { DealPane, PaneField } from "@/lib/leads/deal-pane";
+import type { DealPane, PaneField, PaneObjection } from "@/lib/leads/deal-pane";
 
 /**
  * The green circle-check after a verified value (W3): on the value's line, with
@@ -75,6 +75,19 @@ function PaneFields({ fields }: { fields: PaneField[] }) {
 }
 
 /**
+ * The objection lines (O1): one per objection, "Price: 2 attempts, open";
+ * the buyer's own words in the tooltip. Shared by the Deal state pane, the
+ * hand-over brief and the test lab.
+ */
+export function ObjectionList({ objections }: { objections: PaneObjection[] }) {
+  return (
+    <ul style={{ margin: 0, paddingInlineStart: 18 }} data-testid="objections">
+      {objections.map((o, i) => <li key={i} data-objection-status={o.status} title={o.words ? `"${o.words}"` : undefined}>{o.line}</li>)}
+    </ul>
+  );
+}
+
+/**
  * The deal state as the lead page and Conversations show it (one component,
  * data from lib/leads/deal-pane.ts): known fields, the order-form details not
  * known yet in one line that opens, objections, the next step, then whatever
@@ -109,7 +122,7 @@ export function DealStatePane({ pane, afterNextStep }: { pane: DealPane; afterNe
       {pane.objections.length ? (
         <div className="sas-stack-2">
           <span className="sas-group-label">{t("lead.card.objections")}</span>
-          <ul style={{ margin: 0, paddingInlineStart: 18 }}>{pane.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
+          <ObjectionList objections={pane.objections} />
         </div>
       ) : null}
       {pane.nextStep ? <div className="sas-stack-2" data-testid="next-step"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{pane.nextStep}</span></div> : null}

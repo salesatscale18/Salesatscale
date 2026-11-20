@@ -8,10 +8,11 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { PLAY_KEYS, type DealFieldValue, type Playbook } from "@/db/schema";
+import { PLAY_KEYS, type DealFieldValue, type Playbook, type StoredObjection } from "@/db/schema";
 import { defaultPlaybook } from "@/lib/agent/playbook";
 import { stableSystemPrompt, turnContext } from "@/lib/agent/prompt";
-import { coreDesign, playsText } from "@/lib/agent/core/design";
+import { coreDesign, objectionMethod, playsText } from "@/lib/agent/core/design";
+import { OBJECTION_PLAYS } from "@/lib/agent/core/objections";
 import { conversationExamples, MIXED_EXAMPLES } from "@/lib/agent/core/examples";
 import { askedKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "@/lib/agent/core/facts";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
@@ -78,12 +79,17 @@ describe("no pilot words in shared code", () => {
   });
 
   it("the per-turn context, in every stage", () => {
-    const deals: ({ fields: Record<string, DealFieldValue>; objections: { text: string; handled: boolean }[]; nextStep: string | null } | null)[] = [
+    const deals: ({ fields: Record<string, DealFieldValue>; objections: StoredObjection[]; nextStep: string | null } | null)[] = [
       null,
       { fields: { sites: said("2") }, objections: [{ text: "price", handled: false }], nextStep: null },
       { fields: { business_type: said("Studio"), sites: said("1"), [RECOMMENDATION_CONFIRMED_KEY]: said("yes") }, objections: [], nextStep: null },
       // Asked twice and not answered: the assumption line.
       { fields: { [PRICE_ASKED_KEY]: said("yes"), [askedKey("sites")]: said("2"), [askedKey("business_type")]: said("1") }, objections: [], nextStep: null },
+      // O1: each objection play open in turn, its card shown with the used steps marked.
+      ...OBJECTION_PLAYS.map((play) => ({
+        fields: {}, nextStep: null,
+        objections: [{ play, words: "hmm", steps: [1], status: "open" as const, attempts: 1 }, { play: "not_now" as const, words: "later", steps: [1, 2], status: "settled" as const, attempts: 1 }],
+      })),
     ];
     for (const deal of deals) {
       for (const agentMessages of [0, 1, 3]) {
@@ -95,9 +101,16 @@ describe("no pilot words in shared code", () => {
   });
 
   it("every play card", () => {
+    // O1: the 19 plays, the six new ones and the two hand-off plays included.
+    expect(PLAY_KEYS).toHaveLength(19);
+    for (const key of ["asks_for_person", "handoff", "no_answer", "someone_else_decides", "tried_failed", "complicated", "locked_in"] as const) expect(PLAY_KEYS).toContain(key);
     for (const key of PLAY_KEYS) expectClean(key, JSON.stringify(DEFAULT_PLAYS[key]));
     expectClean("plays, fixed mix", playsText(pb));
     expectClean("plays, seller examples", playsText(withExamples, conversationExamples(withExamples, catalog)));
+  });
+
+  it("the shared objection method (O1), for every attempts setting", () => {
+    for (const n of [1, 2, 3]) expectClean(`objection method ${n}`, objectionMethod(n));
   });
 
   it("every tool description and tool source message", () => {

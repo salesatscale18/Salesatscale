@@ -29,6 +29,8 @@ import { Composer } from "./composer";
 import { AutoSubmit } from "@/components/sas/list-kit-client";
 import { ListTable } from "@/components/sas/list-kit";
 import { ConversationControls, MarkerEntry, deliveryLabel, splitMarkers, windowTimerProps } from "../../leads/[leadId]/conversation";
+import { ObjectionList } from "../../leads/[leadId]/deal-pane";
+import { paneObjections } from "@/lib/leads/deal-pane";
 import { WindowTimer } from "@/components/sas/record";
 import { conversationWindow } from "@/lib/channels/whatsapp";
 import { listConnections } from "@/lib/channels/connections";
@@ -176,7 +178,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 {deal?.objections.length ? (
                   <div className="sas-stack-2">
                     <span className="sas-group-label">{t("lead.card.objections")}</span>
-                    <ul style={{ margin: 0, paddingInlineStart: 18 }}>{deal.objections.map((o, i) => <li key={i}>{o.text}{o.handled ? " ✓" : ""}</li>)}</ul>
+                    <ObjectionList objections={paneObjections(deal.objections)} />
                   </div>
                 ) : null}
                 {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}

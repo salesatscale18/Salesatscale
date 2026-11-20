@@ -138,17 +138,17 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
       await setPlaybook({ questionBudget: 3 });
     });
 
-    it("A4: the summary parts add up to 13; own cards are counted apart", async () => {
+    it("A4: the summary parts add up to 19 (O1: six more plays); own cards are counted apart", async () => {
       const none = playsSummary(playsOverview({ plays: {}, questionBudget: 3, maxDiscountBp: 0 }, new Map()));
-      expect(none).toEqual({ total: 13, withFacts: 0, sharper: 10, noneNeeded: 3, own: 0, suggested: 0 });
+      expect(none).toEqual({ total: 19, withFacts: 0, sharper: 16, noneNeeded: 3, own: 0, suggested: 0 });
       const own = { when: "W", do: ["D"], example: "E", notThis: "N" };
       const some = playsSummary(playsOverview({ plays: { value: { facts: [{ text: "Saves 2 hours a week" }] }, not_now: { facts: [{ text: "Call back in Q1" }], own } }, questionBudget: 3, maxDiscountBp: 500 }, new Map()));
-      expect(some.withFacts + some.sharper + some.noneNeeded).toBe(13);
-      expect(some).toMatchObject({ withFacts: 3, sharper: 8, noneNeeded: 2, own: 1 });
+      expect(some.withFacts + some.sharper + some.noneNeeded).toBe(19);
+      expect(some).toMatchObject({ withFacts: 3, sharper: 14, noneNeeded: 2, own: 1 });
       const html = await render(PlaybookPage);
       save("playbook", html);
       const summary = html.match(/data-testid="plays-summary">[\s\S]*?<\/ul>/)?.[0] ?? "";
-      expect(summary).not.toMatch(/need your facts|of 13/);
+      expect(summary).not.toMatch(/need your facts|of 19/);
       expect(summary).toContain("3 need none");
     });
   });

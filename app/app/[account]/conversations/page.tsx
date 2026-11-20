@@ -18,8 +18,8 @@ import { sendTemplateAction } from "./actions";
 import { AutoRefresh } from "./auto-refresh";
 import { ScrollThreadToEnd } from "./scroll-end";
 import { SimulatedChip, TestLabChip, WhatsAppChip } from "../leads/simulated-chip";
-import { loadDealPane } from "@/lib/leads/deal-pane";
-import { DealStatePane } from "../leads/[leadId]/deal-pane";
+import { loadDealPane, objectionLine } from "@/lib/leads/deal-pane";
+import { DealStatePane, ObjectionList } from "../leads/[leadId]/deal-pane";
 import { activeChatToken } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
@@ -319,6 +319,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                         <h3 id="brief-h" className="sas-label" style={{ margin: 0, display: "flex", gap: 6, alignItems: "center" }}><Icon name="sparkles" />{t("inbox.brief.title")}</h3>
                         {thread.handoff.reason ? <div><div className="sas-small">{t("inbox.brief.why")}</div><div>{thread.handoff.reason}</div></div> : null}
                         {thread.handoff.summary ? <div><div className="sas-small">{t("inbox.brief.known")}</div><div>{thread.handoff.summary}</div></div> : null}
+                        {thread.handoff.objections.length ? <div data-testid="brief-objections"><div className="sas-small">{t("inbox.brief.objections")}</div><ObjectionList objections={thread.handoff.objections.map((o) => ({ line: objectionLine(o), status: o.status, words: o.words }))} /></div> : null}
                       </section>
                     ) : null}
                     <section className="sas-stack-2" aria-labelledby="deal-h">

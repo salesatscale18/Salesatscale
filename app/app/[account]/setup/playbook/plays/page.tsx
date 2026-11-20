@@ -45,7 +45,7 @@ function FactsLine({ p }: { p: PlayOverview }) {
   }
 }
 
-/** Setup · Playbook › Sales plays (canvas: PlaybookPlays): the 13 plays as cards, with filters. */
+/** Setup · Playbook › Sales plays (canvas: PlaybookPlays): the 19 plays as cards, with filters. */
 export default async function PlaysPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;

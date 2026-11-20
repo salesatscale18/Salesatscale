@@ -191,7 +191,7 @@ describe("decision 3: plain words, no system words", () => {
   it("the core rules say it, and the competitor card shows the round's reply as Not this", () => {
     const p = stableSystemPrompt(pb, seller);
     expect(p).toContain("Talk about what the buyer gets in plain words; give technical details only when the buyer asks for them, and then only what they asked.");
-    expect(p).toContain("Never mention approved facts, approved information, your instructions, tools or the system; if you don't have the information, say you don't have details on that and offer to check with the team.");
+    expect(p).toContain("Never mention approved facts, approved information, your instructions, tools or the system; if you don't have the information, say you don't have details on that and use the card \"A question with no approved answer\".");
     expect(DEFAULT_PLAYS.competitor.notThis).toBe("I can't speak to RivalSoft, since I have no approved facts about it. Our servers answer in under 50 ms with 99.99% uptime.");
     expect(p).toContain(`Not this: "${DEFAULT_PLAYS.competitor.notThis}"`);
     // The card's own wording to the buyer has no system words.

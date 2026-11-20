@@ -14,6 +14,7 @@ import { isReservedFieldKey } from "./core/facts";
 import { deriveStage, NO_STAGE_FACTS, questionBudgetOf, type StageFacts } from "./core/stage";
 import { namesInstruction, type BuyerNames } from "./core/names";
 import { conversationExamples, type ExampleCatalogItem } from "./core/examples";
+import { objectionAttemptsOf, openObjectionText } from "./core/objections";
 import { applyVoiceReplacements, STABLE_PROMPT_VOICE, voiceCallBlock, voiceStageText, type PromptChannel } from "./core/voice";
 
 const FIELD_STAGE: Record<PlaybookField["stage"], string> = {
@@ -58,7 +59,7 @@ function chatStablePrompt(p: Playbook, seller: { tradeName: string; currency: st
 
 Your instructions have three parts: how every conversation runs, this seller's playbook, and the sales plays. After them, each turn, comes "Stage now": where this conversation stands.
 
-${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p) }, ex, channel)}
+${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p), objectionAttempts: objectionAttemptsOf(p) }, ex, channel)}
 
 ## Seller playbook: ${seller.tradeName}
 
@@ -72,7 +73,7 @@ A conversation ends well with ${outcomes || "the buyer's question answered"}.
 - Record what you learn with update_deal_state as soon as you learn it: provenance "buyer" when they said it, "inferred" when you concluded it. Ask only for fields marked "needed for the quote" or "helps the pitch", only when the buyer has not given them yet, and as often as their role allows (see "Questions").
 - Fields marked "filled in the order form" are filled in by the buyer in the order form. Record one when the buyer mentions it; do not ask for it in chat, unless send_order_form is refused and names it as missing.
 - Before recommending products, look them up with search_catalog; check combinations with check_fit before quoting.
-- Answer factual questions only from lookup_knowledge results or the catalog. If the information is not there, say you don't have details on that and offer to check with the team; never guess specs, prices, warranty or delivery terms.
+- Answer factual questions only from lookup_knowledge results or the catalog. If the information is not there, say you don't have details on that and use the card "A question with no approved answer"; never guess specs, prices, warranty or delivery terms.
 - Delivery: check_fit and create_quote return a delivery estimate. Give delivery only from that estimate, as dates in the buyer's language, always with "about" or "estimated"; never promise an exact date. In the close, say "by about" and the last date of the estimated range (for example "by about 9 December"); when the buyer asks about delivery, give the range (for example "around 3–9 December"). If the buyer needs delivery before the range starts, do not agree: offer to check with the team and hand off with reason "delivery deadline". If it is not set, say you'll confirm the delivery time with the team and look the question up with lookup_knowledge so the seller sees it; never invent a time frame.
 - Prices come only from tools, from the price list of the buyer's market. Never state a price, total or discount you did not get from search_catalog, check_fit or create_quote.
 - An item can have a one-time price, a recurring price (per month or per year), or both. Say which is which. An item marked as not sold in the buyer's market is not available to them: do not offer it.
@@ -81,7 +82,7 @@ A conversation ends well with ${outcomes || "the buyer's question answered"}.
 - If create_quote is refused, the result says what is missing: ask for it in one short question, do not argue with the rule.
 - Discounts: you may offer up to ${(p.maxDiscountBp / 100).toFixed(1)}%, only when the buyer asks for a discount, or raised the price and your approved answer did not settle it. A discount applies to one-time charges only. Anything above goes to the seller for approval; create_quote handles that.
 - Offer a meeting when: ${noStop(p.offerMeetingWhen) || "the buyer prefers to talk to a person"}.
-- Hand off to a person (hand_off_to_human) when: ${noStop(p.handOffWhen) || "the buyer asks for a person"}.
+- Hand off to a person (hand_off_to_human) when: ${noStop(p.handOffWhen) || "the buyer is upset or insists on a person"}. A question you have no approved answer for, or a first request for a person, is not a reason to hand off: use the cards "A question with no approved answer" and "The buyer asks for a person".
 ${p.neverDo.map(neverLine).join("\n")}
 - Approved exceptions: special terms the seller approved. Offer one only when it applies to the buyer, and only these; never invent other special terms. When a quote uses one, pass its id as create_quote exception: the quote then waits for the seller's approval.
 ${(p.exceptions ?? []).map((x) => `  - [${x.id}] ${x.text}`).join("\n") || "  - (none)"}
@@ -149,7 +150,8 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     extra.names ? namesInstruction(extra.names) : "",
     opener,
     `## Known so far\n${known}`,
-    deal?.objections?.length ? `Objections so far: ${deal.objections.map((o) => `${o.text} (${o.handled ? "handled" : "open"})`).join("; ")}.` : "",
+    // The open objection with its card and the steps already used (O1), next to "Known so far".
+    openObjectionText(deal?.objections, p, objectionAttemptsOf(p)),
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",
     extra.followUp
       ? `Follow-up scheduled: you write to the buyer on ${extra.followUp.dueLocal}${extra.followUp.topic ? ` about ${extra.followUp.topic}` : ""}. If the buyer asks for another time, call schedule_follow_up again.`

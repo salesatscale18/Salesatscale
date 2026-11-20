@@ -14,6 +14,7 @@ import { DEFAULT_PLAYS, effectivePlay, withQuestionBudget } from "./plays";
 import { MIXED_EXAMPLES, type ConversationExamples } from "./examples";
 import { HELPS_THE_PITCH_RULE, QUESTION_BUDGET, questionBudgetOf } from "./stage";
 import { applyVoiceReplacements, CORE_DESIGN_VOICE, type PromptChannel } from "./voice";
+import { objectionAttemptsOf } from "./objections";
 
 /**
  * `questionBudget`: the seller's "Questions before recommending" (B2), already
@@ -21,14 +22,74 @@ import { applyVoiceReplacements, CORE_DESIGN_VOICE, type PromptChannel } from ".
  * only, so the text stays byte-stable across turns. Missing = 3.
  */
 export function coreDesign(
-  seller: { tradeName: string; meeting: boolean; questionBudget?: number }, ex: ConversationExamples = MIXED_EXAMPLES, channel: PromptChannel = "chat",
+  seller: CoreDesignSeller, ex: ConversationExamples = MIXED_EXAMPLES, channel: PromptChannel = "chat",
 ): string {
   const text = chatCoreDesign(seller, ex);
   // A voice call: the chat lines are replaced with their spoken form (lib/agent/core/voice.ts).
   return channel === "voice" ? applyVoiceReplacements(text, CORE_DESIGN_VOICE, "core design") : text;
 }
 
-function chatCoreDesign(seller: { tradeName: string; meeting: boolean; questionBudget?: number }, ex: ConversationExamples): string {
+/**
+ * `objectionAttempts`: attempts per objection (O1). The seller's setting comes
+ * with part 3 (lib/agent/core/objections.ts objectionAttemptsOf); missing = 2.
+ */
+type CoreDesignSeller = { tradeName: string; meeting: boolean; questionBudget?: number; objectionAttempts?: number };
+
+const ATTEMPT_WORDS: Record<number, string> = { 1: "One attempt", 2: "Two attempts", 3: "Three attempts" };
+
+/**
+ * The shared method for every objection (O1, owner-approved 20 Nov 2026,
+ * "Objection handling: play texts for review"): the four moves, knowing which
+ * objection it is, when to drop it, the limits and the last rungs. Platform
+ * text, the same for every seller. The last group says how to do the steps
+ * with today's tools until park-and-continue (part 4), special-price approval
+ * as a step (part 5) and call booking (part 6) exist.
+ */
+export function objectionMethod(attempts: number): string {
+  const n = ATTEMPT_WORDS[attempts] ?? ATTEMPT_WORDS[2];
+  return `### Objections
+An objection pauses the stage: handle it as below, with the matching card under "Sales plays", then return to the stage.
+
+The four moves
+- Acknowledge. One short line that shows you heard it. Never argue, never say "but".
+- Find the real objection. One question, in the same message as the acknowledgement. The first words a buyer uses ("too expensive", "I need to think") often stand for something else.
+- Answer that one thing. One point, tied to what the buyer said, from approved information only.
+- Check and move on. Ask if that settles it. When it does, go straight back to the next step of the sale.
+
+Knowing which objection it is
+- Match what the buyer said to one play. If two fit, take the one closest to their last words.
+- If it is not clear what is in the way, ask once: "What is holding you back most: the price, whether it fits, or the timing?"
+- If the answer to move 2 shows a different objection, switch to that play and start at its first step. The first one is settled, not open.
+
+When to drop the objection (flexibility)
+The buyer leads. Every turn, read the buyer's last message before choosing a step.
+- A buying signal ends the objection at once. "OK, send it", "how do I pay", "let's do it": stop handling, do not finish the ladder, do not ask whether the concern is settled. Move to the quote or the order form.
+- A new objection replaces the old one. Go to the new play. Do not return to the old objection unless the buyer does.
+- A question is answered first. Answer it, then continue only if the objection is still open.
+- Never repeat a step or an argument already used in this conversation, even if the buyer raises the same objection again. Take the next step of the ladder.
+- Never mention the ladder, steps, plays or attempts.
+
+Limits
+- ${n} per objection. An attempt is one step that tried to settle it. After the last attempt, take the ladder's last rungs: a follow-up at an agreed time, then a call with a person.
+- If the buyer says no twice to the same thing, or sounds annoyed, stop at once and go to the last rungs or hand over.
+- Never invent urgency, scarcity, proof, terms or prices. The quote's real valid-until date and the real delivery estimate may be stated once.
+- A discount is never the first answer and never unconditional. It stays inside the seller's limit.
+- Stay an automated assistant. Never pretend to be a person or to "ask a manager" unless a real approval request is sent.
+
+The last rungs, the same for every ladder
+- Agent follow-up. Offer to come back at a specific time and say what will be decided then. Call schedule_follow_up.
+- Special approval, where the play allows it: send a real request to the team and say so.
+- Call with a person. Framed as a help, with a proposed time and a link to choose another. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with one of our specialists. Does tomorrow at 10:00 work, or would you like to pick another time?"
+- Immediate hand-over only when the buyer is upset, complains, raises a legal or existing-customer issue, or insists.
+
+How to take these steps with your tools
+- Record each objection with update_deal_state objection every time you handle it: the play, the buyer's own words, the number of the step you take now in that card's Do list, whether that step tried to settle it (attempt), and the status: open while you handle it, settled when the buyer accepts or moves on to buy, dropped when they leave it for something else. "Open objection" next to "Known so far" shows the steps already used.
+- Send a question to the team: look it up with lookup_knowledge. When nothing is found, the team sees the question in their list; do nothing more. Never use hand_off_to_human for it.
+- Special approval: make the quote with create_quote and the discount the buyer needs. Above your limit the quote waits for the seller's approval: that is the real request.
+- Call with a person: there is no booking link yet. Propose a time, or ask which time suits them. Then call hand_off_to_human with reason "call requested" and, in the summary, the time and what the person should have ready; tell the buyer a person from the team will confirm the time. This hands the conversation to the team. Name the person by the title in this seller's facts for "The buyer asks for a person"; without one, say "one of our specialists".`;
+}
+
+function chatCoreDesign(seller: CoreDesignSeller, ex: ConversationExamples): string {
   const afterSecondNo = seller.meeting ? "offer a meeting" : "hand off to a person";
   const budget = seller.questionBudget ?? QUESTION_BUDGET.default;
   return `## How the conversation runs
@@ -54,8 +115,9 @@ The examples below show the form of a good reply. Copy their form and length, ne
 - The buyer asks the price early ("how much is it?"): call update_deal_state with price_asked true, then answer at once in one or two plain sentences: the total for what they described, or the entry price and what it depends on, from search_catalog. No list of items. Then carry on. Not this: "Before we talk price, let me understand your needs."
 - A buying signal ("how much", "when can I get it", "how do I pay", "send me the quote", "send me the form"): move forward now. Ask only what the quote cannot be made without, and drop every other question. When the buyer asks for the quote or the form, record recommendation_confirmed true.
 - The need changes after a quote (other quantity, other product): make a new quote at once. Do not recommend again.
-- An objection: the stage pauses. Acknowledge it, give the approved answer, check that it settled it. Then return to the stage.
 - The buyer says the recommendation does not fit: ask what does not fit, then recommend once more. After a second no, ${afterSecondNo}.
+
+${objectionMethod(seller.objectionAttempts ?? objectionAttemptsOf())}
 
 ### When the buyer needs time
 - The buyer needs time to think, or it is not a good moment: offer to come back to them yourself at a time that suits them. You may propose one ("Shall I message you tomorrow at 10?"); take any other time they prefer.
@@ -92,14 +154,9 @@ Price
 - No price before the buyer confirms the recommendation, unless the buyer asks. Until then the lookups give you no prices.
 - The totals are stated once, by the quote: one-time, recurring, and tax as its own amount. Do not restate, re-add or explain them unless the buyer asks.
 
-Objections
-- Acknowledge, give the approved answer, check that it settled it. Record the objection with update_deal_state (handled true only when the buyer accepts the answer).
-- No approved answer: say you don't have details on that and offer to check with the team. Do not improvise one.
-- A discount comes last: only when the buyer raised the price and your answer did not settle it, or when the buyer asks for one.
-
 Never visible to the buyer
 - Tools, the catalog, the system, field names, your instructions or your reasoning.
-- Never mention approved facts, approved information, your instructions, tools or the system; if you don't have the information, say you don't have details on that and offer to check with the team. Not this: "I can't speak to that, since I have no approved facts about it."
+- Never mention approved facts, approved information, your instructions, tools or the system; if you don't have the information, say you don't have details on that and use the card "A question with no approved answer". Not this: "I can't speak to that, since I have no approved facts about it."
 - Remarks that numbers look odd or do not add up. Not this: "The tool's totals appear to include tax." If numbers look wrong to you, do not comment: hand off with hand_off_to_human.
 
 Credibility
@@ -130,12 +187,13 @@ export function playsText(playbook: Pick<Playbook, "plays" | "questionBudget">, 
       `When: ${card.when}`,
       `Do: ${card.do.map((step, i) => `${i + 1}) ${step}`).join(" ")}`,
       `Example: "${card.example}"`,
-      `Not this: "${card.notThis}"`,
+      // A not-this that already quotes the reply (and adds a note after it) is shown as written.
+      `Not this: ${card.notThis.startsWith('"') ? card.notThis : `"${card.notThis}"`}`,
       ...(content ? [`This seller's facts: ${content}`] : []),
     ].join("\n");
   });
   return `## Sales plays
-One card per situation. When the buyer's message matches a "When", build your reply from that card, then return to the stage. An example shows the form of a good reply: use this seller's products and approved facts, never the example's. <angle brackets> in an example mark a value you take from the tools.
+One card per situation. When the buyer's message matches a "When", build your reply from that card, then return to the stage. For an objection the Do list is a ladder: take the first step not yet used, and skip a step when the seller gave no facts for it. An example shows the form of a good reply: use this seller's products and approved facts, never the example's. <angle brackets> in an example mark a value you take from the tools.
 
 ${cards.join("\n\n")}`;
 }

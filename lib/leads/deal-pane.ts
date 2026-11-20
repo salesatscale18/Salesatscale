@@ -8,20 +8,40 @@
  * read scoped by account id.
  */
 import type { Db } from "@/db/types";
-import type { DealFieldValue, Playbook } from "@/db/schema";
+import type { DealFieldValue, DealObjection, ObjectionStatus, Playbook, StoredObjection } from "@/db/schema";
+import { readObjections } from "@/lib/agent/core/objections";
 import { currentPlaybook, getDealState } from "@/lib/agent/service";
 import { leadOrdersWithSignature, orderLabel, withSignedValues } from "@/lib/orders/service";
 import { leadStage, type LeadStageView } from "@/lib/leads/stage";
 import { eq } from "drizzle-orm";
 import { sellerAccounts } from "@/db/schema";
 import { asSentence, formatIsoDate, localDateIso } from "@/lib/format";
-import { t } from "@/lib/i18n";
+import { t, type MessageKey } from "@/lib/i18n";
 
 export type PaneField = {
   key: string; label: string; value?: string | null; provenance?: DealFieldValue["provenance"];
   /** A verified value: where it came from (the signed order form, or a person on the team) and its date, as the tooltip says it (W3). */
   verified?: { source: "form" | "person"; title: string };
 };
+
+export type PaneObjection = { line: string; status: ObjectionStatus; words: string };
+
+/**
+ * One objection as the seller reads it (O1): what it is about, the attempts
+ * used and its status, e.g. "Price: 2 attempts, open" or "Needs someone else's
+ * agreement: settled". An older row with no play shows the agent's words.
+ */
+export function objectionLine(o: DealObjection): string {
+  const label = o.play ? t(`lead.card.objection.play.${o.play}` as MessageKey) : o.words.charAt(0).toUpperCase() + o.words.slice(1);
+  const status = t(`lead.card.objection.status.${o.status}`);
+  if (o.attempts === 0) return t("lead.card.objection.no_attempts", { label, status });
+  return o.attempts === 1 ? t("lead.card.objection.attempts_one", { label, status }) : t("lead.card.objection.attempts_other", { label, status, n: o.attempts });
+}
+
+/** The pane's objection lines, from either stored shape. */
+export function paneObjections(raw: readonly StoredObjection[] | null | undefined): PaneObjection[] {
+  return readObjections(raw).map((o) => ({ line: objectionLine(o), status: o.status, words: o.words }));
+}
 
 export type DealPane = {
   /** No playbook yet ("pending"), a playbook with no fields ("none"), or fields to show. */
@@ -32,7 +52,8 @@ export type DealPane = {
   laterUnknown: PaneField[];
   /** Order-form details not known yet (phone summary): always `laterUnknown.length`, the count desktop shows. */
   missingCount: number;
-  objections: { text: string; handled: boolean }[];
+  /** One line per objection (O1), e.g. "Price: 2 attempts, open"; `words` are the buyer's own. */
+  objections: PaneObjection[];
   nextStep: string | null;
   /** A shown value came from the signed order form: the note line under the list. */
   formVerified: boolean;
@@ -78,7 +99,7 @@ export function nextStepText(i: {
 /** The pane from what the page loaded (pure). */
 export function dealPaneView(i: {
   playbook: Pick<Playbook, "fields"> | null;
-  deal: { fields: Record<string, DealFieldValue>; objections: { text: string; handled: boolean }[]; nextStep: string | null } | null;
+  deal: { fields: Record<string, DealFieldValue>; objections: readonly StoredObjection[]; nextStep: string | null } | null;
   latestOrder: LatestOrder | null;
   stage: Pick<LeadStageView, "stage"> | null;
   tradeName: string;
@@ -99,7 +120,7 @@ export function dealPaneView(i: {
     shown,
     laterUnknown,
     missingCount: laterUnknown.length,
-    objections: i.deal?.objections ?? [],
+    objections: paneObjections(i.deal?.objections),
     nextStep: nextStepText({ latestOrder: i.latestOrder, stage: i.stage, agentNextStep: i.deal?.nextStep, tradeName: i.tradeName, buyerName: i.buyerName }),
     formVerified: shown.some((f) => f.verified?.source === "form"),
   };

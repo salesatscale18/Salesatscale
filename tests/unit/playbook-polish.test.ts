@@ -38,10 +38,13 @@ describe("scroll-spy: the section in view", () => {
 });
 
 describe("sales plays: named facts and card footers", () => {
-  const hint = DEFAULT_PLAYS.too_expensive.sellerContentHint;
+  // The slot rules on a fixed two-part hint (the play texts change; the rules do not).
+  const hint = "The cost of the problem; a smaller starting set.";
+  const priceSlots = ["what the problem costs a typical customer", "smaller starting set", "what a discount can be traded for", "what the price includes"];
 
   it("a play's hint gives its named facts (split by ';', without the article)", () => {
     expect(playSlots(hint)).toEqual(["cost of the problem", "smaller starting set"]);
+    expect(playSlots(DEFAULT_PLAYS.too_expensive.sellerContentHint)).toEqual(priceSlots);
     expect(playSlots(DEFAULT_PLAYS.competitor.sellerContentHint)).toEqual(["approved comparison facts"]);
     expect(playSlots("")).toEqual([]);
     expect(slotTitle("cost of the problem")).toBe("Cost of the problem");
@@ -60,7 +63,7 @@ describe("sales plays: named facts and card footers", () => {
   it("footers: '1 fact · add …', 'Add …', the hand-off rule in Limits, no facts needed", () => {
     const plays = playsOverview({ plays: { too_expensive: { facts: [{ text: "We install in a day." }] }, value: { facts: [{ text: "A failure costs a night of stock." }] } } }, new Map());
     const by = (k: string) => plays.find((p) => p.key === k)!;
-    expect(by("too_expensive").factsLine).toEqual({ kind: "facts", n: 1, missing: ["cost of the problem", "smaller starting set"] });
+    expect(by("too_expensive").factsLine).toEqual({ kind: "facts", n: 1, missing: priceSlots });
     expect(by("value").factsLine).toEqual({ kind: "facts", n: 1, missing: ["outcome each product gives"] });
     expect(by("competitor").factsLine).toEqual({ kind: "needs", text: "Add approved comparison facts", missing: ["approved comparison facts"] });
     expect(by("handoff").factsLine).toEqual({ kind: "limits" });

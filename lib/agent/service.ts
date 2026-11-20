@@ -15,6 +15,7 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { modelFor } from "@/lib/ai/models";
 import { defaultPlaybook } from "./playbook";
 import { askedCount, askedKey, isReservedFieldKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "./core/facts";
+import { applyObjection, objectionAttemptsOf, type ObjectionInput } from "./core/objections";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
 
 /** The agent model for new versions: AGENT_MODEL, else the role default (lib/ai/models.ts). */
@@ -148,7 +149,8 @@ export async function applyAgentUpdates(
   db: Db, accountId: string, leadId: string, playbook: Playbook, updates: FieldUpdate[],
   extra: {
     nextStep?: string | null;
-    objection?: { text: string; handled: boolean } | null;
+    /** One objection, validated (lib/agent/core/objections.ts parseObjectionInput). */
+    objection?: ObjectionInput | null;
     /** The conversation facts (P11), stored under reserved keys with provenance "buyer". */
     facts?: { recommendationConfirmed?: boolean; priceAsked?: boolean };
     /** Playbook field keys the agent asks for in this message: each one's `_asked_<key>` count goes up by one (unknown and reserved keys are ignored). */
@@ -180,14 +182,14 @@ export async function applyAgentUpdates(
     fields[askedKey(k)] = { value: String(askedCount(fields, k) + 1), provenance: "inferred", updatedAt: now.toISOString() };
     asked.push(k);
   }
-  const objections = extra.objection
-    ? [...state.objections.filter((o) => o.text !== extra.objection!.text), { text: extra.objection.text.slice(0, 200), handled: extra.objection.handled }]
-    : state.objections;
+  // O1: one entry per play, attempts capped at the playbook's attempts per objection. Older rows are rewritten in the new shape.
+  const write = extra.objection ? applyObjection(state.objections, extra.objection, objectionAttemptsOf(playbook)) : null;
+  const objections = write ? write.objections : state.objections;
   await db
     .update(dealStates)
     .set({ fields, objections, nextStep: extra.nextStep === undefined ? state.nextStep : extra.nextStep?.slice(0, 200) ?? null })
     .where(eq(dealStates.id, state.id));
-  return { applied, unknown, verified, placeholder, asked, fields, objections };
+  return { applied, unknown, verified, placeholder, asked, fields, objections, objection: write ? { entry: write.entry, notes: write.notes } : null };
 }
 
 /** A person edits a field: it becomes Verified, and the change is logged (canvas: Main). */

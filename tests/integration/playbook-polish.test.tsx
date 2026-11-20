@@ -142,11 +142,11 @@ describe("Playbook navigation and polish (rendered)", () => {
     save("plays", html);
     expect(html).toContain('data-testid="draft-banner"');
     // Too expensive: the seller's fact plus the filled discount limit (5%, kept in Limits) count (R3-6, A9).
-    expect(html).toMatch(/2 facts<span[^>]*data-missing="">[^<]*add cost of the problem, smaller starting set/);
+    expect(html).toMatch(/2 facts<span[^>]*data-missing="">[^<]*add what the problem costs a typical customer, smaller starting set, what a discount can be traded for, what the price includes/);
     expect(html).toContain("Uses your hand-off rule in Limits");
     expect(html).toContain("Add approved comparison facts");
     expect(html).toContain("sas-views pb-filters");
-    expect(html).toMatch(/All <span class="pb-count">13<\/span>/);
+    expect(html).toMatch(/All <span class="pb-count">19<\/span>/);
     expect(html).toMatch(/aria-current="page"[^>]*>Sales plays/);
     // The other account's page is its own: no facts there.
     expect(await render(PlaysPage as Page, other)).not.toContain("1 fact<");
@@ -157,9 +157,9 @@ describe("Playbook navigation and polish (rendered)", () => {
     save("play", html);
     expect(html).toContain('data-testid="draft-banner"');
     expect(html).toMatch(/class="sas-small pb-crumbs"><a href="\/app\/acme\/setup\/playbook">Playbook<\/a><span aria-hidden="true">›<\/span><a href="\/app\/acme\/setup\/playbook\/plays">Sales plays<\/a>/);
-    expect(html).toContain('data-slot="cost of the problem"');
+    expect(html).toContain('data-slot="what the problem costs a typical customer"');
     expect(html).toContain('data-slot="smaller starting set"');
-    expect(html).toContain("Cost of the problem");
+    expect(html).toContain("What the problem costs a typical customer");
     expect(html.indexOf('data-slot="smaller starting set"')).toBeLessThan(html.indexOf("Add fact"));
     // A play that needs no facts shows no slots.
     expect(await render(PlayPage as Page, acc, { play: "not_now" })).not.toContain("data-slot=");

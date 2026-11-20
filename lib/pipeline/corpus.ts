@@ -116,8 +116,8 @@ export const INSTRUCTION_TOKENS = 400;
 export const factsOutputTokens = (corpusTokens: number, max = 32_000) => Math.min(max, THINKING_TOKENS + 1_000 + Math.ceil(corpusTokens * 0.08));
 /** P11 added the opener, play facts and own cards, and catalog item texts to stage 2 (about 2,500 more output tokens). */
 export const PLAYBOOK_OUTPUT_TOKENS = THINKING_TOKENS + 6_500;
-/** Stage 2's instruction with the play list (P11): larger than the facts instruction. */
-export const PLAYBOOK_INSTRUCTION_TOKENS = 1_750;
+/** Stage 2's instruction with the play list (P11; 19 plays since O1): larger than the facts instruction. */
+export const PLAYBOOK_INSTRUCTION_TOKENS = 2_150;
 
 export type StageEstimate = { stage: "facts" | "playbook"; model: string; calls: number; usage: Required<TokenUsage>; costMicros: number };
 export type AnalysisEstimate = { stages: StageEstimate[]; tokens: number; costMicros: number };

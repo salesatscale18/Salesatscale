@@ -165,10 +165,11 @@ describe("agent side", () => {
     expect(core).toContain("### When the buyer needs time");
     expect(core).toContain("call schedule_follow_up");
     expect(core).toContain('Never say "our sales team will come back to you"');
-    for (const key of ["need_to_think", "not_now"] as const) {
+    // O1: the ladders come back at an agreed time (schedule_follow_up); the examples now find what is behind the delay first.
+    for (const key of ["need_to_think", "not_now", "someone_else_decides"] as const) {
       const card = DEFAULT_PLAYS[key];
       expect(card.do.join(" ")).toContain("schedule_follow_up");
-      expect(card.example).toMatch(/tomorrow at 10|Tuesday at 10/);
+      expect(card.example).toMatch(/\?$/);
       expect(card.example.toLowerCase()).not.toContain("sales team");
     }
     expect(DEFAULT_PLAYS.need_to_think.notThis).toContain("sales team");

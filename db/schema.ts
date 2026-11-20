@@ -700,9 +700,23 @@ export type PlayFact = { text: string; source?: string };
 /** The selling situations the platform has a default play for (lib/agent/core/plays.ts). */
 export const PLAY_KEYS = [
   "need", "fit", "value", "price_early", "too_expensive", "existing_solution", "competitor",
-  "proof", "need_to_think", "send_info", "not_now", "right_size", "handoff",
+  "proof", "need_to_think", "send_info", "not_now", "right_size", "asks_for_person", "handoff",
+  "no_answer", "someone_else_decides", "tried_failed", "complicated", "locked_in",
 ] as const;
 export type PlayKey = (typeof PLAY_KEYS)[number];
+
+/** Where an objection stands (O1): handled now, settled by the buyer, or left when the buyer moved on. */
+export type ObjectionStatus = "open" | "settled" | "dropped";
+/**
+ * One objection in the deal state (O1): the play it matches, the buyer's own
+ * words, the steps of that play's card already used (1-based), its status and
+ * the attempts used. `play` is null only for an older row read through
+ * lib/agent/core/objections.ts readObjections.
+ */
+export type DealObjection = { play: PlayKey | null; words: string; steps: number[]; status: ObjectionStatus; attempts: number };
+/** An objection as rows written before O1 hold it; read as a DealObjection with no play. */
+export type LegacyDealObjection = { text: string; handled: boolean };
+export type StoredObjection = DealObjection | LegacyDealObjection;
 /**
  * Voice call settings of an agent version (live voice). Every key is optional:
  * a missing key is the platform default (lib/voice/settings.ts), which also
@@ -1139,7 +1153,7 @@ export const dealStates = pgTable(
       .notNull()
       .references(() => leads.id, { onDelete: "cascade" }),
     fields: jsonb("fields").$type<Record<string, DealFieldValue>>().notNull().default({}),
-    objections: jsonb("objections").$type<{ text: string; handled: boolean }[]>().notNull().default([]),
+    objections: jsonb("objections").$type<StoredObjection[]>().notNull().default([]),
     nextStep: text("next_step"),
     summary: text("summary"),
     updatedAt: timestamp("updated_at", { withTimezone: true })

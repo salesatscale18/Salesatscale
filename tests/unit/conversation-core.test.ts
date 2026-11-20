@@ -234,9 +234,11 @@ describe("stable system prompt", () => {
       // Need, fit and value take the seller's example (or the fixed mix) instead of the card's neutral one.
       const shown = (conversationExamples(pb).plays as Partial<Record<string, string>>)[key] ?? card.example;
       expect(p, key).toContain(`Example: "${shown}"`);
-      expect(p, key).toContain(`Not this: "${card.notThis}"`);
+      // A not-this that already quotes the reply and adds a note (O1) is shown as written.
+      expect(p, key).toContain(card.notThis.startsWith('"') ? `Not this: ${card.notThis}` : `Not this: "${card.notThis}"`);
     }
     expect(p.match(/^When: /gm)).toHaveLength(PLAY_KEYS.length);
+    expect(p).toContain('Not this: "Before I do that, can I just ask a few more questions?" and never refusing or ignoring the request.');
   });
 
   it("the default examples are neutral: no invented guarantees, numbers or facts; <angle brackets> mark what the agent fills in", () => {
@@ -247,8 +249,9 @@ describe("stable system prompt", () => {
       expect(ex, key).not.toMatch(/\b(guarantee[ds]?|replaced|within|always|every machine)\b/i);
       expect(ex, key).not.toMatch(/approved|instructions|system/i);
     }
-    expect(DEFAULT_PLAYS.proof.example).toBe("Yes. <One proof point: a fact, a customer example or a guarantee>. Does that answer it?");
-    for (const key of ["fit", "value", "price_early", "existing_solution", "competitor", "proof", "send_info", "right_size"] as const) {
+    // O1: the objection examples find the real objection first, so most ask a question and fill nothing in.
+    expect(DEFAULT_PLAYS.proof.example).toBe("Fair question. Is it more about whether it works, or what happens if something goes wrong?");
+    for (const key of ["fit", "value", "price_early", "existing_solution", "right_size"] as const) {
       expect(DEFAULT_PLAYS[key].example, key).toMatch(/<[^>]+>/);
     }
   });
@@ -298,7 +301,8 @@ describe("turn context", () => {
     expect(ctx.startsWith("## Stage now: 2 Understand\n")).toBe(true);
     expect(ctx).toContain("Still missing for a quote: Business type.");
     expect(ctx).toContain("## Known so far\n- Number of sites: 2 (buyer)");
-    expect(ctx).toContain("Objections so far: price (handled).");
+    expect(ctx).toContain(`Earlier objections: "price" (settled).`);
+    expect(ctx).not.toContain("## Open objection");
     expect(ctx).toContain("Your planned next step: ask business type");
     // The old lists are gone: nothing asks for order-form details in chat.
     expect(ctx).not.toContain("Still needed before the order form");

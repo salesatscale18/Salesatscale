@@ -8,8 +8,9 @@
  * turn ("quote_close"); "order_form" is the turn that waits for the buyer's
  * yes to the close and then sends the link.
  */
-import type { DealFieldValue, Playbook, PlaybookField } from "@/db/schema";
+import type { DealFieldValue, Playbook, PlaybookField, StoredObjection } from "@/db/schema";
 import { ASKED_PREFIX, askedCount, isReservedFieldKey, priceAsked, pricesAllowed, recommendationConfirmed } from "./facts";
+import { objectionTitle, openObjections } from "./objections";
 
 export type Stage = "open" | "understand" | "recommend" | "quote_close" | "order_form" | "after";
 
@@ -61,7 +62,8 @@ export const NO_STAGE_FACTS: StageFacts = { quote: "none", orderForm: "none", si
 export type StageInput = StageFacts & {
   playbook: Pick<Playbook, "fields" | "outcomes" | "questionBudget">;
   fields: Record<string, DealFieldValue> | null | undefined;
-  objections?: { text: string; handled: boolean }[] | null;
+  /** The deal's objections, either stored shape (lib/agent/core/objections.ts). */
+  objections?: readonly StoredObjection[] | null;
   /** Agent messages already in the conversation (the fixed opener counts). */
   agentMessages: number;
 };
@@ -123,7 +125,7 @@ export function deriveStage(input: StageInput): StageResult {
   const allowed = pricesAllowed(input.fields, quoted);
   const confirmed = recommendationConfirmed(input.fields);
   const asked = priceAsked(input.fields);
-  const open = (input.objections ?? []).filter((o) => !o.handled);
+  const open = openObjections(input.objections);
   // Only questions the agent started count (B2): the recorded asks, never agent messages,
   // so answering the buyer's own questions or giving extra detail uses no budget.
   const questionsAsked = agentQuestionsAsked(input.fields);
@@ -153,7 +155,8 @@ export function deriveStage(input: StageInput): StageResult {
     ? "Prices: allowed. Take every number from the tools."
     : "Prices: not yet. State no price and no total. If the buyer asks the price, call update_deal_state with price_asked true, then answer with a number or range from search_catalog.");
   if (open.length) {
-    lines.push(`Paused: the buyer has an open objection (${open.map((o) => `"${o.text}"`).join("; ")}). Settle it first: acknowledge, give the approved answer, check that it settled it. Record it as handled, then return to the stage.`);
+    const named = open.map((o) => (o.play ? `${objectionTitle(o)}${o.words ? `: "${o.words}"` : ""}` : objectionTitle(o))).join("; ");
+    lines.push(`Paused: the buyer has an open objection (${named}). Take the next step of its card not yet used, unless the buyer moved on: a buying signal ends it at once. Record it with update_deal_state objection (settled or dropped when it ends), then return to the stage.`);
   }
   return { stage, paused: open.length > 0, missingForQuote: missing, pricesAllowed: allowed, instruction: lines.join("\n") };
 }

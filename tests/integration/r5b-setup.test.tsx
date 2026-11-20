@@ -280,7 +280,7 @@ describe("pages (demo account)", () => {
     const tx = text(html);
     const n = (label: string) => Number(tx.match(new RegExp(`${label} ?(\\d+)`))?.[1]);
     expect(n("Ready") + n("Needs your facts")).toBe(n("All"));
-    expect(n("All")).toBe(13);
+    expect(n("All")).toBe(19);
     expect(html).toMatch(/data-testid="draft-banner"><svg[^>]*lucide-file-pen/);
     expect(tx).toContain("no full price list before the need is clear");
     const plays = playsOverview({ plays: {} } as never, new Map());

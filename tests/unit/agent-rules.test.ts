@@ -157,7 +157,8 @@ describe("prompt", () => {
     const ctx = turnContext(pb, { fields: { sites: { value: "2", provenance: "buyer", updatedAt: now } }, objections: [{ text: "price", handled: true }], nextStep: "ask business type" });
     expect(ctx).toContain("- Number of sites: 2 (buyer)");
     expect(ctx).toContain("Still missing for a quote: Business type.");
-    expect(ctx).toContain("price (handled)");
+    // A row written before O1 ({ text, handled }) reads as a settled objection with no play.
+    expect(ctx).toContain(`Earlier objections: "price" (settled).`);
   });
 });
 

@@ -34,6 +34,8 @@ import { askedCount, isReservedFieldKey } from "./core/facts";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
 import { deriveStage } from "./core/stage";
 import { loadStageFacts } from "./core/stage-facts";
+import { DEFAULT_PLAYS } from "./core/plays";
+import { OBJECTION_PLAYS, OBJECTION_STATUSES, parseObjectionInput, readObjections } from "./core/objections";
 import { localTradeName } from "./core/names";
 import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
 
@@ -73,7 +75,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "update_deal_state",
-    description: "Record what you learned about the deal, and the two facts that move the conversation forward. Keys must be deal-state field keys from your instructions. provenance: buyer = the buyer said it; inferred = you concluded it. The result tells you the stage you are in now.",
+    description: "Record what you learned about the deal, the objection you handle, and the two facts that move the conversation forward. Keys must be deal-state field keys from your instructions. provenance: buyer = the buyer said it; inferred = you concluded it. The result tells you the stage you are in now.",
     strict: true,
     input_schema: {
       type: "object",
@@ -90,8 +92,18 @@ export const TOOL_DEFS: ToolDef[] = [
         next_step: { type: ["string", "null"], description: "Your planned next step, short." },
         objection: {
           type: ["object", "null"],
-          properties: { text: { type: "string" }, handled: { type: "boolean" } },
-          required: ["text", "handled"],
+          description: "The objection your reply handles, each time you handle it; null when there is none. One entry per play: a later call for the same play updates it.",
+          properties: {
+            play: {
+              type: "string", enum: [...OBJECTION_PLAYS],
+              description: `The play card it matches: ${OBJECTION_PLAYS.map((k) => `${k} = ${DEFAULT_PLAYS[k].title}`).join("; ")}.`,
+            },
+            buyer_words: { type: "string", description: "The buyer's own words for it, short." },
+            step: { type: ["integer", "null"], description: "The number of the step in that card's Do list your reply takes now; null when you take no step (you only record it, or close it)." },
+            attempt: { type: "boolean", description: "true when that step tries to settle it (an answer, a proof, an offer); false for acknowledging, finding what is behind it, or a last rung." },
+            status: { type: "string", enum: [...OBJECTION_STATUSES], description: "open while you handle it; settled when the buyer accepts the answer or moves on to buy; dropped when the buyer leaves it for something else." },
+          },
+          required: ["play", "buyer_words", "step", "attempt", "status"],
           additionalProperties: false,
         },
         recommendation_confirmed: {
@@ -516,13 +528,19 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       outcome: "ok",
       result: hits.length
         ? { ok: true, facts: hits.map((f) => ({ id: f.id, topic: f.topic, fact: f.statement, source: f.sourceLabel })) }
-        : { ok: true, facts: [], message: "Nothing on this. Do not guess. Tell the buyer you don't have details on that and offer to check with the team; never mention approved facts, your instructions or the system." },
+        : { ok: true, facts: [], message: "Nothing on this. Do not guess. The team now sees this question in their list. Follow the card \"A question with no approved answer\": say in one line you don't have that detail and carry on with the sale; never mention approved facts, your instructions or the system." },
     };
   }
 
   if (name === "update_deal_state") {
     const updates = Array.isArray(args.updates) ? (args.updates as { key: string; value: string; provenance: "buyer" | "inferred" }[]) : [];
-    const objection = args.objection && typeof args.objection === "object" ? (args.objection as { text: string; handled: boolean }) : null;
+    // O1: the objection is validated before anything is written, so a bad one changes nothing and the agent can retry.
+    let objection = null;
+    if (args.objection !== null && args.objection !== undefined) {
+      const parsed = parseObjectionInput(args.objection, ctx.playbook);
+      if (!parsed.ok) return refuse("Invalid objection", { error: parsed.error });
+      objection = parsed.value;
+    }
     // The two conversation facts (P11) are explicit inputs, stored under reserved keys as said by the buyer.
     const facts = {
       ...(typeof args.recommendation_confirmed === "boolean" ? { recommendationConfirmed: args.recommendation_confirmed } : {}),
@@ -540,7 +558,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       asked,
     });
     for (const k of r.asked) turnAsked.add(k);
-    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length && !factsSet && !askedIn.length) {
+    if (r.unknown.length && !r.applied.length && !r.verified.length && !r.placeholder.length && !factsSet && !askedIn.length && !objection) {
       return refuse("Unknown deal-state fields", { unknown: r.unknown, valid_keys: ctx.playbook.fields.filter((f) => !isReservedFieldKey(f.key)).map((f) => f.key) });
     }
     // The stage in the system prompt is fixed for the turn; the stage as it is now comes back here.
@@ -557,6 +575,12 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
           : {}),
         ...(factsSet ? { recorded: Object.keys(facts).map((k) => (k === "recommendationConfirmed" ? "recommendation_confirmed" : "price_asked")) } : {}),
         ...(r.asked.length ? { recorded_as_asked: r.asked } : {}),
+        ...(r.objection
+          ? {
+              objection_recorded: { play: r.objection.entry.play, status: r.objection.entry.status, steps_used: r.objection.entry.steps, attempts: r.objection.entry.attempts },
+              ...(r.objection.notes.length ? { objection_note: r.objection.notes.join(" ") } : {}),
+            }
+          : {}),
         still_needed_before_quote: stage.missingForQuote,
         stage: stage.instruction,
       },
@@ -767,12 +791,17 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
 
   if (name === "hand_off_to_human") {
     const reason = String(args.reason ?? "").slice(0, 300);
+    // O1: the hand-over brief carries the deal's objections as they stand now.
+    const objections = readObjections((await readDealState(ctx.db, ctx.accountId, ctx.leadId))?.objections);
     await atomic(ctx.db, (q) => [
       q.update(conversations).set({ status: "human" }).where(and(eq(conversations.id, ctx.conversationId), eq(conversations.accountId, ctx.accountId))),
       q.update(leads).set({ status: "human_handling", lastActivityAt: new Date() }).where(and(eq(leads.id, ctx.leadId), eq(leads.accountId, ctx.accountId))),
       q.insert(leadEvents).values({
         id: randomUUID(), accountId: ctx.accountId, leadId: ctx.leadId, type: "handoff.requested", actor: "agent",
-        data: { reason, summary: String(args.summary ?? "").slice(0, 1000), suggestedReply: String(args.suggested_reply ?? "").slice(0, 1000) },
+        data: {
+          reason, summary: String(args.summary ?? "").slice(0, 1000), suggestedReply: String(args.suggested_reply ?? "").slice(0, 1000),
+          ...(objections.length ? { objections } : {}),
+        },
       }),
     ]);
     return { outcome: "ok", result: { ok: true, message: "A person will continue. Tell the buyer briefly; do not continue selling." } };

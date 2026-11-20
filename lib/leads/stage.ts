@@ -14,10 +14,11 @@ import { and, count, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
   agentVersions, conversations, dealStates, messages, orderForms, orders, quoteVersions, quotes,
-  type DealFieldValue, type Playbook,
+  type DealFieldValue, type Playbook, type StoredObjection,
 } from "@/db/schema";
 import { deriveStage, questionBudgetOf, type Stage, type StageFacts } from "@/lib/agent/core/stage";
 import { loadStageFacts } from "@/lib/agent/core/stage-facts";
+import { objectionTitle, openObjections } from "@/lib/agent/core/objections";
 import { priceAsked, recommendationConfirmed } from "@/lib/agent/core/facts";
 
 /** The stepper's steps. The spec's Close goes out with the quote, so it is part of Quote. */
@@ -55,7 +56,7 @@ export type LeadStageView = {
 export type StageInputs = {
   facts: StageFacts;
   playbook: Pick<Playbook, "fields" | "outcomes" | "questionBudget">;
-  deal: { fields: Record<string, DealFieldValue>; objections: { text: string; handled: boolean }[] } | null;
+  deal: { fields: Record<string, DealFieldValue>; objections: readonly StoredObjection[] } | null;
   agentMessages: number;
   conversationStatus: string;
 };
@@ -67,10 +68,11 @@ export function stageView(i: StageInputs): LeadStageView {
   // deal stays on Order form until it is paid (form with the buyer, or signed and unpaid).
   const step = r.stage === "after" && !i.facts.paid ? "order_form" : STEP_OF[r.stage];
   const past = STAGE_STEPS.indexOf(step) > STAGE_STEPS.indexOf("recommend");
-  const open = (i.deal?.objections ?? []).filter((o) => !o.handled);
+  const open = openObjections(i.deal?.objections);
   return {
     step, stage: r.stage,
-    objection: r.paused ? open.map((o) => o.text).join("; ") : null,
+    // The buyer's own words (O1); a play with no words recorded shows the play's title.
+    objection: r.paused ? open.map((o) => o.words || objectionTitle(o)).join("; ") : null,
     human: i.conversationStatus === "human",
     closed: i.conversationStatus === "closed",
     paid: i.facts.paid,
