@@ -231,7 +231,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(events).toHaveLength(1);
     // The model heard the result in call wording.
     const sent = c.conn().sent.toolResults.filter((r) => r.name === "request_callback").at(-1)!.result as { message: string };
-    expect(sent.message).toContain("the team will confirm it with a message in the chat.");
+    expect(sent.message).toContain("the team will confirm it by message.");
     expect(sent.message).toContain("this call goes on.");
     expect(sent.message).not.toMatch(/confirm it here/);
     // The live transcript's chip while it ran.
@@ -240,7 +240,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await c.speak();
     await c.run(20_000);
     const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent").map((m) => m.body);
-    expect(agent.at(-2)).toMatch(/the team will confirm it with a message in the chat\. Is there anything else I can help with\?$/);
+    expect(agent.at(-2)).toMatch(/the team will confirm it by message\. Is there anything else I can help with\?$/);
     expect(agent.at(-1)).toBe("Thanks for your time. Talk soon, goodbye.");
     expect(c.engine.isEnded).toBe(false);
     // The open request is in the instructions after a reconnect, in call wording.

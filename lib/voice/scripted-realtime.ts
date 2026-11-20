@@ -160,7 +160,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     onlyIf(callbackRefused, expectBuyer("Yes, that works.")),
     onlyIf(callbackRefused, tool("request_callback", (ctx: ScriptCtx) => ({ time: String(ctx.last("request_callback")?.suggested_time ?? ""), brief: CALL_BRIEF }))),
     tool("update_deal_state", askedForPerson("settled", 3)),
-    say((ctx) => `Done. ${String(ctx.last("request_callback")?.time_local ?? "The time")} is requested, and the team will confirm it with a message in the chat. Is there anything else I can help with?`),
+    say((ctx) => `Done. ${String(ctx.last("request_callback")?.time_local ?? "The time")} is requested, and the team will confirm it by message. Is there anything else I can help with?`),
     expectBuyer("No, that's all, thanks."),
     say("Thanks for your time. Talk soon, goodbye."),
   ],

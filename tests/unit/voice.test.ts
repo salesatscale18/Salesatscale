@@ -121,7 +121,7 @@ describe("tool schemas", () => {
   it("descriptions use call wording", () => {
     for (const t of realtimeTools("gemini")) expect(t.description, t.name).not.toMatch(/\bin chat\b|\bin the chat:|\bthe chat\b(?! below)(?!\.)/);
     const cb = realtimeTools("gemini").find((t) => t.name === "request_callback")!.description;
-    expect(cb).toContain("the app tells the buyer with a message in the chat below the call.");
+    expect(cb).toContain("the app tells the buyer by message.");
     expect(cb).toContain("The conversation stays with you: keep the call going.");
     expect(voiceToolDescription(TOOL_DEFS.find((d) => d.name === "send_order_form")!.description!)).toContain("never read it aloud");
     expect(voiceToolDescription(TOOL_DEFS.find((d) => d.name === "record_opt_out")!.description!)).toContain("ends the call");
@@ -150,7 +150,7 @@ describe("voice instructions", () => {
   const chatOnly = (text: string): string[] => {
     const t = text
       // The team's confirmation of a call time arrives as a chat message: legitimate on a call.
-      .replace(/\bwith a message in the chat\b/gi, "")
+      .replace(/\bby message\b/gi, "")
       .replace(/\b(?:in|into|to) the chat(?: below(?: the call)?)?\b/gi, "")
       .replace(/the chat below/gi, "")
       .replace(/\bI'll message you\b|\bShall I message you\b|\bbuyer messages\b|don't write to me again|you write to the buyer|in writing afterwards/gi, "");
@@ -218,15 +218,15 @@ describe("voice instructions", () => {
     const block = voiceStageText(stableSystemPrompt(pb, seller, null, { channel: "voice" }));
     for (const line of [
       '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time and call request_callback. Never use hand_off_to_human for a call request.',
-      "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is a callback request: call request_callback with the time and a brief (what the buyer wants to cover and what the person should have ready). If it offers another time, offer that time instead and call it again when the buyer agrees. Then say the team will confirm the time with a message in the chat, and ask if there is anything else you can help with: this call goes on.",
+      "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is a callback request: call request_callback with the time and a brief (what the buyer wants to cover and what the person should have ready). If it offers another time, offer that time instead and call it again when the buyer agrees. Then say the team will confirm the time by message, and ask if there is anything else you can help with: this call goes on.",
       '- Times: say them naturally, as a person would ("tomorrow at ten", "Thursday at half past two"). Work out the date from "Local time now" in your context, and pass the time to request_callback as a local date and time, for example "2026-11-18T10:00".',
-      "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it with a message in the chat. Never read a link aloud.",
+      "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it by message. Never read a link aloud.",
       '- Send the one approved item ("Send me information"): you cannot attach files or read links aloud. Give the summary in a few spoken sentences, and offer to continue in the chat for anything they want to read later.',
       "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
       '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
       '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
       "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found the team already sees the question: do not say you passed it on, and never say you are waiting for an answer.",
-      "Tell the buyer the team will confirm the time with a message in the chat. The call goes on after the request: keep helping, and never use hand_off_to_human for a call.",
+      "Tell the buyer the team will confirm the time by message. The call goes on after the request: keep helping, and never use hand_off_to_human for a call.",
       "- Find the real objection. One question, in the same turn as the acknowledgement.",
     ]) expect(block, line).toContain(line);
     // hand_off_to_human is never the way to a call: only the upset line keeps it.
@@ -675,7 +675,7 @@ describe("security headers", () => {
 describe("call requests on a call (request_callback)", () => {
   it("the tool result reads in call wording; other results pass unchanged", () => {
     const msg = "Requested. Tell the buyer, in one short sentence in their wording, that a member of our team will call at that time and the team will confirm it here. Keep answering their questions until the call.";
-    expect(voiceToolResultMessage(msg)).toBe("Requested. Tell the buyer, in one short sentence in their wording, that a member of our team will call at that time and the team will confirm it with a message in the chat. Then ask if there is anything else you can help with: this call goes on.");
+    expect(voiceToolResultMessage(msg)).toBe("Requested. Tell the buyer, in one short sentence in their wording, that a member of our team will call at that time and the team will confirm it by message. Then ask if there is anything else you can help with: this call goes on.");
     const other = "Scheduled. Confirm the time back to the buyer in their own wording and language.";
     expect(voiceToolResultMessage(other)).toBe(other);
   });

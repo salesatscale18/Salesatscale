@@ -609,7 +609,7 @@ export class VoiceEngine {
         this.endSoon("handoff");
       }
     }
-    // Every result message in call wording ("confirm it here" → "with a message in the chat", …).
+    // Every result message in call wording ("confirm it here" → "by message", …).
     if (typeof forModel.message === "string") forModel = { ...forModel, message: voiceToolResultMessage(forModel.message) };
     this.conn?.sendToolResult(callId, name, forModel);
     turn.awaitingContinuation = true;
