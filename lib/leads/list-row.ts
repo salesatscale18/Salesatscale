@@ -33,7 +33,11 @@ export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
     case "human_handling":
       return { icon, title: t("leads.need.human_handling"), detail: it.why ? isolate(it.why) : t("overview.needs.human_handling.detail", { when: timeAgo(it.at, ctx.now, ctx.timezone) }) };
     case "callback_requested":
-      return { icon, title: t("leads.need.callback_requested", { time: when(it.callAt, it.timezone) }), detail: it.brief ? isolate(it.brief) : null };
+    {
+      // The buyer named a time outside contact hours (UX): said first, so the "…" cut of a long brief never hides it.
+      const parts = [it.outsideHoursAsked ? t("leads.need.outside_hours") : null, it.brief ? isolate(it.brief) : null].filter(Boolean);
+      return { icon, title: t("leads.need.callback_requested", { time: when(it.callAt, it.timezone) }), detail: parts.length ? parts.join(" · ") : null };
+    }
     case "call_finished":
       return { icon, title: t("leads.need.call_finished"), detail: t("leads.need.call_finished.detail", { time: when(it.callAt, it.timezone) }) };
     case "team_question": {

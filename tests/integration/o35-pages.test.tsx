@@ -169,6 +169,10 @@ describe("O35 pages on the demo account", () => {
     const calls = text(await render(LeadsPage, { account: slug }, { view: "needs_you", need: "calls" }));
     expect(calls).toContain("Rotem Demo");
     expect(calls).toContain("Shira Demo");
+    // The Calls row says it before the seller opens the lead (UX): first in the detail line, so a long brief's "…" never hides it.
+    expect(calls).toMatch(/Rotem Demo[\s\S]*?Confirm call[^\n]*Outside your hours · /);
+    const shiraRow = calls.slice(calls.indexOf("Shira Demo"));
+    expect(shiraRow.slice(0, 300)).not.toContain("Outside your hours");
   });
 
   it("the same one-line reason in all three places for the labelled leads; the taken-over Hebrew lead is in With your team, its reason on the row and the banner", async () => {

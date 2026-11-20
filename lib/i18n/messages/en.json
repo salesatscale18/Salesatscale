@@ -3411,6 +3411,7 @@
   "leads.view_empty": "No leads here yet",
   "leads.need.human_handling": "Asked for a person",
   "leads.need.callback_requested": "Confirm call · {time}",
+  "leads.need.outside_hours": "Outside your hours",
   "leads.need.call_finished": "How did the call go?",
   "leads.need.call_finished.detail": "Call {time} · choose who goes on",
   "leads.need.team_question": "Question to answer",
