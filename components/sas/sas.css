@@ -1187,3 +1187,43 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-verified-value .sas-verified { display: inline-flex; vertical-align: -3px; margin-inline-start: 6px; }
 /* Overview: the selected market's card. */
 .sas-app a.sas-mcard--selected, .sas-app a.sas-mcard--selected:hover { border: 2px solid var(--primary); }
+
+/* ------------------------------------------------------------------------- */
+/* OV2 (Overview V2, option A): KPI cards, funnel column, blue Live, View options */
+/* ------------------------------------------------------------------------- */
+/* O-1: five cards; the number first, a 3px line on top in the meaning colour (green money, violet agent, blue the rest). */
+.sas-ov2-kpis { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--space-3); }
+.sas-ov2-kpi { --kpi-accent: var(--primary); position: relative; overflow: hidden; display: flex; flex-direction: column; gap: 4px; min-width: 0; padding: 14px 16px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.sas-ov2-kpi::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: var(--kpi-accent); }
+.sas-ov2-kpi--money { --kpi-accent: var(--success); }
+.sas-ov2-kpi--agent { --kpi-accent: var(--agent); }
+.sas-ov2-kpi__label { font-size: 13px; line-height: 18px; font-weight: 500; color: var(--ink-muted); }
+.sas-ov2-kpi__value { font-size: 34px; line-height: 40px; font-weight: 700; letter-spacing: -0.02em; font-variant-numeric: tabular-nums; color: var(--ink); overflow-wrap: anywhere; }
+/* The muted line under the number; comparison arrows stay muted (never green or red). */
+.sas-ov2-kpi__line { display: flex; align-items: flex-start; gap: 4px; font-size: 12px; line-height: 16px; color: var(--ink-muted); min-width: 0; overflow-wrap: anywhere; }
+.sas-ov2-kpi__line > .sas-ico { width: 14px; height: 14px; flex: none; margin-block-start: 1px; color: var(--ink-muted); }
+@media (min-width: 768px) and (max-width: 1180px) { .sas-ov2-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+/* Phone: two cards per row. */
+@media (max-width: 767px) {
+  .sas-ov2-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-2); }
+  .sas-ov2-kpi { padding: 12px; }
+  .sas-ov2-kpi__value { font-size: 28px; line-height: 34px; }
+}
+/* O-2: the funnel with a "From the step before" column. */
+.sas-ov2-funnel { display: grid; grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) auto minmax(64px, max-content); gap: 10px 14px; align-items: center; }
+.sas-ov2-funnel__colhead { grid-column: 4; text-align: start; }
+.sas-ov2-funnel__pct { color: var(--ink-muted); white-space: nowrap; }
+@media (max-width: 767px) { .sas-ov2-funnel { grid-template-columns: minmax(72px, 110px) minmax(0, 1fr) auto minmax(0, max-content); gap: 10px; } .sas-ov2-funnel__pct { white-space: normal; } }
+/* O-3: "Agent vN live" and the market cards' Live pill are blue (green stays for wins and verified). */
+.sas-ov2-pill--live, .sas-mcard__pill [data-status="market.live"] { background: var(--primary-soft); color: var(--primary); }
+/* O-3: View options (sliders) at the end of the header actions. */
+.sas-ov2-viewopts > summary.sas-ov2-viewopts__button { position: relative; width: 28px; padding: 0; justify-content: center; }
+.sas-ov2-viewopts__dot { position: absolute; inset-block-start: 4px; inset-inline-end: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }
+.sas-ov2-viewopts__menu { min-width: 240px; max-width: min(320px, calc(100vw - 32px)); padding: 6px; gap: 2px; }
+.sas-app a.sas-ov2-viewopts__item { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 8px; border-radius: var(--radius-sm); font-size: 13px; font-weight: 600; color: var(--ink); text-decoration: none; }
+.sas-app a.sas-ov2-viewopts__item:hover, .sas-app a.sas-ov2-viewopts__item:focus-visible { background: var(--surface-sunken); }
+.sas-ov2-viewopts__box { width: 18px; height: 18px; flex: none; display: grid; place-items: center; border-radius: 4px; border: 1.5px solid var(--line-strong); color: var(--on-primary); }
+.sas-ov2-viewopts__box[data-on] { border-color: var(--primary); background: var(--primary); }
+.sas-ov2-viewopts__hint { display: block; padding: 2px 8px 6px 34px; white-space: normal; }
+/* Phone: the menu spans the screen under the button (fixed, so it never runs off the start edge; MenuEnhancer sets its top). */
+@media (max-width: 767px) { .sas-ov2-viewopts__menu { position: fixed !important; left: 16px !important; right: 16px !important; top: auto; min-width: 0; max-width: none; } }

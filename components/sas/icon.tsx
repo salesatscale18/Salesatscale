@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, ClipboardList, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, History, ArrowRight, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, History, ArrowRight, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -79,6 +79,7 @@ const ICONS = {
   "list-filter": ListFilter,
   "arrow-up-right": ArrowUpRight,
   "chevron-down": ChevronDown,
+  "chevron-up": ChevronUp,
   /** Back links (mirrors in RTL). */
   "chevron-left": ChevronLeft,
   "arrow-up": ArrowUp,

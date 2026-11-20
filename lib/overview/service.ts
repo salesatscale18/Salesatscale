@@ -315,6 +315,64 @@ export async function overviewKpis(db: Db, accountId: string, range: { from: Dat
   };
 }
 
+/** The window of the same length just before `range` (the "vs previous N days" comparison). */
+export function previousRange(range: { from: Date; to: Date }): { from: Date; to: Date } {
+  const len = range.to.getTime() - range.from.getTime();
+  return { from: new Date(range.from.getTime() - len), to: range.from };
+}
+
+/**
+ * Lead events that mean a person stepped in: the agent's hand-off, the
+ * spend-cap hand-off, a takeover, and "the seller continues" after a call.
+ */
+export const PERSON_EVENTS = ["handoff.requested", "handoff.spend_cap", "conversation.taken_over", "callback.after_seller"] as const;
+
+/** Order forms signed in the period per currency: how many, and the sum of their one-time totals (minor units). */
+export type SignedByCurrency = { currency: string; count: number; oneTimeMinor: number };
+
+export type OverviewCardNumbers = {
+  /** Forms signed in (from, to] per currency (sorted by currency code): "Average deal". */
+  signedByCurrency: SignedByCurrency[];
+  /** Leads received in (from, to]. */
+  leadsReceived: number;
+  /** Of those, the leads with an order form signed by `to`: "Lead to signed". */
+  leadsSigned: number;
+  /** Of those, the leads never handed to or taken over by a person (PERSON_EVENTS, Human handling): "Handled by the agent". */
+  leadsWithoutPerson: number;
+};
+
+/**
+ * The numbers the O-1 KPI cards add to overviewKpis. Same filters as
+ * overviewKpis: test leads never, simulated buyers unless asked, the market
+ * switcher's market by the lead's market.
+ */
+export async function overviewCardNumbers(db: Db, accountId: string, range: { from: Date; to: Date }, opts: OverviewFilter = {}): Promise<OverviewCardNumbers> {
+  const notTest = and(realOnly(opts), marketWhere(leads.marketId, opts.market ?? null))!;
+  const received = and(eq(leads.accountId, accountId), notTest, gt(leads.createdAt, range.from), lte(leads.createdAt, range.to))!;
+  const signedLeadIds = db.select({ id: orderForms.leadId }).from(orderForms)
+    .where(and(eq(orderForms.accountId, accountId), eq(orderForms.status, "signed"), lte(orderForms.signedAt, range.to)));
+  const personLeadIds = db.select({ id: leadEvents.leadId }).from(leadEvents)
+    .where(and(eq(leadEvents.accountId, accountId), inArray(leadEvents.type, [...PERSON_EVENTS]), lte(leadEvents.createdAt, range.to)));
+  const [signed, [l], [s], [w]] = await Promise.all([
+    db.select({ currency: quoteVersions.currency, n: count(), oneTime: sum(quoteVersions.oneTimeTotalMinor) }).from(orderForms)
+      .innerJoin(leads, eq(leads.id, orderForms.leadId))
+      .innerJoin(quoteVersions, eq(quoteVersions.id, orderForms.quoteVersionId))
+      .where(and(eq(orderForms.accountId, accountId), notTest, eq(orderForms.status, "signed"), gt(orderForms.signedAt, range.from), lte(orderForms.signedAt, range.to)))
+      .groupBy(quoteVersions.currency),
+    db.select({ n: count() }).from(leads).where(received),
+    db.select({ n: count() }).from(leads).where(and(received, inArray(leads.id, signedLeadIds))),
+    db.select({ n: count() }).from(leads).where(and(received, ne(leads.status, "human_handling"), notInArray(leads.id, personLeadIds))),
+  ]);
+  return {
+    signedByCurrency: signed
+      .map((r) => ({ currency: r.currency, count: r.n, oneTimeMinor: Number(r.oneTime ?? 0) }))
+      .sort((a, b) => a.currency.localeCompare(b.currency)),
+    leadsReceived: l.n,
+    leadsSigned: s.n,
+    leadsWithoutPerson: w.n,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Recent activity
 // ---------------------------------------------------------------------------

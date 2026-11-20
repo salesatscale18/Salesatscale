@@ -165,16 +165,20 @@ describe("W1: Overview home page and the market selection", () => {
       const allK = await overviewKpis(db, account.id, range);
       expect(allK.paidByCurrency.map((r) => r.currency)).toEqual(["GBP", "ILS"]);
       const html = await page(OverviewPage(props(account.slug, { period: "7" })));
-      const tile = html.split("Paid revenue")[1].split('class="sas-metric"')[0];
-      expect(tile).toContain('data-currencies="2"');
-      expect(tile).toContain('data-currency="GBP">£1,200.00');
-      expect(tile).toMatch(/data-currency="ILS">₪[\d,]+\.\d\d/);
-      expect(tile).toContain("+ £15.00/month recurring");
-      // One market selected: a single amount, as before.
+      // OV2: the largest amount is the number (whole units), and each currency gets a line of its own.
+      const tile = html.split('data-kpi="revenue"')[1].split('data-kpi="deals"')[0];
+      const lines = [...tile.matchAll(/class="sas-ov2-kpi__line"[^>]*>(?:<svg[\s\S]*?<\/svg>)?<span>([^<]*)<\/span>/g)].map((m) => m[1]);
+      expect(lines).toHaveLength(2);
+      expect(lines[0]).toMatch(/^£1,200 · .* vs previous 7 days$/);
+      expect(lines[1]).toMatch(/^₪[\d,]+ · .* vs previous 7 days$/);
+      expect(tile).not.toMatch(/\.\d\d/);
+      // OV2 dropped the recurring line from the card (the step counts and the recurring amounts stay on Orders).
+      expect(tile).not.toContain("recurring");
+      // One market selected: a single amount and one line.
       const ukHtml = await page(OverviewPage(props(account.slug, { period: "7", market: uk.id })));
-      const ukTile = ukHtml.split("Paid revenue")[1].split('class="sas-metric"')[0];
-      expect(ukTile).not.toContain("data-currencies");
-      expect(ukTile).toContain("£1,200.00");
+      const ukTile = ukHtml.split('data-kpi="revenue"')[1].split('data-kpi="deals"')[0];
+      expect(ukTile).toContain('sas-ov2-kpi__value sas-num">£1,200<');
+      expect(ukTile.match(/sas-ov2-kpi__line/g)).toHaveLength(1);
     });
 
     it("open leads and Need you per market", async () => {
