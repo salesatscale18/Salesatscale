@@ -36,6 +36,8 @@ const { createDemoAccount } = await import("@/lib/demo/seed");
 const { createMarket, listMarkets } = await import("@/lib/markets/service");
 const { marketCookieName, marketSelection } = await import("@/lib/markets/selection");
 const { needsYou, needsYouByMarket, openLeadsByMarket, overviewKpis, recentActivity } = await import("@/lib/overview/service");
+const { countItemsByGroup, NEEDS_GROUPS } = await import("@/lib/overview/needs-groups");
+const { inMarket } = await import("@/lib/markets/selection");
 const { getAccountById } = await import("@/lib/accounts/service");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
 const { GET: switchMarket } = await import("@/app/app/[account]/market/route");
@@ -198,9 +200,11 @@ describe("W1: Overview home page and the market selection", () => {
 
   describe("page", () => {
     it("filtered by market: switcher with the choice, Needs you and its count only for that market", async () => {
+      // L-6: the card counts the chosen market's items (no spend alert in this account).
+      const items = await needsYou(db, account.id, new Date());
+      const total = (h: string) => Number(h.split('id="needs-h"')[1].match(/data-needs-total="(\d+)"/)?.[1] ?? 0);
       const all = await page(OverviewPage(props(account.slug)));
-      expect(all).toContain("Oliver Brown");
-      expect(all).toContain("Noa Levi");
+      expect(total(all)).toBe(items.length);
       holder.cookies.set(marketCookieName(account.id), uk.id);
       const html = await page(OverviewPage(props(account.slug)));
       expect(html).toContain('data-market-switcher=""');
@@ -208,26 +212,30 @@ describe("W1: Overview home page and the market selection", () => {
       expect(html).toContain('<option value="all">All markets</option>');
       expect(html).toContain(`action="/app/${account.slug}/market"`);
       expect(html).toContain('<input type="hidden" name="next" value="/app/' + account.slug + '"/>');
-      const needs = html.split('id="needs-h"')[1].split("</section>")[0];
-      expect(needs).toContain("Oliver Brown");
-      expect(needs).not.toContain("Noa Levi");
-      // The URL wins over the stored UK choice.
+      expect(total(html)).toBe(items.filter((i) => inMarket(i.marketId, uk)).length);
+      expect(total(html)).toBeLessThan(items.length);
+      // The URL wins over the stored UK choice, and the rows open Leads in that market.
       const home = await page(OverviewPage(props(account.slug, { market: il.id })));
+      expect(total(home)).toBe(items.filter((i) => inMarket(i.marketId, il)).length);
       const homeNeeds = home.split('id="needs-h"')[1].split("</section>")[0];
-      expect(homeNeeds).toContain("Noa Levi");
-      expect(homeNeeds).not.toContain("Oliver Brown");
+      expect(homeNeeds).toMatch(new RegExp(`href="/app/${account.slug}/leads\\?view=needs_you&amp;need=[a-z_]+&amp;market=${il.id}"`));
       // Period links keep the market from the URL.
       expect(home).toContain(`href="/app/${account.slug}?period=7&amp;market=${il.id}"`);
     });
 
-    it("Needs you shows two items, the rest under Show N more", async () => {
+    it("Needs you (L-6): one counter row per group with items, in the L-2 order; the oldest wait and Open in Leads", async () => {
       const html = await page(OverviewPage(props(account.slug)));
       const needs = html.split('id="needs-h"')[1].split("</section>")[0];
-      const total = (needs.match(/class="sas-list__row"/g) ?? []).length;
-      expect(total).toBeGreaterThan(2);
-      const shown = needs.split('data-needs-more=""')[0];
-      expect((shown.match(/class="sas-list__row"/g) ?? []).length).toBe(2);
-      expect(needs).toContain(`Show ${total - 2} more`);
+      const counts = countItemsByGroup(await needsYou(db, account.id, new Date()));
+      const shown = [...needs.matchAll(/data-needs-group="([a-z_]+)"/g)].map((m) => m[1]);
+      expect(shown).toEqual(NEEDS_GROUPS.filter((g) => counts[g] > 0));
+      for (const g of shown) {
+        expect(needs).toMatch(new RegExp(`href="/app/${account.slug}/leads\\?view=needs_you&amp;need=${g}" data-needs-group="${g}">[\\s\\S]*?sas-ovn__count">${counts[g as keyof typeof counts]}<`));
+      }
+      expect(needs).toMatch(/data-oldest-waiting="">Oldest waiting: <strong class="sas-num">\d+ (min|h|days)<\/strong>/);
+      expect(needs).toContain(`href="/app/${account.slug}/leads?view=needs_you">Open in Leads`);
+      expect(needs).not.toContain("data-needs-more");
+      expect(needs).not.toContain("sas-btn");
     });
 
     it("market cards: three markets plus Add market, outlines by status, links that open the market", async () => {

@@ -1395,3 +1395,20 @@ label.st-voice__row { cursor: pointer; }
   .sas-lfm__bar > .sas-lfm__filter { flex: 0 1 auto; }
   .sas-lfm__bar > .sas-lfm__sort { flex: 1 1 auto; }
 }
+/* LQ-L L-6 (UX O-4): the Overview Needs you counter card next to Your markets; the funnel goes full width under them. */
+.sas-app .sas-ov__row.sas-ovn-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(320px, 470px); gap: var(--space-6); align-items: start; }
+.sas-ovn { min-width: 0; overflow: hidden; align-self: end; }
+.sas-ovn__list { list-style: none; margin: 0; padding: 0; }
+.sas-ovn__list > li + li { border-block-start: 1px solid var(--line); }
+.sas-app a.sas-ovn__row { display: flex; align-items: center; gap: var(--space-3); min-height: 52px; padding: 8px 16px 8px 20px; color: var(--ink); text-decoration: none; }
+.sas-app a.sas-ovn__row:hover { background: var(--surface-sunken); }
+.sas-app a.sas-ovn__row > .sas-ico:last-child { flex: none; color: var(--ink-muted); width: 16px; height: 16px; }
+.sas-ovn__icon { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: var(--radius-md); background: var(--human-soft); color: var(--human); }
+.sas-ovn__icon .sas-ico { width: 16px; height: 16px; }
+.sas-ovn__label { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; font-size: 15px; }
+.sas-ovn__count { font-size: 20px; line-height: 24px; font-weight: 700; }
+.sas-ovn__foot { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; padding: 12px 20px; border-block-start: 1px solid var(--line); background: var(--surface-sunken); }
+.sas-ovn__foot strong { color: var(--ink); }
+.sas-app a.sas-ovn__open { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--primary); text-decoration: none; }
+.sas-app a.sas-ovn__open .sas-ico { width: 16px; height: 16px; }
+@media (max-width: 1100px) { .sas-app .sas-ov__row.sas-ovn-row { grid-template-columns: minmax(0, 1fr); } .sas-ovn { align-self: stretch; } }

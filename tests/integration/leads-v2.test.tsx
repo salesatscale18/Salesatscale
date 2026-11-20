@@ -37,6 +37,8 @@ const { needsYou } = await import("@/lib/overview/service");
 const { listLeads } = await import("@/lib/leads/service");
 const { leadListFacts } = await import("@/lib/leads/list-facts");
 const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
+const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { countItemsByGroup, NEEDS_GROUPS } = await import("@/lib/overview/needs-groups");
 
 const page = async (el: Promise<ReactElement>) => renderToStaticMarkup(await el);
 const props = (account: string, sp: Record<string, string> = {}) => ({ params: Promise.resolve({ account }), searchParams: Promise.resolve(sp) });
@@ -232,6 +234,38 @@ describe("Leads V2 (LQ-L)", () => {
     expect(row(html, "Avi Agent")!.html).toContain(">Waiting for the buyer’s reply<");
     const empty = await page(LeadsPage(props(quiet.slug, { view: "needs_you" })));
     expect(empty).toContain("Nothing needs you right now.");
+    // L-6: the Overview card says so too, with no group rows and no footer.
+    const ov = await page(OverviewPage(props(quiet.slug)));
+    const card = ov.split('id="needs-h"')[1].split("</section>")[0];
+    expect(card).toContain('data-needs-empty="">Nothing needs you right now.</p>');
+    expect(card).not.toContain("data-needs-group");
+    expect(card).not.toContain("Open in Leads");
+  });
+
+  it("L-6: the Overview Needs you card counts per group, in order, and opens Leads > Needs you filtered to the group", async () => {
+    const items = await needsYou(db, account.id, new Date());
+    const counts = countItemsByGroup(items);
+    const html = await page(OverviewPage(props(account.slug)));
+    const card = html.split('id="needs-h"')[1].split("</section>")[0];
+    expect(card).toContain(`data-needs-total="${items.length}"`);
+    expect(card).toContain(`${items.length} items`);
+    const shown = [...card.matchAll(/data-needs-group="([a-z_]+)"/g)].map((m) => m[1]);
+    expect(shown).toEqual(NEEDS_GROUPS.filter((g) => counts[g] > 0));
+    expect(shown).toContain("person");
+    expect(shown).toContain("prices");
+    expect(card).toMatch(new RegExp(`href="/app/${account.slug}/leads\\?view=needs_you&amp;need=prices" data-needs-group="prices">[\\s\\S]*?>Prices to approve<[\\s\\S]*?sas-ovn__count">${counts.prices}<`));
+    // Hana has waited 30 h, the oldest item here.
+    const oldest = Math.max(...items.map((i) => Date.now() - i.at.getTime()));
+    expect(card).toContain(`Oldest waiting: <strong class="sas-num">${oldest >= 48 * H ? `${Math.floor(oldest / (24 * H))} days` : `${Math.floor(oldest / H)} h`}</strong>`);
+    expect(card).toContain(`href="/app/${account.slug}/leads?view=needs_you">Open in Leads`);
+    // The old per-item list and its buttons are gone; the funnel is full width, outside the markets row.
+    expect(card).not.toContain("sas-btn");
+    const row = html.split('class="sas-ov__row sas-ovn-row"')[1].split('aria-labelledby="funnel-h"')[0];
+    expect(row).toContain('id="needs-h"');
+    expect(row).toContain('aria-labelledby="markets-h"');
+    // A group link lands on the filtered Leads view.
+    const leadsHtml = await page(LeadsPage(props(account.slug, { view: "needs_you", need: "person" })));
+    expect(rows(leadsHtml).length).toBe(new Set(items.filter((i) => i.kind === "human_handling").map((i) => i.leadId)).size);
   });
 
   it("services: Deal value sorts in SQL; list facts and lead ids stay inside the account", async () => {

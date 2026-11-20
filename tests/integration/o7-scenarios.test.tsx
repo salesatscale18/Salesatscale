@@ -42,6 +42,7 @@ const { conversationScenarioCheck } = await import("@/lib/agent/scenario-results
 const { scenarioById, SCENARIOS } = await import("@/lib/agent/scenarios");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 
 const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
 const save = (name: string, html: string) => {
@@ -172,14 +173,16 @@ describe("O7: objection scenarios end to end (ScriptedLlm)", () => {
     }
   });
 
-  it("Overview Needs you: order and quote IDs are one unbroken run (.sas-id), so a phone never splits \"PD-\" from its number", async () => {
-    const html = renderToStaticMarkup(await (OverviewPage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({}) }));
-    save("overview", html);
-    // The demo's bank-transfer order: "<lead> · PD-<n> · <amount>", the order ID inside .sas-id.
-    expect(html).toMatch(/<span class="sas-small">[^<]* · <span class="sas-id">[A-Z]{2}-\d+<\/span> · [^<]+<\/span>/);
-    // No order or quote ID is left as plain text where it could break at the hyphen.
-    const needs = html.slice(html.indexOf('id="needs-h"'));
-    const plain = needs.replace(/<span class="sas-id"[^>]*>[^<]*<\/span>/g, "").replace(/<[^>]+>/g, " ");
+  it("Needs you (Leads, L-3): order and quote IDs are one unbroken run (.sas-id), so a phone never splits \"PD-\" from its number", async () => {
+    const overview = renderToStaticMarkup(await (OverviewPage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({}) }));
+    save("overview", overview);
+    const html = renderToStaticMarkup(await (LeadsPage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({ view: "needs_you" }) }));
+    save("leads-needs", html);
+    // The demo's bank-transfer order: "PD-<n> · <amount>", the order ID inside .sas-id.
+    expect(html).toMatch(/<span class="sas-lstep__detail"[^>]*><span class="sas-id">[A-Z]{2}-\d+<\/span> · [^<]+<\/span>/);
+    // No order or quote ID is left as plain text where it could break at the hyphen (tooltips aside).
+    const needs = html.split("<tbody>")[1].split("</tbody>")[0];
+    const plain = needs.replace(/<span class="sas-id"[^>]*>[^<]*<\/span>/g, "").replace(/ title="[^"]*"/g, "").replace(/<[^>]+>/g, " ");
     expect(plain).not.toMatch(/\b(?:[A-Z]{2}|Q)-\d+\b/);
   });
 });

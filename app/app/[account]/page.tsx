@@ -1,6 +1,5 @@
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
-import { Icon, type IconName } from "@/components/sas/icon";
-import { quoteRef, TextWithId } from "@/components/sas/id-text";
+import { Icon } from "@/components/sas/icon";
 import { Banner, Timeline, type TimelineItem } from "@/components/sas/record";
 import { SidePanel } from "@/components/sas/list-kit";
 import { MenuEnhancer } from "@/components/sas/list-kit-client";
@@ -9,22 +8,19 @@ import { SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
-import { approvalReasonText } from "@/lib/catalog/pricing";
-import { formatMoney } from "@/lib/domain/money";
-import { relativeTime, timeAgo } from "@/lib/format";
+import { relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
-import { orderLabel } from "@/lib/orders/service";
 import { leadEventIcon } from "@/lib/leads/event-icons";
 import {
-  PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewCardNumbers, overviewKpis, parsePeriod, periodRange,
-  previousRange, recentActivity, type NeedsYouItem,
+  PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, openLeadsByMarket, overviewCardNumbers, overviewKpis, parsePeriod, periodRange,
+  previousRange, recentActivity,
 } from "@/lib/overview/service";
 import { kpiCards, stepOver, stepPercents, waitingToPay, type KpiCard } from "@/lib/overview/kpi-cards";
 import { inMarket, MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
+import { countItemsByGroup, NEEDS_GROUP_ICON, NEEDS_GROUP_LABEL, NEEDS_GROUPS, oldestWaiting, waitingFor, type NeedsGroup } from "@/lib/overview/needs-groups";
 import { MarketCards } from "./market-cards";
 import { setupProgress } from "@/lib/overview/setup";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
-import { formatDueLocal, reasonText } from "@/lib/follow-ups/rules";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
 /**
@@ -41,23 +37,7 @@ const overviewQuery = (period: number, sim: boolean, market?: string, panel?: st
   const s = q.toString();
   return s ? `?${s}` : "";
 };
-/** How many "Needs you" items show before "Show N more". */
-const NEEDS_SHOWN = 2;
-
 /** Event icons: one map with the lead page timeline (lib/leads/event-icons.ts, W6). */
-
-const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | "warning" | "danger" | "neutral" }> = {
-  human_handling: { icon: "message-circle", tone: "human" },
-  quote_approval: { icon: "file-text", tone: "warning" },
-  bank_transfer: { icon: "credit-card", tone: "warning" },
-  payment_failed: { icon: "x-circle", tone: "danger" },
-  form_unsigned: { icon: "file-signature", tone: "neutral" },
-  form_expiring: { icon: "clock", tone: "warning" },
-  follow_up_failed: { icon: "x-circle", tone: "danger" },
-  callback_requested: { icon: "phone-call", tone: "neutral" },
-  call_finished: { icon: "phone-call", tone: "neutral" },
-  team_question: { icon: "book-open", tone: "neutral" },
-};
 
 const TONE_STYLE = {
   warning: { background: "var(--warning-soft)", color: "var(--warning)" },
@@ -137,39 +117,6 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const stepIsOver = stepOver(funnel.map((f) => f.value));
   const waiting = waitingToPay(kpis.formsSigned, kpis.paidOrders);
 
-  /** titleId / detailId: the order or quote ID inside the text, rendered as one unbroken code-font run (.sas-id, nowrap). */
-  const itemText = (it: NeedsYouItem): { title: string; detail: string; titleId?: string; detailId?: string; why?: string } => {
-    const who = it.company ? `${it.leadName} · ${it.company}` : it.leadName;
-    switch (it.kind) {
-      case "quote_approval":
-        return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), titleId: quoteRef(it.quoteNumber), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
-      case "human_handling":
-        // O35: "Dana Demo needs a person", then why on its own line ("Upset: false night alarms"), one line cut with "…" (UX).
-        return { title: t("overview.needs.human_handling", { name: it.leadName }), why: it.why ?? undefined, detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
-      case "bank_transfer":
-      case "payment_failed":
-        return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}`, detailId: orderLabel(account.tradeName, it.orderNumber) };
-      case "form_unsigned":
-        return { title: t("overview.needs.form_unsigned"), detail: `${who} · ${quoteRef(it.quoteNumber)} · ${t("overview.needs.form_unsigned.detail", { when: timeAgo(it.openedAt, now, account.timezone) })}`, detailId: quoteRef(it.quoteNumber) };
-      case "form_expiring":
-        return { title: t("overview.needs.form_expiring"), detail: `${who} · ${quoteRef(it.quoteNumber)} · ${t("overview.needs.form_expiring.detail", { hours: Math.max(1, Math.ceil((it.expiresAt.getTime() - now.getTime()) / 3_600_000)) })}`, detailId: quoteRef(it.quoteNumber) };
-      case "follow_up_failed":
-        return { title: t("overview.needs.follow_up_failed", { name: it.leadName }), detail: [it.company, formatDueLocal(it.dueAt, account.timezone), reasonText(it.reason)].filter(Boolean).join(" · ") };
-      case "callback_requested":
-        // O6: the time in the zone it was set in (the lead's market), with the agent's brief.
-        return { title: t("overview.needs.callback_requested", { time: formatDueLocal(it.callAt, it.timezone), name: it.leadName }), detail: [it.company, it.brief].filter(Boolean).join(" · ") };
-      case "call_finished":
-        // O7: the confirmed call's time has passed; who goes on with the buyer? Company and the call time.
-        return { title: t("overview.needs.call_finished", { name: it.leadName }), detail: [it.company, formatDueLocal(it.callAt, it.timezone)].filter(Boolean).join(" · ") };
-      case "team_question":
-        // O4: a question to answer (not a hand-off): the lead, must-have, the buyer's own words.
-        return {
-          title: t("overview.needs.team_question", { question: it.question }),
-          detail: [who, it.mustHave === true ? t("team_question.must_have") : it.mustHave === false ? t("team_question.good_to_know") : null, it.buyerWords ? `“${it.buyerWords}”` : null].filter(Boolean).join(" · "),
-        };
-    }
-  };
-
   const timeline: TimelineItem[] = activity.map(({ event, lead, user: by }) => ({
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
@@ -186,50 +133,40 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     time: relativeTime(event.createdAt, now),
   }));
 
-  // "Needs you": the spend alert first, then the items; the first NEEDS_SHOWN show, the rest under "Show N more".
+  // L-6 (UX O-4): the Needs you counter card. One row per group with items, in the L-2 order
+  // (lib/overview/needs-groups.ts), each opening Leads > Needs you filtered to that group. The AI
+  // spend alert (not about a lead) stays a row of its own, first.
+  const groupCounts = countItemsByGroup(items);
+  const oldest = oldestWaiting(items);
+  const leadsHref = (group?: NeedsGroup) => {
+    const q = new URLSearchParams({ view: "needs_you" });
+    if (group) q.set("need", group);
+    if (urlMarket) q.set(MARKET_PARAM, urlMarket);
+    return `${base}/leads?${q.toString()}`;
+  };
   const needRows = [
     ...(spendAlert && spendText ? [
       <li key="spend">
-        <a className="sas-list__row" href={`${base}/settings`} style={{ alignItems: "flex-start" }}>
-          <span className="sas-av" style={TONE_STYLE[spendAlert.state === "capped" ? "danger" : "warning"]} aria-hidden="true">
-            <Icon name="alert-triangle" />
-          </span>
-          <span className="sas-list__main">
-            <strong>{t(spendAlert.state === "capped" ? "overview.needs.spend_capped" : "overview.needs.spend_warn")}</strong>
+        <a className="sas-ovn__row" href={`${base}/settings`} data-needs-spend="">
+          <span className="sas-ovn__icon" style={TONE_STYLE[spendAlert.state === "capped" ? "danger" : "warning"]} aria-hidden="true"><Icon name="alert-triangle" /></span>
+          <span className="sas-ovn__label">
+            <span>{t(spendAlert.state === "capped" ? "overview.needs.spend_capped" : "overview.needs.spend_warn")}</span>
             <span className="sas-small">{t("overview.needs.spend.detail", { used: spendText.used, cap: spendText.cap })}</span>
           </span>
-          <span className={buttonClass("secondary", "sm")}>{t("overview.needs.spend.action")}</span>
+          <Icon name="chevron-right" />
         </a>
       </li>,
     ] : []),
-    ...items.map((it) => {
-      const look = ITEM_LOOK[it.kind];
-      const text = itemText(it);
-      return (
-        <li key={it.id}>
-          <a className="sas-list__row" href={needsYouHref(base, it)} style={{ alignItems: "flex-start" }}>
-            <span
-              className={look.tone === "human" ? "sas-av sas-av--human" : "sas-av"}
-              style={look.tone === "warning" || look.tone === "danger" ? TONE_STYLE[look.tone] : undefined}
-              aria-hidden="true"
-            >
-              <Icon name={look.icon} />
-            </span>
-            <span className="sas-list__main">
-              {it.kind === "human_handling"
-                ? <strong data-handoff-title=""><NameInText text={text.title} name={it.leadName} /></strong>
-                : <strong><TextWithId text={text.title} id={text.titleId ?? ""} size="inherit" /></strong>}
-              {/* O35: every hand-off item gives its reason a line of its own under the title, before company and time (UX). */}
-              {text.why ? <span className="sas-small sas-oneline" data-handoff-why="" dir="auto" title={text.why}>{text.why}</span> : null}
-              <span className="sas-small"><TextWithId text={text.detail} id={text.detailId ?? ""} /></span>
-            </span>
-            <span className={look.tone === "human" ? buttonClass("takeover", "sm") : buttonClass("secondary", "sm")}>
-              {t(`overview.needs.${it.kind}.action` as MessageKey)}
-            </span>
-          </a>
-        </li>
-      );
-    }),
+    ...NEEDS_GROUPS.filter((g) => groupCounts[g] > 0).map((g) => (
+      <li key={g}>
+        <a className="sas-ovn__row" href={leadsHref(g)} data-needs-group={g}>
+          <span className="sas-ovn__icon" aria-hidden="true"><Icon name={NEEDS_GROUP_ICON[g]} /></span>
+          <span className="sas-ovn__label">{t(NEEDS_GROUP_LABEL[g])}</span>
+          <strong className="sas-num sas-ovn__count">{groupCounts[g]}</strong>
+          <Icon name="chevron-right" />
+        </a>
+      </li>
+    )),
   ];
 
   const firstOpen = SETUP_STEPS.find((s) => !(done as ReadonlySet<string>).has(s.id))?.id ?? "go-live";
@@ -313,62 +250,55 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         </section>
       ) : null}
 
-      <MarketCards
-        base={base}
-        markets={selection.markets}
-        openLeads={openLeads}
-        needYou={needsYouByMarket(allItems, homeId)}
-        returnTo={`${base}${overviewQuery(period, includeSimulated)}`}
-        selectedId={market?.id ?? null}
-      />
-
       {/* Phone (sas.css): this row dissolves so "Needs you" can come first, under the greeting. */}
-      <div className="sas-ov__row" style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
-        <section className="sas-panel" aria-labelledby="funnel-h" style={{ flex: "1 1 420px", minWidth: 0 }}>
-          <div className="sas-panel__body sas-stack-4">
-            <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
-              <h2 id="funnel-h" className="sas-heading">{t("overview.funnel.title")}</h2>
-              <span className="sas-small">{t("overview.funnel.note")}</span>
-            </div>
-            <div className="sas-ov2-funnel">
-              <span className="sas-small sas-ov2-funnel__colhead" data-funnel-from-before="">{t("overview.funnel.from_before")}</span>
-              {funnel.map((f, i) => (
-                <FunnelRow
-                  key={f.label} label={t(f.label)} value={f.value} width={(f.value / funnelMax) * 100} color={f.color}
-                  fromBefore={stepPct[i] !== null && f.label === "overview.funnel.paid" && waiting > 0 ? `${stepPct[i]} · ${t("overview.funnel.waiting", { count: waiting })}` : stepPct[i]}
-                  fromBeforeTitle={stepIsOver[i] ? t("overview.funnel.over_before") : undefined}
-                />
-              ))}
-            </div>
-          </div>
-        </section>
-
-        <section className="sas-panel sas-ov__needs" aria-labelledby="needs-h" style={{ flex: "0 1 480px", minWidth: 0, overflow: "hidden" }}>
+      <div className="sas-ov__row sas-ovn-row">
+        <MarketCards
+          base={base}
+          markets={selection.markets}
+          openLeads={openLeads}
+          needYou={needsYouByMarket(allItems, homeId)}
+          returnTo={`${base}${overviewQuery(period, includeSimulated)}`}
+          selectedId={market?.id ?? null}
+        />
+        <section className="sas-panel sas-ov__needs sas-ovn" aria-labelledby="needs-h" data-needs-card="">
           <div className="sas-panel__head">
             <h2 id="needs-h" className="sas-heading">{t("overview.needs.title")}</h2>
             {needCount ? (
-              <span className="sas-pill sas-pill--human"><Icon name="user" />{needCount === 1 ? t("overview.needs.count_one") : t("overview.needs.count", { count: needCount })}</span>
+              <span className="sas-pill sas-pill--human" data-needs-total={needCount}><Icon name="user" />{needCount === 1 ? t("overview.needs.count_one") : t("overview.needs.count", { count: needCount })}</span>
             ) : null}
           </div>
           {needCount === 0 ? (
-            <p className="sas-panel__body sas-small" style={{ margin: 0 }}>{t("overview.needs.empty")}</p>
+            <p className="sas-panel__body sas-small" style={{ margin: 0 }} data-needs-empty="">{t("leads.needs_empty")}</p>
           ) : (
             <>
-              <ul className="sas-list">{needRows.slice(0, NEEDS_SHOWN)}</ul>
-              {needRows.length > NEEDS_SHOWN ? (
-                <details className="sas-ov__more" data-needs-more="">
-                  <summary className="sas-ov__more-toggle">
-                    <Icon name="chevron-down" />
-                    <span className="sas-ov__more-count">{t("overview.needs.more", { count: needRows.length - NEEDS_SHOWN })}</span>
-                    <span className="sas-ov__more-less">{t("overview.needs.less")}</span>
-                  </summary>
-                  <ul className="sas-list">{needRows.slice(NEEDS_SHOWN)}</ul>
-                </details>
-              ) : null}
+              <ul className="sas-ovn__list">{needRows}</ul>
+              <div className="sas-ovn__foot">
+                {oldest ? <span className="sas-small" data-oldest-waiting="">{t("overview.needs.oldest")} <strong className="sas-num">{waitingFor(oldest, now)}</strong></span> : <span />}
+                {items.length ? <a className="sas-ovn__open" href={leadsHref()}>{t("overview.needs.open_leads")}<Icon name="arrow-right" /></a> : null}
+              </div>
             </>
           )}
         </section>
       </div>
+
+      <section className="sas-panel" aria-labelledby="funnel-h" style={{ minWidth: 0 }}>
+        <div className="sas-panel__body sas-stack-4">
+          <div style={{ display: "flex", flexWrap: "wrap", justifyContent: "space-between", gap: 8 }}>
+            <h2 id="funnel-h" className="sas-heading">{t("overview.funnel.title")}</h2>
+            <span className="sas-small">{t("overview.funnel.note")}</span>
+          </div>
+          <div className="sas-ov2-funnel">
+            <span className="sas-small sas-ov2-funnel__colhead" data-funnel-from-before="">{t("overview.funnel.from_before")}</span>
+            {funnel.map((f, i) => (
+              <FunnelRow
+                key={f.label} label={t(f.label)} value={f.value} width={(f.value / funnelMax) * 100} color={f.color}
+                fromBefore={stepPct[i] !== null && f.label === "overview.funnel.paid" && waiting > 0 ? `${stepPct[i]} · ${t("overview.funnel.waiting", { count: waiting })}` : stepPct[i]}
+                fromBeforeTitle={stepIsOver[i] ? t("overview.funnel.over_before") : undefined}
+              />
+            ))}
+          </div>
+        </div>
+      </section>
 
       {showActivity ? (
         <SidePanel
@@ -387,12 +317,6 @@ export default async function OverviewPage({ params, searchParams }: { params: P
       ) : null}
     </main>
   );
-}
-
-/** The title with the lead's name isolated (<bdi>), so a Hebrew name keeps its place in the English line. */
-function NameInText({ text, name }: { text: string; name: string }) {
-  const n = name ? text.indexOf(name) : -1;
-  return n >= 0 ? <>{text.slice(0, n)}<bdi>{name}</bdi>{text.slice(n + name.length)}</> : <>{text}</>;
 }
 
 function FunnelRow({ label, value, width, color, fromBefore, fromBeforeTitle }: { label: string; value: number; width: number; color: string; fromBefore: string | null; fromBeforeTitle?: string }) {

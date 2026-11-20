@@ -3452,5 +3452,7 @@
   "leads.next.quote_sent": "Quote sent",
   "leads.next.waiting": "Waiting for the buyer’s reply",
   "leads.value.recurring": "+ {amount}/{per}",
-  "leads.row.open": "Open {name}"
+  "leads.row.open": "Open {name}",
+  "overview.needs.oldest": "Oldest waiting:",
+  "overview.needs.open_leads": "Open in Leads"
 }

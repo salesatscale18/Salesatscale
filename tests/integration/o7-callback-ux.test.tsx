@@ -46,6 +46,7 @@ vi.mock("next/navigation", () => ({
 
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { runTool } = await import("@/lib/agent/tools");
 const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { ensureDraftVersion, publishDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/service");
@@ -178,10 +179,14 @@ describe("O7 callback UX fixes", () => {
 
     const html = await page(OverviewPage, { account: acc.slug });
     save("overview-finished", html);
-    expect(html).toContain(`Call finished: who continues? · ${c.name}`);
-    expect(html).toMatch(/Bistro Demo · \w{3} \d{1,2} \w{3} \d{2}:\d{2}<\/span>/);
-    expect(html).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#after-call"`);
-    expect(html).toMatch(/Call finished: who continues\?[\s\S]*?>Open lead</);
+    // L-6: counted under Calls on the Overview; Leads > Needs you says what's needed and opens the prompt.
+    expect(html).toContain('data-needs-group="calls"');
+    const list = await page(LeadsPage, { account: acc.slug }, { view: "needs_you", need: "calls" });
+    save("leads-finished", list);
+    expect(list).toContain(`<bdi>${c.name}</bdi>`);
+    expect(list).toContain(">How did the call go?<");
+    expect(list).toMatch(/Call \u2068\w{3} \d{1,2} \w{3},? \d{2}:\d{2}\u2069 · choose who goes on/);
+    expect(list).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#after-call"`);
 
     // The lead page opens on the Deal tab when asked, on Chat otherwise.
     const deal = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { tab: "deal" });
