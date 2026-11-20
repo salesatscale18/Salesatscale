@@ -256,7 +256,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
    */
   const startCall = () => {
     const c = clientRef.current;
-    if (!c) return;
+    // A second tap before the page re-rendered (a double tap) must not restart the call being set up.
+    if (!c || CALL_PHASES.has(c.getSnapshot().phase)) return;
     setBarHidden(false);
     c.begin();
     void (async () => {

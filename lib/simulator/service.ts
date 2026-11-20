@@ -367,9 +367,25 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export async function receiveSimulatorInbound(db: Db, ctx: Pick<ChatContext, "lead">, text: string, clientId: string, now = new Date()): Promise<SimInboundResult> {
   const body = text.trim().slice(0, 4000);
   if (!body) return { kind: "ignored", reason: "empty" };
-  // Re-read the lead: it may have opted out since the page loaded.
+  const start = await simulatorStartCheck(db, ctx);
+  if (!start.ok) return { kind: "ignored", reason: start.reason };
+  // The monthly spend cap: an open simulated chat keeps replying, as on WhatsApp; a new
+  // conversation started by the buyer waits for a person (inboundConversation).
+  // Simulated buyers skip the not-live gate (tests during setup); real leads keep it.
+  return receiveLeadMessage(db, start.lead, SIMULATOR_CHANNEL, `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now, { allowBeforeGoLive: start.simulated });
+}
+
+/**
+ * What a buyer's first move on the chat page passes before it may start the conversation (a message, or
+ * a switch to voice on a chat that has not started: lib/voice/buyer.ts): the lead re-read (it may have
+ * opted out since the page loaded) and, for a simulated buyer, the simulator's own gate and a published
+ * agent version. The conversation itself then comes from inboundConversation, the same for both.
+ */
+export async function simulatorStartCheck(
+  db: Db, ctx: Pick<ChatContext, "lead">,
+): Promise<{ ok: true; lead: Lead; simulated: boolean } | { ok: false; reason: Exclude<SimInboundResult, { kind: "stored" | "duplicate" }>["reason"] }> {
   const lead = await realLead(db, ctx.lead.accountId, ctx.lead.id);
-  if (!lead) return { kind: "ignored", reason: "unknown_sender" };
+  if (!lead) return { ok: false, reason: "unknown_sender" };
   const simulated = isSimulatedLead(lead);
   if (simulated && lead.status !== "opted_out") {
     const [[account], [live]] = await Promise.all([
@@ -377,14 +393,11 @@ export async function receiveSimulatorInbound(db: Db, ctx: Pick<ChatContext, "le
       db.select({ id: agentVersions.id }).from(agentVersions).where(and(eq(agentVersions.accountId, lead.accountId), eq(agentVersions.status, "live"))),
     ]);
     const blocked = account ? simulatedBuyerGate(lead, account) : null;
-    if (blocked) return { kind: "ignored", reason: blocked };
+    if (blocked) return { ok: false, reason: blocked };
     // Before go-live too, a simulated chat runs only on a published agent version.
-    if (!live) return { kind: "ignored", reason: "no_agent" };
+    if (!live) return { ok: false, reason: "no_agent" };
   }
-  // The monthly spend cap: an open simulated chat keeps replying, as on WhatsApp; a new
-  // conversation started by the buyer waits for a person (inboundConversation).
-  // Simulated buyers skip the not-live gate (tests during setup); real leads keep it.
-  return receiveLeadMessage(db, lead, SIMULATOR_CHANNEL, `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now, { allowBeforeGoLive: simulated });
+  return { ok: true, lead, simulated };
 }
 
 /** An order-form link card: the client lays it out per language, with amounts and IDs isolated left-to-right. */

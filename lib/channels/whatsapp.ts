@@ -401,12 +401,18 @@ export async function receiveLeadMessage(
   if (!gate.ok) return { kind: "ignored", reason: gate.reason };
   const conv = gate.conv;
   const result = await storeBuyerText(db, conv, channelMessageId, text, now, { accountId, conversationId: conv.id, leadId: lead.id });
-  if (result.kind === "stored" && conv.status === "open") {
-    // The buyer answered: the agent handles the lead (unless a person already does).
-    await db.update(leads).set({ status: "agent_handling" })
-      .where(and(eq(leads.id, lead.id), eq(leads.accountId, accountId), or(eq(leads.status, "new"), eq(leads.status, "waiting_for_reply"))));
-  }
+  if (result.kind === "stored") await markBuyerEngaged(db, lead, conv);
   return result;
+}
+
+/**
+ * The buyer answered (a message, or a switch to voice on a chat that had not started): the agent handles
+ * the lead, unless a person already does or the conversation waits for one.
+ */
+export async function markBuyerEngaged(db: Db, lead: Pick<Lead, "id" | "accountId">, conv: Pick<Conversation, "status">): Promise<void> {
+  if (conv.status !== "open") return;
+  await db.update(leads).set({ status: "agent_handling" })
+    .where(and(eq(leads.id, lead.id), eq(leads.accountId, lead.accountId), or(eq(leads.status, "new"), eq(leads.status, "waiting_for_reply"))));
 }
 
 /** Stores the buyer's message once (deduplicated on the Twilio SID), card numbers masked. */
