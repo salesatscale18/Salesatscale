@@ -271,8 +271,9 @@ export default async function LeadCardPage({
         </header>
         <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} handoffWhy={handoffWhyLine} />
         {/* Phone only (sas.css): a compact deal summary, then tabs Chat · Deal · Timeline. Radio inputs, so they work without JS. */}
-        <input type="radio" name="lead-tab" id="lt-chat" className="sas-lead__tab-radio" defaultChecked aria-label={t("lead.tabs.chat")} />
-        <input type="radio" name="lead-tab" id="lt-deal" className="sas-lead__tab-radio" aria-label={t("lead.tabs.deal")} />
+        {/* `?tab=deal` (Needs you's call items, O7) opens on the Deal tab, so the call card is in view. */}
+        <input type="radio" name="lead-tab" id="lt-chat" className="sas-lead__tab-radio" defaultChecked={sp.tab !== "deal"} aria-label={t("lead.tabs.chat")} />
+        <input type="radio" name="lead-tab" id="lt-deal" className="sas-lead__tab-radio" defaultChecked={sp.tab === "deal"} aria-label={t("lead.tabs.deal")} />
         <input type="radio" name="lead-tab" id="lt-timeline" className="sas-lead__tab-radio" aria-label={t("lead.tabs.timeline")} />
         <div className="sas-lead__summary" data-testid="lead-summary">
           {nextStep ? <span><strong>{t("lead.card.next_step")}:</strong> {nextStep}</span> : null}

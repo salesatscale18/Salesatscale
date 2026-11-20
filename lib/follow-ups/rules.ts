@@ -94,6 +94,18 @@ export function formatDueLocal(at: Date, timezone: string): string {
   return `${get("weekday")} ${get("day")} ${get("month")} ${get("hour")}:${get("minute")}`;
 }
 
+/**
+ * "Friday 20 November at 12:30": a time as the buyer should read it (O7, UX), in English for the
+ * agent to say in the buyer's own language. Seller screens keep formatDueLocal's short form.
+ */
+export function formatBuyerLocal(at: Date, timezone: string): string {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone, weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit", hourCycle: "h23",
+  }).formatToParts(at);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
+  return `${get("weekday")} ${get("day")} ${get("month")} at ${get("hour")}:${get("minute")}`;
+}
+
 /** "Tue 17 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)": the agent's clock for scheduling. */
 export function localNowLine(now: Date, timezone: string): string {
   const year = new Intl.DateTimeFormat("en-GB", { timeZone: timezone, year: "numeric" }).format(now);

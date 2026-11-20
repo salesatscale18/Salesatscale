@@ -136,7 +136,8 @@ describe("Callback requests (O6)", () => {
       const at = ahead(26);
       const r = await request(acc, c, at.toISOString().replace(".000Z", "Z"));
       expect(r.outcome).toBe("ok");
-      expect(r.result).toMatchObject({ ok: true, time_local: expect.stringMatching(/^\w{3} \d{1,2} \w{3} \d{2}:\d{2}$/) });
+      // O7: the agent gets the long form to tell the buyer; the short one is for the seller's trace.
+      expect(r.result).toMatchObject({ ok: true, time_local: expect.stringMatching(/^\w+day \d{1,2} \w+ at \d{2}:\d{2}$/), time_short: expect.stringMatching(/^\w{3} \d{1,2} \w{3} \d{2}:\d{2}$/) });
       expect(String(r.result.message)).toContain("a member of our team will call at that time");
       // The chat does not pause.
       expect((await getConversation(db, acc.id, c.conversationId))!.status).toBe("open");
@@ -146,7 +147,7 @@ describe("Callback requests (O6)", () => {
       expect(cb).toMatchObject({ status: "requested", brief: "Price for 3 sites; bring the install plan.", timezone: "Asia/Jerusalem", conversationId: c.conversationId });
       expect(cb.at.getTime()).toBe(at.getTime());
       const [deal] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
-      expect(deal.nextStep).toBe(`Call requested ${r.result.time_local}: Price for 3 sites; bring the install plan.`);
+      expect(deal.nextStep).toBe(`Call requested ${r.result.time_short}: Price for 3 sites; bring the install plan.`);
       expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, acc.id), eq(auditLog.action, "callback.requested"), eq(auditLog.targetId, c.leadId)))).toHaveLength(1);
     });
 
@@ -222,7 +223,8 @@ describe("Callback requests (O6)", () => {
       expect(html).toContain("Call requested: ");
       expect(html).toContain(`· ${item!.leadName}`);
       expect(html).toContain("Wants to discuss the contract");
-      expect(html).toContain(`href="/app/${acc.slug}/leads/${c.leadId}"`);
+      // O7: the lead opens on the Deal tab (phone) with the call card in view.
+      expect(html).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#callback"`);
 
       const cb = (await leadCallback(db, acc.id, c.leadId))!;
       expect((await confirmCallback(db, holder.access as never, c.leadId, cb.id)).ok).toBe(true);

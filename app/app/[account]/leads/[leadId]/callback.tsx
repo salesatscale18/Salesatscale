@@ -4,6 +4,7 @@ import { DateField } from "@/components/sas/date-field";
 import type { CallbackRequest } from "@/lib/callbacks/rules";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
 import { t, type MessageKey } from "@/lib/i18n";
+import { zonePlainName } from "@/lib/format";
 import { afterCallAction, cancelCallbackAction, changeCallbackAction, confirmCallbackAction } from "./callback-actions";
 
 /** "YYYY-MM-DD" and "HH:MM" of an instant in a time zone (the Change time fields' starting values). */
@@ -11,6 +12,12 @@ function localParts(at: Date, timezone: string): { date: string; time: string } 
   const p = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(at);
   const g = (type: string) => p.find((x) => x.type === type)?.value ?? "";
   return { date: `${g("year")}-${g("month")}-${g("day")}`, time: `${g("hour")}:${g("minute")}` };
+}
+
+/** "Times are Israel time (Asia/Jerusalem).": the plain zone name with its code (lib/format.ts), the code alone when there is no plain name. */
+export function callbackZoneLine(timezone: string, at = new Date()): string {
+  const name = zonePlainName(timezone, at);
+  return name ? t("callback.zone_named", { name, tz: timezone }) : t("callback.zone", { tz: timezone });
 }
 
 const NOTICE: Record<string, MessageKey> = { confirmed: "callback.notice.confirmed", changed: "callback.notice.changed", cancelled: "callback.notice.cancelled" };
@@ -56,7 +63,7 @@ export function CallbackPanel({ slug, leadId, request, canManage, notice, error,
             <span>{t(confirmed ? "callback.confirmed" : "callback.requested", { time: formatDueLocal(request.at, request.timezone) })}</span>
           </span>
           {request.brief ? <span className="sas-small" style={{ overflowWrap: "anywhere" }} data-testid="callback-brief">{t("callback.brief", { brief: request.brief })}</span> : null}
-          <span className="sas-small">{t(confirmed ? "callback.hint_confirmed" : "callback.hint", { tz: request.timezone })}</span>
+          <span className="sas-small">{t(confirmed ? "callback.hint_confirmed" : "callback.hint", { zone: callbackZoneLine(request.timezone, request.at) })}</span>
           {canManage ? (
             <div className="sas-stack-2">
               {!confirmed ? (

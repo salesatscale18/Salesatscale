@@ -14,7 +14,7 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { AccountAccess } from "@/lib/accounts/service";
 import { summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
-import { formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
+import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
@@ -37,7 +37,8 @@ export type CallbackInput = { time: unknown; brief: unknown };
 export type CallbackContext = { accountId: string; leadId: string; conversationId: string };
 
 export type CallbackResult =
-  | { ok: true; request: CallbackRequest; timeLocal: string; replaced: boolean }
+  /** timeLocal: the short form for seller views ("Fri 20 Nov 12:30"); timeForBuyer: the long form the agent tells the buyer. */
+  | { ok: true; request: CallbackRequest; timeLocal: string; timeForBuyer: string; replaced: boolean }
   | { ok: false; rule: string; extra: Record<string, unknown> };
 
 /** The deal's next step for a call request: "Call requested Wed 18 Nov 10:00: pricing for 3 sites". */
@@ -82,8 +83,8 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
       ok: false, rule,
       extra: check.nearest
         ? {
-            suggested_time: isoInZone(check.nearest, tz), suggested_local: formatDueLocal(check.nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
-            message: `Not requested. Offer the buyer ${formatDueLocal(check.nearest, tz)} instead (in their own wording); when they agree, call request_callback with suggested_time.`,
+            suggested_time: isoInZone(check.nearest, tz), suggested_local: formatBuyerLocal(check.nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
+            message: `Not requested. Offer the buyer ${formatBuyerLocal(check.nearest, tz)} instead (in their own wording); when they agree, call request_callback with suggested_time.`,
           }
         : { contact_hours: summarizeContactHours(contact.contactHours), message: "Not requested: ask the buyer for another time within the next 30 days and within contact hours." },
     };
@@ -102,7 +103,7 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
     }),
   ]);
   const request = (await leadCallback(db, ctx.accountId, ctx.leadId, now))!;
-  return { ok: true, request, timeLocal: formatDueLocal(at, tz), replaced: !!before };
+  return { ok: true, request, timeLocal: formatDueLocal(at, tz), timeForBuyer: formatBuyerLocal(at, tz), replaced: !!before };
 }
 
 // ---------------------------------------------------------------------------
@@ -130,6 +131,20 @@ export type CallbackNeed = CallbackRequest & { leadName: string; company: string
 
 /** Requests waiting for the seller, for the account's Needs you list (not test leads, not closed leads). */
 export async function requestedCallbacks(db: Db, accountId: string, now: Date): Promise<CallbackNeed[]> {
+  return (await callbackNeeds(db, accountId, now)).filter((c) => c.status === "requested");
+}
+
+/**
+ * Confirmed calls whose time has passed and that wait for "How did the call go?" (the same
+ * condition as callbackAfterCall), for Needs you's "Call finished: who continues?" (O7, UX).
+ * Gone once either choice is made.
+ */
+export async function finishedCallbacks(db: Db, accountId: string, now: Date): Promise<CallbackNeed[]> {
+  return (await callbackNeeds(db, accountId, now)).filter((c) => c.status === "confirmed" && !c.afterCall && !isActiveCallback(c, now));
+}
+
+/** Each lead's current call request with the lead's name (not test leads, not closed leads). */
+async function callbackNeeds(db: Db, accountId: string, now: Date): Promise<CallbackNeed[]> {
   const rows = await db.select({
     type: leadEvents.type, leadId: leadEvents.leadId, createdAt: leadEvents.createdAt, data: leadEvents.data,
     leadName: leads.fullName, company: leads.company, marketId: leads.marketId,
@@ -141,7 +156,6 @@ export async function requestedCallbacks(db: Db, accountId: string, now: Date): 
     ));
   const lead = new Map(rows.map((r) => [r.leadId, r]));
   return currentCallbacks(rows)
-    .filter((c) => c.status === "requested")
     .map((c) => ({ ...c, leadName: lead.get(c.leadId)!.leadName, company: lead.get(c.leadId)!.company, marketId: lead.get(c.leadId)!.marketId }));
 }
 

@@ -26,6 +26,13 @@ export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_off
 export const APP_MESSAGE_CALL = "app_message";
 const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback", "team_answer", "quote_declined"];
 
+/**
+ * Text a team action sent (UX, O7): the callback time the seller confirmed, changed or cancelled,
+ * the team's answer to a question, and the declined price. Seller views label it "Team" in the
+ * human colour, not "Agent": violet "Agent" is only for what the agent wrote.
+ */
+export const isTeamText = (k: AppMessageKind | undefined) => k === "callback" || k === "team_answer" || k === "quote_declined";
+
 /** Plain text the app wrote (not a quote card): shown as "Sent by the app" in seller views. */
 export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback" || k === "team_answer" || k === "quote_declined";
 

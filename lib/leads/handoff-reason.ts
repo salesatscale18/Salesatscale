@@ -8,8 +8,9 @@
  * reached"); words in the agent's hand_off_to_human reason (legal, existing
  * customer, complaint, insists, upset), matched conservatively; the open
  * objection of the hand-over brief on the "The buyer is upset" play (key
- * "handoff"). The tool has no category today. No match: the reason text alone,
- * with no label.
+ * "handoff"). The tool has no category today. No match: the stored reason text
+ * as it is, in any language, on one line and cut with "…" (UX, O7). Nothing
+ * only when there is neither a label nor a reason.
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -41,13 +42,9 @@ export function handoffLabel(e: { type: string; data: Record<string, unknown> | 
   return null;
 }
 
-/** The agent's reason in a few words: a leading "The buyer is upset:" style prefix dropped, one line, cut on a word. Pure. */
-export function handoffDetail(reason: string, max = HANDOFF_DETAIL_MAX): string {
-  let s = reason.replace(/\s+/g, " ").trim();
-  // "The buyer is upset: false night alarms" -> "false night alarms" (the label says the first part).
-  const colon = s.indexOf(":");
-  if (colon > 0 && colon < 40 && PATTERNS.some(([, re]) => re.test(s.slice(0, colon)))) s = s.slice(colon + 1).trim();
-  s = s.replace(/[.\s]+$/, "");
+/** One line, cut with "…" past `max` characters (on a word when there is one nearby). Pure. */
+export function oneLine(text: string, max = HANDOFF_DETAIL_MAX): string {
+  let s = text.replace(/\s+/g, " ").trim();
   if (s.length > max) {
     const cut = s.slice(0, max + 1);
     const at = cut.lastIndexOf(" ");
@@ -56,13 +53,24 @@ export function handoffDetail(reason: string, max = HANDOFF_DETAIL_MAX): string 
   return s;
 }
 
+/** The agent's reason in a few words after a label: a leading "The buyer is upset:" style prefix dropped, one line, cut on a word. Pure. */
+export function handoffDetail(reason: string, max = HANDOFF_DETAIL_MAX): string {
+  let s = reason.replace(/\s+/g, " ").trim();
+  // "The buyer is upset: false night alarms" -> "false night alarms" (the label says the first part).
+  const colon = s.indexOf(":");
+  if (colon > 0 && colon < 40 && PATTERNS.some(([, re]) => re.test(s.slice(0, colon)))) s = s.slice(colon + 1).trim();
+  return oneLine(s.replace(/[.\s]+$/, ""), max);
+}
+
 /** The one line: "Upset: false night alarms", the label alone, the reason alone, or null. Pure. */
 export function handoffWhy(e: { type: string; data: Record<string, unknown> | null }): string | null {
   const label = handoffLabel(e);
-  const reason = e.type === "handoff.requested" && typeof e.data?.reason === "string" ? handoffDetail(e.data.reason) : "";
-  const name = label ? t(`handoff.why.${label}` as MessageKey) : "";
-  if (name && reason) return `${name}: ${reason}`;
-  return name || reason || null;
+  const raw = e.type === "handoff.requested" && typeof e.data?.reason === "string" ? e.data.reason : "";
+  // No label: the stored reason as it is (one line, cut with "…"), whatever its language.
+  if (!label) return oneLine(raw) || null;
+  const reason = raw ? handoffDetail(raw) : "";
+  const name = t(`handoff.why.${label}` as MessageKey);
+  return reason ? `${name}: ${reason}` : name;
 }
 
 /** The line for each lead's latest hand-off (scoped by account); leads with none are left out. */

@@ -9,7 +9,7 @@ import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
 import { MessageBody } from "@/components/sas/message-body";
 import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
-import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
+import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { seesPlatformDetails } from "@/lib/auth/display";
@@ -192,7 +192,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
       {thread.map(({ message: m, calls: allCalls }) => {
         // The app's own messages (after a seller approval) are linked by an app_message row: not a tool call.
         const calls = allCalls.filter((c) => c.name !== APP_MESSAGE_CALL);
-        const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
+        // A message a team action sent (callback time, team answer, declined price) reads "Team" in the human colour (O7, UX).
+        const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? (isTeamText(kinds.get(m.id)) ? "human" : "agent") : m.actor === "human" ? "human" : "system";
         const trace: TraceItem[] = [];
         const usage = m.usage as { inputTokens?: number; outputTokens?: number; cacheReadTokens?: number } | null;
         const before = pendingMarkers.filter((mk) => mk.at.getTime() <= m.createdAt.getTime());

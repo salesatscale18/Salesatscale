@@ -116,12 +116,13 @@ describe("Agreed follow-ups", () => {
       const due = aheadOnTheHour(26);
       const r = await schedule(c, iso(due), "  the quote for the second kitchen ");
       expect(r.outcome).toBe("ok");
-      expect(r.result).toMatchObject({ ok: true, due_local: expect.stringMatching(/^\w{3} \d{1,2} \w{3} \d{2}:00$/) });
+      // O7: the long form for the buyer, the short one for the seller's trace.
+      expect(r.result).toMatchObject({ ok: true, due_local: expect.stringMatching(/^\w+day \d{1,2} \w+ at \d{2}:00$/), due_short: expect.stringMatching(/^\w{3} \d{1,2} \w{3} \d{2}:00$/) });
       const [f] = await db.select().from(followUps).where(eq(followUps.leadId, c.leadId));
       expect(f).toMatchObject({ status: "scheduled", topic: "the quote for the second kitchen", language: "en", conversationId: c.conversationId, attempts: 0 });
       expect(f.dueAt.getTime()).toBe(due.getTime());
       const [deal] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
-      expect(deal.nextStep).toBe(`Follow up ${r.result.due_local}: the quote for the second kitchen`);
+      expect(deal.nextStep).toBe(`Follow up ${r.result.due_short}: the quote for the second kitchen`);
       const audit = await db.select().from(auditLog).where(and(eq(auditLog.accountId, c.accountId), eq(auditLog.action, "follow_up.scheduled")));
       expect(audit.map((a) => a.targetId)).toContain(f.id);
       const ev = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "follow_up.scheduled")));
@@ -182,7 +183,7 @@ describe("Agreed follow-ups", () => {
       const r = await runBuyerTurn(db, llm, { accountId: c.accountId, conversationId: c.conversationId, text: "ok thanks" });
       expect(r.status).toBe("replied");
       const turn = llm.requests[0].system[1];
-      expect(turn).toMatch(/Follow-up scheduled: you write to the buyer on \w{3} \d{1,2} \w{3} \d{2}:00 about the second kitchen\./);
+      expect(turn).toMatch(/Follow-up scheduled: you write to the buyer on \w+day \d{1,2} \w+ at \d{2}:00 about the second kitchen\./);
       expect(turn).toContain("Local time now:");
       expect(turn).toContain("(Asia/Jerusalem, UTC+0");
       expect(llm.requests[0].tools.map((x: { name: string }) => x.name)).toContain("schedule_follow_up");

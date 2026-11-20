@@ -13,7 +13,7 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { AccountAccess } from "@/lib/accounts/service";
 import { isWithinContactHours, summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
-import { cleanTopic, dueWindow, formatDueLocal, isoInZone, nearestAllowedTime, parseDueAt, type FollowUpReason } from "./rules";
+import { cleanTopic, dueWindow, formatBuyerLocal, formatDueLocal, isoInZone, nearestAllowedTime, parseDueAt, type FollowUpReason } from "./rules";
 
 // ---------------------------------------------------------------------------
 // The agent's tool
@@ -23,7 +23,8 @@ export type ScheduleInput = { due_at: unknown; topic: unknown };
 export type ScheduleContext = { accountId: string; leadId: string; conversationId: string; language: string };
 
 export type ScheduleResult =
-  | { ok: true; followUp: FollowUp; dueLocal: string; replaced: boolean }
+  /** dueLocal: the short form for seller views; dueForBuyer: the long form the agent tells the buyer ("Friday 20 November at 12:30"). */
+  | { ok: true; followUp: FollowUp; dueLocal: string; dueForBuyer: string; replaced: boolean }
   | { ok: false; rule: string; extra: Record<string, unknown> };
 
 /**
@@ -67,8 +68,8 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
       ok: false, rule: "Outside contact hours",
       extra: nearest
         ? {
-            suggested_due_at: isoInZone(nearest, tz), suggested_local: formatDueLocal(nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
-            message: `Not scheduled: you only write to buyers within contact hours. Offer the buyer ${formatDueLocal(nearest, tz)} instead (in their own wording); when they agree, call schedule_follow_up with suggested_due_at.`,
+            suggested_due_at: isoInZone(nearest, tz), suggested_local: formatBuyerLocal(nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
+            message: `Not scheduled: you only write to buyers within contact hours. Offer the buyer ${formatBuyerLocal(nearest, tz)} instead (in their own wording); when they agree, call schedule_follow_up with suggested_due_at.`,
           }
         : { contact_hours: summarizeContactHours(contact.contactHours), message: "Not scheduled: ask the buyer for another time within contact hours." },
     };
@@ -98,7 +99,7 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
     }),
   ]);
   const [followUp] = await db.select().from(followUps).where(and(eq(followUps.id, id), eq(followUps.accountId, ctx.accountId)));
-  return { ok: true, followUp, dueLocal, replaced: !!existing };
+  return { ok: true, followUp, dueLocal, dueForBuyer: formatBuyerLocal(due, tz), replaced: !!existing };
 }
 
 /** The deal's next step for a scheduled follow-up: "Follow up Tue 18 Nov 10:00: the second office". */

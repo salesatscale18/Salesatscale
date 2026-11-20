@@ -7,7 +7,7 @@ import { cache } from "react";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
-import { requestedCallbacks } from "@/lib/callbacks/service";
+import { CONFIRMED_SHOWN_MS, finishedCallbacks, requestedCallbacks } from "@/lib/callbacks/service";
 import { openTeamQuestions } from "@/lib/team-questions/service";
 import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
@@ -35,6 +35,8 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
   /** O6: the agent took a time for a call; the seller confirms or changes it. `timezone` is the zone the time was set in. */
   | { kind: "callback_requested"; callbackId: string; callAt: Date; timezone: string; brief: string }
+  /** O7: a confirmed call whose time has passed, waiting for "How did the call go?" (who continues with the buyer). */
+  | { kind: "call_finished"; callbackId: string; callAt: Date; timezone: string }
   /** O4: a question the agent sent to the team (ask_team); answered in Knowledge. The chat is not paused. */
   | { kind: "team_question"; question: string; buyerWords: string; mustHave: boolean | null; conversationId: string }
 );
@@ -111,8 +113,8 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     failedFollowUps(db, accountId, now),
   ]);
   // A call request waiting for the seller (lib/callbacks, O6), and questions sent to the team (lib/team-questions, O4).
-  const [callbacks, questions, whys] = await Promise.all([
-    requestedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
+  const [callbacks, finished, questions, whys] = await Promise.all([
+    requestedCallbacks(db, accountId, now), finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
     // Why each handed lead needs a person (O35): the latest hand-off's reason line.
     handoffWhyByLead(db, accountId, handed.map((r) => r.leadId)),
   ]);
@@ -158,6 +160,12 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       callbackId: c.id, callAt: c.at, timezone: c.timezone, brief: c.brief,
     });
   }
+  for (const c of finished) {
+    items.push({
+      leadId: c.leadId, leadName: c.leadName, company: c.company, marketId: c.marketId, kind: "call_finished", id: `call_finished:${c.id}`,
+      at: new Date(c.at.getTime() + CONFIRMED_SHOWN_MS), callbackId: c.id, callAt: c.at, timezone: c.timezone,
+    });
+  }
   for (const q of questions) {
     items.push({
       leadId: q.leadId, leadName: q.leadName, company: q.company, marketId: q.marketId, kind: "team_question", id: `team_question:${q.conversationId}:${q.key}`, at: q.askedAt,
@@ -199,8 +207,8 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
     db.select({ n: count() }).from(followUps).innerJoin(leads, eq(leads.id, followUps.leadId)).where(failedFollowUpWhere(accountId, now)),
   ]);
   // Call requests are folded from lead events (lib/callbacks), so they are counted from the same read as the list.
-  const [c, q] = await Promise.all([requestedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
-  return a.n + h.n + o.n + f.n + u.n + c.length + q.length;
+  const [c, cf, q] = await Promise.all([requestedCallbacks(db, accountId, now), finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
+  return a.n + h.n + o.n + f.n + u.n + c.length + cf.length + q.length;
 }
 
 /** needsYouCount at the current time, cached per request (the nav badge in the layout). */
@@ -211,8 +219,12 @@ export function needsYouHref(base: string, item: NeedsYouItem): string {
   switch (item.kind) {
     case "human_handling":
     case "follow_up_failed":
-    case "callback_requested":
       return `${base}/leads/${item.leadId}`;
+    // The lead's Deal tab (phone) with the call card in view (O7, UX).
+    case "callback_requested":
+      return `${base}/leads/${item.leadId}?tab=deal#callback`;
+    case "call_finished":
+      return `${base}/leads/${item.leadId}?tab=deal#after-call`;
     case "team_question":
       // Knowledge's answer panel for this question (O4).
       return `${base}/setup/knowledge?${new URLSearchParams({ panel: "answer", question: item.question }).toString()}`;

@@ -25,7 +25,7 @@ import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { leadCallback } from "@/lib/callbacks/service";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
 import { priceApprovalContext } from "./price-approval";
-import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
+import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 
 export const MAX_TOOL_ROUNDS = 8;
@@ -126,8 +126,9 @@ export async function runBuyerTurn(
     `${turnContext(version.playbook, deal, {
       stage: stageFacts, agentMessages, opener, catalog: activeItems, names: buyerNames(version.playbook, account, lang),
       // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
-      followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
-      callback: callback ? { timeLocal: formatDueLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
+      // Times as the buyer should hear them ("Friday 20 November at 12:30", O7).
+      followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
+      callback: callback ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
       teamQuestions,
       priceApproval,
       localNow: localNowLine(new Date(), contact.timezone),

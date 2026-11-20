@@ -66,7 +66,7 @@ describe("call time rules", () => {
   it("the buyer reads the time in their language and the lead's zone", () => {
     const at = new Date("2026-11-19T08:00:00Z");
     expect(buyerCallTime(at, TZ, "en")).toBe("Thursday 19 November at 10:00");
-    expect(buyerCallTime(at, TZ, "he")).toBe("יום חמישי, 19 בנובמבר, 10:00");
+    expect(buyerCallTime(at, TZ, "he")).toBe("יום חמישי, 19 בנובמבר בשעה 10:00");
     expect(t("buyer.app.callback_confirmed", { time: buyerCallTime(at, TZ, "en") }, "en")).toBe("Your call is confirmed for Thursday 19 November at 10:00. Until then, I'm here for any question.");
     expect(t("buyer.app.callback_changed", { time: "x" }, "he")).toContain("הצוות העביר");
   });

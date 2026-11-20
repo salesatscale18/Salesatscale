@@ -838,7 +838,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     return {
       outcome: "ok",
       result: {
-        ok: true, due_local: r.dueLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
+        // due_local is the form to tell the buyer ("Friday 20 November at 12:30"); due_short is for the seller's trace.
+        ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
         message: "Scheduled. Confirm the time back to the buyer in their own wording and language (for example \"tomorrow at 10\"), in one short sentence. You will write to them yourself at that time.",
       },
     };
@@ -851,7 +852,8 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     return {
       outcome: "ok",
       result: {
-        ok: true, time_local: r.timeLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
+        // time_local is the form to tell the buyer ("Friday 20 November at 12:30"); time_short is for the seller's trace.
+        ok: true, time_local: r.timeForBuyer, time_short: r.timeLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
         message: `Requested. Tell the buyer, in one short sentence in their wording, that ${callRoleOf(ctx.playbook)} will call at that time and the team will confirm it here. Keep answering their questions until the call.`,
       },
     };

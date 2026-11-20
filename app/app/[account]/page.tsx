@@ -1,5 +1,6 @@
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
+import { quoteRef, TextWithId } from "@/components/sas/id-text";
 import { Banner, MetricTile, Timeline, type TimelineItem } from "@/components/sas/record";
 import { SidePanel } from "@/components/sas/list-kit";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
@@ -52,6 +53,7 @@ const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | 
   form_expiring: { icon: "clock", tone: "warning" },
   follow_up_failed: { icon: "x-circle", tone: "danger" },
   callback_requested: { icon: "phone-call", tone: "neutral" },
+  call_finished: { icon: "phone-call", tone: "neutral" },
   team_question: { icon: "book-open", tone: "neutral" },
 };
 
@@ -135,26 +137,30 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   ];
   const funnelMax = Math.max(1, ...funnel.map((f) => f.value));
 
-  const itemText = (it: NeedsYouItem): { title: string; detail: string } => {
+  /** titleId / detailId: the order or quote ID inside the text, rendered as one unbroken code-font run (.sas-id, nowrap). */
+  const itemText = (it: NeedsYouItem): { title: string; detail: string; titleId?: string; detailId?: string } => {
     const who = it.company ? `${it.leadName} · ${it.company}` : it.leadName;
     switch (it.kind) {
       case "quote_approval":
-        return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
+        return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), titleId: quoteRef(it.quoteNumber), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
       case "human_handling":
         // O35: why the lead needs a person, after the name ("Dana Demo needs a person · Upset: false night alarms").
         return { title: it.why ? t("overview.needs.human_handling_why", { name: it.leadName, why: it.why }) : t("overview.needs.human_handling", { name: it.leadName }), detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
       case "bank_transfer":
       case "payment_failed":
-        return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}` };
+        return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}`, detailId: orderLabel(account.tradeName, it.orderNumber) };
       case "form_unsigned":
-        return { title: t("overview.needs.form_unsigned"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_unsigned.detail", { when: timeAgo(it.openedAt, now, account.timezone) })}` };
+        return { title: t("overview.needs.form_unsigned"), detail: `${who} · ${quoteRef(it.quoteNumber)} · ${t("overview.needs.form_unsigned.detail", { when: timeAgo(it.openedAt, now, account.timezone) })}`, detailId: quoteRef(it.quoteNumber) };
       case "form_expiring":
-        return { title: t("overview.needs.form_expiring"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_expiring.detail", { hours: Math.max(1, Math.ceil((it.expiresAt.getTime() - now.getTime()) / 3_600_000)) })}` };
+        return { title: t("overview.needs.form_expiring"), detail: `${who} · ${quoteRef(it.quoteNumber)} · ${t("overview.needs.form_expiring.detail", { hours: Math.max(1, Math.ceil((it.expiresAt.getTime() - now.getTime()) / 3_600_000)) })}`, detailId: quoteRef(it.quoteNumber) };
       case "follow_up_failed":
         return { title: t("overview.needs.follow_up_failed", { name: it.leadName }), detail: [it.company, formatDueLocal(it.dueAt, account.timezone), reasonText(it.reason)].filter(Boolean).join(" · ") };
       case "callback_requested":
         // O6: the time in the zone it was set in (the lead's market), with the agent's brief.
         return { title: t("overview.needs.callback_requested", { time: formatDueLocal(it.callAt, it.timezone), name: it.leadName }), detail: [it.company, it.brief].filter(Boolean).join(" · ") };
+      case "call_finished":
+        // O7: the confirmed call's time has passed; who goes on with the buyer? Company and the call time.
+        return { title: t("overview.needs.call_finished", { name: it.leadName }), detail: [it.company, formatDueLocal(it.callAt, it.timezone)].filter(Boolean).join(" · ") };
       case "team_question":
         // O4: a question to answer (not a hand-off): the lead, must-have, the buyer's own words.
         return {
@@ -210,8 +216,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
               <Icon name={look.icon} />
             </span>
             <span className="sas-list__main">
-              <strong>{text.title}</strong>
-              <span className="sas-small">{text.detail}</span>
+              <strong><TextWithId text={text.title} id={text.titleId ?? ""} size="inherit" /></strong>
+              <span className="sas-small"><TextWithId text={text.detail} id={text.detailId ?? ""} /></span>
             </span>
             <span className={look.tone === "human" ? buttonClass("takeover", "sm") : buttonClass("secondary", "sm")}>
               {t(`overview.needs.${it.kind}.action` as MessageKey)}

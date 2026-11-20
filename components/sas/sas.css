@@ -507,6 +507,8 @@ h2.sas-group-label { margin: 0; }
   #lt-timeline:checked ~ .sas-lead__body [data-tab]:not([data-tab~="timeline"]) { display: none; }
   #lt-chat:checked ~ .sas-lead__body .sas-lead__side, #lt-timeline:checked ~ .sas-lead__body .sas-lead__side { display: none; }
   #lt-deal:checked ~ .sas-lead__body .sas-lead__side { border-block-start: 0; }
+  /* A link to a call card (Needs you, ?tab=deal#callback) lands below the top bar and the sticky tabs. */
+  .sas-lead__side > section[id] { scroll-margin-top: 100px; }
 }
 /* Sticky strips sit below the phone top bar (52px), e.g. the Playbook contents strip. */
 @media (max-width: 767px) {

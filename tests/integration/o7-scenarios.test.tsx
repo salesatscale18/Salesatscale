@@ -24,7 +24,10 @@ vi.mock("@/lib/auth/account", () => ({
   actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "localhost:3000" }) }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ host: "localhost:3000" }),
+  cookies: async () => ({ get: () => undefined, set: () => {}, getAll: () => [] }),
+}));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
@@ -38,6 +41,7 @@ const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { conversationScenarioCheck } = await import("@/lib/agent/scenario-results");
 const { scenarioById, SCENARIOS } = await import("@/lib/agent/scenarios");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
+const { default: OverviewPage } = await import("@/app/app/[account]/page");
 
 const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
 const save = (name: string, html: string) => {
@@ -166,5 +170,16 @@ describe("O7: objection scenarios end to end (ScriptedLlm)", () => {
       expect(row(id)).toContain(esc(s.expected));
       expect(row(id)).toMatch(/data-run="">Run</);
     }
+  });
+
+  it("Overview Needs you: order and quote IDs are one unbroken run (.sas-id), so a phone never splits \"PD-\" from its number", async () => {
+    const html = renderToStaticMarkup(await (OverviewPage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({}) }));
+    save("overview", html);
+    // The demo's bank-transfer order: "<lead> · PD-<n> · <amount>", the order ID inside .sas-id.
+    expect(html).toMatch(/<span class="sas-small">[^<]* · <span class="sas-id">[A-Z]{2}-\d+<\/span> · [^<]+<\/span>/);
+    // No order or quote ID is left as plain text where it could break at the hyphen.
+    const needs = html.slice(html.indexOf('id="needs-h"'));
+    const plain = needs.replace(/<span class="sas-id"[^>]*>[^<]*<\/span>/g, "").replace(/<[^>]+>/g, " ");
+    expect(plain).not.toMatch(/\b(?:[A-Z]{2}|Q)-\d+\b/);
   });
 });

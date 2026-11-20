@@ -139,7 +139,7 @@ describe("Callback: cancel, and after the call", () => {
     expect((await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId)))[0].nextStep).toBeNull();
     const told = await lastApp(c.conversationId);
     expect(told?.call.result).toMatchObject({ kind: "callback", callback_id: cb.id, cancelled: true });
-    expect(told?.message.body).toBe("We need to move our call. We'll suggest a new time here.");
+    expect(told?.message.body).toBe("We can't make the call at that time. I'm here for any question, and you can ask for a new time whenever you like.");
     // The chat stays with the agent.
     expect((await db.select().from(conversations).where(eq(conversations.id, c.conversationId)))[0].status).toBe("open");
 
@@ -161,7 +161,7 @@ describe("Callback: cancel, and after the call", () => {
     await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, c.conversationId));
     const cb = await requested(acc, c);
     expect(await cancelCallback(db, accessOf(acc), c.leadId, cb.id, null)).toMatchObject({ ok: true, buyer: { told: true } });
-    expect((await lastApp(c.conversationId))?.message.body).toBe("אנחנו צריכים להזיז את השיחה שלנו. נציע כאן מועד חדש.");
+    expect((await lastApp(c.conversationId))?.message.body).toBe("לא נוכל לקיים את השיחה במועד הזה. אני כאן לכל שאלה, ואפשר לבקש מועד חדש מתי שתרצו.");
   });
 
   it("After the call: the prompt shows once the card is gone, until answered; hand back to the agent", async () => {

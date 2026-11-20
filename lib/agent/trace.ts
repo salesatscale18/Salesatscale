@@ -85,11 +85,12 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
       break;
     case "schedule_follow_up":
       sent = `${str(input.due_at)}${input.topic ? `: ${str(input.topic)}` : ""}`;
-      got = result.due_local ? `Follow-up set for ${str(result.due_local)}` : "";
+      // Seller view: the short time (due_short; results stored before O7 hold only due_local, short then too).
+      got = result.due_short || result.due_local ? `Follow-up set for ${str(result.due_short ?? result.due_local)}` : "";
       break;
     case "request_callback":
       sent = `${str(input.time)}${input.brief ? `: ${str(input.brief)}` : ""}`;
-      got = result.time_local ? `Call requested for ${str(result.time_local)}; the team confirms it` : "";
+      got = result.time_short || result.time_local ? `Call requested for ${str(result.time_short ?? result.time_local)}; the team confirms it` : "";
       break;
     case "ask_team":
       sent = `"${str(input.question)}"${input.must_have === true ? " (must-have)" : input.must_have === false ? " (good to know)" : ""}`;

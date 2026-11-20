@@ -147,7 +147,7 @@ export function cleanBrief(raw: unknown): string {
 
 /**
  * The call time as the buyer reads it, in their language and the lead's zone:
- * "Wednesday 18 November at 10:00"; Hebrew "יום רביעי, 18 בנובמבר, 10:00".
+ * "Wednesday 18 November at 10:00"; Hebrew "יום רביעי, 18 בנובמבר בשעה 10:00".
  */
 export function buyerCallTime(at: Date, timezone: string, language: string): string {
   const lang: Locale = isLocale(language) ? language : "en";
@@ -156,6 +156,6 @@ export function buyerCallTime(at: Date, timezone: string, language: string): str
   }).formatToParts(at);
   const get = (type: string) => parts.find((p) => p.type === type)?.value ?? "";
   const time = `${get("hour")}:${get("minute")}`;
-  if (lang === "he") return `${get("weekday")}, ${get("day")} ב${get("month")}, ${time}`;
+  if (lang === "he") return `${get("weekday")}, ${get("day")} ב${get("month")} בשעה ${time}`;
   return `${get("weekday")} ${get("day")} ${get("month")} at ${time}`;
 }

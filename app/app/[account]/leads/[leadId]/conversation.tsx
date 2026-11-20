@@ -4,7 +4,7 @@ import type { ReactNode } from "react";
 import { AgentStepsSwitch, ChatMessage, ChatThread, ThreadMarkerLine, type TraceItem } from "@/components/sas/chat";
 import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import { MessageBody } from "@/components/sas/message-body";
-import { APP_MESSAGE_CALL, appMessageKinds, isAppText } from "@/lib/agent/app-message";
+import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import type { ConversationView } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
 import { displayName, personName } from "@/lib/auth/display";
@@ -330,15 +330,16 @@ export function ConversationPanel({
             const back = from === "inbox" ? `/app/${slug}/conversations?c=${c.id}` : `/app/${slug}/leads/${c.leadId}#conversation`;
             return [...noteNodes, day, <QuoteCardMessage key={m.id} card={card} time={clock(m.createdAt)} timeTitle={full(m.createdAt)} slug={slug} approve={{ back }} />, ...afterNodes(m.id)];
           }
-          const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? "agent" : m.actor === "human" ? "human" : "system";
+          const kind = kinds.get(m.id);
+          // A message a team action sent (callback time, team answer, declined price) reads "Team" in the human colour (O7, UX).
+          const actor = m.actor === "buyer" ? "buyer" : m.actor === "agent" ? (isTeamText(kind) ? "human" : "agent") : m.actor === "human" ? "human" : "system";
           // Voice call entries (m.voiceSessionId): only test lab calls exist today, and the test lab renders their
           // spoken/typed marks itself. When calls reach leads, pass ChatMessage's `spoken` here as the test lab does;
           // like quote cards and form notes they must show whether or not the agent steps are shown.
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
-          const kind = kinds.get(m.id);
           // Text the app wrote itself (the close after an approval) reads "Agent", as the timeline does (round-4 review B8).
-          const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author ? personName({ id: m.actorUserId ?? "", ...author }, meId, t("people.you")) : t("conv.who.team")) : t("conv.who.system");
+          const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author && !isTeamText(kind) ? personName({ id: m.actorUserId ?? "", ...author }, meId, t("people.you")) : t("conv.who.team")) : t("conv.who.system");
           return [...noteNodes, day, (
             <ChatMessage
               key={m.id} actor={actor} who={who} time={delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)} timeTitle={full(m.createdAt)}
