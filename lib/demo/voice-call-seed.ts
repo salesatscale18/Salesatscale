@@ -4,19 +4,20 @@
  * network: the rows are written with the same fields the real flow writes.
  *
  * The lead (Gal Demo, a new English buyer in the Israel market) chatted with
- * the agent on the web chat page, then pressed "Talk to us". As a real buyer
+ * the agent on the web chat page, then switched the chat to voice. As a real buyer
  * call does, the call joins that same conversation (channel "simulator"):
  * - the chat: the agent's opener, as startSimulatorConversation writes it,
  *   and one exchange;
- * - the buyer's voice consent (recordVoiceConsent, the same service);
+ * - the buyer's first switch to voice, recorded silently (recordVoiceConsent, the same service);
  * - a `voice_sessions` row as createVoiceSession creates it and the engine
  *   (lib/voice/engine.ts) connects and ends it: mode "scripted", cost 0,
  *   ended by the buyer (user_hangup), with its answer time average;
  * - the spoken lines as the engine stores them (handleBuyerFinal,
  *   finalizeAgentTurn): `voice_session_id`, `spoken_at_ms` (offset in the
  *   call), `answer_ms` on agent lines, one line typed during the call, and the
- *   tool call of an agent turn linked to its message. The agent opens with the
- *   fixed disclosure line of a call that continues a chat (continuingLine);
+ *   tool call of an agent turn linked to its message. The agent opens with one
+ *   short line that picks up from the chat (no introduction: the buyer only
+ *   switched the chat to voice);
  * - the engine's closing system message "Voice call ended · m:ss", from which
  *   the thread shows the call's summary row.
  *
@@ -34,7 +35,6 @@ import { upsertLead } from "@/lib/leads/service";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { ensureChatLink } from "@/lib/simulator/service";
 import { recordVoiceConsent } from "@/lib/voice/buyer";
-import { continuingLine } from "@/lib/voice/instructions";
 import { DEFAULT_VOICE_MODEL, maxCallSeconds } from "@/lib/voice/settings";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 
@@ -62,7 +62,7 @@ type CallLine = {
   calls?: { name: string; input: Record<string, unknown>; result: Record<string, unknown> }[];
 };
 
-/** The spoken lines after the disclosure line (see callLines). */
+/** The spoken lines (see callLines). */
 export const VOICE_CALL_LINES = {
   pickUp: "You were telling me about the fridges at your two gyms.",
   fridges: "Right. We have five fridges in total, three here in Netanya and two in the second gym.",
@@ -73,11 +73,11 @@ export const VOICE_CALL_LINES = {
   bye: "No problem. Everything we said stays in the chat, so you can pick it up there any time. Have a good class, Gal!",
 } as const;
 
-function callLines(disclosure: string): CallLine[] {
+function callLines(): CallLine[] {
   const L = VOICE_CALL_LINES;
   return [
-    // The agent speaks first when the call connects (no buyer turn before it: answerMs null).
-    { actor: "agent", atMs: 1_200, lenMs: 6_800, body: `${disclosure} ${L.pickUp}`, answerMs: null },
+    // The agent speaks first when the call connects, picking up from the chat (no buyer turn before it: answerMs null).
+    { actor: "agent", atMs: 1_200, lenMs: 4_000, body: L.pickUp, answerMs: null },
     { actor: "buyer", atMs: 9_400, lenMs: 5_000, body: L.fridges },
     {
       actor: "agent", atMs: 15_300, lenMs: 9_500, body: L.plan, answerMs: 850,
@@ -143,12 +143,12 @@ export async function seedVoiceCall(
     data: { conversationId, channel: SIMULATOR_CHANNEL }, createdAt: chatStart,
   });
 
-  // The buyer agreed to talk by voice (the sheet's Start call), then the call.
+  // The buyer switched the chat to voice (recorded silently on the first call), then the call.
   const created = minAgo(now, VOICE_CALL.agoMin);
   await recordVoiceConsent(db, accountId, leadId, created);
   const connectedAt = new Date(created.getTime() + 2_000);
   const endedAt = new Date(connectedAt.getTime() + VOICE_CALL.durationSec * 1000);
-  const lines = callLines(continuingLine({ firstName, agent: names.agent, seller: names.seller }));
+  const lines = callLines();
   const answers = lines.map((x) => x.answerMs).filter((x): x is number => typeof x === "number");
   const voiceSessionId = randomUUID();
   await db.insert(voiceSessions).values({

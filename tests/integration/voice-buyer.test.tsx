@@ -38,7 +38,7 @@ const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { createSimulatedBuyer, startSimulatorConversation, buyerChat, resolveChatLink } = await import("@/lib/simulator/service");
 const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
-const { buildVoiceInstructions, loadVoiceInstructions, CHAT_RECAP_LINES } = await import("@/lib/voice/instructions");
+const { buildVoiceInstructions, loadVoiceInstructions, CHAT_RECAP_LINES, CONTINUE_FALLBACK } = await import("@/lib/voice/instructions");
 const { VoiceEngine } = await import("@/lib/voice/engine");
 const { ManualClock, flushAsync } = await import("@/lib/voice/realtime");
 const { ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
@@ -107,7 +107,7 @@ describe("the gates", () => {
     const b = await newBuyer();
     const ctx = await ctxOf(b);
     const gate = (env: Record<string, string> = SCRIPTED, now = IN_HOURS) => buyerVoiceGate(db, ctx, { env, now });
-    expect(await gate()).toMatchObject({ ok: true, consented: false });
+    expect(await gate()).toMatchObject({ ok: true });
     expect(await gate({})).toEqual({ ok: false, reason: "voice_off" });
 
     const set = (o: Partial<SellerAccount>) => db.update(sellerAccounts).set(o).where(eq(sellerAccounts.id, account.id));
@@ -116,7 +116,7 @@ describe("the gates", () => {
     await set({ voiceBuyerCalls: true, status: "paused" });
     expect(await gate()).toEqual({ ok: false, reason: "account_not_live" });
     await set({ status: "live", contactHours: null });
-    expect(await gate(SCRIPTED, SATURDAY)).toEqual({ ok: false, reason: "outside_hours" });
+    expect(await gate(SCRIPTED, SATURDAY)).toEqual({ ok: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00 · Fri 08:30–13:00 · Sat off" });
     expect((await gate(SCRIPTED, IN_HOURS)).ok).toBe(true);
     // Live mode at the spend cap (only the gate runs: nothing is called).
     await set({ monthlySpendCapMinor: 0 });
@@ -134,26 +134,84 @@ describe("the gates", () => {
     const he = await newBuyer("Dana Levi", "he");
     expect(await buyerVoiceGate(db, await ctxOf(he), { env: SCRIPTED, now: IN_HOURS })).toEqual({ ok: false, reason: "not_english" });
     // A refused buyer gets no session.
-    expect(await startBuyerVoiceCall(db, await ctxOf(he), he.token, { consent: true, deadlineSec: 270, env: SCRIPTED, now: IN_HOURS })).toEqual({ ok: false, reason: "unavailable" });
+    expect(await startBuyerVoiceCall(db, await ctxOf(he), he.token, { deadlineSec: 270, env: SCRIPTED, now: IN_HOURS })).toEqual({ ok: false, reason: "unavailable", gate: "not_english" });
     expect(await sessions(he.conversationId)).toEqual([]);
     expect(await sessions(b.conversationId)).toEqual([]);
   });
 });
 
+describe("why the button is off (a simulated chat's tester sees it; a real buyer does not)", () => {
+  it("each reason, the hours text, the language check and the simulated-only rule", async () => {
+    const { buyerVoiceState, isEnglish } = await import("@/lib/voice/buyer");
+    const b = await newBuyer("Sim Tester");
+    const ctx = await ctxOf(b);
+    const lead = ctx.lead;
+    const state = async (env: Record<string, string> = SCRIPTED, now = IN_HOURS) => buyerVoiceState(await buyerVoiceGate(db, ctx, { env, now }), lead);
+    const set = (o: Partial<SellerAccount>) => db.update(sellerAccounts).set(o).where(eq(sellerAccounts.id, account.id));
+    expect(await state()).toEqual({ available: true });
+    expect(await state({})).toEqual({ available: false }); // voice off for the platform: no button at all
+    await set({ voiceBuyerCalls: false });
+    expect(await state()).toEqual({ available: false, reason: "buyer_calls_off" });
+    await set({ voiceBuyerCalls: true, status: "paused" });
+    expect(await state()).toEqual({ available: false, reason: "account_not_live" });
+    // A setting-up account counts as live for a simulated chat.
+    await set({ status: "setting_up" });
+    expect(await state()).toEqual({ available: true });
+    await set({ status: "live", contactHours: null });
+    expect(await state(SCRIPTED, SATURDAY)).toEqual({ available: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00 · Fri 08:30–13:00 · Sat off" });
+    // The lead's market time zone decides: 07:00 UTC Thursday is 09:00 in Jerusalem (open), 05:00 UTC is 07:00 there (closed).
+    expect((await state(SCRIPTED, new Date("2026-11-19T07:00:00Z"))).available).toBe(true);
+    expect((await state(SCRIPTED, new Date("2026-11-19T05:00:00Z"))).reason).toBe("outside_hours");
+    await set({ monthlySpendCapMinor: 0 });
+    expect(await state({ VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "test-key-not-used" })).toEqual({ available: false, reason: "spend_cap" });
+    await set({ monthlySpendCapMinor: account.monthlySpendCapMinor, contactHours: ALWAYS });
+    await db.update(conversations).set({ status: "human" }).where(eq(conversations.id, b.conversationId));
+    expect(await state()).toEqual({ available: false, reason: "not_agent" });
+    await db.update(conversations).set({ status: "open", language: "he" }).where(eq(conversations.id, b.conversationId));
+    expect(await state()).toEqual({ available: false, reason: "not_english" });
+    // English whatever the case or region.
+    for (const l of ["en", "EN", "en-US", "en_GB", " en "]) {
+      await db.update(conversations).set({ language: l }).where(eq(conversations.id, b.conversationId));
+      expect((await state()).available, l).toBe(true);
+    }
+    expect(isEnglish("eng")).toBe(false);
+    expect(isEnglish(null)).toBe(false);
+    // A real (non-simulated) buyer is never told why.
+    await set({ voiceBuyerCalls: false });
+    const real = { ...lead, buyerRef: null, phone: "+972501234567" };
+    expect(buyerVoiceState(await buyerVoiceGate(db, ctx, { env: SCRIPTED, now: IN_HOURS }), real)).toEqual({ available: false });
+    await set({ voiceBuyerCalls: true });
+  });
+
+  it("the server refuses with the same reason (simulated chat), and the page re-checks on every poll", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    const b = await newBuyer("Poll Check");
+    const get = async () => (await messagesRoute.GET(new Request(`https://app.example.com/chat/${b.token}/messages`), { params: Promise.resolve({ token: b.token }) })).json() as Promise<{ voice: unknown }>;
+    expect((await get()).voice).toEqual({ available: true });
+    await db.update(sellerAccounts).set({ voiceBuyerCalls: false }).where(eq(sellerAccounts.id, account.id));
+    expect((await get()).voice).toEqual({ available: false, reason: "buyer_calls_off" });
+    const refused = await post("voice", b.token, {}, voiceRoute);
+    expect(refused.status).toBe(409);
+    expect(await refused.json()).toEqual({ ok: false, reason: "unavailable", gate: "buyer_calls_off" });
+    await db.update(sellerAccounts).set({ voiceBuyerCalls: true }).where(eq(sellerAccounts.id, account.id));
+    expect((await get()).voice).toEqual({ available: true });
+  });
+});
+
 describe("starting a call", () => {
-  it("asks for consent once, records it on the lead's consent record, then starts on the SAME conversation", async () => {
+  it("starts at once (no sheet), records the first switch silently, and joins the SAME conversation", async () => {
     const b = await newBuyer("Tom Bell");
     const ctx = await ctxOf(b);
-    const start = (consent: boolean) => startBuyerVoiceCall(db, ctx, b.token, { consent, deadlineSec: 270, env: SCRIPTED, now: IN_HOURS });
-    expect(await start(false)).toEqual({ ok: false, reason: "consent_needed" });
     expect(await hasVoiceConsent(db, account.id, b.leadId)).toBe(false);
-    const first = await start(true);
-    expect(first).toMatchObject({ ok: true, conversationId: b.conversationId, mode: "scripted", maxSec: 270 });
+    const first = await startBuyerVoiceCall(db, ctx, b.token, { deadlineSec: 270, env: SCRIPTED, now: IN_HOURS });
+    expect(first).toMatchObject({ ok: true, conversationId: b.conversationId, mode: "scripted", maxSec: 270, firstInConversation: true });
     const [rec] = await db.select().from(consentRecords).where(and(eq(consentRecords.leadId, b.leadId), eq(consentRecords.accountId, account.id)));
     expect(rec.voiceConsentAt).toEqual(IN_HOURS);
-    // Later calls skip the sheet; the consent time is not moved.
-    const later = await startBuyerVoiceCall(db, ctx, b.token, { consent: false, deadlineSec: 270, env: SCRIPTED, now: new Date(IN_HOURS.getTime() + 60_000) });
-    expect(later).toMatchObject({ ok: true });
+    // Once a call has connected in this conversation, a later switch is not the first (no transcript note); consent time kept.
+    if (!first.ok) throw new Error();
+    await db.update(voiceSessions).set({ status: "ended", connectedAt: IN_HOURS, endedAt: IN_HOURS }).where(eq(voiceSessions.id, first.sessionId));
+    const later = await startBuyerVoiceCall(db, ctx, b.token, { deadlineSec: 270, env: SCRIPTED, now: new Date(IN_HOURS.getTime() + 60_000) });
+    expect(later).toMatchObject({ ok: true, firstInConversation: false });
     const recs = await db.select().from(consentRecords).where(eq(consentRecords.leadId, b.leadId));
     expect(recs).toHaveLength(1);
     expect(recs[0].voiceConsentAt).toEqual(IN_HOURS);
@@ -167,8 +225,8 @@ describe("starting a call", () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     const b = await newBuyer("Ann Lee");
-    expect((await post("voice", "nope", { consent: true }, voiceRoute)).status).toBe(404);
-    const ok = await post("voice", b.token, { consent: true }, voiceRoute);
+    expect((await post("voice", "nope", {}, voiceRoute)).status).toBe(404);
+    const ok = await post("voice", b.token, {}, voiceRoute);
     const body = (await ok.json()) as Record<string, unknown>;
     expect(body).toMatchObject({ ok: true, wsUrl: "wss://app.example.com/api/voice/socket", maxSec: 270, mode: "scripted" });
     expect(String(body.ticket)).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -182,13 +240,13 @@ describe("starting a call", () => {
     await db.update(simulatorLinks).set({ createdAt: longAgo }).where(eq(simulatorLinks.leadId, old.leadId));
     await db.update(messages).set({ createdAt: longAgo }).where(eq(messages.conversationId, old.conversationId));
     await db.update(conversations).set({ createdAt: longAgo }).where(eq(conversations.id, old.conversationId));
-    expect((await post("voice", old.token, { consent: true }, voiceRoute)).status).toBe(410);
+    expect((await post("voice", old.token, {}, voiceRoute)).status).toBe(410);
     expect(await sessions(old.conversationId)).toEqual([]);
   });
 });
 
 describe("the call continues the chat", () => {
-  it("the engine starts with the disclosure line on a chat that has agent messages, with the chat in its instructions", async () => {
+  it("a call on a chat with agent messages opens with no greeting, no introduction and no bot notice, with the chat in its instructions", async () => {
     const b = await newBuyer("Rina Grey");
     await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "buyer", body: "We have three shops in Haifa.", language: "en", createdAt: new Date(Date.now() + 5) });
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
@@ -197,11 +255,15 @@ describe("the call continues the chat", () => {
     const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, conv.agentVersionId));
     const ctx = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
     expect(ctx.continuing).toBe(true);
-    expect(ctx.opener).toMatch(/^Hi Rina, it's .+, the automated assistant of Acme, on the call now\.$/);
-    expect(ctx.openerPrompt).toContain(ctx.opener);
-    expect(ctx.openerPrompt).toMatch(/Do not introduce yourself again/);
-    expect(ctx.instructions).toContain("This call continues the chat");
-    expect(ctx.instructions).toContain("never ask again for anything the buyer already answered");
+    expect(ctx.opener).toBe(CONTINUE_FALLBACK);
+    expect(ctx.openerPrompt).toMatch(/Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant/);
+    expect(ctx.openerPrompt).toMatch(/picks up from where the chat stopped/);
+    expect(ctx.openerPrompt).not.toMatch(/Hi Rina|on the call now/);
+    expect(ctx.instructions).toContain("The buyer switched this chat from text to voice");
+    expect(ctx.instructions).toContain("say so only if the buyer asks");
+    // No opener block in a continued call (the chat's opener was the introduction).
+    expect(ctx.instructions).not.toContain("Your opening line, which you say first");
+    expect(ctx.instructions).toContain("Never ask again for anything the buyer already answered");
     expect(ctx.instructions).toContain("- Buyer: We have three shops in Haifa.");
     expect(ctx.instructions).not.toContain("Your opening message, already sent");
     expect(CHAT_RECAP_LINES).toBe(20);
@@ -225,14 +287,15 @@ describe("the call continues the chat", () => {
     const ctx = await loadVoiceInstructions(db, { account, version: c.version, conv, lead, deal: null, now: new Date() });
     expect(ctx.continuing).toBe(false);
     expect(ctx.opener).toMatch(/the automated assistant of Acme/);
-    expect(ctx.opener).not.toMatch(/on the call now/);
+    expect(ctx.opener).not.toBe(CONTINUE_FALLBACK);
+    expect(ctx.openerPrompt).toMatch(/Say your opening line now/);
   });
 
   it("text typed in the chat during the call goes into the call: one buyer message, marked typed; a chat POST meanwhile is refused", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     const b = await newBuyer("Kim Ray");
     const ctx = await ctxOf(b);
-    const r = await startBuyerVoiceCall(db, ctx, b.token, { consent: true, deadlineSec: 270, env: SCRIPTED, now: new Date() });
+    const r = await startBuyerVoiceCall(db, ctx, b.token, { deadlineSec: 270, env: SCRIPTED, now: new Date() });
     if (!r.ok) throw new Error(r.reason);
     const clock = new ManualClock();
     const model = new ScriptedRealtime({ clock });
@@ -244,7 +307,7 @@ describe("the call continues the chat", () => {
     await clock.advance(15_000, settle);
     // The opener of a continuing call is the disclosure line.
     const [opener] = await db.select().from(messages).where(and(eq(messages.conversationId, b.conversationId), eq(messages.voiceSessionId, r.sessionId)));
-    expect(opener.body).toMatch(/^Hi Kim, it's .+, the automated assistant of Acme, on the call now\./);
+    expect(opener.body).toBe(CONTINUE_FALLBACK);
     // The chat route refuses a separate chat turn while the call runs.
     const refused = await post("messages", b.token, { text: "hello?", clientId: crypto.randomUUID() }, messagesRoute);
     expect(refused.status).toBe(409);
@@ -281,7 +344,7 @@ describe("no chat turn beside a call", () => {
   it("the server refuses a chat send while a buyer call is pending (just created) or live, and allows it once the pending one is stale", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     const b = await newBuyer("Pat Moss");
-    const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { consent: true, deadlineSec: 270, env: SCRIPTED, now: new Date() });
+    const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { deadlineSec: 270, env: SCRIPTED, now: new Date() });
     if (!r.ok) throw new Error(r.reason);
     const send = () => post("messages", b.token, { text: "Sounds good", clientId: crypto.randomUUID() }, messagesRoute);
     const refused = await send();
@@ -313,7 +376,7 @@ describe("the buyer sees state words only", () => {
   it("the socket never sends tool messages to a buyer's call; the bar says One moment…", async () => {
     const b = await newBuyer("Lee Park");
     await db.update(conversations).set({ scenario: "ready_buyer" }).where(eq(conversations.id, b.conversationId));
-    const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { consent: true, deadlineSec: 270, env: SCRIPTED, now: new Date() });
+    const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { deadlineSec: 270, env: SCRIPTED, now: new Date() });
     if (!r.ok) throw new Error(r.reason);
     class Fake extends EventEmitter {
       out: (string | Uint8Array)[] = [];
@@ -359,7 +422,7 @@ describe("the buyer sees state words only", () => {
     expect(he.muteLabel).toBe("השתקה");
   });
 
-  it("the chat page: Talk to us only when available, call rows and spoken marks, never a tool chip", () => {
+  it("the chat page: Switch to voice only when available, call rows and spoken marks, never a tool chip", () => {
     const strings = new Proxy({ refused: {} }, { get: (o, k) => (k in o ? (o as Record<string, unknown>)[k as string] : String(k)) }) as never;
     const initial = {
       messages: [
@@ -367,10 +430,11 @@ describe("the buyer sees state words only", () => {
         { id: "m2", from: "buyer" as const, body: "Four shops.", at: "2026-11-19T09:02:00.000Z", status: "read" as const, name: null, previews: [], call: { atMs: 80_000, typed: false } },
       ],
       typing: false, ended: false, closedAt: null, cards: {}, calls: [{ id: "c1", startedAt: "2026-11-19T09:01:12.000Z", at: "2026-11-19T09:05:00.000Z", durationSec: 228 }],
-      voice: { available: true, consented: false },
+      voice: { available: true },
     };
     const html = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
-    expect(html).toContain('aria-label="Talk to us"');
+    expect(html).toContain('aria-label="Switch to voice"');
+    expect(html).not.toContain("data-voice-disabled");
     expect(html).toContain("Voice call · 3 min 48 s · 11:05");
     // The call is framed: its start row comes before its first line, its summary row after the last.
     expect(html).toContain("Voice call started · 11:01");
@@ -380,10 +444,14 @@ describe("the buyer sees state words only", () => {
     expect(he).toContain("שיחה קולית התחילה · 11:01");
     expect(html).toContain('aria-label="Said in the call at 1:20"');
     expect(html).not.toContain("data-voice-tool");
-    const off = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, consented: false } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
-    expect(off).not.toContain("Talk to us");
+    const off = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+    expect(off).not.toContain("Switch to voice");
+    // A simulated chat with a gate off: the button stays, disabled, and says why under the composer.
+    const why = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00" } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+    expect(why).toContain('aria-disabled="true"');
+    expect(why).toContain("Outside contact hours (Sun–Thu 08:30–20:00).");
     const voiceOff = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" />);
-    expect(voiceOff).not.toContain("Talk to us");
+    expect(voiceOff).not.toContain("Switch to voice");
   });
 });
 
@@ -402,7 +470,9 @@ describe("Settings › Voice", () => {
     expect(html).toContain("data-settings-voice");
     expect(html).toContain("Let buyers call the agent");
     expect(html).toContain("4 min 30 s");
-    expect(html).toContain("on the call now.");
+    // No sheet and no opening sentence any more: a call continues the chat.
+    expect(html).not.toMatch(/Opening sentence|on the call now/);
+    expect(html).toContain("Transcript");
     expect(html).toContain('data-voice-recordings="off"');
     // One Save for the page; read-only rows say where they are set.
     expect((html.match(/data-voice-save=""/g) ?? []).length).toBe(1);

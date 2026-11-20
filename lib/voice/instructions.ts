@@ -61,8 +61,9 @@ export type VoiceInstructionInput = {
   /** After a reconnect: the opener was already spoken. */
   resumed?: boolean;
   /**
-   * The call continues a chat that already has agent messages: `opener` is
-   * the short disclosure line (continuingLine), not a first introduction.
+   * The call continues a chat that already has agent messages (the buyer
+   * switched from text to voice): no opener and no introduction; the agent
+   * picks up from the chat in one short line (continuingInstruction).
    */
   continuing?: boolean;
 };
@@ -77,7 +78,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   // The whole per-turn context in call wording: turnContext converts the stage block, and the
   // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
   const context = voiceStageText(turnContext(i.playbook, i.deal, {
-    stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed ? null : i.opener, catalog: i.catalog, names: i.names,
+    stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed || i.continuing ? null : i.opener, catalog: i.catalog, names: i.names,
     followUp: i.followUp, callback: i.callback ?? null, teamQuestions: i.teamQuestions ?? null, priceApproval: i.priceApproval ?? null, localNow: i.localNow, channel: "voice",
   }));
   const recap = i.recap.slice(-(i.continuing ? CHAT_RECAP_LINES : RECAP_LINES)).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
@@ -86,7 +87,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
     i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
       : i.continuing
-        ? "This call continues the chat with the same buyer: you already introduced yourself in the chat, and the conversation so far is listed here. When the call connects, say your opening line (it tells the buyer it is you, an automated assistant, now on the call), then one short sentence that picks up from where the chat stopped, then listen. Do not introduce yourself again, do not repeat the chat's opening question, and never ask again for anything the buyer already answered in the chat."
+        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Say one short line that picks up from where the chat stopped: acknowledge the last topic and carry it on, or, when there is nothing to pick up, "${CONTINUE_FALLBACK}" Then listen. Never ask again for anything the buyer already answered in the chat.`
         : "When the call connects, say your opening line, then listen.",
     paceInstruction(settings.pace),
     i.deal?.summary ? `Summary so far: ${i.deal.summary}` : "",
@@ -100,24 +101,22 @@ export function openerInstruction(opener: string): string {
   return `The call has just connected. Say your opening line now, in your own voice: "${opener}"`;
 }
 
-/**
- * The platform's fixed disclosure when a call continues a chat: who is
- * speaking and that it is an automated assistant, said at the start of every
- * call, without a first-time introduction.
- */
-export function continuingLine(o: { firstName: string; agent: string; seller: string }): string {
-  return `Hi ${o.firstName}, it's ${o.agent}, the automated assistant of ${o.seller}, on the call now.`;
-}
+/** The short line when a call continues a chat with nothing to pick up (the buyer only switched to voice). */
+export const CONTINUE_FALLBACK = "I'm here, go ahead.";
 
-/** The instruction that starts a call continuing a chat: the disclosure line, then one line picking up from the chat. */
-export function continuingInstruction(line: string): string {
-  return `The call has just connected and continues the chat. Say this first, in your own voice: "${line}" Then add one short sentence that picks up from where the chat stopped. Do not introduce yourself again and do not repeat questions the buyer already answered.`;
+/**
+ * The instruction that starts a call continuing a chat: no greeting, no
+ * introduction and no bot notice (the buyer only switched from text to voice),
+ * one short line that picks up from the chat.
+ */
+export function continuingInstruction(): string {
+  return `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. Say one short line that picks up from where the chat stopped, or, when there is nothing to pick up: "${CONTINUE_FALLBACK}"`;
 }
 
 export type VoiceCallContext = {
   instructions: string;
   opener: string;
-  /** What the engine asks the model to say first (the opener, or the continuing line). */
+  /** What the engine asks the model to say first (the opener, or a short pick-up line when the call continues a chat). */
   openerPrompt: string;
   continuing: boolean;
 };
@@ -147,10 +146,10 @@ export async function loadVoiceInstructions(
   // A call is English only (decision: release 1).
   const names = buyerNames(version.playbook, account, "en");
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
-  // A chat that already has agent messages continues by voice: the disclosure line, not a new introduction.
+  // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
   const continuing = !opts.resumed && agentCount.length > 0;
   const opener = continuing
-    ? continuingLine({ firstName, agent: names.agent, seller: names.seller })
+    ? CONTINUE_FALLBACK
     : openerText({ name: firstName, agent: names.agent, company: names.seller, gender: names.gender, language: "en", opener: version.playbook.opener });
   const recap = opts.recap ?? earlier.reverse()
     .filter((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human")
@@ -168,5 +167,5 @@ export async function loadVoiceInstructions(
     priceApproval: priceApproval || null,
     recap, resumed: opts.resumed, continuing,
   });
-  return { instructions, opener, openerPrompt: continuing ? continuingInstruction(opener) : openerInstruction(opener), continuing };
+  return { instructions, opener, openerPrompt: continuing ? continuingInstruction() : openerInstruction(opener), continuing };
 }

@@ -17,7 +17,7 @@ import { conversations, sellerAccounts, users } from "@/db/schema";
 import { translator } from "@/lib/i18n";
 import { buyerChat, chatNames, createSimulatedBuyer, receiveSimulatorInbound, resolveChatLink, startSimulatorConversation } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
-import { buyerConversation, buyerVoiceGate, liveVoiceSessionOn, startBuyerVoiceCall } from "@/lib/voice/buyer";
+import { buyerConversation, buyerVoiceGate, buyerVoiceState, liveVoiceSessionOn, startBuyerVoiceCall } from "@/lib/voice/buyer";
 import { chatStrings } from "../../../app/chat/[token]/strings";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
@@ -114,7 +114,9 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
   const buyerBundle = await bundlePage("buyer-page.tsx");
   const chatCss = fs.readFileSync(path.join(ROOT, "app/chat/[token]/chat.css"), "utf8");
   // Buyers (release 2): an English chat, and a Hebrew page whose conversation is in English (the call bar in RTL).
-  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCalls: true, allowSimulatedBuyers: true, contactHours: Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" })) })
+  const ALWAYS = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
+  let gateEnv: Record<string, string | undefined> = ENV;
+  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCalls: true, allowSimulatedBuyers: true, contactHours: ALWAYS })
     .where(eq(sellerAccounts.id, acc));
   await publishDraftVersion(db, { userId: me.id, actingAs: false }, acc);
   await ensureDraftVersion(db, acc);
@@ -142,6 +144,25 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       if (req.method === "GET" && url.pathname === "/buyer") return send(200, "text/html; charset=utf-8", BUYER_HTML);
       if (req.method === "GET" && url.pathname === "/buyer.js") return send(200, "text/javascript; charset=utf-8", buyerBundle.js);
       if (req.method === "GET" && url.pathname === "/buyer.css") return send(200, "text/css; charset=utf-8", `${css}\n${chatCss}\n${buyerBundle.css}`);
+      if (req.method === "POST" && url.pathname === "/api/buyer-gate") {
+        // Harness only: turn one gate off (or reset all) to show why the button is disabled on a simulated chat.
+        const which = url.searchParams.get("off") ?? "";
+        const convIds = Object.values(buyers).map((b) => b.conversationId);
+        await db.update(sellerAccounts).set({ voiceBuyerCalls: true, status: "live", monthlySpendCapMinor: 10_000, contactHours: ALWAYS }).where(eq(sellerAccounts.id, acc));
+        for (const id of convIds) await db.update(conversations).set({ status: "open", language: "en" }).where(eq(conversations.id, id));
+        gateEnv = ENV;
+        if (which === "buyer_calls_off") await db.update(sellerAccounts).set({ voiceBuyerCalls: false }).where(eq(sellerAccounts.id, acc));
+        if (which === "account_not_live") await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, acc));
+        if (which === "outside_hours") await db.update(sellerAccounts).set({ contactHours: Array.from({ length: 7 }, (_, i) => ({ on: i >= 1 && i <= 5, from: "09:00", to: "09:01" })) }).where(eq(sellerAccounts.id, acc));
+        if (which === "not_english") for (const id of convIds) await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, id));
+        if (which === "not_agent") for (const id of convIds) await db.update(conversations).set({ status: "human" }).where(eq(conversations.id, id));
+        if (which === "spend_cap") {
+          // Only the gate runs in "live" mode here (it reads the cap); no call is started and nothing is paid.
+          await db.update(sellerAccounts).set({ monthlySpendCapMinor: 0 }).where(eq(sellerAccounts.id, acc));
+          gateEnv = { VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "harness-gate-only" };
+        }
+        return send(200, "application/json", "{}");
+      }
       if (req.method === "GET" && url.pathname === "/api/buyer-config") {
         const lang = url.searchParams.get("lang") === "he" ? "he" : "en";
         const link = await resolveChatLink(db, buyers[lang].token);
@@ -150,8 +171,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const tr = translator(lang);
         const names = await chatNames(db, ctx.account, lang);
         const chat = await buyerChat(db, ctx);
-        const gate = await buyerVoiceGate(db, ctx, { env: ENV });
-        chat.voice = { available: gate.ok, consented: gate.ok && gate.consented };
+        const gate = await buyerVoiceGate(db, ctx, { env: gateEnv });
+        chat.voice = buyerVoiceState(gate, ctx.lead);
         return send(200, "application/json", JSON.stringify({
           token: buyers[lang].token, lang, seller: names.seller, initials: names.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
           strings: chatStrings(tr, names, lang), initial: chat, timeZone: "Asia/Jerusalem",
@@ -166,9 +187,13 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         if (!link || link.state !== "live") return send(404, "application/json", JSON.stringify({ ok: false, reason: "not_found" }));
         const ctx = link.ctx;
         if (chatPath[2] === "voice") {
-          const b = JSON.parse((await body(req)) || "{}") as { consent?: boolean };
-          const r = await startBuyerVoiceCall(db, ctx, chatPath[1], { consent: b.consent === true, deadlineSec: CAP, env: ENV });
-          return send(200, "application/json", JSON.stringify(r.ok ? { ...r, wsUrl: `ws://${req.headers.host}/api/voice/socket` } : r));
+          await body(req);
+          const r = await startBuyerVoiceCall(db, ctx, chatPath[1], { deadlineSec: CAP, env: gateEnv === ENV ? ENV : gateEnv });
+          if (!r.ok) {
+            const shown = r.gate ? buyerVoiceState({ ok: false, reason: r.gate, hours: r.hours }, ctx.lead) : null;
+            return send(409, "application/json", JSON.stringify({ ok: false, reason: r.reason, ...(shown?.reason ? { gate: shown.reason, hours: shown.hours } : {}) }));
+          }
+          return send(200, "application/json", JSON.stringify({ ...r, wsUrl: `ws://${req.headers.host}/api/voice/socket` }));
         }
         if (req.method === "POST") {
           const b = JSON.parse((await body(req)) || "{}") as { text?: string; clientId?: string };
@@ -177,8 +202,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
           await receiveSimulatorInbound(db, ctx, b.text ?? "", b.clientId ?? "");
           return send(200, "application/json", JSON.stringify({ ok: true }));
         }
-        const [chat, gate] = await Promise.all([buyerChat(db, ctx, { after: url.searchParams.get("after") }), buyerVoiceGate(db, ctx, { env: ENV })]);
-        return send(200, "application/json", JSON.stringify({ ...chat, voice: { available: gate.ok, consented: gate.ok && gate.consented } }));
+        const [chat, gate] = await Promise.all([buyerChat(db, ctx, { after: url.searchParams.get("after") }), buyerVoiceGate(db, ctx, { env: gateEnv })]);
+        return send(200, "application/json", JSON.stringify({ ...chat, voice: buyerVoiceState(gate, ctx.lead) }));
       }
       if (req.method === "GET" && url.pathname === "/api/config") {
         const d = (await listVersions(db, acc)).find((v) => v.status === "draft")!;

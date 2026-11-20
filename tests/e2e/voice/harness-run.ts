@@ -238,107 +238,68 @@ async function main() {
       await page.context().close();
     }
 
-    // -------------------------------------------------- buyer calls (release 2)
-    console.log("buyer call on the chat page");
+    // ------------------------------------- buyer: switch to voice and back (release 2, round 2)
+    console.log("buyer: switch the chat to voice and back");
     {
-      const phase = (page: Page) => page.getAttribute("[data-buyer-call]", "data-voice-phase").catch(() => null);
       const waitPhase = (page: Page, want: string, timeout = 30_000) =>
         page.waitForSelector(`[data-buyer-call][data-voice-phase="${want}"]`, { timeout }).then(() => true, () => false);
-      // Desktop (the phone frame): the button and the sheet before the first call.
-      const desk = await newPage(browser, `${h.url}/buyer?lang=en`);
-      check(await desk.waitForSelector("[data-voice-talk]", { timeout: 15_000 }).then(() => true, () => false), "Talk to us shows on an English chat with every gate on");
-      await shot(desk, "buyer-button-desktop");
-      await desk.click("[data-voice-talk]");
-      check(await desk.waitForSelector("[data-voice-sheet]", { timeout: 5000 }).then(() => true, () => false), "the sheet comes before the first call");
-      await shot(desk, "buyer-sheet-desktop");
-      await desk.click("text=Not now");
-      await desk.context().close();
+      const gateOff = (which: string) => fetch(`${h.url}/api/buyer-gate?off=${which}`, { method: "POST" });
+      await gateOff("");
+      type Shape = { name: string; w: number; hgt: number; lang: "en" | "he" };
+      const desktop = (lang: "en" | "he"): Shape => ({ name: `desktop${lang === "he" ? "-he" : ""}`, w: 1440, hgt: 900, lang });
+      const phone = (lang: "en" | "he"): Shape => ({ name: `phone${lang === "he" ? "-he" : ""}`, w: 390, hgt: 844, lang });
 
-      // Phone: the whole call.
-      const page = await newPage(browser, `${h.url}/buyer?lang=en`, 390, 844);
-      await page.waitForSelector("[data-voice-talk]");
-      await shot(page, "buyer-button-phone");
-      await page.click("[data-voice-talk]");
-      await page.waitForSelector("[data-voice-sheet]");
-      await shot(page, "buyer-sheet-phone");
-      await page.click("[data-voice-sheet-start]");
-      check(await waitPhase(page, "live", 20_000), "the call connects");
-      check(await page.locator("[data-voice-talk]").count() === 0, "no Talk button during the call");
-      await page.waitForTimeout(3000);
-      await shot(page, "buyer-call-live-phone");
-      check(await page.waitForSelector(".c-msg--card", { timeout: 60_000 }).then(() => true, () => false), "the quote card appears in the chat during the call");
-      await page.waitForTimeout(1500);
-      await shot(page, "buyer-call-quote-phone");
-      check((await page.locator("[data-voice-tool]").count()) === 0, "no tool chips for the buyer");
-      check(await page.locator('[data-buyer-call] .sas-vbar__title:has-text("One moment")').count() >= 0, "checking state words only");
-      // A quick reply during the call goes into the call too (a typed turn, stored once, never a chat send).
-      const quick = page.locator('.c-reply:has-text("Sounds good")');
-      if ((await quick.count()) && (await phase(page)) === "live") {
-        await quick.click();
-        check(await page.waitForSelector('.c-bubble:has-text("Sounds good")', { timeout: 15_000 }).then(() => true, () => false), "a quick reply during the call becomes the buyer's line in the call");
+      // The button at rest, then a whole call: switch, live with Back to text, back to text, the chat after.
+      for (const sh of [phone("en"), desktop("en"), phone("he"), desktop("he")]) {
+        const page = await newPage(browser, `${h.url}/buyer?lang=${sh.lang}`, sh.w, sh.hgt);
+        check(await page.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 }).then(() => true, () => false), `${sh.name}: Switch to voice at the composer's edge`);
+        check((await page.getAttribute("[data-voice-talk]", "aria-label")) === (sh.lang === "he" ? "מעבר לקול" : "Switch to voice"), `${sh.name}: its label`);
+        await shot(page, `buyer2-button-${sh.name}`);
+        const first = sh.name === "phone" || sh.name === "phone-he";
+        await page.click("[data-voice-talk]");
+        check((await page.locator("[data-voice-sheet]").count()) === 0, `${sh.name}: no sheet, the call starts at once`);
+        check(await waitPhase(page, "live", 20_000), `${sh.name}: the call connects`);
+        check(await page.waitForSelector("[data-voice-back]", { timeout: 5000 }).then(() => true, () => false), `${sh.name}: Back to text at the composer's edge`);
+        check((await page.getAttribute("[data-buyer-call] [data-voice-end]", "aria-label")) === (sh.lang === "he" ? "חזרה לטקסט" : "Back to text"), `${sh.name}: End reads Back to text`);
+        check((await page.locator("[data-voice-meta]").textContent())?.includes(sh.lang === "he" ? "מצב קול" : "Voice mode") ?? false, `${sh.name}: Voice mode label`);
+        check((await page.locator("[data-voice-first-note]").count()) === (first ? 1 : 0), `${sh.name}: the transcript note only on the first switch in the conversation`);
+        check(!/automated assistant/i.test((await page.locator("[data-buyer-call]").textContent()) ?? ""), `${sh.name}: no bot notice in the bar`);
+        await page.waitForTimeout(sh.lang === "en" && first ? 9000 : 3500);
+        await shot(page, `buyer2-call-live-${sh.name}`);
+        if (sh.lang === "en" && first) {
+          // The call's first line picks up from the chat: no greeting or introduction.
+          const firstLine = await page.locator(".c-msg--in .c-bubble:has([data-spoken])").first().textContent().catch(() => "");
+          check(!!firstLine && !/automated assistant|^Hi /i.test(firstLine), `the call's first line has no greeting or bot notice (${(firstLine ?? "").slice(0, 40)})`);
+        }
+        await page.click("[data-voice-back]");
+        check(await waitPhase(page, "ended", 15_000), `${sh.name}: Back to text ends the call`);
         await page.waitForTimeout(2500);
-        check((await page.locator('.c-bubble:has-text("Sounds good")').count()) === 1, "the quick reply is stored once");
-        check((await page.locator('.c-msg--out:has-text("Sounds good") [data-spoken]').count()) === 1, "the quick reply carries the call mark (typed in the call)");
+        check(await page.locator("[data-voice-talk]").count() === 1, `${sh.name}: Switch to voice is back`);
+        await shot(page, `buyer2-after-call-${sh.name}`);
+        await page.context().close();
       }
-      // Typed in the chat during the call: goes into the call, stored once.
-      if ((await phase(page)) === "live") {
-        await page.fill("#c-input", "Does it include setup?");
-        await page.keyboard.press("Enter");
-        check(await page.waitForSelector('.c-bubble:has-text("Does it include setup?")', { timeout: 15_000 }).then(() => true, () => false), "text typed during the call shows as the buyer's line");
-        await page.waitForTimeout(2500);
-        check((await page.locator('.c-bubble:has-text("Does it include setup?")').count()) === 1, "it is stored once");
+
+      // Each reason the button is off, on a simulated link (the tester sees why).
+      const reasons: [string, RegExp][] = [
+        ["buyer_calls_off", /Buyer calls are off\. Turn them on in Settings › Voice\./],
+        ["outside_hours", /Outside contact hours \(.+\)\./],
+        ["not_english", /Voice works in English chats only for now\./],
+        ["not_agent", /This chat is handled by a person\./],
+        ["spend_cap", /AI limit reached\./],
+        ["account_not_live", /The account is paused\./],
+      ];
+      for (const [which, text] of reasons) {
+        await gateOff(which);
+        for (const sh of [phone("en"), desktop("en"), phone("he")]) {
+          const page = await newPage(browser, `${h.url}/buyer?lang=${sh.lang}`, sh.w, sh.hgt);
+          const ok = await page.waitForSelector(`[data-voice-why="${which}"]`, { timeout: 10_000 }).then(() => true, () => false);
+          check(ok && (await page.getAttribute("[data-voice-talk]", "aria-disabled")) === "true", `${sh.name}: ${which} shows the button disabled with its reason`);
+          if (sh.lang === "en") check(text.test((await page.locator("[data-voice-why]").textContent()) ?? ""), `${which}: the reason's words`);
+          await shot(page, `buyer2-off-${which}-${sh.name}`);
+          await page.context().close();
+        }
       }
-      await page.click("[data-voice-end]");
-      check(await waitPhase(page, "ended", 15_000), "End ends the call");
-      await page.fill("#c-input", "Great, will sign after lunch");
-      await page.keyboard.press("Enter");
-      check(await page.waitForSelector("[data-call-row]", { timeout: 15_000 }).then(() => true, () => false), "a call row shows in the chat after the call");
-      await page.waitForTimeout(2500);
-      await shot(page, "buyer-ended-chat-phone");
-      check(await page.locator("[data-voice-talk]").count() === 1, "Talk to us is back after the call");
-      await page.context().close();
-
-      // Desktop: a later call skips the sheet.
-      const desk2 = await newPage(browser, `${h.url}/buyer?lang=en`);
-      await desk2.waitForSelector("[data-voice-talk]");
-      await desk2.click("[data-voice-talk]");
-      check((await desk2.locator("[data-voice-sheet]").count()) === 0, "later calls skip the sheet");
-      await waitPhase(desk2, "live", 20_000);
-      await desk2.waitForTimeout(4000);
-      await shot(desk2, "buyer-call-live-desktop");
-      await desk2.click("[data-voice-end]");
-      await waitPhase(desk2, "ended", 15_000);
-      await desk2.waitForTimeout(2500);
-      await shot(desk2, "buyer-ended-chat-desktop");
-      // The ended bar stays while the pointer is over it, then goes 8 s after the pointer leaves.
-      await desk2.hover("[data-buyer-call]");
-      await desk2.waitForTimeout(9000);
-      check((await desk2.locator("[data-buyer-call]").count()) === 1, "the ended bar stays while the pointer is over it");
-      await desk2.mouse.move(5, 5);
-      await desk2.waitForTimeout(9000);
-      check((await desk2.locator("[data-buyer-call]").count()) === 0, "it hides 8 s after the pointer leaves");
-      await desk2.context().close();
-
-      // Hebrew page (RTL), English call.
-      const he = await newPage(browser, `${h.url}/buyer?lang=he`, 390, 844);
-      await he.waitForSelector("[data-voice-talk]");
-      await shot(he, "buyer-button-phone-he");
-      await he.click("[data-voice-talk]");
-      await he.waitForSelector("[data-voice-sheet]");
-      await shot(he, "buyer-sheet-phone-he");
-      await he.click("[data-voice-sheet-start]");
-      check(await waitPhase(he, "live", 20_000), "a Hebrew page calls too (its conversation is in English)");
-      await he.waitForTimeout(3000);
-      await shot(he, "buyer-call-live-phone-he");
-      await he.click("[data-voice-end]");
-      await waitPhase(he, "ended", 15_000);
-      await he.waitForTimeout(2500);
-      await shot(he, "buyer-ended-chat-phone-he");
-      await he.context().close();
-      const deskHe = await newPage(browser, `${h.url}/buyer?lang=he`);
-      await deskHe.waitForSelector("[data-voice-talk]");
-      await shot(deskHe, "buyer-button-desktop-he");
-      await deskHe.context().close();
+      await gateOff("");
     }
   } finally {
     await browser.close();

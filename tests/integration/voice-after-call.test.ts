@@ -73,7 +73,7 @@ class FakeSocket extends EventEmitter {
  * side, `turn` what the buyer does (speak or type), then the buyer hangs up. `afterCall` is the route's hook.
  */
 async function buyerCall(b: Buyer, o: { script: Parameters<typeof expectBuyer>[0] extends string ? ReturnType<typeof expectBuyer>[] : never; turn: "typed" | "spoken"; text?: string; afterCall?: (id: string) => Promise<unknown> }) {
-  const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { consent: true, deadlineSec: 270, env: SCRIPTED, now: new Date() });
+  const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { deadlineSec: 270, env: SCRIPTED, now: new Date() });
   if (!r.ok) throw new Error(r.reason);
   const ws = new FakeSocket();
   const clock = new ManualClock();

@@ -127,9 +127,9 @@ describe("demo account: a finished buyer voice call", () => {
       expect(m.createdAt.getTime()).toBeLessThanOrEqual(s.endedAt!.getTime());
       if (m.actor === "buyer") expect(m.answerMs).toBeNull();
     }
-    // The fixed disclosure line opens the call.
-    expect(spoken[0]).toMatchObject({ actor: "agent", answerMs: null });
-    expect(spoken[0].body).toMatch(/^Hi Gal, it's .+, the automated assistant of .+, on the call now\. /);
+    // The call opens with a short line picking up from the chat: no greeting, no introduction, no bot notice.
+    expect(spoken[0]).toMatchObject({ actor: "agent", answerMs: null, body: VOICE_CALL_LINES.pickUp });
+    expect(spoken[0].body).not.toMatch(/automated assistant|^Hi /);
     expect(spoken.filter((m) => m.typedInCall).map((m) => m.body)).toEqual([VOICE_CALL_LINES.typed]);
     // Three chat messages first; the engine's note last.
     expect(thread.slice(0, 3).every((m) => !m.voiceSessionId)).toBe(true);

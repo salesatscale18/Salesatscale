@@ -33,7 +33,7 @@ import { loadForm } from "@/lib/orders/service";
 import { formatMoney } from "@/lib/domain/money";
 import { APP_MESSAGE_CALL, appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
 import { loadQuoteCards } from "@/lib/agent/quote-card-data";
-import { buyerCallRows, type BuyerCallRow } from "@/lib/voice/buyer";
+import { buyerCallRows, type BuyerCallRow, type BuyerVoiceState } from "@/lib/voice/buyer";
 import { pendingAfterCall } from "@/lib/voice/after-call";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
@@ -424,7 +424,7 @@ export type BuyerChat = {
   /** The chat's finished voice calls (every poll, like the cards): a "Voice call · 3 min 48 s" row each. */
   calls: BuyerCallRow[];
   /** "Talk to us" (lib/voice/buyer.ts): set by the page and the messages route, which check the gates. */
-  voice?: { available: boolean; consented: boolean };
+  voice?: BuyerVoiceState;
 };
 
 const CHAT_LIMIT = 200;

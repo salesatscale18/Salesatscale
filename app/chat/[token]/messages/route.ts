@@ -22,7 +22,7 @@ import { replyToBuyer } from "@/lib/channels/whatsapp";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { CHAT_RATE_PER_DAY, CHAT_RATE_PER_MINUTE } from "@/lib/simulator/rules";
 import { buyerChat, receiveSimulatorInbound, resolveChatLink } from "@/lib/simulator/service";
-import { buyerConversation, buyerVoiceGate, liveVoiceSessionOn } from "@/lib/voice/buyer";
+import { buyerConversation, buyerVoiceGate, buyerVoiceState, liveVoiceSessionOn } from "@/lib/voice/buyer";
 import { pendingAfterCall, replyAfterCall } from "@/lib/voice/after-call";
 
 export const dynamic = "force-dynamic";
@@ -48,7 +48,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
     });
   }
   // "Talk to us" follows the gates as they change (contact hours, a person taking over, the setting).
-  return json({ ...chat, voice: { available: gate.ok, consented: gate.ok && gate.consented } });
+  return json({ ...chat, voice: buyerVoiceState(gate, ctx.lead) });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {

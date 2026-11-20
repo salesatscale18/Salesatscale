@@ -5,12 +5,14 @@ import type { BuyerChat, BuyerMessage, LinkPreview } from "@/lib/simulator/servi
 import { boldSegments } from "@/lib/agent/app-message";
 import { QuoteCard } from "@/components/sas/quote-card";
 import { replyButtonsAfter } from "@/lib/agent/quote-replies";
-import { translator, type Locale } from "@/lib/i18n";
+import { translator, type Locale, type MessageKey } from "@/lib/i18n";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
 import { callClock } from "@/lib/voice/lab";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
-import { BuyerCallBar, VoiceSheet } from "./voice";
+import { BuyerCallBar } from "./voice";
+import { Icon } from "@/components/sas/icon";
+import type { BuyerVoiceState } from "@/lib/voice/buyer";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
@@ -103,9 +105,10 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const [calls, setCalls] = useState(initial.calls ?? []);
-  // "Talk to us" (live voice): the server's gates, refreshed on every poll.
-  const [voiceState, setVoiceState] = useState(initial.voice ?? { available: false, consented: false });
-  const [sheet, setSheet] = useState(false);
+  // "Switch to voice" (live voice): the server's gates, refreshed on every poll (with the reason on a simulated chat).
+  const [voiceState, setVoiceState] = useState<BuyerVoiceState>(initial.voice ?? { available: false });
+  // The buyer's first switch in this conversation: the bar says what they say appears as text.
+  const [firstNote, setFirstNote] = useState(false);
   const [barHidden, setBarHidden] = useState(false);
   const clientRef = useRef<VoiceClient | null>(null);
   if (voice && !clientRef.current && typeof window !== "undefined") clientRef.current = new VoiceClient();
@@ -247,26 +250,32 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     }
   };
 
-  /** Starts a call: audio unlocked in this click, the microphone, then the server checks the gates and gives the ticket. */
-  const startCall = (consent: boolean) => {
+  /**
+   * Switches the chat to voice: audio unlocked in this tap, the microphone (the browser's own prompt), then the
+   * server checks the gates and gives the ticket. No notice in between: it is the same conversation by voice.
+   */
+  const startCall = () => {
     const c = clientRef.current;
     if (!c) return;
-    setSheet(false);
     setBarHidden(false);
     c.begin();
     void (async () => {
       if (!(await c.prepare())) return;
       try {
-        const res = await fetch(`/chat/${token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ consent }) });
-        const r = (await res.json().catch(() => ({}))) as { ok?: boolean; reason?: string; sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live" };
+        const res = await fetch(`/chat/${token}/voice`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+        const r = (await res.json().catch(() => ({}))) as {
+          ok?: boolean; reason?: string; gate?: BuyerVoiceState["reason"]; hours?: string;
+          sessionId?: string; ticket?: string; wsUrl?: string; maxSec?: number; mode?: "scripted" | "live"; firstInConversation?: boolean;
+        };
         if (r.ok && r.sessionId && r.ticket && r.wsUrl) {
-          if (consent) setVoiceState((v) => ({ ...v, consented: true }));
+          setFirstNote(!!r.firstInConversation);
           c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec ?? null, mode: r.mode ?? null });
           return;
         }
-        if (r.reason === "consent_needed") {
+        if (r.gate) {
+          // A simulated chat: the button turns disabled with the reason (the server said why).
           c.cancel();
-          setSheet(true);
+          setVoiceState({ available: false, reason: r.gate, ...(r.hours ? { hours: r.hours } : {}) });
           return;
         }
       } catch {
@@ -275,7 +284,6 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       c.unavailable("error");
     })();
   };
-  const onTalk = () => (voiceState.consented ? startCall(false) : setSheet(true));
   // When a call ends: fetch its stored lines and the call row now, then let the bar go after a moment.
   useEffect(() => {
     if (callSnap.phase === "ended") void poll();
@@ -290,6 +298,9 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   useEffect(() => () => clientRef.current?.dispose(), []);
   const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && !barHidden;
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
+  // A simulated chat with a gate off: the button stays, disabled, with the reason under the composer.
+  const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
+    ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey, { hours: voiceState.hours ?? "" }) : null;
 
   const dayKey = dayKeyIn(timeZone);
   const now = new Date();
@@ -398,7 +409,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       {showBar && clientRef.current ? (
         <BuyerCallBar
           client={clientRef.current} tr={tr} agentName={voice!.agentName} dir={dir}
-          onStartAgain={() => startCall(false)} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); setBarHold(false); }} onHoldChange={setBarHold}
+          firstNote={firstNote} onStartAgain={startCall} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); setBarHold(false); }} onHoldChange={setBarHold}
         />
       ) : null}
       <div className="c-log" ref={logRef} role="log" aria-label={strings.messages} dir={dir}>
@@ -410,25 +421,34 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       {ended ? (
         <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{expired ? strings.expired : strings.ended}</div>
       ) : (
+        <>
         <form className="c-bar" dir={dir} onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <label className="c-sr" htmlFor="c-input">{strings.placeholder}</label>
           <textarea
             id="c-input" ref={inputRef} className="c-input" rows={1} dir="auto" placeholder={strings.placeholder} value={draft} maxLength={4000}
             onChange={(e) => { setDraft(e.target.value); grow(); }} onKeyDown={onKey}
           />
-          {showTalk ? (
-            <button type="button" className="c-talk" aria-label={tr("buyer.voice.talk")} title={tr("buyer.voice.talk_hint")} onClick={onTalk} data-voice-talk="">
-              <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.91.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z" /></svg>
+          {/* The composer's edge, as in chat apps: Send while there is text; otherwise Switch to voice, or during a call Back to text. */}
+          {!draft.trim() && inCall && voice ? (
+            <button type="button" className="c-mode c-mode--back" aria-label={tr("buyer.voice.back")} title={tr("buyer.voice.back")} onClick={() => clientRef.current?.end()} data-voice-back="">
+              <Icon name="keyboard" />
+            </button>
+          ) : !draft.trim() && (showTalk || whyOff) ? (
+            <button
+              type="button" className="c-mode" aria-label={tr("buyer.voice.switch")} title={whyOff ?? tr("buyer.voice.switch")}
+              aria-disabled={whyOff ? true : undefined} aria-describedby={whyOff ? "c-voice-why" : undefined}
+              onClick={() => { if (!whyOff) startCall(); }} data-voice-talk="" data-voice-disabled={whyOff ? "" : undefined}
+            >
+              <Icon name="audio-lines" />
             </button>
           ) : null}
-          <button type="submit" className="c-send" aria-label={strings.send} disabled={!draft.trim()}>
+          <button type="submit" className={`c-send${!draft.trim() && ((inCall && voice) || showTalk || whyOff) ? " c-send--hidden" : ""}`} aria-label={strings.send} disabled={!draft.trim()}>
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m22 2-7 20-4-9-9-4z" /><path d="M22 2 11 13" /></svg>
           </button>
         </form>
+        {whyOff ? <p className="c-voice-why" id="c-voice-why" dir={dir} data-voice-why={voiceState.reason}>{whyOff}</p> : null}
+        </>
       )}
-      {sheet && voice ? (
-        <VoiceSheet tr={tr} agentName={voice.agentName} seller={seller} gender={voice.gender} dir={dir} onStart={() => startCall(true)} onClose={() => setSheet(false)} />
-      ) : null}
     </div>
   );
 }

@@ -4,11 +4,9 @@ import { t } from "@/lib/i18n";
 import type { SellerAccount } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
 import { listVersions } from "@/lib/agent/service";
-import { buyerNames } from "@/lib/agent/core/names";
 import { usdMicrosToMinor } from "@/lib/ai/models";
 import { formatMoney } from "@/lib/domain/money";
 import { buyerVoiceMonth } from "@/lib/voice/buyer";
-import { continuingLine } from "@/lib/voice/instructions";
 import { callLimitShort, voiceSettingsSummary } from "@/lib/voice/lab";
 import { maxCallSeconds, resolveVoiceSettings, voiceModelId } from "@/lib/voice/settings";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
@@ -36,8 +34,6 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
   const live = versions.find((v) => v.status === "live") ?? versions.find((v) => v.status === "draft");
   const settings = resolveVoiceSettings(live?.voiceSettings);
   const limit = maxCallSeconds({ settings: live?.voiceSettings ?? null, deadlineSec: deploymentCallLimitSec() });
-  const names = buyerNames(live?.playbook ?? null, account, "en");
-  const opener = continuingLine({ firstName: t("settings.voice.example_buyer"), agent: names.agent, seller: names.seller });
   const minor = usdMicrosToMinor(month.costMicros, account.currency);
   const cost = minor === null ? formatMoney(Math.round(month.costMicros / 10_000), "USD") : formatMoney(minor, account.currency);
   const base = `/app/${account.slug}`;
@@ -80,9 +76,6 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
           <span className="sas-small">{t("settings.voice.told_intro")}</span>
         </div>
         <div className="st-voice">
-          <Row id="voice-open" title={t("settings.voice.opening")} hint={t("settings.voice.opening_hint", { example: opener })}>
-            <span className="sas-pill">{t("settings.voice.platform")}</span>
-          </Row>
           <Row id="voice-tr" title={t("settings.voice.transcript")} hint={t("settings.voice.transcript_hint")}><span className="sas-pill">{t("settings.voice.platform")}</span></Row>
           <Row id="voice-rec" title={t("settings.voice.recordings")} hint={t("settings.voice.recordings_hint")}>
             <span className="sas-pill" data-voice-recordings="off"><Icon name="mic-off" />{t("settings.voice.off")}</span>

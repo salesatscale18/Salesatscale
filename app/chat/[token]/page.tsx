@@ -8,7 +8,7 @@ import { ChatClient } from "./chat-client";
 import { chatStrings } from "./strings";
 import { getMarket } from "@/lib/markets/service";
 import { marketTimezone } from "@/lib/markets/settings";
-import { buyerVoiceGate } from "@/lib/voice/buyer";
+import { buyerVoiceGate, buyerVoiceState } from "@/lib/voice/buyer";
 import { voiceMode } from "@/lib/voice/settings";
 // The call bar is the design system's component (components/sas/voice): its styles and tokens.
 import "@/components/sas/sas.css";
@@ -58,7 +58,7 @@ export default async function BuyerChatPage({ params }: { params: Promise<{ toke
   const voiceOn = voiceMode() !== "off";
   if (voiceOn) {
     const gate = await buyerVoiceGate(appDb, ctx);
-    chat.voice = { available: gate.ok, consented: gate.ok && gate.consented };
+    chat.voice = buyerVoiceState(gate, ctx.lead);
   }
   // Times in the lead's market time zone, as the pay page and the seller's thread show them (R5-3). Read only: no market is created here.
   const timeZone = marketTimezone(ctx.account, ctx.lead.marketId ? await getMarket(appDb, ctx.account.id, ctx.lead.marketId) : null);
