@@ -35,17 +35,43 @@ export type ScriptCtx = {
   last(name: string): Record<string, unknown> | undefined;
   /** Deal-state fields listed in the instructions. */
   fields: ScriptField[];
+  /** "Local time now" from the instructions, as a local date ("2026-11-20") and time ("14:05"); null when missing. */
+  localNow: { date: string; time: string } | null;
 };
 
-export type ScriptStep =
+export type ScriptStep = (
   | { kind: "say"; text: string | ((ctx: ScriptCtx) => string) }
   | { kind: "tool"; name: string; args: unknown | ((ctx: ScriptCtx) => unknown) }
-  | { kind: "expectBuyer"; line: string };
+  | { kind: "expectBuyer"; line: string }
+) & {
+  /** The step runs only when this holds (a branch on an earlier tool result); otherwise it is skipped. */
+  when?: (ctx: ScriptCtx) => boolean;
+};
 export type Script = ScriptStep[];
 
 export const say = (text: string | ((ctx: ScriptCtx) => string)): ScriptStep => ({ kind: "say", text });
 export const tool = (name: string, args: unknown | ((ctx: ScriptCtx) => unknown)): ScriptStep => ({ kind: "tool", name, args });
 export const expectBuyer = (line: string): ScriptStep => ({ kind: "expectBuyer", line });
+/** A step that runs only when `when` holds. */
+export const onlyIf = (when: (ctx: ScriptCtx) => boolean, step: ScriptStep): ScriptStep => ({ ...step, when });
+
+const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** "Local time now: Fri 20 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)" from the instructions, as a local date and time. */
+export function localNowFromInstructions(instructions: string): ScriptCtx["localNow"] {
+  const m = /^Local time now: \w+ (\d{1,2}) (\w{3}) (\d{4}) (\d{2}:\d{2})/m.exec(instructions);
+  const month = m ? MONTHS.indexOf(m[2]) : -1;
+  if (!m || month < 0) return null;
+  return { date: `${m[3]}-${String(month + 1).padStart(2, "0")}-${m[1].padStart(2, "0")}`, time: m[4] };
+}
+
+/** A local date and time ("2026-11-21T10:00") `days` after "Local time now", at `time`. */
+export function localDayAt(ctx: ScriptCtx, days: number, time: string): string {
+  const base = ctx.localNow?.date ?? new Date().toISOString().slice(0, 10);
+  const [y, mo, d] = base.split("-").map(Number);
+  const day = new Date(Date.UTC(y, mo - 1, d + days));
+  return `${day.toISOString().slice(0, 10)}T${time}`;
+}
 
 /** Before-quote fields from the instructions, with a value that is not a placeholder. */
 function quoteFieldUpdates(ctx: ScriptCtx) {
@@ -79,6 +105,15 @@ function totalLine(ctx: ScriptCtx): string {
 
 const OPT_OUT = OPT_OUT_REPLY.en;
 
+/** update_deal_state input recording the request for a person (the card's step) as an objection. */
+const askedForPerson = (status: "open" | "settled", step: number) => ({
+  updates: [], next_step: null, recommendation_confirmed: null, price_asked: null, asked: null,
+  objection: { play: "asks_for_person", buyer_words: "I'd rather talk to a person", step, attempt: false, status },
+});
+const CALL_BRIEF = "The buyer prefers to talk to a person; topic not given. Have the offer and prices for their business ready.";
+/** The last request_callback was refused with another time to offer. */
+const callbackRefused = (ctx: ScriptCtx) => ctx.last("request_callback")?.ok === false && typeof ctx.last("request_callback")?.suggested_time === "string";
+
 /** One script per test-lab scenario (lib/agent/scenarios.ts). Calls are English only. */
 export const VOICE_SCRIPTS: Record<string, Script> = {
   ready_buyer: [
@@ -102,24 +137,32 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     expectBuyer("Okay, thanks."),
     say("Thank you. Talk soon."),
   ],
-  // The card "The buyer asks for a person": say yes and offer help once; asked again, book the call
-  // (hand_off_to_human with reason "call requested" until call booking exists). The call then ends.
+  // "Asks for a person once" (the card "The buyer asks for a person"): say yes and offer help once,
+  // recorded as an objection; the buyer then says what it is about. No call request, no hand-off.
   asks_for_person: [
     expectBuyer("I'd rather talk to a person from your team, please."),
-    tool("update_deal_state", {
-      updates: [], next_step: null, recommendation_confirmed: null, price_asked: null, asked: null,
-      objection: { play: "asks_for_person", buyer_words: "I'd rather talk to a person", step: 1, attempt: false, status: "open" },
-    }),
+    tool("update_deal_state", askedForPerson("open", 1)),
     say("Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price or fit I can usually answer right now."),
-    expectBuyer("I'd just rather talk to a person, thanks."),
-    say("No problem. Does tomorrow at 10:00 work for a short call with one of our specialists?"),
-    expectBuyer("Yes, that works."),
-    tool("update_deal_state", {
-      updates: [], next_step: "call with a specialist tomorrow at 10:00", recommendation_confirmed: null, price_asked: null, asked: null,
-      objection: { play: "asks_for_person", buyer_words: "I'd rather talk to a person", step: 3, attempt: false, status: "settled" },
-    }),
-    tool("hand_off_to_human", { reason: "call requested", summary: "Call requested for tomorrow at 10:00. The buyer did not say what they want to cover.", suggested_reply: "" }),
-    say("Done. Someone from the team will get back to you to confirm the time. Thanks, goodbye."),
+    expectBuyer("Mostly the price, to be honest."),
+    say("Got it. The price depends mostly on how many locations you have. How many are there?"),
+  ],
+  // "Asks for a person twice": asked again, the call is a callback request (request_callback) at a
+  // time inside contact hours; when the tool offers another time, that one is offered and requested.
+  // The call goes on afterwards.
+  asks_for_person_twice: [
+    expectBuyer("I'd rather talk to a person from your team, please."),
+    tool("update_deal_state", askedForPerson("open", 1)),
+    say("Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price or fit I can usually answer right now."),
+    expectBuyer("No thanks, I'd really prefer to speak with someone. Tomorrow morning works for me."),
+    say("No problem. One moment, I'm setting that up."),
+    tool("request_callback", (ctx: ScriptCtx) => ({ time: localDayAt(ctx, 1, "10:00"), brief: CALL_BRIEF })),
+    onlyIf(callbackRefused, say((ctx) => `Tomorrow morning is not open for calls. How about ${String(ctx.last("request_callback")?.suggested_local ?? "the next open time")}?`)),
+    onlyIf(callbackRefused, expectBuyer("Yes, that works.")),
+    onlyIf(callbackRefused, tool("request_callback", (ctx: ScriptCtx) => ({ time: String(ctx.last("request_callback")?.suggested_time ?? ""), brief: CALL_BRIEF }))),
+    tool("update_deal_state", askedForPerson("settled", 3)),
+    say((ctx) => `Done. ${String(ctx.last("request_callback")?.time_local ?? "The time")} is requested, and the team will confirm it with a message in the chat. Is there anything else I can help with?`),
+    expectBuyer("No, that's all, thanks."),
+    say("Thanks for your time. Talk soon, goodbye."),
   ],
   says_stop: [
     // The engine hears the opt-out in code and asks for the fixed reply.
@@ -259,7 +302,7 @@ export class ScriptedConnection implements RealtimeConnection {
   ) {
     this.position = o.startAt;
     const results: Record<string, Record<string, unknown>[]> = o.results ? structuredClone(o.results) : {};
-    this.ctx = { results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions) };
+    this.ctx = { results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions), localNow: localNowFromInstructions(cfg.instructions) };
     this.usage.textInTokens = Math.ceil(cfg.instructions.length / 4);
   }
 
@@ -388,6 +431,10 @@ export class ScriptedConnection implements RealtimeConnection {
       if (!step) {
         await this.idle();
         return;
+      }
+      if (step.when && !step.when(this.ctx)) {
+        this.position++;
+        continue;
       }
       if (step.kind === "expectBuyer") {
         this.endTurn();

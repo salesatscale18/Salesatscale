@@ -93,6 +93,7 @@ export const TOOL_LABELS: Record<string, string> = {
   check_payment: "Checking the order",
   record_opt_out: "Recording the opt-out",
   schedule_follow_up: "Scheduling a follow-up",
+  request_callback: "Requesting a call",
   hand_off_to_human: "Passing to the team",
 };
 

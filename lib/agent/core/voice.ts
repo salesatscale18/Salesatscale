@@ -80,11 +80,15 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   { from: "Every turn, read the buyer's last message before choosing a step.", to: "Every turn, listen to what the buyer just said before choosing a step." },
   {
     from: "- Call with a person. Framed as a help, with a proposed time the buyer can change; the team confirms it.",
-    to: "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it. Never read a link aloud.",
+    to: "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it with a message in the chat. Never read a link aloud.",
   },
   {
     from: "Tell the buyer the team will confirm the time here. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call.",
-    to: "Tell the buyer the team will confirm the time. Keep talking with the buyer after the request, and never use hand_off_to_human for a call.",
+    to: "Tell the buyer the team will confirm the time with a message in the chat. The call goes on after the request: keep helping, and never use hand_off_to_human for a call.",
+  },
+  {
+    from: '- Send the one approved item ("Send me information"): You cannot attach files. Give the summary in text; include a link only if it is listed in this play\'s facts.',
+    to: '- Send the one approved item ("Send me information"): you cannot attach files or read links aloud. Give the summary in a few spoken sentences, and offer to continue in the chat for anything they want to read later.',
   },
 ];
 
@@ -118,7 +122,7 @@ export const PLAYS_VOICE: readonly VoiceReplacement[] = [
   },
   {
     from: "Keep answering until the call. Do not pause the chat.",
-    to: "Keep answering until the call is booked. Booking it ends this call: say someone from the team will get back to them to confirm the time.",
+    to: "Keep answering until the call. Requesting the call does not end this one: keep helping.",
     optional: true,
   },
   { from: "In the same message, promise the outcome", to: "In the same turn, promise the outcome", optional: true },
@@ -156,6 +160,12 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
   { from: "the buyer ends the chat.", to: "the buyer ends the call.", optional: true },
   { from: "in the next messages", to: "in the next turns", optional: true },
   { from: "reply once that you will confirm here when the order goes through", to: "say once that you will confirm in the chat when the order goes through", optional: true },
+  // The open call request (lib/agent/prompt.ts turnContext, O6).
+  {
+    from: "Keep answering until the call. If the buyer wants another time, call request_callback again.",
+    to: "Keep the conversation going: this call does not end because of the request. If the buyer wants another time, call request_callback again.",
+    optional: true,
+  },
   // The "Open objection" block quotes the card's steps.
   ...PLAYS_VOICE,
 ];
@@ -187,7 +197,9 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example \"Which is closest: the price, whether it fits, or the timing?\" One short sentence and one question per turn.",
     "- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that \"Open objection\" shows as used.",
     "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found the team already sees the question: do not say you passed it on, and never say you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have, and then propose a short call with a person.",
-    "- If the buyer asks for a person, follow the card \"The buyer asks for a person\": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time, then call hand_off_to_human with reason \"call requested\" and, in the summary, the time and what the person should have ready. Then say someone from the team will get back to them to confirm the time, and say goodbye: the call ends there.",
+    "- If the buyer asks for a person, follow the card \"The buyer asks for a person\": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time and call request_callback. Never use hand_off_to_human for a call request.",
+    "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is a callback request: call request_callback with the time and a brief (what the buyer wants to cover and what the person should have ready). If it offers another time, offer that time instead and call it again when the buyer agrees. Then say the team will confirm the time with a message in the chat, and ask if there is anything else you can help with: this call goes on.",
+    "- Times: say them naturally, as a person would (\"tomorrow at ten\", \"Thursday at half past two\"). Work out the date from \"Local time now\" in your context, and pass the time to request_callback as a local date and time, for example \"2026-11-18T10:00\".",
     "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
     "- If the buyer says stop or asks not to be contacted: confirm, call record_opt_out, and say only the reply it gives you.",
     "- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.",
@@ -206,5 +218,18 @@ export const TOOL_DESCRIPTION_VOICE: readonly VoiceReplacement[] = [
   { from: "Send the buyer the personal link to the seller's order form", to: "Put the buyer's personal link to the seller's order form in the chat below the call (never read it aloud)", optional: true },
   { from: "Do not ask for company or signer details in the chat:", to: "Do not ask for company or signer details by voice:", optional: true },
   { from: "Opts the buyer out and closes the chat. Then send only the reply the result gives you.", to: "Opts the buyer out and ends the call. Then say only the reply the result gives you.", optional: true },
+  { from: "the app tells the buyer.", to: "the app tells the buyer with a message in the chat below the call.", optional: true },
+  { from: "The conversation stays with you: keep answering until the call.", to: "The conversation stays with you: keep the call going.", optional: true },
   { from: "in chat", to: "by voice", optional: true },
 ];
+
+/** Tool result messages for the model, as a call reads them (lib/voice/engine.ts). Optional, so other messages pass unchanged. */
+export const TOOL_RESULT_VOICE: readonly VoiceReplacement[] = [
+  { from: "the team will confirm it here.", to: "the team will confirm it with a message in the chat.", optional: true },
+  { from: "Keep answering their questions until the call.", to: "Then ask if there is anything else you can help with: this call goes on.", optional: true },
+];
+
+/** A tool result's message as a call reads it. */
+export function voiceToolResultMessage(text: string): string {
+  return applyVoiceReplacements(text, TOOL_RESULT_VOICE, "tool result");
+}

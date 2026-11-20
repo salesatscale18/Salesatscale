@@ -22,6 +22,7 @@ import type { ExampleCatalogItem } from "@/lib/agent/core/examples";
 import type { PlainItem } from "@/lib/agent/prompt";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
+import { leadCallback } from "@/lib/callbacks/service";
 import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { maskCardNumbers } from "./safety";
@@ -45,6 +46,8 @@ export type VoiceInstructionInput = {
   opener: string;
   localNow: string | null;
   followUp: { dueLocal: string; topic: string | null } | null;
+  /** The buyer's open call request (lib/callbacks), as turnContext shows it. Missing = none. */
+  callback?: { timeLocal: string; confirmed: boolean } | null;
   /** The conversation so far (oldest first): earlier chat, or the call before a reconnect. */
   recap: TranscriptLine[];
   /** After a reconnect: the opener was already spoken. */
@@ -62,7 +65,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
   const context = voiceStageText(turnContext(i.playbook, i.deal, {
     stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed ? null : i.opener, catalog: i.catalog, names: i.names,
-    followUp: i.followUp, localNow: i.localNow, channel: "voice",
+    followUp: i.followUp, callback: i.callback ?? null, localNow: i.localNow, channel: "voice",
   }));
   const recap = i.recap.slice(-RECAP_LINES).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
   const call = [
@@ -91,7 +94,7 @@ export async function loadVoiceInstructions(
   opts: { recap?: TranscriptLine[]; resumed?: boolean } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
-  const [stage, catalog, followUp, contact, earlier, agentCount] = await Promise.all([
+  const [stage, catalog, followUp, contact, earlier, agentCount, callback] = await Promise.all([
     loadStageFacts(db, account.id, lead.id),
     publishedCatalog(db, account.id).catch(() => null),
     scheduledFollowUp(db, account.id, lead.id),
@@ -99,6 +102,8 @@ export async function loadVoiceInstructions(
     db.select({ actor: messages.actor, body: messages.body }).from(messages)
       .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id))).orderBy(desc(messages.createdAt)).limit(RECAP_LINES),
     db.select({ id: messages.id }).from(messages).where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))),
+    // The open call request (requested or confirmed), as in a chat turn (lib/agent/turn.ts).
+    leadCallback(db, account.id, lead.id, a.now),
   ]);
   // A call is English only (decision: release 1).
   const names = buyerNames(version.playbook, account, "en");
@@ -114,6 +119,7 @@ export async function loadVoiceInstructions(
     catalog: activeItems, deal: a.deal, stage, agentMessages: agentCount.length, names, opener,
     localNow: localNowLine(a.now, contact.timezone),
     followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
+    callback: callback ? { timeLocal: formatDueLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
     recap, resumed: opts.resumed,
   });
   return { instructions, opener };

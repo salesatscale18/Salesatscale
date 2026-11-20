@@ -21,7 +21,7 @@ import {
 import { readDealState } from "@/lib/agent/service";
 import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
-import { voiceStageText } from "@/lib/agent/core/voice";
+import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallUsageRecord } from "@/lib/ai/models";
 import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
@@ -598,6 +598,7 @@ export class VoiceEngine {
         };
       }
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
+      // A call request does not end this call (only a hand-off or an opt-out does).
       if (name === "record_opt_out") this.afterOptOut();
       if (name === "hand_off_to_human") {
         // The conversation is now held by the team and this call ends after the agent's last sentence.
@@ -608,6 +609,8 @@ export class VoiceEngine {
         this.endSoon("handoff");
       }
     }
+    // Every result message in call wording ("confirm it here" → "with a message in the chat", …).
+    if (typeof forModel.message === "string") forModel = { ...forModel, message: voiceToolResultMessage(forModel.message) };
     this.conn?.sendToolResult(callId, name, forModel);
     turn.awaitingContinuation = true;
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });

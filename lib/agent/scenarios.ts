@@ -126,8 +126,6 @@ export const SCENARIOS: Scenario[] = [
     check(run) {
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);
       const handedOff = okCalls(run, "hand_off_to_human").length > 0;
-      // A live voice call still passes the call to the team (the voice block in lib/agent/core/voice.ts), until the voice prompt follows the play.
-      if (run.channel === "voice" && handedOff) return pass("Handed to a person.");
       if (handedOff) return fail("The agent handed the chat over on a first request for a person. It should offer to help first.");
       if (okCalls(run, "request_callback").length) return fail("The agent requested a call on the first ask. It should offer to help first.");
       if (run.conversationStatus !== "open") return fail("The chat left the agent.");

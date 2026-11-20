@@ -60,9 +60,9 @@ describe("scenario checks", () => {
     expect(check("asks_for_person", run({ ...base, calls: [call("request_callback", { time_local: "Wed 18 Nov 10:00" })] }))).toMatchObject({ result: "failed", reason: expect.stringContaining("first ask") });
     // A refused call request does not count as one.
     expect(check("asks_for_person", run({ ...base, calls: [call("request_callback", {}, {}, "refused")] })).result).toBe("passed");
-    // A hand-off in chat fails; a live voice call still hands off (the voice block), so it passes there.
+    // A hand-off fails, on a voice call as in chat (the voice block follows the play).
     expect(check("asks_for_person", run({ ...base, calls: [call("hand_off_to_human")], conversationStatus: "human" })).result).toBe("failed");
-    expect(check("asks_for_person", run({ ...base, channel: "voice", calls: [call("hand_off_to_human")], conversationStatus: "human" })).result).toBe("passed");
+    expect(check("asks_for_person", run({ ...base, channel: "voice", calls: [call("hand_off_to_human")], conversationStatus: "human" })).result).toBe("failed");
     expect(check("asks_for_person", run({ ...base, conversationStatus: "closed" })).result).toBe("failed");
   });
 
