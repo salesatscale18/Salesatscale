@@ -3456,5 +3456,9 @@
   "buyer.voice.why.not_agent": "This chat is handled by a person.",
   "buyer.voice.why.spend_cap": "AI limit reached.",
   "buyer.voice.why.platform_budget": "AI limit reached.",
-  "buyer.voice.why.account_not_live": "The account is paused."
+  "buyer.voice.why.account_not_live": "The account is paused.",
+  "buyer.sms_stop.title": "Stop text messages from {seller}?",
+  "buyer.sms_stop.body": "You can still write to {seller} in the chat.",
+  "buyer.sms_stop.button": "Stop text messages",
+  "buyer.sms_stop.done": "You won't get more text messages from {seller}."
 }
