@@ -79,10 +79,12 @@ export function stageSentence(v: LeadStageView, name: string): { wait: string; n
 export type PaidOrder = { label: string; amount: string };
 
 /** The stepper and the sentence. `v` null: no conversation yet. `paidOrder`: the lead's paid order, for the banner. */
-export function StageStepper({ v, name, paidOrder, handoffWhy }: {
+export function StageStepper({ v, name, paidOrder, handoffWhy, handoffFull }: {
   v: LeadStageView | null; name: string; paidOrder?: PaidOrder | null;
   /** O35: why the lead needs a person, in one line (lib/leads/handoff-reason.ts); shown while a person handles it. */
   handoffWhy?: string | null;
+  /** The whole stored hand-off reason, uncut (the lists cut it): shown under the line when the line does not already say it all. */
+  handoffFull?: string | null;
 }) {
   const current = v ? STAGE_STEPS.indexOf(v.step) : -1;
   const paidBanner = !!(v && paidOrder && v.paid && v.step === "after" && !v.human && !v.objection);
@@ -123,10 +125,11 @@ export function StageStepper({ v, name, paidOrder, handoffWhy }: {
           {paidBanner && paidOrder ? (
             <span data-testid="stage-paid"><strong><TextWithId text={t("lead.stage.after.paid_order", { order: paidOrder.label })} id={paidOrder.label} /></strong> · <span className="sas-num">{paidOrder.amount}</span>. {sentence.next}</span>
           ) : (
-            <span>
+            <span style={{ minWidth: 0, flex: "1 1 auto" }}>
               {v.human || v.objection || v.closed || (v.step === "after" && v.paid) ? <><strong>{stageLabel(v)}.</strong>{" "}</> : null}
               <strong>{sentence.wait}</strong> {sentence.next}
-              {v.human && handoffWhy ? <span style={{ display: "block" }} data-handoff-why="" dir="auto">{handoffWhy}</span> : null}
+              {v.human && handoffWhy ? <span className="sas-oneline" data-handoff-why="" dir="auto" title={handoffWhy}>{handoffWhy}</span> : null}
+              {v.human && handoffFull && handoffFull !== handoffWhy ? <span className="sas-small" style={{ display: "block", overflowWrap: "anywhere" }} data-handoff-full="" dir="auto">{handoffFull}</span> : null}
             </span>
           )}
         </div>

@@ -89,8 +89,10 @@ export default async function ConversationsPage({ params, searchParams }: { para
     console.error("[inbox] list failed", e);
   }
 
-  // O35: why each waiting hand-off needs a person (one line, as in Needs you and on the lead page).
-  const whys = list ? await handoffWhyByLead(appDb, account.id, list.rows.filter((r) => r.group === "needs_you" && !r.takenOverByUserId).map((r) => r.lead.id)) : new Map<string, string>();
+  // O35: why each conversation a person handles needs one (one line, as in Needs you and on the lead page):
+  // a waiting hand-off, one a person took over (also while the buyer waits), and a lead in "Human handling".
+  const showsWhy = (r: InboxRow) => r.group !== "closed" && (r.status === "human" || r.lead.status === "human_handling");
+  const whys = list ? await handoffWhyByLead(appDb, account.id, list.rows.filter(showsWhy).map((r) => r.lead.id)) : new Map<string, string>();
 
   // The selected thread's data, in a second parallel batch.
   const thread = selected
@@ -213,7 +215,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                               <span className="sas-inbox__meta">
                                 {r.group === "needs_you" ? <span className="sas-inbox__badge"><Icon name="user" />{r.takenOverByUserId ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff")}</span> : null}
                                 {/* O35: why it needs a person, the same line as Needs you and the lead page. */}
-                                {r.group === "needs_you" && !r.takenOverByUserId && whys.get(r.lead.id) ? <span className="sas-small" data-handoff-why="" dir="auto">{whys.get(r.lead.id)}</span> : null}
+                                {showsWhy(r) && whys.get(r.lead.id) ? <span className="sas-small sas-oneline" data-handoff-why="" dir="auto" title={whys.get(r.lead.id)}>{whys.get(r.lead.id)}</span> : null}
                                 <StatusPill object="lead" state={r.lead.status} />
                                 {r.isTest ? <TestLabChip /> : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
                                 {r.marketName || homeMarket ? <span className="sas-small" data-market="">{r.marketName || homeMarket}</span> : null}

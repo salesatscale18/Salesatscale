@@ -37,7 +37,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { OPEN_QUESTIONS, STATE_LEADS } = await import("@/lib/demo/states");
+const { HUMAN_HANDOFF_REASON, OPEN_QUESTIONS, STATE_LEADS } = await import("@/lib/demo/states");
 const { ensureDraftVersion } = await import("@/lib/agent/service");
 const { savePlaybookForm } = await import("@/lib/agent/playbook-save");
 const { answerQuestion } = await import("@/lib/agent/service");
@@ -136,10 +136,12 @@ describe("O35 pages on the demo account", () => {
     const upset = await leadBy(STATE_LEADS.upset.n);
     const list = await render(ConversationsPage, { account: slug }, { filter: "needs_you" });
     save("conversations", list);
-    expect(list).toContain('data-handoff-why="" dir="auto">Upset: false night alarms, and wants a person now</span>');
+    expect(list).toContain('class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="Upset: false night alarms, and wants a person now">Upset: false night alarms, and wants a person now</span>');
     const lead = await render(LeadPage, { account: slug, leadId: upset.id });
     save("lead-upset", lead);
-    expect(lead).toContain('data-handoff-why="" dir="auto">Upset: false night alarms, and wants a person now</span>');
+    expect(lead).toContain('class="sas-oneline" data-handoff-why="" dir="auto" title="Upset: false night alarms, and wants a person now">Upset: false night alarms, and wants a person now</span>');
+    // The lists cut the reason, so the lead page also shows the whole stored reason, uncut.
+    expect(lead).toContain('data-handoff-full="" dir="auto">The buyer is upset: false night alarms, and wants a person now.</span>');
     // An agent-handled lead has none.
     const calm = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callRequested.n)).id });
     save("lead-call-requested", calm);
@@ -147,6 +149,33 @@ describe("O35 pages on the demo account", () => {
     const done = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callDone.n)).id });
     save("lead-call-done", done);
     expect(text(done)).toContain("How did the call go?");
+  });
+
+  it("the same one-line reason in all three places, for the labelled lead and the taken-over Hebrew lead", async () => {
+    const overview = await render(OverviewPage, { account: slug });
+    const inbox = await render(ConversationsPage, { account: slug });
+    save("conversations-all", inbox);
+    const cases = [
+      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now", full: "The buyer is upset: false night alarms, and wants a person now." },
+      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON, full: HUMAN_HANDOFF_REASON },
+    ];
+    for (const c of cases) {
+      // Needs you: name, then the reason as its own one-line, isolated part (cut with "…" by CSS).
+      expect(overview).toContain(`<strong class="sas-why-line" data-why-line="" title="${c.lead.fullName} needs a person · ${c.why}"><span class="sas-why-line__head"><bdi>${c.lead.fullName}</bdi> needs a person ·</span> <span class="sas-why-line__why sas-oneline" data-handoff-why="" dir="auto">${c.why}</span></strong>`);
+      // Conversations row: the same line, one line.
+      const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
+      expect(row.slice(0, row.indexOf("</li>"))).toContain(`class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
+      // Lead page banner: the same line, one line; the whole stored reason is on the page uncut.
+      const lead = await render(LeadPage, { account: slug, leadId: (await leadBy(c.lead.n)).id });
+      if (c.lead === STATE_LEADS.human) save("lead-human", lead);
+      expect(lead).toContain(`class="sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
+      expect(text(lead)).toContain(c.full);
+    }
+    // The Hebrew reason fits the 60-character cut, so the banner line already says it all (no second copy).
+    const he = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.human.n)).id });
+    expect(he).not.toContain("data-handoff-full");
+    // The single-line rule is in the design system.
+    expect(css).toMatch(/\.sas-oneline \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
   });
 
   it("Knowledge: \"1 unanswered question\" in the singular", async () => {

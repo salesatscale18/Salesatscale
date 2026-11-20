@@ -138,14 +138,15 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const funnelMax = Math.max(1, ...funnel.map((f) => f.value));
 
   /** titleId / detailId: the order or quote ID inside the text, rendered as one unbroken code-font run (.sas-id, nowrap). */
-  const itemText = (it: NeedsYouItem): { title: string; detail: string; titleId?: string; detailId?: string } => {
+  const itemText = (it: NeedsYouItem): { title: string; detail: string; titleId?: string; detailId?: string; why?: string } => {
     const who = it.company ? `${it.leadName} · ${it.company}` : it.leadName;
     switch (it.kind) {
       case "quote_approval":
         return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), titleId: quoteRef(it.quoteNumber), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
       case "human_handling":
         // O35: why the lead needs a person, after the name ("Dana Demo needs a person · Upset: false night alarms").
-        return { title: it.why ? t("overview.needs.human_handling_why", { name: it.leadName, why: it.why }) : t("overview.needs.human_handling", { name: it.leadName }), detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
+        // The reason is its own part (`why`): one line, cut with "…" (UX).
+        return { title: it.why ? t("overview.needs.human_handling_why", { name: it.leadName, why: it.why }) : t("overview.needs.human_handling", { name: it.leadName }), why: it.why ?? undefined, detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
       case "bank_transfer":
       case "payment_failed":
         return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}`, detailId: orderLabel(account.tradeName, it.orderNumber) };
@@ -216,7 +217,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
               <Icon name={look.icon} />
             </span>
             <span className="sas-list__main">
-              <strong><TextWithId text={text.title} id={text.titleId ?? ""} size="inherit" /></strong>
+              {text.why ? <WhyTitle title={text.title} why={text.why} name={it.leadName} /> : <strong><TextWithId text={text.title} id={text.titleId ?? ""} size="inherit" /></strong>}
               <span className="sas-small"><TextWithId text={text.detail} id={text.detailId ?? ""} /></span>
             </span>
             <span className={look.tone === "human" ? buttonClass("takeover", "sm") : buttonClass("secondary", "sm")}>
@@ -381,6 +382,25 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         </SidePanel>
       ) : null}
     </main>
+  );
+}
+
+/**
+ * "Dana Demo needs a person · Upset: …" on one line (UX): the head keeps the
+ * name, the reason is its own isolated run (dir="auto", so a Hebrew reason
+ * reads right to left and is cut at its own end) and gives way first, with "…".
+ */
+function WhyTitle({ title, why, name }: { title: string; why: string; name: string }) {
+  const at = title.lastIndexOf(why);
+  const head = (at >= 0 ? title.slice(0, at) : title).trimEnd();
+  // The name is isolated too, so a Hebrew name keeps its place in the English line.
+  const n = name ? head.indexOf(name) : -1;
+  return (
+    <strong className="sas-why-line" data-why-line="" title={title}>
+      <span className="sas-why-line__head">{n >= 0 ? <>{head.slice(0, n)}<bdi>{name}</bdi>{head.slice(n + name.length)}</> : head}</span>
+      {/* The space keeps the text whole for copying and screen readers; the flex layout ignores it (the margin spaces it). */}
+      {at >= 0 ? <>{" "}<span className="sas-why-line__why sas-oneline" data-handoff-why="" dir="auto">{why}</span></> : null}
+    </strong>
   );
 }
 

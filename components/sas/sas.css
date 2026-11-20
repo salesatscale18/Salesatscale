@@ -421,6 +421,15 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox__row--unread .sas-inbox__name, .sas-inbox__row--unread .sas-inbox__preview { font-weight: 700; color: var(--ink); }
 .sas-inbox__preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sas-inbox__meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* O35: the hand-off reason, one line cut with "…" at any width (Needs you, Conversations row, lead banner).
+   The reason is its own isolated run (dir="auto"), so a Hebrew reason is cut at its own end. */
+.sas-oneline { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
+/* "Name needs a person · <reason>": the reason follows on the same line when at least ~8em of it fits
+   (cut with "…"); on a narrow screen it moves under the name, still one line with "…". The name never gets cut. */
+.sas-why-line { display: flex; flex-wrap: wrap; column-gap: 0.3em; min-width: 0; max-width: 100%; }
+.sas-why-line__head { flex: 0 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.sas-why-line__why { flex: 1 1 8em; }
+.sas-inbox__meta > .sas-oneline { flex: 0 1 auto; }
 .sas-inbox__badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 600 11px/22px var(--font-sans); }
 .sas-inbox__badge .sas-ico { width: 12px; height: 12px; }
 .sas-inbox__thread { overflow: hidden; }

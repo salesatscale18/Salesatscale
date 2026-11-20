@@ -73,9 +73,22 @@ export function handoffWhy(e: { type: string; data: Record<string, unknown> | nu
   return reason ? `${name}: ${reason}` : name;
 }
 
+/** The stored reason, whole (whitespace folded only), or null. The lists cut it; the lead page shows it uncut. Pure. */
+export function handoffFullReason(e: { type: string; data: Record<string, unknown> | null }): string | null {
+  const raw = e.type === "handoff.requested" && typeof e.data?.reason === "string" ? e.data.reason.replace(/\s+/g, " ").trim() : "";
+  return raw || null;
+}
+
 /** The line for each lead's latest hand-off (scoped by account); leads with none are left out. */
 export async function handoffWhyByLead(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();
+  for (const [id, r] of await handoffReasonsByLead(db, accountId, leadIds)) out.set(id, r.why);
+  return out;
+}
+
+/** Each lead's latest hand-off (scoped by account): the one line and the whole stored reason; leads with no line are left out. */
+export async function handoffReasonsByLead(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, { why: string; full: string | null }>> {
+  const out = new Map<string, { why: string; full: string | null }>();
   if (!leadIds.length) return out;
   const rows = await db.select({ leadId: leadEvents.leadId, type: leadEvents.type, data: leadEvents.data }).from(leadEvents)
     .where(and(eq(leadEvents.accountId, accountId), inArray(leadEvents.leadId, [...new Set(leadIds)]), inArray(leadEvents.type, [...HANDOFF_WHY_EVENTS])))
@@ -85,7 +98,7 @@ export async function handoffWhyByLead(db: Db, accountId: string, leadIds: reado
     if (seen.has(r.leadId)) continue;
     seen.add(r.leadId);
     const why = handoffWhy(r);
-    if (why) out.set(r.leadId, why);
+    if (why) out.set(r.leadId, { why, full: handoffFullReason(r) });
   }
   return out;
 }
