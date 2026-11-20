@@ -6,9 +6,10 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { and, asc, eq } from "drizzle-orm";
-import { conversations, dealStates, leadEvents, leads, messages, quotes, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
+import { conversations, dealStates, leadEvents, leads, messages, quotes, rateLimits, sellerAccounts, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { leadCallback } from "@/lib/callbacks/service";
 import { recordTeamAnswer } from "@/lib/team-questions/service";
+import { declineHeldQuote } from "@/lib/agent/quote-approval";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, listVersions, publishDraftVersion, rollbackTo, saveDraftPlaybook } from "@/lib/agent/service";
@@ -182,6 +183,34 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     const tc = await calls(c.conversationId);
     expect(tc.find((x) => x.name === "create_quote")?.result).toMatchObject({ status: "awaiting_seller_approval" });
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
+    // While the price waits, the agent says it has asked and keeps going; it never invents the outcome.
+    const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).map((m) => m.body);
+    expect(agent.some((b) => b.includes("I've asked the team to approve that price"))).toBe(true);
+    expect(agent.join(" ")).not.toMatch(/\b(?:approved|declined|will get back to you)\b/i);
+
+    // The team declines the price: the next call has "Price approval" in its first instructions, and again after a reconnect.
+    const [acct] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc));
+    const quoteId = String(tc.find((x) => x.name === "create_quote")!.result.quote_id);
+    expect(await declineHeldQuote(db, { account: acct, user: me, actingAs: false, role: "seller_admin" as const }, quoteId, null)).toMatchObject({ ok: true });
+    const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
+    if (!s.ok) throw new Error(s.reason);
+    const clock = new ManualClock();
+    const model = new ScriptedRealtime({ clock });
+    const e = new VoiceEngine({ db, model, sessionId: s.sessionId, send: () => {}, clock, limits: QUIET });
+    await e.start();
+    await e.idle();
+    for (const instructions of [model.connections[0].cfg.instructions]) {
+      expect(instructions).toContain("## Price approval");
+      expect(instructions).toMatch(/The team declined Q-\d+ with a 15% discount/);
+      expect(instructions).toContain("The buyer was told by message: \"");
+      expect(instructions).not.toContain("The app told the buyer");
+    }
+    model.connections[0].simulateGoAway();
+    for (let i = 0; i < 4; i++) { await flushAsync(); await e.idle(); }
+    expect(model.connections).toHaveLength(2);
+    expect(model.connections[1].cfg.instructions).toContain("## Price approval");
+    expect(model.connections[1].cfg.instructions).toMatch(/The team declined Q-\d+/);
+    await e.stop("user_hangup");
   });
 
   it("asks for a person once: yes and one offer to help, recorded as an objection; no call request, no hand-off; the call goes on", async () => {
@@ -671,7 +700,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     // A fake "live" model: nothing may connect.
     let connects = 0;
     const live: RealtimeModel = { modelId: "google/gemini-3.8-live", mode: "live", connect: async () => { connects++; throw new Error("must not connect"); } };
-    const { sellerAccounts } = await import("@/db/schema");
+
     const [before] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc));
     await db.update(sellerAccounts).set({ monthlySpendCapMinor: 0 }).where(eq(sellerAccounts.id, acc));
     try {

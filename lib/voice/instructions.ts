@@ -24,6 +24,7 @@ import { publishedCatalog } from "@/lib/catalog/service";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { leadCallback } from "@/lib/callbacks/service";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
+import { priceApprovalContext } from "@/lib/agent/price-approval";
 import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { maskCardNumbers } from "./safety";
@@ -51,6 +52,8 @@ export type VoiceInstructionInput = {
   callback?: { timeLocal: string; confirmed: boolean } | null;
   /** "## Questions sent to the team" (lib/team-questions teamQuestionsContext): open questions and the team's answers. */
   teamQuestions?: string | null;
+  /** "## Price approval" (lib/agent/price-approval.ts priceApprovalContext): the team's latest decline of a held price. */
+  priceApproval?: string | null;
   /** The conversation so far (oldest first): earlier chat, or the call before a reconnect. */
   recap: TranscriptLine[];
   /** After a reconnect: the opener was already spoken. */
@@ -68,7 +71,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
   const context = voiceStageText(turnContext(i.playbook, i.deal, {
     stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed ? null : i.opener, catalog: i.catalog, names: i.names,
-    followUp: i.followUp, callback: i.callback ?? null, teamQuestions: i.teamQuestions ?? null, localNow: i.localNow, channel: "voice",
+    followUp: i.followUp, callback: i.callback ?? null, teamQuestions: i.teamQuestions ?? null, priceApproval: i.priceApproval ?? null, localNow: i.localNow, channel: "voice",
   }));
   const recap = i.recap.slice(-RECAP_LINES).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
   const call = [
@@ -97,7 +100,7 @@ export async function loadVoiceInstructions(
   opts: { recap?: TranscriptLine[]; resumed?: boolean } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
-  const [stage, catalog, followUp, contact, earlier, agentCount, callback, teamQuestions] = await Promise.all([
+  const [stage, catalog, followUp, contact, earlier, agentCount, callback, teamQuestions, priceApproval] = await Promise.all([
     loadStageFacts(db, account.id, lead.id),
     publishedCatalog(db, account.id).catch(() => null),
     scheduledFollowUp(db, account.id, lead.id),
@@ -109,6 +112,8 @@ export async function loadVoiceInstructions(
     leadCallback(db, account.id, lead.id, a.now),
     // Questions this conversation sent to the team, and the team's answers (as in a chat turn).
     teamQuestionsContext(db, account.id, lead.id, conv.id, a.now),
+    // The team's latest decline of a special price (as in a chat turn).
+    priceApprovalContext(db, account.id, lead.id),
   ]);
   // A call is English only (decision: release 1).
   const names = buyerNames(version.playbook, account, "en");
@@ -126,6 +131,7 @@ export async function loadVoiceInstructions(
     followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
     callback: callback ? { timeLocal: formatDueLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
     teamQuestions: teamQuestions || null,
+    priceApproval: priceApproval || null,
     recap, resumed: opts.resumed,
   });
   return { instructions, opener };

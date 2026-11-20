@@ -75,6 +75,8 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   { from: "- One value point per message.", to: "- One value point per turn." },
   { from: 'Example, to "kk": "Thanks. I\'ll confirm here as soon as the order goes through."', to: 'Example, to "okay": "Thanks. I\'ll confirm in the chat as soon as the order goes through."' },
   { from: "do not ask it again in the next messages.", to: "do not ask it again in the next turns." },
+  // Special-price approval (O1 part 5): the decision reaches the buyer as a chat message.
+  { from: "The team's decision reaches the buyer from the app;", to: "The team's decision reaches the buyer by message;" },
   // The shared objection method (lib/agent/core/design.ts objectionMethod).
   { from: "- Find the real objection. One question, in the same message as the acknowledgement.", to: "- Find the real objection. One question, in the same turn as the acknowledgement." },
   { from: "Every turn, read the buyer's last message before choosing a step.", to: "Every turn, listen to what the buyer just said before choosing a step." },
@@ -160,6 +162,9 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
   { from: "the buyer ends the chat.", to: "the buyer ends the call.", optional: true },
   { from: "in the next messages", to: "in the next turns", optional: true },
   { from: "reply once that you will confirm here when the order goes through", to: "say once that you will confirm in the chat when the order goes through", optional: true },
+  // The held quote (lib/agent/core/stage.ts) and "Price approval" (lib/agent/price-approval.ts), O1 part 5.
+  { from: "Moves on when: the team decides. The app tells the buyer either way;", to: "Moves on when: the team decides. The buyer gets the decision by message either way;", optional: true },
+  { from: "The app told the buyer: \"", to: "The buyer was told by message: \"", optional: true },
   // "Questions sent to the team" (lib/team-questions/rules.ts teamQuestionLines, O4).
   { from: "(already sent to the buyer in a message: do not repeat it unless they ask)", to: "(already sent to the buyer by message: do not repeat it unless they ask)", optional: true },
   // The open call request (lib/agent/prompt.ts turnContext, O6).

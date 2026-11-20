@@ -133,7 +133,8 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     tool("update_deal_state", dealUpdate),
     tool("search_catalog", { query: "" }),
     tool("create_quote", quoteArgs(15)),
-    say("I'm confirming that price with the team and will get back to you."),
+    // The quote waits for the team (special-price approval): say once it was asked, keep going, never invent the outcome.
+    say("I've asked the team to approve that price, and you'll get their decision by message. Meanwhile, is there anything else you'd like to know?"),
     expectBuyer("Okay, thanks."),
     say("Thank you. Talk soon."),
   ],

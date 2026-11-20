@@ -14,6 +14,7 @@ import { deriveStage, NO_STAGE_FACTS } from "@/lib/agent/core/stage";
 import { TOOL_DEFS } from "@/lib/agent/tools";
 import { OBJECTION_PLAYS } from "@/lib/agent/core/objections";
 import { teamQuestionLines } from "@/lib/team-questions/rules";
+import { priceApprovalText } from "@/lib/agent/price-approval";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PLAY_KEYS, type StoredObjection } from "@/db/schema";
 import {
@@ -158,7 +159,7 @@ describe("voice instructions", () => {
     const found: string[] = [];
     for (const re of [
       /\bmessages?\b/i, /\bchat\b/i, /\bwrite\b|\bwritten\b/i, /\b(?:give|send) the link\b/i, /\blink to choose\b/i,
-      /\bin the same message\b/i, /\bpause the chat\b/i, /\bconfirm here\b/i, /\bquestions here\b/i, /\bin text\b/i, /\bconfirm (?:it|the time) here\b/i,
+      /\bin the same message\b/i, /\bpause the chat\b/i, /\bconfirm here\b/i, /\bquestions here\b/i, /\bin text\b/i, /\bconfirm (?:it|the time) here\b/i, /\bfrom the app\b/i, /\bthe app told\b/i,
     ]) {
       const m = re.exec(t);
       if (m) found.push(`${m[0]}: …${t.slice(Math.max(0, m.index - 60), m.index + 40)}…`);
@@ -178,12 +179,13 @@ describe("voice instructions", () => {
         { play, words: "words", steps: [1], status: "open", attempts: 1 },
         { play: "too_expensive", words: "too much", steps: [1, 2], status: "settled", attempts: 1 },
       ];
-      for (const stage of [NO_STAGE_FACTS, { ...NO_STAGE_FACTS, quote: "ready" as const }, { quote: "ready" as const, orderForm: "sent" as const, signed: true, paid: false }]) {
+      for (const stage of [NO_STAGE_FACTS, { ...NO_STAGE_FACTS, quote: "ready" as const }, { ...NO_STAGE_FACTS, quote: "awaiting_approval" as const }, { quote: "ready" as const, orderForm: "sent" as const, signed: true, paid: false }]) {
         const text = buildVoiceInstructions({
           playbook: pb, voiceSettings: null, seller, catalog, deal: { fields: {}, objections, nextStep: null, summary: null }, stage, agentMessages: 2,
           names: { agent: "Ava", seller: "Acme", gender: "neutral", language: "en" }, opener: "Hi, this is Ava.", localNow: null,
           followUp: { dueLocal: "Wed 18 Nov 10:00", topic: "the quote" }, recap: [],
           callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: false },
+          priceApproval: priceApprovalText({ number: 1001, discountBp: 1500, reasons: ["Discount above the limit."], toldBuyer: "The team could not approve that price." }),
           teamQuestions: teamQuestionLines(
             [{ key: "q2", question: "Open question?", buyerWords: "open one", mustHave: true, conversationId: "c", leadId: "l", askedAt: new Date(0) }] as never,
             [{ key: "q1", question: "Training?", buyerWords: "training", answer: "One day on site.", delivery: "sent", conversationId: "c", leadId: "l" }] as never,
@@ -757,5 +759,27 @@ describe("questions for the team on a call (ask_team)", () => {
     const ctx = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", teamQuestions: block }));
     expect(ctx).toContain('- Answer from the team to the buyer\'s question "training": One day on site. (already sent to the buyer by message: do not repeat it unless they ask)');
     expect(ctx).toContain("A must-have still open at the close: book a short call with the right person (request_callback)");
+  });
+});
+
+describe("special-price approval on a call", () => {
+  it("the decision reaches the buyer by message: method line, held-quote stage and the Price approval block", () => {
+    const voice = stableSystemPrompt(pb, seller, null, { channel: "voice" });
+    expect(voice).toContain("Tell the buyer you have asked the team to approve that price, and keep going: answer questions and carry on with the sale meanwhile. The team's decision reaches the buyer by message; a decline shows under \"Price approval\" in your context: continue the price ladder from it.");
+    expect(voice).not.toContain("from the app");
+    const held = voiceStageText(deriveStage({ ...NO_STAGE_FACTS, quote: "awaiting_approval", playbook: pb, fields: {}, agentMessages: 3 }).instruction);
+    expect(held).toContain("Do: tell the buyer once that you have asked the team to approve that price, then keep going");
+    expect(held).toContain("Moves on when: the team decides. The buyer gets the decision by message either way; a decline shows under \"Price approval\".");
+    const block = voiceStageText(priceApprovalText({ number: 1001, discountBp: 1500, toldBuyer: "The team could not approve that price." }));
+    expect(block).toContain('The buyer was told by message: "The team could not approve that price."');
+    // Not told yet: the agent says it in one line (no chat wording to change).
+    expect(voiceStageText(priceApprovalText({ number: 1001 }))).toContain("The buyer has not been told yet: tell them in one short line that the team could not approve that price.");
+  });
+
+  it("the attempts line follows the seller's setting in the voice prompt too", () => {
+    for (const [n, words] of [[1, "One attempt"], [2, "Two attempts"], [3, "Three attempts"]] as const) {
+      const p = { ...pb, objectionAttempts: n } as Playbook;
+      expect(stableSystemPrompt(p, seller, null, { channel: "voice" })).toContain(`- ${words} per objection.`);
+    }
   });
 });
