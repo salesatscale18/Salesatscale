@@ -123,7 +123,7 @@ describe("SMS core (mock sender, fake transport)", () => {
     expect(await smsEvents(theirs.id)).toHaveLength(0);
     const mine = await addLead();
     const theirMessage = await chatMessage(theirs.id, other);
-    expect(await nudgeBuyer(db, actor(), { accountId: acc, leadId: mine.id, kind: "reply_waiting", messageId: theirMessage.id }, { env: {} }))
+    expect(await nudgeBuyer(db, actor(), { accountId: acc, leadId: mine.id, kind: "order_form", messageId: theirMessage.id }, { env: {} }))
       .toEqual({ outcome: "refused", reason: "message_not_found" });
   });
 
@@ -139,9 +139,9 @@ describe("SMS core (mock sender, fake transport)", () => {
     expect(req.to).toBe(TESTER);
     expect(req.statusCallback).toBe("https://app.example.com/api/webhooks/whatsapp/status");
     expect(req.validityPeriodSeconds).toBe(900);
-    expect(req.body).toContain("פולאר");
-    expect(req.body).toMatch(/https:\/\/app\.example\.com\/chat\/[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}/);
-    expect(req.body).toContain(`https://app.example.com/chat/stop/${stopTokenFor(lead.id)}`);
+    // The board text, one short link (/c/<code>, no scheme) and no stop line.
+    expect(req.body).toMatch(/^הגיע הזמן שביקשת: app\.example\.com\/c\/[A-Za-z0-9_-]{10}$/);
+    expect(req.body).not.toContain(stopTokenFor(lead.id));
 
     const [stored] = await db.select().from(messages).where(eq(messages.id, m.id));
     expect(stored).toMatchObject({ channelMessageId: r.sid, deliveryStatus: "queued" });
@@ -226,6 +226,7 @@ describe("SMS core (mock sender, fake transport)", () => {
     const token = stopTokenFor(lead.id);
     await stopSms(db, token);
     const html = renderToStaticMarkup(await SmsStopPage({ params: Promise.resolve({ token }) }));
-    expect(html).toContain("You won&#x27;t get more text messages from Polar.");
+    expect(html).toContain("Text messages stopped");
+    expect(html).toContain("Polar won&#x27;t send you SMS any more.");
   });
 });

@@ -18,9 +18,11 @@ import { loadQuoteCards } from "./quote-card-data";
 import type { QuoteCardView } from "./quote-card";
 import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat } from "@/lib/simulator/rules";
+import { sendChatLink } from "@/lib/sms/outbound";
 import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
-import { MARKER_EVENT_TYPES, threadMarkers, VOICE_CALL_ENDED_LINE, voiceMarkers, type ThreadMarker } from "./thread-markers";
+import { MARKER_EVENT_TYPES, smsMarkers, threadMarkers, VOICE_CALL_ENDED_LINE, voiceMarkers, type ThreadMarker } from "./thread-markers";
+import { loadSmsEntries } from "@/lib/sms/thread";
 
 /** The system line capped conversations stored before W5; hidden where the spend-cap marker shows. */
 const SPEND_CAP_SYSTEM_LINE = "This month's AI spend cap is reached, so the agent did not start this conversation.";
@@ -98,6 +100,8 @@ export async function handBack(db: Db, actor: Actor, accountId: string, conversa
     }),
   ]);
   await auditIfActingAs(db, actor, accountId, "conversation.handed_back", conv.id, lead.id);
+  // A real buyer's web chat: "Thanks for talking with us. Continue anytime" with the chat link (board ReachSms, chat link).
+  if (isWebChat(conv.channel) && !conv.isTest) await sendChatLink(db, actor, accountId, lead.id, { now });
   return { ok: true, changed: true };
 }
 
@@ -112,8 +116,8 @@ export async function deliverHumanMessage(
   message: { accountId: string; conversationId: string; leadId: string; messageId: string; body: string },
   transport: TwilioTransport | null = defaultTransport(),
 ): Promise<Delivery> {
-  // The buyer simulator delivers by writing to the conversation (deliverText's simulator branch, no provider).
-  if (channel !== "whatsapp" && channel !== SIMULATOR_CHANNEL) return { delivered: false, reason: "channel not connected" };
+  // The web chat (real lead or simulator) delivers by writing to the conversation (deliverText's web chat branch, no provider).
+  if (channel !== "whatsapp" && !isWebChat(channel)) return { delivered: false, reason: "channel not connected" };
   return deliverText(db, transport, message, { statusCallback: statusCallbackUrl(publicBaseUrl()) });
 }
 
@@ -186,7 +190,8 @@ export async function latestConversationForLead(db: Db, accountId: string, leadI
 
 export async function conversationView(db: Db, accountId: string, conv: Conversation): Promise<ConversationView> {
   // Messages (with their tool calls) and the suggested reply load in parallel.
-  const [thread, suggested, quoteCards, events, calls] = await Promise.all([
+  const webChat = isWebChat(conv.channel) && !conv.isTest;
+  const [thread, suggested, quoteCards, events, calls, sms] = await Promise.all([
     conversationMessages(db, accountId, conv.id),
     conv.status === "human" ? latestSuggestedReply(db, accountId, conv.leadId) : Promise.resolve(null),
     loadQuoteCards(db, accountId, [conv.id], { audience: "seller" }),
@@ -197,6 +202,11 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
     // Voice calls on this conversation: a start and a summary marker each (live voice), from the session.
     db.select({ connectedAt: voiceSessions.connectedAt, endedAt: voiceSessions.endedAt, status: voiceSessions.status, durationSec: voiceSessions.durationSec })
       .from(voiceSessions).where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conv.id))),
+    // SMS to the buyer of a web chat (board ReachSeller): a dashed card each, with its state.
+    webChat
+      ? db.select({ phone: leads.phone }).from(leads).where(and(eq(leads.id, conv.leadId), eq(leads.accountId, accountId)))
+        .then(([l]) => (l ? loadSmsEntries(db, accountId, conv.leadId, l.phone, conv.createdAt) : []))
+      : Promise.resolve([]),
   ]);
   const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId), ...events.map((e) => e.actorUserId)].filter((x): x is string => !!x))];
   const people = ids.length
@@ -205,7 +215,9 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
   const authors = Object.fromEntries(people.map((p) => [p.id, p]));
   // Prefill only until a person has replied after that hand-off.
   const answered = suggested && thread.some(({ message: m }) => m.actor === "human" && m.createdAt >= suggested.at);
-  const markers = [...threadMarkers(conv.id, thread, events, authors), ...voiceMarkers(calls)].sort((a, b) => a.at.getTime() - b.at.getTime());
+  // "{buyer} opened the chat" only on a web chat (the lead event is per lead).
+  const shownEvents = webChat ? events : events.filter((e) => e.type !== "chat.opened");
+  const markers = [...threadMarkers(conv.id, thread, shownEvents, authors), ...voiceMarkers(calls), ...smsMarkers(conv.id, webChat, sms)].sort((a, b) => a.at.getTime() - b.at.getTime());
   // A capped chat says it once: the "Handed to a person: AI limit reached" marker replaces the system line
   // that conversations capped before W5 stored (new ones no longer store it).
   const capped = markers.some((m) => m.kind === "spend_cap");

@@ -24,7 +24,7 @@ import { DealStatePane, ObjectionList } from "../leads/[leadId]/deal-pane";
 import { activeChatToken } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -107,7 +107,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
         whatsapp && conv.status !== "closed" ? conversationWindow(appDb, account.id, conv.id, now) : Promise.resolve(null),
         whatsapp ? approvedTemplates(appDb, account.id) : Promise.resolve([]),
         conv.status === "human" ? latestHandoff(appDb, account.id, lead.id) : Promise.resolve(null),
-        conv.channel === SIMULATOR_CHANNEL ? activeChatToken(appDb, account.id, lead.id) : Promise.resolve(null),
+        isWebChat(conv.channel) && !conv.isTest ? activeChatToken(appDb, account.id, lead.id) : Promise.resolve(null),
         // Order forms a person sent: shown in the thread where they happened (round-4 review F2).
         conv.isTest ? Promise.resolve([]) : personSentForms(appDb, account.id, lead.id),
       ]);

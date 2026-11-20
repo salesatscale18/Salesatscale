@@ -6,6 +6,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
 import { approveQuote, cancelQuote, getQuote } from "@/lib/quotes/service";
 import { createOrderForm, markBankTransferReceived } from "@/lib/orders/service";
+import { offerOrderFormInChat } from "@/lib/sms/outbound";
 import { declineHeldQuote, followUpAfterApproval } from "@/lib/agent/quote-approval";
 
 /** Ids come from the form: refuse anything that isn't a UUID before it reaches a query. */
@@ -64,6 +65,8 @@ export async function sendOrderFormAction(form: FormData) {
   const a = await requireAccount(String(form.get("slug") ?? ""));
   const quoteId = quoteIdOf(form, a.account.slug);
   const r = await createOrderForm(appDb, a.account.id, { kind: "human", userId: a.user.id, actingAs: a.actingAs }, quoteId, { language: String(form.get("language") ?? "") || undefined });
+  // Every order-form send posts the form card in the buyer's chat and sends the "order form ready" SMS (reach spec).
+  if (r.ok) await offerOrderFormInChat(appDb, { userId: a.user.id, actingAs: a.actingAs }, a.account.id, r.form.leadId, r.url);
   revalidatePath(`/app/${a.account.slug}/orders`);
   redirect(`/app/${a.account.slug}/orders?quote=${quoteId}${r.ok ? "&sent=1" : "&send=" + r.reason}`);
 }

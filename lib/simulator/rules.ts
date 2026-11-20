@@ -6,6 +6,24 @@
 
 export const SIMULATOR_CHANNEL = "simulator";
 
+/**
+ * The web chat for real leads (reach plan §1): the same /chat/<token> page as
+ * the simulator, on its own channel so the "Simulated" chip, the test banner
+ * and "Simulate WhatsApp rules" never apply to a real buyer. Simulated buyers
+ * stay on "simulator"; the test lab ("testlab") is separate.
+ */
+export const WEB_CHAT_CHANNEL = "chat";
+
+/** The channels the buyer chat page shows and writes to. */
+export const WEB_CHAT_CHANNELS: readonly string[] = [WEB_CHAT_CHANNEL, SIMULATOR_CHANNEL];
+
+/** True for a conversation the buyer has at /chat/<token>: a real lead's web chat or a simulated chat. */
+export const isWebChat = (channel: string | null | undefined): boolean => channel === WEB_CHAT_CHANNEL || channel === SIMULATOR_CHANNEL;
+
+/** The web-chat channel a lead's conversations start on: simulated buyers on "simulator", real leads on "chat". */
+export const webChatChannelOf = (lead: { buyerRef?: string | null; phone: string }): string =>
+  isSimulatedLead(lead) ? SIMULATOR_CHANNEL : WEB_CHAT_CHANNEL;
+
 /** A chat link stops working this many days after its last activity (user decision, 17 Nov). */
 export const CHAT_LINK_IDLE_DAYS = 14;
 

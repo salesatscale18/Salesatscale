@@ -1,8 +1,7 @@
 /**
- * Buyer simulator (channel "simulator"): a WhatsApp-like web chat at
- * `/chat/<token>` for testing the whole agent conversation and sales flow
- * before a WhatsApp Business number exists. Buyers are simulated leads with a
- * buyer ID (SIM-0001), or any existing lead rehearsed on a separate channel.
+ * The buyer web chat at `/chat/<token>` (reach plan §1): the conversation home
+ * of real leads (channel "chat") and of simulated buyers (channel "simulator",
+ * buyers with a buyer ID such as SIM-0001, for testing the whole sale).
  *
  * The buyer's message takes the same inbound path as WhatsApp
  * (`receiveLeadMessage` in lib/channels/whatsapp.ts: opted-out leads and
@@ -16,7 +15,7 @@
 import { marketOfLead } from "@/lib/markets/lead-settings";
 import { marketContactSettings } from "@/lib/markets/settings";
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -40,8 +39,12 @@ import { isLocale, t, type Locale } from "@/lib/i18n";
 import { openerText } from "@/lib/agent/core/opener";
 import { buyerNames, type BuyerNames } from "@/lib/agent/core/names";
 import { displaySeller } from "@/lib/orders/service";
-import { agentTyping, chatLinkExpiresAt, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL } from "./rules";
-import { chatTokenFor, hashToken, linkIdFromChatToken } from "./token";
+import { SMS_NUDGE_EVENTS } from "@/lib/sms/rules";
+import { CHAT_OPENED_EVENT } from "@/lib/agent/thread-markers";
+import {
+  agentTyping, chatLinkExpiresAt, isSimulatedLead, nextBuyerRef, orderFormLinks, safeBrand, simulatedPhone, SIMULATOR_CHANNEL, WEB_CHAT_CHANNELS, webChatChannelOf,
+} from "./rules";
+import { chatTokenFor, hashToken, linkIdFromChatToken, shortCodeMatches, shortCodeRange } from "./token";
 
 export const SIM_CONSENT = "Simulated buyer for testing";
 export const SIM_SOURCE_LABEL = "Simulated buyer";
@@ -138,20 +141,23 @@ async function realLead(db: Db, accountId: string, leadId: string) {
 /**
  * When the lead's chat link expires (rules.chatLinkExpiresAt): the latest of
  * the link's creation, the last buyer or team message and the latest
- * conversation start on the simulator channel, and a scheduled or sent
- * follow-up's due date, plus 14 days.
+ * conversation start on the web chat ("chat" or "simulator"), a scheduled or
+ * sent follow-up's due date, and the latest SMS that points to the chat, plus
+ * 14 days. So a link is never expired when an SMS points to it.
  */
 export async function chatLinkExpiry(db: Db, accountId: string, leadId: string, linkCreatedAt: Date): Promise<Date> {
-  const simConvs = and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, SIMULATOR_CHANNEL), eq(conversations.isTest, false));
-  const [[msg], [conv], [fu]] = await Promise.all([
+  const simConvs = and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false));
+  const [[msg], [conv], [fu], [sms]] = await Promise.all([
     db.select({ at: sql<unknown>`max(${messages.createdAt})` }).from(messages)
       .innerJoin(conversations, eq(conversations.id, messages.conversationId))
       .where(and(simConvs, eq(messages.accountId, accountId), inArray(messages.actor, ["buyer", "human"]))),
     db.select({ at: sql<unknown>`max(${conversations.createdAt})` }).from(conversations).where(simConvs),
     db.select({ at: sql<unknown>`max(${followUps.dueAt})` }).from(followUps)
       .where(and(eq(followUps.accountId, accountId), eq(followUps.leadId, leadId), inArray(followUps.status, ["scheduled", "sent"]))),
+    db.select({ at: sql<unknown>`max(${leadEvents.createdAt})` }).from(leadEvents)
+      .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), inArray(leadEvents.type, [...SMS_NUDGE_EVENTS]))),
   ]);
-  return chatLinkExpiresAt([linkCreatedAt, asDate(msg?.at), asDate(conv?.at), asDate(fu?.at)]);
+  return chatLinkExpiresAt([linkCreatedAt, asDate(msg?.at), asDate(conv?.at), asDate(fu?.at), asDate(sms?.at)]);
 }
 
 const asDate = (v: unknown): Date | null => v == null ? null : v instanceof Date ? v : new Date(String(v));
@@ -240,6 +246,60 @@ export async function resolveChatToken(db: Db, token: string, now = new Date()):
   return link?.state === "live" ? link.ctx : null;
 }
 
+/**
+ * The active chat link behind a short code (/c/<code>, lib/simulator/token):
+ * its token, lead and account. Null for a malformed or forged code, a reset
+ * link, or a test-lab lead. Expired links resolve (the chat page says so).
+ */
+export async function resolveShortCode(db: Db, code: string): Promise<{ token: string; accountId: string; leadId: string } | null> {
+  const range = shortCodeRange(code);
+  if (!range) return null;
+  const rows = await db.select({ id: simulatorLinks.id, accountId: simulatorLinks.accountId, leadId: simulatorLinks.leadId }).from(simulatorLinks)
+    .innerJoin(leads, and(eq(leads.id, simulatorLinks.leadId), eq(leads.accountId, simulatorLinks.accountId)))
+    .where(and(gte(simulatorLinks.id, range.from), lte(simulatorLinks.id, range.to), isNull(simulatorLinks.revokedAt), eq(leads.isTest, false)))
+    .limit(20);
+  const hit = rows.find((r) => shortCodeMatches(code, r.id));
+  return hit ? { token: chatTokenFor(hit.id), accountId: hit.accountId, leadId: hit.leadId } : null;
+}
+
+export { CHAT_OPENED_EVENT };
+/** Opens of the short link closer together than this count once (a reload, a link preview). */
+export const CHAT_OPEN_DEDUPE_MS = 10 * 60_000;
+
+/**
+ * Records that the buyer opened the chat from an SMS: the seller's thread
+ * shows "{buyer} opened the chat · {time}" (board ReachSeller), and any open
+ * counts for the named-time retry. Once per CHAT_OPEN_DEDUPE_MS.
+ */
+export async function recordChatOpen(db: Db, accountId: string, leadId: string, now = new Date()): Promise<boolean> {
+  const [recent] = await db.select({ id: leadEvents.id }).from(leadEvents)
+    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), eq(leadEvents.type, CHAT_OPENED_EVENT),
+      gt(leadEvents.createdAt, new Date(now.getTime() - CHAT_OPEN_DEDUPE_MS))))
+    .limit(1);
+  if (recent) return false;
+  const [conv] = await db.select({ id: conversations.id }).from(conversations)
+    .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false)))
+    .orderBy(desc(conversations.createdAt)).limit(1);
+  await db.insert(leadEvents).values({
+    accountId, leadId, type: CHAT_OPENED_EVENT, actor: "buyer", data: { via: "sms", ...(conv ? { conversationId: conv.id } : {}) }, createdAt: now,
+  });
+  return true;
+}
+
+/**
+ * The web-chat channel a buyer's next message or the seller's opener goes to:
+ * the lead's open web chat if there is one (an older "simulator" rehearsal of a
+ * real lead keeps going there), else "chat" for a real lead and "simulator" for
+ * a simulated buyer.
+ */
+export async function webChatChannelFor(db: Db, lead: Pick<Lead, "id" | "accountId" | "buyerRef" | "phone">): Promise<string> {
+  const [open] = await db.select({ channel: conversations.channel }).from(conversations)
+    .where(and(eq(conversations.accountId, lead.accountId), eq(conversations.leadId, lead.id), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]),
+      eq(conversations.isTest, false), inArray(conversations.status, ["open", "human"])))
+    .orderBy(desc(conversations.createdAt)).limit(1);
+  return open?.channel ?? webChatChannelOf(lead);
+}
+
 // ---------------------------------------------------------------------------
 // Start conversation (the agent's opening message)
 // ---------------------------------------------------------------------------
@@ -279,12 +339,14 @@ export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: st
     db.select({ id: consentRecords.id }).from(consentRecords).where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId))).limit(1),
     db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))),
     db.select({ id: conversations.id }).from(conversations)
-      .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, SIMULATOR_CHANNEL), ne(conversations.status, "closed")))
+      .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false), ne(conversations.status, "closed")))
       .limit(1),
     spendCapped(db, accountId, now),
     marketOfLead(db, accountId, lead.marketId),
   ]);
-  const rules = account.simulateWhatsappRules;
+  // "Simulate WhatsApp rules" is for simulated buyers only; a real lead's web chat has no 24-hour window or template rule.
+  const simulated = isSimulatedLead(lead);
+  const rules = simulated && account.simulateWhatsappRules;
   // Same as WhatsApp: the lead's market decides contact hours, time zone and fallback languages.
   const contact = marketContactSettings(account, market);
   const template = await approvedTemplate(db, accountId, "opener", lead.language, contact.languages);
@@ -301,7 +363,8 @@ export async function simulatorOpenerFacts(db: Db, accountId: string, leadId: st
     spendCapped: capped,
     now,
   });
-  if (!rules && refusal === "outside_contact_hours") refusal = null;
+  // Contact hours limit seller-started outreach to a real lead (spec 9); simulated chats without the rules ignore them.
+  if (simulated && !rules && refusal === "outside_contact_hours") refusal = null;
   return { lead, account, live: live ?? null, template: template ?? null, rules, refusal: refusal as SimOpenerRefusal | null };
 }
 
@@ -314,24 +377,32 @@ export type SimStartResult = { ok: true; conversationId: string; messageId: stri
  * (lib/agent/core/opener.ts): the agent's name, what leads ask about and the
  * seller's opening question, from the playbook. No model call.
  */
-export async function startSimulatorConversation(db: Db, actor: Actor, accountId: string, leadId: string, now = new Date()): Promise<SimStartResult> {
+export async function startSimulatorConversation(
+  db: Db, actor: Actor, accountId: string, leadId: string, now = new Date(),
+  /**
+   * `contactHours: false`: the buyer opened the chat (or a person acted now), so contact hours do not hold the
+   * opener back (lib/chat/start.ts). `leadInterest`: what the lead asked about on the form, when known.
+   */
+  opts: { contactHours?: boolean; leadInterest?: string | null } = {},
+): Promise<SimStartResult> {
   const facts = await simulatorOpenerFacts(db, accountId, leadId, now);
   if (!facts) return { ok: false, reason: "not_found" };
-  if (facts.refusal) return { ok: false, reason: facts.refusal };
+  if (facts.refusal && !(opts.contactHours === false && facts.refusal === "outside_contact_hours")) return { ok: false, reason: facts.refusal };
   const { lead, account, live, template } = facts;
   if (!live) return { ok: false, reason: "no_agent" };
+  const channel = webChatChannelOf(lead);
   const lang: Locale = isLocale(lead.language) ? lead.language : "en";
   const vars = templateVariables(lead, account);
   // Names in the lead's language, and the intro's grammar in the agent's gender (decision 2).
   const names = buyerNames(live.playbook, account, lang);
   const body = template
     ? renderTemplate(template.body, vars)
-    : openerText({ name: vars["1"], agent: names.agent, company: names.seller, gender: names.gender, language: lang, opener: live.playbook.opener });
+    : openerText({ name: vars["1"], agent: names.agent, company: names.seller, gender: names.gender, language: lang, opener: live.playbook.opener, leadInterest: opts.leadInterest });
   const conversationId = randomUUID();
   const messageId = randomUUID();
   await atomic(db, (q) => [
     q.insert(conversations).values({
-      id: conversationId, accountId, leadId, channel: SIMULATOR_CHANNEL, agentVersionId: live.id, language: lead.language, createdByUserId: actor.userId,
+      id: conversationId, accountId, leadId, channel, agentVersionId: live.id, language: lead.language, createdByUserId: actor.userId,
     }),
     q.insert(messages).values({
       id: messageId, accountId, conversationId, actor: "agent", body, language: lead.language, agentVersionId: live.id,
@@ -342,10 +413,12 @@ export async function startSimulatorConversation(db: Db, actor: Actor, accountId
     q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId))),
     q.insert(leadEvents).values({
       id: randomUUID(), accountId, leadId, type: "conversation.started", actor: actor.userId ? "human" : "system", actorUserId: actor.userId,
-      data: { conversationId, channel: SIMULATOR_CHANNEL, ...(template ? { template: template.name } : {}) },
+      data: { conversationId, channel, ...(template ? { template: template.name } : {}) },
     }),
   ]);
-  if (actor.actingAs) await writeAudit(db, actor, { accountId, action: "conversation.started", targetType: "lead", targetId: leadId, details: { conversationId, channel: SIMULATOR_CHANNEL } });
+  if (actor.actingAs) await writeAudit(db, actor, { accountId, action: "conversation.started", targetType: "lead", targetId: leadId, details: { conversationId, channel } });
+  // The chat link is created at the first outreach (for a real lead, every SMS points to it).
+  await ensureChatLink(db, actor, accountId, leadId);
   return { ok: true, conversationId, messageId };
 }
 
@@ -384,7 +457,7 @@ export async function receiveSimulatorInbound(db: Db, ctx: Pick<ChatContext, "le
   // The monthly spend cap: an open simulated chat keeps replying, as on WhatsApp; a new
   // conversation started by the buyer waits for a person (inboundConversation).
   // Simulated buyers skip the not-live gate (tests during setup); real leads keep it.
-  return receiveLeadMessage(db, lead, SIMULATOR_CHANNEL, `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now, { allowBeforeGoLive: simulated });
+  return receiveLeadMessage(db, lead, await webChatChannelFor(db, lead), `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now, { allowBeforeGoLive: simulated });
 }
 
 /** An order-form link card: the client lays it out per language, with amounts and IDs isolated left-to-right. */
@@ -455,7 +528,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const now = opts.now ?? new Date();
   const accountId = ctx.account.id;
   const convs = await db.select().from(conversations)
-    .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, ctx.lead.id), eq(conversations.channel, SIMULATOR_CHANNEL), eq(conversations.isTest, false)))
+    .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, ctx.lead.id), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false)))
     .orderBy(asc(conversations.createdAt));
   const [lead] = await db.select({ status: leads.status }).from(leads).where(and(eq(leads.id, ctx.lead.id), eq(leads.accountId, accountId)));
   const latest = convs.at(-1) ?? null;

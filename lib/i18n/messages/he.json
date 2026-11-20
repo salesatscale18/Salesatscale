@@ -358,7 +358,16 @@
   "buyer.voice.why.platform_budget": "הגעתם למגבלת ה-AI.",
   "buyer.voice.why.account_not_live": "החשבון מושהה.",
   "buyer.sms_stop.title": "להפסיק הודעות SMS מ־{seller}?",
-  "buyer.sms_stop.body": "עדיין אפשר לכתוב ל־{seller} בצ׳אט.",
+  "buyer.sms_stop.body": "לא יישלחו אליך עוד הודעות SMS מ־{seller}. אפשר להמשיך לכתוב כאן בצ׳אט, ומייל עדיין יגיע אליך.",
   "buyer.sms_stop.button": "הפסקת הודעות SMS",
-  "buyer.sms_stop.done": "לא יישלחו אליך עוד הודעות SMS מ־{seller}."
+  "buyer.sms_stop.done": "לא יישלחו אליך עוד הודעות SMS מ־{seller}.",
+  "buyer.chat.sms_stop": "הפסקת הודעות SMS",
+  "buyer.chat.menu": "תפריט הצ׳אט",
+  "buyer.chat.sms_on": "הפעלת הודעות SMS מחדש",
+  "buyer.chat.sms_on_done": "הודעות SMS פועלות שוב.",
+  "buyer.sms_stop.keep": "להמשיך לקבל",
+  "buyer.sms_stop.done_title": "הודעות SMS הופסקו",
+  "buyer.sms_stop.done_hint": "הצ׳אט נשאר פתוח. כדי לקבל שוב הודעות SMS, אפשר להפעיל אותן מתפריט הצ׳אט.",
+  "buyer.sms_stop.open_chat": "פתיחת הצ׳אט",
+  "buyer.consent_line": "בשליחה, את/ה מסכים/ה ש-{seller} תיצור קשר בנוגע לפנייה ב-SMS, וואטסאפ או מייל, גם בשעה שתבקש/י. אפשר להפסיק בכל עת."
 }

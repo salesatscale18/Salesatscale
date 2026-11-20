@@ -1,9 +1,11 @@
 /**
  * SMS rules (reach plan §3, owner spec 20 Nov). Pure: no database, no network.
  *
- * Every outbound nudge to a buyer is one SMS with a link back to the web chat
- * (/chat/<token>) and an opt-out link (/chat/stop/<token>). lib/sms/service.ts
- * gathers the facts and applies these rules on the server before any send.
+ * Every outbound nudge to a buyer is one SMS with one link: the short link to
+ * the web chat (/c/<code>, board ReachSms). Service messages carry no opt-out
+ * line; the chat shows "Stop text messages" when opened from an SMS
+ * (/chat/stop/<token>). lib/sms/service.ts gathers the facts and applies these
+ * rules on the server before any send.
  */
 import { isWithinContactHours } from "@/lib/accounts/contact-hours";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
@@ -47,16 +49,52 @@ export type SmsConfig = {
 
 export const E164 = /^\+[1-9]\d{6,14}$/;
 
-export function smsConfig(env: Env = process.env): SmsConfig {
+/** SMS_TEST_NUMBERS: the platform's default test numbers (an account's own list in Settings › Channels replaces them). */
+export function envTestNumbers(env: Env = process.env): string[] {
+  return [...new Set((env.SMS_TEST_NUMBERS ?? "").split(/[\s,;]+/).map((n) => n.trim()).filter((n) => E164.test(n)))];
+}
+
+/**
+ * The platform's SMS settings. `accountTestNumbers`: the account's own test
+ * numbers (Settings › Channels); null = the account kept the platform default.
+ */
+export function smsConfig(env: Env = process.env, accountTestNumbers: readonly string[] | null = null): SmsConfig {
   const sid = env.TWILIO_SMS_MESSAGING_SERVICE_SID?.trim();
   const capRaw = env.SMS_DAILY_CAP?.trim();
   const cap = capRaw && /^\d+$/.test(capRaw) ? Number(capRaw) : DEFAULT_SMS_DAILY_CAP;
   return {
     mode: smsMode(env),
     messagingServiceSid: sid && /^MG[0-9a-fA-F]{32}$/.test(sid) ? sid : null,
-    testNumbers: [...new Set((env.SMS_TEST_NUMBERS ?? "").split(/[\s,;]+/).map((n) => n.trim()).filter((n) => E164.test(n)))],
+    testNumbers: accountTestNumbers ? accountTestNumbers.filter((n) => E164.test(n)) : envTestNumbers(env),
     dailyCap: cap,
   };
+}
+
+/**
+ * The registered alphanumeric sender (Twilio Messaging Service): its name from
+ * TWILIO_SMS_SENDER_NAME, and whether Twilio approved it
+ * (TWILIO_SMS_SENDER_STATUS=approved; anything else is "registration pending").
+ * Platform-level: the sender lives in the platform's Twilio account.
+ */
+export type SmsSender = { name: string | null; approved: boolean };
+
+export function smsSender(env: Env = process.env): SmsSender {
+  const name = env.TWILIO_SMS_SENDER_NAME?.trim().slice(0, 11) || null;
+  return { name, approved: !!name && env.TWILIO_SMS_SENDER_STATUS?.trim().toLowerCase() === "approved" };
+}
+
+/** An alphanumeric sender ID is at most 11 characters. */
+export const SENDER_NAME_MAX = 11;
+
+/**
+ * Agent-started SMS (the follow-up, and the opener a seller starts) are
+ * commercial: sender name first, "פרסומת:" in Hebrew and STOP by reply, which
+ * needs a sender that can receive replies (owner decision pending). Off unless
+ * SMS_AGENT_NUDGES=1; while off, nothing is sent or recorded (the message
+ * still posts in the chat).
+ */
+export function agentSmsEnabled(env: Env = process.env): boolean {
+  return env.SMS_AGENT_NUDGES?.trim() === "1";
 }
 
 /**
@@ -82,12 +120,13 @@ export function smsRoute(config: SmsConfig, twilioConfigured: boolean, to: strin
 // ---------------------------------------------------------------------------
 
 /**
- * What the SMS is about. Each kind has its own text (lib/sms/texts.ts) and timing:
+ * What the SMS is about (board ReachSms). Each kind has its own text (lib/sms/texts.ts) and timing:
  * - automatic: started by the agent or the seller's outreach; only inside contact hours (spec 9);
- * - buyer_named: the time the buyer asked for; any hour;
+ * - buyer_named: the time the buyer asked for, or a call the buyer booked; any hour;
  * - person: a person on the seller's team did something for this buyer now; any hour.
+ * Hand-back and "Send chat link" both send `chat_link`.
  */
-export const SMS_KINDS = ["opener", "follow_up", "named_time", "reply_waiting", "order_form", "hand_back", "chat_link"] as const;
+export const SMS_KINDS = ["opener", "follow_up", "named_time", "named_time_retry", "quote_ready", "order_form", "team_call", "chat_link"] as const;
 export type SmsKind = (typeof SMS_KINDS)[number];
 export type SmsTiming = "automatic" | "buyer_named" | "person";
 
@@ -95,11 +134,15 @@ export const SMS_KIND_TIMING: Record<SmsKind, SmsTiming> = {
   opener: "automatic",
   follow_up: "automatic",
   named_time: "buyer_named",
-  reply_waiting: "person",
+  named_time_retry: "buyer_named",
+  quote_ready: "person",
   order_form: "person",
-  hand_back: "person",
+  team_call: "buyer_named",
   chat_link: "person",
 };
+
+/** Agent-started, commercial SMS (see agentSmsEnabled): every other kind is a service message the buyer asked for. */
+export const SMS_COMMERCIAL_KINDS: ReadonlySet<SmsKind> = new Set(["opener", "follow_up"]);
 
 export const isSmsKind = (v: unknown): v is SmsKind => typeof v === "string" && (SMS_KINDS as readonly string[]).includes(v);
 
@@ -108,9 +151,9 @@ export const SMS_PER_LEAD_DAILY = 3;
 /** Minimum time between two SMS to one lead, except the kinds in SMS_SPACING_EXEMPT. */
 export const SMS_SPACING_MS = 30 * 60_000;
 /** A person's "Send chat link" and the buyer's own time are never held back by the spacing. */
-export const SMS_SPACING_EXEMPT: ReadonlySet<SmsKind> = new Set(["chat_link", "named_time"]);
+export const SMS_SPACING_EXEMPT: ReadonlySet<SmsKind> = new Set(["chat_link", "named_time", "named_time_retry"]);
 /** "It's the time you asked for" is dropped by Twilio when it would arrive more than 15 minutes late. */
-export const SMS_VALIDITY_SECONDS: Partial<Record<SmsKind, number>> = { named_time: 15 * 60 };
+export const SMS_VALIDITY_SECONDS: Partial<Record<SmsKind, number>> = { named_time: 15 * 60, named_time_retry: 15 * 60 };
 
 // ---------------------------------------------------------------------------
 // Refusals
@@ -164,8 +207,10 @@ export const SMS_EVENTS = {
   failed: "sms.failed",
   /** The buyer used the stop link (actor buyer). */
   stopped: "sms.stopped",
-  /** SMS allowed again after a stop (not offered yet; folded for later). */
+  /** SMS allowed again after a stop: the buyer turned them back on from the chat menu (actor buyer). */
   resumed: "sms.resumed",
+  /** A delivery update for an SMS that nudges no chat message (hand-back): data {sid, status, error}. */
+  status: "sms.status",
 } as const;
 
 /** Events that count as an SMS to the buyer for the per-lead cap and spacing (and for link expiry, L3). */

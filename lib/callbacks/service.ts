@@ -17,7 +17,7 @@ import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat } from "@/lib/simulator/rules";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { isLocale, t } from "@/lib/i18n";
 import { handBack, takeOver } from "@/lib/agent/conversation";
@@ -266,7 +266,7 @@ async function tellBuyer(
     }),
     q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
   ]);
-  if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {
+  if (conv.channel === "whatsapp" || isWebChat(conv.channel)) {
     await deliverText(db, transport, { accountId, conversationId: conv.id, messageId: id, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
   }
   return { told: true, messageId: id };

@@ -15,8 +15,11 @@ import { openerStatusOf, whatsappStatus } from "./rules";
 // Connections (Settings › WhatsApp)
 // ---------------------------------------------------------------------------
 
+/** WhatsApp only: the account's SMS settings row (channel "sms", lib/sms/settings.ts) shares the table. */
+const WA = eq(channelConnections.channel, "whatsapp");
+
 export async function listConnections(db: Db, accountId: string) {
-  return db.select().from(channelConnections).where(eq(channelConnections.accountId, accountId)).orderBy(channelConnections.createdAt);
+  return db.select().from(channelConnections).where(and(eq(channelConnections.accountId, accountId), WA)).orderBy(channelConnections.createdAt);
 }
 
 export type ConnectionInput = { senderNumber: string; displayName: string; messagingServiceSid: string; marketId: string | null };
@@ -46,14 +49,14 @@ export async function addConnection(db: Db, actor: Actor, account: { id: string;
 
 export async function setConnectionStatus(db: Db, actor: Actor, accountId: string, connectionId: string, status: "active" | "disabled") {
   const [row] = await db.update(channelConnections).set({ status })
-    .where(and(eq(channelConnections.id, connectionId), eq(channelConnections.accountId, accountId))).returning();
+    .where(and(eq(channelConnections.id, connectionId), eq(channelConnections.accountId, accountId), WA)).returning();
   if (row) await writeAudit(db, actor, { accountId, action: `whatsapp.${status}`, targetType: "channel_connection", targetId: row.id });
   return !!row;
 }
 
 export async function removeConnection(db: Db, actor: Actor, accountId: string, connectionId: string) {
   const [row] = await db.delete(channelConnections)
-    .where(and(eq(channelConnections.id, connectionId), eq(channelConnections.accountId, accountId))).returning();
+    .where(and(eq(channelConnections.id, connectionId), eq(channelConnections.accountId, accountId), WA)).returning();
   if (row) await writeAudit(db, actor, { accountId, action: "whatsapp.removed", targetType: "channel_connection", targetId: row.id, details: { senderNumber: row.senderNumber } });
   return !!row;
 }
@@ -87,7 +90,7 @@ export async function setTesterNumbers(db: Db, actor: Actor, account: { id: stri
   }
   if (numbers.length > MAX_TESTERS) return { ok: false, reason: "too_many_testers" };
   const [row] = await db.update(channelConnections).set({ testerNumbers: numbers })
-    .where(and(eq(channelConnections.id, connectionId), eq(channelConnections.accountId, account.id))).returning({ id: channelConnections.id });
+    .where(and(eq(channelConnections.id, connectionId), eq(channelConnections.accountId, account.id), WA)).returning({ id: channelConnections.id });
   if (!row) return { ok: false, reason: "not_found" };
   await writeAudit(db, actor, { accountId: account.id, action: "whatsapp.testers_changed", targetType: "channel_connection", targetId: row.id, details: { count: numbers.length } });
   return { ok: true, numbers };
@@ -165,7 +168,7 @@ export async function approvedTemplate(db: Db, accountId: string, purpose: Templ
 export async function whatsappReadiness(db: Db, accountId: string) {
   const [conns, openers] = await Promise.all([
     db.select({ senderNumber: channelConnections.senderNumber, marketId: channelConnections.marketId }).from(channelConnections)
-      .where(and(eq(channelConnections.accountId, accountId), eq(channelConnections.status, "active"))),
+      .where(and(eq(channelConnections.accountId, accountId), eq(channelConnections.status, "active"), WA)),
     db.select({ status: messageTemplates.status }).from(messageTemplates)
       .where(and(eq(messageTemplates.accountId, accountId), eq(messageTemplates.purpose, "opener"))),
   ]);

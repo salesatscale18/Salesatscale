@@ -14,8 +14,12 @@
  *   would start a new conversation at the account's monthly AI spend cap and
  *   the conversation starts with a person instead (lib/channels/whatsapp.ts
  *   inboundConversation, shared by WhatsApp and the buyer simulator).
+ * - chat opened: the lead event chat.opened, when the buyer opens the chat from
+ *   an SMS link (/c/<code>): "{buyer} opened the chat" (board ReachSeller);
+ * - SMS: one dashed card per SMS to the buyer (lib/sms/thread.ts), placed by time.
  * Pure: the loader in lib/agent/conversation.ts passes the rows in.
  */
+import type { SmsEntry } from "@/lib/sms/thread";
 
 export type MarkerPerson = { id: string; firstName: string | null; lastName: string | null; email: string | null };
 
@@ -26,7 +30,11 @@ export type ThreadMarker =
   | { kind: "spend_cap"; at: Date }
   /** A voice call on this conversation: where it connected, and where it ended with its length (live voice). */
   | { kind: "voice_started"; at: Date }
-  | { kind: "voice_ended"; at: Date; durationSec: number };
+  | { kind: "voice_ended"; at: Date; durationSec: number }
+  /** The buyer opened the chat from an SMS link. */
+  | { kind: "chat_opened"; at: Date }
+  /** An SMS to the buyer, with its state (Delivered, Not sent: test mode, Not delivered: reason). */
+  | { kind: "sms"; at: Date; sms: SmsEntry };
 
 /**
  * The line the voice engine stores when a call ends ("Voice call ended · 0:38", lib/voice/engine.ts):
@@ -49,7 +57,10 @@ export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker
 /** Lead event: a new conversation started with a person because the AI spend cap was reached. data: { conversationId, reason: "spend_cap" }. */
 export const SPEND_CAP_HANDOFF_EVENT = "handoff.spend_cap";
 
-export const MARKER_EVENT_TYPES = ["conversation.taken_over", "conversation.handed_back", SPEND_CAP_HANDOFF_EVENT] as const;
+/** Lead event: the buyer opened the chat from an SMS link (/c/<code>). data: { via: "sms", conversationId }. */
+export const CHAT_OPENED_EVENT = "chat.opened";
+
+export const MARKER_EVENT_TYPES = ["conversation.taken_over", "conversation.handed_back", SPEND_CAP_HANDOFF_EVENT, CHAT_OPENED_EVENT] as const;
 
 type ThreadRow = { message: { id: string; createdAt: Date; actor: string }; calls: { name: string; outcome: string }[] };
 type EventRow = { type: string; createdAt: Date; actorUserId: string | null; data: Record<string, unknown> | null };
@@ -67,11 +78,24 @@ export function threadMarkers(
     }
   }
   for (const e of events) {
+    // An open recorded before this conversation existed names none: it belongs to the chat that followed.
+    if (e.type === CHAT_OPENED_EVENT && !e.data?.conversationId) { out.push({ kind: "chat_opened", at: e.createdAt }); continue; }
     if (e.data?.conversationId !== conversationId) continue;
     const by = e.actorUserId ? (people[e.actorUserId] ?? null) : null;
     if (e.type === "conversation.taken_over") out.push({ kind: "taken_over", at: e.createdAt, by });
     else if (e.type === "conversation.handed_back") out.push({ kind: "handed_back", at: e.createdAt, by });
     else if (e.type === SPEND_CAP_HANDOFF_EVENT) out.push({ kind: "spend_cap", at: e.createdAt });
+    else if (e.type === CHAT_OPENED_EVENT) out.push({ kind: "chat_opened", at: e.createdAt });
   }
   return out.sort((a, b) => a.at.getTime() - b.at.getTime());
+}
+
+/**
+ * The SMS cards of one conversation: those that name it, and those that name
+ * none (an SMS with no chat message, e.g. after a hand-back) on a web chat.
+ */
+export function smsMarkers(conversationId: string, webChat: boolean, entries: readonly SmsEntry[]): ThreadMarker[] {
+  return entries
+    .filter((s) => s.conversationId === conversationId || (webChat && !s.conversationId))
+    .map((s) => ({ kind: "sms" as const, at: s.at, sms: s }));
 }

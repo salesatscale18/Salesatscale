@@ -3,6 +3,7 @@ import { Icon, type IconName } from "@/components/sas/icon";
 import type { ReactNode } from "react";
 import { AgentStepsSwitch, ChatMessage, ChatThread, ThreadMarkerLine, type TraceItem } from "@/components/sas/chat";
 import type { ThreadMarker } from "@/lib/agent/thread-markers";
+import type { SmsEntry } from "@/lib/sms/thread";
 import { MessageBody } from "@/components/sas/message-body";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import type { ConversationView } from "@/lib/agent/conversation";
@@ -15,7 +16,7 @@ import { WindowTimer } from "@/components/sas/record";
 import { SuggestedReplyBox } from "./suggested-reply";
 import { QuoteCardMessage } from "./quote-card-message";
 import type { WindowState } from "@/lib/channels/rules";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { SimulatedChip, TestLabChip } from "../simulated-chip";
 import { CopyButton } from "@/components/sas/copy-button";
 import { isolate } from "@/lib/leads/bidi";
@@ -73,8 +74,11 @@ export function traceChips(calls: ConversationView["thread"][number]["calls"], r
 }
 
 /** A marker's words (board ConvSteps). The person is named as everywhere else: never a raw email, "you" for the viewer. */
-export function markerText(m: ThreadMarker, meId: string | null): string {
+export function markerText(m: ThreadMarker, meId: string | null, buyer?: string): string {
   if (m.kind === "handoff") return t("conv.marker.handoff");
+  // "Dana opened the chat · Sat 21:03" (board ReachSeller): the buyer's first name.
+  if (m.kind === "chat_opened") return t("conv.marker.chat_opened", { name: isolate((buyer ?? "").trim().split(/\s+/)[0] || t("conv.who.buyer")) });
+  if (m.kind === "sms") return smsStateText(m.sms);
   if (m.kind === "handed_back") return t("conv.marker.handed_back");
   if (m.kind === "spend_cap") return t("conv.marker.spend_cap");
   // A voice call's boundaries: "Voice call started · 15:44" and "Voice call · 30 s · 15:45" (the time is the marker's).
@@ -91,8 +95,52 @@ export function splitMarkers(markers: ThreadMarker[] | undefined) {
   return { timed, after };
 }
 
-export function MarkerEntry({ marker, meId, time, timeTitle }: { marker: ThreadMarker; meId: string | null; time: string; timeTitle: string }) {
-  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId)} time={time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
+export function MarkerEntry({ marker, meId, time, timeTitle, buyer }: { marker: ThreadMarker; meId: string | null; time: string; timeTitle: string; buyer?: string }) {
+  if (marker.kind === "sms") return <SmsThreadEntry sms={marker.sms} time={time} timeTitle={timeTitle} />;
+  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer)} time={time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
+}
+
+const SMS_STATE_ICON: Record<SmsEntry["state"], IconName> = {
+  delivered: "check", sent: "clock", test_mode: "flask-conical", not_delivered: "alert-triangle", not_sent: "alert-triangle",
+};
+
+/** Why an SMS was not sent or not delivered, in plain words: a rule's reason, or Twilio's error code. */
+export function smsReasonText(reason: string | null): string | null {
+  if (!reason) return null;
+  const code = /^(\d{5})\b/.exec(reason)?.[1];
+  return maybe(`conv.sms.reason.${reason}`) ?? (code ? maybe(`conv.sms.err.${code}`) ?? t("conv.sms.err.other", { code }) : reason);
+}
+
+/** The SMS card's state words: "Delivered", "Not sent: test mode", "Not delivered: number unreachable". */
+export function smsStateText(s: Pick<SmsEntry, "state" | "reason">): string {
+  const why = smsReasonText(s.reason);
+  if (s.state === "not_delivered") return why ? t("conv.sms.state.not_delivered_why", { reason: why }) : t("conv.sms.state.not_delivered");
+  if (s.state === "not_sent") return t("conv.sms.state.not_sent_why", { reason: why ?? s.reason ?? "" });
+  return t(`conv.sms.state.${s.state}`);
+}
+
+/**
+ * An SMS to the buyer in the seller's thread (board ReachSeller): a dashed card on the
+ * seller's side, "SMS to +972 50-•••-4567", the text, and its state on the right with an
+ * icon (Delivered: muted check; Not sent: test mode: amber flask; Not delivered: red alert).
+ */
+export function SmsThreadEntry({ sms, time, timeTitle }: { sms: SmsEntry; time: string; timeTitle: string }) {
+  const timed = sms.state === "delivered" || sms.state === "sent";
+  return (
+    <div className="sas-sms-entry" role="note" data-sms-entry={sms.state}>
+      <div className="sas-sms-entry__head">
+        <Icon name="message-square" />
+        <strong>{t("conv.sms.label")}</strong>
+        <span className="sas-sms-entry__to">{t("conv.sms.to", { phone: sms.to })}</span>
+        <span className={`sas-sms-entry__state sas-sms-entry__state--${sms.state}`} title={timeTitle}>
+          <Icon name={SMS_STATE_ICON[sms.state]} />
+          <span>{smsStateText(sms)}</span>
+          {timed ? <><span aria-hidden="true">·</span><time className="sas-num" dateTime={sms.at.toISOString()}>{time}</time></> : null}
+        </span>
+      </div>
+      <p className="sas-sms-entry__text" dir="auto">{sms.text ?? t(`conv.sms.kind.${sms.kind}`)}</p>
+    </div>
+  );
 }
 
 /** Lead statuses whose deal is over while the agent still answers in the chat. */
@@ -240,7 +288,7 @@ export function ConversationControls({
             />
             {c.channel !== "testlab" ? (
               <span id={`${replyId}-hint`} className="sas-small">
-                {c.channel === "whatsapp" ? t("conv.whatsapp_hint") : c.channel === SIMULATOR_CHANNEL ? t("sim.reply_hint") : t("conv.not_sent_hint")}
+                {c.channel === "whatsapp" ? t("conv.whatsapp_hint") : c.channel === SIMULATOR_CHANNEL ? t("sim.reply_hint") : isWebChat(c.channel) ? t("conv.chat_hint") : t("conv.not_sent_hint")}
               </span>
             ) : null}
             <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", flexWrap: "wrap" }}>
@@ -308,7 +356,7 @@ export function ConversationPanel({
   // Form notes and take-over / hand-back markers, merged by time and placed before the first later message.
   let pending: { at: Date; node: () => ReactNode }[] = [
     ...notes.map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
-    ...timed.map((mk, i) => ({ at: mk.at, node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} /> })),
+    ...timed.map((mk, i) => ({ at: mk.at, node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} /> })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
   // The agent's hand-off: right after the reply that made it.
