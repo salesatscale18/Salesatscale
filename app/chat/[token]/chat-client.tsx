@@ -300,7 +300,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
   // A simulated chat with a gate off: the button stays, disabled, with the reason under the composer.
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
-    ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey, { hours: voiceState.hours ?? "" }) : null;
+    ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey, { hours: `\u2068${voiceState.hours ?? ""}\u2069` }) : null;
 
   const dayKey = dayKeyIn(timeZone);
   const now = new Date();

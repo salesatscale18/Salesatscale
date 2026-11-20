@@ -449,7 +449,7 @@ describe("the buyer sees state words only", () => {
     // A simulated chat with a gate off: the button stays, disabled, and says why under the composer.
     const why = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, reason: "outside_hours", hours: "Sun–Thu 08:30–20:00" } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(why).toContain('aria-disabled="true"');
-    expect(why).toContain("Outside contact hours (Sun–Thu 08:30–20:00).");
+    expect(why).toContain("Outside contact hours (\u2068Sun–Thu 08:30–20:00\u2069).");
     const voiceOff = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" />);
     expect(voiceOff).not.toContain("Switch to voice");
   });
