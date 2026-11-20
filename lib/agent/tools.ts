@@ -210,7 +210,7 @@ export const TOOL_DEFS: ToolDef[] = [
     input_schema: {
       type: "object",
       properties: {
-        due_at: { type: "string", description: 'The agreed time as an ISO date-time with the offset of the seller\'s time zone, e.g. "2026-11-18T10:00:00+02:00". Use "Local time now" from your context.' },
+        due_at: { type: "string", description: 'The agreed time: an ISO date-time with the offset of the buyer\'s time zone, e.g. "2026-11-18T10:00:00+02:00", or a local date and time, e.g. "2026-11-18T10:00", read in the buyer\'s time zone. Use "Local time now" from your context.' },
         topic: { type: "string", description: 'What to come back about, short, in the buyer\'s words, e.g. "the quote for the second office".' },
       },
       required: ["due_at", "topic"],

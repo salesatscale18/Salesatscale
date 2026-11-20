@@ -13,7 +13,8 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { AccountAccess } from "@/lib/accounts/service";
 import { isWithinContactHours, summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
-import { cleanTopic, dueWindow, formatBuyerLocal, formatDueLocal, isoInZone, nearestAllowedTime, parseDueAt, type FollowUpReason } from "./rules";
+import { parseCallTime } from "@/lib/callbacks/rules";
+import { cleanTopic, dueWindow, formatBuyerLocal, formatDueLocal, isoInZone, nearestAllowedTime, type FollowUpReason } from "./rules";
 
 // ---------------------------------------------------------------------------
 // The agent's tool
@@ -51,9 +52,10 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
   if (account.status === "paused") return { ok: false, rule: "The seller's account is paused", extra: { message: "Do not promise to come back. Say the team will be in touch." } };
   if (conv.status !== "open") return { ok: false, rule: "The agent is paused for this chat", extra: { message: "A person handles this chat now. Do not promise to come back yourself." } };
 
-  const due = parseDueAt(input.due_at);
+  // An ISO date-time with an offset, or a local date and time read in the lead's market time zone (as request_callback).
+  const due = parseCallTime(input.due_at, tz);
   if (!due) {
-    return { ok: false, rule: "Invalid time", extra: { message: `Give due_at as an ISO date-time with the offset of ${tz}, e.g. ${isoInZone(now, tz)}.` } };
+    return { ok: false, rule: "Invalid time", extra: { message: `Give due_at as an ISO date-time with the offset of ${tz}, e.g. ${isoInZone(now, tz)}, or as a local date and time, e.g. ${isoInZone(now, tz).slice(0, 16)}.` } };
   }
   const window = dueWindow(due, now);
   if (window !== "ok") {

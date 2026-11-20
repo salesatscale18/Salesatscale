@@ -447,6 +447,9 @@ async function orderChat(
   return id;
 }
 
+/** The Hebrew lead's stored hand-off reason (no label matches it, so it shows as written). */
+export const HUMAN_HANDOFF_REASON = "הלקוח מבקש לדבר עם מישהו על הנחה לרשת של 4 סניפים";
+
 /** A Hebrew chat a person took over and answered (Human handling). */
 async function humanHandled(db: Db, actor: Actor & { userId: string }, accountId: string, leadId: string, versionId: string, now: Date) {
   const id = await newConversation(db, accountId, leadId, versionId, "he", min(now, 180), "open");
@@ -460,6 +463,16 @@ async function humanHandled(db: Db, actor: Actor & { userId: string }, accountId
   ]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 170) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("4", min(now, 179)) }, nextStep: "Call about a price for 4 branches" });
+  // The hand-off reason in Hebrew, stored as the agent's hand_off_to_human tool writes it (lib/agent/tools.ts), so the
+  // "stored reason as written" line shows for a Hebrew lead. Only the event: the chat is still taken over with Take over below.
+  await db.insert(leadEvents).values({
+    accountId, leadId, type: "handoff.requested", actor: "agent", createdAt: min(now, 165),
+    data: {
+      reason: HUMAN_HANDOFF_REASON,
+      summary: "רשת של 4 סניפים, בערך 6 מקררים ומקפיאים בכל סניף. רוצה לדבר עם מישהו על הנחה לרשת.",
+      suggestedReply: "היי אורי, כאן הצוות של פולאר דמו. אשמח להתקשר ולהציע מחיר לרשת. מתי נוח לך?",
+    },
+  });
   // A person takes the chat (the same service as the Take over button) and answers.
   const taken = await takeOver(db, actor, accountId, id, min(now, 160));
   if (!taken.ok) throw new Error(`Demo seed: take over refused: ${taken.reason}`);

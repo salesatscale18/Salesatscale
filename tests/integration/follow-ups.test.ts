@@ -8,7 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import {
-  agentVersions, auditLog, catalogVersions, conversations, dealStates, followUps, leadEvents, leads, messages, orderForms, orders,
+  agentVersions, auditLog, catalogVersions, conversations, dealStates, followUps, leadEvents, leads, markets, messages, orderForms, orders,
   quoteVersions, quotes, sellerAccounts, toolCalls, users, type ContactHours, type User,
 } from "@/db/schema";
 import { ensureDraftVersion } from "@/lib/agent/service";
@@ -147,6 +147,35 @@ describe("Agreed follow-ups", () => {
       expect(bad).toMatchObject({ outcome: "refused", rule: "Invalid time" });
       expect(String(bad.result.message)).toMatch(/\+0[23]:00/);
       expect(await db.select().from(followUps).where(eq(followUps.leadId, c.leadId))).toHaveLength(0);
+    });
+
+    it("takes a local date and time (no offset), read in the lead's market time zone; the offset form still works", async () => {
+      /** The wall-clock "YYYY-MM-DDTHH:MM" of `d` in `tz`. */
+      const localIn = (d: Date, tz: string) => {
+        const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(d).map((x) => [x.type, x.value]));
+        return `${p.year}-${p.month}-${p.day}T${p.hour}:${p.minute}`;
+      };
+      const due = aheadOnTheHour(26);
+      // The account's zone (Asia/Jerusalem) for a lead with no market.
+      const home = await mkChat(acc);
+      expect((await schedule(home, localIn(due, "Asia/Jerusalem"))).outcome).toBe("ok");
+      expect((await leadFollowUp(db, home.accountId, home.leadId))!.dueAt.getTime()).toBe(due.getTime());
+      // A lead in a market with its own zone: the same wall-clock time there is a different instant.
+      const [m] = await db.insert(markets).values({ id: randomUUID(), accountId: acc.account.id, name: `US ${n++}`, countries: ["US"], status: "live", overrides: { timezone: "America/New_York" } }).returning();
+      const us = await mkChat(acc);
+      await db.update(leads).set({ marketId: m.id }).where(eq(leads.id, us.leadId));
+      expect((await schedule(us, localIn(due, "America/New_York"))).outcome).toBe("ok");
+      expect((await leadFollowUp(db, us.accountId, us.leadId))!.dueAt.getTime()).toBe(due.getTime());
+      // With an offset: the instant as given, whatever the zone.
+      const later = aheadOnTheHour(50);
+      expect((await schedule(us, iso(later))).outcome).toBe("ok");
+      expect((await leadFollowUp(db, us.accountId, us.leadId))!.dueAt.getTime()).toBe(later.getTime());
+      // Invalid: not a time, impossible values, a date alone; the message gives both forms in the lead's zone.
+      for (const bad of ["tomorrow at 10", "2026-13-01T10:00", "2026-11-18T25:00", "2026-11-18", 1_800_000_000_000]) {
+        const r = await schedule(us, bad);
+        expect(r).toMatchObject({ outcome: "refused", rule: "Invalid time" });
+        expect(String(r.result.message)).toMatch(/America\/New_York, e\.g\. \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}-0[45]:00, or as a local date and time, e\.g\. \d{4}-\d{2}-\d{2}T\d{2}:\d{2}\.$/);
+      }
     });
 
     it("outside contact hours: not scheduled, the nearest allowed time comes back to offer the buyer", async () => {

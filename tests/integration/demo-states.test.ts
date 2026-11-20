@@ -332,4 +332,28 @@ describe("demo account review states", () => {
     expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === upset.id)).toMatchObject({ kind: "human_handling", why: "Upset: false night alarms, and wants a person now" });
     expect((await handoffWhyByLead(db, otherId, [upset.id])).size).toBe(0);
   });
+
+  it("the Hebrew human-handled lead has its stored hand-off reason (as written) and is still taken over with Take over", async () => {
+    const { HUMAN_HANDOFF_REASON } = await import("@/lib/demo/states");
+    const { latestHandoff } = await import("@/lib/conversations/inbox");
+    const uri = await leadBy(STATE_LEADS.human.n);
+    expect(uri.fullName).toBe("אורי דמו");
+    expect(uri.status).toBe("human_handling");
+    // The shape the hand_off_to_human tool writes: reason, summary, suggestedReply; before the take-over.
+    const [handoff] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, uri.id), eq(leadEvents.type, "handoff.requested")));
+    expect(handoff).toMatchObject({ actor: "agent", data: { reason: HUMAN_HANDOFF_REASON, summary: expect.any(String), suggestedReply: expect.any(String) } });
+    const [taken] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, uri.id), eq(leadEvents.type, "conversation.taken_over")));
+    expect(taken.actorUserId).toBe(admin.id);
+    expect(handoff.createdAt.getTime()).toBeLessThan(taken.createdAt.getTime());
+    // No label matches: the reason shows as written, in Needs you and the brief.
+    expect((await handoffWhyByLead(db, accountId, [uri.id])).get(uri.id)).toBe(HUMAN_HANDOFF_REASON);
+    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === uri.id)).toMatchObject({ kind: "human_handling", why: HUMAN_HANDOFF_REASON });
+    expect(await latestHandoff(db, accountId, uri.id)).toMatchObject({ reason: HUMAN_HANDOFF_REASON });
+    // The take-over flow is unchanged: taken over by the admin, the person already answered (no prefilled reply).
+    const conv = await convOf(uri.id);
+    expect(conv).toMatchObject({ status: "human", takenOverByUserId: admin.id });
+    const view = await conversationView(db, accountId, conv);
+    expect(view.suggestedReply).toBeNull();
+    expect(view.markers?.map((m) => m.kind)).toEqual(["taken_over"]);
+  });
 });

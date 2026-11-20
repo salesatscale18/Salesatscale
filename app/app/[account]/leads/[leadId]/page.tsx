@@ -24,7 +24,7 @@ import { defaultTransport } from "@/lib/channels/twilio";
 import { displayQuoteStatus, furthestQuoteState, quotesForLead, quoteTimezones } from "@/lib/quotes/service";
 import { docStatusByQuote, leadOrdersWithSignature, linkFor, orderLabel, payLinkOpen, personSentForms } from "@/lib/orders/service";
 import { SignedFormLinks } from "../../orders/signed-form-links";
-import { ScrollLeadToLatest } from "./scroll-latest";
+import { ScrollLeadToHash, ScrollLeadToLatest } from "./scroll-latest";
 import { isolate } from "@/lib/leads/bidi";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
@@ -286,6 +286,8 @@ export default async function LeadCardPage({
           <label htmlFor="lt-deal">{t("lead.tabs.deal")}</label>
           <label htmlFor="lt-timeline">{t("lead.tabs.timeline")}</label>
         </div>
+        {/* A #hash (Needs you's call links) opens at that card once the streamed page is in place; the browser's own jump comes too early. */}
+        <ScrollLeadToHash />
         <div className="sas-lead__body">
           <div className="sas-lead__main">
             <div data-tab="chat">
