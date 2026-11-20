@@ -132,7 +132,7 @@ export async function ChannelsSection({ account, saved, error }: { account: Sell
           </Row>
 
           <Row
-            icon="file-text" title={t("settings.channels.email")}
+            icon="mail" title={t("settings.channels.email")}
             pill={<Pill tone="neutral" icon="clock">{t("settings.channels.not_yet")}</Pill>}
           >
             <div className="sas-channel-hint" data-email-planned=""><Icon name="info" /><span>{t("settings.channels.email_planned")}</span></div>
@@ -142,7 +142,7 @@ export async function ChannelsSection({ account, saved, error }: { account: Sell
         <section className="sas-panel sas-channels__card" aria-labelledby="tc-h" data-team-calls-card="">
           <div className="sas-panel__body sas-stack-4">
             <div className="sas-stack-2" style={{ gap: 2 }}>
-              <div className="sas-channel-row__title"><h2 id="tc-h" className="sas-heading">{t("settings.team_calls.title")}</h2><Pill tone="neutral" icon="flask-conical">{t("settings.team_calls.fixed")}</Pill></div>
+              <div className="sas-channel-row__title"><h2 id="tc-h" className="sas-heading">{t("settings.team_calls.title")}</h2><Pill tone="neutral" icon="lock">{t("settings.team_calls.fixed")}</Pill></div>
               <span className="sas-small">{t("settings.team_calls.body")}</span>
             </div>
             <dl className="sas-channel-fields sas-channel-fields--wide">

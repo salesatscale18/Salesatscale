@@ -6,11 +6,11 @@ import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import type { SmsEntry } from "@/lib/sms/thread";
 import { MessageBody } from "@/components/sas/message-body";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
-import type { ConversationView } from "@/lib/agent/conversation";
+import type { ConversationView, SellerFormCard } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
 import { displayName, personName } from "@/lib/auth/display";
 import { formatClockIn, formatDateTimeIn, formatDayIn, localDateIso } from "@/lib/format";
-import { isLocale, messages, t, type MessageKey } from "@/lib/i18n";
+import { isLocale, messages, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
 import { SuggestedReplyBox } from "./suggested-reply";
@@ -139,6 +139,50 @@ export function SmsThreadEntry({ sms, time, timeTitle }: { sms: SmsEntry; time: 
         </span>
       </div>
       <p className="sas-sms-entry__text" dir="auto">{sms.text ?? t(`conv.sms.kind.${sms.kind}`)}</p>
+    </div>
+  );
+}
+
+/**
+ * An order-form link from the seller's side, as the card the buyer sees in the chat (seller, "Order form · Q-2041",
+ * totals, "Open order form"), in the chat's language; never the raw /f/… URL. Any other text of the message
+ * shows in its bubble above the card.
+ */
+export function FormCardMessage({ actor, who, time, timeTitle, locale, text, cards }: {
+  actor: "buyer" | "agent" | "human" | "system"; who: string; time: string; timeTitle: string; locale: Locale; text: string; cards: SellerFormCard[];
+}) {
+  return (
+    <div className={`sas-msg sas-msg--${actor}`} data-app-message="order_form">
+      <div className="sas-msg__meta">
+        <span className="sas-msg__who">{who}</span>
+        <span className="sas-msg__time" title={timeTitle}>{time}</span>
+      </div>
+      {text ? <div className="sas-msg__bubble" lang={locale} dir="auto">{text}</div> : null}
+      {cards.map(({ preview: p }) => <OrderFormCard key={p.url} p={p} locale={locale} />)}
+    </div>
+  );
+}
+
+function OrderFormCard({ p, locale }: { p: SellerFormCard["preview"]; locale: Locale }) {
+  const initials = p.seller.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
+  return (
+    <div className="sas-fcard" lang={locale} dir={locale === "he" ? "rtl" : "ltr"} data-form-card="">
+      <div className="sas-fcard__top">
+        <span className="sas-fcard__logo" aria-hidden="true">{initials}</span>
+        <span className="sas-fcard__text">
+          <b dir="auto">{p.seller}</b>
+          {/* The buyer sees a version only from v2 on, as on the buyer's card. */}
+          <span>{t("buyer.sim.form_label", undefined, locale)} · <bdi className="sas-num">{p.ref.replace(/ v1$/, "")}</bdi></span>
+          {p.oneTime || p.recurring ? (
+            <span className="sas-fcard__sum">
+              {p.oneTime ? <><bdi className="sas-num">{p.oneTime}</bdi> {t("buyer.sim.today_word", undefined, locale)}</> : null}
+              {p.oneTime && p.recurring ? " + " : null}
+              {p.recurring ? <><bdi className="sas-num">{p.recurring}</bdi>{t("buyer.sim.per_month", undefined, locale)}</> : null}
+            </span>
+          ) : null}
+        </span>
+      </div>
+      <a className="sas-fcard__btn" href={p.url} target="_blank" rel="noreferrer">{t("buyer.sim.open_form", undefined, locale)}</a>
     </div>
   );
 }
@@ -353,9 +397,20 @@ export function ConversationPanel({
   };
   const showSteps = steps?.show ?? true;
   const { timed, after } = splitMarkers(view.markers);
+  // A form note whose form is a card in this thread follows that card (the form is posted after the chat's intro,
+  // but the form row is created first): never above the intro.
+  const formCards = view.formCards ?? {};
+  const cardOfForm = new Map<string, string>();
+  for (const [messageId, cards] of Object.entries(formCards)) for (const c of cards) if (c.formId && !cardOfForm.has(c.formId)) cardOfForm.set(c.formId, messageId);
+  const notesAfter = new Map<string, FormNote[]>();
+  for (const n of notes) {
+    const mid = cardOfForm.get(n.id);
+    if (mid) notesAfter.set(mid, [...(notesAfter.get(mid) ?? []), n]);
+  }
+  const noteAfter = (id: string) => (notesAfter.get(id) ?? []).map((n) => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} />);
   // Form notes and take-over / hand-back markers, merged by time and placed before the first later message.
   let pending: { at: Date; node: () => ReactNode }[] = [
-    ...notes.map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
+    ...notes.filter((n) => !cardOfForm.has(n.id)).map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
     ...timed.map((mk, i) => ({ at: mk.at, node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} /> })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
@@ -391,8 +446,19 @@ export function ConversationPanel({
           // like quote cards and form notes they must show whether or not the agent steps are shown.
           const author = m.actorUserId ? authors[m.actorUserId] : undefined;
           const delivery = actor === "agent" || actor === "human" ? deliveryLabel(m) : null;
+          const fcards = actor !== "buyer" ? formCards[m.id] : undefined;
           // Text the app wrote itself (the close after an approval) reads "Agent", as the timeline does (round-4 review B8).
           const who = actor === "buyer" ? buyerName : actor === "agent" ? (isAppText(kind) ? t("conv.qcard.sent_by_app") : t("conv.who.agent")) : actor === "human" ? (author && !isTeamText(kind) ? personName({ id: m.actorUserId ?? "", ...author }, meId, t("people.you")) : t("conv.who.team")) : t("conv.who.system");
+          if (fcards?.length) {
+            // An order form sent in the chat shows as the card the buyer sees, then the private note on who sent it.
+            const rest = fcards.reduce((b, c) => b.split(c.preview.url).join(""), m.body).replace(/[ \t]+\n/g, "\n").replace(/\n{2,}/g, "\n").trim();
+            return [...noteNodes, day, (
+              <FormCardMessage
+                key={m.id} actor={actor} who={who} timeTitle={full(m.createdAt)} time={delivery ? `${clock(m.createdAt)} · ${delivery}` : clock(m.createdAt)}
+                locale={m.language && isLocale(m.language) ? m.language : "en"} text={rest} cards={fcards}
+              />
+            ), ...noteAfter(m.id), ...afterNodes(m.id)];
+          }
           return [...noteNodes, day, (
             <ChatMessage
               key={m.id} actor={actor} who={who} timeTitle={full(m.createdAt)}

@@ -155,7 +155,8 @@ describe("demo account review states", () => {
     for (const l of [bankLead, await leadOf(STATE_LEADS.payStep.n)]) {
       expect(l.status).toBe("agent_handling");
       const convs = await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, l.id)));
-      expect(convs).toHaveLength(1);
+      // RA2: the pay-step lead's order form then went into its web chat (lib/demo/sms-seed.ts).
+      expect(convs.map((c) => c.channel).sort()).toEqual(l.id === bankLead.id ? ["whatsapp"] : ["chat", "whatsapp"]);
     }
     const [bank] = await db.select().from(orders).where(eq(orders.leadId, bankLead.id));
     expect(bank).toMatchObject({ paymentStatus: "bank_transfer_expected", paymentMethod: "bank_transfer", currency: "ILS" });
@@ -169,6 +170,35 @@ describe("demo account review states", () => {
     // Payable: the link is still valid and a payment method is on.
     expect(form.expiresAt.getTime()).toBeGreaterThan(NOW.getTime());
     expect(form.snapshot.paymentMethods.bankTransfer).toBe(true);
+  });
+
+  it("RA2: shows the seller SMS card on two demo leads: Not sent: test mode (chat link) and Delivered (order form ready)", async () => {
+    const leadOf = async (n: number) => (await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.sourceRef, `demo-seed:${n}`))))[0];
+    const smsOf = async (leadId: string) => {
+      const [conv] = await db.select().from(conversations)
+        .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), eq(conversations.channel, "chat")));
+      const view = await conversationView(db, accountId, conv);
+      return { conv, view, sms: (view.markers ?? []).flatMap((m) => (m.kind === "sms" ? [m.sms] : [])) };
+    };
+    // Gal Demo (lead 16, the voice call's web chat): the chat link, not sent in mock mode.
+    const gal = await smsOf((await leadOf(16)).id);
+    expect(gal.sms).toEqual([expect.objectContaining({ kind: "chat_link", state: "test_mode", reason: null, to: expect.stringContaining("•••") })]);
+    expect(gal.sms[0].text).toMatch(/^Thanks for talking with us\. Continue anytime: \S+\/c\/\S+$/);
+    // Avi Demo (the pay-step lead with the order form): order form ready, delivered, with a fake SID; no quiet refusal left.
+    const payLead = await leadOf(STATE_LEADS.payStep.n);
+    const avi = await smsOf(payLead.id);
+    expect(avi.sms).toEqual([expect.objectContaining({ kind: "order_form", state: "delivered", reason: null })]);
+    expect(avi.sms[0].text).toMatch(/^Your order form is ready \(about 2 min\): /);
+    const events = await db.select().from(leadEvents).where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, payLead.id)));
+    expect(events.filter((e) => e.type.startsWith("sms.")).map((e) => [e.type, e.data?.sid, e.data?.status])).toEqual([["sms.sent", "SM0000000000000000000000000000de00", "delivered"]]);
+    // The chat holds the continuation line (signed, waiting for payment) and the form card under it, as offerOrderFormInChat posts it.
+    const bodies = avi.view.thread.map(({ message: m }) => m.body);
+    expect(bodies[0]).toMatch(/^Hi Avi, it's .+ again from .+\. Thanks for signing\. Payment details are below\.$/);
+    expect(bodies[1]).toMatch(/\/f\/[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$/);
+    expect(bodies).toHaveLength(2);
+    expect(Object.keys(avi.view.formCards ?? {})).toEqual([avi.view.thread[1].message.id]);
+    // No Twilio call was possible: no real SMS rows other than the two recorded ones.
+    expect((await db.select().from(leadEvents).where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.type, "sms.refused"))))).toHaveLength(0);
   });
 
   it("has a second market with its own time zone and contact hours", async () => {

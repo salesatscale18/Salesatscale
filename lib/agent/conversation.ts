@@ -18,7 +18,10 @@ import { loadQuoteCards } from "./quote-card-data";
 import type { QuoteCardView } from "./quote-card";
 import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
-import { isWebChat } from "@/lib/simulator/rules";
+import { isWebChat, orderFormLinks } from "@/lib/simulator/rules";
+import { linkPreviews, type LinkPreview } from "@/lib/simulator/service";
+import { formIdFromToken } from "@/lib/orders/token";
+import { isLocale } from "@/lib/i18n";
 import { sendChatLink } from "@/lib/sms/outbound";
 import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
 import { MARKER_EVENT_TYPES, smsMarkers, threadMarkers, VOICE_CALL_ENDED_LINE, voiceMarkers, type ThreadMarker } from "./thread-markers";
@@ -174,7 +177,33 @@ export type ConversationView = {
   quoteCards: Record<string, QuoteCardView>;
   /** Hand-off, take-over and hand-back markers (lib/agent/thread-markers.ts), oldest first. */
   markers?: ThreadMarker[];
+  /**
+   * Order-form links in messages from the seller's side, as the card the buyer sees (by message id),
+   * with the form id so the private "Order form sent by you" note can follow its card.
+   */
+  formCards?: Record<string, SellerFormCard[]>;
 };
+
+/** An order-form link in the seller's thread: the buyer's card (seller, "Order form · Q-2041", totals) and its form. */
+export type SellerFormCard = { formId: string | null; preview: LinkPreview };
+
+/** The order-form cards of a thread's messages from the seller's side (the buyer's own messages never get one). Scoped by account. */
+export async function sellerFormCards(
+  db: Db, accountId: string, thread: { message: { id: string; actor: string; body: string } }[], language: string | null, now = new Date(),
+): Promise<Record<string, SellerFormCard[]>> {
+  const withLinks = thread.filter(({ message: m }) => m.actor !== "buyer" && m.body.includes("/f/"));
+  if (!withLinks.length) return {};
+  const previews = await linkPreviews(db, accountId, withLinks.map(({ message: m }) => m.body), language && isLocale(language) ? language : "en", now);
+  const out: Record<string, SellerFormCard[]> = {};
+  for (const { message: m } of withLinks) {
+    const cards = orderFormLinks(m.body).flatMap((l) => {
+      const preview = previews.get(l.url);
+      return preview ? [{ formId: formIdFromToken(l.token), preview }] : [];
+    });
+    if (cards.length) out[m.id] = cards;
+  }
+  return out;
+}
 
 /** The lead's most recent conversation with its messages and tool calls, or null when there is none. */
 export async function latestConversationForLead(db: Db, accountId: string, leadId: string): Promise<ConversationView | null> {
@@ -208,6 +237,7 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
         .then(([l]) => (l ? loadSmsEntries(db, accountId, conv.leadId, l.phone, conv.createdAt) : []))
       : Promise.resolve([]),
   ]);
+  const formCards = await sellerFormCards(db, accountId, thread, conv.language);
   const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId), ...events.map((e) => e.actorUserId)].filter((x): x is string => !!x))];
   const people = ids.length
     ? await db.select({ id: users.id, firstName: users.firstName, lastName: users.lastName, email: users.email }).from(users).where(inArray(users.id, ids))
@@ -236,5 +266,6 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
     suggestedReply: suggested && !answered ? suggested.text : null,
     quoteCards,
     markers,
+    formCards,
   };
 }

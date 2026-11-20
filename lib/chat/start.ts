@@ -14,6 +14,10 @@
  * Contact hours never hold it back here: the buyer opened the chat, or a
  * person acted now (the owner's contact-hours rule). The lead card's
  * "Start conversation" keeps the contact-hours gate for seller-started outreach.
+ *
+ * A lead the agent already talked to on another channel (WhatsApp, an earlier
+ * chat) gets the continuation line instead of the intro, with the card its
+ * latest state needs right under it (lib/chat/continuation.ts; UX, MVP).
  */
 import { and, desc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -21,9 +25,14 @@ import { conversations, leadEvents } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
 import { WEB_CHAT_CHANNELS } from "@/lib/simulator/rules";
 import { startSimulatorConversation, type SimOpenerRefusal } from "@/lib/simulator/service";
+import { continuationText, leadContinuation, postContinuationCard, type ContinuationState } from "./continuation";
 
 export type EnsureChatStartedResult =
-  | { started: true; conversationId: string; messageId: string }
+  | {
+    started: true; conversationId: string; messageId: string;
+    /** The continuation's state (null: the normal intro) and the card posted under it (a form card names its link). */
+    continued?: { state: ContinuationState["kind"]; card: { messageId: string; formUrl: string | null } | null } | null;
+  }
   /** The lead already has a web chat (open, with a person, or closed): nothing written. */
   | { started: false; reason: "exists"; conversationId: string }
   | { started: false; reason: SimOpenerRefusal | "not_found" };
@@ -52,8 +61,12 @@ export async function ensureChatStarted(
     .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false)))
     .orderBy(desc(conversations.createdAt)).limit(1);
   if (existing) return { started: false, reason: "exists", conversationId: existing.id };
+  const continuation = await leadContinuation(db, accountId, leadId, now);
   const r = await startSimulatorConversation(db, input.actor ?? { userId: null, actingAs: false }, accountId, leadId, now, {
     contactHours: false, leadInterest: await leadInterest(db, accountId, leadId),
+    firstMessage: continuation
+      ? ({ names, firstName, lang }) => continuationText(continuation.state, { name: firstName, agent: names.agent, seller: names.seller }, lang, continuation.date)
+      : undefined,
   });
   if (!r.ok) {
     // A parallel open started it a moment ago.
@@ -65,5 +78,11 @@ export async function ensureChatStarted(
     }
     return { started: false, reason: r.reason };
   }
-  return { started: true, conversationId: r.conversationId, messageId: r.messageId };
+  if (!continuation) return { started: true, conversationId: r.conversationId, messageId: r.messageId, continued: null };
+  // The card, one millisecond after the line, so it always shows right under it.
+  const [conv] = await db.select({ language: conversations.language }).from(conversations)
+    .where(and(eq(conversations.id, r.conversationId), eq(conversations.accountId, accountId)));
+  const card = await postContinuationCard(db, accountId, r.conversationId, continuation.state, conv?.language ?? "en", new Date(now.getTime() + 1));
+  if (card) await db.update(conversations).set({ updatedAt: new Date(now.getTime() + 1) }).where(and(eq(conversations.id, r.conversationId), eq(conversations.accountId, accountId)));
+  return { started: true, conversationId: r.conversationId, messageId: r.messageId, continued: { state: continuation.state.kind, card } };
 }

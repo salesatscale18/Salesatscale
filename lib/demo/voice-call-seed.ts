@@ -5,7 +5,8 @@
  *
  * The lead (Gal Demo, a new English buyer in the Israel market) chatted with
  * the agent on the web chat page, then switched the chat to voice. As a real buyer
- * call does, the call joins that same conversation (channel "simulator"):
+ * call does, the call joins that same conversation (the real web chat, channel "chat": Gal is a
+ * real lead, so the seller thread says "Chat", not "Simulated"):
  * - the chat: the agent's opener, as startSimulatorConversation writes it,
  *   and one exchange;
  * - the buyer's first switch to voice, recorded silently (recordVoiceConsent, the same service);
@@ -32,7 +33,7 @@ import { buyerNames } from "@/lib/agent/core/names";
 import { openerText } from "@/lib/agent/core/opener";
 import { parseLead } from "@/lib/leads/rules";
 import { upsertLead } from "@/lib/leads/service";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { WEB_CHAT_CHANNEL } from "@/lib/simulator/rules";
 import { ensureChatLink } from "@/lib/simulator/service";
 import { recordVoiceConsent } from "@/lib/voice/buyer";
 import { DEFAULT_VOICE_MODEL, maxCallSeconds } from "@/lib/voice/settings";
@@ -130,7 +131,7 @@ export async function seedVoiceCall(
   const conversationId = randomUUID();
   const chatStart = minAgo(now, 45);
   await db.insert(conversations).values({
-    id: conversationId, accountId, leadId, channel: SIMULATOR_CHANNEL, agentVersionId: liveVersionId, language: "en", createdByUserId: actor.userId,
+    id: conversationId, accountId, leadId, channel: WEB_CHAT_CHANNEL, agentVersionId: liveVersionId, language: "en", createdByUserId: actor.userId,
     createdAt: chatStart, updatedAt: chatStart,
   });
   await db.insert(messages).values([
@@ -140,7 +141,7 @@ export async function seedVoiceCall(
   ]);
   await db.insert(leadEvents).values({
     accountId, leadId, type: "conversation.started", actor: "human", actorUserId: actor.userId,
-    data: { conversationId, channel: SIMULATOR_CHANNEL }, createdAt: chatStart,
+    data: { conversationId, channel: WEB_CHAT_CHANNEL }, createdAt: chatStart,
   });
 
   // The buyer switched the chat to voice (recorded silently on the first call), then the call.

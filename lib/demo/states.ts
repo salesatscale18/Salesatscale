@@ -63,6 +63,7 @@ import { createQuote, markQuoteSent, QUOTE_VALID_DAYS, type QuoteInput } from "@
 import { addFile, addNote, addWebsite, listSections, saveParse } from "@/lib/sources/service";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 import { seedVoiceCall } from "./voice-call-seed";
+import { seedDemoSms } from "./sms-seed";
 
 // ---------------------------------------------------------------------------
 // Content (fictional)
@@ -404,7 +405,9 @@ export async function seedReviewStates(
 
   // 12. A note added after that analysis: "Not analyzed yet" until Analyze sources runs.
   await addNote(db, actor, accountId, NEW_NOTE);
-  await seedVoiceCall(db, actor, accountId, { liveVersionId, now });
+  const voice = await seedVoiceCall(db, actor, accountId, { liveVersionId, now });
+  // Two recorded SMS (no Twilio): Not sent: test mode (chat link) and Delivered (order form ready), so the seller thread shows the SMS card.
+  await seedDemoSms(db, actor, accountId, { chatLinkLeadId: voice.leadId, chatLinkConversationId: voice.conversationId, orderFormLeadId: leadIds.payStep, now });
 
   return {
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,

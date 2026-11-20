@@ -382,8 +382,13 @@ export async function startSimulatorConversation(
   /**
    * `contactHours: false`: the buyer opened the chat (or a person acted now), so contact hours do not hold the
    * opener back (lib/chat/start.ts). `leadInterest`: what the lead asked about on the form, when known.
+   * `firstMessage`: the first line in place of the opener (lib/chat/continuation.ts: a lead the agent already
+   * talked to elsewhere gets a continuation line), built from the same names; null keeps the opener.
    */
-  opts: { contactHours?: boolean; leadInterest?: string | null } = {},
+  opts: {
+    contactHours?: boolean; leadInterest?: string | null;
+    firstMessage?: (f: { names: BuyerNames; firstName: string; lang: Locale }) => string | null;
+  } = {},
 ): Promise<SimStartResult> {
   const facts = await simulatorOpenerFacts(db, accountId, leadId, now);
   if (!facts) return { ok: false, reason: "not_found" };
@@ -395,25 +400,26 @@ export async function startSimulatorConversation(
   const vars = templateVariables(lead, account);
   // Names in the lead's language, and the intro's grammar in the agent's gender (decision 2).
   const names = buyerNames(live.playbook, account, lang);
-  const body = template
+  const continued = opts.firstMessage?.({ names, firstName: vars["1"], lang }) ?? null;
+  const body = continued ?? (template
     ? renderTemplate(template.body, vars)
-    : openerText({ name: vars["1"], agent: names.agent, company: names.seller, gender: names.gender, language: lang, opener: live.playbook.opener, leadInterest: opts.leadInterest });
+    : openerText({ name: vars["1"], agent: names.agent, company: names.seller, gender: names.gender, language: lang, opener: live.playbook.opener, leadInterest: opts.leadInterest }));
   const conversationId = randomUUID();
   const messageId = randomUUID();
   await atomic(db, (q) => [
     q.insert(conversations).values({
-      id: conversationId, accountId, leadId, channel, agentVersionId: live.id, language: lead.language, createdByUserId: actor.userId,
+      id: conversationId, accountId, leadId, channel, agentVersionId: live.id, language: lead.language, createdByUserId: actor.userId, createdAt: now, updatedAt: now,
     }),
     q.insert(messages).values({
       id: messageId, accountId, conversationId, actor: "agent", body, language: lead.language, agentVersionId: live.id,
-      deliveryStatus: "delivered", templateId: template?.id ?? null, createdAt: now,
+      deliveryStatus: "delivered", templateId: continued ? null : template?.id ?? null, createdAt: now,
     }),
     q.update(leads).set({ status: "waiting_for_reply", lastActivityAt: now })
       .where(and(eq(leads.id, leadId), eq(leads.accountId, accountId), eq(leads.status, "new"))),
     q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId))),
     q.insert(leadEvents).values({
       id: randomUUID(), accountId, leadId, type: "conversation.started", actor: actor.userId ? "human" : "system", actorUserId: actor.userId,
-      data: { conversationId, channel, ...(template ? { template: template.name } : {}) },
+      data: { conversationId, channel, ...(template && !continued ? { template: template.name } : {}), ...(continued ? { continued: true } : {}) },
     }),
   ]);
   if (actor.actingAs) await writeAudit(db, actor, { accountId, action: "conversation.started", targetType: "lead", targetId: leadId, details: { conversationId, channel } });

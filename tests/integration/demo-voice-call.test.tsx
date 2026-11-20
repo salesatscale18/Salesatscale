@@ -41,7 +41,7 @@ const { createDemoAccount } = await import("@/lib/demo/seed");
 const { VOICE_CALL, VOICE_CALL_CHAT, VOICE_CALL_LEAD, VOICE_CALL_LINES, callEndedText } = await import("@/lib/demo/voice-call-seed");
 const VOICE_CALL_CHAT_AGENT = VOICE_CALL_CHAT.agent;
 const { needsYou } = await import("@/lib/overview/service");
-const { buyerCallRows, buyerConversation, hasVoiceConsent } = await import("@/lib/voice/buyer");
+const { buyerCallRows, hasVoiceConsent } = await import("@/lib/voice/buyer");
 const { voiceSessionSummary } = await import("@/lib/voice/service");
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { default: ConversationsPage } = await import("@/app/app/[account]/conversations/page");
@@ -78,8 +78,9 @@ describe("demo account: a finished buyer voice call", () => {
     [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, a.summary.accountId));
     const [lead] = await db.select().from(leads).where(and(eq(leads.accountId, acc.id), eq(leads.fullName, VOICE_CALL_LEAD.fullName)));
     leadId = lead.id;
-    const conv = await buyerConversation(db, { account: acc, lead });
-    convId = conv!.id;
+    // The lead's web chat (the voice session reads it through WEB_CHAT_CHANNELS, lib/voice/buyer.ts).
+    const [conv] = await db.select().from(conversations).where(and(eq(conversations.accountId, acc.id), eq(conversations.leadId, lead.id)));
+    convId = conv.id;
     holder.access = { account: acc, user: admin, actingAs: false, role: "seller_admin" };
   }, 120_000);
   afterAll(async () => { await t.close(); });
@@ -90,7 +91,8 @@ describe("demo account: a finished buyer voice call", () => {
     expect(lead.marketId).not.toBeNull();
     const convs = await db.select().from(conversations).where(eq(conversations.leadId, leadId));
     expect(convs).toHaveLength(1);
-    expect(convs[0]).toMatchObject({ channel: "simulator", status: "open", isTest: false });
+    // The real web chat ("chat"), not the simulator: the seller thread says "Web chat", never "Simulated".
+    expect(convs[0]).toMatchObject({ channel: "chat", status: "open", isTest: false });
     // The buyer agreed to the voice call; the lead still has one consent record.
     expect(await hasVoiceConsent(db, acc.id, leadId)).toBe(true);
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, leadId))).toHaveLength(1);
@@ -165,6 +167,10 @@ describe("demo account: a finished buyer voice call", () => {
     expect(start).toBeLessThan(html.indexOf(VOICE_CALL_LINES.fridges));
     expect(html.indexOf(VOICE_CALL_LINES.bye)).toBeLessThan(html.indexOf('data-thread-marker="voice_ended"'));
     expect(html.indexOf(VOICE_CALL_CHAT_AGENT)).toBeLessThan(start);
+    // The thread header names the real web chat: no "Simulated" chip.
+    const conv = html.slice(html.indexOf('id="conversation"'));
+    expect(conv).toContain('<span class="sas-chip sas-chip--plain">Web chat</span>');
+    expect(conv).not.toContain('class="sas-channel-pill"');
   });
 
   it("Conversations shows the same call", async () => {

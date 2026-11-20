@@ -3600,5 +3600,9 @@
   "settings.channels.whatsapp_off_hint": "Off for every account for now. Turning it on per account comes with WhatsApp setup.",
   "settings.channels.not_yet": "Not yet",
   "settings.channels.email_planned": "Email as a fallback is planned.",
-  "settings.channels.go_live_why": "SMS go live for the whole platform once the sender name is approved."
+  "settings.channels.go_live_why": "SMS go live for the whole platform once the sender name is approved.",
+  "buyer.chat.continue.quote": "Hi {name}, it's {agent} again from {seller}, picking up where we left off. Here's your quote {ref} from {date}, any questions about it?",
+  "buyer.chat.continue.form": "Hi {name}, it's {agent} again from {seller}. Your order form for {ref} is below; it takes about 2 minutes.",
+  "buyer.chat.continue.pay": "Hi {name}, it's {agent} again from {seller}. Thanks for signing. Payment details are below.",
+  "buyer.chat.continue.other": "Hi {name}, it's {agent} again from {seller}, picking up where we left off. How can I help?"
 }

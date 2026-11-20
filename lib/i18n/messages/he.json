@@ -384,5 +384,9 @@
   "buyer.voice.bubble.ended_limit": "השיחה הסתיימה · נגמר הזמן",
   "buyer.voice.bubble.left": "נותרו {time}",
   "buyer.voice.bubble.caption_more": "הצגת המשפט המלא",
-  "buyer.voice.bubble.caption_less": "הצגה מקוצרת"
+  "buyer.voice.bubble.caption_less": "הצגה מקוצרת",
+  "buyer.chat.continue.quote": "היי {name}, כאן {agent} שוב מ-{seller}, ממשיכים מאיפה שעצרנו. הנה ההצעה {ref} מ-{date}, יש שאלות לגביה?",
+  "buyer.chat.continue.form": "היי {name}, כאן {agent} שוב מ-{seller}. טופס ההזמנה ל-{ref} כאן למטה, זה לוקח כ-2 דקות.",
+  "buyer.chat.continue.pay": "היי {name}, כאן {agent} שוב מ-{seller}. תודה על החתימה, פרטי התשלום כאן למטה.",
+  "buyer.chat.continue.other": "היי {name}, כאן {agent} שוב מ-{seller}, ממשיכים מאיפה שעצרנו. איך אפשר לעזור?"
 }

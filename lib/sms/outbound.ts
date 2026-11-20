@@ -86,16 +86,26 @@ export async function offerOrderFormInChat(
       eq(conversations.isTest, false), inArray(conversations.status, ["open", "human"])))
     .orderBy(desc(conversations.createdAt)).limit(1);
   let [open] = await openChat();
-  // A first chat starts with the agent's intro, then the form (lib/chat/start.ts).
-  if (!open && (await ensureChatStarted(db, { accountId, leadId, now: new Date(now.getTime() - 1), actor })).started) [open] = await openChat();
+  // A first chat starts with the agent's intro (or the continuation line and its card), then the form (lib/chat/start.ts).
+  let posted: string | null = null;
+  if (!open) {
+    const started = await ensureChatStarted(db, { accountId, leadId, now: new Date(now.getTime() - 2), actor });
+    if (started.started) {
+      [open] = await openChat();
+      // The continuation already put this same form under its line: not posted twice.
+      if (started.continued?.card?.formUrl === formUrl) posted = started.continued.card.messageId;
+    }
+  }
   let conversationId = open?.id ?? null;
   const language = open?.language ?? lead.language;
-  const messageId = randomUUID();
+  const messageId = posted ?? randomUUID();
   const message = (convId: string) => ({
     id: messageId, accountId, conversationId: convId, actor: "human" as const, actorUserId: actor.userId, body: formUrl, language,
     deliveryStatus: "delivered", createdAt: now,
   });
-  if (conversationId) {
+  if (posted) {
+    // Nothing more to write: the SMS points to the card the continuation posted.
+  } else if (conversationId) {
     const id = conversationId;
     await atomic(db, (q) => [
       q.insert(messages).values(message(id)),
