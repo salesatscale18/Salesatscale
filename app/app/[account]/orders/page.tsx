@@ -13,7 +13,7 @@ import { parseSort, type TableSort } from "@/lib/domain/table-sort";
 import { SortHeader } from "@/components/sas/sort-header";
 import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
 import { catalogItems, catalogVersions, markets, orderForms, orders, leads, priceLists, users, type Lead } from "@/db/schema";
-import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, declineQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
 import { formsForQuote, linkFor, listOrders, ORDER_SORT_DEFAULT, ORDER_SORT_KEYS, orderForQuote, orderLabel, payLinkOpen, type OrderSortKey } from "@/lib/orders/service";
@@ -28,10 +28,10 @@ import type { DocMarketFilter } from "@/lib/quotes/service";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-/** Orders of real (non-test) leads in the chosen market, for the tab count; the list itself loads only on the Orders tab. */
-async function countOrders(accountId: string, market: DocMarketFilter) {
+/** Orders of real (non-test) leads in the chosen market (signed from `since` on, when given); the list itself loads only on the Orders tab. */
+async function countOrders(accountId: string, market: DocMarketFilter, since: Date | null = null) {
   const [{ n }] = await appDb.select({ n: count() }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
-    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), marketWhere(orders.marketId, market)));
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), marketWhere(orders.marketId, market), since ? gte(orders.createdAt, since) : undefined));
   return n;
 }
 
@@ -123,20 +123,31 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const now = new Date();
   const since = periodStart(days, now);
   // Round trip 1–2: lists, counts and the selected quote all start together;
-  // the latest order form and order of each listed quote chain onto the quote list only.
-  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, "quotes", { q, sort: quoteSort, market: chosenMarket, since });
-  const [allRows, docs, total, allOrderRows, orderCount, detail] = await Promise.all([
+  // the latest order form, order and decline of each listed quote chain onto the quote lists only.
+  // The approval chip ignores the period (UX): its quotes load on their own, all time.
+  const emptyQuotes = Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>);
+  const quotesP = tab === "orders" ? emptyQuotes : listQuotes(appDb, account.id, "quotes", { q, sort: quoteSort, market: chosenMarket, since });
+  const approvalP = tab === "orders" ? emptyQuotes : listQuotes(appDb, account.id, "approval", { q, sort: quoteSort, market: chosenMarket });
+  const [allRows, approvalAll, docs, anyQuotes, otherTabCount, allOrderRows, anyOrders, detail] = await Promise.all([
     quotesP,
-    quotesP.then((r) => quoteDocs(appDb, account.id, r.map((x) => x.quote.id))),
-    countQuotes(appDb, account.id, chosenMarket),
+    approvalP,
+    Promise.all([quotesP, approvalP]).then(([a, b]) => quoteDocs(appDb, account.id, [...new Set([...a, ...b].map((x) => x.quote.id))])),
+    tab === "quotes" ? countQuotes(appDb, account.id, chosenMarket) : Promise.resolve(0),
+    // The other tab's count follows the period too (no search: its link drops it).
+    tab === "quotes" ? countOrders(account.id, chosenMarket, since) : countQuotes(appDb, account.id, chosenMarket, since),
     tab === "orders" ? listOrders(appDb, account.id, { q, sort: orderSort, market: chosenMarket, since }) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
-    countOrders(account.id, chosenMarket),
+    tab === "orders" ? countOrders(account.id, chosenMarket) : Promise.resolve(0),
     UUID.test(quoteId) ? getQuote(appDb, account.id, quoteId) : Promise.resolve(null),
   ]);
-  // Where each quote is; the chips count the period's quotes, the list shows the chosen chip.
-  const whereOf = new Map<string, QuoteWhere>(allRows.map((r) => [r.quote.id, quoteWhere({ status: r.quote.status, validUntil: r.version.validUntil }, docs.forms.get(r.quote.id), docs.orders.get(r.quote.id), now)]));
-  const whereCount = (w: QuoteWhereChip) => allRows.filter((r) => whereOf.get(r.quote.id) === w).length;
-  const rows = where ? allRows.filter((r) => whereOf.get(r.quote.id) === where) : allRows;
+  // Where each quote is; the chips count the period's quotes (approval: all time), the list shows the chosen chip.
+  const whereOf = new Map<string, QuoteWhere>([...allRows, ...approvalAll].map((r) => [r.quote.id, quoteWhere({ status: r.quote.status, validUntil: r.version.validUntil }, docs.forms.get(r.quote.id), docs.orders.get(r.quote.id), now, docs.declined.has(r.quote.id))]));
+  const approvalRows = approvalAll.filter((r) => whereOf.get(r.quote.id) === "awaiting_approval");
+  const whereCount = (w: QuoteWhereChip) => (w === "awaiting_approval" ? approvalRows.length : allRows.filter((r) => whereOf.get(r.quote.id) === w).length);
+  const rows = where === "awaiting_approval" ? approvalRows : where ? allRows.filter((r) => whereOf.get(r.quote.id) === where) : allRows;
+  // Tab counts follow the period, so the open tab's count is its All chip.
+  const total = tab === "quotes" ? allRows.length : otherTabCount;
+  const orderCount = tab === "orders" ? allOrderRows.length : otherTabCount;
+  const periodTitle = (kind: "created" | "signed") => (days ? t(`orders.period.title_${kind}`, { days }) : t("orders.period.title_any"));
   const payCount = (c: OrderPayChip) => allOrderRows.filter((r) => orderPayChip(r.order.paymentStatus) === c).length;
   const orderRows = pay ? allOrderRows.filter((r) => orderPayChip(r.order.paymentStatus) === pay) : allOrderRows;
   /** Amounts in the document's own currency (from its price list), with the period for recurring ones. */
@@ -153,6 +164,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const tabHref = (x: string) => {
     const p = new URLSearchParams();
     if (x !== "quotes") p.set("tab", x);
+    // The period carries over, so the count on a tab is what it opens.
+    if (days !== 30) p.set("days", days ? String(days) : "any");
     if (urlMarket) p.set(MARKET_PARAM, urlMarket);
     const s = p.toString();
     return s ? `${base}?${s}` : base;
@@ -317,8 +330,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
 
   const tabs = (
     <nav aria-label={t("orders.tabs")} className="sas-tabs lqq-tabs">
-      <a className="sas-tab" href={tabHref("quotes")} aria-current={tab === "quotes" ? "page" : undefined}>{t("orders.tab.quotes")} <span className="sas-num">{total}</span></a>
-      <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined}>{t("orders.tab.orders")} <span className="sas-num">{orderCount}</span></a>
+      <a className="sas-tab" href={tabHref("quotes")} aria-current={tab === "quotes" ? "page" : undefined} title={periodTitle("created")}>{t("orders.tab.quotes")} <span className="sas-num">{total}</span></a>
+      <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined} title={periodTitle("signed")}>{t("orders.tab.orders")} <span className="sas-num">{orderCount}</span></a>
     </nav>
   );
 
@@ -338,7 +351,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
         </header>
 
         {tab === "orders" ? (
-          orderCount === 0 ? (
+          anyOrders === 0 ? (
             <section className="sas-panel lqq-card">
               {tabs}
               <div className="sas-empty lqq-empty">
@@ -387,7 +400,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               )}
             </section>
           )
-        ) : total === 0 ? (
+        ) : anyQuotes === 0 ? (
           <section className="sas-panel lqq-card">
             {tabs}
             <div className="sas-empty lqq-empty">

@@ -40,6 +40,7 @@ export const STATUS = {
     form_sent: { tone: "neutral", icon: "file-signature" },
     ordered: { tone: "success", icon: "check-circle" },
     expired: { tone: "neutral", icon: "calendar-x" },
+    declined: { tone: "neutral", icon: "x-circle" },
     draft: { tone: "neutral", icon: "file-pen" },
     replaced: { tone: "neutral", icon: "file-text" },
     cancelled: { tone: "neutral", icon: "file-x" },

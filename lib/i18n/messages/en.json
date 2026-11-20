@@ -3378,5 +3378,9 @@
   "orders.empty.quotes_filtered": "No quotes match these filters.",
   "orders.empty.orders_filtered": "No orders match these filters.",
   "orders.empty.show_all": "Show all",
-  "orders.subtitle": "Every quote the agent sent and every signed order."
+  "orders.subtitle": "Every quote the agent sent and every signed order.",
+  "status.quote_where.declined": "Declined",
+  "orders.period.title_created": "Created in the last {days} days",
+  "orders.period.title_signed": "Signed in the last {days} days",
+  "orders.period.title_any": "All time"
 }

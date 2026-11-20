@@ -2,16 +2,18 @@
  * Quotes and orders V2 (Q-1, Q-2; board QuotesOrdersV2). On a demo account with
  * its own quotes replaced by one per state: the Where it is pill and its detail
  * line, the chips with counts, the old Awaiting approval tab as a chip, the
- * Created / Signed period, the amber Valid until, the Lead cell, the Total with
- * its monthly part, the Orders chips, test leads left out and account
- * isolation of the order-form and order lookup. Rendered pages on PGlite.
+ * Created / Signed period (tab counts follow it; the approval chip ignores it),
+ * Declined (a cancelled quote with a quote.declined event), the amber Valid
+ * until, the Lead cell, the Total with its monthly part, the Orders chips, test
+ * leads left out and account isolation of the order-form, order and decline
+ * lookup. Rendered pages on PGlite.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { randomUUID } from "node:crypto";
 import type { ReactElement } from "react";
 import { eq } from "drizzle-orm";
-import { catalogVersions, leads, orderForms, orders, quotes, quoteVersions, users, type ApprovalReason, type QuoteStatus, type SellerAccount, type User } from "@/db/schema";
+import { catalogVersions, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users, type ApprovalReason, type QuoteStatus, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -55,6 +57,7 @@ describe("Quotes and orders V2", () => {
   let account: SellerAccount, other: SellerAccount;
   let admin: User;
   const ids: Record<string, string> = {};
+  const leadOf: Record<string, string> = {};
   const numbers: Record<string, number> = {};
   let seq = 7000;
 
@@ -96,6 +99,7 @@ describe("Quotes and orders V2", () => {
       }
     }
     ids[key] = quoteId;
+    leadOf[key] = lead.id;
     numbers[key] = number;
     return quoteId;
   };
@@ -121,24 +125,31 @@ describe("Quotes and orders V2", () => {
     await mk("paid", { form: { status: "signed" }, order: { paymentStatus: "paid", createdAt: ago(3) } });
     await mk("expired", { validUntil: ago(1) });
     await mk("cancelled", { status: "cancelled", company: null });
+    await mk("declined", { status: "cancelled" });
+    await mk("approvalOld", { status: "awaiting_approval", createdAt: ago(40) });
+    // The seller declined "declined" (as declineHeldQuote writes it); another account's event naming "cancelled" is ignored.
+    await db.insert(leadEvents).values({ accountId: account.id, leadId: leadOf.declined, type: "quote.declined", actor: "human", data: { quoteId: ids.declined, number: numbers.declined, version: 1 } });
     await mk("old", { createdAt: ago(40) });
     await mk("oldPaid", { createdAt: ago(45), form: { status: "signed" }, order: { paymentStatus: "paid", createdAt: ago(40) } });
     await mk("testLead", { isTest: true });
     await mk("foreign", { acc: other, form: { status: "opened", openedAt: NOW }, order: { paymentStatus: "paid" } });
+    await db.insert(leadEvents).values({ accountId: other.id, leadId: leadOf.foreign, type: "quote.declined", actor: "human", data: { quoteId: ids.cancelled } });
   }, 180_000);
   afterAll(async () => { await t.close(); });
   beforeEach(() => { holder.access = { account, user: admin, actingAs: false, role: "seller_admin" }; });
 
-  it("Quotes: chips with counts over the last 30 days; tabs Quotes / Orders only; the old Awaiting approval tab is gone", async () => {
+  it("Quotes: chips with counts over the last 30 days (approval: all time); tabs Quotes / Orders only; the old Awaiting approval tab is gone", async () => {
     const html = await page(OrdersPage(props(account.slug)));
-    expect(chips(html)).toEqual([["all", 8], ["awaiting_approval", 1], ["quote_sent", 1], ["form_sent", 2], ["ordered", 2], ["expired", 1]]);
+    expect(chips(html)).toEqual([["all", 9], ["awaiting_approval", 2], ["quote_sent", 1], ["form_sent", 2], ["ordered", 2], ["expired", 1], ["declined", 1]]);
     expect(html).toContain('aria-current="true" data-chip="all"');
     const tabs = html.split('aria-label="Document type"')[1].split("</nav>")[0];
     expect(tabs).not.toContain("Awaiting approval");
-    // Tab counts: every quote and order of the account (all time), test leads left out.
-    expect([...tabs.matchAll(/class="sas-num">(\d+)</g)].map((m) => Number(m[1]))).toEqual([10, 3]);
+    // Tab counts follow the period (Quotes = the All chip), test leads left out; the period in the tooltip.
+    expect([...tabs.matchAll(/class="sas-num">(\d+)</g)].map((m) => Number(m[1]))).toEqual([9, 2]);
+    expect(tabs).toContain('title="Created in the last 30 days"');
+    expect(tabs).toContain('title="Signed in the last 30 days"');
     // Older than 30 days, a test lead's quote and another account's: not listed.
-    for (const k of ["old", "oldPaid", "testLead", "foreign"]) expect(html).not.toContain(`data-quote-row="${ids[k]}"`);
+    for (const k of ["old", "oldPaid", "approvalOld", "testLead", "foreign"]) expect(html).not.toContain(`data-quote-row="${ids[k]}"`);
     // The columns, in board order; Created sorts newest first by default.
     expect(html).toMatch(/>Quote<[\s\S]*>Lead<[\s\S]*>Market<[\s\S]*>Total<[\s\S]*>Where it is<\/th>[\s\S]*data-sort-col="created"[\s\S]*>Valid until</);
     expect(html).not.toContain(">Order form</th>");
@@ -160,7 +171,10 @@ describe("Quotes and orders V2", () => {
     expect(where("ordered")).toContain(`href="/app/${account.slug}/orders?tab=orders&amp;quote=${ids.ordered}" data-where-order="${ids.ordered_order}">Order <span class="sas-id">${pd}</span></a> · bank transfer expected`);
     expect(where("paid")).toContain("</a> · paid");
     expect(where("expired")).toContain('data-status="quote_where.expired"');
+    // Declined: only with the seller's quote.declined event in this account; otherwise Cancelled.
     expect(where("cancelled")).toContain('data-status="quote_where.cancelled"');
+    expect(where("declined")).toContain('data-status="quote_where.declined"');
+    expect(where("declined")).toContain(">Declined<");
   });
 
   it("Quote, Lead, Total and Valid until cells", async () => {
@@ -182,14 +196,19 @@ describe("Quotes and orders V2", () => {
 
   it("a chip filters the list and keeps its counts; the old tab=approval link opens the chip", async () => {
     const form = await page(OrdersPage(props(account.slug, { where: "form_sent" })));
-    expect(chips(form)[0]).toEqual(["all", 8]);
+    expect(chips(form)[0]).toEqual(["all", 9]);
     expect(form).toContain('aria-current="true" data-chip="form_sent"');
     expect(form.match(/data-quote-row=/g)).toHaveLength(2);
     // Links keep the chip; the period form carries it too.
     expect(form).toContain('<input type="hidden" name="where" value="form_sent"/>');
     const approval = await page(OrdersPage(props(account.slug, { tab: "approval", quote: ids.approval })));
     expect(approval).toContain('aria-current="true" data-chip="awaiting_approval"');
-    expect(approval.match(/data-quote-row=/g)).toHaveLength(1);
+    // The approval chip ignores the period: the 40-day-old held quote is listed too.
+    expect(approval.match(/data-quote-row=/g)).toHaveLength(2);
+    expect(approval).toContain(`data-quote-row="${ids.approvalOld}"`);
+    const declined = await page(OrdersPage(props(account.slug, { where: "declined" })));
+    expect(declined.match(/data-quote-row=/g)).toHaveLength(1);
+    expect(declined).toContain(`data-quote-row="${ids.declined}"`);
     // The panel still opens with Approve and Decline.
     expect(approval).toContain("data-decline");
     const none = await page(OrdersPage(props(account.slug, { where: "awaiting_approval", q: "zzz" })));
@@ -200,9 +219,15 @@ describe("Quotes and orders V2", () => {
 
   it("Created period: 7 / 30 (default) / 90 / any", async () => {
     const any = await page(OrdersPage(props(account.slug, { days: "any" })));
-    expect(chips(any)).toEqual([["all", 10], ["awaiting_approval", 1], ["quote_sent", 2], ["form_sent", 2], ["ordered", 3], ["expired", 1]]);
+    expect(chips(any)).toEqual([["all", 12], ["awaiting_approval", 2], ["quote_sent", 2], ["form_sent", 2], ["ordered", 3], ["expired", 1], ["declined", 1]]);
     expect(any).toContain('<option value="any" selected="">Created: Any</option>');
-    expect(chips(await page(OrdersPage(props(account.slug, { days: "90" }))))[0]).toEqual(["all", 10]);
+    // With Any: the tabs count all time, say so, and keep the period on their links.
+    const anyTabs = any.split('aria-label="Document type"')[1].split("</nav>")[0];
+    expect([...anyTabs.matchAll(/class="sas-num">(\d+)</g)].map((m) => Number(m[1]))).toEqual([12, 3]);
+    expect(anyTabs).toContain('title="All time"');
+    expect(anyTabs).toContain(`href="/app/${account.slug}/orders?tab=orders&amp;days=any"`);
+    expect(chips(await page(OrdersPage(props(account.slug, { days: "90" }))))[0]).toEqual(["all", 12]);
+    expect(chips(await page(OrdersPage(props(account.slug, { days: "7" }))))[0]).toEqual(["all", 9]);
     const def = await page(OrdersPage(props(account.slug)));
     expect(def).toContain('<option value="30" selected="">Created: Last 30 days</option>');
     // Chip links keep a non-default period.
@@ -212,6 +237,9 @@ describe("Quotes and orders V2", () => {
   it("Orders: Order, Lead, Total, Payment, Signed, Delivery; chips All · Waiting for payment · Paid; Signed period", async () => {
     const html = await page(OrdersPage(props(account.slug, { tab: "orders" })));
     expect(chips(html)).toEqual([["all", 2], ["waiting", 1], ["paid", 1]]);
+    // Orders = its All chip; Quotes counts the same period.
+    const tabs = html.split('aria-label="Document type"')[1].split("</nav>")[0];
+    expect([...tabs.matchAll(/class="sas-num">(\d+)</g)].map((m) => Number(m[1]))).toEqual([9, 2]);
     expect(html).toMatch(/>Order<[\s\S]*>Lead<[\s\S]*>Total<[\s\S]*>Payment<[\s\S]*data-sort-col="signed"[\s\S]*>Est. delivery</);
     expect(html).not.toContain(">Monthly<");
     const row = rowOf(html, "data-order-row", ids.ordered_order);
@@ -225,8 +253,10 @@ describe("Quotes and orders V2", () => {
     expect(chips(any)).toEqual([["all", 3], ["waiting", 1], ["paid", 2]]);
   });
 
-  it("the order form and order lookup is scoped by account", async () => {
-    const mine = await quoteDocs(db, account.id, [ids.foreign, ids.ordered]);
+  it("the order form, order and decline lookup is scoped by account", async () => {
+    const mine = await quoteDocs(db, account.id, [ids.foreign, ids.ordered, ids.cancelled, ids.declined]);
+    expect([...mine.declined]).toEqual([ids.declined]);
+    expect((await quoteDocs(db, other.id, [ids.cancelled])).declined.has(ids.cancelled)).toBe(true);
     expect(mine.forms.has(ids.foreign)).toBe(false);
     expect(mine.orders.has(ids.foreign)).toBe(false);
     expect(mine.orders.get(ids.ordered)?.paymentStatus).toBe("bank_transfer_expected");

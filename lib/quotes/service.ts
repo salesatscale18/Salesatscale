@@ -595,8 +595,9 @@ export async function countAwaitingApproval(db: Db, accountId: string, market: D
   return n;
 }
 
-export async function countQuotes(db: Db, accountId: string, market: DocMarketFilter = null) {
-  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), marketWhere(quotes.marketId, market)));
+/** Quotes of real leads in the market; with `since`, only those created from then on. */
+export async function countQuotes(db: Db, accountId: string, market: DocMarketFilter = null, since: Date | null = null) {
+  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), marketWhere(quotes.marketId, market), since ? gte(quotes.createdAt, since) : undefined));
   return n;
 }
 

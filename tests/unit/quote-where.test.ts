@@ -18,6 +18,13 @@ describe("quoteWhere", () => {
     expect(quoteWhere({ status: "sent", validUntil: later }, form({ status: "signed" }), order, NOW)).toBe("ordered");
     expect(quoteWhere({ status: "cancelled", validUntil: past }, null, order, NOW)).toBe("ordered");
   });
+  it("a cancelled quote the seller declined is Declined; without the decline it stays Cancelled; an order still wins", () => {
+    expect(quoteWhere({ status: "cancelled", validUntil: later }, null, null, NOW, true)).toBe("declined");
+    expect(quoteWhere({ status: "cancelled", validUntil: past }, null, null, NOW, true)).toBe("declined");
+    expect(quoteWhere({ status: "cancelled", validUntil: later }, null, null, NOW, false)).toBe("cancelled");
+    expect(quoteWhere({ status: "sent", validUntil: later }, null, null, NOW, true)).toBe("quote_sent");
+    expect(quoteWhere({ status: "cancelled", validUntil: later }, null, order, NOW, true)).toBe("ordered");
+  });
   it("held, replaced and cancelled quotes keep their state, even past their date", () => {
     expect(quoteWhere({ status: "awaiting_approval", validUntil: past }, null, null, NOW)).toBe("awaiting_approval");
     expect(quoteWhere({ status: "replaced", validUntil: later }, form(), null, NOW)).toBe("replaced");
@@ -51,7 +58,7 @@ describe("endsSoon (amber Valid until)", () => {
     expect(endsSoon("quote_sent", new Date(NOW.getTime() + 2 * day + 1), NOW)).toBe(false);
   });
   it("never for ended or ordered quotes, nor past the date", () => {
-    for (const w of ["ordered", "expired", "replaced", "cancelled"] as const) expect(endsSoon(w, new Date(NOW.getTime() + day), NOW)).toBe(false);
+    for (const w of ["ordered", "expired", "declined", "replaced", "cancelled"] as const) expect(endsSoon(w, new Date(NOW.getTime() + day), NOW)).toBe(false);
     expect(endsSoon("quote_sent", past, NOW)).toBe(false);
   });
 });
