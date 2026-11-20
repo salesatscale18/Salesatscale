@@ -87,13 +87,15 @@ export function kpiCards(input: KpiCardsInput): KpiCard[] {
       const line = moneyComparison(p.cur, p.prev, p.currency, days);
       return { ...line, text: `${formatWhole(p.cur, p.currency)} · ${line.text}` };
     });
-  const revenueSim = real ? paid.map((p) => formatWhole(p.cur - amount(real.kpis.paidByCurrency, p.currency), p.currency)).join(" + ") : null;
+  // "incl. N simulated" only when simulated buyers add something to the card (UX: no "incl. 0 simulated").
+  const simPaid = real ? paid.map((p) => ({ ...p, sim: p.cur - amount(real.kpis.paidByCurrency, p.currency) })).filter((p) => p.sim !== 0) : [];
+  const revenueSim = simPaid.length ? simPaid.map((p) => formatWhole(p.sim, p.currency)).join(" + ") : null;
 
   // Deals signed: order forms signed in the period.
-  const dealsSim = real ? kpis.formsSigned - real.kpis.formsSigned : null;
+  const dealsSim = real && kpis.formsSigned !== real.kpis.formsSigned ? kpis.formsSigned - real.kpis.formsSigned : null;
 
   // Lead to signed / Handled by the agent: of the leads received in the period.
-  const leadsSim = real ? cards.leadsReceived - real.cards.leadsReceived : null;
+  const leadsSim = real && cards.leadsReceived !== real.cards.leadsReceived ? cards.leadsReceived - real.cards.leadsReceived : null;
   const conv = percent(cards.leadsSigned, cards.leadsReceived);
   const agent = percent(cards.leadsWithoutPerson, cards.leadsReceived);
 
@@ -127,7 +129,7 @@ export function kpiCards(input: KpiCardsInput): KpiCard[] {
     {
       id: "average", label: label("overview.kpi.average"), accent: "plain",
       value: topAvg ? formatWhole(topAvg.avg, topAvg.currency) : "—",
-      lines: withSim(averageLines, real ? String(signedCount - realSigned) : null),
+      lines: withSim(averageLines, real && signedCount !== realSigned ? String(signedCount - realSigned) : null),
     },
     {
       id: "agent", label: label("overview.kpi.agent"), accent: "agent",
@@ -137,13 +139,22 @@ export function kpiCards(input: KpiCardsInput): KpiCard[] {
   ];
 }
 
-/** Funnel "From the step before": the % of the previous step (null on the first step; "—" when the previous step is 0). */
+/**
+ * Funnel "From the step before": the % of the previous step (null on the first step; "—" when the previous
+ * step is 0, and "—" when it would exceed 100%: each step is counted when it happens, not per lead, so a step
+ * can be larger than the one before; `stepOver` marks those for the tooltip).
+ */
 export function stepPercents(values: readonly number[]): (string | null)[] {
   return values.map((v, i) => {
     if (i === 0) return null;
     const p = percent(v, values[i - 1]);
-    return p === null ? "—" : `${p}%`;
+    return p === null || p > 100 ? "—" : `${p}%`;
   });
+}
+
+/** True where the step is larger than the step before (shown as "—" with a tooltip). */
+export function stepOver(values: readonly number[]): boolean[] {
+  return values.map((v, i) => i > 0 && values[i - 1] > 0 && v > values[i - 1]);
 }
 
 /** Order forms signed in the period and not yet paid, as the funnel reads it: signed minus paid, never below 0. */

@@ -207,6 +207,9 @@ describe("Overview V2: KPI cards, funnel column, View options", () => {
         expect(head).not.toContain("sas-pill--success");
       }
       expect(html).toMatch(/class="sas-mcard__pill"><span class="sas-pill sas-pill--success" data-status="market.live"/);
+      // Every market Live pill is blue by CSS (the Markets page too); green stays for wins and verified.
+      const sasCss = (await import("node:fs")).readFileSync("components/sas/sas.css", "utf8");
+      expect(sasCss).toMatch(/\.sas-ov2-pill--live, \.sas-pill\[data-status="market\.live"\] \{ background: var\(--primary-soft\); color: var\(--primary\); \}/);
       const menu = head.split('data-view-options=""')[1];
       expect(menu).toContain('aria-label="View options"');
       expect(menu).toContain('role="checkbox" aria-checked="false" data-include-simulated="0"');

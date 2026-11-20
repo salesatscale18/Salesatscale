@@ -3236,6 +3236,7 @@
   "overview.kpi.no_deals": "No signed deals yet",
   "overview.kpi.agent_line": "{count} of {total} leads without a person",
   "overview.funnel.from_before": "From the step before",
+  "overview.funnel.over_before": "More this period than the step before: each step is counted when it happens.",
   "overview.funnel.waiting": "{count} waiting",
   "overview.view_options": "View options",
   "overview.view_options.hint": "Test lab buyers are never counted."

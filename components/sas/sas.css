@@ -1213,9 +1213,15 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-ov2-funnel { display: grid; grid-template-columns: minmax(90px, 140px) minmax(0, 1fr) auto minmax(64px, max-content); gap: 10px 14px; align-items: center; }
 .sas-ov2-funnel__colhead { grid-column: 4; text-align: start; }
 .sas-ov2-funnel__pct { color: var(--ink-muted); white-space: nowrap; }
-@media (max-width: 767px) { .sas-ov2-funnel { grid-template-columns: minmax(72px, 110px) minmax(0, 1fr) auto minmax(0, max-content); gap: 10px; } .sas-ov2-funnel__pct { white-space: normal; } }
-/* O-3: "Agent vN live" and the market cards' Live pill are blue (green stays for wins and verified). */
-.sas-ov2-pill--live, .sas-mcard__pill [data-status="market.live"] { background: var(--primary-soft); color: var(--primary); }
+@media (max-width: 767px) {
+  /* Phone: the % (and "N waiting") goes under the bar so the bar keeps most of the width. */
+  .sas-ov2-funnel { grid-template-columns: minmax(64px, 96px) minmax(0, 1fr) auto; gap: 4px 10px; }
+  .sas-ov2-funnel__colhead { display: none; }
+  .sas-ov2-funnel__pct { grid-column: 2 / 4; white-space: normal; margin-block-start: -2px; }
+  .sas-ov2-funnel__pct:empty { display: none; }
+}
+/* O-3: "Agent vN live" and every market Live pill are blue (green stays for wins and verified; UX: Markets page included). */
+.sas-ov2-pill--live, .sas-pill[data-status="market.live"] { background: var(--primary-soft); color: var(--primary); }
 /* O-3: View options (sliders) at the end of the header actions. */
 .sas-ov2-viewopts > summary.sas-ov2-viewopts__button { position: relative; width: 28px; padding: 0; justify-content: center; }
 .sas-ov2-viewopts__dot { position: absolute; inset-block-start: 4px; inset-inline-end: 4px; width: 6px; height: 6px; border-radius: 50%; background: var(--primary); }

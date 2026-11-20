@@ -19,7 +19,7 @@ import {
   PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewCardNumbers, overviewKpis, parsePeriod, periodRange,
   previousRange, recentActivity, type NeedsYouItem,
 } from "@/lib/overview/service";
-import { kpiCards, stepPercents, waitingToPay, type KpiCard } from "@/lib/overview/kpi-cards";
+import { kpiCards, stepOver, stepPercents, waitingToPay, type KpiCard } from "@/lib/overview/kpi-cards";
 import { inMarket, MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { MarketCards } from "./market-cards";
 import { setupProgress } from "@/lib/overview/setup";
@@ -134,6 +134,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const funnelMax = Math.max(1, ...funnel.map((f) => f.value));
   // O-2: each step as a % of the step before; Paid adds "· N waiting" (signed in the period and not paid yet).
   const stepPct = stepPercents(funnel.map((f) => f.value));
+  const stepIsOver = stepOver(funnel.map((f) => f.value));
   const waiting = waitingToPay(kpis.formsSigned, kpis.paidOrders);
 
   /** titleId / detailId: the order or quote ID inside the text, rendered as one unbroken code-font run (.sas-id, nowrap). */
@@ -335,6 +336,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
                 <FunnelRow
                   key={f.label} label={t(f.label)} value={f.value} width={(f.value / funnelMax) * 100} color={f.color}
                   fromBefore={stepPct[i] !== null && f.label === "overview.funnel.paid" && waiting > 0 ? `${stepPct[i]} · ${t("overview.funnel.waiting", { count: waiting })}` : stepPct[i]}
+                  fromBeforeTitle={stepIsOver[i] ? t("overview.funnel.over_before") : undefined}
                 />
               ))}
             </div>
@@ -393,7 +395,7 @@ function NameInText({ text, name }: { text: string; name: string }) {
   return n >= 0 ? <>{text.slice(0, n)}<bdi>{name}</bdi>{text.slice(n + name.length)}</> : <>{text}</>;
 }
 
-function FunnelRow({ label, value, width, color, fromBefore }: { label: string; value: number; width: number; color: string; fromBefore: string | null }) {
+function FunnelRow({ label, value, width, color, fromBefore, fromBeforeTitle }: { label: string; value: number; width: number; color: string; fromBefore: string | null; fromBeforeTitle?: string }) {
   return (
     <>
       <span>{label}</span>
@@ -402,7 +404,7 @@ function FunnelRow({ label, value, width, color, fromBefore }: { label: string; 
       </span>
       <span className="sas-num" style={{ textAlign: "end" }}>{value}</span>
       {/* O-2: "From the step before", blank on New leads. */}
-      <span className="sas-small sas-num sas-ov2-funnel__pct" data-funnel-pct="">{fromBefore ?? ""}</span>
+      <span className="sas-small sas-num sas-ov2-funnel__pct" data-funnel-pct="" title={fromBeforeTitle}>{fromBefore ?? ""}</span>
     </>
   );
 }
