@@ -20,7 +20,7 @@ import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, ne, or, sql } from 
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, consentRecords, conversations, followUps, leadEvents, leads, messages, orderFormSettings, sellerAccounts, simulatorLinks, toolCalls, users,
+  agentVersions, consentRecords, conversations, followUps, leadEvents, leads, messages, orderFormSettings, sellerAccounts, simulatorLinks, toolCalls, users, voiceSessions,
   type Lead, type SellerAccount,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -34,6 +34,7 @@ import { formatMoney } from "@/lib/domain/money";
 import { APP_MESSAGE_CALL, appMessageKinds, type AppMessageKind } from "@/lib/agent/app-message";
 import { loadQuoteCards } from "@/lib/agent/quote-card-data";
 import { buyerCallRows, type BuyerCallRow } from "@/lib/voice/buyer";
+import { pendingAfterCall } from "@/lib/voice/after-call";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { openerText } from "@/lib/agent/core/opener";
@@ -477,9 +478,23 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"])));
   const repliedAt = lastReply?.at == null ? null : lastReply.at instanceof Date ? lastReply.at : new Date(String(lastReply.at));
   // System notes count here: a failed agent turn leaves one, so "typing…" stops at once (UX: no ghost typing).
-  const [last] = await db.select({ actor: messages.actor, createdAt: messages.createdAt }).from(messages)
-    .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, latest!.id), inArray(messages.actor, ["buyer", "agent", "human", "system"])))
+  // The "Voice call ended" line the call stores does not count: the summary row stands for it, and an
+  // unanswered last turn of the call is answered right after it (lib/voice/after-call.ts).
+  const [lastRow] = await db.select({ actor: messages.actor, createdAt: messages.createdAt, voiceSessionId: messages.voiceSessionId }).from(messages)
+    .where(and(
+      eq(messages.accountId, accountId), eq(messages.conversationId, latest!.id), inArray(messages.actor, ["buyer", "agent", "human", "system"]),
+      sql`not (${messages.actor} = 'system' and ${messages.body} like 'Voice call ended · %')`,
+    ))
     .orderBy(desc(messages.createdAt)).limit(1);
+  let last: { actor: string; createdAt: Date } | undefined = lastRow;
+  if (lastRow?.actor === "buyer" && lastRow.voiceSessionId) {
+    // The buyer's last line was on a call that has ended: "typing…" while its answer is due in the chat, from the call's end.
+    const [call] = await db.select({ status: voiceSessions.status }).from(voiceSessions).where(and(eq(voiceSessions.id, lastRow.voiceSessionId), eq(voiceSessions.accountId, accountId)));
+    if (call?.status === "ended") {
+      const due = await pendingAfterCall(db, accountId, latest!.id);
+      last = due?.session.endedAt ? { actor: "buyer", createdAt: new Date(Math.max(lastRow.createdAt.getTime(), due.session.endedAt.getTime())) } : { actor: "system", createdAt: lastRow.createdAt };
+    }
+  }
 
   await db.update(messages).set({ deliveryStatus: "read" })
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"]), eq(messages.deliveryStatus, "delivered")));

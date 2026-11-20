@@ -63,6 +63,11 @@ export type VoiceSocketOptions = {
   model?: RealtimeModel;
   /** Tests: shorter engine timings. */
   limits?: Omit<VoiceLimits, "deadlineSec" | "env">;
+  /**
+   * Runs once the call is stored, before the handler resolves (so the function stays alive for it):
+   * the route answers a buyer turn the call left unanswered (lib/voice/after-call.ts). Never awaited past its own errors.
+   */
+  afterCall?: (sessionId: string) => Promise<unknown>;
 };
 
 /** Raw `ws` message data as bytes (Buffer is a Uint8Array; a fragmented frame is a Buffer[]). */
@@ -150,7 +155,11 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       return;
     }
     // The engine ends the call now ("connection_lost" unless it already ended for another reason).
-    e.stop("connection_lost").catch((err) => console.error("[voice] engine stop failed", err)).finally(resolveDone);
+    e.stop("connection_lost").catch((err) => console.error("[voice] engine stop failed", err))
+      // The call is stored: an unanswered last buyer turn may be answered in the chat now.
+      .then(() => opts.afterCall?.(e.sessionId))
+      .catch((err) => console.error("[voice] after-call hook failed", err))
+      .finally(resolveDone);
   };
 
   const pingLoop = () => {

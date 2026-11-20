@@ -1,7 +1,9 @@
 /**
  * Buyer simulator chat API (public; the token is the credential).
  *
- * GET  ?after=<message id>  → the buyer's view of the chat (newer messages only with `after`)
+ * GET  ?after=<message id>  → the buyer's view of the chat (newer messages only with `after`); also answers a
+ *                              buyer turn a call left unanswered, when the call's own function could not
+ *                              (lib/voice/after-call.ts)
  * POST { text, clientId }   → the buyer sends a message (refused with "in_call" while a voice call runs:
  *                              the page sends typed text into the call then)
  *
@@ -21,6 +23,7 @@ import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { CHAT_RATE_PER_DAY, CHAT_RATE_PER_MINUTE } from "@/lib/simulator/rules";
 import { buyerChat, receiveSimulatorInbound, resolveChatLink } from "@/lib/simulator/service";
 import { buyerConversation, buyerVoiceGate, liveVoiceSessionOn } from "@/lib/voice/buyer";
+import { pendingAfterCall, replyAfterCall } from "@/lib/voice/after-call";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -35,7 +38,15 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   if (link.state === "expired") return json({ error: "expired" }, 410);
   const ctx = link.ctx;
   const afterId = new URL(req.url).searchParams.get("after");
-  const [chat, gate] = await Promise.all([buyerChat(appDb, ctx, { after: afterId }), buyerVoiceGate(appDb, ctx)]);
+  const [chat, gate, conv] = await Promise.all([buyerChat(appDb, ctx, { after: afterId }), buyerVoiceGate(appDb, ctx), buyerConversation(appDb, ctx)]);
+  // A call that ended on the buyer's unanswered turn, and the socket's function had no time to answer it:
+  // this poll does (at most once: lib/voice/after-call.ts claims it). The page shows "typing…" meanwhile.
+  const due = conv ? await pendingAfterCall(appDb, ctx.account.id, conv.id) : null;
+  if (due && !due.claimed) {
+    after(async () => {
+      await replyAfterCall(appDb, new AnthropicLlm(), due.session.id);
+    });
+  }
   // "Talk to us" follows the gates as they change (contact hours, a person taking over, the setting).
   return json({ ...chat, voice: { available: gate.ok, consented: gate.ok && gate.consented } });
 }

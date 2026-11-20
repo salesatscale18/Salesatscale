@@ -8,7 +8,7 @@ import { and, desc, eq, exists } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, users } from "@/db/schema";
+import { agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
 import { AiBudgetError, budgetGuarded } from "@/lib/ai/usage";
 import { withHistoryCacheBreakpoint, type Block, type LlmClient } from "./llm";
@@ -105,12 +105,18 @@ export async function runBuyerTurn(
   ]);
   const recent = recentDesc.reverse();
   const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
+  // Live voice: the buyer's last line was on a call that has ended (lib/voice/after-call.ts): answer it here, in writing.
+  const lastSaid = [...recent].reverse().find(({ m }) => m.actor !== "system")?.m;
+  const afterCall = lastSaid?.actor === "buyer" && lastSaid.voiceSessionId
+    ? (await db.select({ status: voiceSessions.status }).from(voiceSessions).where(and(eq(voiceSessions.id, lastSaid.voiceSessionId), eq(voiceSessions.accountId, args.accountId))))[0]?.status === "ended"
+    : false;
   // The model's history must start with the buyer, so a fixed opener (the conversation's first
   // message, sent as the agent) is dropped below: the per-turn context tells the agent what it said.
   const opener = recent.length < HISTORY && recent[0]?.m.actor === "agent" ? recent[0].m.body : null;
   const history: Anthropic.Beta.BetaMessageParam[] = [];
   for (const { m, u } of recent) {
-    if (m.actor === "buyer") history.push({ role: "user", content: m.body });
+    // A line from a voice call (live voice) says so: the buyer said (or typed) it on the call, which may have ended since.
+    if (m.actor === "buyer") history.push({ role: "user", content: m.voiceSessionId ? `(On the voice call${m.typedInCall ? ", typed" : ""}) ${m.body}` : m.body });
     else if (m.actor === "agent") history.push({ role: "assistant", content: m.body });
     else if (m.actor === "human") history.push({ role: "assistant", content: `[${u?.firstName ?? "A person"} from the team]: ${m.body}` });
   }
@@ -132,7 +138,7 @@ export async function runBuyerTurn(
       teamQuestions,
       priceApproval,
       localNow: localNowLine(new Date(), contact.timezone),
-    })}\nConversation language: ${lang}.`,
+    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing; do not mention a technical problem." : ""}\nConversation language: ${lang}.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({

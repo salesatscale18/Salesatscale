@@ -20,6 +20,8 @@ import { MAX_CLIENT_AUDIO_BYTES } from "@/lib/voice/protocol";
 import { handleVoiceSocket } from "@/lib/voice/socket";
 import { routeDeadlineSec } from "@/lib/voice/socket-limits";
 import { voiceMode } from "@/lib/voice/settings";
+import { AnthropicLlm } from "@/lib/agent/llm";
+import { AFTER_CALL_MIN_SEC, replyAfterCall } from "@/lib/voice/after-call";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,10 +34,18 @@ export async function GET(req: Request) {
   if (req.headers.get("upgrade")?.toLowerCase() !== "websocket") {
     return new Response("Expected a WebSocket upgrade.", { status: 426, headers: { Upgrade: "websocket" } });
   }
-  const deadlineSec = routeDeadlineSec(getDeadline());
+  const deadline = getDeadline();
+  const deadlineSec = routeDeadlineSec(deadline);
+  // A buyer turn the call left unanswered is answered in the chat right after the call, while this function
+  // has time for a chat turn; otherwise the buyer page's next poll or the cron does it (lib/voice/after-call.ts).
+  const afterCall = async (sessionId: string) => {
+    const left = deadline ? (deadline.getTime() - Date.now()) / 1000 : Infinity;
+    if (left < AFTER_CALL_MIN_SEC) return;
+    await replyAfterCall(appDb, { create: (req) => new AnthropicLlm().create(req) }, sessionId);
+  };
   try {
     // The handler resolves when the socket has closed and the call is stored, which keeps the function alive for the call.
-    return await upgradeWebSocket((ws) => handleVoiceSocket(ws, { db: appDb, deadlineSec }), { maxPayload: MAX_CLIENT_AUDIO_BYTES + 1024 });
+    return await upgradeWebSocket((ws) => handleVoiceSocket(ws, { db: appDb, deadlineSec, afterCall }), { maxPayload: MAX_CLIENT_AUDIO_BYTES + 1024 });
   } catch (e) {
     console.error("[voice] WebSocket upgrade failed", e);
     return new Response("WebSocket upgrade is not available here.", { status: 501 });
