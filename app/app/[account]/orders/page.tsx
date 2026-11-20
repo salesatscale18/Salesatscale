@@ -8,7 +8,7 @@ import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
 import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn } from "@/lib/format";
 import { countQuotes, displayQuoteStatus, DOC_PERIODS, getQuote, listQuotes, parseDocPeriod, periodStart, QUOTE_SORT_DEFAULT, QUOTE_SORT_KEYS, quoteTimezones, type QuoteSortKey } from "@/lib/quotes/service";
-import { endsSoon, ORDER_PAY_CHIPS, orderPayChip, QUOTE_WHERE_CHIPS, quoteDocs, quoteWhere, shownFormStatus, type OrderPayChip, type QuoteWhere, type QuoteWhereChip } from "@/lib/quotes/where";
+import { endsSoon, ORDER_PAY_CHIPS, orderPayChip, QUOTE_WHERE_CHIPS, quoteDocs, quoteWhere, showsValidUntil, shownFormStatus, type OrderPayChip, type QuoteWhere, type QuoteWhereChip } from "@/lib/quotes/where";
 import { parseSort, type TableSort } from "@/lib/domain/table-sort";
 import { SortHeader } from "@/components/sas/sort-header";
 import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
@@ -456,7 +456,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                           </td>
                           <td className="sas-small sas-num sas-col-minor" data-label={t("orders.col.created")} title={atFull(quote.createdAt)}>{day(quote.createdAt)}</td>
                           <td className={`sas-small sas-num sas-col-minor${soon ? " lqq-soon" : ""}`} data-label={t("orders.col.valid_until")} data-valid-soon={soon ? "" : undefined}>
-                            {w === "ordered" ? "—" : formatDayMonthIn(version.validUntil, tzFor(quote.id))}
+                            {showsValidUntil(w) ? formatDayMonthIn(version.validUntil, tzFor(quote.id)) : "—"}
                           </td>
                         </tr>
                       );

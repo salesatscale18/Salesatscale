@@ -57,6 +57,11 @@ export function endsSoon(where: QuoteWhere, validUntil: Date, now = new Date()):
   return left > 0 && left <= 2 * 86_400_000;
 }
 
+/** The Valid until cell shows a date; an ordered, declined or cancelled quote shows "—" (its validity no longer matters). Pure. */
+export function showsValidUntil(where: QuoteWhere): boolean {
+  return where !== "ordered" && where !== "declined" && where !== "cancelled";
+}
+
 /** The orders-tab chips: waiting for payment (anything not paid or refunded) and paid. Pure. */
 export const ORDER_PAY_CHIPS = ["waiting", "paid"] as const;
 export type OrderPayChip = (typeof ORDER_PAY_CHIPS)[number];

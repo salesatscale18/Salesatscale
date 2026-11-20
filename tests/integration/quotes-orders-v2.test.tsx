@@ -192,6 +192,11 @@ describe("Quotes and orders V2", () => {
     expect(sent).toContain("lqq-soon");
     expect(rowOf(html, "data-quote-row", ids.unopened)).not.toContain("lqq-soon");
     expect(rowOf(html, "data-quote-row", ids.ordered)).toMatch(/data-label="Valid until">—<\/td>/);
+    // Declined and cancelled: a dash too, as ordered; open and expired quotes keep their date.
+    expect(rowOf(html, "data-quote-row", ids.declined)).toMatch(/data-label="Valid until">—<\/td>/);
+    expect(rowOf(html, "data-quote-row", ids.cancelled)).toMatch(/data-label="Valid until">—<\/td>/);
+    expect(rowOf(html, "data-quote-row", ids.expired)).toMatch(/data-label="Valid until">\d+ \w+<\/td>/);
+    expect(sent).toMatch(/data-label="Valid until"[^>]*>\d+ \w+<\/td>/);
   });
 
   it("a chip filters the list and keeps its counts; the old tab=approval link opens the chip", async () => {

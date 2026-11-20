@@ -61,7 +61,7 @@ describe("Leads V2 (LQ-L)", () => {
   let admin: User;
   let account: SellerAccount;
   let other: SellerAccount;
-  let hana: Lead, ido: Lead, quinn: Lead, sam: Lead, otto: Lead, tess: Lead;
+  let hana: Lead, ido: Lead, ilan: Lead, quinn: Lead, sam: Lead, otto: Lead, tess: Lead;
   let seq = 97_000;
 
   const as = (a: SellerAccount) => { holder.access = { account: a, user: admin, actingAs: false, role: "seller_admin" }; };
@@ -97,6 +97,8 @@ describe("Leads V2 (LQ-L)", () => {
     other = (await getAccountById(db, b.summary.accountId))!;
     // Handed to a person, nobody took it: waits 30 h and 2 h.
     hana = await mkLead(account, "Hana Handoff", "human_handling", 30);
+    ilan = await mkLead(account, "Ilan Handoff", "human_handling", 2);
+    // Handed to a person who owns it: someone holds the chat, so it is in With your team, not Needs you.
     ido = await mkLead(account, "Ido Handoff", "human_handling", 2, { ownerUserId: admin.id });
     // A price to approve (and nothing else).
     quinn = await mkLead(account, "Quinn Quote", "agent_handling", 1);
@@ -121,13 +123,16 @@ describe("Leads V2 (LQ-L)", () => {
     expect(tabCount(html, "needs_you")).toBe(withItems.size);
     const names = rows(html).map((r) => r.name);
     expect(names).toContain("Hana Handoff");
+    expect(names).toContain("Ilan Handoff");
     expect(names).toContain("Quinn Quote");
+    expect(names).not.toContain("Ido Handoff");
     expect(names).not.toContain("Sam Sent");
     expect(names).not.toContain("Tess Testlead");
     expect(names).not.toContain("Olga Otheraccount");
     expect(names.length).toBe(Math.min(50, withItems.size));
-    // Waiting longest first: Hana (30 h) before Ido (2 h).
-    expect(names.indexOf("Hana Handoff")).toBeLessThan(names.indexOf("Ido Handoff"));
+    // Waiting longest first: Hana (30 h) before Ilan (2 h).
+    expect(names.indexOf("Hana Handoff")).toBeGreaterThanOrEqual(0);
+    expect(names.indexOf("Hana Handoff")).toBeLessThan(names.indexOf("Ilan Handoff"));
     expect(html).toContain("Oldest first. An item leaves this view as soon as it is done.");
     // The view's columns.
     expect(html).toContain('data-sort-col="need"');
@@ -143,8 +148,12 @@ describe("Leads V2 (LQ-L)", () => {
     expect(h.html).toContain(">Asked for a person<");
     expect(h.html).toMatch(/data-label="Waiting"[^>]*>30 h</);
     expect(h.html).toContain("data-needs");
-    expect(row(html, "Ido Handoff")!.html).toContain('data-who="person"');
-    expect(row(html, "Ido Handoff")!.html).toContain("<bdi>You</bdi>");
+    expect(row(html, "Ilan Handoff")!.html).toContain('data-who="waiting"');
+    // Ido's owner holds the chat: not in Needs you; With your team shows who is on it.
+    expect(row(html, "Ido Handoff")).toBeUndefined();
+    const team = await page(LeadsPage(props(account.slug, { view: "with_team" })));
+    expect(row(team, "Ido Handoff")!.html).toContain('data-who="person"');
+    expect(row(team, "Ido Handoff")!.html).toContain("<bdi>You</bdi>");
     const q = row(html, "Quinn Quote")!;
     expect(q.html).toMatch(new RegExp(`href="/app/${account.slug}/orders\\?tab=approval&amp;quote=[0-9a-f-]+"`));
     expect(q.html).toContain(">Price to approve<");
@@ -210,7 +219,8 @@ describe("Leads V2 (LQ-L)", () => {
   it("Needs you can sort newest first and by group; the phone Sort menu offers the view's sorts", async () => {
     const newest = await page(LeadsPage(props(account.slug, { need: "person", sort: "waiting", dir: "asc" })));
     const n = rows(newest).map((r) => r.name);
-    expect(n.indexOf("Ido Handoff")).toBeLessThan(n.indexOf("Hana Handoff"));
+    expect(n.indexOf("Ilan Handoff")).toBeGreaterThanOrEqual(0);
+    expect(n.indexOf("Ilan Handoff")).toBeLessThan(n.indexOf("Hana Handoff"));
     expect(newest).toContain("Sort: Newest");
     const byGroup = await page(LeadsPage(props(account.slug, { sort: "need", dir: "asc" })));
     const g = rows(byGroup).map((r) => r.html.match(/data-group="([a-z_]+)"/)?.[1] ?? "");
@@ -271,7 +281,7 @@ describe("Leads V2 (LQ-L)", () => {
     expect(rows(leadsHtml).length).toBe(new Set(items.filter((i) => i.kind === "human_handling").map((i) => i.leadId)).size);
   });
 
-  it("Next step outside Needs you: who has the chat, or Waiting for a person; Needs you keeps Asked for a person", async () => {
+  it("Next step outside Needs you: who has the chat, or Waiting for a person; Needs you keeps Asked for a person only while nobody holds the chat", async () => {
     const team = await page(LeadsPage(props(account.slug, { view: "with_team" })));
     const h = row(team, "Hana Handoff")!;
     expect(h.html).toContain(">Waiting for a person</span>");
@@ -284,7 +294,9 @@ describe("Leads V2 (LQ-L)", () => {
     // The rose edge stays: they still need you.
     expect(h.html).toContain("data-needs");
     const needs = await page(LeadsPage(props(account.slug, { need: "person" })));
-    expect(row(needs, "Ido Handoff")!.html).toContain(">Asked for a person<");
+    expect(row(needs, "Ilan Handoff")!.html).toContain(">Asked for a person<");
+    // Someone holds Ido's chat (an owner), so Needs you leaves it out.
+    expect(row(needs, "Ido Handoff")).toBeUndefined();
   });
 
   it("Take over: whoever took the chat is on it (Next step and Who's on it agree), from the conversation, not the lead's owner", async () => {

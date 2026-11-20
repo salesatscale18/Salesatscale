@@ -4,7 +4,7 @@
  * Read-only: derived from leads, quotes, order forms, orders and lead events.
  */
 import { cache } from "react";
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import { CONFIRMED_SHOWN_MS, finishedCallbacks, requestedCallbacks } from "@/lib/callbacks/service";
@@ -13,7 +13,7 @@ import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
 import {
-  followUps, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
+  conversations, followUps, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
   type ApprovalReason, type LeadEvent, type Market, type User,
 } from "@/db/schema";
 
@@ -56,7 +56,19 @@ const leadCols = { leadId: leads.id, leadName: leads.fullName, company: leads.co
  */
 const notTest = eq(leads.isTest, false);
 const approvalWhere = (accountId: string) => and(eq(quotes.accountId, accountId), eq(quotes.status, "awaiting_approval"), notTest);
-const handedWhere = (accountId: string) => and(eq(leads.accountId, accountId), eq(leads.status, "human_handling"), notTest);
+/**
+ * "Asked for a person": handed to a person and nobody holds the chat yet (UX, 20 Nov). A lead with an owner, or
+ * whose open chat a person took over, lives in With your team ("{Name} / You're handling the chat"), not here.
+ * Its other items (payment, call, question, ...) still count as usual.
+ */
+const handedWhere = (db: Db, accountId: string) =>
+  and(
+    eq(leads.accountId, accountId), eq(leads.status, "human_handling"), notTest, isNull(leads.ownerUserId),
+    notExists(
+      db.select({ one: conversations.id }).from(conversations)
+        .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leads.id), eq(conversations.status, "human"), isNotNull(conversations.takenOverByUserId))),
+    ),
+  );
 const orderWhere = (accountId: string) =>
   and(eq(orders.accountId, accountId), inArray(orders.paymentStatus, ["bank_transfer_expected", "failed"]), notTest);
 /** Open, unsigned, unexpired forms of live quotes (before the expiring / long-unsigned split). */
@@ -87,7 +99,7 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     db
       .select({ ...leadCols, at: leads.lastActivityAt })
       .from(leads)
-      .where(handedWhere(accountId)),
+      .where(handedWhere(db, accountId)),
     db
       .select({
         ...leadCols,
@@ -190,7 +202,7 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
     db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
       .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
       .where(approvalWhere(accountId)),
-    db.select({ n: count() }).from(leads).where(handedWhere(accountId)),
+    db.select({ n: count() }).from(leads).where(handedWhere(db, accountId)),
     db.select({ n: count() }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId)).where(orderWhere(accountId)),
     db.select({ n: count() }).from(orderForms)
       .innerJoin(leads, eq(leads.id, orderForms.leadId))

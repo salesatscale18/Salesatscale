@@ -1471,7 +1471,9 @@ label.st-voice__row { cursor: pointer; }
   .sas-ovn-row .sas-mcards__list > li.sas-mcards__add { flex: 0 1 152px; min-width: 132px; max-width: 264px; }
 }
 @media (min-width: 1101px) {
-  .sas-app .sas-ovn { align-self: start; }
+  /* The card's top lines up with the market cards' top, not with the "Your markets" heading: it starts below the
+     heading row (the 22px heading line plus the list's gap). The phone order (under 768px) is unchanged. */
+  .sas-app .sas-ovn { align-self: start; margin-block-start: calc(22px + var(--space-3)); }
 }
 /* When two cards and Add market can't share a row, Add market becomes a slim row under the cards (not a tall empty box). */
 @container mcards (max-width: 603px) {

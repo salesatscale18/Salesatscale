@@ -3,7 +3,7 @@
  * Orders payment chips and the period parameter. Pure.
  */
 import { describe, expect, it } from "vitest";
-import { endsSoon, orderPayChip, quoteWhere, shownFormStatus, type LatestForm } from "@/lib/quotes/where";
+import { endsSoon, orderPayChip, quoteWhere, showsValidUntil, shownFormStatus, type LatestForm } from "@/lib/quotes/where";
 import { parseDocPeriod, periodStart } from "@/lib/quotes/service";
 
 const NOW = new Date("2026-11-20T10:00:00Z");
@@ -60,6 +60,13 @@ describe("endsSoon (amber Valid until)", () => {
   it("never for ended or ordered quotes, nor past the date", () => {
     for (const w of ["ordered", "expired", "declined", "replaced", "cancelled"] as const) expect(endsSoon(w, new Date(NOW.getTime() + day), NOW)).toBe(false);
     expect(endsSoon("quote_sent", past, NOW)).toBe(false);
+  });
+});
+
+describe("showsValidUntil (the Valid until cell)", () => {
+  it("a dash for ordered, declined and cancelled quotes; a date for every other state", () => {
+    for (const w of ["ordered", "declined", "cancelled"] as const) expect(showsValidUntil(w)).toBe(false);
+    for (const w of ["awaiting_approval", "quote_sent", "form_sent", "expired", "draft", "replaced"] as const) expect(showsValidUntil(w)).toBe(true);
   });
 });
 

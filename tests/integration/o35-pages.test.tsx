@@ -156,18 +156,32 @@ describe("O35 pages on the demo account", () => {
     expect(text(done)).toContain("How did the call go?");
   });
 
-  it("the same one-line reason in all three places, for the labelled lead and the taken-over Hebrew lead", async () => {
+  it("the same one-line reason in all three places for the labelled leads; the taken-over Hebrew lead is in With your team, its reason on the row and the banner", async () => {
     const needsList = await render(LeadsPage, { account: slug }, { view: "needs_you", need: "person" });
+    const team = await render(LeadsPage, { account: slug }, { view: "with_team" });
     const inbox = await render(ConversationsPage, { account: slug });
     save("conversations-all", inbox);
+    const rowOf = (html: string, name: string) => {
+      const at = html.indexOf(`<bdi>${name}</bdi>`);
+      if (at < 0) return null;
+      const r = html.slice(at);
+      return r.slice(0, r.indexOf("</tr>"));
+    };
     const cases = [
-      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now" },
-      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON },
+      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now", held: false },
+      { lead: STATE_LEADS.spendCap, why: "AI limit reached", held: false },
+      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON, held: true },
     ];
     for (const c of cases) {
-      // Leads > Needs you (L-3): "Asked for a person", then the reason as the one muted line, isolated, cut with "…" by CSS.
-      const lrow = needsList.slice(needsList.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
-      expect(lrow.slice(0, lrow.indexOf("</tr>"))).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="\u2068${c.why}\u2069">\u2068${c.why}\u2069</span>`);
+      if (c.held) {
+        // Taken over (UX, 20 Nov): someone holds the chat, so not in Needs you; With your team says who.
+        expect(rowOf(needsList, c.lead.fullName)).toBeNull();
+        expect(rowOf(team, c.lead.fullName)).toContain(">You\u2019re handling the chat</span>");
+        expect(rowOf(team, c.lead.fullName)).not.toContain(">Asked for a person<");
+      } else {
+        // Leads > Needs you (L-3): "Asked for a person", then the reason as the one muted line, isolated, cut with "…" by CSS.
+        expect(rowOf(needsList, c.lead.fullName)).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="\u2068${c.why}\u2069">\u2068${c.why}\u2069</span>`);
+      }
       // Conversations row: the same line, one line.
       const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
       expect(row.slice(0, row.indexOf("</li>"))).toContain(`class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);

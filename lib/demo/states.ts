@@ -725,7 +725,6 @@ async function callConfirmed(db: Db, userId: string, accountId: string, leadId: 
   await insertThread(db, accountId, id, "en", versionId, [
     { actor: "buyer", at: min(now, 70), body: "Hi, we have a wine cellar and two cold rooms. Could someone call me to plan the sensors?" },
     { actor: "agent", at: min(now, 69), body: "Of course. So the team comes prepared: is the cellar one room, and how big are the cold rooms?" },
-    { actor: "buyer", at: min(now, 67), body: "One cellar and two walk-in cold rooms. Tomorrow at 11 works for me." },
   ]);
   const at = min(now, 66);
   const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
@@ -746,10 +745,14 @@ async function callConfirmed(db: Db, userId: string, accountId: string, leadId: 
     }
   }
   if (!r.ok) throw new Error(`Demo seed: call request refused: ${r.rule}`);
-  await insertThread(db, accountId, id, "en", versionId, [{
-    actor: "agent", at, body: `Great. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here.`,
-    calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
-  }]);
+  // The buyer names the day that was booked (on a Friday, tomorrow has no contact hours: "Sunday at 11").
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 67), body: `One cellar and two walk-in cold rooms. ${buyerCallDay(input.time, tomorrow)} works for me.` },
+    {
+      actor: "agent", at, body: `Great. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here.`,
+      calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
+    },
+  ]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 67)) } });
   // The seller confirms (the same service as Confirm on the call card); the buyer gets the confirmation in the chat.
@@ -765,6 +768,20 @@ async function callConfirmed(db: Db, userId: string, accountId: string, leadId: 
   }
   await db.update(leads).set({ lastActivityAt: confirmAt }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   return id;
+}
+
+/**
+ * How the buyer names a booked local time ("YYYY-MM-DDTHH:MM" in the account's
+ * time zone): "Tomorrow at 11" when it is tomorrow, else the weekday ("Sunday at 11").
+ */
+export function buyerCallDay(localTime: string, tomorrow: string): string {
+  const date = localTime.slice(0, 10);
+  const [hh, mm] = localTime.slice(11, 16).split(":");
+  const hour = `${Number(hh)}${mm === "00" ? "" : `:${mm}`}`;
+  const day = date === tomorrow
+    ? "Tomorrow"
+    : new Date(`${date}T12:00:00Z`).toLocaleDateString("en-US", { weekday: "long", timeZone: "UTC" });
+  return `${day} at ${hour}`;
 }
 
 /**

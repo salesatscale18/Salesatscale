@@ -337,6 +337,9 @@ describe("demo account review states", () => {
     expect(mayaConv.status).toBe("open");
     expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, mayaConv.id))).map((c) => c.name)).toContain("request_callback");
     const view = await conversationView(db, accountId, mayaConv);
+    // The buyer names the booked day: tomorrow here (Friday 20 Nov has contact hours).
+    expect(view.thread.map((e) => e.message.body)).toContain("One cellar and two walk-in cold rooms. Tomorrow at 11 works for me.");
+    expect(view.thread.map((e) => e.message.body)).toContainEqual(expect.stringMatching(/^Great\. I've asked for a call with a member of our team on Friday 20 November at 11:00;/));
     expect(view.thread.at(-1)!.message.body).toMatch(/^Your call is confirmed for .+\. Until then, I'm here for any question\.$/);
     expect(view.thread.at(-1)!.message.deliveryStatus).toBeNull();
     expect((await leadListFacts(db, accountId, [maya.id], NOW)).get(maya.id)?.call?.at.getTime()).toBe(call.at.getTime());
@@ -389,7 +392,23 @@ describe("demo account review states", () => {
     expect((await handoffWhyByLead(db, otherId, [upset.id])).size).toBe(0);
   });
 
-  it("the Hebrew human-handled lead has its stored hand-off reason (as written) and is still taken over with Take over", async () => {
+  it("seeded on a Friday, Hila's call is booked for Sunday 11:00 and the chat names Sunday, not tomorrow", async () => {
+    const FRIDAY = new Date("2026-11-20T09:00:00Z");
+    const r = await createDemoAccount(db, admin, { ownerEmail: "owner@platform.test", now: FRIDAY });
+    if (!r.ok) throw new Error("refused");
+    const fid = r.summary.accountId;
+    const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, fid));
+    const [hila] = await db.select().from(leads).where(and(eq(leads.accountId, fid), eq(leads.sourceRef, `demo-seed:${STATE_LEADS.callConfirmed.n}`)));
+    const call = (await leadCallback(db, fid, hila.id, FRIDAY))!;
+    expect(isoInZone(call.at, acc.timezone).slice(0, 16)).toBe(`2026-11-22T${CONFIRMED_CALL_TIME}`);
+    const [conv] = await db.select().from(conversations).where(and(eq(conversations.accountId, fid), eq(conversations.leadId, hila.id)));
+    const bodies = (await db.select().from(messages).where(and(eq(messages.accountId, fid), eq(messages.conversationId, conv.id)))).map((m) => m.body);
+    expect(bodies).toContain("One cellar and two walk-in cold rooms. Sunday at 11 works for me.");
+    expect(bodies).toContainEqual(expect.stringMatching(/I've asked for a call with a member of our team on Sunday 22 November at 11:00;/));
+    expect(bodies.join("\n")).not.toContain("Tomorrow at 11");
+  });
+
+  it("the Hebrew human-handled lead has its stored hand-off reason (as written), is still taken over with Take over, and so is not in Needs you", async () => {
     const { HUMAN_HANDOFF_REASON } = await import("@/lib/demo/states");
     const { latestHandoff } = await import("@/lib/conversations/inbox");
     const uri = await leadBy(STATE_LEADS.human.n);
@@ -401,9 +420,10 @@ describe("demo account review states", () => {
     const [taken] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, uri.id), eq(leadEvents.type, "conversation.taken_over")));
     expect(taken.actorUserId).toBe(admin.id);
     expect(handoff.createdAt.getTime()).toBeLessThan(taken.createdAt.getTime());
-    // No label matches: the reason shows as written, in Needs you and the brief.
+    // No label matches: the reason shows as written (Conversations row, lead page banner) and in the brief.
     expect((await handoffWhyByLead(db, accountId, [uri.id])).get(uri.id)).toBe(HUMAN_HANDOFF_REASON);
-    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === uri.id)).toMatchObject({ kind: "human_handling", why: HUMAN_HANDOFF_REASON });
+    // Someone holds the chat (taken over), so it is not "Asked for a person" in Needs you (UX, 20 Nov).
+    expect((await needsYou(db, accountId, NOW)).some((i) => i.leadId === uri.id && i.kind === "human_handling")).toBe(false);
     expect(await latestHandoff(db, accountId, uri.id)).toMatchObject({ reason: HUMAN_HANDOFF_REASON });
     // The take-over flow is unchanged: taken over by the admin, the person already answered (no prefilled reply).
     const conv = await convOf(uri.id);
