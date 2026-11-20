@@ -1,6 +1,6 @@
 /** Overview V2 (O-1, O-2): the KPI cards and the funnel's "From the step before" column, pure. */
 import { describe, expect, it } from "vitest";
-import { comparisonLine, formatWhole, kpiCards, percent, stepPercents, waitingToPay, type KpiCardsInput } from "@/lib/overview/kpi-cards";
+import { comparisonLine, formatWhole, kpiCards, percent, stepOver, stepPercents, waitingToPay, type KpiCardsInput } from "@/lib/overview/kpi-cards";
 
 const cards = (o: Partial<KpiCardsInput> = {}) => kpiCards({
   days: 30,
@@ -118,12 +118,31 @@ describe("simulated buyers included", () => {
     expect(c.average.lines[0].text).toBe("One-time, signed deals · incl. 2 simulated");
     expect(c.agent.lines[0].text).toBe("7 of 9 leads without a person · incl. 2 simulated");
   });
+
+  it("no note on a card that simulated buyers add nothing to", () => {
+    const c = byId({
+      kpis: { formsSigned: 1, paidByCurrency: [] },
+      cards: { signedByCurrency: [{ currency: "ILS", count: 1, oneTimeMinor: 10_000 }], leadsReceived: 9, leadsSigned: 1, leadsWithoutPerson: 7 },
+      real: {
+        kpis: { formsSigned: 1, paidByCurrency: [] },
+        cards: { signedByCurrency: [{ currency: "ILS", count: 1, oneTimeMinor: 10_000 }], leadsReceived: 7, leadsSigned: 1, leadsWithoutPerson: 5 },
+      },
+    });
+    expect(c.revenue.lines[0].text).not.toContain("simulated");
+    expect(c.deals.lines[0].text).not.toContain("simulated");
+    expect(c.average.lines[0].text).not.toContain("simulated");
+    expect(c.conversion.lines[0].text).toBe("1 of 9 leads · incl. 2 simulated");
+  });
 });
 
 describe("funnel: from the step before", () => {
   it("blank on the first step, whole % of the step before, — after an empty step", () => {
     expect(stepPercents([7, 2, 2, 2, 0])).toEqual([null, "29%", "100%", "100%", "0%"]);
     expect(stepPercents([0, 0, 1])).toEqual([null, "—", "—"]);
+    // More than the step before (each step counted when it happens): "—", marked for the tooltip.
+    expect(stepPercents([3, 5, 5, 2])).toEqual([null, "—", "100%", "40%"]);
+    expect(stepOver([3, 5, 5, 2])).toEqual([false, true, false, false]);
+    expect(stepOver([0, 1])).toEqual([false, false]);
   });
 
   it("waiting to pay: signed minus paid, never below 0", () => {
