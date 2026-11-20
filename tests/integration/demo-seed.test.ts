@@ -188,13 +188,14 @@ describe("one-click demo account", () => {
     expect(drafts).toHaveLength(0);
   });
 
-  it("has twelve consented leads with fictional numbers that are never contacted", async () => {
+  it("has thirteen consented leads with fictional numbers that are never contacted", async () => {
     const all = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)));
     // Plus two simulated buyers (buyer IDs, no phone), which the simulator tests cover.
     expect(all.filter((l) => l.buyerRef).map((l) => l.buyerRef).sort()).toEqual(["SIM-0001", "SIM-0002"]);
     const rows = all.filter((l) => !l.buyerRef);
-    // Three plain new leads plus nine that carry an order, quote, conversation or call state (W6: spend cap, hand-back; O35: call requested, call done).
-    expect(rows).toHaveLength(12);
+    // Three plain new leads plus nine that carry an order, quote, conversation or call state (W6: spend cap, hand-back; O35: call requested, call done),
+    // and one with a finished voice call (lib/demo/voice-call-seed.ts).
+    expect(rows).toHaveLength(13);
     for (const l of rows) {
       expect(l.phone).toMatch(DEMO_PHONE_RANGE);
       expect(l.phone).toMatch(/^\+97250555\d{4}$/);
@@ -234,7 +235,7 @@ describe("one-click demo account", () => {
     for (const id of [a.summary.accountId, b.summary.accountId]) {
       const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
       expect(acc.status).toBe("live");
-      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(14);
+      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(15);
     }
   });
 
