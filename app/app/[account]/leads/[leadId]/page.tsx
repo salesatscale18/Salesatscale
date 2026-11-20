@@ -330,7 +330,7 @@ export default async function LeadCardPage({
             </div>
             {/* Quotes and Orders: two cards side by side, stacked on a phone (W3). */}
             <div className="sas-lead-docs" data-tab="deal">
-            <section className="sas-lead-doc" aria-labelledby="lq-h" data-testid="quotes-card">
+            <section id="lead-quotes" className="sas-lead-doc" aria-labelledby="lq-h" data-testid="quotes-card">
               <div className="sas-lead-doc__head">
                 <h2 id="lq-h" className="sas-lead-doc__title">{t("lead.card.quotes")} <span className="sas-lead-doc__count sas-num">{leadQuotes.length}</span></h2>
                 {lead.status !== "opted_out" ? <a className={buttonClass("ghost", "sm")} href={`/app/${account.slug}/leads/${lead.id}/quote`}><Icon name="file-text" />{t("lead.card.create_quote")}</a> : null}
@@ -370,7 +370,7 @@ export default async function LeadCardPage({
                 </ul>
               )}
             </section>
-            <section className="sas-lead-doc" aria-labelledby="lo-h" data-testid="orders-card">
+            <section id="lead-orders" className="sas-lead-doc" aria-labelledby="lo-h" data-testid="orders-card">
               <div className="sas-lead-doc__head">
                 <h2 id="lo-h" className="sas-lead-doc__title">{t("lead.card.orders")} <span className="sas-lead-doc__count sas-num">{leadOrders.length}</span></h2>
               </div>
@@ -391,6 +391,16 @@ export default async function LeadCardPage({
                       </a>
                       {/* The signed form, and its pay page while the order waits for payment (R5 item 8). */}
                       <div className="sas-lead-doc__links">
+                        {/* A transfer to confirm or a failed payment: straight to the order's panel on Quotes and orders (Leads V2, UX). */}
+                        {order.paymentStatus === "bank_transfer_expected" || order.paymentStatus === "failed" ? (
+                          <a
+                            className={buttonClass("ghost", "sm")} href={`/app/${account.slug}/orders?tab=orders&quote=${order.quoteId}`}
+                            data-order-action={order.paymentStatus === "failed" ? "payment_failed" : "review_transfer"}
+                          >
+                            <Icon name={order.paymentStatus === "failed" ? "x-circle" : "credit-card"} />
+                            {t(order.paymentStatus === "failed" ? "lead.card.order_payment_failed" : "lead.card.order_review_transfer")}
+                          </a>
+                        ) : null}
                         <SignedFormLinks url={linkFor({ id: order.orderFormId }).url} pay={payLinkOpen(order.paymentStatus, leadQuotes.find((q) => q.quote.id === order.quoteId)?.quote.status ?? "")} payVariant="ghost" />
                       </div>
                     </li>

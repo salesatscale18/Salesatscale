@@ -33,6 +33,7 @@ vi.mock("next/navigation", () => ({
 
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { cancelFollowUpAction } = await import("@/app/app/[account]/leads/[leadId]/follow-up-actions");
 
 const form = (v: Record<string, string>) => {
@@ -136,8 +137,14 @@ describe("Follow-ups on the seller's screens", () => {
     expect(html).toContain("Dismiss");
     const overview = await render(OverviewPage({ params: Promise.resolve({ account: acc.slug }), searchParams: Promise.resolve({}) }));
     save("overview", overview);
-    expect(overview).toContain("Follow-up to Yossi Amar not sent");
-    expect(overview).toContain("Open lead");
-    expect(overview).toContain(`/app/${acc.slug}/leads/${lead.id}`);
+    // L-6: counted under Failed follow-ups; the row opens Leads > Needs you for that group.
+    expect(overview).toContain('data-needs-group="follow_ups"');
+    expect(overview).toContain(">Failed follow-ups<");
+    expect(overview).toContain(`/app/${acc.slug}/leads?view=needs_you&amp;need=follow_ups`);
+    const list = await render(LeadsPage({ params: Promise.resolve({ account: acc.slug }), searchParams: Promise.resolve({ view: "needs_you" }) }));
+    save("leads-needs", list);
+    expect(list).toContain(">Follow-up not sent<");
+    expect(list).toContain("<bdi>Yossi Amar</bdi>");
+    expect(list).toContain(`/app/${acc.slug}/leads/${lead.id}?tab=deal#follow-up`);
   });
 });

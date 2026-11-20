@@ -37,6 +37,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowledge/page");
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { runTool, TOOL_DEFS } = await import("@/lib/agent/tools");
@@ -178,9 +179,12 @@ describe("Park and continue: questions to the team (O4)", () => {
     expect((await needsYou(db, other.id, new Date())).some((i) => i.kind === "team_question")).toBe(false);
 
     const html = await page(OverviewPage, { account: acc.slug });
-    expect(html).toContain("Question to answer: Can it run on 110V?");
-    expect(html).toContain("Good to know");
-    expect(html).toContain(`/app/${acc.slug}/setup/knowledge?panel=answer&amp;question=Can+it+run+on+110V%3F`);
+    // L-6: counted under Questions to answer; Leads > Needs you shows it and opens Knowledge's answer panel.
+    expect(html).toContain('data-needs-group="questions"');
+    const list = await page(LeadsPage, { account: acc.slug }, { view: "needs_you", need: "questions" });
+    expect(list).toContain(">Question to answer<");
+    expect(list).toContain("Good to know");
+    expect(list).toContain(`/app/${acc.slug}/setup/knowledge?panel=answer&amp;question=Can+it+run+on+110V%3F`);
 
     // Knowledge: the list and the answer panel show the lead, the flag and the words; the test chat says so.
     const k = await page(KnowledgePage, { account: acc.slug }, { panel: "answer", question: "Can it run on 110V?" });

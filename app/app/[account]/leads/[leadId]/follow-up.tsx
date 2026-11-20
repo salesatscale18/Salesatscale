@@ -16,7 +16,7 @@ export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled }
   if (!followUp && !cancelled) return null;
   const failed = followUp?.status === "failed";
   return (
-    <section aria-labelledby="fu-h" className="sas-stack-2" data-testid="follow-up" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
+    <section id="follow-up" aria-labelledby="fu-h" className="sas-stack-2" data-testid="follow-up" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
       <h2 id="fu-h" className="sas-group-label" style={{ padding: "16px 0 0" }}>{t("followup.title")}</h2>
       {cancelled ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("followup.cancelled")}</span></div> : null}
       {followUp ? (

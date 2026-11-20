@@ -120,32 +120,32 @@ describe("W2: markets across the workspace", () => {
 
   describe("Leads", () => {
     it("all markets: the switcher, every lead and a sortable Market column", async () => {
-      const html = await page(LeadsPage(props(account.slug)));
+      const html = await page(LeadsPage(props(account.slug, { view: "all" })));
       expect(html).toContain("data-market-switcher");
       expect(html).toContain(`action="/app/${account.slug}/market"`);
       for (const n of ["Oliver Brown", "Hans Weber", "Noa Null", "Noa Demo"]) expect(html).toContain(n);
       expect(html).toContain('data-sort-col="market"');
       // Phone cards: the market is a labelled row; a lead without a market shows the home market.
-      expect(html).toMatch(/<td data-label="Market"><span data-market="home">Israel<\/span><\/td>/);
+      expect(html).toMatch(/<td class="sas-lrow__market" data-label="Market"><span data-market="home">Israel<\/span><\/td>/);
       expect(html).toContain(`data-market="${uk.id}">United Kingdom</span>`);
     });
 
     it("the URL parameter filters the list and the view counts; it wins over the cookie", async () => {
       holder.cookies.set(marketCookieName(account.id), il.id);
-      const html = await page(LeadsPage(props(account.slug, { market: uk.id })));
+      const html = await page(LeadsPage(props(account.slug, { view: "all", market: uk.id })));
       expect(html).toContain("Oliver Brown");
       expect(html).not.toContain("Noa Null");
       expect(html).not.toContain("Hans Weber");
-      // All 1, New 0, Agent handling 1, ...
-      expect(counts(html, "Views").slice(0, 3)).toEqual([1, 0, 1]);
+      // Leads V2 views: Needs you 0, Agent working 1, With your team 0, Won 0, Closed 0, All 1.
+      expect(counts(html, "Views")).toEqual([0, 1, 0, 0, 0, 1]);
       // Links on the page keep the market from the URL; the switcher shows it chosen.
-      expect(html).toContain(`?view=new&amp;market=${uk.id}`);
+      expect(html).toContain(`?view=with_team&amp;market=${uk.id}`);
       expect(html).toMatch(new RegExp(`<option value="${uk.id}" title="United Kingdom · Setting up" selected="">United Kingdom</option>`));
     });
 
     it("the stored cookie filters when the URL has no market; the home market keeps leads without a market id", async () => {
       holder.cookies.set(marketCookieName(account.id), il.id);
-      const html = await page(LeadsPage(props(account.slug)));
+      const html = await page(LeadsPage(props(account.slug, { view: "all" })));
       expect(html).toContain("Noa Null");
       expect(html).toContain("Noa Demo");
       expect(html).not.toContain("Oliver Brown");
@@ -153,17 +153,18 @@ describe("W2: markets across the workspace", () => {
     });
 
     it("keeps every other filter with a market chosen (search)", async () => {
-      const html = await page(LeadsPage(props(account.slug, { market: il.id, q: "Oliver" })));
+      const html = await page(LeadsPage(props(account.slug, { view: "all", market: il.id, q: "Oliver" })));
       expect(html).toContain("No leads match these filters");
-      const ok = await page(LeadsPage(props(account.slug, { market: uk.id, q: "Oliver" })));
+      const ok = await page(LeadsPage(props(account.slug, { view: "all", market: uk.id, q: "Oliver" })));
       expect(ok).toContain("Oliver Brown");
-      expect(ok).toContain(`name="market" value="${uk.id}"`);
+      // The market goes with the filters as the More filters Market select (the switcher's choice).
+      expect(ok).toContain(`<option value="${uk.id}" selected="">Market: United Kingdom</option>`);
     });
 
     it("a market with no leads says so, without the first-lead empty state", async () => {
       await db.update(leads).set({ marketId: uk.id }).where(and(eq(leads.accountId, account.id), eq(leads.fullName, "Hans Weber")));
       try {
-        const html = await page(LeadsPage(props(account.slug, { market: dach.id })));
+        const html = await page(LeadsPage(props(account.slug, { view: "all", market: dach.id })));
         expect(html).toContain("No leads in Germany and Austria yet");
         expect(html).toContain("data-market-switcher");
       } finally {
@@ -172,11 +173,11 @@ describe("W2: markets across the workspace", () => {
     });
 
     it("sorts by market name; a lead without a market sorts as the home market", async () => {
-      const asc = await page(LeadsPage(props(account.slug, { sort: "market", dir: "asc" })));
+      const asc = await page(LeadsPage(props(account.slug, { view: "all", sort: "market", dir: "asc" })));
       // Germany and Austria < Israel (incl. no market id) < United Kingdom.
       expect(asc.indexOf("Hans Weber")).toBeLessThan(asc.indexOf("Noa Null"));
       expect(asc.indexOf("Noa Null")).toBeLessThan(asc.indexOf("Oliver Brown"));
-      const desc = await page(LeadsPage(props(account.slug, { sort: "market", dir: "desc" })));
+      const desc = await page(LeadsPage(props(account.slug, { view: "all", sort: "market", dir: "desc" })));
       expect(desc.indexOf("Oliver Brown")).toBeLessThan(desc.indexOf("Noa Null"));
       expect(desc.indexOf("Noa Null")).toBeLessThan(desc.indexOf("Hans Weber"));
     });
@@ -186,8 +187,8 @@ describe("W2: markets across the workspace", () => {
     it("all markets: switcher, every quote, a sortable Market column with each currency kept", async () => {
       const html = await page(OrdersPage(props(account.slug)));
       expect(html).toContain("data-market-switcher");
-      expect(html).toContain(`Q-${ukQuote} v1`);
-      expect(html).toContain(`Q-${homeQuote} v1`);
+      expect(html).toContain(`>Q-${ukQuote}<`);
+      expect(html).toContain(`>Q-${homeQuote}<`);
       expect(html).toContain('data-sort-col="market"');
       expect(html).toContain(`data-market="${uk.id}">United Kingdom</span>`);
       expect(html).toContain('data-market="home">Israel</span>');
@@ -198,8 +199,8 @@ describe("W2: markets across the workspace", () => {
     it("the URL parameter filters quotes, orders and the tab counts", async () => {
       const all = counts(await page(OrdersPage(props(account.slug))), "Document type");
       const html = await page(OrdersPage(props(account.slug, { market: uk.id })));
-      expect(html).toContain(`Q-${ukQuote} v1`);
-      expect(html).not.toContain(`Q-${homeQuote} v1`);
+      expect(html).toContain(`>Q-${ukQuote}<`);
+      expect(html).not.toContain(`>Q-${homeQuote}<`);
       const ukCounts = counts(html, "Document type");
       expect(ukCounts.slice(0, 2)).toEqual([1, 1]);
       expect(all[0]).toBeGreaterThan(1);
@@ -213,17 +214,17 @@ describe("W2: markets across the workspace", () => {
     it("the cookie filters when the URL has no market (home includes quotes without a market id)", async () => {
       holder.cookies.set(marketCookieName(account.id), il.id);
       const html = await page(OrdersPage(props(account.slug)));
-      expect(html).toContain(`Q-${homeQuote} v1`);
-      expect(html).not.toContain(`Q-${ukQuote} v1`);
+      expect(html).toContain(`>Q-${homeQuote}<`);
+      expect(html).not.toContain(`>Q-${ukQuote}<`);
       holder.cookies.set(marketCookieName(account.id), dach.id);
       expect(await page(OrdersPage(props(account.slug)))).toContain("No quotes in Germany and Austria yet");
     });
 
     it("sorts quotes by market", async () => {
       const asc = await page(OrdersPage(props(account.slug, { sort: "market", dir: "asc" })));
-      expect(asc.indexOf(`Q-${homeQuote} v1`)).toBeLessThan(asc.indexOf(`Q-${ukQuote} v1`));
+      expect(asc.indexOf(`>Q-${homeQuote}<`)).toBeLessThan(asc.indexOf(`>Q-${ukQuote}<`));
       const desc = await page(OrdersPage(props(account.slug, { sort: "market", dir: "desc" })));
-      expect(desc.indexOf(`Q-${ukQuote} v1`)).toBeLessThan(desc.indexOf(`Q-${homeQuote} v1`));
+      expect(desc.indexOf(`>Q-${ukQuote}<`)).toBeLessThan(desc.indexOf(`>Q-${homeQuote}<`));
       const ordDesc = await page(OrdersPage(props(account.slug, { tab: "orders", sort: "market", dir: "desc" })));
       expect(ordDesc.indexOf("£1,200.00")).toBeLessThan(ordDesc.indexOf("₪3,500.00"));
     });
@@ -253,7 +254,7 @@ describe("W2: markets across the workspace", () => {
   describe("one market", () => {
     it("no switcher and no Market or Sold in columns", async () => {
       as(single);
-      const leadsHtml = await page(LeadsPage(props(single.slug, { market: "anything" })));
+      const leadsHtml = await page(LeadsPage(props(single.slug, { view: "all", market: "anything" })));
       expect(leadsHtml).not.toContain("data-market-switcher");
       expect(leadsHtml).not.toContain('data-sort-col="market"');
       expect(leadsHtml).not.toContain('data-label="Market"');

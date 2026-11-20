@@ -11,7 +11,7 @@ import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, markets, sellerAccounts, users,
+  consentRecords, leadEvents, leadIntakeDeliveries, leadIntakeKeys, leads, markets, quotes, quoteVersions, sellerAccounts, users,
   type IntakeResult, type Lead, type LeadOrigin, type LeadStatus,
 } from "@/db/schema";
 import { getMarket, listMarkets, updateMarket } from "@/lib/markets/service";
@@ -192,8 +192,46 @@ export async function previewLead(db: Db, accountId: string, input: LeadInput): 
 export const LEAD_VIEWS = ["all", "new", "agent_handling", "human_handling", "won", "lost", "opted_out"] as const;
 export type LeadView = (typeof LEAD_VIEWS)[number];
 
+/**
+ * Leads V2 views (UX L-1, 20 Nov): Needs you · Agent working · With your team ·
+ * Won · Closed · All. Needs you is "has an open Needs you item"
+ * (lib/overview/service.ts), so a lead can be in it and in its status view.
+ */
+export const LEAD_TABS = ["needs_you", "agent_working", "with_team", "won", "closed", "all"] as const;
+export type LeadTab = (typeof LEAD_TABS)[number];
+export type StatusTab = Exclude<LeadTab, "needs_you" | "all">;
+
+/**
+ * The statuses of each status view. Agent working is new + agent handling; the
+ * agent's other open states (waiting for the buyer's reply, meeting booked)
+ * go there too, so every open lead is in one status view.
+ */
+export const TAB_STATUSES: Record<StatusTab, readonly LeadStatus[]> = {
+  agent_working: ["new", "waiting_for_reply", "agent_handling", "meeting_booked"],
+  with_team: ["human_handling"],
+  won: ["won"],
+  closed: ["lost", "opted_out"],
+};
+
+/** A view from the URL; the old status views (`?view=new`, …) open the view that now holds them. */
+export function parseLeadTab(raw: string | undefined | null): LeadTab | null {
+  if (!raw) return null;
+  if ((LEAD_TABS as readonly string[]).includes(raw)) return raw as LeadTab;
+  for (const [tab, statuses] of Object.entries(TAB_STATUSES)) if ((statuses as readonly string[]).includes(raw)) return tab as LeadTab;
+  return null;
+}
+
+/** The status view a lead is in. */
+export function statusTabOf(status: LeadStatus): StatusTab {
+  return (Object.keys(TAB_STATUSES) as StatusTab[]).find((k) => TAB_STATUSES[k].includes(status)) ?? "agent_working";
+}
+
 export type LeadFilters = {
   view?: LeadView;
+  /** Leads V2 status views: only these statuses (wins over `view`). */
+  statuses?: readonly LeadStatus[];
+  /** Only these leads (the Needs you view); an empty list matches nothing. */
+  leadIds?: readonly string[];
   q?: string;
   sourceLabel?: string;
   language?: Locale;
@@ -209,9 +247,11 @@ export type LeadFilters = {
 export type LeadMarketFilter = { id: string; isHome: boolean };
 
 /** Leads list columns that sort on the server (the stage is worked out per lead, so it does not). */
-export const LEAD_SORT_KEYS = ["lead", "status", "market", "owner", "source", "activity"] as const;
+export const LEAD_SORT_KEYS = ["lead", "status", "market", "owner", "source", "activity", "value", "waiting", "need"] as const;
 export type LeadSortKey = (typeof LEAD_SORT_KEYS)[number];
 export const LEAD_SORT_DEFAULT: TableSort<LeadSortKey> = { key: "activity", dir: "desc" };
+/** Needs you: waiting longest first. `waiting` and `need` sort in memory (the page), not in SQL. */
+export const NEEDS_SORT_DEFAULT: TableSort<LeadSortKey> = { key: "waiting", dir: "desc" };
 
 function escapeLike(v: string) {
   return v.replace(/[\\%_]/g, (c) => `\\${c}`);
@@ -219,7 +259,9 @@ function escapeLike(v: string) {
 
 function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
   const parts: SQL[] = [eq(leads.accountId, accountId), eq(leads.isTest, false)];
-  if (f.view && f.view !== "all") parts.push(eq(leads.status, f.view as LeadStatus));
+  if (f.statuses) parts.push(f.statuses.length ? inArray(leads.status, [...f.statuses]) : sql`false`);
+  else if (f.view && f.view !== "all") parts.push(eq(leads.status, f.view as LeadStatus));
+  if (f.leadIds) parts.push(f.leadIds.length ? inArray(leads.id, [...f.leadIds]) : sql`false`);
   if (f.language) parts.push(eq(leads.language, f.language));
   if (f.sourceLabel) parts.push(eq(leads.sourceLabel, f.sourceLabel));
   if (f.sinceDays) parts.push(gte(leads.lastActivityAt, new Date(now.getTime() - f.sinceDays * 86_400_000)));
@@ -250,6 +292,13 @@ export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, 
     owner: sql`lower(coalesce(nullif(trim(concat_ws(' ', ${owner.firstName}, ${owner.lastName})), ''), ${owner.email}, ''))`,
     source: sql`lower(coalesce(${leads.sourceLabel}, ${leads.origin}::text))`,
     activity: leads.lastActivityAt,
+    // Deal value: the latest live quote's one-time total (the Deal value column; leads without a quote last).
+    value: sql`(select ${quoteVersions.oneTimeTotalMinor} from ${quotes} inner join ${quoteVersions} on ${quoteVersions.quoteId} = ${quotes.id} and ${quoteVersions.version} = ${quotes.currentVersion}
+      where ${quotes.leadId} = ${leads.id} and ${quotes.accountId} = ${leads.accountId} and ${quotes.status} not in ('cancelled', 'replaced')
+      order by ${quotes.createdAt} desc limit 1)`,
+    // Worked out per lead on the page (lib/overview/needs-groups.ts); SQL keeps the default order.
+    waiting: leads.lastActivityAt,
+    need: leads.lastActivityAt,
   };
   const [rows, [{ total }]] = await Promise.all([
     db
@@ -263,6 +312,21 @@ export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, 
     db.select({ total: count() }).from(leads).where(where),
   ]);
   return { rows, total };
+}
+
+/** Leads per status view and in all (ignores search and filters, but follows the market switcher's choice). Needs you is counted from its items. */
+export async function countLeadsByTab(db: Db, accountId: string, market: LeadMarketFilter | null = null): Promise<Record<StatusTab | "all", number>> {
+  const rows = await db
+    .select({ status: leads.status, n: count() })
+    .from(leads)
+    .where(and(eq(leads.accountId, accountId), eq(leads.isTest, false), marketWhere(leads.marketId, market)))
+    .groupBy(leads.status);
+  const out: Record<StatusTab | "all", number> = { agent_working: 0, with_team: 0, won: 0, closed: 0, all: 0 };
+  for (const r of rows) {
+    out.all += r.n;
+    out[statusTabOf(r.status)] += r.n;
+  }
+  return out;
 }
 
 /** Counts per view for the saved-view tabs (ignores search and filters, but follows the market switcher's choice). */

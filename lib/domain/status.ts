@@ -33,6 +33,18 @@ export const STATUS = {
     // Shown only (no stored status): a signed or paid order came from this quote.
     ordered: { tone: "success", icon: "check-circle" },
   },
+  // Quotes and orders V2 (Q-1): "Where it is", one pill per quote row (lib/quotes/where.ts).
+  quote_where: {
+    awaiting_approval: { tone: "warning", icon: "hourglass" },
+    quote_sent: { tone: "neutral", icon: "send" },
+    form_sent: { tone: "neutral", icon: "file-signature" },
+    ordered: { tone: "success", icon: "check-circle" },
+    expired: { tone: "neutral", icon: "calendar-x" },
+    declined: { tone: "neutral", icon: "x-circle" },
+    draft: { tone: "neutral", icon: "file-pen" },
+    replaced: { tone: "neutral", icon: "file-text" },
+    cancelled: { tone: "neutral", icon: "file-x" },
+  },
   order_form: {
     sent: { tone: "neutral", icon: "send" },
     opened: { tone: "neutral", icon: "eye" },

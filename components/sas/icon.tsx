@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, ClipboardList, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ArrowUp, ArrowDown, Globe, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, History, ArrowRight, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Globe, Hourglass, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, Trash2, History, ArrowRight, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -28,6 +28,7 @@ const ICONS = {
   "circle-dot": CircleDot,
   "circle-slash": CircleSlash,
   clock: Clock,
+  hourglass: Hourglass,
   cog: Cog,
   copy: Copy,
   download: Download,
@@ -82,6 +83,8 @@ const ICONS = {
   "chevron-up": ChevronUp,
   /** Back links (mirrors in RTL). */
   "chevron-left": ChevronLeft,
+  /** Leads rows: the row opens the lead (mirrors in RTL). */
+  "chevron-right": ChevronRight,
   "arrow-up": ArrowUp,
   "arrow-down": ArrowDown,
   globe: Globe,
@@ -112,7 +115,7 @@ const ICONS = {
 export type IconName = keyof typeof ICONS;
 
 /** Icons that point in a direction and must mirror in RTL. */
-const DIRECTIONAL: ReadonlySet<IconName> = new Set(["send", "chevron-left", "arrow-right"]);
+const DIRECTIONAL: ReadonlySet<IconName> = new Set(["send", "chevron-left", "chevron-right", "arrow-right"]);
 
 export function Icon({ name, label, className }: { name: IconName; label?: string; className?: string }) {
   const Cmp = ICONS[name];

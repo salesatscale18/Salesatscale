@@ -41,6 +41,7 @@ vi.mock("next/navigation", () => ({
 
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { confirmCallbackAction, changeCallbackAction } = await import("@/app/app/[account]/leads/[leadId]/callback-actions");
 const { runTool } = await import("@/lib/agent/tools");
 const { runBuyerTurn } = await import("@/lib/agent/turn");
@@ -220,11 +221,15 @@ describe("Callback requests (O6)", () => {
 
       as(acc);
       const html = await page(OverviewPage, { account: acc.slug });
-      expect(html).toContain("Call requested: ");
-      expect(html).toContain(`· ${item!.leadName}`);
-      expect(html).toContain("Wants to discuss the contract");
-      // O7: the lead opens on the Deal tab (phone) with the call card in view.
-      expect(html).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#callback"`);
+      // L-6: the Overview counts it under Calls, opening Leads > Needs you filtered to calls.
+      expect(html).toMatch(/data-needs-group="calls"[\s\S]*?Calls[\s\S]*?class="sas-num sas-ovn__count">\d+</);
+      expect(html).toContain(`href="/app/${acc.slug}/leads?view=needs_you&amp;need=calls"`);
+      // Leads > Needs you: what's needed, the brief, and the row opens the Deal tab at the call card (O7).
+      const list = await page(LeadsPage, { account: acc.slug }, { view: "needs_you", need: "calls" });
+      expect(list).toContain("Confirm call · ");
+      expect(list).toContain("Wants to discuss the contract");
+      expect(list).toContain(`<bdi>${item!.leadName}</bdi>`);
+      expect(list).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#callback"`);
 
       const cb = (await leadCallback(db, acc.id, c.leadId))!;
       expect((await confirmCallback(db, holder.access as never, c.leadId, cb.id)).ok).toBe(true);

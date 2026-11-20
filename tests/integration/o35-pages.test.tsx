@@ -45,6 +45,7 @@ const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbo
 const { default: PlaysPage } = await import("@/app/app/[account]/setup/playbook/plays/page");
 const { default: PlayPage } = await import("@/app/app/[account]/setup/playbook/plays/[play]/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { default: ConversationsPage } = await import("@/app/app/[account]/conversations/page");
 const { default: LeadPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowledge/page");
@@ -121,15 +122,18 @@ describe("O35 pages on the demo account", () => {
     for (const slot of ["Common reasons similar products fail", "What is different here"]) expect(tried).toContain(slot);
   });
 
-  it("Needs you: the hand-off reason on its own line under the name, and Show N more / Show less", async () => {
+  it("Needs you: Overview counts per group; Leads > Needs you gives each hand-off its reason line", async () => {
     const html = await render(OverviewPage, { account: slug });
     save("overview", html);
-    expect(text(html)).toContain(`${STATE_LEADS.upset.fullName} needs a personUpset: false night alarms, and wants a person now`);
-    expect(text(html)).toContain(`${STATE_LEADS.spendCap.fullName} needs a personAI limit reached`);
-    expect(text(html)).toContain(`Call requested`);
-    if (html.includes("data-needs-more")) {
-      expect(html).toMatch(/<span class="sas-ov__more-count">Show \d+ more<\/span><span class="sas-ov__more-less">Show less<\/span>/);
-    }
+    // L-6: one counter row per group with items, in the L-2 order.
+    const groups = [...html.matchAll(/data-needs-group="([a-z_]+)"/g)].map((m) => m[1]);
+    expect(groups[0]).toBe("person");
+    expect(groups).toContain("calls");
+    const leadsHtml = await render(LeadsPage, { account: slug }, { view: "needs_you" });
+    save("leads-needs", leadsHtml);
+    expect(text(leadsHtml)).toContain("Asked for a person\u2068Upset: false night alarms, and wants a person now\u2069");
+    expect(text(leadsHtml)).toContain("\u2068AI limit reached\u2069");
+    expect(text(leadsHtml)).toContain("Confirm call · ");
   });
 
   it("Conversations row and the lead page banner carry the same reason line", async () => {
@@ -153,7 +157,7 @@ describe("O35 pages on the demo account", () => {
   });
 
   it("the same one-line reason in all three places, for the labelled lead and the taken-over Hebrew lead", async () => {
-    const overview = await render(OverviewPage, { account: slug });
+    const needsList = await render(LeadsPage, { account: slug }, { view: "needs_you", need: "person" });
     const inbox = await render(ConversationsPage, { account: slug });
     save("conversations-all", inbox);
     const cases = [
@@ -161,9 +165,9 @@ describe("O35 pages on the demo account", () => {
       { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON },
     ];
     for (const c of cases) {
-      // Needs you: "Name needs a person" (name isolated), then the reason on its own muted one-line row
-      // (isolated, dir="auto", cut with "…" by CSS), then company and time. The same layout for every hand-off.
-      expect(overview).toContain(`<strong data-handoff-title=""><bdi>${c.lead.fullName}</bdi> needs a person</strong><span class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span><span class="sas-small">${c.lead.company ? `${c.lead.company} · ` : ""}Handed to a person · `);
+      // Leads > Needs you (L-3): "Asked for a person", then the reason as the one muted line, isolated, cut with "…" by CSS.
+      const lrow = needsList.slice(needsList.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
+      expect(lrow.slice(0, lrow.indexOf("</tr>"))).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="\u2068${c.why}\u2069">\u2068${c.why}\u2069</span>`);
       // Conversations row: the same line, one line.
       const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
       expect(row.slice(0, row.indexOf("</li>"))).toContain(`class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);

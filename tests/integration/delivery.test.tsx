@@ -247,7 +247,7 @@ describe("delivery ETA", () => {
     expect((await signForm(db, f.token, sign, {})).ok).toBe(true);
     expect(await buyer(f.token)).not.toContain("Estimated delivery");
     const orders = renderToStaticMarkup(await OrdersPage(props(acc.slug, { tab: "orders" })));
-    expect(orders).toMatch(/data-order-delivery="[^"]+"><\/td>/);
+    expect(orders).toMatch(/data-order-delivery="[^"]+">—<\/td>/);
   });
 
   it("the agent gets the estimate in check_fit and create_quote, and has one stable delivery rule", async () => {

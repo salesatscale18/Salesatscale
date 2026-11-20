@@ -6,7 +6,7 @@
  * written. Multi-row writes are atomic (db/atomic.ts).
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, ilike, inArray, max, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, max, or, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
@@ -529,9 +529,23 @@ function withSent<T extends { quote: Quote }>(row: T, sent: Set<string>): T {
 export type QuoteTab = "quotes" | "approval";
 
 /** Quotes list columns that sort on the server; default: newest first. */
-export const QUOTE_SORT_KEYS = ["quote", "lead", "one_time", "monthly", "status", "market"] as const;
+export const QUOTE_SORT_KEYS = ["quote", "lead", "one_time", "monthly", "status", "market", "created", "valid_until"] as const;
 export type QuoteSortKey = (typeof QUOTE_SORT_KEYS)[number];
-export const QUOTE_SORT_DEFAULT: TableSort<QuoteSortKey> = { key: "quote", dir: "desc" };
+export const QUOTE_SORT_DEFAULT: TableSort<QuoteSortKey> = { key: "created", dir: "desc" };
+
+/** "Created: Last N days" / "Signed: Last N days" on Quotes and orders; null = any time. */
+export const DOC_PERIODS = [7, 30, 90] as const;
+export const DOC_PERIOD_DEFAULT = 30;
+/** The period from the URL: "7" | "30" | "90" | "any"; anything else is the default (30 days). */
+export function parseDocPeriod(v: string | undefined): number | null {
+  if (v === "any") return null;
+  const n = Number(v);
+  return (DOC_PERIODS as readonly number[]).includes(n) ? n : DOC_PERIOD_DEFAULT;
+}
+/** The first moment inside a "Last N days" period (null = any time). */
+export function periodStart(days: number | null, now = new Date()): Date | null {
+  return days ? new Date(now.getTime() - days * 86_400_000) : null;
+}
 
 /**
  * Search in Quotes and orders: a quote number ("Q-1003", "1003"), an order
@@ -550,7 +564,7 @@ export function docSearchSql(q: string | undefined, numberCol: AnyPgColumn): SQL
 /** The market switcher's choice for Quotes and orders (lib/markets/selection.ts): a quote or order with no market id is the home market's. */
 export type DocMarketFilter = { id: string; isHome: boolean } | null;
 
-export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes", opts: { q?: string; sort?: TableSort<QuoteSortKey>; market?: DocMarketFilter } = {}) {
+export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quotes", opts: { q?: string; sort?: TableSort<QuoteSortKey>; market?: DocMarketFilter; since?: Date | null } = {}) {
   const sort = opts.sort ?? QUOTE_SORT_DEFAULT;
   const col: Record<QuoteSortKey, SQL | AnyPgColumn> = {
     quote: quotes.number,
@@ -559,6 +573,8 @@ export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quo
     monthly: quoteVersions.recurringTotalMinor,
     status: quotes.status,
     market: marketNameSort(markets.name, quotes.accountId),
+    created: quotes.createdAt,
+    valid_until: quoteVersions.validUntil,
   };
   const rows = await db
     .select({ quote: quotes, version: quoteVersions, lead: leads, market: { id: markets.id, name: markets.name } })
@@ -566,7 +582,7 @@ export async function listQuotes(db: Db, accountId: string, tab: QuoteTab = "quo
     .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
     .innerJoin(leads, eq(leads.id, quotes.leadId))
     .leftJoin(markets, and(eq(markets.id, quotes.marketId), eq(markets.accountId, quotes.accountId)))
-    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : []), docSearchSql(opts.q, quotes.number) ?? undefined, marketWhere(quotes.marketId, opts.market ?? null)))
+    .where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), ...(tab === "approval" ? [eq(quotes.status, "awaiting_approval")] : []), docSearchSql(opts.q, quotes.number) ?? undefined, marketWhere(quotes.marketId, opts.market ?? null), opts.since ? gte(quotes.createdAt, opts.since) : undefined))
     .orderBy(sort.dir === "asc" ? sql`${col[sort.key]} asc nulls last` : sql`${col[sort.key]} desc nulls last`, desc(quotes.createdAt))
     .limit(200);
   const sent = await sentDraftQuoteIds(db, accountId, rows.map((r) => r.quote));
@@ -579,8 +595,9 @@ export async function countAwaitingApproval(db: Db, accountId: string, market: D
   return n;
 }
 
-export async function countQuotes(db: Db, accountId: string, market: DocMarketFilter = null) {
-  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), marketWhere(quotes.marketId, market)));
+/** Quotes of real leads in the market; with `since`, only those created from then on. */
+export async function countQuotes(db: Db, accountId: string, market: DocMarketFilter = null, since: Date | null = null) {
+  const [{ n }] = await db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId)).where(and(eq(quotes.accountId, accountId), eq(leads.isTest, false), marketWhere(quotes.marketId, market), since ? gte(quotes.createdAt, since) : undefined));
   return n;
 }
 

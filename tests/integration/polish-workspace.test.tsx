@@ -144,9 +144,10 @@ describe("Polish-2+5: seller workspace", () => {
     });
 
     it("tables become stacked cards: every cell after the first names its column", async () => {
-      const leadsHtml = await page(LeadsPage(props(account.slug)));
+      const leadsHtml = await page(LeadsPage(props(account.slug, { view: "all" })));
       expect(leadsHtml).toContain("sas-table sas-table--stack");
-      expect(leadsHtml).toContain('data-label="Status"');
+      // Leads V2: Status and Owner are one column, Who's on it (UX L-3).
+      expect(leadsHtml).toContain('data-label="Who&#x27;s on it"');
       expect(unlabelledCells(leadsHtml)).toBe(0);
       const quotesHtml = await page(OrdersPage(props(account.slug)));
       expect(quotesHtml).toContain("sas-table--stack");
@@ -238,9 +239,10 @@ describe("Polish-2+5: seller workspace", () => {
       expect(css).toContain('.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft);');
     });
 
-    it("quotes: Status column, chat name first, no zero discount, Sent pill inline", async () => {
+    it("quotes: Where it is column, chat name first, no zero discount, Sent pill inline", async () => {
       const list = await page(OrdersPage(props(account.slug)));
-      expect(list).toMatch(/<th scope="col" aria-sort="none" data-sort-col="status"><a class="sas-sort"[^>]*>Status<[\s\S]*?<\/th><th scope="col" class="sas-col-minor">Order form<\/th>/);
+      // Quotes and orders V2: Status and Order form are one column, Where it is (not sortable), then Created.
+      expect(list).toMatch(/<th scope="col">Where it is<\/th><th scope="col" aria-sort="descending" class="sas-col-minor" data-sort-col="created">/);
       const detail = await page(OrdersPage(props(account.slug, { quote: ids.quote })));
       expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-id">GW-10<\/span>/);
       expect(detail).not.toMatch(/>Discount</);
@@ -259,7 +261,8 @@ describe("Polish-2+5: seller workspace", () => {
     it("leads: Add lead first with the rest under More; filters behind a Filters button; market as plain text", async () => {
       const html = await page(LeadsPage(props(account.slug, { source: "Simulated buyer" })));
       expect(html).toContain('class="sas-more"');
-      expect(html).toMatch(/for="lf-open"[^>]*>.*Filters · 1/);
+      // Leads V2 (UX L-5): one Filter button opening a sheet with every filter.
+      expect(html).toMatch(/for="lf-open"[^>]*>.*Filter · 1/);
       expect(html).not.toMatch(/class="sas-chip" data-market/);
     });
 
