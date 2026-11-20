@@ -84,11 +84,21 @@ describe("scenario checks", () => {
     expect(check("hebrew_buyer", run({ language: "he", messages: [buyer("שלום"), agent("Hello! How many fridges?")] })).result).toBe("failed");
   });
 
-  it("no approved answer: passes when lookup finds nothing and no number is invented", () => {
+  it("no approved answer (O4): passes when nothing is found, the question goes to the team silently and no number is invented", () => {
     const q = buyer("Do your sensors work at minus 40 degrees?");
     const empty = call("lookup_knowledge", { ok: true, facts: [] }, { query: "minus 40" });
-    expect(check("no_approved_answer", run({ messages: [q, agent("I don't have approved information on that. I'll check with the team.")], calls: [empty] })).result).toBe("passed");
-    expect(check("no_approved_answer", run({ messages: [q, agent("Yes, down to minus 50.")], calls: [empty] }))).toMatchObject({ result: "failed", reason: expect.stringContaining("50") });
+    const asked = call("ask_team", { ok: true, sent: true, must_have: null }, { question: "Do the sensors work at -40?", buyer_words: "minus 40 degrees", must_have: null });
+    const park = "I don't have that detail yet. What do you need it for: is it a must-have, or good to know? I'll make sure you get an exact answer on that.";
+    expect(check("no_approved_answer", run({ messages: [q, agent(park)], calls: [empty, asked] })).result).toBe("passed");
+    // Nothing sent to the team: not the new behaviour (a voice call keeps the old check until voice adds ask_team).
+    expect(check("no_approved_answer", run({ messages: [q, agent(park)], calls: [empty] })).result).toBe("failed");
+    expect(check("no_approved_answer", run({ channel: "voice", messages: [q, agent("I don't have details on that.")], calls: [empty] })).result).toBe("passed");
+    // The old hand-off, and the "Not this" replies, fail.
+    expect(check("no_approved_answer", run({ messages: [q, agent("I don't know, I'll pass you to a colleague.")], calls: [empty, call("hand_off_to_human", { ok: true })], conversationStatus: "human" })).result).toBe("failed");
+    expect(check("no_approved_answer", run({ messages: [q, agent("I've sent that to the team, let's wait for their answer.")], calls: [empty, asked] })).result).toBe("failed");
+    expect(check("no_approved_answer", run({ messages: [q, agent("Yes, down to minus 50.")], calls: [empty, asked] }))).toMatchObject({ result: "failed", reason: expect.stringContaining("50") });
+    // The team already answered it: approved information exists.
+    expect(check("no_approved_answer", run({ messages: [q, agent("Yes.")], calls: [call("ask_team", { ok: true, sent: false, answer: "Yes" })] })).result).toBe("not_yet");
     expect(check("no_approved_answer", run({ messages: [q, agent("I'll check.")], calls: [] })).result).toBe("failed");
     expect(check("no_approved_answer", run({ messages: [q, agent("Yes.")], calls: [call("lookup_knowledge", { facts: [{ topic: "Cold" }] })] })).result).toBe("not_yet");
   });

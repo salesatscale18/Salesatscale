@@ -15,16 +15,17 @@
  * model can call; left out of the trace). "follow_up" is the agreed follow-up
  * the platform scheduler sends (lib/follow-ups/scheduler.ts). "callback" tells
  * the buyer the call time the seller confirmed or changed (lib/callbacks,
- * O6). Pure: safe in client components.
+ * O6). "team_answer" is the team's answer to a question the agent sent them,
+ * sent to a buyer who went quiet (lib/team-questions, O4). Pure: safe in client components.
  */
-export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up" | "callback";
+export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up" | "callback" | "team_answer";
 
 /** The tool_calls name of a message the app wrote outside a model turn. */
 export const APP_MESSAGE_CALL = "app_message";
-const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback"];
+const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback", "team_answer"];
 
 /** Plain text the app wrote (not a quote card): shown as "Sent by the app" in seller views. */
-export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback";
+export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback" || k === "team_answer";
 
 type CallLike = { name: string; outcome: string; result: Record<string, unknown> | null | undefined };
 

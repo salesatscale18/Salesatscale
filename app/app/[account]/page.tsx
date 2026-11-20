@@ -52,6 +52,7 @@ const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | 
   form_expiring: { icon: "clock", tone: "warning" },
   follow_up_failed: { icon: "x-circle", tone: "danger" },
   callback_requested: { icon: "phone-call", tone: "neutral" },
+  team_question: { icon: "book-open", tone: "neutral" },
 };
 
 const TONE_STYLE = {
@@ -153,6 +154,12 @@ export default async function OverviewPage({ params, searchParams }: { params: P
       case "callback_requested":
         // O6: the time in the zone it was set in (the lead's market), with the agent's brief.
         return { title: t("overview.needs.callback_requested", { time: formatDueLocal(it.callAt, it.timezone), name: it.leadName }), detail: [it.company, it.brief].filter(Boolean).join(" · ") };
+      case "team_question":
+        // O4: a question to answer (not a hand-off): the lead, must-have, the buyer's own words.
+        return {
+          title: t("overview.needs.team_question", { question: it.question }),
+          detail: [who, it.mustHave === true ? t("team_question.must_have") : it.mustHave === false ? t("team_question.good_to_know") : null, it.buyerWords ? `“${it.buyerWords}”` : null].filter(Boolean).join(" · "),
+        };
     }
   };
 

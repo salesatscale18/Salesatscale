@@ -6,7 +6,7 @@
  * shape (lead events): lib/callbacks/rules.ts.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { auditLog, conversations, dealStates, leadEvents, leads, messages, sellerAccounts, toolCalls } from "@/db/schema";
@@ -20,6 +20,7 @@ import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { isLocale, t } from "@/lib/i18n";
+import { handBack, takeOver } from "@/lib/agent/conversation";
 import {
   buyerCallTime, CALLBACK_EVENT_TYPES, CALLBACK_EVENTS, checkCallTime, cleanBrief, currentCallbackOf, currentCallbacks, parseCallTime,
   type CallbackRequest,
@@ -154,6 +155,7 @@ type Access = Pick<AccountAccess, "account" | "user" | "actingAs" | "role">;
 export const mayManageCallbacks = (a: Pick<Access, "role">) => a.role === "seller_admin" || a.role === "platform_admin";
 
 export type BuyerTold = { told: true; messageId: string } | { told: false; reason: "no_conversation" | "closed" | "opted_out" | "window_closed" };
+type TellHow = "confirmed" | "changed" | "cancelled";
 export type SellerCallbackResult =
   | { ok: true; leadId: string; request: CallbackRequest; buyer: BuyerTold }
   | { ok: false; reason: "forbidden" | "not_found" | "already_confirmed" | "past" | "invalid_time" };
@@ -216,7 +218,7 @@ async function sellerSets(
  * WhatsApp 24-hour window is closed.
  */
 async function tellBuyer(
-  db: Db, accountId: string, c: CallbackRequest, at: Date, timezone: string, how: "confirmed" | "changed", transport: TwilioTransport | null, now: Date,
+  db: Db, accountId: string, c: CallbackRequest, at: Date, timezone: string, how: TellHow, transport: TwilioTransport | null, now: Date,
 ): Promise<BuyerTold> {
   if (!c.conversationId) return { told: false, reason: "no_conversation" };
   const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
@@ -228,13 +230,15 @@ async function tellBuyer(
   if (conv.status === "closed") return { told: false, reason: "closed" };
   if (conv.channel === "whatsapp" && !(await conversationWindow(db, accountId, conv.id, now)).open) return { told: false, reason: "window_closed" };
   const language = isLocale(conv.language) ? conv.language : "en";
-  const body = t(how === "confirmed" ? "buyer.app.callback_confirmed" : "buyer.app.callback_changed", { time: buyerCallTime(at, timezone, language) }, language);
+  const body = how === "cancelled"
+    ? t("buyer.app.callback_cancelled", undefined, language)
+    : t(how === "confirmed" ? "buyer.app.callback_confirmed" : "buyer.app.callback_changed", { time: buyerCallTime(at, timezone, language) }, language);
   const id = randomUUID();
   await atomic(db, (q) => [
     q.insert(messages).values({ id, accountId, conversationId: conv.id, actor: "agent", body, language, createdAt: now }),
     q.insert(toolCalls).values({
       accountId, conversationId: conv.id, messageId: id, sequence: 0, name: APP_MESSAGE_CALL, input: {},
-      result: { message_id: id, kind: "callback", callback_id: c.id, at: at.toISOString() }, outcome: "ok", createdAt: now,
+      result: { message_id: id, kind: "callback", callback_id: c.id, at: at.toISOString(), ...(how === "cancelled" ? { cancelled: true } : {}) }, outcome: "ok", createdAt: now,
     }),
     q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
   ]);
@@ -242,4 +246,95 @@ async function tellBuyer(
     await deliverText(db, transport, { accountId, conversationId: conv.id, messageId: id, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
   }
   return { told: true, messageId: id };
+}
+
+// ---------------------------------------------------------------------------
+// The seller cancels the call, and answers "How did the call go?" (UX, O6 follow-up)
+// ---------------------------------------------------------------------------
+
+/** The deal's next step was the call (callbackNextStep): it goes back to none, so "Stage now" is as without the call. */
+const isCallNextStep = (s: string | null | undefined) => !!s && /^Call (requested|confirmed) /.test(s);
+
+async function clearCallNextStep(db: Db, accountId: string, leadId: string) {
+  const [deal] = await db.select({ id: dealStates.id, nextStep: dealStates.nextStep }).from(dealStates).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, leadId)));
+  if (deal && isCallNextStep(deal.nextStep)) await db.update(dealStates).set({ nextStep: null }).where(and(eq(dealStates.id, deal.id), eq(dealStates.accountId, accountId)));
+}
+
+export type CancelCallbackResult =
+  | { ok: true; leadId: string; buyer: BuyerTold }
+  | { ok: false; reason: "forbidden" | "not_found" };
+
+/**
+ * Cancels the lead's call request (requested or confirmed): records
+ * "callback.cancelled", so the request is closed everywhere (lead page, Needs
+ * you, the agent's context); clears the deal's next step when it was the call;
+ * and tells the buyer in one app message ("We need to move our call…").
+ * Account admins only; audited.
+ */
+export async function cancelCallback(db: Db, a: Access, leadId: string, callbackId: string, transport?: TwilioTransport | null, now = new Date()): Promise<CancelCallbackResult> {
+  if (!mayManageCallbacks(a)) return { ok: false, reason: "forbidden" };
+  const accountId = a.account.id;
+  const c = await leadCallback(db, accountId, leadId, now);
+  if (!c || c.id !== callbackId) return { ok: false, reason: "not_found" };
+  await Promise.all([
+    db.insert(leadEvents).values({
+      id: randomUUID(), accountId, leadId, type: CALLBACK_EVENTS.cancelled, actor: "human", actorUserId: a.user.id, createdAt: now,
+      data: { callbackId: c.id, at: c.at.toISOString(), timezone: c.timezone },
+    }),
+    writeAudit(db, { userId: a.user.id, actingAs: a.actingAs }, { accountId, action: "callback.cancelled", targetType: "lead", targetId: leadId, details: { callbackId: c.id } }),
+    clearCallNextStep(db, accountId, leadId),
+  ]);
+  const buyer = await tellBuyer(db, accountId, c, c.at, c.timezone, "cancelled", transport === undefined ? defaultTransport() : transport, now);
+  return { ok: true, leadId, buyer };
+}
+
+/**
+ * The confirmed call whose card has gone (CONFIRMED_SHOWN_MS after its time)
+ * and that waits for "How did the call go?". Null when there is none or it
+ * was answered.
+ */
+export async function callbackAfterCall(db: Db, accountId: string, leadId: string, now = new Date()): Promise<CallbackRequest | null> {
+  const rows = await db.select({ type: leadEvents.type, leadId: leadEvents.leadId, createdAt: leadEvents.createdAt, data: leadEvents.data }).from(leadEvents)
+    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), inArray(leadEvents.type, [...CALLBACK_EVENT_TYPES])));
+  const c = currentCallbackOf(rows);
+  if (!c || c.status !== "confirmed" || c.afterCall || isActiveCallback(c, now)) return null;
+  return c;
+}
+
+export type AfterCallChoice = "agent" | "seller";
+export type AfterCallResult =
+  | { ok: true; leadId: string; choice: AfterCallChoice }
+  | { ok: false; reason: "forbidden" | "not_found" | "closed" | "opted_out" };
+
+/**
+ * "How did the call go?": "agent" keeps the chat with the agent, or hands it
+ * back when a person holds it; "seller" takes the conversation over with the
+ * same service as Take over, so the agent pauses. Records the choice, which
+ * removes the prompt. Account admins only, scoped by account.
+ */
+export async function answerAfterCall(db: Db, a: Access, leadId: string, callbackId: string, choice: AfterCallChoice, now = new Date()): Promise<AfterCallResult> {
+  if (!mayManageCallbacks(a)) return { ok: false, reason: "forbidden" };
+  const accountId = a.account.id;
+  const c = await callbackAfterCall(db, accountId, leadId, now);
+  if (!c || c.id !== callbackId) return { ok: false, reason: "not_found" };
+  const actor: Actor = { userId: a.user.id, actingAs: a.actingAs };
+  // The call's conversation, else the lead's latest.
+  const [conv] = c.conversationId
+    ? await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.id, c.conversationId), eq(conversations.accountId, accountId), eq(conversations.leadId, leadId)))
+    : await db.select({ id: conversations.id }).from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId))).orderBy(desc(conversations.createdAt)).limit(1);
+  if (conv) {
+    const r = choice === "seller" ? await takeOver(db, actor, accountId, conv.id, now) : await handBack(db, actor, accountId, conv.id, now);
+    // The agent may stay on a closed or opted-out chat: nothing to hand back. Taking it over needs it open.
+    if (!r.ok && (choice === "seller" || r.reason === "not_found")) return { ok: false, reason: r.reason };
+  }
+  await Promise.all([
+    db.insert(leadEvents).values({
+      id: randomUUID(), accountId, leadId, type: choice === "agent" ? CALLBACK_EVENTS.afterAgent : CALLBACK_EVENTS.afterSeller, actor: "human", actorUserId: a.user.id, createdAt: now,
+      data: { callbackId: c.id, at: c.at.toISOString(), timezone: c.timezone, conversationId: conv?.id ?? null },
+    }),
+    writeAudit(db, actor, { accountId, action: `callback.after_${choice}`, targetType: "lead", targetId: leadId, details: { callbackId: c.id } }),
+    // The call is over: the deal's next step no longer says it.
+    clearCallNextStep(db, accountId, leadId),
+  ]);
+  return { ok: true, leadId, choice };
 }

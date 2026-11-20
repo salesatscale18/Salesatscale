@@ -17,6 +17,8 @@ import { defaultPlaybook } from "./playbook";
 import { askedCount, askedKey, isReservedFieldKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "./core/facts";
 import { applyObjection, objectionAttemptsOf, type ObjectionInput } from "./core/objections";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
+import { deliverTeamAnswers, openTeamQuestions, recordTeamAnswer } from "@/lib/team-questions/service";
+import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 
 /** The agent model for new versions: AGENT_MODEL, else the role default (lib/ai/models.ts). */
 export const DEFAULT_MODEL = modelFor("agent");
@@ -312,50 +314,87 @@ export async function listTopics(db: Db, accountId: string): Promise<TopicSummar
   return [...byTopic.values()].sort((a, b) => a.topic.localeCompare(b.topic));
 }
 
-export type UnansweredQuestion = { question: string; lastAskedAt: Date; times: number };
+/** A conversation that sent the question to the team (O4, ask_team): the lead, the buyer's words and whether it is a must-have. */
+export type QuestionAsk = {
+  leadId: string; leadName: string; company: string | null; conversationId: string; isTest: boolean;
+  buyerWords: string; mustHave: boolean | null; askedAt: Date;
+};
+export type UnansweredQuestion = { question: string; lastAskedAt: Date; times: number; asks: QuestionAsk[] };
 
 /**
- * Questions the agent looked up and found no approved fact for (tool calls
- * `lookup_knowledge` with an empty result, test-lab conversations included),
- * newest first, one per question text. A question drops off once a fact
- * exists whose source is "Buyer question: <same text>" (answerQuestion).
+ * Questions the agent could not answer, newest first, one per question text:
+ * those it sent to the team with ask_team (O4: with the lead, the buyer's
+ * words and must-have), and those it looked up and found no approved fact for
+ * (tool calls `lookup_knowledge` with an empty result, test-lab conversations
+ * included). An empty lookup that an ask_team of the same conversation stands
+ * for is not listed twice. A question drops off once a fact exists whose
+ * source is "Buyer question: <same text>" (answerQuestion).
  */
-export async function unansweredQuestions(db: Db, accountId: string, limit = 10): Promise<UnansweredQuestion[]> {
-  const calls = await db
-    .select({ input: toolCalls.input, createdAt: toolCalls.createdAt })
-    .from(toolCalls)
-    .where(and(
-      eq(toolCalls.accountId, accountId), eq(toolCalls.name, "lookup_knowledge"), eq(toolCalls.outcome, "ok"),
-      sql`${toolCalls.result} -> 'facts' = '[]'::jsonb`,
-    ))
-    .orderBy(desc(toolCalls.createdAt))
-    .limit(500);
-  if (calls.length === 0) return [];
+export async function unansweredQuestions(db: Db, accountId: string, limit = 10, now = new Date()): Promise<UnansweredQuestion[]> {
+  const [calls, asks] = await Promise.all([
+    db
+      .select({ input: toolCalls.input, createdAt: toolCalls.createdAt, conversationId: toolCalls.conversationId })
+      .from(toolCalls)
+      .where(and(
+        eq(toolCalls.accountId, accountId), eq(toolCalls.name, "lookup_knowledge"), eq(toolCalls.outcome, "ok"),
+        sql`${toolCalls.result} -> 'facts' = '[]'::jsonb`,
+      ))
+      .orderBy(desc(toolCalls.createdAt))
+      .limit(500),
+    openTeamQuestions(db, accountId, now),
+  ]);
+  if (calls.length === 0 && asks.length === 0) return [];
   const answered = new Set(
     (await db.select({ s: knowledgeFacts.sourceLabel }).from(knowledgeFacts)
       .where(and(eq(knowledgeFacts.accountId, accountId), like(knowledgeFacts.sourceLabel, `${QUESTION_PREFIX}%`))))
       .map((r) => answeredQuestionKey(r.s))
       .filter((k): k is string => !!k),
   );
+  const covered = new Set(asks.flatMap((a) => a.lookups.map((k) => `${a.conversationId}|${k}`)));
+  const items: { question: string; key: string; at: Date; ask: QuestionAsk | null }[] = [
+    ...asks.map((a) => ({
+      question: a.question, key: a.key, at: a.askedAt,
+      ask: { leadId: a.leadId, leadName: a.leadName, company: a.company, conversationId: a.conversationId, isTest: a.isTest, buyerWords: a.buyerWords, mustHave: a.mustHave, askedAt: a.askedAt },
+    })),
+    ...calls.flatMap((c) => {
+      const question = typeof c.input?.query === "string" ? c.input.query.replace(/\s+/g, " ").trim() : "";
+      const key = normalizeQuestion(question);
+      return key && !covered.has(`${c.conversationId}|${key}`) ? [{ question, key, at: c.createdAt, ask: null }] : [];
+    }),
+  ].sort((a, b) => b.at.getTime() - a.at.getTime());
   const out = new Map<string, UnansweredQuestion>();
-  for (const c of calls) {
-    const question = typeof c.input?.query === "string" ? c.input.query.replace(/\s+/g, " ").trim() : "";
-    const key = normalizeQuestion(question);
-    if (!key || answered.has(key)) continue;
-    const seen = out.get(key);
-    if (seen) seen.times += 1;
-    else out.set(key, { question: question.slice(0, 300), lastAskedAt: c.createdAt, times: 1 });
+  for (const it of items) {
+    if (!it.key || answered.has(it.key)) continue;
+    const seen = out.get(it.key);
+    if (seen) {
+      seen.times += 1;
+      if (it.ask) seen.asks.push(it.ask);
+    } else out.set(it.key, { question: it.question.slice(0, 300), lastAskedAt: it.at, times: 1, asks: it.ask ? [it.ask] : [] });
   }
   return [...out.values()].slice(0, limit);
 }
 
-/** A person answers an unanswered question: the answer becomes an approved fact sourced to the question. */
-export async function answerQuestion(db: Db, actor: Actor, accountId: string, a: { question: string; answer: string; topic?: string }) {
+/**
+ * A person answers an unanswered question: the answer becomes an approved
+ * fact sourced to the question. O4: each conversation that sent it to the
+ * team gets the answer (the agent's context), and a buyer who went quiet gets
+ * it as a message now, inside contact hours, or later from the scheduler.
+ */
+export async function answerQuestion(
+  db: Db, actor: Actor, accountId: string, a: { question: string; answer: string; topic?: string },
+  opts: { transport?: TwilioTransport | null; now?: Date } = {},
+) {
   const question = a.question.replace(/\s+/g, " ").trim();
   const answer = a.answer.trim();
   if (!normalizeQuestion(question) || !answer) return null;
   const fact = await addFact(db, actor, accountId, { topic: a.topic?.trim() || "General", statement: answer, sourceLabel: questionSourceLabel(question), status: "approved" });
   await writeAudit(db, actor, { accountId, action: "knowledge.question_answered", targetType: "knowledge_fact", targetId: fact.id, details: { question: question.slice(0, 200) } });
+  const now = opts.now ?? new Date();
+  const answers = await recordTeamAnswer(db, accountId, { question, answer, factId: fact.id, userId: actor.userId }, now);
+  if (answers.length) {
+    // Best effort: the scheduler retries whatever is not delivered now.
+    await deliverTeamAnswers(db, accountId, answers, opts.transport === undefined ? defaultTransport() : opts.transport, now).catch(() => undefined);
+  }
   return fact;
 }
 

@@ -8,6 +8,7 @@ import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notI
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import { requestedCallbacks } from "@/lib/callbacks/service";
+import { openTeamQuestions } from "@/lib/team-questions/service";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
 import {
@@ -32,6 +33,8 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
   /** O6: the agent took a time for a call; the seller confirms or changes it. `timezone` is the zone the time was set in. */
   | { kind: "callback_requested"; callbackId: string; callAt: Date; timezone: string; brief: string }
+  /** O4: a question the agent sent to the team (ask_team); answered in Knowledge. The chat is not paused. */
+  | { kind: "team_question"; question: string; buyerWords: string; mustHave: boolean | null; conversationId: string }
 );
 
 export type NeedsYouKind = NeedsYouItem["kind"];
@@ -105,8 +108,8 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     // An agreed follow-up that could not be sent (lib/follow-ups): someone should write to the buyer.
     failedFollowUps(db, accountId, now),
   ]);
-  // A call request waiting for the seller (lib/callbacks, O6).
-  const callbacks = await requestedCallbacks(db, accountId, now);
+  // A call request waiting for the seller (lib/callbacks, O6), and questions sent to the team (lib/team-questions, O4).
+  const [callbacks, questions] = await Promise.all([requestedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
 
   const items: NeedsYouItem[] = [];
   const ref = (r: LeadRef): LeadRef => ({ leadId: r.leadId, leadName: r.leadName, company: r.company, marketId: r.marketId });
@@ -149,6 +152,12 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       callbackId: c.id, callAt: c.at, timezone: c.timezone, brief: c.brief,
     });
   }
+  for (const q of questions) {
+    items.push({
+      leadId: q.leadId, leadName: q.leadName, company: q.company, marketId: q.marketId, kind: "team_question", id: `team_question:${q.conversationId}:${q.key}`, at: q.askedAt,
+      question: q.question, buyerWords: q.buyerWords, mustHave: q.mustHave, conversationId: q.conversationId,
+    });
+  }
   return items.sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id));
 }
 
@@ -184,8 +193,8 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
     db.select({ n: count() }).from(followUps).innerJoin(leads, eq(leads.id, followUps.leadId)).where(failedFollowUpWhere(accountId, now)),
   ]);
   // Call requests are folded from lead events (lib/callbacks), so they are counted from the same read as the list.
-  const c = (await requestedCallbacks(db, accountId, now)).length;
-  return a.n + h.n + o.n + f.n + u.n + c;
+  const [c, q] = await Promise.all([requestedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
+  return a.n + h.n + o.n + f.n + u.n + c.length + q.length;
 }
 
 /** needsYouCount at the current time, cached per request (the nav badge in the layout). */
@@ -198,6 +207,9 @@ export function needsYouHref(base: string, item: NeedsYouItem): string {
     case "follow_up_failed":
     case "callback_requested":
       return `${base}/leads/${item.leadId}`;
+    case "team_question":
+      // Knowledge's answer panel for this question (O4).
+      return `${base}/setup/knowledge?${new URLSearchParams({ panel: "answer", question: item.question }).toString()}`;
     case "quote_approval":
       return `${base}/orders?tab=approval&quote=${item.quoteId}`;
     case "bank_transfer":

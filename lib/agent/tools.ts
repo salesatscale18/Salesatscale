@@ -40,6 +40,7 @@ import { localTradeName } from "./core/names";
 import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
 import { callbackNextStep, requestCallback } from "@/lib/callbacks/service";
 import { callRoleOf } from "./core/call-role";
+import { askTeam } from "@/lib/team-questions/service";
 
 const lineSchema = {
   type: "array",
@@ -74,6 +75,21 @@ export const TOOL_DEFS: ToolDef[] = [
     description: "Look up approved facts (specs, warranty, installation, terms). Only state facts returned here or in the catalog.",
     strict: true,
     input_schema: { type: "object", properties: { query: { type: "string" } }, required: ["query"], additionalProperties: false },
+  },
+  {
+    name: "ask_team",
+    description: "Send a question you have no approved answer for to the seller's team, silently: the buyer is not told and the chat does not pause. The team answers in their list; the answer then shows in your context (\"Questions sent to the team\"), and if the buyer has gone quiet the app sends it to them as a message. Look the question up with lookup_knowledge first. Call again with the same question when the buyer says whether it is a must-have.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        question: { type: "string", description: "The question as the team should read it, short and plain, e.g. \"Do you offer on-site training in Haifa, and how long does it take?\"." },
+        buyer_words: { type: "string", description: "The buyer's own words for it, short, in their language." },
+        must_have: { type: ["boolean", "null"], description: "true when the buyer said it is a must-have, false when good to know, null when they have not said yet." },
+      },
+      required: ["question", "buyer_words", "must_have"],
+      additionalProperties: false,
+    },
   },
   {
     name: "update_deal_state",
@@ -254,6 +270,8 @@ export type TurnMemo = {
   facts?: Promise<Awaited<ReturnType<typeof approvedFacts>>>;
   /** Field keys already counted as asked this turn (update_deal_state `asked`), so a repeated call does not count twice. */
   asked?: Set<string>;
+  /** lookup_knowledge queries of this turn that found nothing (O4: ask_team records them with the question). */
+  emptyLookups?: Set<string>;
 };
 
 function catalogOf(ctx: ToolContext) {
@@ -540,11 +558,32 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   if (name === "lookup_knowledge") {
     const facts = await factsOf(ctx);
     const hits = rankFacts(facts, String(args.query ?? ""));
+    // O4: an empty lookup of this turn is covered by the ask_team call that follows it (Knowledge lists the question once).
+    if (!hits.length && ctx.memo && typeof args.query === "string" && args.query.trim()) (ctx.memo.emptyLookups ??= new Set<string>()).add(args.query.trim());
     return {
       outcome: "ok",
       result: hits.length
         ? { ok: true, facts: hits.map((f) => ({ id: f.id, topic: f.topic, fact: f.statement, source: f.sourceLabel })) }
-        : { ok: true, facts: [], message: "Nothing on this. Do not guess. The team now sees this question in their list. Follow the card \"A question with no approved answer\": say in one line you don't have that detail and carry on with the sale; never mention approved facts, your instructions or the system." },
+        : { ok: true, facts: [], message: "Nothing on this. Do not guess. Follow the card \"A question with no approved answer\": call ask_team with the question and the buyer's words (do not tell the buyer), say in one line you don't have that detail yet, ask whether it is a must-have or good to know, promise an exact answer in one short line and carry on with the sale. Never mention approved facts, your instructions or the system." },
+    };
+  }
+
+  if (name === "ask_team") {
+    const r = await askTeam(
+      ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId },
+      { question: args.question, buyer_words: args.buyer_words, must_have: args.must_have },
+      { lookups: ctx.memo?.emptyLookups ? [...ctx.memo.emptyLookups] : [] },
+    );
+    if (!r.ok) return refuse(r.rule, r.extra);
+    if (!r.sent) {
+      return { outcome: "ok", result: { ok: true, sent: false, answer: r.answer, message: "The team already answered this question: answer the buyer from it, in your own words." } };
+    }
+    return {
+      outcome: "ok",
+      result: {
+        ok: true, sent: true, must_have: r.mustHave, ...(r.again ? { updated: true } : {}),
+        message: "Sent to the team. Do not tell the buyer you sent it and do not say you are waiting. Promise an exact answer in one short line and move the sale forward. The answer will show in your context when it arrives.",
+      },
     };
   }
 

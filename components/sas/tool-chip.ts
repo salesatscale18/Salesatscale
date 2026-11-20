@@ -17,6 +17,7 @@ export const TOOL_ICON: Record<string, IconName> = {
   create_quote: "file-text",
   schedule_follow_up: "clock",
   request_callback: "phone-call",
+  ask_team: "book-open",
   record_opt_out: "x-circle",
 };
 

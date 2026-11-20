@@ -38,6 +38,12 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "callback.requested": "phone-call",
   "callback.confirmed": "check-circle",
   "callback.changed": "calendar",
+  "callback.cancelled": "phone-off",
+  "callback.after_agent": "sparkles",
+  "callback.after_seller": "user",
+  "team_question.asked": "book-open",
+  "team_question.answered": "check-circle",
+  "team_question.delivered": "send",
 };
 
 /** The icon of one event; `simulator` marks a conversation started on the buyer simulator. Unknown types fall back to the gear. */

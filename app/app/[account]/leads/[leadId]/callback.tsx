@@ -4,7 +4,7 @@ import { DateField } from "@/components/sas/date-field";
 import type { CallbackRequest } from "@/lib/callbacks/rules";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
 import { t, type MessageKey } from "@/lib/i18n";
-import { changeCallbackAction, confirmCallbackAction } from "./callback-actions";
+import { afterCallAction, cancelCallbackAction, changeCallbackAction, confirmCallbackAction } from "./callback-actions";
 
 /** "YYYY-MM-DD" and "HH:MM" of an instant in a time zone (the Change time fields' starting values). */
 function localParts(at: Date, timezone: string): { date: string; time: string } {
@@ -13,7 +13,7 @@ function localParts(at: Date, timezone: string): { date: string; time: string } 
   return { date: `${g("year")}-${g("month")}-${g("day")}`, time: `${g("hour")}:${g("minute")}` };
 }
 
-const NOTICE: Record<string, MessageKey> = { confirmed: "callback.notice.confirmed", changed: "callback.notice.changed" };
+const NOTICE: Record<string, MessageKey> = { confirmed: "callback.notice.confirmed", changed: "callback.notice.changed", cancelled: "callback.notice.cancelled" };
 const ERROR: Record<string, MessageKey> = {
   forbidden: "callback.error.forbidden", not_found: "callback.error.not_found", already_confirmed: "callback.error.already_confirmed",
   past: "callback.error.past", invalid_time: "callback.error.invalid_time",
@@ -83,8 +83,61 @@ export function CallbackPanel({ slug, leadId, request, canManage, notice, error,
                   <div><button type="submit" className={buttonClass("secondary", "sm")} data-testid="callback-change-submit">{t("callback.change_submit")}</button></div>
                 </form>
               </details>
+              {/* Cancel call, with a confirm step: the request closes and the buyer is told in the chat. */}
+              <details data-testid="callback-cancel">
+                <summary className="sas-small">{t("callback.cancel")}</summary>
+                <form action={cancelCallbackAction} className="sas-stack-2" style={{ paddingBlockStart: 8 }}>
+                  {hidden}
+                  <span className="sas-small">{t("callback.cancel_confirm")}</span>
+                  <div><button type="submit" className={buttonClass("danger", "sm")} data-testid="callback-cancel-submit">{t("callback.cancel_submit")}</button></div>
+                </form>
+              </details>
             </div>
           ) : null}
+        </>
+      ) : null}
+    </section>
+  );
+}
+
+const AFTER_NOTICE: Record<string, MessageKey> = { agent: "callback.after.notice_agent", seller: "callback.after.notice_seller" };
+const AFTER_ERROR: Record<string, MessageKey> = {
+  forbidden: "callback.error.forbidden", not_found: "callback.error.not_found", closed: "callback.after.error_closed", opted_out: "callback.after.error_opted_out",
+};
+
+/**
+ * After the call (UX, O6 follow-up): once the call card has gone (two hours
+ * after the call time), "How did the call go?" stays on the lead page until
+ * answered: "Hand back to the agent" or "I'm handling this deal" (the seller
+ * takes over the conversation, so the agent pauses). Admins only.
+ */
+export function AfterCallPrompt({ slug, leadId, call, canManage, notice, error }: {
+  slug: string; leadId: string; call: CallbackRequest | null; canManage: boolean; notice?: string; error?: string;
+}) {
+  const shownNotice = notice && AFTER_NOTICE[notice] ? AFTER_NOTICE[notice] : null;
+  const shownError = error && AFTER_ERROR[error] ? AFTER_ERROR[error] : null;
+  if (!(call && canManage) && !shownNotice && !shownError) return null;
+  return (
+    <section id="after-call" aria-labelledby="ac-h" className="sas-stack-2" data-testid="after-call" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
+      <h2 id="ac-h" className="sas-group-label" style={{ padding: "16px 0 0" }}>{t("callback.after.title")}</h2>
+      {shownNotice ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t(shownNotice)}</span></div> : null}
+      {shownError ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(shownError)}</span></div> : null}
+      {call && canManage ? (
+        <>
+          <span className="sas-small">{t("callback.after.hint", { time: formatDueLocal(call.at, call.timezone) })}</span>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+            {(["agent", "seller"] as const).map((choice) => (
+              <form key={choice} action={afterCallAction}>
+                <input type="hidden" name="slug" value={slug} />
+                <input type="hidden" name="leadId" value={leadId} />
+                <input type="hidden" name="callbackId" value={call.id} />
+                <input type="hidden" name="choice" value={choice} />
+                <button type="submit" className={buttonClass(choice === "agent" ? "secondary" : "takeover", "sm")} data-testid={`after-call-${choice}`}>
+                  <Icon name={choice === "agent" ? "sparkles" : "user"} />{t(choice === "agent" ? "callback.after.agent" : "callback.after.seller")}
+                </button>
+              </form>
+            ))}
+          </div>
         </>
       ) : null}
     </section>

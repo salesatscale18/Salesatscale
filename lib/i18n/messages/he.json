@@ -285,5 +285,8 @@
   "buyer.copied": "הועתק",
   "buyer.bank_name": "בנק",
   "buyer.app.callback_confirmed": "השיחה שלך נקבעה ל{time}. עד אז אני כאן לכל שאלה.",
-  "buyer.app.callback_changed": "הצוות העביר את השיחה שלך ל{time}. אם המועד לא מתאים, כתבו לי מועד אחר."
+  "buyer.app.callback_changed": "הצוות העביר את השיחה שלך ל{time}. אם המועד לא מתאים, כתבו לי מועד אחר.",
+  "buyer.app.callback_cancelled": "אנחנו צריכים להזיז את השיחה שלנו. נציע כאן מועד חדש.",
+  "buyer.app.team_answer": "היי {name}, לגבי השאלה שלך \"{question}\": {answer}",
+  "buyer.app.team_answer_plain": "לגבי השאלה שלך \"{question}\": {answer}"
 }

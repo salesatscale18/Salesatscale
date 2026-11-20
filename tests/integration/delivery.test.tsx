@@ -267,6 +267,6 @@ describe("delivery ETA", () => {
     const prompt = stableSystemPrompt(draft.playbook, { tradeName: "Polar", currency: "ILS", languages: ["en"] });
     expect(prompt).toContain("never promise an exact date");
     expect(prompt).toContain('hand off with reason "delivery deadline"');
-    expect(prompt).toContain("lookup_knowledge so the seller sees it");
+    expect(prompt).toContain("look the question up with lookup_knowledge and, when nothing is found, send it to the team with ask_team");
   });
 });

@@ -9,6 +9,7 @@ import { appDb } from "@/lib/auth/account";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { cronAuthorized } from "@/lib/follow-ups/cron-auth";
 import { runDueFollowUps } from "@/lib/follow-ups/scheduler";
+import { runTeamAnswers } from "@/lib/team-questions/service";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -18,7 +19,9 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const summary = await runDueFollowUps(appDb, defaultTransport());
+  // O4: the team's answers to questions the agent sent them, to buyers who went quiet.
+  const teamAnswers = await runTeamAnswers(appDb, defaultTransport());
   // Counts only: never names, numbers or message text in the log.
-  console.info("[follow-ups] run", JSON.stringify(summary));
-  return NextResponse.json({ ok: true, ...summary });
+  console.info("[follow-ups] run", JSON.stringify({ ...summary, teamAnswers }));
+  return NextResponse.json({ ok: true, ...summary, teamAnswers });
 }

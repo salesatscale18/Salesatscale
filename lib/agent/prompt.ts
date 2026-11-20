@@ -75,7 +75,7 @@ A conversation ends well with ${outcomes || "the buyer's question answered"}.
 - Fields marked "filled in the order form" are filled in by the buyer in the order form. Record one when the buyer mentions it; do not ask for it in chat, unless send_order_form is refused and names it as missing.
 - Before recommending products, look them up with search_catalog; check combinations with check_fit before quoting.
 - Answer factual questions only from lookup_knowledge results or the catalog. If the information is not there, say you don't have details on that and use the card "A question with no approved answer"; never guess specs, prices, warranty or delivery terms.
-- Delivery: check_fit and create_quote return a delivery estimate. Give delivery only from that estimate, as dates in the buyer's language, always with "about" or "estimated"; never promise an exact date. In the close, say "by about" and the last date of the estimated range (for example "by about 9 December"); when the buyer asks about delivery, give the range (for example "around 3–9 December"). If the buyer needs delivery before the range starts, do not agree: offer to check with the team and hand off with reason "delivery deadline". If it is not set, say you'll confirm the delivery time with the team and look the question up with lookup_knowledge so the seller sees it; never invent a time frame.
+- Delivery: check_fit and create_quote return a delivery estimate. Give delivery only from that estimate, as dates in the buyer's language, always with "about" or "estimated"; never promise an exact date. In the close, say "by about" and the last date of the estimated range (for example "by about 9 December"); when the buyer asks about delivery, give the range (for example "around 3–9 December"). If the buyer needs delivery before the range starts, do not agree: offer to check with the team and hand off with reason "delivery deadline". If it is not set, say you'll confirm the delivery time with the team, look the question up with lookup_knowledge and, when nothing is found, send it to the team with ask_team; never invent a time frame.
 - Prices come only from tools, from the price list of the buyer's market. Never state a price, total or discount you did not get from search_catalog, check_fit or create_quote.
 - An item can have a one-time price, a recurring price (per month or per year), or both. Say which is which. An item marked as not sold in the buyer's market is not available to them: do not offer it.
 - Some items (such as setup or installation fees) are added to a quote automatically. The quote shows them; explain one when the buyer asks about it.
@@ -126,6 +126,11 @@ export type TurnExtra = {
   followUp?: { dueLocal: string; topic: string | null } | null;
   /** The buyer's open call request (O6, lib/callbacks): its time in the lead's zone and whether the team confirmed it. */
   callback?: { timeLocal: string; confirmed: boolean } | null;
+  /**
+   * Questions this conversation sent to the team and the team's answers (O4,
+   * lib/team-questions teamQuestionsContext): a ready block, shown next to the open objection.
+   */
+  teamQuestions?: string | null;
   /** "voice": a live call (lib/voice/instructions.ts). Default: chat, unchanged. */
   channel?: PromptChannel;
 };
@@ -155,6 +160,8 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     `## Known so far\n${known}`,
     // The open objection with its card and the steps already used (O1), next to "Known so far".
     openObjectionText(deal?.objections, p, objectionAttemptsOf(p)),
+    // O4: "Answer from the team to the buyer's question: …" and the questions still open with the team.
+    extra.teamQuestions ?? "",
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",
     extra.followUp
       ? `Follow-up scheduled: you write to the buyer on ${extra.followUp.dueLocal}${extra.followUp.topic ? ` about ${extra.followUp.topic}` : ""}. If the buyer asks for another time, call schedule_follow_up again.`

@@ -8,7 +8,7 @@ import { SetupSteps } from "@/components/sas/nav";
 import { ConfirmDelete, ListTable, ListToolbar, RowMenu, SidePanel, SortableTh, type RowMenuItem } from "@/components/sas/list-kit";
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { listFacts, listTopics, unansweredQuestions } from "@/lib/agent/service";
+import { listFacts, listTopics, unansweredQuestions, type QuestionAsk } from "@/lib/agent/service";
 import { locateEvidence, openContradictions, sourceGaps, type EvidenceLink } from "@/lib/pipeline/service";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -61,8 +61,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   // Buyers' questions first, then questions the sources do not answer (same text once).
   const askedKeys = new Set(asked.map((q) => q.question.toLowerCase()));
   const questions = [
-    ...asked.map((q) => ({ question: q.question, times: q.times, lastAskedAt: q.lastAskedAt as Date | null, topic: null as string | null })),
-    ...gaps.filter((g) => !askedKeys.has(g.question.toLowerCase())).map((g) => ({ question: g.question, times: 0, lastAskedAt: null as Date | null, topic: g.topic })),
+    ...asked.map((q) => ({ question: q.question, times: q.times, lastAskedAt: q.lastAskedAt as Date | null, topic: null as string | null, asks: q.asks })),
+    ...gaps.filter((g) => !askedKeys.has(g.question.toLowerCase())).map((g) => ({ question: g.question, times: 0, lastAskedAt: null as Date | null, topic: g.topic, asks: [] as QuestionAsk[] })),
   ];
   const links = await locateEvidence(appDb, account.id, account.slug, allFacts.filter((f) => f.sourceId && f.sourceLocator).map((f) => ({ sourceId: f.sourceId!, locator: f.sourceLocator! })));
   // Facts in an open contradiction wait for the seller's choice: "Approve all" leaves them out.
@@ -106,7 +106,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
     </>
   );
   const editing = panel && panel !== "new" && panel !== "answer" ? allFacts.find((f) => f.id === panel) ?? null : null;
-  const answering = panel === "answer" ? questions.find((q) => q.question === firstParam(sp, "question")) ?? (firstParam(sp, "question") ? { question: firstParam(sp, "question")!.slice(0, 300), times: 0, lastAskedAt: null, topic: null } : null) : null;
+  const answering = panel === "answer" ? questions.find((q) => q.question === firstParam(sp, "question")) ?? (firstParam(sp, "question") ? { question: firstParam(sp, "question")!.slice(0, 300), times: 0, lastAskedAt: null, topic: null, asks: [] as QuestionAsk[] } : null) : null;
   // "Save and answer next": the next open question after this one (wrapping round), while another remains.
   const answeringAt = answering ? questions.findIndex((q) => q.question === answering.question) : -1;
   const nextQuestion = answering
@@ -376,7 +376,10 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                 <tbody>
                   {questions.map((q) => (
                     <tr key={q.question} data-current={answering?.question === q.question ? "" : undefined}>
-                      <td style={{ overflowWrap: "anywhere", whiteSpace: "normal" }} dir="auto">{q.question}</td>
+                      <td style={{ overflowWrap: "anywhere", whiteSpace: "normal" }}>
+                        <span dir="auto">{q.question}</span>
+                        {q.asks.length ? <AskedBy asks={q.asks} base={base} /> : null}
+                      </td>
                       <td data-label={t("knowledge.questions.col_asked")} className="sas-small">
                         {q.times === 0 ? t("knowledge.questions.from_sources") : (
                           <>
@@ -467,7 +470,9 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
               <strong dir="auto" style={{ overflowWrap: "anywhere" }} data-answer-question="">{answering.question}</strong>
               {answering.times > 1 ? <span className="sas-hint">{t("knowledge.questions.times", { n: answering.times })}</span> : null}
               {answering.times === 0 && answering.topic ? <span className="sas-hint">{t("knowledge.questions.from_sources")}</span> : null}
+              {answering.asks.length ? <AskedBy asks={answering.asks} base={base} /> : null}
             </div>
+            {answering.asks.length ? <span className="sas-small">{t("knowledge.questions.answer_goes_back")}</span> : null}
             {/* R5-11: Topic starts empty (as in Add fact) unless the question or the side list gives one; "General" is not a real topic. */}
             {topicInput("kq-topic", "q.0.topic", answering.topic ?? current?.topic ?? "")}
             <div className="sas-input-group">
@@ -479,5 +484,30 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
         </SidePanel>
       ) : null}
     </main>
+  );
+}
+
+/** How many buyers' lines a question shows before "+N more". */
+const ASKS_SHOWN = 2;
+
+/**
+ * O4: who sent the question to the team (ask_team): the lead (linked; a
+ * test-lab chat says so), must-have or good to know, and the buyer's own
+ * words. The chat was not paused; answering sends the answer back to it.
+ */
+function AskedBy({ asks, base }: { asks: QuestionAsk[]; base: string }) {
+  const shown = asks.slice(0, ASKS_SHOWN);
+  return (
+    <span className="sas-stack-2" style={{ gap: 2, marginBlockStart: 4 }} data-asked-by="">
+      {shown.map((a) => (
+        <span key={`${a.conversationId}`} className="sas-small" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0 }} data-ask="">
+          {a.isTest ? <span>{t("knowledge.questions.test_chat")}</span> : <a href={`${base}/leads/${a.leadId}`}>{a.leadName}</a>}
+          {a.mustHave === true ? <span className="sas-chip sas-chip--plain" data-must-have="yes">{t("team_question.must_have")}</span> : null}
+          {a.mustHave === false ? <span className="sas-chip sas-chip--plain" data-must-have="no">{t("team_question.good_to_know")}</span> : null}
+          {a.buyerWords ? <span dir="auto" style={{ overflowWrap: "anywhere" }}>“{a.buyerWords}”</span> : null}
+        </span>
+      ))}
+      {asks.length > ASKS_SHOWN ? <span className="sas-small">{t("knowledge.questions.more_asks", { n: asks.length - ASKS_SHOWN })}</span> : null}
+    </span>
   );
 }

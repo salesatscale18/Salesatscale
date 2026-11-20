@@ -19,6 +19,7 @@ export const TRACE_LABEL: Record<string, string> = {
   record_opt_out: "lead.opt_out",
   schedule_follow_up: "follow_up.schedule",
   request_callback: "callback.request",
+  ask_team: "team.ask",
 };
 
 export type TraceLine = { label: string; sent: string; got: string; missing: string[] };
@@ -89,6 +90,10 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
     case "request_callback":
       sent = `${str(input.time)}${input.brief ? `: ${str(input.brief)}` : ""}`;
       got = result.time_local ? `Call requested for ${str(result.time_local)}; the team confirms it` : "";
+      break;
+    case "ask_team":
+      sent = `"${str(input.question)}"${input.must_have === true ? " (must-have)" : input.must_have === false ? " (good to know)" : ""}`;
+      got = result.sent === true ? "Sent to the team; the chat goes on" : result.sent === false ? "Already answered in Knowledge" : "";
       break;
     default:
       sent = "";

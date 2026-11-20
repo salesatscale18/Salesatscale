@@ -7,7 +7,10 @@
  * - "callback.requested" (the agent's request_callback): a new request, which
  *   replaces any earlier one of the lead;
  * - "callback.confirmed" (the seller confirms the time);
- * - "callback.changed" (the seller sets another time, which is then confirmed).
+ * - "callback.changed" (the seller sets another time, which is then confirmed);
+ * - "callback.cancelled" (the seller cancels the call: the lead has no request);
+ * - "callback.after_agent" / "callback.after_seller" (after the call, the
+ *   seller hands the chat back to the agent or handles the deal themselves).
  * The lead's current request is the latest "callback.requested" with the
  * seller's later events for it applied (currentCallbackOf).
  */
@@ -20,6 +23,9 @@ export const CALLBACK_EVENTS = {
   requested: "callback.requested",
   confirmed: "callback.confirmed",
   changed: "callback.changed",
+  cancelled: "callback.cancelled",
+  afterAgent: "callback.after_agent",
+  afterSeller: "callback.after_seller",
 } as const;
 export const CALLBACK_EVENT_TYPES: readonly string[] = Object.values(CALLBACK_EVENTS);
 
@@ -39,6 +45,8 @@ export type CallbackRequest = {
   /** The time the agent first recorded, when the seller changed it. */
   requestedFor: Date;
   changed: boolean;
+  /** After the call, what the seller chose (null: not answered yet). */
+  afterCall: "agent" | "seller" | null;
 };
 
 type EventLike = { type: string; leadId: string; createdAt: Date; data: Record<string, unknown> | null };
@@ -64,8 +72,13 @@ export function currentCallbackOf(events: readonly EventLike[]): CallbackRequest
       if (!at || !str(d.callbackId)) continue;
       cur = {
         id: str(d.callbackId), leadId: e.leadId, conversationId: str(d.conversationId) || null, at, timezone: str(d.timezone) || "UTC",
-        brief: str(d.brief), status: "requested", requestedAt: e.createdAt, requestedFor: at, changed: false,
+        brief: str(d.brief), status: "requested", requestedAt: e.createdAt, requestedFor: at, changed: false, afterCall: null,
       };
+    } else if (cur && str(d.callbackId) === cur.id && e.type === CALLBACK_EVENTS.cancelled) {
+      cur = null;
+    } else if (cur && str(d.callbackId) === cur.id && (e.type === CALLBACK_EVENTS.afterAgent || e.type === CALLBACK_EVENTS.afterSeller)) {
+      const prev: CallbackRequest = cur;
+      cur = { ...prev, afterCall: e.type === CALLBACK_EVENTS.afterAgent ? "agent" : "seller" };
     } else if (cur && str(d.callbackId) === cur.id) {
       const prev: CallbackRequest = cur;
       const at: Date = date(d.at) ?? prev.at;

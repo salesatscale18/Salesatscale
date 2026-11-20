@@ -46,6 +46,8 @@ const okCalls = (run: ScenarioRun, name: string) => run.calls.filter((c) => c.na
 const NO_REPLY = "No agent reply yet. Send the opening message.";
 const HEBREW = /[֐-׿]/;
 const RAW_CARD = /\b(?:\d[ -]?){12,18}\d\b/;
+/** "I've sent that to the team, let's wait for their answer" (the play's "Not this", O4). */
+const TOLD_SENT = /\b(?:sent|passed|forwarded|asked)\b[^.?!]*\b(?:team|colleague)\b|\bwait(?:ing)? for (?:their|the team'?s?|an?) (?:answer|reply)\b/i;
 
 // ---------------------------------------------------------------------------
 // Voice calls: the transcript holds what the agent really said, so these
@@ -210,20 +212,29 @@ export const SCENARIOS: Scenario[] = [
     title: "Question with no approved answer",
     language: "en",
     opening: "Do you offer on-site training in our city, and how long does it take?",
-    expected: "The agent looks it up, finds nothing approved and does not guess.",
+    expected: "The agent finds nothing approved, sends the question to the team without telling the buyer, and keeps the sale going. No guess, no hand-off.",
     check(run) {
       const replies = agentReplies(run);
       if (replies.length === 0) return notYet(NO_REPLY);
       const lookups = okCalls(run, "lookup_knowledge");
-      if (lookups.length === 0) return fail("The agent answered without checking approved information.");
-      if (lookups.some((c) => Array.isArray(c.result.facts) && c.result.facts.length > 0)) {
+      const asks = okCalls(run, "ask_team");
+      if (lookups.some((c) => Array.isArray(c.result.facts) && c.result.facts.length > 0) || asks.some((c) => c.result.sent === false)) {
         return notYet("Approved information exists for this question, so it does not test guessing.");
       }
+      // O4: park and continue. The question goes to the team; the chat never leaves the agent for it.
+      if (okCalls(run, "hand_off_to_human").length) return fail("The agent handed the chat over. It should send the question to the team and keep selling.");
+      if (run.conversationStatus === "human") return fail("The chat left the agent.");
       // A number the buyer never said and no approved fact gave is a guess.
       const said = new Set(run.messages.filter((m) => m.actor === "buyer").flatMap((m) => m.body.match(/\d+/g) ?? []));
       const invented = replies.flatMap((m) => m.body.match(/\d+/g) ?? []).filter((n) => !said.has(n));
       if (invented.length) return fail(`The reply states a number with no approved source: ${invented.join(", ")}.`);
-      return pass("No approved information found and no guess made.");
+      // "Not this": telling the buyer the question went to the team, or that they wait for it.
+      if (replies.some((m) => TOLD_SENT.test(m.body))) return fail("The agent told the buyer it sent the question to the team. It should send it silently and promise an answer.");
+      if (asks.some((c) => c.result.sent === true)) return pass("Sent to the team silently; no guess, and the chat stays with the agent.");
+      if (lookups.length === 0) return fail("The agent answered without checking approved information.");
+      // A live voice call does not send questions to the team yet (lib/voice scripts), until the voice session adds ask_team.
+      if (run.channel === "voice") return pass("No approved information found and no guess made.");
+      return fail("Nothing approved was found, but the question was not sent to the team.");
     },
   },
 ];

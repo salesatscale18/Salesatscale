@@ -44,8 +44,8 @@ import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
-import { CallbackPanel } from "./callback";
-import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
+import { AfterCallPrompt, CallbackPanel } from "./callback";
+import { callbackAfterCall, leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -74,7 +74,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms, callback] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms, callback, afterCall] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -91,6 +91,7 @@ export default async function LeadCardPage({
     leadOrdersWithSignature(appDb, account.id, leadId),
     personSentForms(appDb, account.id, leadId),
     leadCallback(appDb, account.id, leadId),
+    callbackAfterCall(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
@@ -156,6 +157,9 @@ export default async function LeadCardPage({
         : event.type.startsWith("quote.") || event.type.startsWith("order_form.")
         // The quote reference is one ID in the code font (R5-6).
         ? <><span className="sas-id">{quoteRef(String((event.data as { number?: number } | null)?.number ?? ""), (event.data as { version?: number } | null)?.version)}</span>{`${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`}</>
+        : event.type.startsWith("team_question.")
+        // O4: the question as the team reads it (and how the answer reached the buyer).
+        ? `${String((event.data as { question?: string } | null)?.question ?? "")}${user ? ` · ${who(user)}` : ""}`
         : event.type.startsWith("callback.")
         // O6: the call time, in the zone it was set in, and who acted.
         ? `${formatDueLocal(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
@@ -404,6 +408,11 @@ export default async function LeadCardPage({
               slug={account.slug} leadId={lead.id} request={callback} canManage={mayManageCallbacks(access)}
               notice={typeof sp.callback === "string" ? sp.callback : undefined} error={typeof sp.callback_error === "string" ? sp.callback_error : undefined}
               notTold={typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined}
+            />
+            {/* After the call: hand back to the agent, or the seller handles the deal (Take over). */}
+            <AfterCallPrompt
+              slug={account.slug} leadId={lead.id} call={afterCall} canManage={mayManageCallbacks(access)}
+              notice={typeof sp.after_call === "string" ? sp.after_call : undefined} error={typeof sp.after_call_error === "string" ? sp.after_call_error : undefined}
             />
             <FollowUpPanel
               slug={account.slug} followUp={followUp} timezone={account.timezone}

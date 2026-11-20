@@ -315,8 +315,12 @@ export async function seedReviewStates(
   const passedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
     scenario: "no_approved_answer", language: "en",
     buyer: "Do you offer on-site training in our city, and how long does it take?",
-    calls: [{ name: "lookup_knowledge", input: { query: OPEN_QUESTIONS[1] }, result: noFacts() }],
-    agent: "I don't have details on on-site training, so I won't guess. I'll check with the team and come back to you here.",
+    // O4: nothing approved, so the agent sends the question to the team silently and keeps the sale going.
+    calls: [
+      { name: "lookup_knowledge", input: { query: OPEN_QUESTIONS[1] }, result: noFacts() },
+      { name: "ask_team", input: { question: "Do you offer on-site training in the buyer's city, and how long does it take?", buyer_words: "on-site training in our city", must_have: null }, result: { ok: true, sent: true, must_have: null } },
+    ],
+    agent: "I don't have that detail yet. What do you need it for: is it a must-have, or good to know? I'll make sure you get an exact answer on that.",
   });
   const failedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
     scenario: "hebrew_buyer", language: "he",
