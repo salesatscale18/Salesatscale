@@ -27,6 +27,7 @@ import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import type { ChatContext } from "@/lib/simulator/service";
 import { inboundConversation, markBuyerEngaged } from "@/lib/channels/whatsapp";
+import { isEmptyShortCall } from "@/lib/agent/thread-markers";
 import { createVoiceSession, STALE_PENDING_SEC } from "./service";
 import { maxCallSeconds, voiceMode } from "./settings";
 
@@ -258,7 +259,8 @@ export async function liveVoiceSessionOn(db: Db, accountId: string, conversation
 }
 
 /** A finished call: `startedAt` (connected) for "Voice call started · 10:42", `at` (ended) for "Voice call · 3 min 48 s · 10:46". */
-export type BuyerCallRow = { id: string; startedAt: string; at: string; durationSec: number };
+/** `empty`: a short call with nothing from the buyer (one row, no start row: lib/agent/thread-markers isEmptyShortCall). */
+export type BuyerCallRow = { id: string; startedAt: string; at: string; durationSec: number; empty: boolean };
 
 /** The chat's finished calls, for the start and summary rows around each call's lines. */
 export async function buyerCallRows(db: Db, accountId: string, conversationIds: string[]): Promise<BuyerCallRow[]> {
@@ -267,8 +269,18 @@ export async function buyerCallRows(db: Db, accountId: string, conversationIds: 
     .from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, accountId), inArray(voiceSessions.conversationId, conversationIds), eq(voiceSessions.status, "ended"), eq(voiceSessions.isTest, false)))
     .orderBy(asc(voiceSessions.createdAt));
-  return rows.filter((r) => r.connectedAt && r.endedAt)
-    .map((r) => ({ id: r.id, startedAt: r.connectedAt!.toISOString(), at: r.endedAt!.toISOString(), durationSec: r.durationSec ?? 0 }));
+  const ended = rows.filter((r) => r.connectedAt && r.endedAt);
+  // The buyer's lines in each call (spoken or typed): a short call without any is one row.
+  const said = ended.length
+    ? await db.select({ id: messages.voiceSessionId }).from(messages)
+      .where(and(eq(messages.accountId, accountId), inArray(messages.voiceSessionId, ended.map((r) => r.id)), eq(messages.actor, "buyer")))
+    : [];
+  const turns = new Map<string, number>();
+  for (const s of said) if (s.id) turns.set(s.id, (turns.get(s.id) ?? 0) + 1);
+  return ended.map((r) => ({
+    id: r.id, startedAt: r.connectedAt!.toISOString(), at: r.endedAt!.toISOString(), durationSec: r.durationSec ?? 0,
+    empty: isEmptyShortCall(r.durationSec, turns.get(r.id) ?? 0),
+  }));
 }
 
 // ---------------------------------------------------------------------------

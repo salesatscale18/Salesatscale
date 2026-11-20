@@ -171,7 +171,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   useEffect(() => {
     const el = logRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [items.length, typing, calls.length]);
+    // The bubble's room at the bottom appears with the call: keep the last message in view.
+  }, [items.length, typing, calls.length, inCall]);
 
   const grow = () => {
     const el = inputRef.current;
@@ -319,8 +320,9 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     rows.push(<div key={key} className="c-date" role="separator" dir={dir} suppressHydrationWarning>{dateLabel(d)}</div>);
   };
   const repliesAfter = ended || typing ? null : replyButtonsAfter(items, cards);
-  // Each finished call is framed by two rows between the messages: where it started (connected) and where it ended.
-  const callRows = [...calls.flatMap((c) => [{ c, at: c.startedAt, start: true }, { c, at: c.at, start: false }])].sort((a, b) => a.at.localeCompare(b.at) || Number(b.start) - Number(a.start));
+  // Each finished call is framed by two rows between the messages: where it started (connected) and where it ended;
+  // a short call with nothing from the buyer is one row only (its summary).
+  const callRows = [...calls.flatMap((c) => [...(c.empty ? [] : [{ c, at: c.startedAt, start: true }]), { c, at: c.at, start: false }])].sort((a, b) => a.at.localeCompare(b.at) || Number(b.start) - Number(a.start));
   const pushCall = ({ c, start }: (typeof callRows)[number]) => {
     const at = new Date(start ? c.startedAt : c.at);
     separator(at, `d-${c.id}-${start ? "s" : "e"}`);

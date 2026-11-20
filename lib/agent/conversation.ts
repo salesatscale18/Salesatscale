@@ -195,7 +195,7 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
       .from(leadEvents)
       .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, conv.leadId), inArray(leadEvents.type, [...MARKER_EVENT_TYPES]), gte(leadEvents.createdAt, conv.createdAt))),
     // Voice calls on this conversation: a start and a summary marker each (live voice), from the session.
-    db.select({ connectedAt: voiceSessions.connectedAt, endedAt: voiceSessions.endedAt, status: voiceSessions.status, durationSec: voiceSessions.durationSec })
+    db.select({ id: voiceSessions.id, connectedAt: voiceSessions.connectedAt, endedAt: voiceSessions.endedAt, status: voiceSessions.status, durationSec: voiceSessions.durationSec })
       .from(voiceSessions).where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conv.id))),
   ]);
   const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId), ...events.map((e) => e.actorUserId)].filter((x): x is string => !!x))];
@@ -205,7 +205,9 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
   const authors = Object.fromEntries(people.map((p) => [p.id, p]));
   // Prefill only until a person has replied after that hand-off.
   const answered = suggested && thread.some(({ message: m }) => m.actor === "human" && m.createdAt >= suggested.at);
-  const markers = [...threadMarkers(conv.id, thread, events, authors), ...voiceMarkers(calls)].sort((a, b) => a.at.getTime() - b.at.getTime());
+  const markers = [...threadMarkers(conv.id, thread, events, authors), ...voiceMarkers(calls.map((c) => ({
+    ...c, buyerTurns: thread.filter(({ message: m }) => m.actor === "buyer" && m.voiceSessionId === c.id).length,
+  })))].sort((a, b) => a.at.getTime() - b.at.getTime());
   // A capped chat says it once: the "Handed to a person: AI limit reached" marker replaces the system line
   // that conversations capped before W5 stored (new ones no longer store it).
   const capped = markers.some((m) => m.kind === "spend_cap");

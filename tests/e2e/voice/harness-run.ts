@@ -127,6 +127,17 @@ async function bubbleSection(browser: Browser, base: string) {
     const endSide = sh.lang === "he" ? (box?.x ?? 999) < sh.w / 2 || sh.w > 600 : true;
     check(endSide, `${sh.name}: bottom-end (left in Hebrew)`);
     await chat.waitForTimeout(2500);
+    // The bubble never covers the last item: at the bottom of the thread, the last row ends above the bubble.
+    const clearOf = async (page: Page, last: string) => page.evaluate(`(() => {
+      const log = document.querySelector(".c-log");
+      if (log) log.scrollTop = log.scrollHeight;
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      const items = [...document.querySelectorAll(${JSON.stringify(last)})].filter((e) => e.getBoundingClientRect().height > 0);
+      const lastEl = items[items.length - 1];
+      const b = document.querySelector("[data-bubble-button]");
+      return !!lastEl && !!b && lastEl.getBoundingClientRect().bottom <= b.getBoundingClientRect().top;
+    })()`) as Promise<boolean>;
+    if (sh.w < 600) check(await clearOf(chat, ".c-log > *"), `${sh.name}: the last thread item ends above the bubble`);
     await shot(chat, `bubble-chat-${sh.name}`);
     await chat.click("[data-bubble-button]");
     check(await chat.locator("[data-bubble-menu]").isVisible(), `${sh.name}: tapping the bubble opens the call controls`);
@@ -144,6 +155,11 @@ async function bubbleSection(browser: Browser, base: string) {
     const caption = await form.waitForSelector("[data-bubble-caption]", { timeout: 30_000 }).then(() => true, () => false);
     check(caption, `${sh.name}: the agent's line shows as a caption on the form`);
     await shot(form, `bubble-form-caption-${sh.name}`);
+    if (sh.w < 600) {
+      await form.waitForSelector("[data-bubble-caption]", { state: "detached", timeout: 15_000 }).catch(() => undefined);
+      check(await clearOf(form, ".b-cta, .b-foot, .b-main input"), `${sh.name}: the form's last field, button and footer end above the bubble`);
+      await form.evaluate("window.scrollTo(0, 0)");
+    }
     if (sh.full) {
       // Expand the caption, then the controls from the form tab: mute, unmute.
       await form.click("[data-bubble-caption]");

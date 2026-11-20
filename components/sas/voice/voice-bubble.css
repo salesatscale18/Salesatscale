@@ -63,7 +63,8 @@
 .vb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media print { .vb { display: none; } }
 /* The order form keeps room at the bottom so the bubble never covers its last button. */
-.b-root:has(.vb--fixed) .b-page { padding-block-end: calc(88px + env(safe-area-inset-bottom)); }
+/* (bubble 56 px + its 16 px offset + 12 px, and the home indicator) */
+.b-root:has(.vb--fixed) .b-page { padding-block-end: calc(84px + env(safe-area-inset-bottom)); }
 /* Standby: calm. A white bubble with a still, brand-coloured line; no ring, no motion. The menu's first item wakes the agent. */
 .vb--standby .vb-btn { background: #fff; color: var(--vb-brand); box-shadow: inset 0 0 0 2px var(--vb-brand), 0 6px 18px rgba(15, 20, 32, .16); }
 .vb-wave--standby i { transition: none; opacity: .85; }

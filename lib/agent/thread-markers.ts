@@ -34,15 +34,28 @@ export type ThreadMarker =
  */
 export const VOICE_CALL_ENDED_LINE = /^Voice call ended · \d+:\d{2}$/;
 
-/** A conversation's voice calls, as stored on voice_sessions. */
-export type VoiceSessionRow = { connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null };
+/** A conversation's voice calls, as stored on voice_sessions. `buyerTurns`: the buyer's lines in the call (spoken or typed). */
+export type VoiceSessionRow = { connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null; buyerTurns?: number };
 
-/** The start and summary markers of each call that connected (a call still running has only its start). */
+/** A finished call shorter than this with nothing from the buyer shows as one row (its summary), not a start and a summary. */
+export const EMPTY_CALL_MAX_SEC = 15;
+
+/** A short finished call in which the buyer said and typed nothing: one row in every thread (buyer page, lead page, test lab). */
+export function isEmptyShortCall(durationSec: number | null | undefined, buyerTurns: number): boolean {
+  return buyerTurns === 0 && (durationSec ?? 0) < EMPTY_CALL_MAX_SEC;
+}
+
+/**
+ * The start and summary markers of each call that connected (a call still running has only its start);
+ * a short call with nothing from the buyer has only its summary ("Voice call · 4 s").
+ */
 export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker[] {
   return sessions.flatMap((v): ThreadMarker[] => {
     if (!v.connectedAt) return [];
     const start: ThreadMarker = { kind: "voice_started", at: v.connectedAt };
-    return v.status === "ended" && v.endedAt ? [start, { kind: "voice_ended", at: v.endedAt, durationSec: v.durationSec ?? 0 }] : [start];
+    if (!(v.status === "ended" && v.endedAt)) return [start];
+    const end: ThreadMarker = { kind: "voice_ended", at: v.endedAt, durationSec: v.durationSec ?? 0 };
+    return isEmptyShortCall(v.durationSec, v.buyerTurns ?? 0) ? [end] : [start, end];
   });
 }
 

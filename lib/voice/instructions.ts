@@ -172,6 +172,38 @@ export function reAskLine(lastAgentMessage: string): string | null {
   return `So, ${q}`;
 }
 
+/** A chat message as the pick-up line reads it (newest first): who wrote it, and whether it was said in a call. */
+export type PickUpMessage = { actor: string; body: string; voiceSessionId: string | null };
+
+/** A line as compared for "the same question": no "So,"/"אז," lead-in, letters and digits only, lower case. */
+const sameQuestion = (s: string) => s.replace(/^\s*(so|אז)\s*,?\s*/i, "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * The re-ask for a call that continues a chat, or null (say the fallback). The agent's latest open question
+ * since the buyer last wrote (or spoke) is re-asked ONCE: when an earlier call already said its re-ask and the
+ * buyer has not answered since, the next call opens with the fallback instead. `newestFirst`: the
+ * conversation's latest messages, newest first (as loaded for the recap).
+ */
+export function pickUpReAsk(newestFirst: readonly PickUpMessage[]): string | null {
+  const talk = newestFirst.filter((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human");
+  // The agent's messages since the buyer (or a person) last wrote; none when the buyer spoke last.
+  const since: PickUpMessage[] = [];
+  for (const m of talk) {
+    if (m.actor !== "agent") break;
+    since.push(m);
+  }
+  if (!since.length) return null;
+  // The open question: the latest of those that asks something and is not itself an earlier call's re-ask of an older one.
+  const asks = since.map((m) => ({ m, q: reAskLine(m.body) })).filter((x): x is { m: PickUpMessage; q: string } => !!x.q);
+  const isReAskOf = (spoken: PickUpMessage, q: string) => !!spoken.voiceSessionId && sameQuestion(spoken.body).includes(sameQuestion(q));
+  const original = asks.find((x, i) => !(x.m.voiceSessionId && asks.slice(i + 1).some((older) => isReAskOf(x.m, older.q))));
+  if (!original) return null;
+  const at = since.indexOf(original.m);
+  // Already re-asked by an earlier call (a spoken line after it that is the same question), with no answer since.
+  if (since.slice(0, at).some((m) => isReAskOf(m, original.q))) return null;
+  return original.q;
+}
+
 /**
  * The instruction that starts a call continuing a chat: no greeting, no
  * introduction and no bot notice (the buyer only switched from text to voice).
@@ -209,7 +241,7 @@ export async function loadVoiceInstructions(
     publishedCatalog(db, account.id).catch(() => null),
     scheduledFollowUp(db, account.id, lead.id),
     leadContactSettings(db, account, lead.marketId),
-    db.select({ actor: messages.actor, body: messages.body }).from(messages)
+    db.select({ actor: messages.actor, body: messages.body, voiceSessionId: messages.voiceSessionId }).from(messages)
       .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id))).orderBy(desc(messages.createdAt)).limit(CHAT_RECAP_LINES),
     db.select({ id: messages.id }).from(messages).where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))),
     // The open call request (requested or confirmed), as in a chat turn (lib/agent/turn.ts).
@@ -226,9 +258,8 @@ export async function loadVoiceInstructions(
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
   // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
   const continuing = !opts.resumed && agentCount.length > 0;
-  // The pick-up line: the agent's own unanswered question re-asked, when the agent wrote last; else the fallback.
-  const lastChat = earlier.find((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human");
-  const reAsk = continuing && lastChat?.actor === "agent" ? reAskLine(lastChat.body) : null;
+  // The pick-up line: the agent's own unanswered question re-asked once (pickUpReAsk); else the fallback.
+  const reAsk = continuing ? pickUpReAsk(earlier) : null;
   const fallback = continueFallback(language);
   const opener = continuing
     ? reAsk ?? fallback ?? ""

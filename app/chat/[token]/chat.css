@@ -148,3 +148,6 @@
 .c-voice[data-voice-phase="live"] .sas-vbar[data-voice-state="standby"] .sas-vbar__text { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
 .c-voice[data-voice-phase="live"] .sas-vbar[data-voice-state="standby"] .sas-vbar__sub:not(.sas-vbar__sub--long) { display: inline; }
 .c-voice[data-voice-phase="live"] .sas-vbar[data-voice-state="standby"] .sas-vbar__sub:not(.sas-vbar__sub--long)::before { content: "· "; }
+/* While the bubble shows, the thread keeps room for it at the bottom (bubble 56 px + its 12 px lift + 12 px), so the last
+   message never sits under it. */
+.c-frame:has(.c-bubble-dock .vb) .c-log { padding-block-end: 80px; }

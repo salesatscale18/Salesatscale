@@ -531,7 +531,7 @@ describe("the buyer sees state words only", () => {
         { id: "m1", from: "agent" as const, body: "Hi Dana", at: "2026-11-19T09:00:00.000Z", status: null, name: null, previews: [] },
         { id: "m2", from: "buyer" as const, body: "Four shops.", at: "2026-11-19T09:02:00.000Z", status: "read" as const, name: null, previews: [], call: { atMs: 80_000, typed: false } },
       ],
-      typing: false, ended: false, closedAt: null, cards: {}, calls: [{ id: "c1", startedAt: "2026-11-19T09:01:12.000Z", at: "2026-11-19T09:05:00.000Z", durationSec: 228 }],
+      typing: false, ended: false, closedAt: null, cards: {}, calls: [{ id: "c1", startedAt: "2026-11-19T09:01:12.000Z", at: "2026-11-19T09:05:00.000Z", durationSec: 228, empty: false }],
       voice: { available: true },
     };
     const html = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
@@ -554,6 +554,40 @@ describe("the buyer sees state words only", () => {
     expect(why).toContain("This chat is handled by a person.");
     const voiceOff = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" />);
     expect(voiceOff).not.toContain("Switch to voice");
+  });
+
+  it("a short call with nothing from the buyer is one row (no start row), on the buyer page in both languages, the seller's thread and the stored rows", async () => {
+    const strings = new Proxy({ refused: {} }, { get: (o, k) => (k in o ? (o as Record<string, unknown>)[k as string] : String(k)) }) as never;
+    const initial = {
+      messages: [{ id: "m1", from: "agent" as const, body: "So, what made you get in touch today?", at: "2026-11-19T09:13:01.000Z", status: null, name: null, previews: [], call: { atMs: 500, typed: false } }],
+      typing: false, ended: false, closedAt: null, cards: {}, calls: [{ id: "c1", startedAt: "2026-11-19T09:13:00.000Z", at: "2026-11-19T09:13:04.000Z", durationSec: 4, empty: true }],
+      voice: { available: true },
+    };
+    for (const [lang, row, start] of [["en", "Voice call · 4 s · 11:13", "Voice call started"], ["he", "שיחה קולית · 4 שנ׳ · 11:13", "שיחה קולית התחילה"]] as const) {
+      const html = renderToStaticMarkup(<ChatClient token="t" lang={lang} seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+      expect(html).toContain(row);
+      expect(html).not.toContain(start);
+      expect(html.match(/data-call-row=/g)).toHaveLength(1);
+      // The agent's spoken line still shows as a message.
+      expect(html).toContain("So, what made you get in touch today?");
+    }
+    // From the database: the rows and the seller's markers follow the buyer's lines in the call.
+    const b = await newBuyer("Short Call");
+    const at = (s: number) => new Date(Date.UTC(2026, 10, 19, 9, 13, s));
+    const [v] = await db.insert(voiceSessions).values({
+      accountId: account.id, conversationId: b.conversationId, agentVersionId: (await db.select().from(conversations).where(eq(conversations.id, b.conversationId)))[0].agentVersionId,
+      isTest: false, status: "ended", createdAt: at(0), connectedAt: at(0), endedAt: at(4), durationSec: 4, model: "scripted", mode: "scripted", ticketHash: "x".repeat(64),
+    }).returning();
+    await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "agent", body: "So, what made you get in touch today?", language: "en", voiceSessionId: v.id, createdAt: at(1) });
+    const { buyerCallRows } = await import("@/lib/voice/buyer");
+    const { conversationView } = await import("@/lib/agent/conversation");
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
+    expect((await buyerCallRows(db, account.id, [b.conversationId]))[0]).toMatchObject({ durationSec: 4, empty: true });
+    expect((await conversationView(db, account.id, conv)).markers!.filter((m) => m.kind.startsWith("voice")).map((m) => m.kind)).toEqual(["voice_ended"]);
+    // The buyer said something: the start and summary pair.
+    await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "buyer", body: "Hi", language: "en", voiceSessionId: v.id, createdAt: at(2) });
+    expect((await buyerCallRows(db, account.id, [b.conversationId]))[0].empty).toBe(false);
+    expect((await conversationView(db, account.id, conv)).markers!.filter((m) => m.kind.startsWith("voice")).map((m) => m.kind)).toEqual(["voice_started", "voice_ended"]);
   });
 });
 
