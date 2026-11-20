@@ -185,7 +185,7 @@ export function decideAnswer(f: AnswerFacts): AnswerDecision {
 
 /**
  * The follow-up message with the team's answer, in the conversation's
- * language: EN "Hi Rina, about your question "can it run on 220V": <answer>",
+ * language: EN "Hi Rina, you asked: "can it run on 220V". The answer: <answer>",
  * HE the same in Hebrew. The question is the buyer's own words where the agent
  * recorded them, else the question as the team read it.
  */

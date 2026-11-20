@@ -64,8 +64,10 @@ describe("team questions: when the answer is sent", () => {
     expect(decideAnswer({ ...base, accountStatus: "paused" })).toEqual({ action: "wait", why: "account_paused" });
   });
   it("the message quotes the buyer's words, in their language", () => {
-    expect(teamAnswerText({ language: "en", leadName: "Noa Levi", buyerWords: "a Hebrew manual", question: "Q?", answer: "Yes. " })).toBe('Hi Noa, about your question "a Hebrew manual": Yes.');
-    expect(teamAnswerText({ language: "he", leadName: "", buyerWords: "", question: "מדריך?", answer: "כן" })).toBe('לגבי השאלה שלך "מדריך?": כן');
+    expect(teamAnswerText({ language: "en", leadName: "Noa Levi", buyerWords: "a Hebrew manual", question: "Q?", answer: "Yes. " })).toBe('Hi Noa, you asked: "a Hebrew manual". The answer: Yes.');
+    expect(teamAnswerText({ language: "he", leadName: "", buyerWords: "", question: "מדריך?", answer: "כן" })).toBe('שאלת: "מדריך?". התשובה: כן');
+    expect(teamAnswerText({ language: "he", leadName: "נועה לוי", buyerWords: "מדריך בעברית", question: "Q?", answer: "כן, מצורף לכל הזמנה." })).toBe('היי נועה, שאלת: "מדריך בעברית". התשובה: כן, מצורף לכל הזמנה.');
+    expect(teamAnswerText({ language: "en", leadName: "", buyerWords: "a manual", question: "Q?", answer: "Yes." })).toBe('You asked: "a manual". The answer: Yes.');
   });
 });
 

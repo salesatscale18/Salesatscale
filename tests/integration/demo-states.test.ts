@@ -8,7 +8,8 @@ const h = vi.hoisted(() => ({ anthropic: vi.fn() }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: h.anthropic }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { NEW_NOTE, OPEN_QUESTIONS, PARTLY_WEBSITE, STATE_LEADS, STEPS_CHAT, UNPRICED_SKU } = await import("@/lib/demo/states");
+const { NEW_NOTE, OPEN_QUESTIONS, PARKED_QUESTION, PARTLY_WEBSITE, STATE_LEADS, STEPS_CHAT, UNPRICED_SKU } = await import("@/lib/demo/states");
+const { needsYou } = await import("@/lib/overview/service");
 const { conversationView } = await import("@/lib/agent/conversation");
 const { listSources } = await import("@/lib/sources/service");
 const { listRuns, planAnalysis, analysisSummary, sourceFactCounts, sourceDisplayStatus } = await import("@/lib/pipeline/service");
@@ -176,7 +177,35 @@ describe("demo account review states", () => {
     expect(eff.contactHours.value[0].on).toBe(false);
   });
 
-  it("has one human-handled and two needs-you conversations (the agent handed off; one started at the spend cap)", async () => {
+  it("O4: the BMS question is parked with the team (no hand-off), and the upset buyer is the seeded hand-off", async () => {
+    const parked = await leadBy(STATE_LEADS.needsYou.n);
+    const upset = await leadBy(STATE_LEADS.upset.n);
+    // Parked: the chat stays with the agent; ask_team ran, hand_off_to_human did not.
+    expect(parked.status).toBe("agent_handling");
+    const parkedConv = await convOf(parked.id);
+    expect(parkedConv.status).toBe("open");
+    const parkedCalls = (await db.select().from(toolCalls).where(eq(toolCalls.conversationId, parkedConv.id))).map((c) => c.name);
+    expect(parkedCalls).toContain("ask_team");
+    expect(parkedCalls).not.toContain("hand_off_to_human");
+    expect(await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, parked.id), eq(leadEvents.type, "handoff.requested")))).toHaveLength(0);
+    // Needs you: a question to answer (must-have, the buyer's words), not a hand-off.
+    const items = await needsYou(db, accountId, new Date());
+    expect(items.find((i) => i.leadId === parked.id)).toMatchObject({ kind: "team_question", question: OPEN_QUESTIONS[0], mustHave: true, buyerWords: PARKED_QUESTION.buyerWords });
+    expect(items.some((i) => i.leadId === parked.id && i.kind === "human_handling")).toBe(false);
+    // Knowledge: the question once, with the lead and the must-have flag.
+    const q = (await unansweredQuestions(db, accountId)).find((x) => x.question === OPEN_QUESTIONS[0])!;
+    expect(q.asks).toEqual([expect.objectContaining({ leadId: parked.id, leadName: STATE_LEADS.needsYou.fullName, mustHave: true, buyerWords: PARKED_QUESTION.buyerWords, isTest: false })]);
+    // The upset buyer: handed over at once, with the "The buyer is upset" play recorded.
+    expect(upset.status).toBe("human_handling");
+    expect((await convOf(upset.id)).status).toBe("human");
+    expect(items.find((i) => i.leadId === upset.id)).toMatchObject({ kind: "human_handling" });
+    const [handoff] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, upset.id), eq(leadEvents.type, "handoff.requested")));
+    expect(handoff.data).toMatchObject({ objections: [{ play: "handoff", status: "open" }] });
+    // Account-scoped: the other demo account has its own.
+    expect((await needsYou(db, otherId, new Date())).some((i) => i.leadId === parked.id)).toBe(false);
+  });
+
+  it("has one human-handled and two needs-you conversations (the upset buyer was handed off; one started at the spend cap)", async () => {
     const inbox = await listInbox(db, accountId, { now: NOW });
     expect(inbox.counts).toMatchObject({ needs_you: 2, human: 1, test: 4 });
     const needs = inbox.rows.find((r) => r.group === "needs_you")!;

@@ -251,7 +251,7 @@ describe("Park and continue: questions to the team (O4)", () => {
     const sent = await appMessages(c.conversationId);
     expect(sent).toHaveLength(1);
     const [m] = await db.select().from(messages).where(eq(messages.id, sent[0].messageId!));
-    expect(m).toMatchObject({ actor: "agent", body: 'Hi Noa, about your question "a Hebrew manual": Yes, a Hebrew PDF manual comes with every order.' });
+    expect(m).toMatchObject({ actor: "agent", body: 'Hi Noa, you asked: "a Hebrew manual". The answer: Yes, a Hebrew PDF manual comes with every order.' });
     expect(await appMessages(active.conversationId)).toHaveLength(0);
     expect(await delivered(c.leadId)).toEqual(["sent"]);
     expect(await delivered(active.leadId)).toEqual(["in_chat"]);

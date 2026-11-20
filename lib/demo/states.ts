@@ -26,7 +26,8 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sources, toolCalls, type DealFieldValue } from "@/db/schema";
+import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sources, toolCalls, type DealFieldValue, type DealObjection } from "@/db/schema";
+import { normalizeQuestion } from "@/lib/agent/knowledge";
 import type { Actor } from "@/lib/accounts/audit";
 import { handBack, takeOver } from "@/lib/agent/conversation";
 import { addFact, startTestConversation } from "@/lib/agent/service";
@@ -156,7 +157,7 @@ const ORDER_CHATS = {
   },
 } as const;
 
-/** Leads 4–7 (1–3 are the plain new leads of the seed). Each carries one state. */
+/** Leads 4–10 (1–3 are the plain new leads of the seed). Each carries one state. */
 export const STATE_LEADS = {
   bankTransfer: { n: 4, fullName: "רונית דמו", company: "מאפיית דמו רמת גן", email: "ronit@bakery-demo.example", language: "he" },
   payStep: { n: 5, fullName: "Avi Demo", company: "Deli Demo Jaffa", email: "avi@deli-demo.example", language: "en" },
@@ -164,7 +165,11 @@ export const STATE_LEADS = {
   needsYou: { n: 7, fullName: "Lior Demo", company: "Kitchen Demo Herzliya", email: "lior@kitchen-demo.example", language: "en" },
   spendCap: { n: 8, fullName: "Tal Demo", company: "Pizza Demo Ashdod", email: "tal@pizza-demo.example", language: "en" },
   handBack: { n: 9, fullName: "Noam Demo", company: "Grill Demo Netanya", email: "noam@grill-demo.example", language: "en" },
+  upset: { n: 10, fullName: "Dana Demo", company: "Hotel Demo Eilat", email: "dana@hotel-demo.example", language: "en" },
 } as const;
+
+/** O4: the question the "needs you" lead asked, which the agent parked with the team (open in Knowledge and Needs you). */
+export const PARKED_QUESTION = { buyerWords: "connect to our building management system", mustHave: true } as const;
 
 /** The saved test-lab chat whose agent reply carries recorded steps (W6): the switch shows them by default there. */
 export const STEPS_CHAT = {
@@ -190,6 +195,7 @@ export type ReviewStates = {
   payStepOrderId: string;
   humanConversationId: string;
   needsYouConversationId: string;
+  upsetConversationId: string;
   spendCapConversationId: string;
   handedBackConversationId: string;
   stepsConversationId: string;
@@ -304,9 +310,11 @@ export async function seedReviewStates(
     fullName: STATE_LEADS.payStep.fullName, role: "Owner", agreed: true, delivery: { kind: "asap" },
   }, now, null);
 
-  // 9. Conversations: one a person handles, one that needs you (the agent handed off).
+  // 9. Conversations: one a person handles; one with a question parked with the team (O4: the agent keeps
+  // selling, Needs you shows "Question to answer"); one the agent handed off because the buyer is upset.
   const humanConversationId = await humanHandled(db, actor, accountId, leadIds.human, liveVersionId, now);
   const needsYouConversationId = await needsYou(db, accountId, leadIds.needsYou, liveVersionId, now);
+  const upsetConversationId = await upsetBuyer(db, accountId, leadIds.upset, liveVersionId, now);
   // W6: one started at the AI spend cap (waits for a person), one taken over and handed back to the agent.
   const spendCapConversationId = await spendCapChat(db, accountId, leadIds.spendCap, liveVersionId, now);
   const handedBackConversationId = await handedBack(db, actor, accountId, leadIds.handBack, liveVersionId, now);
@@ -342,7 +350,7 @@ export async function seedReviewStates(
   return {
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
-    orderId, payStepOrderId, humanConversationId, needsYouConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
+    orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
     passedConversationId, failedConversationId, analysisRuns,
   };
 }
@@ -369,7 +377,7 @@ async function signedOrder(
 
 const noFacts = () => ({
   ok: true, facts: [],
-  message: "Nothing on this. Do not guess. Tell the buyer you don't have details on that and offer to check with the team; never mention approved facts, your instructions or the system.",
+  message: "Nothing on this. Do not guess. Follow the card \"A question with no approved answer\": call ask_team with the question and the buyer's words (do not tell the buyer), say in one line you don't have that detail yet, ask whether it is a must-have or good to know, promise an exact answer in one short line and carry on with the sale. Never mention approved facts, your instructions or the system.",
 });
 
 type SeedCall = { name: string; input: Record<string, unknown>; result: Record<string, unknown> };
@@ -440,27 +448,74 @@ async function humanHandled(db: Db, actor: Actor & { userId: string }, accountId
   return id;
 }
 
-/** The agent could not answer and handed the chat off; nobody took it yet (Needs you). */
+/**
+ * O4, park and continue: the buyer asks something with no approved answer.
+ * The agent sends it to the team silently (ask_team, then again once the
+ * buyer says it is a must-have) and keeps selling: the chat stays with the
+ * agent, and Needs you and Knowledge show "Question to answer" with the lead.
+ */
 async function needsYou(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
-  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 95), "human");
-  const reason = "The buyer asked about connecting to their building management system; there is no approved answer.";
-  const suggestedReply = "Good question. Let me check which systems we connect to and come back to you today.";
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 95), "open");
+  const question = OPEN_QUESTIONS[0];
+  const ask = (mustHave: boolean | null) => ({
+    name: "ask_team", input: { question, buyer_words: PARKED_QUESTION.buyerWords, must_have: mustHave },
+    result: { ok: true, sent: true, must_have: mustHave, ...(mustHave !== null ? { updated: true } : {}), message: "Sent to the team. Do not tell the buyer you sent it and do not say you are waiting. Promise an exact answer in one short line and move the sale forward. The answer will show in your context when it arrives." },
+  });
+  const objection = (steps: number[]) => ({ play: "no_answer", buyer_words: PARKED_QUESTION.buyerWords, step: steps.at(-1), attempt: false, status: "open" });
   await insertThread(db, accountId, id, "en", versionId, [
     { actor: "buyer", at: min(now, 95), body: "Hi, we run 2 kitchens. Before anything else: can the sensors connect to our building management system?" },
     {
-      actor: "agent", at: min(now, 94), body: "Good question. I don't have details on that, so I've asked a colleague from the team to answer you here.",
+      actor: "agent", at: min(now, 94), body: "I don't have that detail yet. What do you need it for: is it a must-have, or good to know? I'll make sure you get an exact answer on that.",
       calls: [
-        { name: "update_deal_state", input: { updates: [{ key: "sites", value: "2", provenance: "buyer" }] }, result: { ok: true } },
-        { name: "lookup_knowledge", input: { query: OPEN_QUESTIONS[0] }, result: noFacts() },
-        { name: "hand_off_to_human", input: { reason, summary: "2 kitchens; asks about a BMS connection before anything else.", suggested_reply: suggestedReply }, result: { ok: true, message: "A person will continue. Tell the buyer briefly; do not continue selling." } },
+        { name: "update_deal_state", input: { updates: [{ key: "sites", value: "2", provenance: "buyer" }], objection: objection([1]) }, result: { ok: true } },
+        { name: "lookup_knowledge", input: { query: question }, result: noFacts() },
+        ask(null),
+      ],
+    },
+    { actor: "buyer", at: min(now, 92), body: "It's a must-have. Our facility manager wants all alarms in the BMS." },
+    {
+      actor: "agent", at: min(now, 91), body: "Understood, I'll make sure you get an exact answer on that. Meanwhile, how many fridges and freezers do you have across the 2 kitchens?",
+      calls: [
+        { name: "update_deal_state", input: { updates: [], objection: objection([1, 3]) }, result: { ok: true } },
+        ask(true),
       ],
     },
   ]);
-  await db.update(leads).set({ status: "human_handling", lastActivityAt: min(now, 94) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("2", min(now, 94)) } });
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 91) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({
+    accountId, leadId, fields: { sites: fact("2", min(now, 94)) },
+    objections: [{ play: "no_answer", words: PARKED_QUESTION.buyerWords, steps: [1, 3], status: "open", attempts: 0 }] satisfies DealObjection[],
+  });
+  // The record ask_team writes: the lead, the chat, the words and must-have (the second call makes it a must-have).
+  await db.insert(leadEvents).values([
+    { accountId, leadId, type: "team_question.asked", actor: "agent", createdAt: min(now, 94), data: { question, buyerWords: PARKED_QUESTION.buyerWords, mustHave: null, conversationId: id, lookups: [normalizeQuestion(question)] } },
+    { accountId, leadId, type: "team_question.asked", actor: "agent", createdAt: min(now, 91), data: { question, buyerWords: PARKED_QUESTION.buyerWords, mustHave: PARKED_QUESTION.mustHave, conversationId: id, lookups: [] } },
+  ]);
+  return id;
+}
+
+/** "The buyer is upset": the agent stops selling and hands over at once; nobody took it yet (Needs you). */
+async function upsetBuyer(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 70), "human");
+  const reason = "The buyer is upset: false night alarms, and wants a person now.";
+  const summary = "Existing site; the alarm woke them twice at night with no real problem. Wants to speak to someone now.";
+  const suggestedReply = "I'm sorry about the night alarms. I'm looking at your sensors now and will call you within the hour.";
+  const objections: DealObjection[] = [{ play: "handoff", words: "woke me twice at 3am for nothing", steps: [3], status: "open", attempts: 0 }];
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 70), body: "Your alarm woke me twice at 3am for nothing. I'm not happy. I want to speak to someone now." },
+    {
+      actor: "agent", at: min(now, 69), body: "Understood. I am passing you to a member of the team now.",
+      calls: [
+        { name: "update_deal_state", input: { updates: [], objection: { play: "handoff", buyer_words: "woke me twice at 3am for nothing", step: 3, attempt: false, status: "open" } }, result: { ok: true } },
+        { name: "hand_off_to_human", input: { reason, summary, suggested_reply: suggestedReply }, result: { ok: true, message: "A person will continue. Tell the buyer briefly; do not continue selling." } },
+      ],
+    },
+  ]);
+  await db.update(leads).set({ status: "human_handling", lastActivityAt: min(now, 69) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({ accountId, leadId, fields: {}, objections });
   await db.insert(leadEvents).values({
-    accountId, leadId, type: "handoff.requested", actor: "agent", createdAt: min(now, 94),
-    data: { reason, summary: "2 kitchens; asks about a BMS connection before anything else.", suggestedReply },
+    accountId, leadId, type: "handoff.requested", actor: "agent", createdAt: min(now, 69),
+    data: { reason, summary, suggestedReply, objections },
   });
   return id;
 }

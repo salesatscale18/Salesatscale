@@ -3206,6 +3206,6 @@
   "callback.after.error_closed": "The chat is closed, so it can't be taken over.",
   "callback.after.error_opted_out": "The buyer opted out.",
   "buyer.app.callback_cancelled": "We need to move our call. We'll suggest a new time here.",
-  "buyer.app.team_answer": "Hi {name}, about your question \"{question}\": {answer}",
-  "buyer.app.team_answer_plain": "About your question \"{question}\": {answer}"
+  "buyer.app.team_answer": "Hi {name}, you asked: \"{question}\". The answer: {answer}",
+  "buyer.app.team_answer_plain": "You asked: \"{question}\". The answer: {answer}"
 }

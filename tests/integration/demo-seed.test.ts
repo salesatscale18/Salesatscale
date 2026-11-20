@@ -77,7 +77,7 @@ describe("one-click demo account", () => {
     if (!r.ok) throw new Error("refused");
     const s = r.summary;
     accountId = s.accountId;
-    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 9, facts: 12, legalSections: 4, leads: 9, simulatedBuyers: 2, live: true });
+    expect(s).toMatchObject({ catalogVersion: 1, priceListVersion: 1, agentVersion: 1, sources: 9, facts: 12, legalSections: 4, leads: 10, simulatedBuyers: 2, live: true });
     expect(s.tradeName).toBe("Polar Demo 2026-11-17 10:00:00");
 
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
@@ -188,13 +188,13 @@ describe("one-click demo account", () => {
     expect(drafts).toHaveLength(0);
   });
 
-  it("has nine consented leads with fictional numbers that are never contacted", async () => {
+  it("has ten consented leads with fictional numbers that are never contacted", async () => {
     const all = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)));
     // Plus two simulated buyers (buyer IDs, no phone), which the simulator tests cover.
     expect(all.filter((l) => l.buyerRef).map((l) => l.buyerRef).sort()).toEqual(["SIM-0001", "SIM-0002"]);
     const rows = all.filter((l) => !l.buyerRef);
     // Three plain new leads plus six that carry an order, quote or conversation state (W6: spend cap, hand-back).
-    expect(rows).toHaveLength(9);
+    expect(rows).toHaveLength(10);
     for (const l of rows) {
       expect(l.phone).toMatch(DEMO_PHONE_RANGE);
       expect(l.phone).toMatch(/^\+97250555\d{4}$/);
@@ -234,7 +234,7 @@ describe("one-click demo account", () => {
     for (const id of [a.summary.accountId, b.summary.accountId]) {
       const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
       expect(acc.status).toBe("live");
-      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(11);
+      expect(await db.select().from(leads).where(and(eq(leads.accountId, id), eq(leads.isTest, false)))).toHaveLength(12);
     }
   });
 
@@ -257,7 +257,7 @@ describe("one-click demo account", () => {
     h.me = admin;
     const e = await thrown(createDemoAccountAction());
     expect(e.message).toBe("NEXT_REDIRECT");
-    const m = e.url!.match(/^\/sadmin\/accounts\/([0-9a-f-]{36})\?demo=created&items=3&sources=9&facts=12&leads=9$/);
+    const m = e.url!.match(/^\/sadmin\/accounts\/([0-9a-f-]{36})\?demo=created&items=3&sources=9&facts=12&leads=10$/);
     expect(m).not.toBeNull();
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, m![1]));
     expect(acc.status).toBe("live");
