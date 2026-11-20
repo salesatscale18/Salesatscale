@@ -205,29 +205,31 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "schedule_follow_up",
-    description: "Schedule the time you agreed with the buyer to come back to them yourself (when they need time to think or it is not a good moment). The app writes to the buyer at that time. One per buyer: a new call replaces the earlier time. Refused outside 15 minutes to 30 days ahead; outside contact hours it returns the nearest allowed time to offer the buyer instead.",
+    description: "Schedule the time you agreed with the buyer to come back to them yourself (when they need time to think or it is not a good moment). The app writes to the buyer at that time. One per buyer: a new call replaces the earlier time. Refused outside 15 minutes to 30 days ahead. A time the buyer asked for is allowed at any hour; a time you proposed yourself must be inside contact hours, otherwise it returns the nearest allowed time to offer the buyer instead.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
         due_at: { type: "string", description: 'The agreed time: an ISO date-time with the offset of the buyer\'s time zone, e.g. "2026-11-18T10:00:00+02:00", or a local date and time, e.g. "2026-11-18T10:00", read in the buyer\'s time zone. Use "Local time now" from your context.' },
         topic: { type: "string", description: 'What to come back about, short, in the buyer\'s words, e.g. "the quote for the second office".' },
+        buyer_named_time: { type: "boolean", description: 'true when the buyer named this time themselves ("write to me Saturday at 21:00"); false when you proposed it, even if the buyer then agreed.' },
       },
-      required: ["due_at", "topic"],
+      required: ["due_at", "topic", "buyer_named_time"],
       additionalProperties: false,
     },
   },
   {
     name: "request_callback",
-    description: "Request a call between the buyer and a person on the seller's team, at the time you agreed with the buyer. There is no booking link yet: the team sees the request with your brief, confirms or changes the time, and the app tells the buyer. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier request. Refused for a time in the past, less than 15 minutes or more than 30 days ahead; outside contact hours it returns the nearest allowed time to offer the buyer instead.",
+    description: "Request a call between the buyer and a person on the seller's team, at the time you agreed with the buyer. There is no booking link yet: the team sees the request with your brief, confirms or changes the time, and the app tells the buyer. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier request. Refused for a time in the past, less than 15 minutes or more than 30 days ahead. A time the buyer named is accepted at any hour; a time you proposed yourself must be inside contact hours, otherwise it returns the nearest allowed time to offer the buyer instead.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
         time: { type: "string", description: 'The agreed time: an ISO date-time with the offset of the buyer\'s time zone, e.g. "2026-11-18T10:00:00+02:00", or a local date and time, e.g. "2026-11-18T10:00", read in the buyer\'s time zone. Use "Local time now" from your context.' },
         brief: { type: "string", description: "What the buyer wants to cover and what the person should have ready, short." },
+        buyer_named_time: { type: "boolean", description: 'true when the buyer named this time themselves ("call me Saturday at 21:00"); false when you proposed it, even if the buyer then agreed.' },
       },
-      required: ["time", "brief"],
+      required: ["time", "brief", "buyer_named_time"],
       additionalProperties: false,
     },
   },
@@ -831,7 +833,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   if (name === "schedule_follow_up") {
     const r = await scheduleFollowUp(
       ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId, language: ctx.language ?? "en" },
-      { due_at: args.due_at, topic: args.topic },
+      { due_at: args.due_at, topic: args.topic, buyer_named_time: args.buyer_named_time },
     );
     if (!r.ok) return refuse(r.rule, r.extra);
     await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, [], { nextStep: followUpNextStep(r.dueLocal, r.followUp.topic) });
@@ -846,7 +848,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "request_callback") {
-    const r = await requestCallback(ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, { time: args.time, brief: args.brief });
+    const r = await requestCallback(ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, { time: args.time, brief: args.brief, buyer_named_time: args.buyer_named_time });
     if (!r.ok) return refuse(r.rule, r.extra);
     await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, [], { nextStep: callbackNextStep(r.timeLocal, r.request.brief) });
     return {

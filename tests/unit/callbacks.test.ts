@@ -57,6 +57,25 @@ describe("call time rules", () => {
     expect(checkCallTime(ALL_DAY, TZ, new Date("2027-01-30T08:00:00Z"), NOW)).toMatchObject({ ok: false, why: "too_far", nearest: null });
   });
 
+  it("a time the buyer named is accepted at any hour; one the agent proposed must be inside contact hours (owner, 20 Nov 2026)", () => {
+    // Saturday 21 Nov 21:00 local: outside weekday 09:00-17:00.
+    const sat = new Date("2026-11-21T19:00:00Z");
+    expect(checkCallTime(WEEKDAYS_9_17, TZ, sat, NOW, { buyerNamed: true })).toEqual({ ok: true });
+    const proposed = checkCallTime(WEEKDAYS_9_17, TZ, sat, NOW, { buyerNamed: false });
+    expect(proposed).toMatchObject({ ok: false, why: "outside_hours" });
+    // The nearest allowed time, inside contact hours: Friday 16:30 (14:30 UTC) is nearer than Monday 09:00.
+    expect(!proposed.ok && proposed.nearest?.toISOString()).toBe("2026-11-20T14:30:00.000Z");
+    expect(checkCallTime(WEEKDAYS_9_17, TZ, sat, NOW)).toMatchObject({ ok: false, why: "outside_hours" });
+  });
+
+  it("past and too-far times are refused either way", () => {
+    for (const buyerNamed of [true, false]) {
+      expect(checkCallTime(WEEKDAYS_9_17, TZ, new Date("2026-11-18T07:00:00Z"), NOW, { buyerNamed })).toMatchObject({ ok: false, why: "past" });
+      expect(checkCallTime(WEEKDAYS_9_17, TZ, new Date("2026-11-18T08:05:00Z"), NOW, { buyerNamed })).toMatchObject({ ok: false, why: "too_soon" });
+      expect(checkCallTime(WEEKDAYS_9_17, TZ, new Date("2026-12-19T19:00:00Z"), NOW, { buyerNamed })).toMatchObject({ ok: false, why: "too_far", nearest: null });
+    }
+  });
+
   it("the brief is one line, at most BRIEF_MAX characters", () => {
     expect(cleanBrief("  pricing\n for  3 sites ")).toBe("pricing for 3 sites");
     expect(cleanBrief("x".repeat(BRIEF_MAX + 50))).toHaveLength(BRIEF_MAX);
@@ -87,7 +106,19 @@ describe("the current request, from lead events", () => {
     const changed = currentCallbackOf([...events, ev("callback.changed", 4, { callbackId: "b", at: "2026-11-20T12:00:00.000Z", timezone: TZ })]);
     expect(changed).toMatchObject({ id: "b", status: "confirmed", changed: true, at: new Date("2026-11-20T12:00:00.000Z"), requestedFor: new Date("2026-11-20T08:00:00.000Z") });
     expect(currentCallbackOf([ev("lead.created", 0, {})])).toBeNull();
+    expect(changed).toMatchObject({ buyerNamedTime: false, outsideHoursAsked: false });
     expect(currentCallbacks([...events, ev("callback.requested", 0, { callbackId: "c", at: "2026-11-19T08:00:00.000Z" }, "L2")]).map((c) => c.id).sort()).toEqual(["b", "c"]);
+  });
+
+  it("a buyer's time outside contact hours is noted until the seller sets another time", () => {
+    const asked = ev("callback.requested", 0, { callbackId: "n", at: "2026-11-21T19:00:00.000Z", timezone: TZ, brief: "x", buyerNamedTime: true, outsideContactHours: true });
+    expect(currentCallbackOf([asked])).toMatchObject({ buyerNamedTime: true, outsideHoursAsked: true });
+    // Confirmed: still the buyer's time.
+    expect(currentCallbackOf([asked, ev("callback.confirmed", 1, { callbackId: "n", at: "2026-11-21T19:00:00.000Z" })])).toMatchObject({ status: "confirmed", outsideHoursAsked: true });
+    // Changed by the seller: their time, no note.
+    expect(currentCallbackOf([asked, ev("callback.changed", 1, { callbackId: "n", at: "2026-11-21T20:00:00.000Z" })])).toMatchObject({ changed: true, outsideHoursAsked: false });
+    // outsideContactHours without buyerNamedTime is never a note.
+    expect(currentCallbackOf([ev("callback.requested", 0, { callbackId: "m", at: "2026-11-21T19:00:00.000Z", outsideContactHours: true })])).toMatchObject({ outsideHoursAsked: false });
   });
 });
 
@@ -146,23 +177,26 @@ describe("Who takes calls (setting) in the prompt", () => {
 describe("request_callback: definition, trace, voice", () => {
   const def = TOOL_DEFS.find((d) => d.name === "request_callback")!;
 
-  it("is a strict tool with time and brief, and says the chat stays with the agent", () => {
+  it("is a strict tool with time, brief and buyer_named_time, and says the chat stays with the agent", () => {
     expect(def.strict).toBe(true);
     expect(def.input_schema).toEqual({
       type: "object",
-      properties: { time: expect.objectContaining({ type: "string" }), brief: expect.objectContaining({ type: "string" }) },
-      required: ["time", "brief"], additionalProperties: false,
+      properties: { time: expect.objectContaining({ type: "string" }), brief: expect.objectContaining({ type: "string" }), buyer_named_time: expect.objectContaining({ type: "boolean" }) },
+      required: ["time", "brief", "buyer_named_time"], additionalProperties: false,
     });
     expect(def.description).toContain("The conversation stays with you: keep answering until the call.");
-    expect(def.description).toContain("outside contact hours it returns the nearest allowed time");
+    expect(def.description).toContain("A time the buyer named is accepted at any hour; a time you proposed yourself must be inside contact hours, otherwise it returns the nearest allowed time");
   });
 
   it("converts for both realtime dialects", () => {
     const gemini = realtimeTools("gemini").find((x) => x.name === "request_callback")!;
     expect(gemini.parameters).toEqual({
       type: "object",
-      properties: { time: { type: "string", description: expect.any(String) }, brief: { type: "string", description: expect.any(String) } },
-      required: ["time", "brief"],
+      properties: {
+        time: { type: "string", description: expect.any(String) }, brief: { type: "string", description: expect.any(String) },
+        buyer_named_time: { type: "boolean", description: expect.any(String) },
+      },
+      required: ["time", "brief", "buyer_named_time"],
     });
     expect(geminiSchema(def.input_schema)).toEqual(gemini.parameters);
     expect(realtimeTools("openai").find((x) => x.name === "request_callback")!.parameters).toEqual(def.input_schema);

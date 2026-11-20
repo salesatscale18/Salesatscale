@@ -211,11 +211,13 @@ export type DueFacts = {
   paid: boolean;
   buyerWroteAfterScheduling: boolean;
   withinContactHours: boolean;
+  /** The buyer asked for this time themselves: sent at that time even outside contact hours (owner, 20 Nov 2026). */
+  buyerNamedTime?: boolean;
 };
 
 export type DueDecision = { action: "cancel"; reason: FollowUpReason } | { action: "defer" } | { action: "send" };
 
-/** First matching rule wins: cancellations, then contact hours, then send. */
+/** First matching rule wins: cancellations, then contact hours (not for a time the buyer asked for), then send. */
 export function decideDue(f: DueFacts): DueDecision {
   if (f.leadOptedOut) return { action: "cancel", reason: "opted_out" };
   if (f.accountStatus === "paused") return { action: "cancel", reason: "account_paused" };
@@ -224,7 +226,7 @@ export function decideDue(f: DueFacts): DueDecision {
   if (f.conversationStatus === "human") return { action: "cancel", reason: "taken_over" };
   if (f.paid) return { action: "cancel", reason: "paid" };
   if (f.buyerWroteAfterScheduling) return { action: "cancel", reason: "buyer_replied" };
-  if (!f.withinContactHours) return { action: "defer" };
+  if (!f.withinContactHours && !f.buyerNamedTime) return { action: "defer" };
   return { action: "send" };
 }
 

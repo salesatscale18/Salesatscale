@@ -33,7 +33,8 @@ const NOT_TOLD: Record<string, MessageKey> = {
  * Lead card (O6): the call the agent arranged with the buyer. "Call requested:
  * Wed 18 Nov 10:00" with the agent's brief, Confirm and Change time; once
  * confirmed, "Call confirmed" with Change time. Confirming or changing tells
- * the buyer in the chat. The chat stays with the agent. Shown only when there
+ * the buyer in the chat. A time the buyer asked for outside contact hours
+ * carries a small note until the seller sets another time. The chat stays with the agent. Shown only when there
  * is a request (or right after acting on one).
  */
 export function CallbackPanel({ slug, leadId, request, canManage, notice, error, notTold }: {
@@ -62,6 +63,13 @@ export function CallbackPanel({ slug, leadId, request, canManage, notice, error,
             <Icon name={confirmed ? "check-circle" : "phone-call"} />
             <span>{t(confirmed ? "callback.confirmed" : "callback.requested", { time: formatDueLocal(request.at, request.timezone) })}</span>
           </span>
+          {/* The buyer named a time outside contact hours (allowed, owner 20 Nov 2026): the seller still confirms or changes it. */}
+          {request.outsideHoursAsked ? (
+            <span className="sas-small" data-testid="callback-outside-hours" style={{ display: "inline-flex", gap: 6, alignItems: "flex-start" }}>
+              <Icon name="clock" />
+              <span>{t("callback.outside_hours_asked")}</span>
+            </span>
+          ) : null}
           {request.brief ? <span className="sas-small" style={{ overflowWrap: "anywhere" }} data-testid="callback-brief">{t("callback.brief", { brief: request.brief })}</span> : null}
           <span className="sas-small">{t(confirmed ? "callback.hint_confirmed" : "callback.hint", { zone: callbackZoneLine(request.timezone, request.at) })}</span>
           {canManage ? (

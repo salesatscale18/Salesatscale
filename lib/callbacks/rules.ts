@@ -47,6 +47,13 @@ export type CallbackRequest = {
   changed: boolean;
   /** After the call, what the seller chose (null: not answered yet). */
   afterCall: "agent" | "seller" | null;
+  /** The buyer named the time themselves (request_callback buyer_named_time), rather than the agent proposing it. */
+  buyerNamedTime: boolean;
+  /**
+   * The time the buyer asked for falls outside the lead's contact hours (allowed for a time the buyer
+   * named, owner 20 Nov 2026). The call card notes it until the seller sets another time.
+   */
+  outsideHoursAsked: boolean;
 };
 
 type EventLike = { type: string; leadId: string; createdAt: Date; data: Record<string, unknown> | null };
@@ -73,6 +80,7 @@ export function currentCallbackOf(events: readonly EventLike[]): CallbackRequest
       cur = {
         id: str(d.callbackId), leadId: e.leadId, conversationId: str(d.conversationId) || null, at, timezone: str(d.timezone) || "UTC",
         brief: str(d.brief), status: "requested", requestedAt: e.createdAt, requestedFor: at, changed: false, afterCall: null,
+        buyerNamedTime: d.buyerNamedTime === true, outsideHoursAsked: d.buyerNamedTime === true && d.outsideContactHours === true,
       };
     } else if (cur && str(d.callbackId) === cur.id && e.type === CALLBACK_EVENTS.cancelled) {
       cur = null;
@@ -82,7 +90,9 @@ export function currentCallbackOf(events: readonly EventLike[]): CallbackRequest
     } else if (cur && str(d.callbackId) === cur.id) {
       const prev: CallbackRequest = cur;
       const at: Date = date(d.at) ?? prev.at;
-      cur = { ...prev, at, timezone: str(d.timezone) || prev.timezone, status: "confirmed", changed: prev.changed || e.type === CALLBACK_EVENTS.changed };
+      const changed = e.type === CALLBACK_EVENTS.changed;
+      // A time the seller set is theirs: the "the buyer asked for this time" note no longer applies.
+      cur = { ...prev, at, timezone: str(d.timezone) || prev.timezone, status: "confirmed", changed: prev.changed || changed, outsideHoursAsked: changed ? false : prev.outsideHoursAsked };
     }
   }
   return cur;
@@ -123,12 +133,18 @@ export type TimeCheck =
   | { ok: false; why: "past" | "too_soon" | "too_far" | "outside_hours"; nearest: Date | null };
 
 /**
- * A call time must be 15 minutes to 30 days ahead and within the lead's
- * contact hours. Otherwise `nearest` is the allowed time closest to it: for a
- * time in the past or too soon, the first allowed quarter hour from 15
- * minutes ahead; outside contact hours, as schedule_follow_up offers it.
+ * A call time must be 15 minutes to 30 days ahead, and, when the agent
+ * proposed it, within the lead's contact hours. A time the buyer named
+ * (`buyerNamed`) is allowed at any hour (contact hours limit only what the
+ * agent starts on its own, owner 20 Nov 2026); the past and the 30-day limit
+ * still apply. Otherwise `nearest` is the allowed time closest to it, always
+ * inside contact hours (the agent then proposes it): for a time in the past
+ * or too soon, the first allowed quarter hour from 15 minutes ahead; outside
+ * contact hours, as schedule_follow_up offers it.
  */
-export function checkCallTime(hours: ContactHours | null | undefined, timezone: string, at: Date, now: Date): TimeCheck {
+export function checkCallTime(
+  hours: ContactHours | null | undefined, timezone: string, at: Date, now: Date, opts: { buyerNamed?: boolean } = {},
+): TimeCheck {
   const window = dueWindow(at, now);
   if (window === "too_far") return { ok: false, why: "too_far", nearest: null };
   if (window === "too_soon") {
@@ -136,7 +152,7 @@ export function checkCallTime(hours: ContactHours | null | undefined, timezone: 
     const nearest = isWithinContactHours(hours, timezone, from) ? from : nearestAllowedTime(hours, timezone, from, now);
     return { ok: false, why: at.getTime() <= now.getTime() ? "past" : "too_soon", nearest };
   }
-  if (!isWithinContactHours(hours, timezone, at)) return { ok: false, why: "outside_hours", nearest: nearestAllowedTime(hours, timezone, at, now) };
+  if (!opts.buyerNamed && !isWithinContactHours(hours, timezone, at)) return { ok: false, why: "outside_hours", nearest: nearestAllowedTime(hours, timezone, at, now) };
   return { ok: true };
 }
 

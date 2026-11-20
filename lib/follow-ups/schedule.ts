@@ -5,7 +5,7 @@
  * platform scheduler that sends them is lib/follow-ups/scheduler.ts.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, gt, inArray } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { auditLog, conversations, followUps, leadEvents, leads, sellerAccounts, type FollowUp } from "@/db/schema";
@@ -20,12 +20,13 @@ import { cleanTopic, dueWindow, formatBuyerLocal, formatDueLocal, isoInZone, nea
 // The agent's tool
 // ---------------------------------------------------------------------------
 
-export type ScheduleInput = { due_at: unknown; topic: unknown };
+/** buyer_named_time: the buyer asked for this time themselves (true), or the agent proposed it (false or absent). */
+export type ScheduleInput = { due_at: unknown; topic: unknown; buyer_named_time?: unknown };
 export type ScheduleContext = { accountId: string; leadId: string; conversationId: string; language: string };
 
 export type ScheduleResult =
   /** dueLocal: the short form for seller views; dueForBuyer: the long form the agent tells the buyer ("Friday 20 November at 12:30"). */
-  | { ok: true; followUp: FollowUp; dueLocal: string; dueForBuyer: string; replaced: boolean }
+  | { ok: true; followUp: FollowUp; dueLocal: string; dueForBuyer: string; replaced: boolean; buyerNamedTime: boolean; outsideContactHours: boolean }
   | { ok: false; rule: string; extra: Record<string, unknown> };
 
 /**
@@ -33,7 +34,10 @@ export type ScheduleResult =
  * replaces the scheduled one (cancelled with reason "replaced"). Refused for
  * an opted-out lead, a chat a person holds or that is closed, a paused
  * account, a time less than 15 minutes or more than 30 days ahead, and a time
- * outside contact hours (the result then offers the nearest allowed time).
+ * the agent proposed outside contact hours (the result then offers the
+ * nearest allowed time). A time the buyer asked for is allowed at any hour
+ * (owner, 20 Nov 2026): the lead event "follow_up.scheduled" records
+ * buyerNamedTime, and the scheduler then sends it at that time.
  */
 export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: ScheduleInput, now = new Date()): Promise<ScheduleResult> {
   const [row] = await db.select({ lead: leads, conv: conversations, account: sellerAccounts }).from(conversations)
@@ -64,7 +68,9 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
       extra: { message: "Ask the buyer for a time between 15 minutes and 30 days from now." },
     };
   }
-  if (!isWithinContactHours(contact.contactHours, tz, due)) {
+  const buyerNamed = input.buyer_named_time === true;
+  const outsideContactHours = !isWithinContactHours(contact.contactHours, tz, due);
+  if (outsideContactHours && !buyerNamed) {
     const nearest = nearestAllowedTime(contact.contactHours, tz, due, now);
     return {
       ok: false, rule: "Outside contact hours",
@@ -93,15 +99,29 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
     }),
     q.insert(leadEvents).values({
       id: randomUUID(), accountId: ctx.accountId, leadId: ctx.leadId, type: "follow_up.scheduled", actor: "agent",
-      data: { followUpId: id, dueAt: due.toISOString(), replaced: !!existing },
+      data: { followUpId: id, dueAt: due.toISOString(), replaced: !!existing, buyerNamedTime: buyerNamed, ...(outsideContactHours ? { outsideContactHours: true } : {}) },
     }),
     q.insert(auditLog).values({
       accountId: ctx.accountId, actorUserId: null, action: "follow_up.scheduled", targetType: "follow_up", targetId: id,
-      details: { leadId: ctx.leadId, dueAt: due.toISOString(), ...(existing ? { replaced: existing.id } : {}) },
+      details: { leadId: ctx.leadId, dueAt: due.toISOString(), buyerNamedTime: buyerNamed, ...(existing ? { replaced: existing.id } : {}) },
     }),
   ]);
   const [followUp] = await db.select().from(followUps).where(and(eq(followUps.id, id), eq(followUps.accountId, ctx.accountId)));
-  return { ok: true, followUp, dueLocal, dueForBuyer: formatBuyerLocal(due, tz), replaced: !!existing };
+  return { ok: true, followUp, dueLocal, dueForBuyer: formatBuyerLocal(due, tz), replaced: !!existing, buyerNamedTime: buyerNamed, outsideContactHours };
+}
+
+/**
+ * Whether the buyer asked for this follow-up's time (the "follow_up.scheduled" lead event's
+ * buyerNamedTime): such a follow-up is sent at its time even outside contact hours.
+ */
+export async function followUpBuyerNamed(db: Db, f: Pick<FollowUp, "id" | "accountId" | "leadId">): Promise<{ buyerNamedTime: boolean; outsideContactHours: boolean }> {
+  const [e] = await db.select({ data: leadEvents.data }).from(leadEvents)
+    .where(and(
+      eq(leadEvents.accountId, f.accountId), eq(leadEvents.leadId, f.leadId), eq(leadEvents.type, "follow_up.scheduled"),
+      sql`${leadEvents.data}->>'followUpId' = ${f.id}`,
+    )).limit(1);
+  const d = (e?.data ?? {}) as Record<string, unknown>;
+  return { buyerNamedTime: d.buyerNamedTime === true, outsideContactHours: d.buyerNamedTime === true && d.outsideContactHours === true };
 }
 
 /** The deal's next step for a scheduled follow-up: "Follow up Tue 18 Nov 10:00: the second office". */
