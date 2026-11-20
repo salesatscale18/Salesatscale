@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { build } from "esbuild";
 import { eq } from "drizzle-orm";
-import { conversations, sellerAccounts, users } from "@/db/schema";
+import { conversations, rateLimits, sellerAccounts, users } from "@/db/schema";
 import { translator } from "@/lib/i18n";
 import { buyerChat, chatNames, createSimulatedBuyer, receiveSimulatorInbound, resolveChatLink, startSimulatorConversation } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
@@ -44,6 +44,13 @@ async function bundlePage(entry = "harness-page.tsx"): Promise<{ js: string; css
     bundle: true, write: false, format: "esm", platform: "browser", target: "es2022", jsx: "automatic",
     tsconfig: path.join(ROOT, "tsconfig.json"), sourcemap: "inline", logLevel: "warning",
     define: { "process.env.NODE_ENV": '"development"' },
+    // "use server" modules (the chat page's actions) are server references in Next.js: a stub here, not server code.
+    plugins: [{
+      name: "server-actions-stub",
+      setup(b) {
+        b.onResolve({ filter: /^\.\/actions$/ }, (args) => (args.importer.includes(`${path.sep}app${path.sep}chat${path.sep}`) ? { path: path.join(__dirname, "stub-server-actions.ts") } : undefined));
+      },
+    }],
     banner: { js: "globalThis.process ??= { env: {} };" },
   });
   return {
@@ -174,6 +181,11 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
           lang, tabKey: voiceTabKey(buyers[lang].conversationId), agentName: (await chatNames(db, link.ctx.account, "en")).agent, seller: names.seller,
           rootStyle: brandVars(link.ctx.brandColor),
         }));
+      }
+      if (req.method === "POST" && url.pathname === "/api/reset-rate-limits") {
+        // Harness only: a buyer link allows 6 calls an hour; the sections below make more than that on the same links.
+        await db.delete(rateLimits);
+        return send(200, "application/json", "{}");
       }
       if (req.method === "POST" && url.pathname === "/api/limits") {
         fastStandby = url.searchParams.get("fast") === "1";

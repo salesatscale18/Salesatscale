@@ -16,7 +16,7 @@ import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX } from "@/lib/a
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import type { TwilioTransport } from "@/lib/channels/twilio";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import {
   ANSWER_MAX, ANSWER_SEND_WITHIN_MS, cleanLine, decideAnswer, foldAnswers, foldAsks, mustHaveOf, QUESTION_LOOKBACK_MS, QUESTION_MAX,
   TEAM_QUESTION_EVENTS, TEAM_QUESTION_EVENT_TYPES, teamAnswerText, teamQuestionLines, WORDS_MAX, type TeamAnswer, type TeamAsk,
@@ -269,7 +269,7 @@ async function deliverOne(db: Db, account: SellerAccount, a: TeamAnswer, transpo
     q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
     q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, a.leadId), eq(leads.accountId, accountId))),
   ]);
-  if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {
+  if (conv.channel === "whatsapp" || isWebChat(conv.channel)) {
     await deliverText(db, transport, { accountId, conversationId: conv.id, messageId, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
   }
   return "sent";

@@ -4,7 +4,7 @@ import {
   DEFAULT_SMS_DAILY_CAP, SMS_EVENTS, SMS_KINDS, SMS_PER_LEAD_DAILY, smsConfig, smsMode, smsRefusal, smsRoute, smsSegments, smsStoppedOf,
   type SmsFacts,
 } from "@/lib/sms/rules";
-import { smsText } from "@/lib/sms/texts";
+import { smsLink, smsText } from "@/lib/sms/texts";
 import { leadIdFromStopToken, stopPath, stopTokenFor } from "@/lib/sms/token";
 import { TwilioSmsTransport } from "@/lib/sms/transport";
 import { chatTokenFor, linkIdFromChatToken } from "@/lib/simulator/token";
@@ -84,7 +84,9 @@ describe("SMS refusals", () => {
     expect(smsRefusal(facts({ contactHours: NEVER, kind: "opener" }))).toBe("outside_contact_hours");
     expect(smsRefusal(facts({ contactHours: NEVER, kind: "named_time" }))).toBeNull();
     expect(smsRefusal(facts({ contactHours: NEVER, kind: "chat_link" }))).toBeNull();
-    expect(smsRefusal(facts({ contactHours: NEVER, kind: "hand_back" }))).toBeNull();
+    expect(smsRefusal(facts({ contactHours: NEVER, kind: "quote_ready" }))).toBeNull();
+    expect(smsRefusal(facts({ contactHours: NEVER, kind: "order_form" }))).toBeNull();
+    expect(smsRefusal(facts({ contactHours: NEVER, kind: "team_call" }))).toBeNull();
   });
 
   it("caps SMS per lead per day and spaces them, except the buyer's time and Send chat link", () => {
@@ -110,24 +112,48 @@ describe("SMS refusals", () => {
 });
 
 describe("SMS texts and segments", () => {
-  const vars = { seller: "Polar", chat: "https://app.test/chat/abc", stop: "https://app.test/chat/stop/xyz" };
+  // The board's link: host and short code, no scheme (~38 characters).
+  const link = "salesatscale18.vercel.app/c/Ab3dE6gH9k";
+  const vars = { seller: "Polar Demo", chat: link, agent: "Maya", time: "Mon 23 Nov 15:30" };
 
-  it("every kind in every language has the chat link and ends with the stop link", () => {
+  it("uses the board ReachSms texts verbatim, one link each, no opt-out line on service messages", () => {
+    expect(smsText("named_time", "en", vars)).toBe(`It's the time you asked for. Talk or write: ${link}`);
+    expect(smsText("named_time", "he", vars)).toBe(`הגיע הזמן שביקשת: ${link}`);
+    expect(smsText("named_time_retry", "en", vars)).toBe(`Still a good time? Talk, write or pick a new time: ${link}`);
+    expect(smsText("named_time_retry", "he", vars)).toBe(`עדיין נוח? או זמן אחר: ${link}`);
+    expect(smsText("quote_ready", "en", vars)).toBe(`Your quote from Polar Demo is ready: ${link}`);
+    expect(smsText("quote_ready", "he", vars)).toBe(`ההצעה מ-Polar Demo מוכנה: ${link}`);
+    expect(smsText("order_form", "en", vars)).toBe(`Your order form is ready (about 2 min): ${link}`);
+    expect(smsText("order_form", "he", vars)).toBe(`טופס ההזמנה מוכן (כ-2 דק'): ${link}`);
+    expect(smsText("team_call", "en", vars)).toBe(`Call with Polar Demo: Mon 23 Nov 15:30 your time. Details: ${link}`);
+    expect(smsText("chat_link", "en", vars)).toBe(`Thanks for talking with us. Continue anytime: ${link}`);
+    expect(smsText("chat_link", "he", vars)).toBe(`תודה על השיחה. אפשר להמשיך כאן: ${link}`);
+    // The agent's follow-up is commercial: sender name first, STOP by reply ("פרסומת:" in Hebrew).
+    expect(smsText("follow_up", "en", vars)).toBe(`Polar Demo: Maya has an update for you: ${link}\nTo stop: reply STOP`);
+    expect(smsText("follow_up", "he", { ...vars, agent: "מאיה" })).toBe(`פרסומת: Polar Demo - מאיה עם עדכון: ${link}\nלהסרה השב/י הסר`);
     for (const lang of ["en", "he"]) {
       for (const kind of SMS_KINDS) {
         const text = smsText(kind, lang, vars);
-        expect(text).toContain("Polar");
-        expect(text).toContain(vars.chat);
-        expect(text.endsWith(vars.stop)).toBe(true);
+        expect(text.split(link)).toHaveLength(2);
+        expect(text).not.toMatch(/Stop messages|להפסקת הודעות|https?:/);
       }
     }
-    expect(smsText("chat_link", "en", vars)).toContain("Stop messages: https://app.test/chat/stop/xyz");
     expect(smsText("chat_link", "fr", vars)).toBe(smsText("chat_link", "en", vars));
-    expect(smsText("named_time", "en", vars)).toContain("it's the time you asked for");
+    expect(smsLink("https://salesatscale18.vercel.app/c/Ab3dE6gH9k")).toBe(link);
+  });
+
+  it("fits one SMS each, except the Hebrew follow-up (two), as the board counts", () => {
+    for (const kind of SMS_KINDS) expect(smsSegments(smsText(kind, "en", vars))).toBe(1);
+    for (const kind of SMS_KINDS) {
+      const he = smsText(kind, "he", { ...vars, agent: "מאיה", time: "ב' 23.11 15:30" });
+      expect(smsSegments(he)).toBe(kind === "follow_up" || kind === "opener" ? 2 : 1);
+    }
+    expect(smsText("named_time", "en", vars)).toHaveLength(82);
+    expect(smsText("chat_link", "he", vars)).toHaveLength(70);
   });
 
   it("never re-expands placeholders inside the values", () => {
-    expect(smsText("chat_link", "en", { ...vars, seller: "{chat}" })).toMatch(/^\{chat\}: /);
+    expect(smsText("quote_ready", "en", { ...vars, seller: "{chat}" })).toBe(`Your quote from {chat} is ready: ${link}`);
   });
 
   it("counts GSM-7 and UCS-2 segments", () => {

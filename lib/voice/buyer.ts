@@ -24,9 +24,8 @@ import { accountMembers, agentVersions, consentRecords, conversations, leads, me
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
-import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isSimulatedLead, WEB_CHAT_CHANNELS } from "@/lib/simulator/rules";
 import type { ChatContext } from "@/lib/simulator/service";
-import { inboundConversation, markBuyerEngaged } from "@/lib/channels/whatsapp";
 import { isEmptyShortCall } from "@/lib/agent/thread-markers";
 import { createVoiceSession, STALE_PENDING_SEC } from "./service";
 import { maxCallSeconds, voiceMode } from "./settings";
@@ -36,20 +35,20 @@ export const BUYER_CALLS_PER_HOUR = 6;
 
 export type BuyerVoiceBlock =
   | "voice_off" | "buyer_calls_off" | "account_not_live" | "spend_cap" | "platform_budget"
-  | "no_conversation" | "not_agent" | "opted_out";
+  | "no_conversation" | "not_agent" | "opted_out" | "no_consent";
 
 export type BuyerVoiceGate =
-  /** `conversation` null: the chat has not started; the call starts it, as the buyer's first message would. */
+  /** `conversation` null: the chat has not started; the call starts it (ensureChatStarted), as opening the chat link would. */
   | { ok: true; conversation: Conversation | null; consented: boolean }
   | { ok: false; reason: BuyerVoiceBlock };
 
 /** Reasons a tester on a simulated chat is shown (the others hide the button: no chat yet, the buyer opted out, voice off). */
-export const SHOWN_BLOCKS: ReadonlySet<BuyerVoiceBlock> = new Set(["buyer_calls_off", "account_not_live", "spend_cap", "platform_budget", "not_agent"]);
+export const SHOWN_BLOCKS: ReadonlySet<BuyerVoiceBlock> = new Set(["buyer_calls_off", "account_not_live", "spend_cap", "platform_budget", "not_agent", "no_consent"]);
 
 /** The chat's conversation (the latest on the chat page's channel), or null. */
 export async function buyerConversation(db: Db, ctx: Pick<ChatContext, "lead" | "account">): Promise<Conversation | null> {
   const [c] = await db.select().from(conversations)
-    .where(and(eq(conversations.accountId, ctx.account.id), eq(conversations.leadId, ctx.lead.id), eq(conversations.channel, SIMULATOR_CHANNEL), eq(conversations.isTest, false)))
+    .where(and(eq(conversations.accountId, ctx.account.id), eq(conversations.leadId, ctx.lead.id), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false)))
     .orderBy(desc(conversations.createdAt)).limit(1);
   return c ?? null;
 }
@@ -105,7 +104,7 @@ export async function buyerVoiceGate(db: Db, ctx: Pick<ChatContext, "lead" | "ac
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   const conversation = await buyerConversation(db, { lead, account });
   if (!conversation) {
-    // A chat that has not started: the call will start it (startBuyerVoiceCall), as the first message would. Only
+    // A chat that has not started: the call will start it (startBuyerVoiceCall, ensureChatStarted). Only
     // what that path would refuse or hand to a person is checked here: a published agent, and the spend cap (a new
     // buyer-started conversation at the cap waits for a person), in every mode.
     const [live] = await db.select({ id: agentVersions.id }).from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "live")));
@@ -144,7 +143,7 @@ export async function startBuyerVoiceCall(
   const gate = await buyerVoiceGate(db, ctx, { now, env: opts.env });
   if (!gate.ok) return { ok: false, reason: "unavailable", gate: gate.reason };
   if (!(await rateLimit(db, `voice-buyer:${hashKey(token)}`, { limit: BUYER_CALLS_PER_HOUR, windowSeconds: 3600 }, now)).ok) return { ok: false, reason: "rate_limited" };
-  // A chat that has not started: the call starts the conversation the way the buyer's first message does.
+  // A chat that has not started: the call starts it as opening the chat link does (ensureChatStarted, with the opener).
   let conversation = gate.conversation;
   let started = false;
   if (!conversation) {
@@ -157,12 +156,8 @@ export async function startBuyerVoiceCall(
   const [earlier] = started ? [] : await db.select({ id: voiceSessions.id }).from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, ctx.account.id), eq(voiceSessions.conversationId, conversation.id), isNotNull(voiceSessions.connectedAt))).limit(1);
   const s = await createVoiceSession(db, { accountId: ctx.account.id, conversationId: conversation.id, userId: null, isTest: false }, { now, env: opts.env });
-  if (!s.ok) {
-    // Refused after all: a conversation this call started (and nothing else wrote to) goes again.
-    if (started) await dropUnusedConversation(db, ctx.account.id, conversation.id);
-    return { ok: false, reason: s.reason === "already_in_call" ? "already_in_call" : "unavailable" };
-  }
-  if (started) await markBuyerEngaged(db, ctx.lead, conversation);
+  // A refusal now leaves the chat as opening its link would have: started, with the agent's opener.
+  if (!s.ok) return { ok: false, reason: s.reason === "already_in_call" ? "already_in_call" : "unavailable" };
   if (!gate.consented) await recordVoiceConsent(db, ctx.account.id, ctx.lead.id, now);
   const [version] = await db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
     .where(and(eq(agentVersions.id, conversation.agentVersionId), eq(agentVersions.accountId, ctx.account.id)));
@@ -172,45 +167,43 @@ export async function startBuyerVoiceCall(
   };
 }
 
-/** One start of a not-started chat per lead at a time (a double tap, two tabs): the second waits its turn as "already in a call". */
+/** A start of a not-started chat holds this lock per lead (see startChatForCall). */
 const START_LOCK_SEC = 20;
 
 /**
- * Starts the chat's conversation for a call, through the same path as the buyer's first message
- * (lib/simulator/service simulatorStartCheck, then inboundConversation with its spend-cap rule).
- * Idempotent per lead: a concurrent start is refused (already_in_call) instead of making a second conversation.
+ * Starts the lead's web chat for a call: lib/chat/start ensureChatStarted, the same start as opening the chat link
+ * (idempotent, with the agent's opener as its first message, and its gates). The call then continues that chat
+ * (its pick-up line re-asks the opener's question), so the buyer hears no second introduction.
  */
 async function startChatForCall(
   db: Db, ctx: Pick<ChatContext, "lead" | "account">, now: Date,
-): Promise<{ ok: true; conversation: Conversation } | { ok: false; reason: "unavailable" | "already_in_call"; gate?: BuyerVoiceBlock }> {
+): Promise<{ ok: true; conversation: Conversation } | { ok: false; reason: "unavailable"; gate: BuyerVoiceBlock }> {
+  // One start per lead at a time (a double tap, two tabs): ensureChatStarted alone lets two parallel first starts both
+  // write a conversation. The second waits its turn: it joins the chat if it is there now, else "already in a call".
   if (!(await rateLimit(db, `voice-start:${ctx.lead.id}`, { limit: 1, windowSeconds: START_LOCK_SEC }, now)).ok) {
-    // Someone else is starting it: if it is there now, the call joins it like any other.
     const conv = await buyerConversation(db, ctx);
-    return conv?.status === "open" ? { ok: true, conversation: conv } : { ok: false, reason: "already_in_call" };
+    return conv?.status === "open" ? { ok: true, conversation: conv } : { ok: false, reason: "unavailable", gate: "no_conversation" };
   }
-  const existing = await buyerConversation(db, ctx);
-  if (existing) return existing.status === "open" ? { ok: true, conversation: existing } : { ok: false, reason: "unavailable", gate: "not_agent" };
-  // Imported here: lib/simulator/service imports this module.
-  const { simulatorStartCheck } = await import("@/lib/simulator/service");
-  const check = await simulatorStartCheck(db, ctx);
-  if (!check.ok) return { ok: false, reason: "unavailable", gate: check.reason === "opted_out" ? "opted_out" : "account_not_live" };
-  const r = await inboundConversation(db, check.lead, SIMULATOR_CHANNEL, { allowBeforeGoLive: check.simulated, now });
-  if (!r.ok) return { ok: false, reason: "unavailable", gate: r.reason === "opted_out" ? "opted_out" : "account_not_live" };
-  if (r.conv.status !== "open") {
-    // At the spend cap a new conversation waits for a person (that path's rule): no call on it.
-    return { ok: false, reason: "unavailable", gate: "spend_cap" };
+  // Imported here: lib/chat/start imports lib/simulator/service, which imports this module.
+  const { ensureChatStarted } = await import("@/lib/chat/start");
+  const r = await ensureChatStarted(db, { accountId: ctx.account.id, leadId: ctx.lead.id, now });
+  if (r.started || r.reason === "exists") {
+    const conv = await buyerConversation(db, ctx);
+    if (conv?.status === "open") return { ok: true, conversation: conv };
+    return { ok: false, reason: "unavailable", gate: conv?.status === "human" && (await spendCapped(db, ctx.account.id, now)) ? "spend_cap" : "not_agent" };
   }
-  return { ok: true, conversation: r.conv };
+  return { ok: false, reason: "unavailable", gate: startRefusalBlock(r.reason) };
 }
 
-/** Deletes a conversation a refused call started, only while it has no message and no call stored. */
-async function dropUnusedConversation(db: Db, accountId: string, conversationId: string): Promise<void> {
-  const [[msg], [call]] = await Promise.all([
-    db.select({ id: messages.id }).from(messages).where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId))).limit(1),
-    db.select({ id: voiceSessions.id }).from(voiceSessions).where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conversationId))).limit(1),
-  ]);
-  if (msg || call) return;
-  await db.delete(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.id, conversationId)));
+/** ensureChatStarted's refusals as the voice reasons a tester or the seller's staff is shown. */
+export function startRefusalBlock(reason: string): BuyerVoiceBlock {
+  switch (reason) {
+    case "opted_out": return "opted_out";
+    case "spend_cap": return "spend_cap";
+    case "no_consent": return "no_consent";
+    case "account_not_live": case "account_paused": case "no_agent": case "simulated_disabled": return "account_not_live";
+    default: return "no_conversation";
+  }
 }
 
 /** What the chat page gets about voice: available, or (to a tester or the seller's staff only) why not. */

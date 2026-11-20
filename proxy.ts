@@ -4,8 +4,8 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 // pages themselves (see app/sadmin/page.tsx, lib/auth/account.ts) — this only enforces sign-in.
 const isProtectedRoute = createRouteMatcher(["/sadmin(.*)", "/app(.*)", "/invite(.*)"]);
 // Public buyer pages, login-free: the personal token in the link is the credential
-// (order form /f/<token>, buyer simulator chat /chat/<token>). Never protected here.
-const isPublicBuyerRoute = createRouteMatcher(["/f/(.*)", "/chat/(.*)"]);
+// (order form /f/<token>, buyer chat /chat/<token>, the SMS short link /c/<code>). Never protected here.
+const isPublicBuyerRoute = createRouteMatcher(["/f/(.*)", "/chat/(.*)", "/c/(.*)"]);
 
 export default clerkMiddleware(async (auth, req) => {
   if (isPublicBuyerRoute(req)) return;

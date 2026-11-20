@@ -20,7 +20,7 @@ import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import type { TwilioTransport } from "@/lib/channels/twilio";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { decideDue, followUpText, MAX_ATTEMPTS, type FollowUpReason } from "./rules";
 import { followUpBuyerNamed } from "./schedule";
 
@@ -185,7 +185,7 @@ async function processOne(
     ]);
   }
 
-  if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {
+  if (conv.channel === "whatsapp" || isWebChat(conv.channel)) {
     const delivery = await deliverText(db, transport, { accountId: f.accountId, conversationId: conv.id, messageId, body }, {
       statusCallback: statusCallbackUrl(publicBaseUrl()), now,
     });

@@ -12,7 +12,7 @@
 import { marketOfLead } from "@/lib/markets/lead-settings";
 import { marketContactSettings } from "@/lib/markets/settings";
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, isNull, max, ne, or } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, max, ne, or, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { agentVersions, channelConnections, consentRecords, conversations, leadEvents, leads, messageTemplates, messages, sellerAccounts, toolCalls } from "@/db/schema";
@@ -24,10 +24,11 @@ import { maskCardNumbers } from "@/lib/agent/safety";
 import { runBuyerTurn } from "@/lib/agent/turn";
 import { spendCapped } from "@/lib/ai/usage";
 import type { LlmClient } from "@/lib/agent/llm";
-import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, windowState, type OpenerRefusal, type WindowState } from "./rules";
+import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, whatsappEnabled, windowState, type OpenerRefusal, type WindowState } from "./rules";
 import { whatsappAddressToE164, type TwilioTransport } from "./twilio";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
-import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isSimulatedLead, isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { SMS_EVENTS } from "@/lib/sms/rules";
 import { SPEND_CAP_HANDOFF_EVENT } from "@/lib/agent/thread-markers";
 import type { Conversation, Lead } from "@/db/schema";
 
@@ -81,16 +82,19 @@ export async function deliverText(
     .innerJoin(leads, eq(leads.id, conversations.leadId))
     .innerJoin(sellerAccounts, eq(sellerAccounts.id, conversations.accountId))
     .where(and(eq(conversations.id, m.conversationId), eq(conversations.accountId, m.accountId), eq(leads.accountId, m.accountId)));
-  // Buyer simulator: no provider. The message is already in the conversation, which is
-  // what the buyer page shows; it counts as delivered at once ("read" when the page loads it).
-  if (row?.conv.channel === SIMULATOR_CHANNEL) {
+  // Web chat (a real lead's "chat", or the simulator): no provider. The message is already in the conversation,
+  // which is what the buyer page shows; it counts as delivered at once ("read" when the page loads it).
+  // Only a simulated chat with "Simulate WhatsApp rules" on has the 24-hour window.
+  if (row && isWebChat(row.conv.channel)) {
     if (row.lead.status === "opted_out" && !opts.optOutConfirmation) return fail("opted_out");
-    if (row.simulateRules && !(await conversationWindow(db, m.accountId, m.conversationId, now)).open) return fail("window_closed");
+    if (row.conv.channel === SIMULATOR_CHANNEL && row.simulateRules && !(await conversationWindow(db, m.accountId, m.conversationId, now)).open) return fail("window_closed");
     await db.update(messages).set({ deliveryStatus: "delivered", deliveryError: null })
       .where(and(eq(messages.id, m.messageId), eq(messages.accountId, m.accountId)));
     return { delivered: true };
   }
   if (!row || row.conv.channel !== "whatsapp") return { delivered: false, reason: "not_whatsapp" };
+  // WhatsApp is off for the platform (WHATSAPP_ENABLED): nothing reaches Twilio; the message stays in the thread with why.
+  if (!whatsappEnabled()) return fail("whatsapp_off");
   // Test-lab chats only ever reach a tester's phone, re-checked against the number's tester list at send time.
   const tester = row.conv.isTest;
   if (tester ? !row.conv.channelAddress : row.lead.isTest || isFictionalDemoLead(row.lead)) return fail("test_lead");
@@ -148,13 +152,14 @@ export async function sendTemplateMessage(
   const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
     .innerJoin(leads, eq(leads.id, conversations.leadId))
     .where(and(eq(conversations.id, conversationId), eq(conversations.accountId, accountId), eq(leads.accountId, accountId)));
-  // Buyer simulator: the same template rule, delivered to the buyer page instead of Twilio.
-  const sim = row?.conv.channel === SIMULATOR_CHANNEL;
+  // Web chat (simulator, or a real lead's chat): the same template rule, delivered to the buyer page instead of Twilio.
+  const sim = !!row && isWebChat(row.conv.channel);
   if (!row || (row.conv.channel !== "whatsapp" && !sim)) return { ok: false, reason: "not_found" };
   const { conv, lead } = row;
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   if (conv.status === "closed") return { ok: false, reason: "closed" };
   if (!sim && (conv.isTest ? !conv.channelAddress : lead.isTest || isSimulatedLead(lead) || isFictionalDemoLead(lead))) return { ok: false, reason: "test_lead" };
+  if (!sim && !whatsappEnabled()) return { ok: false, reason: "not_configured" };
   const [template] = await db.select().from(messageTemplates)
     .where(and(eq(messageTemplates.id, templateId), eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")));
   if (!template) return { ok: false, reason: "template_not_found" };
@@ -222,6 +227,7 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
   const contact = marketContactSettings(account, market);
   const template = await approvedTemplate(db, accountId, "opener", lead.language, contact.languages);
   const refusal = openerRefusal({
+    whatsappOff: !whatsappEnabled(),
     twilioConfigured: !!transport,
     // A demo lead's number is fictional (lib/demo/phones.ts): never contacted, like a test lead.
     lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status, simulated: isSimulatedLead(lead) },
@@ -507,11 +513,29 @@ export async function applyStatusCallback(db: Db, params: Record<string, string>
   const incoming = params.MessageStatus ?? params.SmsStatus ?? "";
   if (!sid || !incoming) return false;
   const [msg] = await db.select({ id: messages.id, status: messages.deliveryStatus }).from(messages).where(eq(messages.channelMessageId, sid));
-  if (!msg) return false;
+  if (!msg) return applySmsStatus(db, sid, incoming, params);
   const next = nextDeliveryStatus(msg.status, incoming);
   if (!next) return true;
   const error = params.ErrorCode ? `${params.ErrorCode}${params.ErrorMessage ? `: ${params.ErrorMessage}` : ""}`.slice(0, 300) : null;
   await db.update(messages).set({ deliveryStatus: next, ...(error ? { deliveryError: error } : {}) })
     .where(and(eq(messages.id, msg.id), msg.status === null ? isNull(messages.deliveryStatus) : eq(messages.deliveryStatus, msg.status)));
+  return true;
+}
+
+/**
+ * A delivery update for an SMS that nudges no chat message (the hand-back
+ * "chat link"): appended as an `sms.status` lead event next to its `sms.sent`
+ * (lib/sms/thread.ts reads the latest one). False for an unknown SID.
+ */
+async function applySmsStatus(db: Db, sid: string, incoming: string, params: Record<string, string>): Promise<boolean> {
+  if (!/^SM[0-9a-f]{32}$/i.test(sid)) return false;
+  const [sent] = await db.select({ accountId: leadEvents.accountId, leadId: leadEvents.leadId }).from(leadEvents)
+    .where(and(eq(leadEvents.type, SMS_EVENTS.sent), sql`${leadEvents.data}->>'sid' = ${sid}`)).limit(1);
+  if (!sent) return false;
+  const error = params.ErrorCode ? `${params.ErrorCode}${params.ErrorMessage ? `: ${params.ErrorMessage}` : ""}`.slice(0, 300) : null;
+  await db.insert(leadEvents).values({
+    accountId: sent.accountId, leadId: sent.leadId, type: SMS_EVENTS.status, actor: "system",
+    data: { sid, status: incoming.toLowerCase().slice(0, 20), ...(error ? { error } : {}) },
+  });
   return true;
 }

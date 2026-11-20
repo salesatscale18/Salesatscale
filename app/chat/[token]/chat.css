@@ -151,3 +151,39 @@
 /* While the bubble shows, the thread keeps room for it at the bottom (bubble 56 px + its 12 px lift + 12 px), so the last
    message never sits under it. */
 .c-frame:has(.c-bubble-dock .vb) .c-log { padding-block-end: 80px; }
+
+/* RA (reach: web chat for real leads, board ReachChat / ReachSms). The chat menu in the header
+   (stop text messages, or turn them back on), the "Stop text messages" link at the top of a chat
+   opened from an SMS, and the stop page (/chat/stop/<token>) in the same phone frame. */
+.c-head { position: relative; }
+.c-menu { margin-inline-start: auto; position: relative; flex: none; }
+.c-menu__btn { list-style: none; width: 36px; height: 36px; border-radius: 999px; display: grid; place-items: center; color: var(--muted); cursor: pointer; }
+.c-menu__btn::-webkit-details-marker { display: none; }
+.c-menu__btn:hover { background: var(--surface); }
+.c-menu__btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.c-menu__btn .sas-ico { width: 18px; height: 18px; }
+.c-menu__list { position: absolute; inset-inline-end: 0; inset-block-start: 40px; z-index: 5; min-width: 220px; background: var(--raised);
+  border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(15, 20, 32, .14); padding: 4px; }
+.c-menu__list form { margin: 0; }
+.c-menu__item { display: block; width: 100%; text-align: start; padding: 9px 12px; border: 0; border-radius: 8px; background: transparent;
+  font: inherit; font-size: 14px; line-height: 20px; color: var(--ink); text-decoration: none; cursor: pointer; }
+.c-menu__item:hover { background: var(--surface); }
+.c-menu__item:focus-visible { outline: 2px solid var(--focus); outline-offset: -2px; }
+.c-stopbar { flex: none; padding: 6px 12px; background: var(--raised); border-block-end: 1px solid var(--line); font-size: 12px; line-height: 16px; text-align: center; }
+.c-stopbar a { color: var(--muted); text-decoration: underline; }
+.c-stopbar a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.c-notice--ok { background: var(--surface); color: var(--ink); border-block-end: 1px solid var(--line); }
+
+.c-stop { background: var(--raised); }
+.c-stop__body { flex: 1; display: flex; flex-direction: column; gap: 12px; padding: 32px 20px; overflow-y: auto; }
+.c-stop__body--done { align-items: center; text-align: center; padding-block-start: 40px; }
+.c-stop__title { margin: 0; font-size: 20px; line-height: 26px; font-weight: 700; color: var(--ink); }
+.c-stop__text { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink); }
+.c-stop__hint { margin: 0; font-size: 14px; line-height: 20px; color: var(--muted); }
+.c-stop__btn { margin-block-start: 8px; width: 100%; min-height: 44px; border: 0; border-radius: 999px; background: var(--brand); color: var(--brand-on, #fff);
+  font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; }
+.c-stop__btn:focus-visible, .c-stop__link:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.c-stop__link { align-self: center; padding: 8px 12px; color: var(--brand-text, var(--brand)); font-weight: 600; font-size: 15px; text-decoration: none; }
+.c-stop__link:hover { text-decoration: underline; }
+.c-stop__icon { width: 52px; height: 52px; border-radius: 999px; background: var(--sunken); color: var(--ink); display: grid; place-items: center; }
+.c-stop__icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }

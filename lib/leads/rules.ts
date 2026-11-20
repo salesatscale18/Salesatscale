@@ -53,7 +53,7 @@ export function maskPhone(e164: string): string {
   return `+${cc} ${rest.slice(0, 2)}-***-${last4}`;
 }
 
-export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted on WhatsApp";
+export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted by SMS, WhatsApp or email";
 
 export type LeadInput = {
   fullName: string;

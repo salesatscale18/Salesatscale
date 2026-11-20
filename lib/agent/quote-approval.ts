@@ -33,7 +33,8 @@ import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } fro
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { isLocale, t } from "@/lib/i18n";
 import { resolveMarket } from "@/lib/markets/service";
-import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isWebChat } from "@/lib/simulator/rules";
+import { nudgeQuoteReady } from "@/lib/sms/outbound";
 import { APP_MESSAGE_CALL, type AppMessageKind } from "./app-message";
 import { deliveryByPhrase, percentText } from "./quote-message";
 import { loadQuoteCards } from "./quote-card-data";
@@ -168,10 +169,12 @@ export async function followUpApprovedQuote(
   await markQuoteSent(db, accountId, quote.id);
 
   // Real channels: through the existing send path and its rules (text only on WhatsApp; the simulator marks them delivered).
-  if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {
+  if (conv.channel === "whatsapp" || isWebChat(conv.channel)) {
     const statusCallback = statusCallbackUrl(publicBaseUrl());
     for (const m of out) await deliverText(db, transport, { accountId, conversationId: conv.id, messageId: m.id, body: m.body }, { statusCallback, now });
   }
+  // Web chat: the buyer gets the "quote ready" SMS with the chat link (real leads only; the rules decide the rest).
+  if (isWebChat(conv.channel) && cardId) await nudgeQuoteReady(db, accountId, conv.leadId, cardId, { now });
   return { sent: true, channel: conv.channel, messages: out };
 }
 
@@ -264,7 +267,7 @@ export async function declineHeldQuote(db: Db, a: Access, quoteId: string, trans
 
   if (!found.ok || !messageId) return { ok: true, quoteId, followUp: { sent: false, reason: found.ok ? "no_conversation" : found.reason } };
   const conv = found.conv;
-  if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {
+  if (conv.channel === "whatsapp" || isWebChat(conv.channel)) {
     try {
       await deliverText(db, transport === undefined ? defaultTransport() : transport, { accountId, conversationId: conv.id, messageId, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
     } catch (e) {

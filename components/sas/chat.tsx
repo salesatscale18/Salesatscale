@@ -85,9 +85,10 @@ export function AgentStepsSwitch({ slug, scope, show, back }: { slug: string; sc
   );
 }
 
-export type MarkerKind = "handoff" | "taken_over" | "handed_back" | "spend_cap" | "voice_started" | "voice_ended";
+export type MarkerKind = "handoff" | "taken_over" | "handed_back" | "spend_cap" | "voice_started" | "voice_ended" | "chat_opened";
 const MARKER_ICON: Record<MarkerKind, IconName> = {
   handoff: "user-plus", taken_over: "user", handed_back: "sparkles", spend_cap: "user-plus", voice_started: "phone-call", voice_ended: "phone-call",
+  chat_opened: "eye",
 };
 
 /** A centred dashed marker in the thread: "Chat taken over by Dana · 14:02". Shown whether or not the steps are. */

@@ -14,10 +14,12 @@ type Props = Parameters<typeof ChatClient>[0] & { rootStyle: CSSProperties };
 
 const lang = new URLSearchParams(location.search).get("lang") === "he" ? "he" : "en";
 const who = new URLSearchParams(location.search).get("who");
+const real = new URLSearchParams(location.search).get("real") === "1";
 void fetch(`/api/buyer-config?lang=${lang}${who ? `&who=${who}` : ""}`).then((r) => r.json() as Promise<Props>).then(({ rootStyle, ...p }) => {
   createRoot(document.getElementById("root")!).render(
     <div className="c-root" lang={p.lang} dir="ltr" style={rootStyle}>
-      <ChatClient {...p} />
+      {/* ?real=1: a real lead's chat (no simulated banner) opened from an SMS: the stop link and the "⋯" chat menu show. */}
+      <ChatClient {...p} {...(real ? { simulated: false, sms: { stopUrl: "#stop", stopped: false, fromSms: true } } : {})} />
     </div>,
   );
 });

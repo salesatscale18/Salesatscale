@@ -1496,3 +1496,58 @@ label.st-voice__row { cursor: pointer; }
 @container mcard (max-width: 250px) {
   .sas-mcard__num { padding-inline: 12px; }
 }
+
+/* RA (reach: SMS and the web chat for real leads; boards ReachSeller, ReachSettings).
+   The SMS card in the seller's thread: dashed, on the seller's side, "SMS to +972 50-•••-4567", the text,
+   and the state on the right with an icon (Delivered muted, Not sent: test mode amber, Not delivered red).
+   Settings › Channels: one row per channel (icon, name, pill, description, control), and the Team calls card. */
+.sas-sms-entry { align-self: flex-end; width: min(100%, 720px); max-width: 100%; border: 1px dashed var(--line-strong); border-radius: var(--radius-lg);
+  background: var(--surface-raised); padding: 10px 14px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.sas-sms-entry__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; font-size: 13px; line-height: 18px; color: var(--ink); }
+.sas-sms-entry__head > .sas-ico { width: 15px; height: 15px; color: var(--ink-muted); }
+.sas-sms-entry__to { color: var(--ink-muted); }
+.sas-sms-entry__state { margin-inline-start: auto; display: inline-flex; align-items: center; gap: 4px; font-weight: 600; color: var(--ink-muted); }
+.sas-sms-entry__state .sas-ico { width: 14px; height: 14px; }
+.sas-sms-entry__state--test_mode { color: var(--warning); }
+.sas-sms-entry__state--not_delivered, .sas-sms-entry__state--not_sent { color: var(--danger); }
+.sas-sms-entry__text { margin: 0; font-size: 14px; line-height: 20px; color: var(--ink); overflow-wrap: anywhere; white-space: pre-wrap; }
+
+.sas-pill--info { background: var(--primary-soft); color: var(--primary); }
+.sas-channels { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.sas-channels__grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; align-items: start; }
+@media (min-width: 1200px) { .sas-channels__grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); } }
+.sas-channels__card { min-width: 0; overflow: hidden; }
+.sas-channel-row { display: flex; gap: 14px; align-items: flex-start; padding: 16px; border-block-start: 1px solid var(--line); min-width: 0; }
+.sas-channel-row__icon { width: 34px; height: 34px; border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--ink-muted); display: grid; place-items: center; flex: none; }
+.sas-channel-row__icon .sas-ico { width: 17px; height: 17px; }
+.sas-channel-row__main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
+.sas-channel-row__main > p { margin: 0; }
+.sas-channel-row__title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sas-channel-row__title h3 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
+.sas-channel-row__side { flex: none; display: flex; align-items: center; }
+.sas-channel-fields { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 10px 16px; margin: 4px 0 0; align-items: start; }
+.sas-channel-fields--wide { grid-template-columns: minmax(0, 160px) minmax(0, 1fr); }
+.sas-channel-fields dt { color: var(--ink-muted); font-size: 14px; line-height: 20px; padding-block-start: 2px; }
+.sas-channel-fields dd { margin: 0; display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sas-channel-sender { align-self: flex-start; padding: 5px 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); font-weight: 600; }
+.sas-channel-testers { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; align-items: flex-start; }
+.sas-channel-tester { display: inline-flex; align-items: center; gap: 4px; padding: 3px 4px 3px 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-pill); font-size: 14px; line-height: 20px; }
+.sas-channel-tester form { margin: 0; display: inline-flex; }
+.sas-channel-tester__x { width: 26px; height: 26px; border: 0; border-radius: 999px; background: transparent; color: var(--ink-muted); display: grid; place-items: center; cursor: pointer; }
+.sas-channel-tester__x:hover { background: var(--surface-sunken); color: var(--ink); }
+.sas-channel-tester__x:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+.sas-channel-tester__x .sas-ico { width: 14px; height: 14px; }
+.sas-channel-add > summary { list-style: none; cursor: pointer; }
+.sas-channel-add > summary::-webkit-details-marker { display: none; }
+.sas-channel-add__form { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px; margin-block-start: 8px; }
+.sas-channel-add__form .sas-input-label { flex-basis: 100%; }
+.sas-channel-add__form .sas-input { flex: 1 1 180px; min-width: 0; }
+.sas-channel-hint { display: flex; gap: 8px; align-items: flex-start; padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface-sunken);
+  color: var(--ink-muted); font-size: 13px; line-height: 19px; }
+.sas-channel-hint > .sas-ico { width: 15px; height: 15px; flex: none; margin-block-start: 2px; }
+@media (max-width: 560px) {
+  .sas-channel-row { gap: 10px; padding: 14px 12px; }
+  .sas-channel-row__icon { display: none; }
+  .sas-channel-fields, .sas-channel-fields--wide { grid-template-columns: minmax(0, 1fr); gap: 4px; }
+  .sas-channel-fields dd { margin-block-end: 8px; }
+}

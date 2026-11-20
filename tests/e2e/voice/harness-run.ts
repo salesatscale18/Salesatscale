@@ -105,6 +105,7 @@ async function newPage(browser: Browser, url: string, width = 1440, height = 900
  * as a note, and the agent's line shows as a caption. Screenshots `bubble-…` (phone and desktop, English and Hebrew).
  */
 async function bubbleSection(browser: Browser, base: string) {
+  await fetch(`${base}/api/reset-rate-limits`, { method: "POST" });
   console.log("voice bubble: the chat tab and an order form tab");
   await fetch(`${base}/api/buyer-gate?off=`, { method: "POST" });
   const shapes = [
@@ -210,6 +211,26 @@ async function bubbleSection(browser: Browser, base: string) {
     // The chat tab closes during a call: the form bubble goes (gone, then hidden).
     await chat.context().close();
   }
+  await fetch(`${base}/api/reset-rate-limits`, { method: "POST" });
+  // A real lead's chat (their header: no simulated banner, the stop link, the "⋯" menu) with a call on: the strip,
+  // the bubble and the composer's voice button sit with it, in English and Hebrew.
+  for (const lang of ["en", "he"] as const) {
+    const sfx = lang === "he" ? "phone-he" : "phone";
+    const chat = await newPage(browser, `${base}/buyer?lang=${lang}&real=1`, 390, 844);
+    await chat.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 });
+    await shot(chat, `buyer2-real-lead-${sfx}`);
+    await chat.click("[data-voice-talk]");
+    const live = await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 }).then(() => true, () => false);
+    check(live, `real lead ${sfx}: the call runs under their header`);
+    const head = await chat.locator(".c-head").boundingBox();
+    const strip = await chat.locator("[data-buyer-call]").boundingBox();
+    check(!!head && !!strip && head.y + head.height <= strip.y + 1, `real lead ${sfx}: the strip sits under the header (and its menu)`);
+    await chat.waitForTimeout(1500);
+    await shot(chat, `bubble-real-lead-${sfx}`);
+    await chat.click("[data-voice-back]").catch(() => undefined);
+    await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
+    await chat.context().close();
+  }
   // A form opened with no call in the chat tab: no bubble at all.
   {
     const page = await newPage(browser, `${base}/form?lang=en&step=company`, 390, 844);
@@ -242,6 +263,7 @@ async function bubbleSection(browser: Browser, base: string) {
  * `bubble-standby-{chat,form}-{phone,phone-he}`.
  */
 async function standbySection(browser: Browser, base: string) {
+  await fetch(`${base}/api/reset-rate-limits`, { method: "POST" });
   console.log("voice bubble: standby with the order form open");
   await fetch(`${base}/api/limits?fast=1`, { method: "POST" });
   const notes = async () => (await (await fetch(`${base}/api/notes`)).json()) as string[];
@@ -525,8 +547,11 @@ async function main() {
         check((await page.locator(".c-msg").count()) === 0, "empty chat: no messages yet");
         await page.click("[data-voice-talk]");
         check(await waitPhase(page, "live", 20_000), "empty chat: the call starts (the conversation is created)");
-        const intro = await page.waitForSelector('.c-msg--in .c-bubble:has([data-spoken])', { timeout: 20_000 }).then(() => true, () => false);
-        check(intro && /automated assistant/i.test((await page.locator(".c-msg--in .c-bubble:has([data-spoken])").first().textContent()) ?? ""), "empty chat: the agent introduces itself (the normal opener)");
+        // The start writes the agent's opener into the chat (ensureChatStarted, as opening the link does); the call re-asks its question.
+        const spoken = await page.waitForSelector('.c-msg--in .c-bubble:has([data-spoken])', { timeout: 20_000 }).then(() => true, () => false);
+        const written = (await page.locator(".c-msg--in .c-bubble:not(:has([data-spoken]))").first().textContent()) ?? "";
+        check(/automated assistant/i.test(written), "empty chat: the chat starts with the agent's opener");
+        check(spoken && /^So, /.test((await page.locator(".c-msg--in .c-bubble:has([data-spoken])").first().textContent()) ?? ""), "empty chat: the call re-asks its question (no second introduction)");
         await shot(page, "buyer2-empty-chat-phone");
         await page.click("[data-voice-back]");
         check(await waitPhase(page, "ended", 15_000), "empty chat: Back to text ends the call; the chat goes on");

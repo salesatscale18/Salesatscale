@@ -1,7 +1,9 @@
 /**
  * Voice on a buyer chat that has not started (no conversation yet: the lead has a link, nobody wrote): the button
- * shows, and pressing it starts the conversation the way the buyer's first message would, then the call, which
- * opens with the agent's normal introduction. PGlite and the free scripted model.
+ * shows, and pressing it starts the chat as opening its link does (lib/chat/start ensureChatStarted: the agent's
+ * opener as the first message), then the call, which continues that chat (it re-asks the opener's question, no
+ * second introduction). Simulated buyers (channel "simulator") and real leads (web chat, channel "chat").
+ * PGlite and the free scripted model.
  */
 import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -26,8 +28,10 @@ vi.mock("@/lib/voice/service", async (orig) => {
 const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
-const { createSimulatedBuyer, resolveChatLink, receiveSimulatorInbound } = await import("@/lib/simulator/service");
-const { buyerVoiceGate, buyerVoiceState, startBuyerVoiceCall } = await import("@/lib/voice/buyer");
+const { createSimulatedBuyer, resolveChatLink, receiveSimulatorInbound, ensureChatLink } = await import("@/lib/simulator/service");
+const { buyerVoiceGate, buyerVoiceState, startBuyerVoiceCall, startRefusalBlock } = await import("@/lib/voice/buyer");
+const { parseLead } = await import("@/lib/leads/rules");
+const { upsertLead } = await import("@/lib/leads/service");
 const { ManualClock, flushAsync } = await import("@/lib/voice/realtime");
 const { ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
 const { handleVoiceSocket } = await import("@/lib/voice/socket");
@@ -47,6 +51,19 @@ async function notStarted(name: string, language = "en") {
   const link = await resolveChatLink(db, made.token);
   if (!link) throw new Error("link");
   return { token: made.token, leadId: made.lead.id, ctx: link.ctx };
+}
+/** A real lead (not simulated) with a web-chat link and no conversation yet. */
+async function realNotStarted(phone: string) {
+  const p = parseLead({ fullName: "Rina Cohen", company: "Rina's", email: `r${phone}@x.test`, phone, language: "en", consent: "yes", consentSource: "web form" }, "IL", { language: "en", now: new Date() });
+  if (!p.ok) throw new Error(JSON.stringify(p.errors));
+  const l = await upsertLead(db, account.id, { userId: me.id, actingAs: false }, p.value, "webhook");
+  if (!l.ok) throw new Error("lead");
+  const made = await ensureChatLink(db, { userId: me.id, actingAs: false }, account.id, l.lead.id);
+  if (!made) throw new Error("chat link");
+  const token = made.token;
+  const link = await resolveChatLink(db, token);
+  if (!link) throw new Error("link");
+  return { token, leadId: l.lead.id, ctx: link.ctx };
 }
 const convsOf = (leadId: string) => db.select().from(conversations).where(eq(conversations.leadId, leadId));
 const start = (b: Awaited<ReturnType<typeof notStarted>>) => startBuyerVoiceCall(db, b.ctx, b.token, { deadlineSec: 270, env: SCRIPTED });
@@ -86,7 +103,7 @@ describe("voice on a chat that has not started", () => {
     expect(poll.voice).toEqual({ available: true });
   });
 
-  it("the start makes one conversation (as a first message would) and one session; the lead is the agent's now", async () => {
+  it("the start makes one conversation with the agent's opener (as opening the link does) and one session", async () => {
     const b = await notStarted("Empty Two");
     const r = await start(b);
     if (!r.ok) throw new Error(r.reason);
@@ -95,8 +112,9 @@ describe("voice on a chat that has not started", () => {
     expect(convs[0]).toMatchObject({ id: r.conversationId, status: "open", channel: "simulator", language: "en" });
     expect(await db.select().from(voiceSessions).where(eq(voiceSessions.conversationId, r.conversationId))).toHaveLength(1);
     expect(r.firstInConversation).toBe(true);
-    const [lead] = await db.select().from(leads).where(eq(leads.id, b.leadId));
-    expect(lead.status).toBe("agent_handling");
+    const opener = await db.select().from(messages).where(and(eq(messages.conversationId, r.conversationId), eq(messages.actor, "agent")));
+    expect(opener).toHaveLength(1);
+    expect(opener[0].body).toMatch(/automated assistant of Acme/);
     // A message typed afterwards lands in the same conversation (the chat continues).
     // (the call is still pending here: the chat refuses a send then, so the session is ended first)
     await db.update(voiceSessions).set({ status: "ended" }).where(eq(voiceSessions.conversationId, r.conversationId));
@@ -115,16 +133,19 @@ describe("voice on a chat that has not started", () => {
     expect(await convsOf(b.leadId)).toHaveLength(1);
   });
 
-  it("a start refused after the conversation was made leaves no conversation behind", async () => {
+  it("a start refused after the chat was started leaves the chat as opening its link would: started, no call", async () => {
     const b = await notStarted("Empty Four");
     holder.refuseSession = true;
     expect(await start(b)).toMatchObject({ ok: false, reason: "unavailable" });
-    expect(await convsOf(b.leadId)).toHaveLength(0);
-    const [lead] = await db.select().from(leads).where(eq(leads.id, b.leadId));
-    expect(lead.status).not.toBe("agent_handling");
+    const convs = await convsOf(b.leadId);
+    expect(convs).toHaveLength(1);
+    expect(await db.select().from(voiceSessions).where(eq(voiceSessions.conversationId, convs[0].id))).toHaveLength(0);
+    expect(await db.select().from(messages).where(eq(messages.conversationId, convs[0].id))).toHaveLength(1);
   });
 
-  it("refusals on a not-started chat say why (to a tester): opted out hides it; spend cap and buyer calls off are typed", async () => {
+  it("refusals on a not-started chat say why (to a tester): opted out hides it; spend cap, buyer calls off and the start's own refusals are typed", async () => {
+    expect(["opted_out", "spend_cap", "no_consent", "account_paused", "account_not_live", "no_agent", "simulated_disabled", "test_lead"].map(startRefusalBlock))
+      .toEqual(["opted_out", "spend_cap", "no_consent", "account_not_live", "account_not_live", "account_not_live", "account_not_live", "no_conversation"]);
     const b = await notStarted("Empty Five");
     await db.update(leads).set({ status: "opted_out" }).where(eq(leads.id, b.leadId));
     const g1 = await buyerVoiceGate(db, b.ctx, { env: SCRIPTED });
@@ -151,7 +172,7 @@ describe("voice on a chat that has not started", () => {
     }
   });
 
-  it("the call opens with the agent's normal introduction, in the conversation's language, and stores it in the chat", async () => {
+  it("the call continues the started chat: it re-asks the opener's question, no second introduction", async () => {
     const b = await notStarted("Empty Seven");
     const r = await start(b);
     if (!r.ok) throw new Error(r.reason);
@@ -175,8 +196,32 @@ describe("voice on a chat that has not started", () => {
     await done;
     const said = ws.out.filter((x): x is string => typeof x === "string").map((x) => JSON.parse(x) as { t: string; role?: string; text?: string; final?: boolean })
       .filter((m) => m.t === "transcript" && m.role === "agent" && m.final);
-    expect(said[0]?.text).toMatch(/automated assistant of Acme/);
+    expect(said[0]?.text).toBe("So, what made you get in touch today?");
+    expect(said.some((m) => /automated assistant/.test(m.text ?? ""))).toBe(false);
+    // The chat has the opener once (written by the start), then the call's lines.
     const stored = await db.select().from(messages).where(and(eq(messages.conversationId, r.conversationId), eq(messages.actor, "agent")));
-    expect(stored[0]?.body).toMatch(/automated assistant of Acme/);
+    expect(stored.filter((m) => /automated assistant of Acme/.test(m.body))).toHaveLength(1);
+  });
+});
+
+describe("Switch to voice on both web-chat channels", () => {
+  it("a real lead's web chat (channel chat): available before it started, the start makes a chat conversation, and a second call joins it", async () => {
+    const b = await realNotStarted("0525550777");
+    expect(await buyerVoiceGate(db, b.ctx, { env: SCRIPTED })).toMatchObject({ ok: true, conversation: null });
+    const r = await startBuyerVoiceCall(db, b.ctx, b.token, { deadlineSec: 270, env: SCRIPTED });
+    if (!r.ok) throw new Error(`${r.reason} ${r.gate ?? ""}`);
+    const convs = await convsOf(b.leadId);
+    expect(convs.map((c) => c.channel)).toEqual(["chat"]);
+    // The started chat is found as the chat's conversation (the gate, the rows, the tab key all use the same lookup).
+    const gate = await buyerVoiceGate(db, b.ctx, { env: SCRIPTED });
+    expect(gate).toMatchObject({ ok: true, conversation: { id: r.conversationId, channel: "chat" } });
+  });
+
+  it("a simulated buyer's chat (channel simulator) still works the same way", async () => {
+    const b = await notStarted("Sim Channel");
+    const r = await start(b);
+    if (!r.ok) throw new Error(r.reason);
+    expect((await convsOf(b.leadId)).map((c) => c.channel)).toEqual(["simulator"]);
+    expect(await buyerVoiceGate(db, b.ctx, { env: SCRIPTED })).toMatchObject({ ok: true, conversation: { id: r.conversationId, channel: "simulator" } });
   });
 });

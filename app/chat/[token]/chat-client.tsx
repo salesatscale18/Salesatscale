@@ -13,6 +13,7 @@ import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { BuyerCallBar, ChatVoiceBubble } from "./voice";
 import { Icon } from "@/components/sas/icon";
 import type { BuyerVoiceState } from "@/lib/voice/buyer";
+import { resumeSmsAction } from "./actions";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
@@ -21,7 +22,12 @@ export type ChatStrings = {
   /** Reply buttons after the close ("Sounds good" / "Change something"). */
   replyYes: string; replyChange: string; replies: string;
   refused: Record<string, string>;
+  /** Text messages (board ReachChat): the stop link at the top, and the chat menu. */
+  smsStop: string; menu: string; smsOn: string; smsOnDone: string;
 };
+
+/** The buyer's text messages on a real lead's chat: the stop page, whether they are stopped, and whether this visit came from an SMS. */
+export type ChatSms = { stopUrl: string; stopped: boolean; fromSms: boolean; resumed?: boolean };
 
 
 /** A message on the page: from the server, or the buyer's own still on its way (pending). */
@@ -87,8 +93,12 @@ const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", voice = null }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", voice = null, simulated = true, sms = null }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
+  /** A simulated buyer's chat: the "Simulated chat" banner shows (never on a real buyer's chat). */
+  simulated?: boolean;
+  /** A real lead's text messages: the stop link (opened from an SMS) and the chat menu. Null: no SMS on this chat. */
+  sms?: ChatSms | null;
   /** The lead's market time zone: times and dates read as on the pay page and the seller's thread (R5-3). */
   timeZone?: string;
   /** Buyer calls (live voice): null while voice calls are off for the platform (nothing changes on the page). */
@@ -401,14 +411,34 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
 
   return (
     <div className="c-frame">
-      <div className="c-banner" role="note" dir={dir}><b>{strings.bannerLead}</b> <span>{strings.banner}</span></div>
+      {simulated ? <div className="c-banner" role="note" dir={dir}><b>{strings.bannerLead}</b> <span>{strings.banner}</span></div> : null}
       <header className="c-head" dir={dir}>
         <span className="c-avatar" aria-hidden="true">{initials}</span>
         <span className="c-head__text">
           <span className="c-head__name">{seller}</span>
           <span className={`c-head__sub${showTyping ? " c-head__sub--typing" : ""}`}>{showTyping ? strings.typing : strings.automated}</span>
         </span>
+        {sms ? (
+          // The chat menu (a native disclosure: works without JS): stop text messages, or turn them back on.
+          <details className="c-menu" data-chat-menu="">
+            <summary className="c-menu__btn" aria-label={strings.menu} title={strings.menu}><Icon name="ellipsis" /></summary>
+            <div className="c-menu__list" role="menu">
+              {sms.stopped ? (
+                <form action={resumeSmsAction}>
+                  <input type="hidden" name="token" value={token} />
+                  <button type="submit" role="menuitem" className="c-menu__item" data-sms-resume="">{strings.smsOn}</button>
+                </form>
+              ) : (
+                <a role="menuitem" className="c-menu__item" href={sms.stopUrl} data-sms-stop-menu="">{strings.smsStop}</a>
+              )}
+            </div>
+          </details>
+        ) : null}
       </header>
+      {sms && sms.fromSms && !sms.stopped ? (
+        <div className="c-stopbar" dir={dir}><a href={sms.stopUrl} data-sms-stop="">{strings.smsStop}</a></div>
+      ) : null}
+      {sms?.resumed && !sms.stopped ? <div className="c-notice c-notice--ok" role="status" dir={dir}>{strings.smsOnDone}</div> : null}
       {showBar && clientRef.current ? (
         <BuyerCallBar
           client={clientRef.current} tr={tr} agentName={voice!.agentName} dir={dir}

@@ -59,13 +59,27 @@ export function renderTemplate(body: string, vars: Record<string, string>): stri
   return body.replace(/\{\{\s*(\d+)\s*\}\}/g, (m, n: string) => vars[n] ?? m);
 }
 
+/**
+ * WhatsApp is off by default (owner decision, 20 Nov): the web chat is the
+ * conversation home and SMS brings the buyer back to it. WHATSAPP_ENABLED=1
+ * turns WhatsApp outbound on for the platform (the opener, and every reply,
+ * follow-up and answer on an existing WhatsApp conversation).
+ */
+export function whatsappEnabled(env: Record<string, string | undefined> = process.env): boolean {
+  return env.WHATSAPP_ENABLED?.trim() === "1";
+}
+
 export type OpenerRefusal =
+  /** WhatsApp is off for the platform (WHATSAPP_ENABLED unset): conversations start in the web chat. */
+  | "whatsapp_off"
   | "not_configured" | "test_lead" | "opted_out" | "no_consent" | "account_not_live" | "account_paused"
   | "outside_contact_hours" | "no_connection" | "no_template" | "no_agent" | "already_started" | "spend_cap"
   /** A simulated buyer (buyer simulator): a buyer ID, no phone. Never contacted on WhatsApp. */
   | "simulated_lead";
 
 export type OpenerFacts = {
+  /** WHATSAPP_ENABLED is off: no WhatsApp opener at all. Absent = on (the simulator's own gates). */
+  whatsappOff?: boolean;
   twilioConfigured: boolean;
   lead: { isTest: boolean; status: string; simulated?: boolean };
   hasConsent: boolean;
@@ -87,6 +101,7 @@ export type OpenerFacts = {
 export function openerRefusal(f: OpenerFacts): OpenerRefusal | null {
   if (f.lead.isTest) return "test_lead";
   if (f.lead.simulated) return "simulated_lead";
+  if (f.whatsappOff) return "whatsapp_off";
   if (f.lead.status === "opted_out") return "opted_out";
   if (!f.hasConsent) return "no_consent";
   if (f.hasActiveWhatsappConversation) return "already_started";

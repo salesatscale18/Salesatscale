@@ -20,6 +20,8 @@ import { IntakeKeyForm } from "./key-form";
 import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
 import { WhatsAppSection } from "./whatsapp";
+import { ChannelsSection } from "./channels";
+import { consentLine } from "@/lib/leads/consent-line";
 import { SimulationSection } from "./simulation";
 import { VoiceSection } from "./voice";
 import { voiceMode } from "@/lib/voice/settings";
@@ -41,7 +43,7 @@ const EXAMPLE = `{
   "source_id": "form-88213",
   "consent": {
     "source": "yoursite.example/contact",
-    "text": "I agree to be contacted on WhatsApp…",
+    "text": "I agree to be contacted by SMS, WhatsApp or email…",
     "at": "2026-11-09T09:12:00Z"
   }
 }`;
@@ -50,7 +52,7 @@ const EXAMPLE = `{
 const INTAKE_REQUIRED = ["full_name", "phone", "consent.source", "consent.text"] as const;
 const INTAKE_OPTIONAL = ["language", "business", "source_id", "consent.at", "email", "country", "source", "consent.page_url"] as const;
 
-const SECTIONS = ["whatsapp", "simulation", "voice", "payments", "users", "notifications", "hours", "intake"] as const;
+const SECTIONS = ["channels", "whatsapp", "simulation", "voice", "payments", "users", "notifications", "hours", "intake"] as const;
 type Section = (typeof SECTIONS)[number];
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 
@@ -89,6 +91,8 @@ export default async function SettingsPage({ params, searchParams }: { params: P
         </nav>
         {section === "intake" ? (
           await IntakeSection({ account, sp })
+        ) : section === "channels" ? (
+          <div className="sas-split__main" style={{ flexBasis: 720 }}>{await ChannelsSection({ account, saved: one(sp.saved), error: one(sp.error) })}</div>
         ) : (
           <div className="sas-split__main" style={{ flexBasis: 520 }}>
             {section === "whatsapp" ? await WhatsAppSection({ account, sp, baseUrl: await baseUrl() }) : null}
@@ -312,6 +316,27 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
                 <CopyButton value={endpoint} />
               </div>
             </div>
+          </section>
+
+          {/* The consent line for the seller's lead form (board ReachSms): names SMS, in English and Hebrew. */}
+          <section className="sas-panel sas-panel__body sas-stack-4" aria-labelledby="consent-h" data-consent-line="">
+            <div className="sas-stack-2" style={{ gap: 2 }}>
+              <h2 id="consent-h" className="sas-heading">{t("settings.intake.consent_line")}</h2>
+              <span className="sas-small">{t("settings.intake.consent_line_hint")}</span>
+            </div>
+            {(["en", "he"] as const).map((lang) => {
+              const seller = account.tradeNameLocal?.[lang]?.trim() || account.tradeName;
+              const line = consentLine(lang, seller);
+              return (
+                <div key={lang} className="sas-stack-2" style={{ gap: 6 }}>
+                  <span className="sas-small">{t(`lang.${lang}`)}</span>
+                  <div style={{ display: "flex", gap: 8, alignItems: "flex-start", flexWrap: "wrap" }}>
+                    <p lang={lang} dir={lang === "he" ? "rtl" : "ltr"} style={{ margin: 0, flex: "1 1 280px", minWidth: 0 }} data-consent-lang={lang}>{line}</p>
+                    <CopyButton value={line} />
+                  </div>
+                </div>
+              );
+            })}
           </section>
 
           {sp.key_market ? <Saved text={t("settings.intake.key_market_saved")} /> : null}

@@ -32,7 +32,7 @@ import { dealPaneView } from "@/lib/leads/deal-pane";
 import { DealStatePane } from "./deal-pane";
 import { formatMoney } from "@/lib/domain/money";
 import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
-import { isSimulatedLead, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { isSimulatedLead, isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
 import { leadEventIcon } from "@/lib/leads/event-icons";
@@ -304,9 +304,10 @@ export default async function LeadCardPage({
               <SimulatorPanel
                 slug={account.slug} leadId={lead.id} simulated={simulated}
                 url={chatLink ? publicUrl(chatPath(chatLink.token)) : null}
-                expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, account.timezone) : null} refusal={simFacts?.refusal ?? null} rules={account.simulateWhatsappRules}
-                started={conversation?.conversation.channel === SIMULATOR_CHANNEL || simFacts?.refusal === "already_started"}
+                expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, account.timezone) : null} refusal={simFacts?.refusal ?? null} rules={simulated && account.simulateWhatsappRules}
+                started={isWebChat(conversation?.conversation.channel) || simFacts?.refusal === "already_started"}
                 notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined} hoursHref={hoursHref}
+                why={typeof sp.why === "string" ? sp.why : undefined}
               />
             ) : null}
             {conversation ? (

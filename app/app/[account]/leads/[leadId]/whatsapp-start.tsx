@@ -23,7 +23,8 @@ export function WhatsAppStart({
   /** "Fix hours": the lead's market's contact hours when it has its own (contactHoursFixHref), else Settings › hours. */
   hoursHref?: string;
 }) {
-  if (refusal === "already_started" || refusal === "test_lead" || refusal === "opted_out" || refusal === "simulated_lead") return null;
+  // WhatsApp off (WHATSAPP_ENABLED): conversations start in the web chat (Buyer chat panel), so nothing shows here.
+  if (refusal === "already_started" || refusal === "test_lead" || refusal === "opted_out" || refusal === "simulated_lead" || refusal === "whatsapp_off") return null;
   const errorText = error ? (t(`wa.start.refused.${error}` as MessageKey) || t("wa.start.refused.provider_error")) : null;
   return (
     <section aria-labelledby="wa-start-h" className="sas-stack-2" style={{ padding: 16, borderBlockEnd: "1px solid var(--line)" }}>

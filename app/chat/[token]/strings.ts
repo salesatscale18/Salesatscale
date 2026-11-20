@@ -35,6 +35,10 @@ export function chatStrings(tr: (key: MessageKey, vars?: Record<string, string |
     sent: tr("buyer.sim.status.sent"),
     delivered: tr("buyer.sim.status.delivered"),
     read: tr("buyer.sim.status.read"),
+    smsStop: tr("buyer.chat.sms_stop"),
+    menu: tr("buyer.chat.menu"),
+    smsOn: tr("buyer.chat.sms_on"),
+    smsOnDone: tr("buyer.chat.sms_on_done"),
     refused: {
       opted_out: tr("buyer.sim.refused.opted_out"),
       account_not_live: tr("buyer.sim.refused.account_not_live", { company: names.seller }),

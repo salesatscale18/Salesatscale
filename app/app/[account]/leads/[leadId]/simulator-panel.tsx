@@ -3,19 +3,24 @@ import { CopyButton } from "@/components/sas/copy-button";
 import { Icon } from "@/components/sas/icon";
 import { t, type MessageKey } from "@/lib/i18n";
 import type { SimOpenerRefusal } from "@/lib/simulator/service";
-import { createChatLinkAction, resetChatLinkAction, startSimulatorAction } from "../simulator-actions";
+import { createChatLinkAction, resetChatLinkAction, sendChatLinkAction, startSimulatorAction } from "../simulator-actions";
+import { smsReasonText } from "./conversation";
 
 const maybe = (key: string) => (t(key as MessageKey) as string | undefined) ?? null;
 
 /**
- * Lead card › Buyer chat simulator (artboard SimSeller): Start conversation
- * (the agent's opening message on the simulator channel), Open buyer chat,
- * Copy link, Reset link. Every action re-checks access and gates on the server.
- * A link idle for 14 days shows "Expired": only Reset link is offered then.
+ * Lead card › Buyer chat (artboard SimSeller): Start conversation (the agent's
+ * opening message in the web chat: "chat" for a real lead, "simulator" for a
+ * simulated buyer), Open buyer chat, Copy link, Reset link, and for a real
+ * lead Send chat link (one SMS with the link). Every action re-checks access
+ * and gates on the server. A link idle for 14 days shows "Expired": only Reset
+ * link is offered then.
  */
 export function SimulatorPanel({
-  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false, hoursHref,
+  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false, hoursHref, why: smsWhy,
 }: {
+  /** Why "Send chat link" sent no SMS (a rule's reason or Twilio's code), with notice "sms_not_sent". */
+  why?: string;
   /** "Fix hours": the lead's market's contact hours when it has its own (contactHoursFixHref), else Settings › hours. */
   hoursHref?: string;
   /** The simulated chat has started: the panel is one line (Open buyer chat · Copy link · Reset link). */
@@ -40,7 +45,10 @@ export function SimulatorPanel({
       <input type="hidden" name="leadId" value={leadId} />
     </>
   );
-  const noticeText = notice ? maybe(`sim.notice.${notice}`) : null;
+  const noticeText = notice === "sms_not_sent"
+    ? t("sim.notice.sms_not_sent", { reason: smsReasonText(smsWhy ?? null) ?? t("conv.sms.reason.unknown") })
+    : notice ? maybe(`sim.notice.${notice}`) : null;
+  const noticeBad = notice === "error" || notice === "sms_not_sent";
   const errorText = error ? maybe(`sim.start.refused.${error}`) ?? maybe(`wa.start.refused.${error}`) ?? t("sim.start.refused.not_found") : null;
   const canStart = !!url && !expired && refusal === null;
   // Why Start is not offered, unless it simply already ran (the conversation shows below).
@@ -49,7 +57,7 @@ export function SimulatorPanel({
   if (started && url && !expired && !canStart) {
     return (
       <section id="simulator" aria-labelledby="sim-h" className="sas-sim-line" data-sim-compact="">
-        <h2 id="sim-h" className="sas-sim-line__title"><Icon name="flask-conical" />{t("sim.line")}</h2>
+        <h2 id="sim-h" className="sas-sim-line__title"><Icon name={simulated ? "flask-conical" : "message-circle"} />{t(simulated ? "sim.line" : "chat.line")}</h2>
         <a className={buttonClass("ghost", "sm")} href={url} target="_blank" rel="noopener noreferrer" data-chat-link="">{t("sim.open")}</a>
         {/* One action style in the line: all three are small ghost buttons (round-3 review B3). */}
         <CopyButton value={url} label={t("sim.copy")} variant="ghost" />
@@ -57,7 +65,13 @@ export function SimulatorPanel({
           {hidden}
           <button type="submit" className={buttonClass("ghost", "sm")}>{t("sim.reset")}</button>
         </form>
-        {noticeText ? <div className={`sas-alert ${notice === "error" ? "sas-alert--danger" : "sas-alert--success"}`} role="status" style={{ flexBasis: "100%" }}><Icon name={notice === "error" ? "alert-triangle" : "check-circle"} /><span>{noticeText}</span></div> : null}
+        {simulated ? null : (
+          <form action={sendChatLinkAction}>
+            {hidden}
+            <button type="submit" className={buttonClass("ghost", "sm")} data-send-chat-link=""><Icon name="message-square" />{t("chat.send_link")}</button>
+          </form>
+        )}
+        {noticeText ? <div className={`sas-alert ${noticeBad ? "sas-alert--danger" : "sas-alert--success"}`} role="status" style={{ flexBasis: "100%" }}><Icon name={noticeBad ? "alert-triangle" : "check-circle"} /><span>{noticeText}</span></div> : null}
         {errorText ? <div className="sas-alert sas-alert--danger" role="alert" style={{ flexBasis: "100%" }}><Icon name="alert-triangle" /><span>{errorText}</span></div> : null}
       </section>
     );
@@ -65,10 +79,10 @@ export function SimulatorPanel({
   return (
     <section id="simulator" aria-labelledby="sim-h" className="sas-panel sas-stack-2" style={{ margin: 16, padding: "16px 20px", borderStyle: "dashed", gap: 12 }}>
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-        <h2 id="sim-h" style={{ margin: 0, fontSize: 15, lineHeight: "22px", fontWeight: 600, flex: 1 }}>{t("sim.panel.title")}</h2>
-        <span className="sas-small">{t("sim.panel.hint")}</span>
+        <h2 id="sim-h" style={{ margin: 0, fontSize: 15, lineHeight: "22px", fontWeight: 600, flex: 1 }}>{t(simulated ? "sim.panel.title" : "chat.panel.title")}</h2>
+        <span className="sas-small">{t(simulated ? "sim.panel.hint" : "chat.panel.hint")}</span>
       </div>
-      {noticeText ? <div className={`sas-alert ${notice === "error" ? "sas-alert--danger" : "sas-alert--success"}`} role="status"><Icon name={notice === "error" ? "alert-triangle" : "check-circle"} /><span>{noticeText}</span></div> : null}
+      {noticeText ? <div className={`sas-alert ${noticeBad ? "sas-alert--danger" : "sas-alert--success"}`} role="status"><Icon name={noticeBad ? "alert-triangle" : "check-circle"} /><span>{noticeText}</span></div> : null}
       {errorText ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{errorText}</span></div> : null}
       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
         {canStart ? (
@@ -97,7 +111,7 @@ export function SimulatorPanel({
         ) : (
           <form action={createChatLinkAction}>
             {hidden}
-            <button type="submit" className={buttonClass("secondary", "sm")}><Icon name="flask-conical" />{t(simulated ? "sim.open" : "sim.open_real")}</button>
+            <button type="submit" className={buttonClass("secondary", "sm")}><Icon name={simulated ? "flask-conical" : "message-circle"} />{t("sim.open")}</button>
           </form>
         )}
       </div>
