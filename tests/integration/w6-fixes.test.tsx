@@ -144,15 +144,16 @@ describe("W6: workspace and markets review fixes", () => {
   });
 
   describe("Overview filtered to one market", () => {
-    it("Paid revenue shows the market's currency: £0.00 for the UK with nothing paid, ₪ for Israel", async () => {
+    it("Paid revenue shows the market's currency: £0 for the UK with nothing paid, ₪ for Israel", async () => {
       expect(await marketCurrency(db, account.id, uk, account.currency)).toBe("GBP");
       expect(await marketCurrency(db, account.id, { priceListLineageId: null }, "ILS")).toBe("ILS");
       const ukHtml = await overview({ market: uk.id });
       save("overview-uk", ukHtml);
-      const ukTile = ukHtml.split("Paid revenue")[1].split('class="sas-metric"')[0];
-      expect(ukTile).toContain("£0.00");
+      const ukTile = ukHtml.split('data-kpi="revenue"')[1].split('data-kpi="deals"')[0];
+      // OV2: whole amounts on the cards.
+      expect(ukTile).toContain('sas-ov2-kpi__value sas-num">£0<');
       expect(ukTile).not.toContain("₪");
-      const ilTile = (await overview({ market: il.id })).split("Paid revenue")[1].split('class="sas-metric"')[0];
+      const ilTile = (await overview({ market: il.id })).split('data-kpi="revenue"')[1].split('data-kpi="deals"')[0];
       expect(ilTile).toContain("₪");
       expect(ilTile).not.toContain("£");
     });

@@ -1,8 +1,9 @@
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { quoteRef, TextWithId } from "@/components/sas/id-text";
-import { Banner, MetricTile, Timeline, type TimelineItem } from "@/components/sas/record";
+import { Banner, Timeline, type TimelineItem } from "@/components/sas/record";
 import { SidePanel } from "@/components/sas/list-kit";
+import { MenuEnhancer } from "@/components/sas/list-kit-client";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
@@ -15,9 +16,10 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { orderLabel } from "@/lib/orders/service";
 import { leadEventIcon } from "@/lib/leads/event-icons";
 import {
-  PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewKpis, parsePeriod, periodRange, recentActivity,
-  type CurrencyTotal, type NeedsYouItem,
+  PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, needsYouHref, openLeadsByMarket, overviewCardNumbers, overviewKpis, parsePeriod, periodRange,
+  previousRange, recentActivity, type NeedsYouItem,
 } from "@/lib/overview/service";
+import { kpiCards, stepPercents, waitingToPay, type KpiCard } from "@/lib/overview/kpi-cards";
 import { inMarket, MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { MarketCards } from "./market-cards";
 import { setupProgress } from "@/lib/overview/setup";
@@ -91,11 +93,15 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const market = selection.selected;
   const homeId = selection.markets.find((m) => m.isHome)?.id ?? selection.markets[0]?.id ?? "";
   const urlMarket = one(sp[MARKET_PARAM]);
-  const [allItems, kpis, realKpis, activity, done, agent, spend, openLeads, currency] = await Promise.all([
+  const [allItems, kpis, realKpis, prevKpis, cardNums, realCardNums, activity, done, agent, spend, openLeads, currency] = await Promise.all([
     needsYouForRequest(appDb, account.id),
     overviewKpis(appDb, account.id, range, { includeSimulated, market }),
     // With simulated data included, the real-only numbers give the "incl. N simulated" lines.
     includeSimulated ? overviewKpis(appDb, account.id, range, { market }) : Promise.resolve(null),
+    // O-1: the previous equal period (the days just before this window), same filters, for "vs previous N days".
+    overviewKpis(appDb, account.id, previousRange(range), { includeSimulated, market }),
+    overviewCardNumbers(appDb, account.id, range, { includeSimulated, market }),
+    includeSimulated ? overviewCardNumbers(appDb, account.id, range, { market }) : Promise.resolve(null),
     showActivity ? recentActivity(appDb, account.id, 10, { includeSimulated, market }) : Promise.resolve([]),
     setupProgress(appDb, account),
     liveVersion(appDb, account.id),
@@ -109,24 +115,14 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const spendAlert = spend && spend.state !== "ok" ? spend : null;
   const spendText = spendAlert ? spendTexts(spendAlert) : null;
   const needCount = items.length + (spendAlert ? 1 : 0);
-  // Amounts are never added across currencies: one line per currency (nothing paid yet: the selected market's currency, else the account's).
-  const revenue: CurrencyTotal[] = kpis.paidByCurrency.length ? kpis.paidByCurrency : [{ currency, oneTimeMinor: 0, recurringMinor: 0 }];
-  const sim = realKpis ? {
-    leads: kpis.newLeads - realKpis.newLeads, quotes: kpis.quotesCreated - realKpis.quotesCreated, signed: kpis.formsSigned - realKpis.formsSigned,
-    paid: kpis.paidOrders - realKpis.paidOrders,
-    revenue: revenue
-      .map((r) => formatMoney(r.oneTimeMinor - (realKpis.paidByCurrency.find((x) => x.currency === r.currency)?.oneTimeMinor ?? 0), r.currency))
-      .join(" + "),
-  } : null;
-  const recurring = revenue.filter((r) => r.recurringMinor > 0);
-  const revenueDelta = recurring.length
-    ? recurring.map((r) => t("overview.kpi.revenue_recurring", { amount: formatMoney(r.recurringMinor, r.currency, { period: "month" }) })).join(" · ")
-    : t("overview.kpi.revenue_delta");
+  const sim = realKpis ? { leads: kpis.newLeads - realKpis.newLeads, quotes: kpis.quotesCreated - realKpis.quotesCreated, paid: kpis.paidOrders - realKpis.paidOrders } : null;
+  // O-1: five cards; amounts never added across currencies (nothing paid yet: the selected market's currency, else the account's).
+  const cards = kpiCards({
+    days: period, kpis, prev: prevKpis, cards: cardNums, currency,
+    real: realKpis && realCardNums ? { kpis: realKpis, cards: realCardNums } : null,
+  });
   const query = (o: { period?: number; sim?: boolean; panel?: string } = {}) =>
     overviewQuery(o.period ?? period, o.sim ?? includeSimulated, urlMarket, o.panel);
-  /** The tile's own sub-line, plus "incl. N simulated" while simulated data is included. */
-  const withSim = (delta: string | undefined, n: number | string | null) =>
-    sim && n !== null ? [delta, t("overview.incl_simulated", { count: n })].filter(Boolean).join(" · ") : delta;
 
   const funnel: { label: MessageKey; value: number; color: string }[] = [
     { label: "overview.funnel.leads", value: kpis.newLeads, color: "#c9d7f5" },
@@ -136,6 +132,9 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     { label: "overview.funnel.paid", value: kpis.paidOrders, color: "var(--success)" },
   ];
   const funnelMax = Math.max(1, ...funnel.map((f) => f.value));
+  // O-2: each step as a % of the step before; Paid adds "· N waiting" (signed in the period and not paid yet).
+  const stepPct = stepPercents(funnel.map((f) => f.value));
+  const waiting = waitingToPay(kpis.formsSigned, kpis.paidOrders);
 
   /** titleId / detailId: the order or quote ID inside the text, rendered as one unbroken code-font run (.sas-id, nowrap). */
   const itemText = (it: NeedsYouItem): { title: string; detail: string; titleId?: string; detailId?: string; why?: string } => {
@@ -244,7 +243,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
           </span>
         </div>
         {agent ? (
-          <span className="sas-pill sas-pill--success"><Icon name="check-circle" />{t("overview.agent_live", { version: agent.version })}</span>
+          <span className="sas-pill sas-ov2-pill--live" data-agent-live=""><Icon name="check-circle" />{t("overview.agent_live", { version: agent.version })}</span>
         ) : null}
         {account.status !== "live" ? <StatusPill object="account" state={account.status} /> : null}
         <div className="sas-ov__tools">
@@ -256,40 +255,36 @@ export default async function OverviewPage({ params, searchParams }: { params: P
               </a>
             ))}
           </nav>
-          <a
-            href={`${base}${query({ sim: !includeSimulated })}`} role="checkbox" aria-checked={includeSimulated}
-            data-include-simulated={includeSimulated ? "1" : "0"}
-            style={{ display: "inline-flex", gap: 8, alignItems: "center", fontSize: 13, fontWeight: 600, color: "var(--ink)", textDecoration: "none" }}
-          >
-            <span aria-hidden="true" style={{
-              width: 18, height: 18, borderRadius: 4, display: "grid", placeItems: "center", color: "var(--on-primary)",
-              border: `1.5px solid ${includeSimulated ? "var(--primary)" : "var(--line-strong)"}`, background: includeSimulated ? "var(--primary)" : "transparent",
-            }}>{includeSimulated ? <Icon name="check" /> : null}</span>
-            {t("overview.include_simulated")}
-          </a>
           <a className={buttonClass("secondary", "sm")} href={`${base}${query({ panel: "activity" })}`} data-open-activity="" aria-haspopup="dialog">
             <Icon name="history" />{t("overview.activity.open")}
           </a>
+          {/* O-3: View options, a <details> menu (opens without JS; MenuEnhancer adds Escape, arrow keys and click outside). */}
+          <details className="sas-rowmenu sas-ov2-viewopts" data-view-options="">
+            <summary className={`${buttonClass("secondary", "sm")} sas-ov2-viewopts__button`} aria-label={t("overview.view_options")} title={t("overview.view_options")} aria-haspopup="true">
+              <Icon name="sliders" />
+              {includeSimulated ? <span className="sas-ov2-viewopts__dot" aria-hidden="true" /> : null}
+            </summary>
+            <div className="sas-rowmenu__list sas-ov2-viewopts__menu">
+              <a
+                className="sas-ov2-viewopts__item"
+                href={`${base}${query({ sim: !includeSimulated })}`} role="checkbox" aria-checked={includeSimulated}
+                data-include-simulated={includeSimulated ? "1" : "0"}
+              >
+                <span aria-hidden="true" className="sas-ov2-viewopts__box" data-on={includeSimulated ? "1" : undefined}>{includeSimulated ? <Icon name="check" /> : null}</span>
+                {t("overview.include_simulated")}
+              </a>
+              <span className="sas-small sas-ov2-viewopts__hint">{t("overview.view_options.hint")}</span>
+            </div>
+            <MenuEnhancer />
+          </details>
         </div>
       </header>
 
       {sim ? (
         <Banner kind="test"><strong>{t("overview.sim_banner_lead")}</strong> {t("overview.sim_banner", { leads: sim.leads, quotes: sim.quotes, orders: sim.paid })}</Banner>
       ) : null}
-      <section aria-label={t("overview.kpis")} className="sas-metrics">
-        <MetricTile label={t("overview.kpi.leads")} value={kpis.newLeads} delta={withSim(t("overview.kpi.leads_delta"), sim?.leads ?? null)} />
-        <MetricTile label={t("overview.kpi.quotes")} value={kpis.quotesCreated} delta={withSim(undefined, sim?.quotes ?? null)} />
-        <MetricTile label={t("overview.kpi.signed")} value={kpis.formsSigned} delta={withSim(t("overview.kpi.signed_delta", { count: kpis.formsSent }), sim?.signed ?? null)} />
-        <MetricTile label={t("overview.kpi.paid")} value={kpis.paidOrders} delta={withSim(undefined, sim?.paid ?? null)} />
-        <MetricTile
-          label={t("overview.kpi.revenue")}
-          value={revenue.length === 1 ? formatMoney(revenue[0].oneTimeMinor, revenue[0].currency) : (
-            <span className="sas-ov__money" data-currencies={revenue.length}>
-              {revenue.map((r) => <span key={r.currency} data-currency={r.currency}>{formatMoney(r.oneTimeMinor, r.currency)}</span>)}
-            </span>
-          )}
-          delta={withSim(revenueDelta, sim ? sim.revenue : null)}
-        />
+      <section aria-label={t("overview.kpis")} className="sas-ov2-kpis">
+        {cards.map((c) => <KpiCardView key={c.id} card={c} />)}
       </section>
 
       {/* Not live yet: setting up is the first thing to act on, so it comes before "Your markets". */}
@@ -334,9 +329,13 @@ export default async function OverviewPage({ params, searchParams }: { params: P
               <h2 id="funnel-h" className="sas-heading">{t("overview.funnel.title")}</h2>
               <span className="sas-small">{t("overview.funnel.note")}</span>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "minmax(90px, 140px) minmax(0, 1fr) auto", gap: "10px 14px", alignItems: "center" }}>
-              {funnel.map((f) => (
-                <FunnelRow key={f.label} label={t(f.label)} value={f.value} width={(f.value / funnelMax) * 100} color={f.color} />
+            <div className="sas-ov2-funnel">
+              <span className="sas-small sas-ov2-funnel__colhead" data-funnel-from-before="">{t("overview.funnel.from_before")}</span>
+              {funnel.map((f, i) => (
+                <FunnelRow
+                  key={f.label} label={t(f.label)} value={f.value} width={(f.value / funnelMax) * 100} color={f.color}
+                  fromBefore={stepPct[i] !== null && f.label === "overview.funnel.paid" && waiting > 0 ? `${stepPct[i]} · ${t("overview.funnel.waiting", { count: waiting })}` : stepPct[i]}
+                />
               ))}
             </div>
           </div>
@@ -394,7 +393,7 @@ function NameInText({ text, name }: { text: string; name: string }) {
   return n >= 0 ? <>{text.slice(0, n)}<bdi>{name}</bdi>{text.slice(n + name.length)}</> : <>{text}</>;
 }
 
-function FunnelRow({ label, value, width, color }: { label: string; value: number; width: number; color: string }) {
+function FunnelRow({ label, value, width, color, fromBefore }: { label: string; value: number; width: number; color: string; fromBefore: string | null }) {
   return (
     <>
       <span>{label}</span>
@@ -402,6 +401,24 @@ function FunnelRow({ label, value, width, color }: { label: string; value: numbe
         <span style={{ display: "block", width: `${width}%`, height: "100%", borderRadius: 4, background: color }} />
       </span>
       <span className="sas-num" style={{ textAlign: "end" }}>{value}</span>
+      {/* O-2: "From the step before", blank on New leads. */}
+      <span className="sas-small sas-num sas-ov2-funnel__pct" data-funnel-pct="">{fromBefore ?? ""}</span>
     </>
+  );
+}
+
+/** O-1 KPI card (option A): label, the number, one muted line (one per currency); a 3px line on top in the card's meaning colour. */
+function KpiCardView({ card }: { card: KpiCard }) {
+  return (
+    <div className={`sas-ov2-kpi sas-ov2-kpi--${card.accent}`} data-kpi={card.id}>
+      <span className="sas-ov2-kpi__label">{card.label}</span>
+      <span className="sas-ov2-kpi__value sas-num">{card.value}</span>
+      {card.lines.map((l, i) => (
+        <span key={i} className="sas-ov2-kpi__line" data-trend={l.trend}>
+          {l.trend ? <Icon name={l.trend === "up" ? "chevron-up" : "chevron-down"} /> : null}
+          <span>{l.text}</span>
+        </span>
+      ))}
+    </div>
   );
 }

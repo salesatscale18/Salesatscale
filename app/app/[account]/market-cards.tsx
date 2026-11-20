@@ -44,6 +44,7 @@ export function MarketCards({ base, markets, openLeads, needYou, returnTo, selec
                 data-market-card={m.id}
               >
                 <span className="sas-mcard__map">
+                  {/* OV2 (O-3): the Live pill reads blue here and on the Overview header only (sas.css scopes it to .sas-mcard__pill). */}
                   <span className="sas-mcard__pill"><StatusPill object="market" state={m.status} /></span>
                   {path ? (
                     <svg viewBox={`0 0 ${OUTLINE_VIEWBOX.width} ${OUTLINE_VIEWBOX.height}`} aria-hidden="true" focusable="false" data-outline="">
