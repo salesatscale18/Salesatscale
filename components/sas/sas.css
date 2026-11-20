@@ -1414,3 +1414,75 @@ label.st-voice__row { cursor: pointer; }
 @media (max-width: 1100px) { .sas-app .sas-ov__row.sas-ovn-row { grid-template-columns: minmax(0, 1fr); } .sas-ovn { align-self: stretch; } }
 /* LQ-L: the Orders card's direct action (Review transfer / Payment failed: open order) sits on the links line. */
 .sas-lead-doc__links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+/* ------------------------------------------------------------------------- */
+/* LQ fix 1 (lane lq-fix1): the Leads table fits its card (fixed columns,     */
+/* What's needed / Next step takes the rest; Market folds under the company   */
+/* on a narrower table); Stage as the same picker as What's needed; plain     */
+/* quote and order numbers in list cells; Overview markets row top-aligned.   */
+/* ------------------------------------------------------------------------- */
+.sas-ltable-wrap { container: ltable / inline-size; }
+.sas-lrow__mkt { display: none; }
+@media (min-width: 768px) {
+  .sas-ltable-wrap { overflow-x: visible; }
+  .sas-table.sas-ltable { table-layout: fixed; width: 100%; }
+  .sas-table.sas-ltable th, .sas-table.sas-ltable td { padding-inline: 12px; }
+  .sas-table.sas-ltable th:first-child, .sas-table.sas-ltable td:first-child { padding-inline-start: 16px; }
+  .sas-table.sas-ltable th { white-space: normal; vertical-align: bottom; }
+  .sas-ltable th.sas-lcol--lead { width: 188px; }
+  .sas-ltable th.sas-lcol--stage { width: 148px; }
+  .sas-ltable th.sas-lcol--value { width: 116px; }
+  .sas-ltable th.sas-lcol--who { width: 140px; }
+  .sas-ltable th.sas-lcol--market { width: 112px; }
+  .sas-ltable th.sas-lcol--when { width: 104px; }
+  .sas-table.sas-ltable th.sas-ltable__chev, .sas-table.sas-ltable td.sas-lrow__chev { width: 32px; padding-inline: 0 12px; }
+  .sas-table.sas-ltable td.sas-lrow__lead { min-width: 0; white-space: normal; }
+  .sas-ltable .sas-lrow__sub, .sas-ltable .sas-lrow__mkt { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sas-table.sas-ltable td.sas-lrow__step { min-width: 0; }
+  .sas-ltable .sas-lstep { max-width: none; }
+  /* Stage pills keep their size; a long one ("Understand · objection") wraps inside the pill instead of widening the column. */
+  .sas-ltable td.sas-lrow__stage .sas-pill { max-width: 100%; height: auto; min-height: 24px; padding-block: 4px; white-space: normal; border-radius: 12px; }
+  .sas-table.sas-ltable td.sas-lrow__who, .sas-table.sas-ltable td.sas-lrow__market { white-space: normal; }
+  .sas-ltable .sas-who { white-space: normal; align-items: baseline; }
+  .sas-ltable .sas-who::before { align-self: center; }
+}
+/* A narrower table (under about 1080px: viewports under about 1340px): no Market column; the market is a muted line under the company. */
+@container ltable (max-width: 1079px) {
+  .sas-ltable th.sas-lcol--market, .sas-ltable td.sas-lrow__market { display: none; }
+  .sas-ltable .sas-lrow__mkt { display: block; }
+}
+@media (max-width: 767px) {
+  .sas-ltable .sas-lrow__mkt { display: none; }
+}
+/* Stage: the same picker look as What's needed ("Stage: Any", same height, border and chevron); still a native select (works without JS). */
+.sas-lf > .sas-filter { position: relative; display: inline-flex; color: var(--ink); }
+.sas-lf > .sas-filter .sas-select { -webkit-appearance: none; appearance: none; width: auto; height: 36px; padding: 0 36px 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink); font-size: 14px; cursor: pointer; }
+.sas-lf > .sas-filter::after { content: ""; position: absolute; inset-inline-end: 12px; top: 50%; width: 16px; height: 16px; margin-top: -8px; background: currentColor; pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; }
+.sas-lf > .sas-filter:has(option:checked:not([value=""])) { color: var(--primary); }
+.sas-lf > .sas-filter:has(option:checked:not([value=""])) .sas-select { border-color: var(--primary); color: var(--primary); }
+/* Quote and order numbers in list cells and detail lines: the text font with tabular numbers (still one unbroken run). */
+.sas-id.sas-id--plain { font-family: inherit; font-size: inherit; font-weight: inherit; font-variant-numeric: tabular-nums; }
+/* Overview: Your markets on the start side, Needs you on the end side, both top-aligned (OverviewV2). Two markets and
+   Add market share one row while they fit: cards shrink from 264px toward 220px; Add market is the narrow one. */
+.sas-ovn-row .sas-mcards { container: mcards / inline-size; }
+@media (min-width: 768px) {
+  .sas-ovn-row .sas-mcards__list > li { flex: 1 1 220px; width: auto; min-width: 220px; max-width: 264px; }
+  .sas-ovn-row .sas-mcards__list > li.sas-mcards__add { flex: 0 1 152px; min-width: 132px; max-width: 264px; }
+}
+@media (min-width: 1101px) {
+  .sas-app .sas-ovn { align-self: start; }
+}
+/* When two cards and Add market can't share a row, Add market becomes a slim row under the cards (not a tall empty box). */
+@container mcards (max-width: 603px) {
+  @media (min-width: 768px) {
+    .sas-mcards__list:has(> li:nth-child(3)) > li.sas-mcards__add { flex: 1 1 100%; max-width: none; }
+    .sas-mcards__list:has(> li:nth-child(3)) > li.sas-mcards__add .sas-mcard--add { min-height: 56px; flex-direction: row; }
+  }
+}
+/* A card narrower than 264px keeps "Open leads" and "Need you" on one line. */
+.sas-ovn-row .sas-mcard:not(.sas-mcard--add) { container: mcard / inline-size; }
+.sas-ovn-row .sas-mcard__num > span { white-space: nowrap; }
+@container mcard (max-width: 250px) {
+  .sas-mcard__num { padding-inline: 12px; }
+}

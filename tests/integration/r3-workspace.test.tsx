@@ -295,7 +295,7 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     save("leads", asc);
     const order = ["Eli Shapiro", "Noa Cohen", "Tamar Golan"].map((n) => asc.indexOf(n));
     expect(order).toEqual([...order].sort((a, b) => a - b));
-    expect(asc).toContain('aria-sort="ascending" data-sort-col="lead"');
+    expect(asc).toMatch(/aria-sort="ascending"[^>]*data-sort-col="lead"/);
     expect(asc).toMatch(/aria-sort="none"[^>]*data-sort-col="activity"/);
     const desc = await page(LeadsPage(props(account.slug, { view: "all", sort: "lead", dir: "desc" })));
     expect(desc.indexOf("Tamar Golan")).toBeLessThan(desc.indexOf("Eli Shapiro"));

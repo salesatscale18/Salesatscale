@@ -38,8 +38,8 @@ import { continuingLine } from "@/lib/voice/instructions";
 import { DEFAULT_VOICE_MODEL, maxCallSeconds } from "@/lib/voice/settings";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 
-/** The lead with the finished call (demo phone 13: 1–3 are the seed's new leads, 4–12 the review states). */
-export const VOICE_CALL_LEAD = { n: 13, fullName: "Gal Demo", company: "Gym Demo Netanya", email: "gal@gym-demo.example", language: "en" } as const;
+/** The lead with the finished call (demo phone 16: 1–3 are the seed's new leads, 4–15 the review states). */
+export const VOICE_CALL_LEAD = { n: 16, fullName: "Gal Demo", company: "Gym Demo Netanya", email: "gal@gym-demo.example", language: "en" } as const;
 
 /** The chat before the call (minutes before `now`). */
 export const VOICE_CALL_CHAT = {

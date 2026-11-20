@@ -7,9 +7,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { ReactElement } from "react";
-import { eq } from "drizzle-orm";
-import { catalogVersions, leadEvents, leads, orders, quotes, quoteVersions, sellerAccounts, users, type Lead, type SellerAccount, type User } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { catalogVersions, conversations, leadEvents, leads, orders, quotes, quoteVersions, sellerAccounts, users, type Lead, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -40,6 +41,7 @@ const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
 const { countItemsByGroup, NEEDS_GROUPS } = await import("@/lib/overview/needs-groups");
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
+const { takeOver, handBack } = await import("@/lib/agent/conversation");
 
 const page = async (el: Promise<ReactElement>) => renderToStaticMarkup(await el);
 const props = (account: string, sp: Record<string, string> = {}) => ({ params: Promise.resolve({ account }), searchParams: Promise.resolve(sp) });
@@ -276,13 +278,88 @@ describe("Leads V2 (LQ-L)", () => {
     expect(h.html).not.toContain(">Asked for a person<");
     // The person's name (here the viewer: "You"), isolated, never an email.
     const i = row(team, "Ido Handoff")!;
-    expect(i.html).toContain(">⁨You⁩ is handling the chat</span>");
+    expect(i.html).toContain(">You’re handling the chat</span>");
     expect(i.html).not.toContain("lql@platform.test");
     expect(i.html).toContain(`href="/app/${account.slug}/leads/${ido.id}"`);
     // The rose edge stays: they still need you.
     expect(h.html).toContain("data-needs");
     const needs = await page(LeadsPage(props(account.slug, { need: "person" })));
     expect(row(needs, "Ido Handoff")!.html).toContain(">Asked for a person<");
+  });
+
+  it("Take over: whoever took the chat is on it (Next step and Who's on it agree), from the conversation, not the lead's owner", async () => {
+    // The demo's Uri (אורי דמו): handed off, then taken over with the Take over service by the demo's creator (the viewer).
+    const uri = (await db.select().from(leads).where(eq(leads.accountId, account.id))).find((l) => l.fullName === "אורי דמו")!;
+    expect(uri.ownerUserId).toBeNull();
+    const team = await page(LeadsPage(props(account.slug, { view: "with_team" })));
+    const u = row(team, "אורי דמו")!;
+    expect(u.html).toContain(">You’re handling the chat</span>");
+    expect(u.html).toContain('data-who="person"');
+    expect(u.html).not.toContain(">Waiting for a person<");
+    const [conv] = await db.select().from(conversations).where(and(eq(conversations.accountId, account.id), eq(conversations.leadId, uri.id), eq(conversations.status, "human")));
+    const [mate] = await db.insert(users).values({ clerkId: "c_lql_mate", email: "noa.mate@platform.test", firstName: "Noa", lastName: "Levi", role: "user" }).returning();
+    const actor = (id: string) => ({ userId: id, actingAs: false });
+    try {
+      // A teammate takes it over: their name, never their email, in both cells.
+      expect((await handBack(db, actor(admin.id), account.id, conv.id)).ok).toBe(true);
+      expect((await takeOver(db, actor(mate.id), account.id, conv.id)).ok).toBe(true);
+      const facts = await leadListFacts(db, account.id, [uri.id]);
+      expect(facts.get(uri.id)?.handler?.id).toBe(mate.id);
+      expect((await leadListFacts(db, other.id, [uri.id])).size).toBe(0);
+      const html = await page(LeadsPage(props(account.slug, { view: "with_team" })));
+      const r = row(html, "אורי דמו")!;
+      expect(r.html).toContain(">⁨Noa Levi⁩ is handling the chat</span>");
+      expect(r.html).toMatch(/data-who="person"><bdi>Noa Levi<\/bdi>/);
+      expect(r.html).not.toContain("noa.mate@");
+      // Handed back: the agent has it again.
+      expect((await handBack(db, actor(mate.id), account.id, conv.id)).ok).toBe(true);
+      const back = row(await page(LeadsPage(props(account.slug, { view: "agent_working" }))), "אורי דמו")!;
+      expect(back.html).toContain('data-who="agent"');
+      expect(back.html).not.toContain("is handling the chat");
+    } finally {
+      await takeOver(db, actor(admin.id), account.id, conv.id);
+    }
+  });
+
+  it("fits its card at 1440 and 1280 with 2 markets: fixed columns, What's needed takes the rest, Market folds under the company (LQ fix 1)", async () => {
+    // Render: the demo account has 2 markets, so the Market column shows; no min-width forces a sideways scroll.
+    const html = await page(LeadsPage(props(account.slug)));
+    const table = html.match(/<table [^>]*class="sas-table sas-table--stack sas-ltable"[^>]*>/)![0];
+    expect(table).toContain("data-market-col");
+    expect(table).not.toMatch(/min-width/);
+    const head = html.split("<thead>")[1].split("</thead>")[0];
+    const cols = [...head.matchAll(/<th [^>]*class="([^"]+)"/g)].map((m) => m[1].match(/sas-lcol--(\w+)|sas-ltable__chev/)?.[0]);
+    expect(cols).toEqual(["sas-lcol--lead", "sas-lcol--step", "sas-lcol--stage", "sas-lcol--value", "sas-lcol--who", "sas-lcol--market", "sas-lcol--when", "sas-ltable__chev"]);
+    // The market also as a muted line under the company (shown when the table is narrower).
+    expect(row(html, "Hana Handoff")!.html).toMatch(/class="sas-small sas-lrow__mkt" data-market="[^"]+">[^<]+</);
+    // CSS numbers (a render test cannot measure layout): the fixed columns leave What's needed at least 240px
+    // in the card at 1440 (about 1142px, with Market) and at 1280 (about 982px, Market folded).
+    const css = readFileSync("components/sas/sas.css", "utf8");
+    const block = css.slice(css.indexOf("/* LQ fix 1 (lane lq-fix1)"));
+    expect(block).toMatch(/\.sas-table\.sas-ltable \{ table-layout: fixed; width: 100%; \}/);
+    const w = (c: string) => Number(block.match(new RegExp(`\\.sas-ltable th\\.sas-lcol--${c} \\{ width: (\\d+)px; \\}`))?.[1]);
+    const chev = Number(block.match(/th\.sas-ltable__chev, [^{]+\{ width: (\d+)px;/)?.[1]);
+    const fixed = ["lead", "stage", "value", "who", "when"].map(w).reduce((a, b) => a + b, 0) + chev;
+    expect(Number.isFinite(fixed)).toBe(true);
+    const fold = Number(block.match(/@container ltable \(max-width: (\d+)px\)/)?.[1]);
+    expect(1142 - fixed - w("market")).toBeGreaterThanOrEqual(240);
+    expect(fold).toBeLessThan(1142);
+    expect(fold + 1 - fixed - w("market")).toBeGreaterThanOrEqual(240);
+    expect(982 - fixed).toBeGreaterThanOrEqual(240);
+  });
+
+  it("every filter defaults to Any; Stage is a picker like What's needed; order numbers in detail lines use the text font (LQ fix 1)", async () => {
+    const html = await page(LeadsPage(props(account.slug)));
+    for (const label of ["Stage", "Source", "Language", "Last activity"]) expect(html).toContain(`<option value="" selected="">${label}: Any</option>`);
+    expect(html).toContain('<option value="all" selected="">Market: Any</option>');
+    expect(html).not.toMatch(/>(Stage|Source|Language|Last activity|Market): All</);
+    // Desktop Stage: a direct child of the toolbar (sas.css gives it the What's needed look), still a native select.
+    const toolbar = html.split('data-testid="leads-filters"')[1].split("</form>")[0];
+    expect(toolbar).toMatch(/<\/details><label class="sas-filter"><span class="sas-sr">Stage<\/span><select class="sas-select" name="stage">/);
+    // The bank transfer's order number: one plain run (text font, tabular numbers), not the code font.
+    const bank = (await needsYou(db, account.id, new Date())).find((i) => i.kind === "bank_transfer")!;
+    const r = rows(html).find((x) => x.html.includes(`/leads/${bank.leadId}?`))!;
+    expect(r.html).toMatch(/<span class="sas-id sas-id--plain">PD-\d+<\/span> · /);
   });
 
   it("a confirmed call ahead is the Next step (before the sent quote), read in one batch per page", async () => {

@@ -271,7 +271,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
       const label = orderLabel(account.tradeName, ord.number);
       return (
         <>
-          <a href={`${tabHref("orders")}&quote=${r.quote.id}`} data-where-order={ord.id}><TextWithId text={t("orders.where.order", { order: label })} id={label} /></a>
+          <a href={`${tabHref("orders")}&quote=${r.quote.id}`} data-where-order={ord.id}><TextWithId text={t("orders.where.order", { order: label })} id={label} plain /></a>
           {" · "}{t(`orders.where.pay.${ord.paymentStatus}`)}
         </>
       );
@@ -385,7 +385,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                     <tbody>
                       {orderRows.map(({ order, lead, market: rowMarket }) => (
                         <tr key={order.id} className={order.quoteId === quoteId ? "sas-row--selected" : undefined} data-order-row={order.id}>
-                          <td><a className="sas-id lqq-ref" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
+                          <td><a className="sas-id sas-id--plain lqq-ref" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
                           <td data-label={t("orders.col.lead")}><LeadCell lead={lead} /></td>
                           {showMarket ? marketCell(rowMarket) : null}
                           <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.total")}>{totalCell(order.currency, order.amountDueMinor, order.recurringMinor, null)}</td>
@@ -442,7 +442,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                       const soon = endsSoon(w, version.validUntil, now);
                       return (
                         <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined} data-quote-row={quote.id} data-where={w}>
-                          <td><a className="lqq-ref" href={listHref({ quote: quote.id })}><span className="sas-id">{quoteRef(quote.number)}</span></a> <span className="lqq-ver">· v{quote.currentVersion}</span></td>
+                          <td><a className="lqq-ref" href={listHref({ quote: quote.id })}><span className="sas-id sas-id--plain">{quoteRef(quote.number)}</span></a> <span className="lqq-ver">· v{quote.currentVersion}</span></td>
                           <td data-label={t("orders.col.lead")}><LeadCell lead={lead} /></td>
                           {showMarket ? marketCell(rowMarket) : null}
                           <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.total")}>

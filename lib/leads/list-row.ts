@@ -88,7 +88,7 @@ export function nextStepCell(lead: LeadLike, f: LeadListFacts, ctx: RowCtx, owne
   // A person has the chat, or it waits for one (Needs you itself says "Asked for a person").
   if (lead.status === "human_handling") {
     return ownerName
-      ? { icon: "user", title: t("leads.next.human_owner", { name: isolate(ownerName) }), detail: null }
+      ? { icon: "user", title: ownerName === t("people.you") ? t("leads.next.human_you") : t("leads.next.human_owner", { name: isolate(ownerName) }), detail: null }
       : { icon: "user", title: t("leads.who.waiting"), detail: null };
   }
   if (lead.status === "won" || f.order?.paymentStatus === "paid") {

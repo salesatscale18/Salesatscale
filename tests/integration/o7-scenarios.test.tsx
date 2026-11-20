@@ -179,10 +179,10 @@ describe("O7: objection scenarios end to end (ScriptedLlm)", () => {
     const html = renderToStaticMarkup(await (LeadsPage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({ view: "needs_you" }) }));
     save("leads-needs", html);
     // The demo's bank-transfer order: "PD-<n> · <amount>", the order ID inside .sas-id.
-    expect(html).toMatch(/<span class="sas-lstep__detail"[^>]*><span class="sas-id">[A-Z]{2}-\d+<\/span> · [^<]+<\/span>/);
+    expect(html).toMatch(/<span class="sas-lstep__detail"[^>]*><span class="sas-id sas-id--plain">[A-Z]{2}-\d+<\/span> · [^<]+<\/span>/);
     // No order or quote ID is left as plain text where it could break at the hyphen (tooltips aside).
     const needs = html.split("<tbody>")[1].split("</tbody>")[0];
-    const plain = needs.replace(/<span class="sas-id"[^>]*>[^<]*<\/span>/g, "").replace(/ title="[^"]*"/g, "").replace(/<[^>]+>/g, " ");
+    const plain = needs.replace(/<span class="sas-id[^"]*"[^>]*>[^<]*<\/span>/g, "").replace(/ title="[^"]*"/g, "").replace(/<[^>]+>/g, " ");
     expect(plain).not.toMatch(/\b(?:[A-Z]{2}|Q)-\d+\b/);
   });
 });

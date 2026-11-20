@@ -168,7 +168,7 @@ describe("Quotes and orders V2", () => {
     expect(where("opened")).toMatch(/data-where-detail="">Opened \d+ \w+</);
     const pd = orderLabel(account.tradeName, 10_000 + numbers.ordered);
     expect(where("ordered")).toContain('data-status="quote_where.ordered"');
-    expect(where("ordered")).toContain(`href="/app/${account.slug}/orders?tab=orders&amp;quote=${ids.ordered}" data-where-order="${ids.ordered_order}">Order <span class="sas-id">${pd}</span></a> · bank transfer expected`);
+    expect(where("ordered")).toContain(`href="/app/${account.slug}/orders?tab=orders&amp;quote=${ids.ordered}" data-where-order="${ids.ordered_order}">Order <span class="sas-id sas-id--plain">${pd}</span></a> · bank transfer expected`);
     expect(where("paid")).toContain("</a> · paid");
     expect(where("expired")).toContain('data-status="quote_where.expired"');
     // Declined: only with the seller's quote.declined event in this account; otherwise Cancelled.
@@ -181,7 +181,7 @@ describe("Quotes and orders V2", () => {
     const html = await page(OrdersPage(props(account.slug)));
     const sent = rowOf(html, "data-quote-row", ids.sent);
     // "Q-7001" links to the panel, the version muted after it.
-    expect(sent).toContain(`<a class="lqq-ref" href="/app/${account.slug}/orders?quote=${ids.sent}"><span class="sas-id">Q-${numbers.sent}</span></a> <span class="lqq-ver">· v1</span>`);
+    expect(sent).toContain(`<a class="lqq-ref" href="/app/${account.slug}/orders?quote=${ids.sent}"><span class="sas-id sas-id--plain">Q-${numbers.sent}</span></a> <span class="lqq-ver">· v1</span>`);
     // Name with its language tag, company under it, both isolated.
     expect(sent).toContain('<bdi>קפה נועה</bdi><span class="lqq-lang" lang="en">HE</span>');
     expect(sent).toContain('<span class="lqq-lead__company"><bdi>קפה נועה תל אביב</bdi></span>');

@@ -16,7 +16,14 @@
  * Call states (O6): a lead with an open call request (the agent's
  * request_callback, waiting for the seller in Needs you) and a lead whose
  * confirmed call was 3 hours ago, so "How did the call go?" shows. Both go
- * through lib/callbacks/service.ts (requestCallback, confirmCallback).
+ * through lib/callbacks/service.ts (requestCallback, confirmCallback). A third
+ * lead has a call the seller confirmed for tomorrow at 11:00 (Leads: "Call ·
+ * <time>" as the Next step; the lead page's call card).
+ *
+ * Quote states: an open quote (sent, no order) whose Valid until is tomorrow
+ * in the account's time zone (amber on Quotes), and a held quote the seller
+ * declined with declineHeldQuote (Quotes: "Declined"). These three leads stay
+ * with the agent, so Needs you does not change.
  *
  * Not seeded: a source in "processing". The status exists, but it is
  * transient by design: failStaleSources marks a source that has been
@@ -32,7 +39,8 @@ import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sellerAccounts, sources, toolCalls, users, type DealFieldValue, type DealObjection } from "@/db/schema";
-import { confirmCallback, requestCallback } from "@/lib/callbacks/service";
+import { confirmCallback, leadCallback, requestCallback } from "@/lib/callbacks/service";
+import { declineHeldQuote } from "@/lib/agent/quote-approval";
 import { CALLBACK_EVENTS } from "@/lib/callbacks/rules";
 import { askTeam } from "@/lib/team-questions/service";
 import { isoInZone } from "@/lib/follow-ups/rules";
@@ -49,7 +57,7 @@ import { startConversationAtSpendCap } from "@/lib/channels/whatsapp";
 import { createOrderForm, loadForm, markOpened, signForm, startPayment, type SignInput } from "@/lib/orders/service";
 import { planAnalysis } from "@/lib/pipeline/service";
 import { createPriceList, setEntry } from "@/lib/pricing/price-lists";
-import { createQuote, type QuoteInput } from "@/lib/quotes/service";
+import { createQuote, markQuoteSent, QUOTE_VALID_DAYS, type QuoteInput } from "@/lib/quotes/service";
 import { addFile, addNote, addWebsite, listSections, saveParse } from "@/lib/sources/service";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 import { seedVoiceCall } from "./voice-call-seed";
@@ -167,7 +175,7 @@ const ORDER_CHATS = {
   },
 } as const;
 
-/** Leads 4–10 (1–3 are the plain new leads of the seed). Each carries one state. */
+/** Leads 4–15 (1–3 are the plain new leads of the seed). Each carries one state. */
 export const STATE_LEADS = {
   bankTransfer: { n: 4, fullName: "רונית דמו", company: "מאפיית דמו רמת גן", email: "ronit@bakery-demo.example", language: "he" },
   payStep: { n: 5, fullName: "Avi Demo", company: "Deli Demo Jaffa", email: "avi@deli-demo.example", language: "en" },
@@ -178,13 +186,20 @@ export const STATE_LEADS = {
   upset: { n: 10, fullName: "Dana Demo", company: "Hotel Demo Eilat", email: "dana@hotel-demo.example", language: "en" },
   callRequested: { n: 11, fullName: "Shira Demo", company: "Bistro Demo Rehovot", email: "shira@bistro-demo.example", language: "en" },
   callDone: { n: 12, fullName: "Omer Demo", company: "Catering Demo Holon", email: "omer@catering-demo.example", language: "en" },
+  callConfirmed: { n: 13, fullName: "Hila Demo", company: "Winery Demo Zichron", email: "hila@winery-demo.example", language: "en" },
+  quoteExpiring: { n: 14, fullName: "Yoni Demo", company: "Ice Cream Demo Haifa", email: "yoni@icecream-demo.example", language: "en" },
+  quoteDeclined: { n: 15, fullName: "Erez Demo", company: "Butcher Demo Petah Tikva", email: "erez@butcher-demo.example", language: "en" },
 } as const;
 
 /** O6: the briefs of the two seeded call requests. */
 export const CALL_BRIEFS = {
   requested: "Wants to go over pricing for 3 sites before deciding; have the 3-site quote ready.",
   done: "Wants to hear how installation works in a running kitchen; have the installation steps ready.",
+  confirmed: "Wants to plan sensors for a wine cellar and two cold rooms; have the cellar setup ready.",
 } as const;
+
+/** The confirmed call's local time, tomorrow (inside the demo's contact hours). */
+export const CONFIRMED_CALL_TIME = "11:00";
 
 /** O4: the question the "needs you" lead asked, which the agent parked with the team (open in Knowledge and Needs you). */
 export const PARKED_QUESTION = { buyerWords: "connect to our building management system", mustHave: true } as const;
@@ -218,6 +233,9 @@ export type ReviewStates = {
   handedBackConversationId: string;
   callRequestedConversationId: string;
   callDoneConversationId: string;
+  callConfirmedConversationId: string;
+  expiringQuoteId: string;
+  declinedQuoteId: string;
   stepsConversationId: string;
   passedConversationId: string;
   failedConversationId: string;
@@ -341,6 +359,11 @@ export async function seedReviewStates(
   // O6: an open call request (Needs you "Call requested"), and a confirmed call 3 hours ago ("How did the call go?").
   const callRequestedConversationId = await callRequested(db, accountId, leadIds.callRequested, liveVersionId, now);
   const callDoneConversationId = await callDone(db, userId, accountId, leadIds.callDone, liveVersionId, now);
+  // A call the seller confirmed for tomorrow at 11:00: Leads shows "Call · <time>" as the agent's next step.
+  const callConfirmedConversationId = await callConfirmed(db, userId, accountId, leadIds.callConfirmed, liveVersionId, now);
+  // Quotes: one sent whose Valid until is tomorrow (amber), one held and declined by the seller.
+  const expiringQuoteId = await expiringQuote(db, userId, accountId, leadIds.quoteExpiring, liveVersionId, now);
+  const declinedQuoteId = await declinedQuote(db, userId, accountId, leadIds.quoteDeclined, liveVersionId, now);
 
   // 10. Test lab: one scenario chat that passes its check and one that fails it.
   const passedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
@@ -377,7 +400,7 @@ export async function seedReviewStates(
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
-    callRequestedConversationId, callDoneConversationId,
+    callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, expiringQuoteId, declinedQuoteId,
     passedConversationId, failedConversationId, analysisRuns,
   };
 }
@@ -688,6 +711,122 @@ async function callDone(db: Db, userId: string, accountId: string, leadId: strin
   }
   await db.update(leads).set({ lastActivityAt: min(now, 190) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   return id;
+}
+
+/**
+ * A call the seller confirmed for tomorrow at 11:00 in the account's time zone
+ * (inside contact hours; when tomorrow has none, 11:00 on the next day the tool
+ * offers, else its nearest time): the agent's request_callback (requestCallback, as the tool), then
+ * Confirm (confirmCallback, which tells the buyer in the chat). The chat stays
+ * with the agent: Leads > Agent working shows "Call · <time>" as the Next step.
+ */
+async function callConfirmed(db: Db, userId: string, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 70), "open");
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 70), body: "Hi, we have a wine cellar and two cold rooms. Could someone call me to plan the sensors?" },
+    { actor: "agent", at: min(now, 69), body: "Of course. So the team comes prepared: is the cellar one room, and how big are the cold rooms?" },
+    { actor: "buyer", at: min(now, 67), body: "One cellar and two walk-in cold rooms. Tomorrow at 11 works for me." },
+  ]);
+  const at = min(now, 66);
+  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  if (!account) throw new Error("Demo seed: account not found");
+  const tz = account.timezone || "UTC";
+  const tomorrow = isoInZone(new Date(now.getTime() + 24 * 3_600_000), tz).slice(0, 10);
+  const ctx = { accountId, leadId, conversationId: id };
+  let input = { time: `${tomorrow}T${CONFIRMED_CALL_TIME}`, brief: CALL_BRIEFS.confirmed };
+  let r = await requestCallback(db, ctx, input, at);
+  if (!r.ok && typeof r.extra.suggested_time === "string") {
+    // Tomorrow is outside contact hours (a day off): 11:00 on the day the tool offers, else the time it offers.
+    const offered = r.extra.suggested_time;
+    input = { ...input, time: `${offered.slice(0, 10)}T${CONFIRMED_CALL_TIME}` };
+    r = await requestCallback(db, ctx, input, at);
+    if (!r.ok) {
+      input = { ...input, time: offered };
+      r = await requestCallback(db, ctx, input, at);
+    }
+  }
+  if (!r.ok) throw new Error(`Demo seed: call request refused: ${r.rule}`);
+  await insertThread(db, accountId, id, "en", versionId, [{
+    actor: "agent", at, body: `Great. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here.`,
+    calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
+  }]);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 67)) } });
+  // The seller confirms (the same service as Confirm on the call card); the buyer gets the confirmation in the chat.
+  const confirmAt = min(now, 60);
+  const open = await leadCallback(db, accountId, leadId, confirmAt);
+  if (!open) throw new Error("Demo seed: call request not found");
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  const confirmed = await confirmCallback(db, { account, user: user!, actingAs: true, role: "seller_admin" }, leadId, open.id, null, confirmAt);
+  if (!confirmed.ok) throw new Error(`Demo seed: call not confirmed: ${confirmed.reason}`);
+  if (confirmed.buyer.told) {
+    // Fictional number: nothing is sent; the stored message reads like the seed's other messages.
+    await db.update(messages).set({ deliveryStatus: null, deliveryError: null }).where(and(eq(messages.accountId, accountId), eq(messages.id, confirmed.buyer.messageId)));
+  }
+  await db.update(leads).set({ lastActivityAt: confirmAt }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return id;
+}
+
+/**
+ * A quote sent 6 days ago (createQuote, then markQuoteSent, as the app does
+ * when it sends one), with no order form: its Valid until (QUOTE_VALID_DAYS
+ * after it was made) is tomorrow in the account's time zone, so Quotes shows it
+ * in amber. The lead and its chat are dated before the quote.
+ */
+async function expiringQuote(db: Db, userId: string, accountId: string, leadId: string, versionId: string, now: Date) {
+  const day = 24 * 60;
+  const madeMin = (QUOTE_VALID_DAYS - 1) * day;
+  const made = min(now, madeMin);
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, madeMin + 30), "open");
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, madeMin + 30), body: "Hi, we have one ice cream shop with 6 freezers. What would sensors cost?" },
+    { actor: "agent", at: min(now, madeMin + 29), body: "Happy to help! For one site that is 6 sensors and a gateway. I'll send you a quote now." },
+  ]);
+  const q = await createQuote(db, accountId, { kind: "human", userId, actingAs: true }, leadId, { lines: [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 1 }], sites: 1, discountBp: 0 }, made);
+  if (!q.ok) throw new Error(`Demo seed: quote refused: ${JSON.stringify(q)}`);
+  if (!(await markQuoteSent(db, accountId, q.quote.id))) throw new Error("Demo seed: quote not marked sent");
+  const added = min(now, madeMin + 40);
+  await db.update(leads).set({ status: "agent_handling", createdAt: added, lastActivityAt: made }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.update(leadEvents).set({ createdAt: added })
+    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), inArray(leadEvents.type, ["lead.created", "consent.recorded"])));
+  await db.update(consentRecords).set({ capturedAt: added }).where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId)));
+  return q.quote.id;
+}
+
+/**
+ * The agent made a quote over the discount limit, so it waited for approval;
+ * the seller declined it (declineHeldQuote, the same service as Decline, which
+ * writes the quote.declined event and tells the buyer in the chat). Quotes
+ * shows it as "Declined"; the chat stays with the agent.
+ */
+async function declinedQuote(db: Db, userId: string, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 90), "open");
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 90), body: "Hi, we have 2 butcher shops with 10 fridges. Can you do 15% off?" },
+  ]);
+  const lines = [{ sku: "SNS-200", qty: 10 }, { sku: "GW-10", qty: 2 }];
+  const q = await createQuote(db, accountId, { kind: "agent" }, leadId, { lines, sites: 2, discountBp: 1500 }, min(now, 89));
+  if (!q.ok) throw new Error(`Demo seed: held quote refused: ${JSON.stringify(q)}`);
+  if (q.quote.status !== "awaiting_approval") throw new Error(`Demo seed: the quote over the limit is ${q.quote.status}, expected awaiting_approval`);
+  await insertThread(db, accountId, id, "en", versionId, [{
+    actor: "agent", at: min(now, 88), body: "Let me check that price with the team. I'll be back to you shortly.",
+    calls: [{ name: "create_quote", input: { lines, discount_percent: 15 }, result: { ok: true, quote_id: q.quote.id, status: "awaiting_approval" } }],
+  }]);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 88) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  if (!account || !user) throw new Error("Demo seed: account or user not found");
+  const declinedAt = min(now, 80);
+  const d = await declineHeldQuote(db, { account, user, actingAs: true, role: "seller_admin" }, q.quote.id, null, declinedAt);
+  if (!d.ok) throw new Error(`Demo seed: decline refused: ${d.reason}`);
+  if (d.followUp.sent) {
+    // Fictional number: nothing is sent; the stored message reads like the seed's other messages.
+    for (const m of d.followUp.messages) {
+      await db.update(messages).set({ deliveryStatus: null, deliveryError: null }).where(and(eq(messages.accountId, accountId), eq(messages.id, m.id)));
+    }
+  }
+  await db.update(leads).set({ lastActivityAt: declinedAt }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return q.quote.id;
 }
 
 /** A saved test-lab chat on the live version (no scenario) whose agent reply has recorded steps. */

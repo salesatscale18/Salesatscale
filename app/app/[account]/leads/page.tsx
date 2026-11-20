@@ -204,7 +204,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     select("language", t("leads.filter.language"), filters.language ?? "", (account.languages as Locale[]).map((l) => ({ value: l, label: t(`lang.${l}`) })), t("leads.filter.any")),
     select("days", t("leads.filter.period"), filters.sinceDays ? String(filters.sinceDays) : "", PERIODS.map((d) => ({ value: String(d), label: t("leads.filter.days", { days: d }) })), t("leads.filter.any")),
     // The same choice as the market switcher (`?market=`), offered with the other filters (L-5).
-    ...(showMarket ? [select(MARKET_PARAM, t("leads.filter.market"), market?.id ?? MARKET_ALL, [{ value: MARKET_ALL, label: t("leads.filter.all_markets") }, ...marketList.map((m) => ({ value: m.id, label: m.name }))])] : []),
+    ...(showMarket ? [select(MARKET_PARAM, t("leads.filter.market"), market?.id ?? MARKET_ALL, [{ value: MARKET_ALL, label: t("leads.filter.any") }, ...marketList.map((m) => ({ value: m.id, label: m.name }))])] : []),
   ];
   const needLabel = need ? t(NEEDS_GROUP_LABEL[need]) : t("leads.need.any");
 
@@ -212,9 +212,9 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     <span className="sas-lstep" data-needs={needsYou ? "" : undefined}>
       <span className="sas-lstep__title">
         {cell.icon ? <span className="sas-lstep__icon"><Icon name={cell.icon} /></span> : null}
-        <TextWithId text={cell.title} id={cell.titleId ?? ""} />
+        <TextWithId text={cell.title} id={cell.titleId ?? ""} plain />
       </span>
-      {cell.detail ? <span className="sas-lstep__detail" title={cell.detail}><TextWithId text={cell.detail} id={cell.detailId ?? ""} /></span> : null}
+      {cell.detail ? <span className="sas-lstep__detail" title={cell.detail}><TextWithId text={cell.detail} id={cell.detailId ?? ""} plain /></span> : null}
     </span>
   );
 
@@ -363,20 +363,21 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             ) : (
               <>
                 <div className="sas-ltable-wrap">
-                  <table className="sas-table sas-table--stack sas-ltable" style={{ minWidth: showMarket ? 1080 : 960 }}>
+                  {/* Fixed column widths (sas.css, LQ fix 1): What's needed / Next step takes the rest, so the table fits its card with no sideways scroll. */}
+                  <table className="sas-table sas-table--stack sas-ltable" data-market-col={showMarket ? "" : undefined}>
                     <thead>
                       <tr>
-                        <SortHeader label={t("leads.col.lead")} column="lead" sort={sort} href={sortHref} />
+                        <SortHeader label={t("leads.col.lead")} column="lead" sort={sort} href={sortHref} className="sas-lcol--lead" />
                         {isNeeds
-                          ? <SortHeader label={t("leads.col.needed")} column="need" sort={sort} href={sortHref} />
-                          : <th scope="col">{t("leads.col.next")}</th>}
-                        <th scope="col">{t("leads.col.stage")}</th>
-                        <SortHeader label={t("leads.col.value")} column="value" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} />
-                        <SortHeader label={t("leads.col.who")} column="owner" sort={sort} href={sortHref} />
-                        {showMarket ? <SortHeader label={t("leads.col.market")} column="market" sort={sort} href={sortHref} /> : null}
+                          ? <SortHeader label={t("leads.col.needed")} column="need" sort={sort} href={sortHref} className="sas-lcol--step" />
+                          : <th scope="col" className="sas-lcol--step">{t("leads.col.next")}</th>}
+                        <th scope="col" className="sas-lcol--stage">{t("leads.col.stage")}</th>
+                        <SortHeader label={t("leads.col.value")} column="value" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} className="sas-lcol--value" />
+                        <SortHeader label={t("leads.col.who")} column="owner" sort={sort} href={sortHref} className="sas-lcol--who" />
+                        {showMarket ? <SortHeader label={t("leads.col.market")} column="market" sort={sort} href={sortHref} className="sas-lcol--market" /> : null}
                         {isNeeds
-                          ? <SortHeader label={t("leads.col.waiting")} column="waiting" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} />
-                          : <SortHeader label={t("leads.col.activity")} column="activity" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} />}
+                          ? <SortHeader label={t("leads.col.waiting")} column="waiting" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} className="sas-lcol--when" />
+                          : <SortHeader label={t("leads.col.activity")} column="activity" sort={sort} href={sortHref} firstDir="desc" style={{ textAlign: "end" }} className="sas-lcol--when" />}
                         <th scope="col" className="sas-ltable__chev"><span className="sas-sr">{t("leads.col.lead")}</span></th>
                       </tr>
                     </thead>
@@ -385,7 +386,10 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                         const any: LeadNeeds | undefined = needs.get(lead.id);
                         const shown = isNeeds ? shownNeeds.get(lead.id) ?? any : any;
                         const f = facts.get(lead.id) ?? NO_FACTS;
-                        const ownerName = owner ? personName(owner, me.id, t("people.you")) : null;
+                        // Who has the chat: whoever took it over (Take over sets the conversation's taken-over-by, not the
+                        // lead's owner), else the lead's owner. Next step and Who's on it read the same name.
+                        const holder = f.handler ?? owner;
+                        const ownerName = holder ? personName(holder, me.id, t("people.you")) : null;
                         // Outside Needs you, a lead a person handles says who has the chat (or that it waits for one).
                         const personStep = !isNeeds && lead.status === "human_handling";
                         const cell = personStep || !shown ? nextStepCell(lead, f, ctx, ownerName) : needsCell(shown, ctx);
@@ -410,6 +414,8 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                                     {lead.company ? <bdi>{lead.company}</bdi> : null}
                                   </span>
                                 ) : null}
+                                {/* On a narrower table the Market column folds into a muted line here (sas.css container query). */}
+                                {showMarket ? <span className="sas-small sas-lrow__mkt" data-market={rowMarket?.id ?? "home"}>{rowMarket?.name ?? homeName}</span> : null}
                               </a>
                             </td>
                             <td className="sas-lrow__step" data-label={isNeeds ? t("leads.col.needed") : t("leads.col.next")}>{stepCell(cell, !!shown)}</td>

@@ -200,7 +200,7 @@ describe("Polish-1: wrong or contradicting data", () => {
     const qRow = orders.match(new RegExp(`<tr[^>]*>(?:(?!</tr>)[\\s\\S])*quote=${quoteId}(?:(?!</tr>)[\\s\\S])*</tr>`))?.[0] ?? "";
     // Quotes and orders V2: one Where it is pill, the order and its payment on the detail line.
     expect(qRow).toContain(">Ordered<");
-    expect(qRow).toMatch(/Order <span class="sas-id">PD-10001<\/span><\/a> · paid/);
+    expect(qRow).toMatch(/Order <span class="sas-id sas-id--plain">PD-10001<\/span><\/a> · paid/);
   });
 
   it("3/7. quote detail: Subtotal, VAT 18%, Total incl. VAT (and monthly); valid until in the quote's zone", async () => {

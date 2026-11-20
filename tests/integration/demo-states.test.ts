@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentVersions, auditLog, conversations, knowledgeFacts, leadEvents, leadIntakeKeys, leads, messages, orderForms, orders, sources, toolCalls, users, type User } from "@/db/schema";
+import { agentVersions, auditLog, conversations, quotes, quoteVersions, sellerAccounts, knowledgeFacts, leadEvents, leadIntakeKeys, leads, messages, orderForms, orders, sources, toolCalls, users, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 // No real model client may be built: the review states spend nothing.
@@ -24,7 +24,10 @@ const { listIntakeKeys } = await import("@/lib/leads/service");
 const { aiUsageThisMonth } = await import("@/lib/ai/usage");
 const { getOrderFormSettings } = await import("@/lib/orders/settings");
 const { getAccountById } = await import("@/lib/accounts/service");
-const { CALL_BRIEFS } = await import("@/lib/demo/states");
+const { CALL_BRIEFS, CONFIRMED_CALL_TIME } = await import("@/lib/demo/states");
+const { leadListFacts } = await import("@/lib/leads/list-facts");
+const { quoteDocs, quoteWhere, endsSoon } = await import("@/lib/quotes/where");
+const { isoInZone } = await import("@/lib/follow-ups/rules");
 const { callbackAfterCall, leadCallback } = await import("@/lib/callbacks/service");
 const { handoffWhyByLead } = await import("@/lib/leads/handoff-reason");
 const { mentionsUnknownQuestions } = await import("@/lib/agent/handoff-notice");
@@ -317,6 +320,56 @@ describe("demo account review states", () => {
     expect(view.thread.at(-1)!.message.deliveryStatus).toBeNull();
     // Account-scoped.
     expect(await leadCallback(db, otherId, asked.id, NOW)).toBeNull();
+  });
+
+  it("LQ: a call confirmed for tomorrow 11:00 (the Next step), a sent quote valid until tomorrow, a declined held quote; Needs you unchanged", async () => {
+    const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+    const tz = acc.timezone;
+    const tomorrow = isoInZone(new Date(NOW.getTime() + 24 * 3_600_000), tz).slice(0, 10);
+    const items = await needsYou(db, accountId, NOW);
+    // Confirmed call: requested by the agent's tool, confirmed by the seller (the confirmation in the thread), still ahead.
+    const maya = await leadBy(STATE_LEADS.callConfirmed.n);
+    expect(maya.status).toBe("agent_handling");
+    const call = (await leadCallback(db, accountId, maya.id, NOW))!;
+    expect(call).toMatchObject({ status: "confirmed", brief: CALL_BRIEFS.confirmed });
+    expect(isoInZone(call.at, tz).slice(0, 16)).toBe(`${tomorrow}T${CONFIRMED_CALL_TIME}`);
+    const mayaConv = await convOf(maya.id);
+    expect(mayaConv.status).toBe("open");
+    expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, mayaConv.id))).map((c) => c.name)).toContain("request_callback");
+    const view = await conversationView(db, accountId, mayaConv);
+    expect(view.thread.at(-1)!.message.body).toMatch(/^Your call is confirmed for .+\. Until then, I'm here for any question\.$/);
+    expect(view.thread.at(-1)!.message.deliveryStatus).toBeNull();
+    expect((await leadListFacts(db, accountId, [maya.id], NOW)).get(maya.id)?.call?.at.getTime()).toBe(call.at.getTime());
+    // Sent quote, no order form: valid until tomorrow in the account's time zone, so it ends soon (amber).
+    const yoni = await leadBy(STATE_LEADS.quoteExpiring.n);
+    expect(yoni.status).toBe("agent_handling");
+    const [q] = await db.select({ quote: quotes, version: quoteVersions }).from(quotes)
+      .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
+      .where(and(eq(quotes.accountId, accountId), eq(quotes.leadId, yoni.id)));
+    expect(q.quote.status).toBe("sent");
+    expect(isoInZone(q.version.validUntil, tz).slice(0, 10)).toBe(tomorrow);
+    const docs = await quoteDocs(db, accountId, [q.quote.id]);
+    expect(docs.forms.size + docs.orders.size).toBe(0);
+    const where = quoteWhere({ status: q.quote.status, validUntil: q.version.validUntil }, null, null, NOW, docs.declined.has(q.quote.id));
+    expect(where).toBe("quote_sent");
+    expect(endsSoon(where, q.version.validUntil, NOW)).toBe(true);
+    // The lead came in before its chat and its quote.
+    expect(yoni.createdAt.getTime()).toBeLessThan(q.quote.createdAt.getTime());
+    // Declined: the agent's quote over the discount limit was held, then declined (quote.declined event, the buyer told).
+    const gal = await leadBy(STATE_LEADS.quoteDeclined.n);
+    const [held] = await db.select({ quote: quotes, version: quoteVersions }).from(quotes)
+      .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
+      .where(and(eq(quotes.accountId, accountId), eq(quotes.leadId, gal.id)));
+    expect(held.quote.status).toBe("cancelled");
+    const [declined] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, gal.id), eq(leadEvents.type, "quote.declined")));
+    expect(declined).toMatchObject({ actor: "human", actorUserId: admin.id, data: { quoteId: held.quote.id } });
+    expect((declined.data as { toldBuyer: string | null }).toldBuyer).toBeTruthy();
+    const gdocs = await quoteDocs(db, accountId, [held.quote.id]);
+    expect(quoteWhere({ status: held.quote.status, validUntil: held.version.validUntil }, null, null, NOW, gdocs.declined.has(held.quote.id))).toBe("declined");
+    expect(gal.status).toBe("agent_handling");
+    // None of the three needs you.
+    for (const l of [maya, yoni, gal]) expect(items.filter((i) => i.leadId === l.id)).toEqual([]);
+    expect((await quoteDocs(db, otherId, [held.quote.id])).declined.size).toBe(0);
   });
 
   it("O35: the seeded hand-off rule is the new default (no Limits notice), the test-lab question reads as a real ask, and hand-offs have their reason line", async () => {

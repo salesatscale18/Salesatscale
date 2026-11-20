@@ -72,7 +72,7 @@ export function MarketCards({ base, markets, openLeads, needYou, returnTo, selec
             </li>
           );
         })}
-        <li>
+        <li className="sas-mcards__add">
           <a className="sas-mcard sas-mcard--add" href={`${base}/markets?add=1`} data-market-add="">
             <Icon name="plus" />
             <span>{t("overview.markets.add")}</span>
