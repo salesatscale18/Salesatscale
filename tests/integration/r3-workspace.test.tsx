@@ -291,24 +291,25 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
   });
 
   it("C: Leads sort on the server, filters apply at once (Apply only without JS), a set filter keeps its prefix", async () => {
-    const asc = await page(LeadsPage(props(account.slug, { sort: "lead", dir: "asc" })));
+    const asc = await page(LeadsPage(props(account.slug, { view: "all", sort: "lead", dir: "asc" })));
     save("leads", asc);
     const order = ["Eli Shapiro", "Noa Cohen", "Tamar Golan"].map((n) => asc.indexOf(n));
     expect(order).toEqual([...order].sort((a, b) => a - b));
     expect(asc).toContain('aria-sort="ascending" data-sort-col="lead"');
     expect(asc).toMatch(/aria-sort="none"[^>]*data-sort-col="activity"/);
-    const desc = await page(LeadsPage(props(account.slug, { sort: "lead", dir: "desc" })));
+    const desc = await page(LeadsPage(props(account.slug, { view: "all", sort: "lead", dir: "desc" })));
     expect(desc.indexOf("Tamar Golan")).toBeLessThan(desc.indexOf("Eli Shapiro"));
-    // Default: latest activity first, with aria-sort on Last activity.
-    const def = await page(LeadsPage(props(account.slug)));
+    // Default (a status view): latest activity first, with aria-sort on Last activity.
+    const def = await page(LeadsPage(props(account.slug, { view: "all" })));
     expect(def).toMatch(/aria-sort="descending"[^>]*data-sort-col="activity"/);
     // Instant filters: the Apply button only inside <noscript>; the sort survives as hidden inputs.
     expect(asc).toMatch(/<noscript><button type="submit"[^>]*>Apply<\/button><\/noscript>/);
     expect(asc).toContain('<input type="hidden" name="sort" value="lead"/>');
     // Prefix on set values; shorter placeholder.
-    const he = await page(LeadsPage(props(account.slug, { language: "en" })));
+    const he = await page(LeadsPage(props(account.slug, { view: "all", language: "en" })));
     expect(he).toMatch(/<option value="en" selected="">Language: English<\/option>/);
-    expect(he).toContain('placeholder="Search leads"');
+    // Leads V2 (UX L-5): the board's placeholder.
+    expect(he).toContain('placeholder="Search name or company"');
   });
 
   it("CSS: pills keep their background on a selected row (a ring), sort icons, phone filters two by two", () => {

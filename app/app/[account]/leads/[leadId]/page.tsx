@@ -330,7 +330,7 @@ export default async function LeadCardPage({
             </div>
             {/* Quotes and Orders: two cards side by side, stacked on a phone (W3). */}
             <div className="sas-lead-docs" data-tab="deal">
-            <section className="sas-lead-doc" aria-labelledby="lq-h" data-testid="quotes-card">
+            <section id="lead-quotes" className="sas-lead-doc" aria-labelledby="lq-h" data-testid="quotes-card">
               <div className="sas-lead-doc__head">
                 <h2 id="lq-h" className="sas-lead-doc__title">{t("lead.card.quotes")} <span className="sas-lead-doc__count sas-num">{leadQuotes.length}</span></h2>
                 {lead.status !== "opted_out" ? <a className={buttonClass("ghost", "sm")} href={`/app/${account.slug}/leads/${lead.id}/quote`}><Icon name="file-text" />{t("lead.card.create_quote")}</a> : null}
@@ -370,7 +370,7 @@ export default async function LeadCardPage({
                 </ul>
               )}
             </section>
-            <section className="sas-lead-doc" aria-labelledby="lo-h" data-testid="orders-card">
+            <section id="lead-orders" className="sas-lead-doc" aria-labelledby="lo-h" data-testid="orders-card">
               <div className="sas-lead-doc__head">
                 <h2 id="lo-h" className="sas-lead-doc__title">{t("lead.card.orders")} <span className="sas-lead-doc__count sas-num">{leadOrders.length}</span></h2>
               </div>

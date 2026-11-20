@@ -1295,3 +1295,103 @@ label.st-voice__row { cursor: pointer; }
 /* Overview market cards: a pill on the coloured map panel gets a white ground, same text and icon colours
    (more specific than .sas-ov2-pill--live / .sas-pill[data-status="market.live"] above). */
 .sas-mcard__pill .sas-pill, .sas-mcard__pill .sas-pill[data-status] { background: #fff; }
+/* ------------------------------------------------------------------------- */
+/* LQ-L (lane LQ-L): Leads V2, UX L-1 to L-5. Views as underlined tabs with   */
+/* counts (Needs you in a rose badge), one toolbar, rows that open the lead,  */
+/* a rose start edge on rows that need you; phone: Filter sheet, Sort, cards. */
+/* ------------------------------------------------------------------------- */
+.sas-leads-subtitle { color: var(--ink-muted); }
+.sas-ltabs { display: flex; gap: var(--space-1); padding: 0 var(--space-3); border-block-end: 1px solid var(--line); overflow-x: auto; scrollbar-width: none; }
+.sas-ltabs::-webkit-scrollbar { display: none; }
+.sas-app a.sas-ltab { flex: none; display: inline-flex; align-items: center; gap: 6px; height: 48px; padding: 0 12px; color: var(--ink-muted); font-weight: 500; text-decoration: none; white-space: nowrap; border-block-end: 2px solid transparent; margin-block-end: -1px; }
+.sas-app a.sas-ltab:hover { color: var(--ink); }
+.sas-app a.sas-ltab[aria-current="page"] { color: var(--primary); border-block-end-color: var(--primary); font-weight: 600; }
+.sas-ltab .sas-num { font-size: 12px; }
+.sas-ltab .sas-ltab__badge { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 700 11px/20px var(--font-sans); text-align: center; }
+/* Desktop toolbar */
+.sas-lf { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
+.sas-lf .sas-search { flex: 0 1 360px; min-width: 200px; }
+.sas-lf .sas-filter .sas-select { height: 36px; font-size: 14px; }
+.sas-lf__menu { position: relative; }
+.sas-lf__menu > summary { list-style: none; cursor: pointer; }
+.sas-lf__menu > summary::-webkit-details-marker { display: none; }
+.sas-lf__pick { display: inline-flex; align-items: center; gap: 6px; height: 36px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink); font-size: 14px; white-space: nowrap; }
+.sas-app .sas-lf__pick--on, .sas-lf__menu[open] > .sas-lf__pick { border-color: var(--primary); color: var(--primary); }
+.sas-lf__pop { position: absolute; inset-inline-start: 0; inset-block-start: calc(100% + 4px); z-index: 30; min-width: 280px; padding: 6px; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-md); box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: 2px; }
+.sas-lf__pop--fields { gap: var(--space-2); padding: var(--space-3); }
+.sas-lf__pop--fields .sas-filter .sas-select { width: 100%; }
+.sas-lf__opt { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 40px; padding: 0 10px; border-radius: var(--radius-sm); color: var(--ink); white-space: nowrap; }
+.sas-app a.sas-lf__opt { color: var(--ink); text-decoration: none; }
+.sas-lf__opt > span:first-child { display: inline-flex; align-items: center; gap: 8px; }
+.sas-app a.sas-lf__opt:hover { background: var(--surface-sunken); }
+.sas-app a.sas-lf__opt[aria-current="true"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.sas-lf__opt[aria-disabled="true"] { color: var(--ink-muted); }
+.sas-lfm { display: none; }
+/* Rows: the lead link covers the whole row (no buttons on rows, L-4). */
+.sas-ltable-wrap { overflow-x: auto; }
+.sas-ltable tbody tr.sas-lrow { position: relative; }
+.sas-ltable tbody tr.sas-lrow:hover > td { background: var(--surface-sunken); }
+.sas-app a.sas-lrow__link::after { content: ""; position: absolute; inset: 0; }
+.sas-app a.sas-lrow__link:focus-visible { outline: none; }
+.sas-app a.sas-lrow__link:focus-visible::after { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sas-lrow[data-needs] > td:first-child { box-shadow: inset 3px 0 0 var(--human); }
+.sas-lrow__name { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.sas-lrow__sub { color: var(--ink-muted); }
+.sas-lang { display: inline-flex; align-items: center; height: 18px; padding: 0 5px; border: 1px solid var(--line); border-radius: var(--radius-sm); font: 600 10px/16px var(--font-sans); letter-spacing: .04em; color: var(--ink-muted); }
+.sas-table td.sas-lrow__step { white-space: normal; min-width: 240px; }
+.sas-lstep { display: flex; flex-direction: column; gap: 2px; min-width: 0; max-width: 400px; }
+.sas-lstep__title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
+.sas-lstep__icon { display: inline-flex; flex: none; color: var(--ink-muted); }
+.sas-lstep[data-needs] .sas-lstep__icon { color: var(--human); }
+.sas-lstep__detail { font-size: 13px; line-height: 18px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-lvalue { display: inline-flex; flex-direction: column; align-items: flex-end; }
+.sas-who { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
+.sas-who::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.sas-who--agent { color: var(--agent); }
+.sas-who--person, .sas-who--waiting { color: var(--human); }
+.sas-who--none { color: var(--ink-muted); font-weight: 400; }
+.sas-table th.sas-ltable__chev, .sas-table td.sas-lrow__chev { width: 36px; padding-inline: 0 var(--space-3); color: var(--ink-muted); }
+.sas-lpanel__empty { padding: var(--space-8) var(--space-4); }
+/* Cards opened at a Leads link (#lead-quotes, #lead-orders) land below the sticky header. */
+.sas-lead-docs > section[id] { scroll-margin-top: 100px; }
+@media (max-width: 767px) {
+  .sas-ltabs { padding-inline: var(--space-1); }
+  .sas-lf { display: none; }
+  .sas-lfm { display: block; padding: 10px var(--space-3); border-block-end: 1px solid var(--line); }
+  .sas-lfm__toggle, .sas-lfm__stoggle { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
+  .sas-lfm__bar { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+  .sas-lfm__filter { flex: 1 1 0; min-width: 0; height: 36px; justify-content: flex-start; cursor: pointer; }
+  .sas-lfm__sort { flex: 1.5 1 0; min-width: 0; }
+  .sas-lfm__sort > summary { width: 100%; height: 36px; justify-content: flex-start; overflow: hidden; white-space: nowrap; }
+  .sas-lfm__sort .sas-lf__pop { inset-inline-start: auto; inset-inline-end: 0; min-width: 200px; }
+  .sas-lfm__searchbtn { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 36px; height: 36px; border-radius: var(--radius-md); color: var(--ink-muted); cursor: pointer; }
+  .sas-lfm__toggle:focus-visible ~ .sas-lfm__bar .sas-lfm__filter, .sas-lfm__stoggle:focus-visible ~ .sas-lfm__bar .sas-lfm__searchbtn { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+  .sas-lfm__search { display: none; margin-block-start: var(--space-2); }
+  .sas-lfm__stoggle:checked ~ .sas-lfm__search { display: flex; }
+  .sas-lfm__stoggle:checked ~ .sas-lfm__bar .sas-lfm__searchbtn { background: var(--primary-soft); color: var(--primary); }
+  .sas-lfm__sheet { display: none; }
+  .sas-lfm__toggle:checked ~ .sas-lfm__sheet { display: block; position: fixed; inset: 0; z-index: 60; }
+  .sas-lfm__scrim { position: absolute; inset: 0; background: rgba(15, 20, 32, .4); }
+  .sas-lfm__panel { position: absolute; inset-inline: 0; inset-block-end: 0; max-height: 85vh; overflow-y: auto; display: flex; flex-direction: column; gap: 10px; padding: var(--space-4) var(--space-4) calc(var(--space-4) + env(safe-area-inset-bottom)); background: var(--surface-raised); border-radius: var(--radius-lg) var(--radius-lg) 0 0; box-shadow: var(--shadow-pop); }
+  .sas-lfm__panel .sas-filter { display: block; }
+  .sas-lfm__panel .sas-select { width: 100%; height: 40px; font-size: 15px; }
+  /* Cards: name and language with the time at the end, the company, then what's needed or the next step (LeadsPhone). */
+  .sas-ltable-wrap { overflow: visible; }
+  .sas-ltable.sas-table--stack tr.sas-lrow { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: "lead when" "step step"; gap: 6px var(--space-3); padding: var(--space-3) var(--space-4); }
+  .sas-ltable.sas-table--stack td { display: block; min-height: 0; padding: 0 !important; }
+  .sas-ltable.sas-table--stack td::before { content: none !important; }
+  .sas-ltable.sas-table--stack td.sas-lrow__lead { grid-area: lead; min-width: 0; }
+  .sas-ltable.sas-table--stack td.sas-lrow__when { grid-area: when; align-self: start; }
+  .sas-ltable.sas-table--stack td.sas-lrow__step { grid-area: step; min-width: 0; }
+  .sas-ltable.sas-table--stack td.sas-lrow__stage, .sas-ltable.sas-table--stack td.sas-lrow__value, .sas-ltable.sas-table--stack td.sas-lrow__who,
+  .sas-ltable.sas-table--stack td.sas-lrow__market, .sas-ltable.sas-table--stack td.sas-lrow__chev { display: none; }
+  .sas-ltable .sas-lstep { max-width: none; }
+  .sas-ltable .sas-lrow[data-needs] > td:first-child { box-shadow: none; }
+  .sas-ltable.sas-table--stack tr.sas-lrow[data-needs] { box-shadow: inset 3px 0 0 var(--human); }
+}
+.sas-ltable th { white-space: nowrap; }
+.sas-ltable td.sas-lrow__lead { min-width: 220px; }
+@media (max-width: 767px) {
+  .sas-lfm__bar > .sas-lfm__filter { flex: 0 1 auto; }
+  .sas-lfm__bar > .sas-lfm__sort { flex: 1 1 auto; }
+}

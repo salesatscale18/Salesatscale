@@ -144,9 +144,10 @@ describe("Polish-2+5: seller workspace", () => {
     });
 
     it("tables become stacked cards: every cell after the first names its column", async () => {
-      const leadsHtml = await page(LeadsPage(props(account.slug)));
+      const leadsHtml = await page(LeadsPage(props(account.slug, { view: "all" })));
       expect(leadsHtml).toContain("sas-table sas-table--stack");
-      expect(leadsHtml).toContain('data-label="Status"');
+      // Leads V2: Status and Owner are one column, Who's on it (UX L-3).
+      expect(leadsHtml).toContain('data-label="Who&#x27;s on it"');
       expect(unlabelledCells(leadsHtml)).toBe(0);
       const quotesHtml = await page(OrdersPage(props(account.slug)));
       expect(quotesHtml).toContain("sas-table--stack");
@@ -260,7 +261,8 @@ describe("Polish-2+5: seller workspace", () => {
     it("leads: Add lead first with the rest under More; filters behind a Filters button; market as plain text", async () => {
       const html = await page(LeadsPage(props(account.slug, { source: "Simulated buyer" })));
       expect(html).toContain('class="sas-more"');
-      expect(html).toMatch(/for="lf-open"[^>]*>.*Filters · 1/);
+      // Leads V2 (UX L-5): one Filter button opening a sheet with every filter.
+      expect(html).toMatch(/for="lf-open"[^>]*>.*Filter · 1/);
       expect(html).not.toMatch(/class="sas-chip" data-market/);
     });
 
