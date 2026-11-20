@@ -52,6 +52,7 @@ import { createPriceList, setEntry } from "@/lib/pricing/price-lists";
 import { createQuote, type QuoteInput } from "@/lib/quotes/service";
 import { addFile, addNote, addWebsite, listSections, saveParse } from "@/lib/sources/service";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
+import { seedVoiceCall } from "./voice-call-seed";
 
 // ---------------------------------------------------------------------------
 // Content (fictional)
@@ -370,6 +371,7 @@ export async function seedReviewStates(
 
   // 12. A note added after that analysis: "Not analyzed yet" until Analyze sources runs.
   await addNote(db, actor, accountId, NEW_NOTE);
+  await seedVoiceCall(db, actor, accountId, { liveVersionId, now });
 
   return {
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
