@@ -1004,7 +1004,7 @@ export const VOICE_SESSION_STATUSES = ["pending", "live", "ended"] as const;
 export type VoiceSessionStatus = (typeof VOICE_SESSION_STATUSES)[number];
 /** Why a voice call ended. */
 export const VOICE_END_REASONS = [
-  "user_hangup", "agent_closed", "limit", "silence", "opt_out", "handoff", "take_over", "connection_lost", "budget", "error",
+  "user_hangup", "agent_closed", "limit", "silence", "idle", "opt_out", "handoff", "take_over", "connection_lost", "budget", "error",
 ] as const;
 export type VoiceEndReason = (typeof VOICE_END_REASONS)[number];
 /** scripted: the free fake model (VOICE_REALTIME=scripted), never counted in AI spend; live: a paid realtime model. */
@@ -1022,6 +1022,13 @@ export type VoiceUsage = {
   textOutTokens: number;
   cachedInTokens: number;
   estimated?: boolean;
+  /** Standby (lib/voice/call-rules.ts): seconds with the model connected (paid) and without; wakes. */
+  activeSec?: number;
+  standbySec?: number;
+  standbys?: number;
+  wakes?: number;
+  falseWakes?: number;
+  wakeLog?: { by: "speech" | "typed" | "tap"; atMs: number; readyMs: number | null; firstAudioMs: number | null; heard: boolean }[];
 };
 
 /**

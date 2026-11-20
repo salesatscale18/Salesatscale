@@ -123,7 +123,7 @@ describe("startVoiceCallAction", () => {
     // The local dev relay: its URL, and no hosting deadline.
     vi.stubEnv("VOICE_WS_URL", "ws://localhost:8787/api/voice/socket");
     const local = await startVoiceCallAction({ slug });
-    expect(local).toMatchObject({ ok: true, wsUrl: "ws://localhost:8787/api/voice/socket", maxSec: 600 });
+    expect(local).toMatchObject({ ok: true, wsUrl: "ws://localhost:8787/api/voice/socket", maxSec: 480 });
     await endMyVoiceCallAction({ slug });
   });
 

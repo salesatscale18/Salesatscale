@@ -20,6 +20,9 @@ import type { VoiceUsage } from "@/db/schema";
 import { OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { scenarioById } from "@/lib/agent/scenarios";
 import { pcmDurationMs, VOICE_SAMPLE_RATE } from "./protocol";
+import { EnergyVad } from "./vad";
+
+export { rms } from "./vad";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 
 // ---------------------------------------------------------------------------
@@ -505,10 +508,8 @@ export class ScriptedConnection implements RealtimeConnection {
   private turnText = "";
   private turnOpen = false;
   private callSeq = 0;
-  // Energy detector
-  private loudMs = 0;
-  private quietMs = 0;
-  private inSpeech = false;
+  // Energy detector (lib/voice/vad.ts): 200 ms of loud audio is speech, 700 ms of quiet ends it.
+  private vad: EnergyVad;
   private speechWatch: TimerHandle | null = null;
   // Fake usage (a snapshot that grows)
   private usage: VoiceUsage = { audioInTokens: 0, audioOutTokens: 0, textInTokens: 0, textOutTokens: 0, cachedInTokens: 0 };
@@ -521,6 +522,7 @@ export class ScriptedConnection implements RealtimeConnection {
     private o: { clock: Clock; wordMs: number; speechRms: number; tone: boolean; resumed: boolean; startAt: number; results?: Record<string, Record<string, unknown>[]> },
   ) {
     this.position = o.startAt;
+    this.vad = new EnergyVad({ threshold: o.speechRms, minSpeechMs: 200, endSilenceMs: 700 });
     const results: Record<string, Record<string, unknown>[]> = o.results ? structuredClone(o.results) : {};
     this.ctx = { results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions), localNow: localNowFromInstructions(cfg.instructions) };
     this.usage.textInTokens = Math.ceil(cfg.instructions.length / 4);
@@ -539,22 +541,14 @@ export class ScriptedConnection implements RealtimeConnection {
     const ms = pcmDurationMs(pcm.byteLength);
     this.sent.audioMs += ms;
     this.usage.audioInTokens += (ms / 1000) * 32;
-    const loud = rms(pcm) >= this.o.speechRms;
-    if (loud) {
-      this.quietMs = 0;
-      this.loudMs += ms;
-      if (!this.inSpeech && this.loudMs >= 200) {
-        this.inSpeech = true;
-        if (this.agentSpeaking) this.interrupted = true;
-        this.emit({ type: "speech-started" });
-      }
-    } else if (this.inSpeech) {
-      this.quietMs += ms;
-      if (this.quietMs >= 700) this.endSpeech();
-    } else {
-      this.loudMs = 0;
+    const ev = this.vad.push(pcm);
+    if (ev === "start") {
+      if (this.agentSpeaking) this.interrupted = true;
+      this.emit({ type: "speech-started" });
+    } else if (ev === "end") {
+      this.endSpeech(true);
     }
-    if (this.inSpeech) {
+    if (this.vad.inSpeech) {
       // Audio that simply stops (mute, a dropped frame) also ends the turn after 700 ms.
       this.o.clock.clearTimeout(this.speechWatch);
       this.speechWatch = this.o.clock.setTimeout(() => this.endSpeech(), 700);
@@ -607,11 +601,9 @@ export class ScriptedConnection implements RealtimeConnection {
 
   // -- Internals -------------------------------------------------------------
 
-  private endSpeech() {
-    if (!this.inSpeech) return;
-    this.inSpeech = false;
-    this.loudMs = 0;
-    this.quietMs = 0;
+  /** The buyer's speech ended (`ended`: the detector already said so; else only if speech is in progress). */
+  private endSpeech(ended = false) {
+    if (!ended && this.vad.end() !== "end") return;
     this.o.clock.clearTimeout(this.speechWatch);
     this.speechWatch = null;
     this.buyerTurns.push({ typed: false });
@@ -808,19 +800,6 @@ export class ScriptedConnection implements RealtimeConnection {
   get hasStarted() {
     return this.started;
   }
-}
-
-/** Root mean square of PCM16 little-endian audio, 0..1. */
-export function rms(pcm: Uint8Array): number {
-  const n = Math.floor(pcm.byteLength / 2);
-  if (!n) return 0;
-  const view = new DataView(pcm.buffer, pcm.byteOffset, n * 2);
-  let sum = 0;
-  for (let i = 0; i < n; i++) {
-    const s = view.getInt16(i * 2, true) / 32768;
-    sum += s * s;
-  }
-  return Math.sqrt(sum / n);
 }
 
 /** `ms` of PCM16 mono 24 kHz: a soft 220 Hz tone, or silence. */

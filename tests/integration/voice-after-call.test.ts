@@ -78,7 +78,7 @@ async function buyerCall(b: Buyer, o: { script: Parameters<typeof expectBuyer>[0
   const ws = new FakeSocket();
   const clock = new ManualClock();
   const model = new ScriptedRealtime({ clock, defaultScript: o.script });
-  const done = handleVoiceSocket(ws, { db, deadlineSec: 270, env: SCRIPTED, clock, model, limits: { silenceAskMs: 600_000, silenceEndMs: 600_000 }, afterCall: o.afterCall });
+  const done = handleVoiceSocket(ws, { db, deadlineSec: 270, env: SCRIPTED, clock, model, limits: { standbyAfterQuietMs: 600_000 }, afterCall: o.afterCall });
   const settle = async () => { for (let i = 0; i < 6; i++) { await flushAsync(4); await new Promise((x) => setTimeout(x, 5)); } };
   const send = (m: unknown) => ws.emit("message", Buffer.from(JSON.stringify(m)), false);
   send({ t: "auth", sessionId: r.sessionId, ticket: r.ticket });

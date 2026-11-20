@@ -72,7 +72,7 @@ export function VoiceCall({
     <div className="sas-vcall" data-voice-call="" data-voice-phase={s.phase}>
       {header}
       <div className="sas-vcall__bar">
-        <VoiceCallBar view={view} levels={client.levels} onMute={(on) => client.mute(on)} onEnd={() => client.end()} onAction={onAction} />
+        <VoiceCallBar view={view} levels={client.levels} onMute={(on) => client.mute(on)} onEnd={() => client.end()} onAction={onAction} onWake={() => client.wake()} />
       </div>
       {transcript ? (
         <VoiceTranscript

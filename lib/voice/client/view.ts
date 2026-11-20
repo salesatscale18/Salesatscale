@@ -21,7 +21,7 @@ export type BarView = {
   tone: BarTone;
   /** An icon, or animated bars (mic level, agent audio, a slow "checking" pulse, flat when muted). */
   icon: BarIcon | null;
-  bars: "mic" | "out" | "checking" | "muted" | null;
+  bars: "mic" | "out" | "checking" | "muted" | "standby" | null;
   title: string;
   sub: string;
   /** The sub-line on a narrow phone (under ~420px), where the clock and the buttons leave little room. */
@@ -43,6 +43,8 @@ export type BarView = {
   unmuteLabel: string;
   /** The bar is busy: buttons wait (ending). */
   busy: boolean;
+  /** On standby: tapping the state area wakes the agent; this is the tap's label (else null). */
+  wake: string | null;
 };
 
 /** How money from the relay (USD micros) is shown: the account currency, like Sources. */
@@ -98,7 +100,7 @@ const UNAVAILABLE_TITLE: Record<VoiceUnavailableReason, MessageKey> = {
 /** The ended line's second part: cost or "No cost", plus the saved note. */
 export function endedSub(s: VoiceSnapshot, ctx: BarContext): string {
   const T = words(ctx);
-  if (ctx.audience === "buyer") return T("voice.ended.chat_continues" as MessageKey);
+  if (ctx.audience === "buyer") return T((s.endReason === "idle" ? "voice.ended.idle" : "voice.ended.chat_continues") as MessageKey);
   const cost = s.mode === "scripted" ? T("voice.no_cost") : T("voice.ended.cost", { cost: costText(s.costMicros, ctx.fx ?? null) });
   return [cost, ctx.savedNote].filter(Boolean).join(" · ");
 }
@@ -106,7 +108,7 @@ export function endedSub(s: VoiceSnapshot, ctx: BarContext): string {
 const SHORT: Partial<Record<string, MessageKey>> = {
   mic_prompt: "voice.short.mic_prompt", mic_blocked: "voice.short.mic_blocked", no_mic: "voice.short.no_mic", connecting: "voice.short.connecting",
   reconnecting: "voice.short.reconnecting", ending: "voice.short.ending", listening: "voice.short.listening", speaking: "voice.short.speaking",
-  checking: "voice.short.checking", muted: "voice.short.muted",
+  checking: "voice.short.checking", muted: "voice.short.muted", standby: "voice.short.standby",
 };
 
 export function barView(s: VoiceSnapshot, now: number, ctx: BarContext = {}): BarView {
@@ -122,7 +124,7 @@ export function barView(s: VoiceSnapshot, now: number, ctx: BarContext = {}): Ba
 function fullBarView(s: VoiceSnapshot, now: number, ctx: BarContext): Omit<BarView, "subShort"> {
   const T = words(ctx);
   const buyer = ctx.audience === "buyer";
-  const base = { clock: null, controls: "none" as const, endLabel: T("voice.end"), endStyle: (buyer ? "back" : "end") as BarView["endStyle"], muteLabel: T("voice.mute"), unmuteLabel: T("voice.unmute"), action: null, muted: s.muted, busy: false, bars: null, icon: null };
+  const base = { clock: null, controls: "none" as const, endLabel: T("voice.end"), endStyle: (buyer ? "back" : "end") as BarView["endStyle"], muteLabel: T("voice.mute"), unmuteLabel: T("voice.unmute"), action: null, muted: s.muted, busy: false, bars: null, icon: null, wake: null };
   switch (s.phase) {
     case "idle":
       return { ...base, state: "ready", tone: "plain", icon: "phone-call", title: T("voice.ready.title"), sub: ctx.readyLine ?? "", action: { kind: "start", label: T("voice.ready.start") } };
@@ -167,6 +169,8 @@ function fullBarView(s: VoiceSnapshot, now: number, ctx: BarContext): Omit<BarVi
       const noticeSub = s.notice === "limit_soon" ? T("voice.notice.limit_soon") : s.notice === "silence_check" ? T("voice.notice.silence_check") : null;
       if (s.muted) return { ...call, state: "muted", tone: "off", bars: "muted", title: T("voice.muted.title"), sub: noticeSub ?? T("voice.muted.sub") };
       if (s.live === "speaking") return { ...call, state: "speaking", tone: "agent", bars: "out", title: buyer && ctx.agentName ? T("voice.speaking.named" as MessageKey, { agent: `\u2068${ctx.agentName}\u2069` }) : T("voice.speaking.title"), sub: noticeSub ?? T("voice.speaking.sub") };
+      // Standby: the agent is off the line until the person speaks, types or taps (calm and neutral, a still waveform).
+      if (s.live === "standby") return { ...call, state: "standby", tone: "plain", bars: "standby", title: T("voice.standby.title"), sub: noticeSub ?? T("voice.standby.sub"), wake: T("voice.wake") };
       if (s.live === "checking") return { ...call, state: "checking", tone: "agent", bars: "checking", title: T("voice.checking.title"), sub: noticeSub ?? T("voice.checking.sub") };
       return { ...call, state: "listening", tone: "me", bars: "mic", title: T("voice.listening.title"), sub: noticeSub ?? T("voice.listening.sub") };
     }

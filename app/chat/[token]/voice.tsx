@@ -49,7 +49,7 @@ export function BuyerCallBar({ client, tr, agentName, dir, firstNote, onStartAga
       onMouseEnter={() => { hover.current = true; hold(); }} onMouseLeave={() => { hover.current = false; hold(); }}
       ref={box} onFocus={hold} onBlur={() => setTimeout(hold, 0)}
     >
-      <VoiceCallBar view={view} levels={client.levels} onMute={(on) => client.mute(on)} onEnd={() => client.end()} onAction={onAction} />
+      <VoiceCallBar view={view} levels={client.levels} onMute={(on) => client.mute(on)} onEnd={() => client.end()} onAction={onAction} onWake={() => client.wake()} />
       {closable ? (
         <button type="button" className="c-voice__close" aria-label={tr("buyer.voice.close")} onClick={onClose}>
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>

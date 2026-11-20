@@ -20,6 +20,7 @@ export function VoiceCallStats({
   costEstimated = false,
   endReason,
   errorCode,
+  standby = null,
   headingId = "voice-stats-h",
 }: {
   durationSec: number;
@@ -33,6 +34,8 @@ export function VoiceCallStats({
   costEstimated?: boolean;
   endReason?: string | null;
   errorCode?: string | null;
+  /** Saved calls that went on standby: time with the agent connected (paid) and on standby. */
+  standby?: { activeSec: number; standbySec: number } | null;
   headingId?: string;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
@@ -48,6 +51,12 @@ export function VoiceCallStats({
         <dt>{t("voice.stats.cost")}</dt><dd className="sas-num" data-voice-cost="">{cost}</dd>
         <dt>{t("voice.stats.answer")}</dt>
         <dd className="sas-num" data-voice-answer="">{answerMsAvg === null ? "—" : t("voice.stats.answer_value", { time: answerSpeedText(answerMsAvg) })}</dd>
+        {standby ? (
+          <>
+            <dt>{t("voice.stats.standby")}</dt>
+            <dd className="sas-num" data-voice-standby="">{t("voice.stats.standby_value", { standby: callClock(standby.standbySec), active: callClock(standby.activeSec) })}</dd>
+          </>
+        ) : null}
         {ended ? <><dt>{t("voice.stats.ended")}</dt><dd data-voice-ended="">{ended}</dd></> : null}
         {error ? <><dt>{t("voice.stats.error")}</dt><dd data-voice-error="">{error}</dd></> : null}
       </dl>

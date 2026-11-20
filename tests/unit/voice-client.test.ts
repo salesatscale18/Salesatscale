@@ -7,6 +7,10 @@ import { describe, expect, it } from "vitest";
 import { FRAME_SAMPLES, FrameChunker, LinearResampler, floatToPcm16, levelOf, pcm16ToFloat, rmsOf } from "@/lib/voice/client/audio";
 import { PlaybackSchedule } from "@/lib/voice/client/playback";
 import { outputChoices, playbackRoute } from "@/lib/voice/client/output";
+import { EnergyVad, PcmRing, rms } from "@/lib/voice/vad";
+import { CALL_RULES } from "@/lib/voice/call-rules";
+import { parseClientMessage } from "@/lib/voice/protocol";
+import { t } from "@/lib/i18n";
 import { INITIAL_SNAPSHOT, elapsedSec, voiceReducer, type VoiceEvent, type VoiceSnapshot } from "@/lib/voice/client/state";
 import { barView, clockTime, costText, endReasonText, errorText } from "@/lib/voice/client/view";
 import { answerSpeedText, callClock, callLimitShort, callLimitText, limitOptions, voiceLabAccess, voiceOptions, voiceSettingsSummary } from "@/lib/voice/lab";
@@ -347,5 +351,89 @@ describe("where the agent's voice plays (loudspeaker by default)", () => {
     expect(outputChoices(desktop, false)).toEqual([]);
     expect(outputChoices([d("default", "Speaker")], true)).toEqual([]);
     expect(outputChoices([d("mic1", "Mic", "audioinput")], true)).toEqual([]);
+  });
+});
+
+describe("standby on the call bar", () => {
+  const now = 100_000;
+  const live = (o: Partial<VoiceSnapshot>): VoiceSnapshot => ({ ...INITIAL_SNAPSHOT, phase: "live", connectedAt: now - 38_000, maxSec: 480, ...o });
+
+  it("the relay's standby state: calm and neutral, a still waveform, 'just speak', and a tap wakes the agent", () => {
+    const s = voiceReducer(live({ live: "speaking", speakingKey: "a1" }), { type: "server", msg: { t: "state", state: "standby" }, now });
+    expect(s).toMatchObject({ phase: "live", live: "standby", speakingKey: null });
+    const lab = barView(s, now);
+    expect(lab).toMatchObject({ state: "standby", tone: "plain", bars: "standby", title: "Standing by", controls: "call", wake: "Wake the agent", subShort: "Just speak" });
+    expect(lab.sub).toBe("Agent off the line, no cost · speak, type or tap to wake it");
+    const buyer = barView(s, now, { audience: "buyer" });
+    expect(buyer).toMatchObject({ title: "Standing by", sub: "Just speak", wake: "Talk to the agent" });
+    const he = barView(s, now, { audience: "buyer", tr: (k, v) => t(k, v, "he") });
+    expect(he).toMatchObject({ title: "בהמתנה", sub: "פשוט לדבר" });
+    // Other states have no tap.
+    expect(barView(live({ live: "listening" }), now).wake).toBeNull();
+    expect(parseServerMessage(JSON.stringify({ t: "state", state: "standby" }))).toEqual({ t: "state", state: "standby" });
+    expect(parseClientMessage(JSON.stringify({ t: "wake" }))).toEqual({ t: "wake" });
+  });
+
+  it("a call that ended because it was quiet tells the buyer they can switch to voice any time", () => {
+    const ended = voiceReducer(live({}), { type: "server", msg: { t: "ended", reason: "idle", durationSec: 260, costMicros: 0, answerMsAvg: null }, now });
+    expect(barView(ended, now, { audience: "buyer" }).sub).toBe("The call ended because it was quiet. Switch to voice any time.");
+    expect(barView(ended, now, { audience: "buyer", tr: (k, v) => t(k, v, "he") }).sub).toBe("השיחה הסתיימה כי היה שקט. אפשר לעבור לשיחה קולית בכל רגע.");
+    expect(endReasonText("idle")).toBe("The call ended because it was quiet.");
+  });
+});
+
+describe("the standby speech detector (lib/voice/vad.ts)", () => {
+  const RATE = 24_000;
+  const tone = (ms: number, level: number) => {
+    const n = Math.round((RATE * ms) / 1000);
+    const out = new Uint8Array(n * 2);
+    const v = new DataView(out.buffer);
+    for (let i = 0; i < n; i++) v.setInt16(i * 2, Math.round(Math.sin((2 * Math.PI * 300 * i) / RATE) * level * Math.SQRT2 * 32768), true);
+    return out;
+  };
+  const feed = (vad: EnergyVad, ms: number, level: number) => {
+    const ev: string[] = [];
+    for (let at = 0; at < ms; at += 40) {
+      const e = vad.push(tone(40, level));
+      if (e) ev.push(`${e}@${at + 40}`);
+    }
+    return ev;
+  };
+
+  it("speech = loud for 250 ms; a click is ignored; 700 ms of quiet ends it", () => {
+    const vad = new EnergyVad(CALL_RULES.vad);
+    expect(rms(tone(40, 0.1))).toBeCloseTo(0.1, 2);
+    expect(feed(vad, 200, 0.1)).toEqual([]);
+    expect(feed(vad, 400, 0)).toEqual([]);
+    expect(feed(vad, 400, 0.1)).toEqual(["start@280"]);
+    expect(feed(vad, 800, 0)).toEqual(["end@720"]);
+  });
+
+  it("a noisy room raises the floor, so steady noise stops counting; quiet speech above it still does", () => {
+    const vad = new EnergyVad(CALL_RULES.vad);
+    // Steady noise at 0.03: heard at first (above the 0.02 threshold), then the floor follows it.
+    const first = feed(vad, 12_000, 0.03);
+    expect(first[0]).toMatch(/^start@/);
+    vad.reset();
+    expect(feed(vad, 3_000, 0.03)).toEqual([]);
+    expect(vad.level).toBeGreaterThan(0.06);
+    expect(feed(vad, 400, 0.2)[0]).toMatch(/^start@/);
+  });
+
+  it("boost (after false wakes) raises the threshold", () => {
+    const vad = new EnergyVad(CALL_RULES.vad);
+    vad.boost = 2;
+    expect(feed(vad, 600, 0.03)).toEqual([]);
+    expect(feed(vad, 600, 0.05)[0]).toMatch(/^start@/);
+  });
+
+  it("the pre-roll keeps about the last 3 s, oldest first", () => {
+    const ring = new PcmRing(3_000);
+    for (let i = 0; i < 100; i++) ring.push(tone(100, i / 1000));
+    expect(ring.durationMs).toBeGreaterThanOrEqual(3_000);
+    expect(ring.durationMs).toBeLessThan(3_100);
+    const frames = ring.drain();
+    expect(rms(frames[0])).toBeLessThan(rms(frames.at(-1)!));
+    expect(ring.durationMs).toBe(0);
   });
 });

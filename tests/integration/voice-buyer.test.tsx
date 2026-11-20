@@ -401,7 +401,7 @@ describe("the call continues the chat", () => {
     const clock = new ManualClock();
     const model = new ScriptedRealtime({ clock });
     const sent: unknown[] = [];
-    const engine = new VoiceEngine({ db, model, sessionId: r.sessionId, send: (m) => sent.push(m), clock, limits: { silenceAskMs: 600_000, silenceEndMs: 600_000, env: {} } });
+    const engine = new VoiceEngine({ db, model, sessionId: r.sessionId, send: (m) => sent.push(m), clock, limits: { standbyAfterQuietMs: 600_000, env: {} } });
     const settle = async () => { for (let i = 0; i < 4; i++) { await flushAsync(); await engine.idle(); } };
     await engine.start();
     await settle();
@@ -488,7 +488,7 @@ describe("the buyer sees state words only", () => {
     }
     const ws = new Fake();
     const clock = new ManualClock();
-    const done = handleVoiceSocket(ws, { db, deadlineSec: 270, env: SCRIPTED, clock, model: new ScriptedRealtime({ clock }), limits: { silenceAskMs: 600_000, silenceEndMs: 600_000 } });
+    const done = handleVoiceSocket(ws, { db, deadlineSec: 270, env: SCRIPTED, clock, model: new ScriptedRealtime({ clock }), limits: { standbyAfterQuietMs: 600_000 } });
     const settle = async () => { for (let i = 0; i < 6; i++) { await flushAsync(4); await new Promise((x) => setTimeout(x, 5)); } };
     ws.emit("message", Buffer.from(JSON.stringify({ t: "auth", sessionId: r.sessionId, ticket: r.ticket })), false);
     await settle();

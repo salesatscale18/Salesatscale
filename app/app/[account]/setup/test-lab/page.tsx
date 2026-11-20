@@ -481,6 +481,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <VoiceCallStats
                 durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
                 answerMsAvg={savedEnded.answerMsAvg} live={false} costEstimated={savedEnded.costEstimated} endReason={savedEnded.endReason} errorCode={savedEnded.errorCode}
+                standby={savedEnded.standbySec !== null && savedEnded.activeSec !== null ? { activeSec: savedEnded.activeSec, standbySec: savedEnded.standbySec } : null}
               />
             ) : null;
             return voice ? <VoiceLabStats conversationId={conv.id}>{saved}</VoiceLabStats> : saved;

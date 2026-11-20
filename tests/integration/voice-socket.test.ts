@@ -19,7 +19,7 @@ import { handleVoiceSocket, IDLE_TIMEOUT_MS, MAX_BUFFERED_AUDIO_BYTES, type Voic
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
-const QUIET = { silenceAskMs: 3_600_000, silenceEndMs: 3_600_000 };
+const QUIET = { standbyAfterQuietMs: 3_600_000 };
 
 class FakeSocket extends EventEmitter implements VoiceSocket {
   sent: (string | Uint8Array)[] = [];
@@ -76,12 +76,12 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     return { ...s, conversationId: c.conversationId };
   }
 
-  function open(o: { deadlineSec?: number | null; clock?: ManualClock; env?: Record<string, string | undefined> } = {}) {
+  function open(o: { deadlineSec?: number | null; clock?: ManualClock; env?: Record<string, string | undefined>; limits?: typeof QUIET } = {}) {
     const ws = new FakeSocket();
     const clock = o.clock ?? new ManualClock();
     const model = new ScriptedRealtime({ clock });
     let finished = false;
-    const done = handleVoiceSocket(ws, { db, deadlineSec: o.deadlineSec ?? null, env: o.env ?? SCRIPTED, clock, model, limits: QUIET }).then(() => (finished = true));
+    const done = handleVoiceSocket(ws, { db, deadlineSec: o.deadlineSec ?? null, env: o.env ?? SCRIPTED, clock, model, limits: o.limits ?? QUIET }).then(() => (finished = true));
     const settle = async () => {
       for (let i = 0; i < 6; i++) {
         await flushAsync(4);
@@ -221,6 +221,38 @@ describe("voice relay socket (fake socket, scripted model)", () => {
       expect(await row(s.sessionId)).toMatchObject({ status: "ended", endReason: "connection_lost" });
       expect(c.model.connections[0].closed).toBe(true);
     }
+  });
+
+  it("standby through the socket: the model closes, a tap ({t:'wake'}) and speech wake it, the page closing ends it", async () => {
+    const s = await newSession();
+    const c = open({ limits: { standbyAfterQuietMs: 5_000 } });
+    c.ws.text({ t: "auth", sessionId: s.sessionId, ticket: s.ticket });
+    await c.settle();
+    await c.run(20_000); // opener, then 5 s of quiet
+    const states = () => c.ws.json().filter((m): m is Extract<ServerMessage, { t: "state" }> => m.t === "state").map((m) => m.state);
+    expect(states().at(-1)).toBe("standby");
+    expect(c.model.connections[0].closed).toBe(true);
+    // A tap on the bar.
+    c.ws.text({ t: "wake" });
+    await c.settle();
+    expect(states().at(-1)).toBe("listening");
+    expect(c.model.connections).toHaveLength(2);
+    await c.run(6_000);
+    expect(states().at(-1)).toBe("standby");
+    // The buyer speaks: the mic audio keeps flowing to our server, which wakes the model.
+    for (let i = 0; i < 6; i++) {
+      c.ws.audio(micPcm(100, true));
+      await c.run(100);
+    }
+    expect(c.model.connections).toHaveLength(3);
+    expect(c.model.connections[2].sent.audioMs).toBeGreaterThanOrEqual(600);
+    await c.run(5_000);
+    // On standby again (or still answering): the page closes and the call ends at once.
+    c.ws.emit("close");
+    await c.settle();
+    await c.done;
+    expect(await row(s.sessionId)).toMatchObject({ status: "ended", endReason: "connection_lost" });
+    expect(c.model.connections.every((x) => x.closed)).toBe(true);
   });
 
   it("a browser that goes silent (no frames, no pongs) is closed and the call ends", async () => {

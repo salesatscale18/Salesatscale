@@ -14,6 +14,7 @@ const SHAPES = {
   out: [8, 16, 24, 14, 22, 10, 18, 26, 12, 20, 8, 14],
   checking: [6, 10, 6, 10, 6, 10, 6, 10],
   muted: [4, 4, 4, 4, 4, 4, 4, 4, 4, 4],
+  standby: [4, 6, 8, 6, 4, 6, 8, 6, 4, 6],
 } as const;
 
 /**
@@ -21,7 +22,7 @@ const SHAPES = {
  * agent's audio while it speaks, a slow pulse while it checks, flat when muted.
  * Heights are set on the DOM each frame (no re-render). Reduced motion: static.
  */
-function VoiceBars({ kind, levels }: { kind: "mic" | "out" | "checking" | "muted"; levels?: Levels }) {
+function VoiceBars({ kind, levels }: { kind: "mic" | "out" | "checking" | "muted" | "standby"; levels?: Levels }) {
   const ref = useRef<HTMLSpanElement>(null);
   const shape = SHAPES[kind];
   useEffect(() => {
@@ -65,6 +66,7 @@ export function VoiceCallBar({
   onMute,
   onEnd,
   onAction,
+  onWake,
   actionDisabled = false,
 }: {
   view: BarView;
@@ -72,9 +74,18 @@ export function VoiceCallBar({
   onMute?: (on: boolean) => void;
   onEnd?: () => void;
   onAction?: (a: BarAction) => void;
+  /** On standby, a tap on the state area wakes the agent. */
+  onWake?: () => void;
   actionDisabled?: boolean;
 }) {
   const a = view.action;
+  const text = (
+    <span className="sas-vbar__text" role="status" aria-live="polite" aria-atomic="true">
+      <b className="sas-vbar__title">{view.title}</b>
+      {view.sub ? <span className={`sas-small sas-vbar__sub${view.subShort !== view.sub ? " sas-vbar__sub--long" : ""}`}>{view.sub}</span> : null}
+      {view.subShort && view.subShort !== view.sub ? <span className="sas-small sas-vbar__sub sas-vbar__sub--short">{view.subShort}</span> : null}
+    </span>
+  );
   return (
     <div className={`sas-vbar sas-vbar--${view.tone}`} data-voice-state={view.state}>
       {view.bars ? <VoiceBars kind={view.bars} levels={levels} /> : view.icon === "phone-call" ? (
@@ -82,11 +93,9 @@ export function VoiceCallBar({
       ) : view.icon ? (
         <span className={`sas-vbar__icon${view.icon === "loader" ? " sas-vbar__icon--spin" : ""}`} aria-hidden="true"><Icon name={view.icon} /></span>
       ) : null}
-      <span className="sas-vbar__text" role="status" aria-live="polite" aria-atomic="true">
-        <b className="sas-vbar__title">{view.title}</b>
-        {view.sub ? <span className={`sas-small sas-vbar__sub${view.subShort !== view.sub ? " sas-vbar__sub--long" : ""}`}>{view.sub}</span> : null}
-        {view.subShort && view.subShort !== view.sub ? <span className="sas-small sas-vbar__sub sas-vbar__sub--short">{view.subShort}</span> : null}
-      </span>
+      {view.wake && onWake ? (
+        <button type="button" className="sas-vbar__wake" onClick={onWake} aria-label={view.wake} title={view.wake} data-voice-wake="">{text}</button>
+      ) : text}
       {view.clock ? <span className="sas-num sas-vbar__clock" data-voice-clock="">{view.clock}</span> : null}
       {a ? (
         a.kind === "link" ? (

@@ -26,6 +26,8 @@ export type ClientMessage =
   /** Text typed during the call: used verbatim as the buyer's turn. */
   | { t: "text"; text: string }
   | { t: "end" }
+  /** A tap on the call bar while the call is on standby: reconnect the agent now. */
+  | { t: "wake" }
   | { t: "ping" };
 
 /** A text frame from the browser as a message, or null when it is not one (untrusted input). */
@@ -44,6 +46,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
   switch (o.t) {
     case "start":
     case "end":
+    case "wake":
     case "ping":
       return { t: o.t };
     case "mute":
@@ -99,14 +102,15 @@ export const VOICE_CLOSE = {
 // Relay → browser
 // ---------------------------------------------------------------------------
 
-export const VOICE_STATES = ["connecting", "listening", "speaking", "checking", "reconnecting", "ended"] as const;
+/** `standby`: the agent is disconnected while the buyer is quiet (lib/voice/call-rules.ts); speaking, typing or a tap wakes it. */
+export const VOICE_STATES = ["connecting", "listening", "speaking", "checking", "standby", "reconnecting", "ended"] as const;
 export type VoiceState = (typeof VOICE_STATES)[number];
 
 export type ToolStatus = "running" | "ok" | "refused" | "failed";
 
 /** Why a call ended (same values as voice_sessions.end_reason). */
 export type VoiceEndReasonWire =
-  | "user_hangup" | "agent_closed" | "limit" | "silence" | "opt_out" | "handoff" | "take_over" | "connection_lost" | "budget" | "error";
+  | "user_hangup" | "agent_closed" | "limit" | "silence" | "idle" | "opt_out" | "handoff" | "take_over" | "connection_lost" | "budget" | "error";
 
 /** Error codes the call screen can show. */
 export const VOICE_ERROR_CODES = [

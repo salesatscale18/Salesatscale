@@ -184,7 +184,7 @@ function onServer(s: VoiceSnapshot, m: ServerMessage, now: number): VoiceSnapsho
       if (m.state === "ended") return { ...s, phase: "ended", live: null, speakingKey: null };
       return {
         ...s, phase: s.phase === "ending" ? "ending" : "live", live: m.state, connectedAt: s.connectedAt ?? now,
-        speakingKey: m.state === "speaking" ? s.speakingKey : m.state === "listening" ? null : s.speakingKey,
+        speakingKey: m.state === "speaking" ? s.speakingKey : m.state === "listening" || m.state === "standby" ? null : s.speakingKey,
       };
     case "transcript":
       return onTranscript(s, m);

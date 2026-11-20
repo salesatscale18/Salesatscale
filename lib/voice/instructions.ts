@@ -61,6 +61,8 @@ export type VoiceInstructionInput = {
   recap: TranscriptLine[];
   /** After a reconnect: the opener was already spoken. */
   resumed?: boolean;
+  /** With `resumed`: the call comes back from standby (lib/voice/call-rules.ts) because the buyer spoke, typed or tapped. */
+  woke?: boolean;
   /**
    * The call continues a chat that already has agent messages (the buyer
    * switched from text to voice): no opener and no introduction; the agent
@@ -90,6 +92,9 @@ export function expectedCallLanguages(conversationLanguage: string, sellingLangu
 
 const ROLE: Record<TranscriptLine["role"], string> = { buyer: "Buyer", agent: "You", human: "A person from the team" };
 
+/** "## This call" after standby: the buyer is back; no greeting, no repeat. */
+export const WOKE_LINE = "The call was on standby while the buyer was quiet (for example while filling in the order form), and the buyer has just come back: they are speaking, typed something or tapped to talk. Do not greet them, do not introduce yourself and do not repeat your last line. Answer what they say; if they say nothing, wait quietly.";
+
 /** The session instructions (pure). */
 export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   const settings = resolveVoiceSettings(i.voiceSettings);
@@ -107,7 +112,9 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   const recap = i.recap.slice(-(i.continuing ? CHAT_RECAP_LINES : RECAP_LINES)).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
   const call = [
     "## This call",
-    i.resumed
+    i.resumed && i.woke
+      ? `${WOKE_LINE}`
+      : i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
       : i.continuing
         ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Open with one short line that picks up from where the chat stopped: if your own last chat message asked the buyer something they have not answered yet, ask it again briefly, in spoken form${i.opener && i.opener !== fallback ? ` (here: "${i.opener}")` : ""}; if the buyer wrote last, or nothing is open, ${fallback ? `say "${fallback}"` : `say briefly, in ${languageNameEn(language)}, that you are here and they can go ahead.`} Then listen. Never ask again for anything the buyer already answered in the chat.`
@@ -194,7 +201,7 @@ export type VoiceCallContext = {
 export async function loadVoiceInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
   const [stage, catalog, followUp, contact, earlier, agentCount, callback, teamQuestions, priceApproval] = await Promise.all([
@@ -240,7 +247,7 @@ export async function loadVoiceInstructions(
     callback: callback ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
     teamQuestions: teamQuestions || null,
     priceApproval: priceApproval || null,
-    recap, resumed: opts.resumed, continuing,
+    recap, resumed: opts.resumed, woke: opts.woke, continuing,
     language, expectedLanguages: expectedCallLanguages(language, contact.languages),
   });
   return {

@@ -30,7 +30,7 @@ import { seedCatalog, seedPricing } from "../helpers/pricing";
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
 /** Long silence timers unless a test is about silence. */
-const QUIET: VoiceLimits = { silenceAskMs: 600_000, silenceEndMs: 600_000, env: {} };
+const QUIET: VoiceLimits = { standbyAfterQuietMs: 600_000, env: {} };
 
 describe("voice calls (scripted realtime model, fake clock)", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -738,21 +738,9 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect((await thread(c.conversationId)).some((m) => m.body.startsWith("We're almost out of time"))).toBe(true);
   });
 
-  it("silence: asks once after 25 s, ends 20 s later", async () => {
-    const c = await newCall(null, { limits: { env: {}, silenceAskMs: 25_000, silenceEndMs: 20_000 } });
-    await c.run(10_000); // opener done
-    await c.run(25_000);
-    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(1);
-    expect(c.engine.isEnded).toBe(false);
-    await c.run(21_000);
-    expect(c.engine.isEnded).toBe(true);
-    expect((await sessionRow(c.sessionId)).endReason).toBe("silence");
-    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(1);
-  });
-
-  it("order form: the agent says the buyer can fill it in now and stays on the line, quiet (no silence check while they fill it in)", async () => {
+  it("order form: the agent says the buyer can fill it in now and stays on the line", async () => {
     await db.delete(rateLimits); // this file starts more test calls than the hourly limit allows
-    const c = await newCall("ready_buyer", { limits: { env: {}, silenceAskMs: 25_000, silenceEndMs: 20_000, orderFormQuietMs: 240_000 } });
+    const c = await newCall("ready_buyer");
     await c.run(15_000);
     await c.speak();
     await c.run(30_000);
@@ -762,13 +750,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(formResult.message).toBe("The order form link is in the chat. Say so in one short sentence, with what the buyer does there (fill in their company details, sign and pay), and say they can fill it in now while you stay on the line. Never read the link aloud. Do not end the call, say goodbye or wind down: stay quiet while they fill it in, and answer only when they speak.");
     const spoken = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).at(-1)!;
     expect(spoken.body).toContain("Go ahead now, I'm staying on the line.");
-    // Three quiet minutes while the buyer fills it in: no "are you still there?", the call is on.
-    await c.run(180_000);
-    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(0);
-    expect(c.engine.isEnded).toBe(false);
-    // After the quiet window the usual silence check comes back.
-    await c.run(90_000);
-    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(1);
+    // Quiet while they fill it in is standby's job (voice-standby.test.ts): no idle end before the call's limit.
     await hangUp(c);
   });
 
@@ -800,16 +782,6 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     const lastAgent = (await thread(c.conversationId)).filter((m) => m.actor === "agent").at(-1)!;
     expect(lastAgent.body).toBe("בטח. תודה על הזמן, להתראות.");
     expect(lastAgent.language).toBe("he");
-  });
-
-  it("silence check is reset when the buyer talks", async () => {
-    const c = await newCall(null, { limits: { env: {}, silenceAskMs: 25_000, silenceEndMs: 20_000 } });
-    await c.run(40_000);
-    expect(c.json().filter((m) => m.t === "notice" && m.kind === "silence_check")).toHaveLength(1);
-    await c.speak();
-    await c.run(15_000);
-    expect(c.engine.isEnded).toBe(false);
-    await hangUp(c);
   });
 
   it("stats go out about every 5 s with cost 0 and the answer average", async () => {

@@ -97,7 +97,7 @@ lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run o
   `lib/voice/scripted-realtime.ts`: a person can click through a whole call; cost 0, never counted
   in AI spend and never a scenario result for a version) and `live` (the paid realtime model through
   the Vercel AI Gateway; needs `AI_GATEWAY_API_KEY`). `VOICE_MODEL` picks the model
-  (default `google/gemini-3.8-live`); `VOICE_MAX_CALL_SECONDS` can shorten the 10-minute maximum.
+  (default `google/gemini-3.8-live`); `VOICE_MAX_CALL_SECONDS` can shorten a call (8 minutes by default, 10 at most; standby counts).
 - **Spend rule**: a live call spends money. In development and testing it needs the owner's
   approval first, with an estimate (CLAUDE.md, "AI spend"). Tests only use the scripted model;
   the Gateway adapter refuses to be built under the test runner or without `VOICE_REALTIME=live`.
@@ -118,10 +118,27 @@ lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run o
   the instructions only; OpenAI's transcription gets it as a prompt. Each stored line carries the
   language it was spoken in.
 - **Order form and ending**: after `send_order_form` the agent says, in one sentence, that the
-  buyer can fill it in now while it stays on the line, then stays quiet unless asked (no "are you
-  still there?" for 4 minutes, `orderFormQuietMs`). When the buyer asks to end the call, the agent
+  buyer can fill it in now while it stays on the line, then stays quiet unless asked (standby
+  covers the quiet, with no idle end while the form is open). When the buyer asks to end the call, the agent
   says a short goodbye and calls `end_call`, a voice-only tool the engine handles (never in the
   chat's tools or prompt); the call ends as `agent_closed` and the conversation stays open.
+- **Standby** (`lib/voice/call-rules.ts`, all values in one place): never pay for an idle call.
+  When the agent has finished (no turn open, no tool running, nothing queued, the opening line
+  spoken) and the buyer has been quiet for 30 s, the engine closes the model connection (the paid
+  part) and sends `{t:'state', state:'standby'}`; the buyer's socket and microphone stay connected
+  to our server, which listens with an energy speech detector (`lib/voice/vad.ts`: 250 ms of speech,
+  clicks ignored, a noise floor that follows the room) and keeps the last 3 s of mic audio. Speech,
+  typed text or a tap on the call bar (`{t:'wake'}`) reconnects the model with fresh instructions
+  and the recap; the held audio goes first, so the buyer's first words reach it. A speech wake
+  that produces no words in 8 s is a false wake: back to standby, and after every 3 the detector's
+  threshold doubles. 3 minutes of standby with no speech ends the call (`idle`); while the order form
+  is open (sent in the call, or `noteOrderFormOpen()`) only the call's limit applies. The limit
+  counts standby; on standby it just ends the call. A wake whose model does not connect is retried
+  once, then the call ends (`connection_lost`). Nothing is stored in the thread for standby.
+  `voice_sessions.usage` keeps `activeSec` (model connected: the duration cost floor uses it),
+  `standbySec`, `standbys`, `wakes`, `falseWakes` and a `wakeLog` (per wake: what woke it, speech
+  detected → model ready, → first agent audio). This replaced the spoken "are you still there?"
+  check and the 25 s + 20 s silence end.
 - **Loudspeaker** (`lib/voice/client/output.ts`): the agent plays through an `<audio>` element fed
   by a `MediaStreamAudioDestinationNode` (as a WebRTC call does), falling back to the AudioContext
   output. The mic keeps echo cancellation. `setOutputDevice` / `outputDevices` switch the output

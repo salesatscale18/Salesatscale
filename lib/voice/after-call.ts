@@ -26,8 +26,12 @@ import { conversations, messages, voiceSessions, type VoiceEndReason, type Voice
 import type { LlmClient } from "@/lib/agent/llm";
 import { replyToBuyer } from "@/lib/channels/whatsapp";
 
-/** Endings that leave the conversation open and with the agent. Not: opt_out, handoff, take_over, budget, agent_closed. */
-export const AFTER_CALL_REASONS: ReadonlySet<VoiceEndReason> = new Set(["user_hangup", "limit", "silence", "connection_lost", "error"]);
+/**
+ * Endings that leave the conversation open and with the agent. Not: opt_out, handoff, take_over, budget, agent_closed.
+ * `idle` (ended on standby): the agent spoke last before standby, so there is normally nothing to answer; it is
+ * listed so a buyer line the model never answered before standby still gets its reply.
+ */
+export const AFTER_CALL_REASONS: ReadonlySet<VoiceEndReason> = new Set(["user_hangup", "limit", "silence", "idle", "connection_lost", "error"]);
 /** The cron answers calls that ended at most this long ago. */
 export const AFTER_CALL_MAX_AGE_MS = 24 * 3_600_000;
 /** The socket's function answers right away only with at least this much time left; otherwise a poll or the cron does. */

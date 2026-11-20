@@ -939,7 +939,10 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vbars i { width: 3px; border-radius: 2px; background: currentColor; display: block; transition: height 80ms linear; }
 .sas-vbars--mic { color: var(--primary); }
 .sas-vbars--out, .sas-vbars--checking { color: var(--agent); }
-.sas-vbars--muted { color: var(--ink-muted); }
+.sas-vbars--muted, .sas-vbars--standby { color: var(--ink-muted); }
+/* Standby: the state area is a quiet button (tap to wake the agent). */
+.sas-vbar__wake { all: unset; display: flex; flex: 1; min-width: 0; cursor: pointer; border-radius: var(--radius-sm, 6px); }
+.sas-vbar__wake:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .sas-vbars--checking i { animation: sas-vpulse 900ms ease-in-out infinite alternate; }
 @keyframes sas-vpulse { from { opacity: .35; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {

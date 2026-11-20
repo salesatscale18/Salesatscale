@@ -4,11 +4,14 @@
  * the settings UI read the same defaults, capabilities and validation.
  */
 import type { VoiceSettings } from "@/db/schema";
+import { CALL_RULES } from "./call-rules";
 
 export type { VoiceSettings };
 
 /** The platform's longest call. A version's setting can only lower it. */
-export const PLATFORM_MAX_CALL_SEC = 600;
+export const PLATFORM_MAX_CALL_SEC: number = CALL_RULES.platformMaxCallSec;
+/** A call's longest length unless the version sets another (standby counts too): lib/voice/call-rules.ts. */
+export const DEFAULT_MAX_CALL_SEC: number = CALL_RULES.defaultMaxCallSec;
 /** The shortest maximum a seller may set. */
 export const MIN_CALL_SEC = 60;
 
@@ -60,7 +63,7 @@ export function voiceCapabilities(modelId: string): VoiceCapabilities {
 export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice">> & { voice: string | null };
 
 export const DEFAULT_VOICE_SETTINGS: ResolvedVoiceSettings = {
-  voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: PLATFORM_MAX_CALL_SEC,
+  voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: DEFAULT_MAX_CALL_SEC,
 };
 
 /** A version's stored settings with the defaults filled in (anything invalid falls back to the default). */
@@ -69,7 +72,7 @@ export function resolveVoiceSettings(s: VoiceSettings | null | undefined): Resol
   const style = s?.style && (VOICE_STYLES as readonly string[]).includes(s.style) ? s.style : DEFAULT_VOICE_SETTINGS.style;
   const max = typeof s?.maxCallSec === "number" && Number.isFinite(s.maxCallSec)
     ? Math.min(PLATFORM_MAX_CALL_SEC, Math.max(MIN_CALL_SEC, Math.round(s.maxCallSec)))
-    : PLATFORM_MAX_CALL_SEC;
+    : DEFAULT_MAX_CALL_SEC;
   return {
     voice: typeof s?.voice === "string" && s.voice.trim() ? s.voice.trim().slice(0, 40) : null,
     pace, style, fillers: typeof s?.fillers === "boolean" ? s.fillers : DEFAULT_VOICE_SETTINGS.fillers, maxCallSec: max,

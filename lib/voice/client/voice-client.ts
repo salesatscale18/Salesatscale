@@ -326,6 +326,12 @@ export class VoiceClient {
     this.sendMsg({ t: "mute", on });
   }
 
+  /** A tap on the bar while the call is on standby: the agent reconnects now. */
+  wake(): boolean {
+    if (this.snap.phase !== "live" || this.snap.live !== "standby") return false;
+    return this.sendMsg({ t: "wake" });
+  }
+
   /** Typed text, used as the buyer's turn. */
   sendText(text: string): boolean {
     const clean = text.trim().slice(0, MAX_CLIENT_TEXT);

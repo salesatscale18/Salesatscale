@@ -391,6 +391,19 @@ describe("realtime cost", () => {
 
   const snap = (audioIn: number, audioOut: number) => ({ audioInTokens: audioIn, audioOutTokens: audioOut, textInTokens: 100, textOutTokens: 10, cachedInTokens: 0 });
 
+  it("usage across model sessions (a reconnect, a wake from standby): each new session counts in full", () => {
+    const a = new RealtimeUsageAccumulator();
+    const snap = (n: number) => ({ audioInTokens: n, audioOutTokens: 0, textInTokens: 0, textOutTokens: 0, cachedInTokens: 0 });
+    a.add(snap(100));
+    a.add(snap(200));
+    a.newSession();
+    // The new session's first snapshot is larger than the old session's last: still counted in full.
+    a.add(snap(250));
+    a.add(snap(300));
+    expect(a.total.audioInTokens).toBe(500);
+    expect(a.events).toBe(4);
+  });
+
   it("usage snapshots that are cumulative per session: only the growth counts", () => {
     const a = new RealtimeUsageAccumulator();
     for (const [i, o] of [[100, 50], [250, 120], [400, 200]]) a.add(snap(i, o));
@@ -478,7 +491,8 @@ describe("settings and modes", () => {
     expect(voiceModelId({ VOICE_MODEL: "openai/gpt-realtime-2" })).toBe("openai/gpt-realtime-2");
   });
   it("max call length: the smallest of platform, version, env and deadline", () => {
-    expect(maxCallSeconds({ env: {} })).toBe(600);
+    // Default 8 minutes (lib/voice/call-rules.ts); a version may set up to the platform's 10.
+    expect(maxCallSeconds({ env: {} })).toBe(480);
     expect(maxCallSeconds({ settings: { maxCallSec: 300 }, env: {} })).toBe(300);
     expect(maxCallSeconds({ settings: { maxCallSec: 9999 }, env: {} })).toBe(600);
     expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "240" } })).toBe(240);
@@ -498,7 +512,7 @@ describe("settings and modes", () => {
     const bad = validateVoiceSettings({ voice: "Robot", pace: "warp", maxCallSec: 5, fillers: "yes" });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(["fillers", "maxCallSec", "pace", "voice"]);
-    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 600 });
+    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480 });
     expect(resolveVoiceSettings({ pace: "warp" as never, maxCallSec: 10 })).toMatchObject({ pace: "normal", maxCallSec: 60 });
   });
 });

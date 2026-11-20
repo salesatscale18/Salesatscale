@@ -252,6 +252,10 @@ export type VoiceSessionSummary = {
   answerMsAvg: number | null;
   /** The longest call this call had (the settings snapshot), or null. */
   maxSec: number | null;
+  /** Standby (lib/voice/call-rules.ts): seconds with the agent connected and on standby; null when the call had no standby. */
+  activeSec: number | null;
+  standbySec: number | null;
+  wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
 };
@@ -274,6 +278,9 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     sessionId: s.id, status: s.status, mode: s.mode, model: s.model, startedAt: s.createdAt, connectedAt: s.connectedAt, endedAt: s.endedAt,
     durationSec: s.durationSec, costMicros: s.costMicros, costEstimated: !!s.usage?.estimated, endReason: s.endReason ?? null, errorCode: s.errorCode,
     answerMsAvg: s.answerMsAvg, maxSec: s.settings?.maxCallSec ?? null,
+    activeSec: s.usage?.standbys ? s.usage.activeSec ?? null : null,
+    standbySec: s.usage?.standbys ? s.usage.standbySec ?? null : null,
+    wakes: s.usage?.wakes ?? 0,
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

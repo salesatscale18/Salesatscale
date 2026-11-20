@@ -278,6 +278,15 @@ export class RealtimeUsageAccumulator {
     this.first ??= clean;
     this.last = clean;
   }
+
+  /**
+   * A new model session starts (a reconnect, a wake from standby): its counters start again from 0,
+   * so its first snapshot counts in full (otherwise one larger than the old session's last would
+   * count only the difference).
+   */
+  newSession(): void {
+    this.last = null;
+  }
 }
 
 /** What a live call's `voice_sessions.usage` holds: the totals plus how the cost was decided. */
@@ -291,6 +300,21 @@ export type VoiceCallUsageRecord = RealtimeTokenUsage & {
   usageEvents: number;
   firstSnapshot: RealtimeTokenUsage | null;
   lastSnapshot: RealtimeTokenUsage | null;
+} & Partial<VoiceCallTimes>;
+
+/**
+ * How a call's time was spent (lib/voice/call-rules.ts standby): `activeSec` with the model connected
+ * (what is paid; the duration cost floor uses it), `standbySec` without; one entry per wake.
+ */
+export type VoiceCallTimes = {
+  activeSec: number;
+  standbySec: number;
+  /** Times the call went on standby. */
+  standbys: number;
+  wakes: number;
+  falseWakes: number;
+  /** Per wake: what woke it, when (ms into the call), speech detected → model ready, → first agent audio (null: none). */
+  wakeLog: { by: "speech" | "typed" | "tap"; atMs: number; readyMs: number | null; firstAudioMs: number | null; heard: boolean }[];
 };
 
 /**

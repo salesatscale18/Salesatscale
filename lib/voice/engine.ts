@@ -23,13 +23,16 @@ import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
-import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallUsageRecord } from "@/lib/ai/models";
+import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
 import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
 import { maxCallSeconds, resolveVoiceSettings, turnTakingFor } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./tool-schema";
+import { CALL_RULES } from "./call-rules";
+import { EnergyVad, PcmRing, type VadOptions } from "./vad";
+import { pcmDurationMs } from "./protocol";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -39,24 +42,38 @@ export type VoiceLimits = {
   env?: Record<string, string | undefined>;
   /** Warn this many seconds before the time limit. */
   limitWarnSec?: number;
-  /** Quiet buyer after the agent finished: ask once after this… */
-  silenceAskMs?: number;
-  /** …and end the call this long after asking. */
-  silenceEndMs?: number;
+  /** Standby and stop rules (lib/voice/call-rules.ts CALL_RULES has the product values). */
+  standbyAfterQuietMs?: number;
+  standbyIdleEndMs?: number;
+  preRollMs?: number;
+  wakeBufferMaxMs?: number;
+  wakeConnectMs?: number;
+  falseWakeMs?: number;
+  falseWakesBeforeRaise?: number;
+  maxThresholdBoost?: number;
+  minWakeGapMs?: number;
+  /** The standby speech detector (lib/voice/vad.ts). */
+  vad?: VadOptions;
   /** One reconnect must succeed within this. */
   reconnectMs?: number;
   /** After a hand-off or opt-out, the agent may finish its sentence for this long. */
   endGraceMs?: number;
   /** How often `{t:'stats'}` goes out. */
   statsEveryMs?: number;
-  /** After the order form is sent, the buyer may fill it in quietly this long before a silence check. */
-  orderFormQuietMs?: number;
 };
 
 /** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
 const END_AFTER_GOODBYE_MS = 2_500;
 
-const DEFAULTS = { limitWarnSec: 45, silenceAskMs: 25_000, silenceEndMs: 20_000, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, orderFormQuietMs: 240_000 };
+const DEFAULTS = {
+  limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000,
+  standbyAfterQuietMs: CALL_RULES.standbyAfterQuietMs, standbyIdleEndMs: CALL_RULES.standbyIdleEndMs, preRollMs: CALL_RULES.preRollMs,
+  wakeBufferMaxMs: CALL_RULES.wakeBufferMaxMs, wakeConnectMs: CALL_RULES.wakeConnectMs, falseWakeMs: CALL_RULES.falseWakeMs,
+  falseWakesBeforeRaise: CALL_RULES.falseWakesBeforeRaise, maxThresholdBoost: CALL_RULES.maxThresholdBoost, minWakeGapMs: CALL_RULES.minWakeGapMs,
+  vad: { ...CALL_RULES.vad } as VadOptions,
+};
+
+type WakeEntry = VoiceCallTimes["wakeLog"][number];
 
 export type VoiceEngineDeps = {
   db: Db;
@@ -162,14 +179,38 @@ export class VoiceEngine {
   private optedOut = false;
   private reconnectUsed = false;
   private reconnecting = false;
-  private silenceChecked = false;
-  /** Clock time until which a quiet buyer is taken to be filling in the order form. */
-  private orderFormQuietUntil = 0;
   private lastStamp = 0;
   private errorCode: VoiceErrorCode | null = null;
-  private timers: Record<"warn" | "limit" | "silenceAsk" | "silenceEnd" | "grace" | "stats" | "reconnect", TimerHandle | null> = {
-    warn: null, limit: null, silenceAsk: null, silenceEnd: null, grace: null, stats: null, reconnect: null,
+  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect", TimerHandle | null> = {
+    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null,
   };
+
+  // Standby (lib/voice/call-rules.ts): the model is disconnected while the buyer is quiet; our detector listens.
+  /** On standby since this clock time (null: not on standby). */
+  private standbySince: number | null = null;
+  /** A wake is reconnecting the model; mic audio waits in `wakeAudio`. */
+  private waking = false;
+  private wakeAudio: Uint8Array[] = [];
+  private wakeAudioMs = 0;
+  private readonly vad: EnergyVad;
+  private readonly preRoll: PcmRing;
+  /** The wake being measured (detected at, its log entry), until the first agent audio. */
+  private currentWake: { at: number; entry: WakeEntry } | null = null;
+  private lastWakeAt = -Infinity;
+  private wakeLog: WakeEntry[] = [];
+  private falseWakes = 0;
+  /** Quiet since (clock time): the idle end counts from here across false wakes; null after the buyer is heard. */
+  private quietSince: number | null = null;
+  /** The buyer has the order form open (sent in this call, or noteOrderFormOpen): no idle end before the limit. */
+  private formOpen = false;
+  /** Model-connected time: what is paid. */
+  private activeMs = 0;
+  private activeSince: number | null = null;
+  private toolsRunning = 0;
+  private standbys = 0;
+  private queueDepth = 0;
+  /** The agent finished its first turn in this call (the opening line): standby only after it. */
+  private openerDone = false;
 
   constructor(deps: VoiceEngineDeps) {
     this.db = deps.db;
@@ -178,6 +219,8 @@ export class VoiceEngine {
     this.out = deps.send;
     this.sessionId = deps.sessionId;
     this.limits = { ...DEFAULTS, ...deps.limits };
+    this.vad = new EnergyVad(this.limits.vad);
+    this.preRoll = new PcmRing(this.limits.preRollMs);
   }
 
   // -------------------------------------------------------------------------
@@ -193,6 +236,7 @@ export class VoiceEngine {
 
   onClientMessage(msg: import("./protocol").ClientMessage): void {
     if (this.ended) return;
+    if (msg.t === "wake") return this.tapWake();
     switch (msg.t) {
       case "start":
         void this.start();
@@ -213,8 +257,25 @@ export class VoiceEngine {
   }
 
   onClientAudio(bytes: Uint8Array): void {
-    if (this.ended || this.muted || !this.conn || this.reconnecting) return;
+    if (this.ended || this.muted) return;
+    if (this.standbySince !== null) return this.listenOnStandby(bytes);
+    if (this.waking) return this.holdWakeAudio(bytes);
+    if (!this.conn || this.reconnecting) return;
     this.conn.sendAudio(bytes);
+  }
+
+  /**
+   * The buyer opened the order form (the bubble's form context): while it is open the call has no
+   * idle end on standby, only the call's total limit. Sending the form in this call does the same.
+   */
+  noteOrderFormOpen(): void {
+    this.formOpen = true;
+    if (this.standbySince !== null) this.clearTimer("idle");
+  }
+
+  /** True while the model is disconnected for standby (tests, the harness). */
+  get onStandby(): boolean {
+    return this.standbySince !== null;
   }
 
   /** The browser's socket dropped: the call ends now (never keep a paid model socket open). */
@@ -254,9 +315,14 @@ export class VoiceEngine {
   // -------------------------------------------------------------------------
 
   private enqueue(fn: () => Promise<void>, evenIfEnded = false): Promise<void> {
+    this.queueDepth++;
     const run = async () => {
-      if (this.ended && !evenIfEnded) return;
-      await fn();
+      try {
+        if (this.ended && !evenIfEnded) return;
+        await fn();
+      } finally {
+        this.queueDepth--;
+      }
     };
     const p = this.queue.then(run).catch((e) => {
       console.error("[voice] engine error", e);
@@ -297,6 +363,10 @@ export class VoiceEngine {
     const c = this.conn;
     this.conn = null;
     this.gen++;
+    if (this.activeSince !== null) {
+      this.activeMs += Math.max(0, this.clock.now() - this.activeSince);
+      this.activeSince = null;
+    }
     if (!c) return;
     try {
       c.close();
@@ -320,10 +390,23 @@ export class VoiceEngine {
     return this.answerTimes.length ? Math.round(this.answerTimes.reduce((a, b) => a + b, 0) / this.answerTimes.length) : null;
   }
 
-  /** Cost so far, from the latest usage snapshot (0 for the scripted model). */
+  /** Model-connected seconds so far (standby and reconnect gaps excluded). */
+  private activeSec(): number {
+    const open = this.activeSince === null ? 0 : Math.max(0, this.clock.now() - this.activeSince);
+    return Math.round((this.activeMs + open) / 1000);
+  }
+
+  /** A model connection is up from now (start, reconnect, wake): its time is paid and its usage counters start at 0. */
+  private modelUp(conn: RealtimeConnection) {
+    this.conn = conn;
+    this.activeSince = this.clock.now();
+    this.usageAcc.newSession();
+  }
+
+  /** Cost so far, from the latest usage snapshot and the model-connected time (0 for the scripted model). */
   private costSoFar(): number {
     if (this.model.mode === "scripted" || this.callStart === null) return 0;
-    return voiceCallCost(this.model.modelId, this.usageAcc, Math.round(this.offsetMs() / 1000)).costMicros;
+    return voiceCallCost(this.model.modelId, this.usageAcc, this.activeSec()).costMicros;
   }
 
   private sendStats() {
@@ -400,7 +483,7 @@ export class VoiceEngine {
       conn.close();
       return;
     }
-    this.conn = conn;
+    this.modelUp(conn);
     this.callStart = this.clock.now();
     await this.db.update(voiceSessions)
       .set({ status: "live", connectedAt: new Date(this.callStart), model: this.model.modelId, mode: this.model.mode, settings: { ...version.voiceSettings, maxCallSec: this.maxSec } })
@@ -412,7 +495,7 @@ export class VoiceEngine {
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
     // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
-    this.conn.requestResponse(ctx.openerPrompt);
+    conn.requestResponse(ctx.openerPrompt);
   }
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
@@ -432,6 +515,8 @@ export class VoiceEngine {
   }
 
   private warnLimit() {
+    // On standby (or waking) nobody is listening: the limit just ends the call.
+    if (!this.conn || this.reconnecting) return;
     this.send({ t: "notice", kind: "limit_soon" });
     this.conn?.requestResponse("The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat.");
   }
@@ -455,8 +540,12 @@ export class VoiceEngine {
           this.answerTimes.push(turn.answerMs);
           this.buyerEndedAt = null;
         }
+        if (this.currentWake) {
+          this.currentWake.entry.firstAudioMs ??= Math.max(0, Math.round(this.clock.now() - this.currentWake.at));
+          this.currentWake = null;
+        }
         this.agentSpeaking = true;
-        this.clearSilence();
+        this.clearQuiet();
         this.setState("speaking");
         this.send(e.pcm);
         return;
@@ -475,6 +564,7 @@ export class VoiceEngine {
       }
       case "buyer-transcript": {
         this.buyerActivity();
+        if (e.text.trim()) this.markHeard();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
         if (e.final) {
           void this.enqueue(() => this.handleBuyerFinal(e.text, false));
@@ -524,28 +614,177 @@ export class VoiceEngine {
     return this.agentTurn;
   }
 
-  /** The buyer spoke or typed: the silence checks start over. */
+  /** The buyer spoke or typed: the quiet timer (standby) starts over. */
   private buyerActivity() {
-    this.clearSilence();
-    this.silenceChecked = false;
+    this.clearQuiet();
   }
 
-  private clearSilence() {
-    this.clearTimer("silenceAsk");
-    if (!this.silenceChecked) this.clearTimer("silenceEnd");
+  /** The buyer was really heard (words, typed text, a tap): not a false wake, and the idle clock starts over. */
+  private markHeard() {
+    this.quietSince = null;
+    if (this.currentWake) this.currentWake.entry.heard = true;
+    this.clearTimer("falseWake");
   }
 
-  private startSilence() {
-    if (this.ended || this.pendingEnd) return;
-    if (this.silenceChecked) return; // already asked: the end timer runs
-    // The buyer may be filling in the order form while the agent stays on the line: no "are you still there?" meanwhile.
-    const formQuiet = Math.max(0, this.orderFormQuietUntil - this.clock.now());
-    this.timer("silenceAsk", formQuiet + this.limits.silenceAskMs, () => {
-      this.silenceChecked = true;
-      this.send({ t: "notice", kind: "silence_check" });
-      this.conn?.requestResponse("The buyer has been quiet for a while. Ask once, briefly, whether they are still there.");
-      this.timer("silenceEnd", this.limits.silenceEndMs, () => void this.stop("silence"));
+  private clearQuiet() {
+    this.clearTimer("quiet");
+  }
+
+  /** The agent finished and waits for the buyer: standby after standbyAfterQuietMs of quiet. */
+  private startQuiet() {
+    if (this.ended || this.pendingEnd || this.standbySince !== null || this.waking) return;
+    this.timer("quiet", this.limits.standbyAfterQuietMs, () => this.tryStandby());
+  }
+
+  /**
+   * Standby only when nothing is going on: the opening line was spoken, the agent is not speaking,
+   * no turn is open, no tool runs, nothing is queued, the buyer is not mid-turn and no end is pending.
+   * Otherwise the quiet timer starts again (a turn that ends restarts it too).
+   */
+  private canStandby(): boolean {
+    return !this.ended && !this.pendingEnd && !!this.conn && !this.reconnecting && !this.waking && this.standbySince === null
+      && this.openerDone && !this.agentTurn && !this.agentSpeaking && this.toolsRunning === 0 && this.queueDepth === 0 && !this.buyerTurn;
+  }
+
+  private tryStandby() {
+    if (this.canStandby()) this.enterStandby();
+    else this.startQuiet();
+  }
+
+  /** Closes the model (the paid part) and listens for the buyer on our side. No message is stored. */
+  private enterStandby() {
+    this.closeModel();
+    this.clearQuiet();
+    this.clearTimer("falseWake");
+    this.currentWake = null;
+    this.standbySince = this.clock.now();
+    this.standbys++;
+    this.quietSince ??= this.standbySince;
+    this.vad.reset();
+    this.preRoll.clear();
+    this.setState("standby");
+    this.armIdle();
+  }
+
+  /** Continuous standby with no speech ends the call; never while the order form is open (the call's limit applies). */
+  private armIdle() {
+    if (this.formOpen || this.standbySince === null) {
+      this.clearTimer("idle");
+      return;
+    }
+    const left = this.limits.standbyIdleEndMs - (this.clock.now() - (this.quietSince ?? this.standbySince));
+    this.timer("idle", Math.max(0, left), () => {
+      if (this.standbySince !== null) void this.stop("idle");
     });
+  }
+
+  /** Mic audio on standby: kept for the pre-roll, and a wake when the detector hears speech. */
+  private listenOnStandby(bytes: Uint8Array) {
+    this.preRoll.push(bytes);
+    if (this.vad.push(bytes) !== "start") return;
+    if (this.clock.now() - this.lastWakeAt < this.limits.minWakeGapMs) return;
+    if (this.beginWake("speech")) void this.enqueue(async () => void (await this.connectAfterWake()));
+  }
+
+  /** Audio while the model reconnects on a wake: sent once it is ready (capped). */
+  private holdWakeAudio(bytes: Uint8Array) {
+    if (this.wakeAudioMs >= this.limits.wakeBufferMaxMs) return;
+    this.wakeAudio.push(bytes);
+    this.wakeAudioMs += pcmDurationMs(bytes.byteLength);
+  }
+
+  /** A tap on the call bar (`{t:'wake'}`). */
+  private tapWake() {
+    if (!this.beginWake("tap")) return;
+    this.markHeard();
+    void this.enqueue(async () => void (await this.connectAfterWake()));
+  }
+
+  /** Leaves standby (synchronously, so no audio is lost): the pre-roll becomes the start of the wake audio. */
+  private beginWake(by: WakeEntry["by"]): boolean {
+    if (this.ended || this.standbySince === null || this.waking) return false;
+    const now = this.clock.now();
+    this.standbySince = null;
+    this.waking = true;
+    this.clearTimer("idle");
+    this.wakeAudio = by === "speech" ? this.preRoll.drain() : [];
+    this.wakeAudioMs = this.wakeAudio.reduce((n, f) => n + pcmDurationMs(f.byteLength), 0);
+    this.preRoll.clear();
+    this.vad.reset();
+    this.lastWakeAt = now;
+    const entry: WakeEntry = { by, atMs: this.offsetMs(), readyMs: null, firstAudioMs: null, heard: by !== "speech" };
+    this.wakeLog.push(entry);
+    this.currentWake = { at: now, entry };
+    // The buyer is talking (or about to): the bar shows listening while the agent reconnects.
+    this.setState("listening");
+    return true;
+  }
+
+  /**
+   * Reconnects the model after a wake, with fresh instructions and the recap; the held audio goes
+   * first, then live audio flows as usual. One retry; else the call ends (connection_lost).
+   */
+  private async connectAfterWake(): Promise<boolean> {
+    if (this.ended || !this.waking || !this.loaded) return false;
+    let conn: RealtimeConnection | null = null;
+    for (let attempt = 0; attempt < 2 && !conn && !this.ended; attempt++) {
+      conn = await this.openModel({ resumed: true, woke: true }, this.limits.wakeConnectMs);
+    }
+    if (this.ended) {
+      conn?.close();
+      return false;
+    }
+    this.waking = false;
+    if (!conn) {
+      this.wakeAudio = [];
+      this.fail("connection_lost", "connection_lost");
+      return false;
+    }
+    this.modelUp(conn);
+    const wake = this.currentWake;
+    if (wake) wake.entry.readyMs = Math.max(0, Math.round(this.clock.now() - wake.at));
+    const held = this.wakeAudio;
+    this.wakeAudio = [];
+    this.wakeAudioMs = 0;
+    if (!this.muted) for (const f of held) conn.sendAudio(f);
+    if (wake?.entry.by === "speech" && !wake.entry.heard) this.timer("falseWake", this.limits.falseWakeMs, () => this.falseWake());
+    this.startQuiet();
+    return true;
+  }
+
+  /** A speech wake that produced no words: count it, raise the detector after a few, and go back to standby when idle. */
+  private falseWake() {
+    this.falseWakes++;
+    if (this.falseWakes % this.limits.falseWakesBeforeRaise === 0) this.vad.boost = Math.min(this.limits.maxThresholdBoost, this.vad.boost * 2);
+    if (this.canStandby()) this.enterStandby();
+  }
+
+  /**
+   * One model connection with fresh instructions and the call's recap, within `ms`; null on failure
+   * or timeout (a late connection is closed at once).
+   */
+  private async openModel(opts: { resumed: true; woke?: boolean }, ms: number): Promise<RealtimeConnection | null> {
+    const { account, version, conv, lead } = this.loaded!;
+    const gen = this.gen;
+    let timedOut = false;
+    const timeout = new Promise<null>((resolve) => this.timer("reconnect", ms, () => { timedOut = true; resolve(null); }));
+    const attempt = (async () => {
+      const deal = await readDealState(this.db, account.id, conv.leadId);
+      const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
+        recap: this.lines.slice(-RECAP_LINES), ...opts,
+      });
+      return this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
+    })().catch((e) => {
+      console.error("[voice] model connect failed", e);
+      return null;
+    });
+    const conn = await Promise.race([attempt, timeout]);
+    this.clearTimer("reconnect");
+    if (!conn || timedOut || this.ended || gen !== this.gen) {
+      void attempt.then((late) => late?.close());
+      return null;
+    }
+    return conn;
   }
 
   private toolCtx(callId: string, memo: TurnMemo): ToolContext {
@@ -584,7 +823,8 @@ export class VoiceEngine {
     this.send({ t: "transcript", id: turn.id, role: "buyer", text: masked.text, final: true, atMs: turn.startMs, ...(typed ? { typed: true as const } : {}) });
     this.buyerEndedAt = this.clock.now();
     this.buyerActivity();
-    if (!this.conn) return;
+    if (typed) this.markHeard();
+    if (!this.conn && this.standbySince === null) return;
     // A person took the conversation over during the call: the agent stops (the buyer's words are kept).
     const [now] = await this.db.select({ status: conversations.status, takenOverByUserId: conversations.takenOverByUserId }).from(conversations)
       .where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id)));
@@ -592,6 +832,13 @@ export class VoiceEngine {
       void this.stop(now.takenOverByUserId ? "take_over" : "handoff");
       return;
     }
+    // Typed on standby: the agent reconnects first, then gets the text.
+    if (this.standbySince !== null) {
+      if (!this.beginWake("typed") || !(await this.connectAfterWake())) return;
+    }
+    if (!this.conn) return;
+    // Nothing answered this line yet: the quiet timer runs until the agent speaks (its audio stops it).
+    this.startQuiet();
     if (isSpokenOptOut(masked.text)) {
       await this.codeOptOut(masked.text);
     } else if (masked.found) {
@@ -620,8 +867,7 @@ export class VoiceEngine {
   /** The call ends once the agent finishes its sentence, at most endGraceMs from now. */
   private endSoon(reason: VoiceEndReason, graceMs = this.limits.endGraceMs) {
     this.pendingEnd = reason;
-    this.clearSilence();
-    this.clearTimer("silenceEnd");
+    this.clearQuiet();
     this.timer("grace", graceMs, () => void this.stop(reason));
   }
 
@@ -647,6 +893,15 @@ export class VoiceEngine {
 
   private async handleTool(callId: string, name: string, args: unknown) {
     if (this.ended || !this.loaded) return;
+    this.toolsRunning++;
+    try {
+      await this.runToolForModel(callId, name, args);
+    } finally {
+      this.toolsRunning--;
+    }
+  }
+
+  private async runToolForModel(callId: string, name: string, args: unknown) {
     const turn = this.ensureAgentTurn();
     const label = toolLabel(name);
     this.setState("checking");
@@ -659,8 +914,8 @@ export class VoiceEngine {
         // The link goes into the chat; the model is told it is there and never reads it out.
         const id = await this.storeAppMessage(`Your order form: ${r.result.link}`);
         this.send({ t: "message", messageId: id });
-        // The buyer can fill it in now while the agent stays on the line (quiet unless asked; no silence check meanwhile).
-        this.orderFormQuietUntil = this.clock.now() + this.limits.orderFormQuietMs;
+        // The buyer can fill it in now while the agent stays on the line: standby covers the quiet, with no idle end.
+        this.noteOrderFormOpen();
         forModel = {
           ...r.result, link: "shown in the chat",
           message: "The order form link is in the chat. Say so in one short sentence, with what the buyer does there (fill in their company details, sign and pay), and say they can fill it in now while you stay on the line. Never read the link aloud. Do not end the call, say goodbye or wind down: stay quiet while they fill it in, and answer only when they speak.",
@@ -708,12 +963,13 @@ export class VoiceEngine {
     if (turn && turn.awaitingContinuation && !interrupted) return;
     await this.finalizeAgentTurn(interrupted ? "interrupted" : "done");
     this.agentSpeaking = false;
+    this.openerDone = true;
     if (this.pendingEnd) {
       void this.stop(this.pendingEnd);
       return;
     }
     this.setState("listening");
-    this.startSilence();
+    this.startQuiet();
   }
 
   /**
@@ -817,32 +1073,17 @@ export class VoiceEngine {
     this.closeModel();
     await this.finalizeAgentTurn("stop");
     this.agentSpeaking = false;
-    const { account, version, conv, lead } = this.loaded;
-    const gen = this.gen;
-    let timedOut = false;
-    const timeout = new Promise<null>((resolve) => this.timer("reconnect", this.limits.reconnectMs, () => { timedOut = true; resolve(null); }));
-    const attempt = (async () => {
-      const deal = await readDealState(this.db, account.id, conv.leadId);
-      const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-        recap: this.lines.slice(-RECAP_LINES), resumed: true,
-      });
-      return this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
-    })().catch((e) => {
-      console.error("[voice] reconnect failed", e);
-      return null;
-    });
-    const conn = await Promise.race([attempt, timeout]);
-    this.clearTimer("reconnect");
-    if (!conn || timedOut || this.ended || gen !== this.gen) {
-      // A connection that opens after the deadline is closed at once.
-      void attempt.then((late) => late?.close());
+    const conn = await this.openModel({ resumed: true }, this.limits.reconnectMs);
+    if (!conn || this.ended) {
+      conn?.close();
       this.reconnecting = false;
       if (!this.ended) this.fail("connection_lost", "connection_lost");
       return;
     }
-    this.conn = conn;
+    this.modelUp(conn);
     this.reconnecting = false;
     this.setState("listening");
+    this.startQuiet();
   }
 
   // -------------------------------------------------------------------------
@@ -862,15 +1103,19 @@ export class VoiceEngine {
     }
     const connected = this.callStart !== null;
     const durationSec = connected ? Math.round(this.offsetMs() / 1000) : 0;
-    // Live: the larger of the usage-based and the duration-based cost, both kept with the basis (never undercounted).
+    // Paid time is the model-connected time (standby excluded); durationSec stays the whole call.
+    const activeSec = Math.min(durationSec, this.activeSec());
+    const times: VoiceCallTimes = { activeSec, standbySec: Math.max(0, durationSec - activeSec), standbys: this.standbys, wakes: this.wakeLog.length, falseWakes: this.falseWakes, wakeLog: this.wakeLog };
+    // Live: the larger of the usage-based and the duration-based cost (active seconds), both kept with the basis (never undercounted).
     // Scripted: always 0; the fake counts are kept with basis "none".
     let usage: VoiceCallUsageRecord | null = null;
     let costMicros = 0;
     if (this.model.mode === "live" && connected) {
-      ({ costMicros, usage } = voiceCallCost(this.model.modelId, this.usageAcc, durationSec));
-    } else if (this.usageAcc.events > 0) {
+      ({ costMicros, usage } = voiceCallCost(this.model.modelId, this.usageAcc, activeSec));
+      usage = { ...usage, ...times };
+    } else if (this.usageAcc.events > 0 || connected) {
       const a = this.usageAcc;
-      usage = { ...a.total, usageCostMicros: 0, durationCostMicros: 0, basis: "none", usageEvents: a.events, firstSnapshot: a.first, lastSnapshot: a.last };
+      usage = { ...a.total, usageCostMicros: 0, durationCostMicros: 0, basis: "none", usageEvents: a.events, firstSnapshot: a.first, lastSnapshot: a.last, ...times };
     }
     const answerMsAvg = this.answerMsAvg();
     await this.db.update(voiceSessions).set({
