@@ -197,11 +197,11 @@ describe("the open objection next to Known so far", () => {
 
 describe("the seller's view: Deal state pane and lead stage", () => {
   it("one line per objection: what it is about, the attempts and the status", () => {
-    expect(objectionLine({ play: "too_expensive", words: "a lot", steps: [2, 4], status: "open", attempts: 2 })).toBe("Price: 2 attempts, open");
-    expect(objectionLine({ play: "someone_else_decides", words: "my partner", steps: [1], status: "settled", attempts: 0 })).toBe("Needs someone else's agreement: settled");
-    expect(objectionLine({ play: "locked_in", words: "", steps: [2], status: "dropped", attempts: 1 })).toBe("Worried about being locked in: 1 attempt, dropped");
+    expect(objectionLine({ play: "too_expensive", words: "a lot", steps: [2, 4], status: "open", attempts: 2 })).toBe("Price · 2 attempts · open");
+    expect(objectionLine({ play: "someone_else_decides", words: "my partner", steps: [1], status: "settled", attempts: 0 })).toBe("Needs someone else's agreement · settled");
+    expect(objectionLine({ play: "locked_in", words: "", steps: [2], status: "dropped", attempts: 1 })).toBe("Worried about being locked in · 1 attempt · dropped");
     // An older row shows the agent's words.
-    expect(paneObjections([{ text: "too pricey", handled: true }])).toEqual([{ line: "Too pricey: settled", status: "settled", words: "too pricey" }]);
+    expect(paneObjections([{ text: "too pricey", handled: true }])).toEqual([{ line: "Too pricey · settled", status: "settled", words: "too pricey" }]);
     for (const k of OBJECTION_PLAYS) expect(objectionLine({ play: k, words: "", steps: [], status: "open", attempts: 0 }), k).not.toContain("lead.card");
   });
 
@@ -210,7 +210,7 @@ describe("the seller's view: Deal state pane and lead stage", () => {
       playbook: pb, latestOrder: null, stage: null, tradeName: "Acme", buyerName: "Dana Levi",
       deal: { fields: {}, nextStep: null, objections: [{ text: "pricey", handled: false }, { play: "not_now", words: "after the budget", steps: [1], status: "open", attempts: 0 }] },
     });
-    expect(pane.objections.map((o) => o.line)).toEqual(["Pricey: open", "Timing: open"]);
+    expect(pane.objections.map((o) => o.line)).toEqual(["Pricey · open", "Timing · open"]);
   });
 
   it("the lead stage names the open objection in the buyer's words", () => {

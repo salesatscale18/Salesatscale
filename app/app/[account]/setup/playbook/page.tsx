@@ -12,6 +12,13 @@ import { t } from "@/lib/i18n";
 import { PlaybookForm } from "./form";
 import { playsOverview, playsSummary } from "./plays/overview";
 import { PlaybookToc } from "./toc";
+import { cookies } from "next/headers";
+import { HANDOFF_NOTICE_COOKIE, showHandoffNotice } from "@/lib/agent/handoff-notice";
+
+/** The notice cookie, or nothing outside a request (render tests). */
+async function noticeCookie(): Promise<string | undefined> {
+  try { return (await cookies()).get(HANDOFF_NOTICE_COOKIE)?.value; } catch { return undefined; }
+}
 
 /** Setup · Playbook (canvas: Playbook, PlaybookOpening). Always edits the draft version (created from the live one when missing). */
 export default async function PlaybookPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
@@ -33,6 +40,8 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
   const here = `${base}/setup/playbook`;
   const lab = `${base}/setup/test-lab`;
   const plays = playsOverview(draft.playbook, pending);
+  // O1: unknown questions no longer hand off; tell sellers whose hand-off rule still says so, until they dismiss it.
+  const handOffNotice = showHandoffNotice(draft.playbook.handOffWhen, await noticeCookie(), access.user.id) ? { playHref: `${here}/plays/no_answer` } : null;
   return (
     <>
       <DraftBanner draft={draft.version} live={live?.version ?? null} />
@@ -58,7 +67,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <div className="pb-main pb-main--spy">
             <PlaybookForm
               slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
-              plays={playsSummary(plays)}
+              plays={playsSummary(plays)} handOffNotice={handOffNotice}
               playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
               names={{ rows, source: draft.playbook.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${base}/markets` }}
             />

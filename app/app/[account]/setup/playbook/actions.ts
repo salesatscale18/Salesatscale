@@ -7,6 +7,23 @@ import { writeAudit } from "@/lib/accounts/audit";
 import type { PlaybookErrors, PlaybookRowsInput } from "@/lib/agent/playbook";
 import { savePlaybookForm } from "@/lib/agent/playbook-save";
 import { autoNameModel } from "@/lib/agent/names-auto";
+import { cookies } from "next/headers";
+import { HANDOFF_NOTICE_COOKIE, HANDOFF_NOTICE_MAX_AGE, withDismissed } from "@/lib/agent/handoff-notice";
+
+/**
+ * Dismisses the Limits notice on unknown questions (O1) for this user: their id
+ * goes into the notice cookie, so it stays hidden in this browser. The playbook
+ * form is not saved: this action only reads the account slug.
+ */
+export async function dismissHandoffNoticeAction(form: FormData): Promise<void> {
+  const a = await requireAccount(String(form.get("slug") ?? ""));
+  const jar = await cookies();
+  jar.set(HANDOFF_NOTICE_COOKIE, withDismissed(jar.get(HANDOFF_NOTICE_COOKIE)?.value, a.user.id), {
+    path: "/", maxAge: HANDOFF_NOTICE_MAX_AGE, sameSite: "lax", httpOnly: true, secure: process.env.NODE_ENV === "production",
+  });
+  revalidatePath(`/app/${a.account.slug}/setup/playbook`);
+  redirect(`/app/${a.account.slug}/setup/playbook#pb-lim-h-s`);
+}
 
 /**
  * On a refused save the submitted values come back, so the form shows what

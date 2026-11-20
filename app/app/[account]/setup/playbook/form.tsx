@@ -8,7 +8,7 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { readOpener } from "@/lib/agent/core/opener";
 import { AGENT_GENDERS, agentGenderOf, localAgentName, type NameRow } from "@/lib/agent/core/names";
 import { QUESTION_BUDGET, QUESTION_CEILING, questionBudgetOf } from "@/lib/agent/core/stage";
-import { savePlaybookAction, type PlaybookFormState } from "./actions";
+import { dismissHandoffNoticeAction, savePlaybookAction, type PlaybookFormState } from "./actions";
 import { OpeningSection, type OpeningValues } from "./opening";
 import { LocalNames } from "../local-names";
 import { PlatformFixed, growProps } from "./parts";
@@ -123,9 +123,11 @@ function QuestionCounting({ max }: { max: number }) {
  * deal-state values. Sales plays have their own pages (the form does not send
  * them, so the stored plays are kept).
  */
-export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref, names }: {
+export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref, names, handOffNotice }: {
   slug: string; p: Playbook; draftVersion: number; labHref: string; company: string; companyLocal?: Partial<Record<string, string>> | null; plays: PlaysSummary; playsHref: string; orderFormHref: string;
   names: AgentNamesView;
+  /** O1: the notice that unknown questions no longer hand off, with the link to that play (null: not shown). */
+  handOffNotice?: { playHref: string } | null;
 }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
@@ -419,6 +421,17 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               <span className="sas-hint" id="pb-handOffWhen-hint">{t("playbook.handoff_always")}</span>
             </div>
           </div>
+          {handOffNotice ? (
+            // O1: dismissed per user (cookie). The button submits to its own action, which does not save the playbook.
+            <div className="sas-alert pb-notice" role="status" data-testid="handoff-notice">
+              <Icon name="info" />
+              <span style={{ flex: "1 1 220px", minWidth: 0 }}>
+                {t("playbook.handoff_notice.text")}{" "}
+                <a href={handOffNotice.playHref}>{t("playbook.handoff_notice.link")}</a>
+              </span>
+              <button type="submit" formAction={dismissHandoffNoticeAction} formNoValidate className={buttonClass("ghost", "sm")}>{t("playbook.handoff_notice.dismiss")}</button>
+            </div>
+          ) : null}
           <div className="sas-stack-2">
             <input type="hidden" name="exceptionsShown" value="1" />
             <span className="sas-input-label" id="pb-exc-h">{t("playbook.exceptions")}</span>

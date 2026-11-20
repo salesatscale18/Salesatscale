@@ -28,8 +28,8 @@ export type PaneObjection = { line: string; status: ObjectionStatus; words: stri
 
 /**
  * One objection as the seller reads it (O1): what it is about, the attempts
- * used and its status, e.g. "Price: 2 attempts, open" or "Needs someone else's
- * agreement: settled". An older row with no play shows the agent's words.
+ * used and its status, e.g. "Price · 2 attempts · open" or "Needs someone else's
+ * agreement · settled". An older row with no play shows the agent's words.
  */
 export function objectionLine(o: DealObjection): string {
   const label = o.play ? t(`lead.card.objection.play.${o.play}` as MessageKey) : o.words.charAt(0).toUpperCase() + o.words.slice(1);
@@ -52,7 +52,7 @@ export type DealPane = {
   laterUnknown: PaneField[];
   /** Order-form details not known yet (phone summary): always `laterUnknown.length`, the count desktop shows. */
   missingCount: number;
-  /** One line per objection (O1), e.g. "Price: 2 attempts, open"; `words` are the buyer's own. */
+  /** One line per objection (O1), e.g. "Price · 2 attempts · open"; `words` are the buyer's own. */
   objections: PaneObjection[];
   nextStep: string | null;
   /** A shown value came from the signed order form: the note line under the list. */

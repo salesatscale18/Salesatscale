@@ -123,3 +123,6 @@
 
 /* Play example (R4 A1): each <placeholder> is a small grey tag inside the bubble, without the brackets. */
 .pb-slot-tag { display: inline-block; padding: 0 6px; margin-inline: 1px; border-radius: 4px; background: var(--surface-sunken, var(--surface)); border: 1px solid var(--line); color: var(--ink-muted); font-size: 12px; line-height: 18px; vertical-align: baseline; }
+
+/* O1: the notice that unknown questions no longer hand off (dismissible). */
+.pb-notice { flex-wrap: wrap; align-items: center; background: var(--surface); border: 1px solid var(--line); }

@@ -95,7 +95,7 @@ describe("O1: the objection record", () => {
     await db.update(dealStates).set({ objections: [{ text: "Too expensive", handled: false }, { text: "Has an alarm", handled: true }] })
       .where(and(eq(dealStates.accountId, acc), eq(dealStates.leadId, c.leadId)));
     const pane = await loadDealPane(db, acc, { id: c.leadId, fullName: "Dana Levi" }, "Acme");
-    expect(pane.objections.map((o) => o.line)).toEqual(["Too expensive: open", "Has an alarm: settled"]);
+    expect(pane.objections.map((o) => o.line)).toEqual(["Too expensive · open", "Has an alarm · settled"]);
     expect((await leadStage(db, acc, c.leadId))?.objection).toBe("Too expensive");
     await runTool("update_deal_state", update({ play: "someone_else_decides", buyer_words: "My partner decides", step: 1, attempt: false, status: "open" }), ctx());
     expect((await getDealState(db, acc, c.leadId))?.objections).toEqual([
@@ -104,7 +104,7 @@ describe("O1: the objection record", () => {
       { play: "someone_else_decides", words: "My partner decides", steps: [1], status: "open", attempts: 0 },
     ]);
     const after = await loadDealPane(db, acc, { id: c.leadId, fullName: "Dana Levi" }, "Acme");
-    expect(after.objections.map((o) => o.line)).toEqual(["Too expensive: dropped", "Has an alarm: settled", "Needs someone else's agreement: open"]);
+    expect(after.objections.map((o) => o.line)).toEqual(["Too expensive · dropped", "Has an alarm · settled", "Needs someone else's agreement · open"]);
   });
 
   it("the hand-over brief carries the objections; another account's lead reads nothing", async () => {

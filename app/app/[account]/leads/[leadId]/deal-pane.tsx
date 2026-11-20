@@ -75,14 +75,24 @@ function PaneFields({ fields }: { fields: PaneField[] }) {
 }
 
 /**
- * The objection lines (O1): one per objection, "Price: 2 attempts, open";
- * the buyer's own words in the tooltip. Shared by the Deal state pane, the
- * hand-over brief and the test lab.
+ * The objection lines (O1): one per objection, plain text, "Price · 2 attempts · open";
+ * settled and dropped ones muted. Under it, the buyer's own words in quotes on one
+ * muted line cut with an ellipsis: the full text on hover (title) and on tap (a
+ * <details>, no JS needed). Shared by the Deal state pane, the hand-over brief and the test lab.
  */
 export function ObjectionList({ objections }: { objections: PaneObjection[] }) {
   return (
-    <ul style={{ margin: 0, paddingInlineStart: 18 }} data-testid="objections">
-      {objections.map((o, i) => <li key={i} data-objection-status={o.status} title={o.words ? `"${o.words}"` : undefined}>{o.line}</li>)}
+    <ul className="sas-objections" data-testid="objections">
+      {objections.map((o, i) => (
+        <li key={i} data-objection-status={o.status} className={o.status === "open" ? undefined : "sas-objections__closed"}>
+          <span>{o.line}</span>
+          {o.words ? (
+            <details className="sas-objections__words" title={`"${o.words}"`}>
+              <summary>&quot;{o.words}&quot;</summary>
+            </details>
+          ) : null}
+        </li>
+      ))}
     </ul>
   );
 }

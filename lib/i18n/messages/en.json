@@ -3116,9 +3116,9 @@
   "catalog.sold_in.none": "Not sold yet",
   "conv.marker.spend_cap": "Handed to a person: AI limit reached. A person needs to reply.",
   "lead.event.handoff.spend_cap": "Handed to a person: AI limit reached",
-  "lead.card.objection.no_attempts": "{label}: {status}",
-  "lead.card.objection.attempts_one": "{label}: 1 attempt, {status}",
-  "lead.card.objection.attempts_other": "{label}: {n} attempts, {status}",
+  "lead.card.objection.no_attempts": "{label} · {status}",
+  "lead.card.objection.attempts_one": "{label} · 1 attempt · {status}",
+  "lead.card.objection.attempts_other": "{label} · {n} attempts · {status}",
   "lead.card.objection.status.open": "open",
   "lead.card.objection.status.settled": "settled",
   "lead.card.objection.status.dropped": "dropped",
@@ -3142,5 +3142,8 @@
   "playbook.play.line.someone_else_decides": "Ask who decides and what matters to them, help the buyer make the case, agree a time.",
   "playbook.play.line.tried_failed": "Ask what went wrong, say honestly what is different here, offer a small first step.",
   "playbook.play.line.complicated": "Ask what worries them, say who does what in plain steps, offer the smallest start.",
-  "playbook.play.line.locked_in": "Ask what they want to be able to do, state the real terms, offer a shorter start if allowed."
+  "playbook.play.line.locked_in": "Ask what they want to be able to do, state the real terms, offer a shorter start if allowed.",
+  "playbook.handoff_notice.text": "Questions the agent can't answer no longer hand off the chat. The agent asks the team and keeps going. See the play",
+  "playbook.handoff_notice.link": "'A question with no approved answer'.",
+  "playbook.handoff_notice.dismiss": "Dismiss"
 }
