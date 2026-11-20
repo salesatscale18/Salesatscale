@@ -19,7 +19,7 @@ import { aiUsageThisMonth, platformUsageThisMonth } from "@/lib/ai/usage";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
 import type { ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
-import { expectBuyer, micPcm, say, ScriptedRealtime, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
+import { expectBuyer, micPcm, say, ScriptedRealtime, tool, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
 import type { VoiceCallUsageRecord } from "@/lib/ai/models";
 import {
   closeStaleVoiceSessions, conversationVoiceMode, createVoiceSession, redeemVoiceTicket, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary,
@@ -639,6 +639,23 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       expect(rows).toHaveLength(4);
       expect(rows[1][1]).toMatch(/^One two( \w+)*…$/);
       expect(rows.slice(2)).toEqual([["buyer", "Does it include setup?"], ["agent", "Yes, setup is included."]]);
+    });
+
+    it("a turn cut before its first word stores no empty line: its tool calls go with the agent's next line", async () => {
+      const c = await callWith([expectBuyer("Hello."), tool("search_catalog", { query: "" }), say(LINE), expectBuyer("typed"), say("Short answer here.")]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(100); // the tool runs; the line has not started
+      c.engine.onClientMessage({ t: "text", text: "Wait." });
+      await c.run(10_000);
+      await hangUp(c);
+      const rows = await spoken(c.conversationId);
+      expect(rows.every((r) => r.body.trim().length > 0)).toBe(true);
+      const tc = await calls(c.conversationId);
+      expect(tc.map((x) => x.name)).toEqual(["search_catalog"]);
+      const withCall = (await thread(c.conversationId)).find((m) => m.id === tc[0].messageId)!;
+      expect(withCall.actor).toBe("agent");
+      expect(withCall.body.length).toBeGreaterThan(0);
     });
 
     it("a cut copy of the line just said is not stored again", async () => {

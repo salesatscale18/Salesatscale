@@ -234,9 +234,19 @@ describe("the test lab page", () => {
       { accountId: account.id, conversationId: c.conversationId, actor: "agent", body: "Sure.", language: "en", voiceSessionId: s.sessionId, spokenAtMs: 15_000, answerMs: 900, createdAt: new Date(t0 + 3) },
       { accountId: account.id, conversationId: c.conversationId, actor: "system", body: "Voice call ended · 0:38", language: "en", createdAt: new Date(t0 + 4) },
     ]);
-    await db.update(voiceSessions).set({ status: "ended", endReason: "opt_out", durationSec: 38, answerMsAvg: 900, settings: { maxCallSec: 270 } }).where(eq(voiceSessions.id, s.sessionId));
+    await db.update(voiceSessions).set({
+      status: "ended", endReason: "opt_out", durationSec: 38, answerMsAvg: 900, settings: { maxCallSec: 270 },
+      connectedAt: new Date(t0 - 1), endedAt: new Date(t0 + 4),
+    }).where(eq(voiceSessions.id, s.sessionId));
     const html = await render({ c: c.conversationId });
     save("page-saved-call", html);
+    // The call is framed by a start and a summary marker; the stored "Voice call ended" line is not shown again.
+    expect(html).toContain('data-thread-marker="voice_started"');
+    expect(html).toContain("Voice call started");
+    expect(html).toContain("Voice call · 38 s");
+    expect(html).not.toContain("Voice call ended · 0:38");
+    expect(html.indexOf("Voice call started")).toBeLessThan(html.indexOf("Hi, this is the assistant."));
+    expect(html.indexOf("Voice call · 38 s")).toBeGreaterThan(html.indexOf("Sure."));
     expect(html).toContain("data-voice-pill");
     expect(html).toContain("Scripted test");
     expect((html.match(/data-spoken=""/g) ?? []).length).toBe(4);
@@ -255,8 +265,9 @@ describe("the test lab page", () => {
     expect(html).toContain("Scripted test: not counted");
     expect(html).not.toContain("Keep answering as the buyer");
     expect(html).toContain("Expected: The agent quotes from the catalog");
-    // Spoken and typed lines show the time in the call only; the system note keeps its timestamp.
-    expect((html.match(/class="sas-msg__time"/g) ?? []).length).toBe(1);
+    // Spoken and typed lines show the time in the call only; the call's markers carry the clock time.
+    expect((html.match(/class="sas-msg__time"/g) ?? []).length).toBe(0);
+    expect((html.match(/data-thread-marker="voice_(?:started|ended)"/g) ?? []).length).toBe(2);
     // The list marks the voice row.
     expect(html).toMatch(/aria-label="Voice call"/);
     // A seller opening it sees the record, not the call controls.

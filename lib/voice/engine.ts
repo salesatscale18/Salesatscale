@@ -134,6 +134,8 @@ export class VoiceEngine {
   private lines: TranscriptLine[] = [];
   /** The last agent line stored in this call (see finalizeAgentTurn). */
   private lastLine: StoredLine | null = null;
+  /** Tool calls of a turn that said nothing yet (cut before its first word), for the next line. */
+  private carriedTools: ToolRun[] = [];
   /** Usage snapshots, totalled whether the provider reports them per session or per turn. */
   private usageAcc = new RealtimeUsageAccumulator();
   private providerSessionId: string | null = null;
@@ -693,8 +695,27 @@ export class VoiceEngine {
     const cut = !!raw && (reason === "interrupted" || (reason !== "done" && (turn.interrupted || !turn.finalText)));
     const body = cut ? cutLine(raw) : raw;
     if (!body && !turn.tools.length) return;
+    // Tools with nothing said (the buyer cut in before the first word): no empty line in the thread.
+    // The calls go with the agent's next line in this call, or with its last one when the call ends.
+    if (!raw && reason !== "stop") {
+      this.carriedTools.push(...turn.tools);
+      return;
+    }
+    if (this.carriedTools.length) {
+      turn.tools = [...this.carriedTools, ...turn.tools];
+      this.carriedTools = [];
+    }
     const { conv, account, version, lead } = this.loaded;
     const last = this.lastLine;
+    if (!raw && last) {
+      await this.db.insert(toolCalls).values(turn.tools.map((p, i) => ({
+        accountId: account.id, conversationId: conv.id, messageId: last.messageId, sequence: last.tools + i + 1, name: p.name,
+        input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
+        result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
+      })));
+      this.lastLine = { ...last, tools: last.tools + turn.tools.length };
+      return;
+    }
     const toolRows = (messageId: string, from: number) => turn.tools.map((p, i) => ({
       accountId: account.id, conversationId: conv.id, messageId, sequence: from + i + 1, name: p.name,
       input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
@@ -793,6 +814,11 @@ export class VoiceEngine {
   private async finish(reason: VoiceEndReason) {
     try {
       await this.finalizeAgentTurn("stop");
+      // Tool calls still waiting for a line go with the call's last line.
+      if (this.carriedTools.length) {
+        this.ensureAgentTurn();
+        await this.finalizeAgentTurn("stop");
+      }
     } catch (e) {
       console.error("[voice] could not store the last turn", e);
     }
