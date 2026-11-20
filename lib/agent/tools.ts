@@ -38,6 +38,8 @@ import { DEFAULT_PLAYS } from "./core/plays";
 import { OBJECTION_PLAYS, OBJECTION_STATUSES, parseObjectionInput, readObjections } from "./core/objections";
 import { localTradeName } from "./core/names";
 import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
+import { callbackNextStep, requestCallback } from "@/lib/callbacks/service";
+import { callRoleOf } from "./core/call-role";
 
 const lineSchema = {
   type: "array",
@@ -196,6 +198,20 @@ export const TOOL_DEFS: ToolDef[] = [
         topic: { type: "string", description: 'What to come back about, short, in the buyer\'s words, e.g. "the quote for the second office".' },
       },
       required: ["due_at", "topic"],
+      additionalProperties: false,
+    },
+  },
+  {
+    name: "request_callback",
+    description: "Request a call between the buyer and a person on the seller's team, at the time you agreed with the buyer. There is no booking link yet: the team sees the request with your brief, confirms or changes the time, and the app tells the buyer. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier request. Refused for a time in the past, less than 15 minutes or more than 30 days ahead; outside contact hours it returns the nearest allowed time to offer the buyer instead.",
+    strict: true,
+    input_schema: {
+      type: "object",
+      properties: {
+        time: { type: "string", description: 'The agreed time: an ISO date-time with the offset of the buyer\'s time zone, e.g. "2026-11-18T10:00:00+02:00", or a local date and time, e.g. "2026-11-18T10:00", read in the buyer\'s time zone. Use "Local time now" from your context.' },
+        brief: { type: "string", description: "What the buyer wants to cover and what the person should have ready, short." },
+      },
+      required: ["time", "brief"],
       additionalProperties: false,
     },
   },
@@ -785,6 +801,19 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       result: {
         ok: true, due_local: r.dueLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
         message: "Scheduled. Confirm the time back to the buyer in their own wording and language (for example \"tomorrow at 10\"), in one short sentence. You will write to them yourself at that time.",
+      },
+    };
+  }
+
+  if (name === "request_callback") {
+    const r = await requestCallback(ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, { time: args.time, brief: args.brief });
+    if (!r.ok) return refuse(r.rule, r.extra);
+    await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, [], { nextStep: callbackNextStep(r.timeLocal, r.request.brief) });
+    return {
+      outcome: "ok",
+      result: {
+        ok: true, time_local: r.timeLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
+        message: `Requested. Tell the buyer, in one short sentence in their wording, that ${callRoleOf(ctx.playbook)} will call at that time and the team will confirm it here. Keep answering their questions until the call.`,
       },
     };
   }

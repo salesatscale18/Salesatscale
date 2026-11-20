@@ -44,6 +44,8 @@ import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { CallbackPanel } from "./callback";
+import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -72,7 +74,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms, callback] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -88,6 +90,7 @@ export default async function LeadCardPage({
     leadFollowUp(appDb, account.id, leadId),
     leadOrdersWithSignature(appDb, account.id, leadId),
     personSentForms(appDb, account.id, leadId),
+    leadCallback(appDb, account.id, leadId),
   ]);
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
@@ -153,6 +156,9 @@ export default async function LeadCardPage({
         : event.type.startsWith("quote.") || event.type.startsWith("order_form.")
         // The quote reference is one ID in the code font (R5-6).
         ? <><span className="sas-id">{quoteRef(String((event.data as { number?: number } | null)?.number ?? ""), (event.data as { version?: number } | null)?.version)}</span>{`${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}${(event.data as { reasons?: string[] } | null)?.reasons?.length ? `: ${(event.data as { reasons: string[] }).reasons.join("; ")}` : ""}`}</>
+        : event.type.startsWith("callback.")
+        // O6: the call time, in the zone it was set in, and who acted.
+        ? `${formatDueLocal(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : event.type === "lead.market_changed"
@@ -393,6 +399,12 @@ export default async function LeadCardPage({
             </div>
           </div>
           <aside className="sas-lead__side">
+            {/* O6: the call the agent arranged; Confirm / Change time tell the buyer in the chat. */}
+            <CallbackPanel
+              slug={account.slug} leadId={lead.id} request={callback} canManage={mayManageCallbacks(access)}
+              notice={typeof sp.callback === "string" ? sp.callback : undefined} error={typeof sp.callback_error === "string" ? sp.callback_error : undefined}
+              notTold={typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined}
+            />
             <FollowUpPanel
               slug={account.slug} followUp={followUp} timezone={account.timezone}
               canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"}

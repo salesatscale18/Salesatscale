@@ -8,6 +8,7 @@ import { t, type MessageKey } from "@/lib/i18n";
 import { readOpener } from "@/lib/agent/core/opener";
 import { AGENT_GENDERS, agentGenderOf, localAgentName, type NameRow } from "@/lib/agent/core/names";
 import { QUESTION_BUDGET, QUESTION_CEILING, questionBudgetOf } from "@/lib/agent/core/stage";
+import { CALL_ROLE_MAX, DEFAULT_CALL_ROLE } from "@/lib/agent/core/call-role";
 import { dismissHandoffNoticeAction, savePlaybookAction, type PlaybookFormState } from "./actions";
 import { OpeningSection, type OpeningValues } from "./opening";
 import { LocalNames } from "../local-names";
@@ -63,6 +64,8 @@ export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
     questionBudget: sent?.questionBudget !== undefined && Number.isInteger(Number(sent.questionBudget)) ? questionBudgetOf({ questionBudget: Number(sent.questionBudget) }) : questionBudgetOf(p),
     tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
     maxDiscount: sent?.maxDiscount ?? String(p.maxDiscountBp / 100), offerMeetingWhen: sent?.offerMeetingWhen ?? p.offerMeetingWhen, handOffWhen: sent?.handOffWhen ?? p.handOffWhen,
+    /** Who takes calls (O6): as typed; empty shows the default as the placeholder. */
+    callRole: sent?.callRole ?? p.callRole ?? "",
   };
 }
 
@@ -420,6 +423,16 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               <textarea className="sas-textarea" id="pb-handOffWhen" name="handOffWhen" rows={3} maxLength={500} defaultValue={v.handOffWhen} aria-describedby="pb-handOffWhen-hint" />
               <span className="sas-hint" id="pb-handOffWhen-hint">{t("playbook.handoff_always")}</span>
             </div>
+          </div>
+          {/* O6: the role title the agent uses for the person who takes calls. */}
+          <div className="sas-input-group" style={{ maxWidth: 420 }}>
+            <label className="sas-input-label" htmlFor="pb-callRole">{t("playbook.call_role")}</label>
+            <input
+              className="sas-input" id="pb-callRole" name="callRole" maxLength={CALL_ROLE_MAX} defaultValue={v.callRole} placeholder={DEFAULT_CALL_ROLE}
+              {...invalid("callRole")} aria-describedby={e.callRole ? "pb-callRole-error" : "pb-callRole-hint"}
+            />
+            <span className="sas-hint" id="pb-callRole-hint">{t("playbook.call_role_hint", { role: DEFAULT_CALL_ROLE })}</span>
+            {err("callRole")}
           </div>
           {handOffNotice ? (
             // O1: dismissed per user (cookie). The button submits to its own action, which does not save the playbook.

@@ -7,6 +7,7 @@ import { cache } from "react";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notInArray, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
+import { requestedCallbacks } from "@/lib/callbacks/service";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
 import {
@@ -29,6 +30,8 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "form_unsigned"; quoteId: string; formId: string; quoteNumber: number; openedAt: Date }
   | { kind: "form_expiring"; quoteId: string; formId: string; quoteNumber: number; expiresAt: Date }
   | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
+  /** O6: the agent took a time for a call; the seller confirms or changes it. `timezone` is the zone the time was set in. */
+  | { kind: "callback_requested"; callbackId: string; callAt: Date; timezone: string; brief: string }
 );
 
 export type NeedsYouKind = NeedsYouItem["kind"];
@@ -102,6 +105,8 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     // An agreed follow-up that could not be sent (lib/follow-ups): someone should write to the buyer.
     failedFollowUps(db, accountId, now),
   ]);
+  // A call request waiting for the seller (lib/callbacks, O6).
+  const callbacks = await requestedCallbacks(db, accountId, now);
 
   const items: NeedsYouItem[] = [];
   const ref = (r: LeadRef): LeadRef => ({ leadId: r.leadId, leadName: r.leadName, company: r.company, marketId: r.marketId });
@@ -138,6 +143,12 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       followUpId: f.id, dueAt: f.dueAt, reason: f.reason,
     });
   }
+  for (const c of callbacks) {
+    items.push({
+      leadId: c.leadId, leadName: c.leadName, company: c.company, marketId: c.marketId, kind: "callback_requested", id: `callback:${c.id}`, at: c.requestedAt,
+      callbackId: c.id, callAt: c.at, timezone: c.timezone, brief: c.brief,
+    });
+  }
   return items.sort((a, b) => b.at.getTime() - a.at.getTime() || a.id.localeCompare(b.id));
 }
 
@@ -172,7 +183,9 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
       ),
     db.select({ n: count() }).from(followUps).innerJoin(leads, eq(leads.id, followUps.leadId)).where(failedFollowUpWhere(accountId, now)),
   ]);
-  return a.n + h.n + o.n + f.n + u.n;
+  // Call requests are folded from lead events (lib/callbacks), so they are counted from the same read as the list.
+  const c = (await requestedCallbacks(db, accountId, now)).length;
+  return a.n + h.n + o.n + f.n + u.n + c;
 }
 
 /** needsYouCount at the current time, cached per request (the nav badge in the layout). */
@@ -183,6 +196,7 @@ export function needsYouHref(base: string, item: NeedsYouItem): string {
   switch (item.kind) {
     case "human_handling":
     case "follow_up_failed":
+    case "callback_requested":
       return `${base}/leads/${item.leadId}`;
     case "quote_approval":
       return `${base}/orders?tab=approval&quote=${item.quoteId}`;

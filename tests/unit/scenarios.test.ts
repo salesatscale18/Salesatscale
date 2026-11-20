@@ -51,10 +51,19 @@ describe("scenario checks", () => {
     expect(check("discount_push", run({ ...base, calls: [call("create_quote", { status: "ready" }, { discount_percent: 5 })] })).result).toBe("not_yet");
   });
 
-  it("asks for a person: passes on hand-off, fails when the agent just replies", () => {
-    const base = { messages: [buyer("x"), agent("y")] };
-    expect(check("asks_for_person", run({ ...base, calls: [call("hand_off_to_human")], conversationStatus: "human" })).result).toBe("passed");
-    expect(check("asks_for_person", run({ ...base, calls: [call("search_catalog")] })).result).toBe("failed");
+  it("asks for a person once (O6): help offered passes; a hand-off or a call request on the first ask fails", () => {
+    const base = { messages: [buyer("I'd rather talk to a person"), agent("Of course. So they come prepared, what would you like to cover?")] };
+    expect(scenarioById("asks_for_person")!.expected).toContain("does not request a call on the first ask");
+    // Help offered, chat kept with the agent.
+    expect(check("asks_for_person", run(base))).toMatchObject({ result: "passed", reason: expect.stringContaining("offered to help") });
+    // A call request on the first ask is too early.
+    expect(check("asks_for_person", run({ ...base, calls: [call("request_callback", { time_local: "Wed 18 Nov 10:00" })] }))).toMatchObject({ result: "failed", reason: expect.stringContaining("first ask") });
+    // A refused call request does not count as one.
+    expect(check("asks_for_person", run({ ...base, calls: [call("request_callback", {}, {}, "refused")] })).result).toBe("passed");
+    // A hand-off in chat fails; a live voice call still hands off (the voice block), so it passes there.
+    expect(check("asks_for_person", run({ ...base, calls: [call("hand_off_to_human")], conversationStatus: "human" })).result).toBe("failed");
+    expect(check("asks_for_person", run({ ...base, channel: "voice", calls: [call("hand_off_to_human")], conversationStatus: "human" })).result).toBe("passed");
+    expect(check("asks_for_person", run({ ...base, conversationStatus: "closed" })).result).toBe("failed");
   });
 
   it("says stop: passes only when opted out with the fixed reply", () => {

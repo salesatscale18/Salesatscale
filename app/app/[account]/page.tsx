@@ -51,6 +51,7 @@ const ITEM_LOOK: Record<NeedsYouItem["kind"], { icon: IconName; tone: "human" | 
   form_unsigned: { icon: "file-signature", tone: "neutral" },
   form_expiring: { icon: "clock", tone: "warning" },
   follow_up_failed: { icon: "x-circle", tone: "danger" },
+  callback_requested: { icon: "phone-call", tone: "neutral" },
 };
 
 const TONE_STYLE = {
@@ -149,6 +150,9 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         return { title: t("overview.needs.form_expiring"), detail: `${who} · Q-${it.quoteNumber} · ${t("overview.needs.form_expiring.detail", { hours: Math.max(1, Math.ceil((it.expiresAt.getTime() - now.getTime()) / 3_600_000)) })}` };
       case "follow_up_failed":
         return { title: t("overview.needs.follow_up_failed", { name: it.leadName }), detail: [it.company, formatDueLocal(it.dueAt, account.timezone), reasonText(it.reason)].filter(Boolean).join(" · ") };
+      case "callback_requested":
+        // O6: the time in the zone it was set in (the lead's market), with the agent's brief.
+        return { title: t("overview.needs.callback_requested", { time: formatDueLocal(it.callAt, it.timezone), name: it.leadName }), detail: [it.company, it.brief].filter(Boolean).join(" · ") };
     }
   };
 

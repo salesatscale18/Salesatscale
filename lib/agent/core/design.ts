@@ -15,6 +15,7 @@ import { MIXED_EXAMPLES, type ConversationExamples } from "./examples";
 import { HELPS_THE_PITCH_RULE, QUESTION_BUDGET, questionBudgetOf } from "./stage";
 import { applyVoiceReplacements, CORE_DESIGN_VOICE, type PromptChannel } from "./voice";
 import { objectionAttemptsOf } from "./objections";
+import { callRoleOf, DEFAULT_CALL_ROLE, withCallRole } from "./call-role";
 
 /**
  * `questionBudget`: the seller's "Questions before recommending" (B2), already
@@ -32,8 +33,9 @@ export function coreDesign(
 /**
  * `objectionAttempts`: attempts per objection (O1). The seller's setting comes
  * with part 3 (lib/agent/core/objections.ts objectionAttemptsOf); missing = 2.
+ * `callRole`: who takes calls (O6, lib/agent/core/call-role.ts); missing = "a member of our team".
  */
-type CoreDesignSeller = { tradeName: string; meeting: boolean; questionBudget?: number; objectionAttempts?: number };
+type CoreDesignSeller = { tradeName: string; meeting: boolean; questionBudget?: number; objectionAttempts?: number; callRole?: string };
 
 const ATTEMPT_WORDS: Record<number, string> = { 1: "One attempt", 2: "Two attempts", 3: "Three attempts" };
 
@@ -41,11 +43,13 @@ const ATTEMPT_WORDS: Record<number, string> = { 1: "One attempt", 2: "Two attemp
  * The shared method for every objection (O1, owner-approved 20 Nov 2026,
  * "Objection handling: play texts for review"): the four moves, knowing which
  * objection it is, when to drop it, the limits and the last rungs. Platform
- * text, the same for every seller. The last group says how to do the steps
- * with today's tools until park-and-continue (part 4), special-price approval
- * as a step (part 5) and call booking (part 6) exist.
+ * text, the same for every seller, except the role title of the person who
+ * takes calls (the seller's "Who takes calls", O6). The last group says how
+ * to do the steps with today's tools until park-and-continue (part 4),
+ * special-price approval as a step (part 5) and call booking exist; until
+ * call booking exists, a call is a callback request (request_callback, O6).
  */
-export function objectionMethod(attempts: number): string {
+export function objectionMethod(attempts: number, callRole: string = DEFAULT_CALL_ROLE): string {
   const n = ATTEMPT_WORDS[attempts] ?? ATTEMPT_WORDS[2];
   return `### Objections
 An objection pauses the stage: handle it as below, with the matching card under "Sales plays", then return to the stage.
@@ -79,14 +83,15 @@ Limits
 The last rungs, the same for every ladder
 - Agent follow-up. Offer to come back at a specific time and say what will be decided then. Call schedule_follow_up.
 - Special approval, where the play allows it: send a real request to the team and say so.
-- Call with a person. Framed as a help, with a proposed time and a link to choose another. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with one of our specialists. Does tomorrow at 10:00 work, or would you like to pick another time?"
+- Call with a person. Framed as a help, with a proposed time the buyer can change; the team confirms it. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with ${callRole}. Does tomorrow at 10:00 work, or would you like to pick another time?"
 - Immediate hand-over only when the buyer is upset, complains, raises a legal or existing-customer issue, or insists.
 
 How to take these steps with your tools
 - Record each objection with update_deal_state objection every time you handle it: the play, the buyer's own words, the number of the step you take now in that card's Do list, whether that step tried to settle it (attempt), and the status: open while you handle it, settled when the buyer accepts or moves on to buy, dropped when they leave it for something else. "Open objection" next to "Known so far" shows the steps already used.
 - Send a question to the team: look it up with lookup_knowledge. When nothing is found, the team sees the question in their list; do nothing more. Never use hand_off_to_human for it.
 - Special approval: make the quote with create_quote and the discount the buyer needs. Above your limit the quote waits for the seller's approval: that is the real request.
-- Call with a person: there is no booking link yet. Propose a time, or ask which time suits them. Then call hand_off_to_human with reason "call requested" and, in the summary, the time and what the person should have ready; tell the buyer a person from the team will confirm the time. This hands the conversation to the team. Name the person by the title in this seller's facts for "The buyer asks for a person"; without one, say "one of our specialists".`;
+- Send the one approved item ("Send me information"): You cannot attach files. Give the summary in text; include a link only if it is listed in this play's facts.
+- Call with a person: there is no booking link yet, so the call is a callback request. Propose a time within contact hours, or take the time the buyer gives; instead of a link, say they can name another time. Then call request_callback with the time and a brief: what the buyer wants to cover and what the person should have ready. If it offers another time, offer that one instead. Tell the buyer the team will confirm the time here. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. Call the person "${callRole}".`;
 }
 
 function chatCoreDesign(seller: CoreDesignSeller, ex: ConversationExamples): string {
@@ -117,7 +122,7 @@ The examples below show the form of a good reply. Copy their form and length, ne
 - The need changes after a quote (other quantity, other product): make a new quote at once. Do not recommend again.
 - The buyer says the recommendation does not fit: ask what does not fit, then recommend once more. After a second no, ${afterSecondNo}.
 
-${objectionMethod(seller.objectionAttempts ?? objectionAttemptsOf())}
+${objectionMethod(seller.objectionAttempts ?? objectionAttemptsOf(), seller.callRole ?? DEFAULT_CALL_ROLE)}
 
 ### When the buyer needs time
 - The buyer needs time to think, or it is not a good moment: offer to come back to them yourself at a time that suits them. You may propose one ("Shall I message you tomorrow at 10?"); take any other time they prefer.
@@ -173,9 +178,12 @@ Credibility
  * card when there is one, plus the seller's facts for it. Nothing tells the
  * model whether a card is the default or the seller's own.
  */
-export function playsText(playbook: Pick<Playbook, "plays" | "questionBudget">, ex: ConversationExamples = MIXED_EXAMPLES): string {
+export function playsText(playbook: Pick<Playbook, "plays" | "questionBudget" | "callRole">, ex: ConversationExamples = MIXED_EXAMPLES): string {
   const sellerExample: Partial<Record<string, string>> = ex.plays;
   const budget = questionBudgetOf(playbook);
+  // "<role>" in a card is the seller's "Who takes calls" (O6).
+  const role = callRoleOf(playbook);
+  const r = (text: string) => withCallRole(text, role);
   const cards = PLAY_KEYS.map((key) => {
     const { card: c0, content, own } = effectivePlay(playbook, key);
     // A default card stops at the seller's question budget (B2); the seller's own card stays as written.
@@ -185,8 +193,8 @@ export function playsText(playbook: Pick<Playbook, "plays" | "questionBudget">, 
     return [
       `### ${DEFAULT_PLAYS[key].title}`,
       `When: ${card.when}`,
-      `Do: ${card.do.map((step, i) => `${i + 1}) ${step}`).join(" ")}`,
-      `Example: "${card.example}"`,
+      `Do: ${card.do.map((step, i) => `${i + 1}) ${r(step)}`).join(" ")}`,
+      `Example: "${r(card.example)}"`,
       // A not-this that already quotes the reply (and adds a note after it) is shown as written.
       `Not this: ${card.notThis.startsWith('"') ? card.notThis : `"${card.notThis}"`}`,
       ...(content ? [`This seller's facts: ${content}`] : []),

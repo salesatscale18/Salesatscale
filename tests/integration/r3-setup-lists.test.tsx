@@ -347,7 +347,7 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       const chat = await render(TestLabPage, slug, { c: url.split("c=")[1] });
       save("test-lab-chat", chat);
       // The opening waits in the composer; the box under the chat has the result chip, title, the check's reason and Expected.
-      expect(chat).toMatch(/aria-label="Scenario: Asks for a person"[\s\S]*?data-scenario-result="not_yet"/);
+      expect(chat).toMatch(/aria-label="Scenario: Asks for a person once"[\s\S]*?data-scenario-result="not_yet"/);
       expect(chat).toMatch(/Expected: /);
       expect(chat).not.toContain("You judge whether");
     });

@@ -11,6 +11,7 @@ import { conversationExamples } from "@/lib/agent/core/examples";
 import { PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "@/lib/agent/core/facts";
 import { openerText, writtenIn } from "@/lib/agent/core/opener";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
+import { DEFAULT_CALL_ROLE, withCallRole } from "@/lib/agent/core/call-role";
 import { deriveStage, NO_STAGE_FACTS, type StageInput } from "@/lib/agent/core/stage";
 import { TOOL_DEFS } from "@/lib/agent/tools";
 import { demoPlaybook } from "@/lib/demo/seed";
@@ -230,7 +231,8 @@ describe("stable system prompt", () => {
     for (const key of PLAY_KEYS) {
       const card = DEFAULT_PLAYS[key];
       expect(p, key).toContain(`### ${card.title}\nWhen: ${card.when}\nDo: 1) ${card.do[0]}`);
-      for (const step of card.do) expect(p, key).toContain(step);
+      // "<role>" reads as the seller's "Who takes calls" (O6; default "a member of our team").
+      for (const step of card.do) expect(p, key).toContain(withCallRole(step, DEFAULT_CALL_ROLE));
       // Need, fit and value take the seller's example (or the fixed mix) instead of the card's neutral one.
       const shown = (conversationExamples(pb).plays as Partial<Record<string, string>>)[key] ?? card.example;
       expect(p, key).toContain(`Example: "${shown}"`);

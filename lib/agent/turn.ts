@@ -22,6 +22,7 @@ import { publishedCatalog } from "@/lib/catalog/service";
 import { plainChatText } from "./core/plain-text";
 import { buyerNames } from "./core/names";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
+import { leadCallback } from "@/lib/callbacks/service";
 import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 
@@ -85,7 +86,7 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp, contact] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, contact, callback] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
@@ -93,6 +94,8 @@ export async function runBuyerTurn(
     scheduledFollowUp(db, args.accountId, conv.leadId),
     // The lead's market: its own time zone and selling languages, else the account's.
     leadContactSettings(db, account, lead.marketId),
+    // The buyer's open call request (O6): the agent keeps answering until the call.
+    leadCallback(db, args.accountId, conv.leadId),
   ]);
   const recent = recentDesc.reverse();
   const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
@@ -118,6 +121,7 @@ export async function runBuyerTurn(
       stage: stageFacts, agentMessages, opener, catalog: activeItems, names: buyerNames(version.playbook, account, lang),
       // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
       followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
+      callback: callback ? { timeLocal: formatDueLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
       localNow: localNowLine(new Date(), contact.timezone),
     })}\nConversation language: ${lang}.`,
   ];

@@ -4,6 +4,7 @@ import { isReservedFieldKey } from "./core/facts";
 import { MAX_OPENER_TOPICS, writtenIn } from "./core/opener";
 import { AGENT_GENDERS, languageName, writtenInScript, type AgentGender } from "./core/names";
 import { QUESTION_BUDGET } from "./core/stage";
+import { CALL_ROLE_MAX } from "./core/call-role";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -54,6 +55,8 @@ export type PlaybookRowsInput = {
   maxDiscount: string;
   offerMeetingWhen: string;
   handOffWhen: string;
+  /** "Who takes calls" (O6), as typed; "" = the default. Undefined when the form did not show it (the stored one is kept). */
+  callRole?: string;
   neverDo: string[];
   /** Opener inputs (P11). Undefined when the form did not show them (the stored ones are kept). */
   opener?: OpenerRowsInput;
@@ -184,6 +187,7 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
     maxDiscount: scalar.maxDiscount ?? "",
     offerMeetingWhen: scalar.offerMeetingWhen ?? "",
     handOffWhen: scalar.handOffWhen ?? "",
+    ...("callRole" in scalar ? { callRole: scalar.callRole } : {}),
     neverDo: ordered(never),
     ...(opener ? { opener } : {}),
     ...(plays.size ? {
@@ -311,6 +315,8 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   }
   const gender = input.agentGender?.trim() ?? "";
   if (input.agentGender !== undefined && !(AGENT_GENDERS as readonly string[]).includes(gender)) errors.agentGender = "Choose female, male or neutral.";
+  const callRole = oneLine(input.callRole ?? "");
+  if (callRole.length > CALL_ROLE_MAX) errors.callRole = `Use ${CALL_ROLE_MAX} characters or fewer.`;
   const goal = input.goal.trim();
   if (!goal) errors.goal = "Describe the sales goal in a sentence or two.";
   else if (goal.length > 1000) errors.goal = "Use 1,000 characters or fewer.";
@@ -408,6 +414,8 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
       maxDiscountBp: Math.round(pct * 100),
       offerMeetingWhen: input.offerMeetingWhen.trim().slice(0, 500),
       handOffWhen: input.handOffWhen.trim().slice(0, 500),
+      // Empty = the default ("a member of our team"); only a role typed is stored.
+      ...(callRole ? { callRole } : {}),
       neverDo,
       ...(input.exceptions?.length ? { exceptions: input.exceptions } : {}),
       ...(opener ? { opener } : {}),

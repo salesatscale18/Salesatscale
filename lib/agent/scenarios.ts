@@ -26,6 +26,12 @@ export type Scenario = {
   title: string;
   language: "en" | "he";
   opening: string;
+  /**
+   * The buyer's later messages, in order (a multi-turn scenario): after each
+   * agent reply the test lab fills in the next one, as it fills in the opening.
+   * The seller still sends each one; nothing is sent automatically.
+   */
+  buyerTurns?: string[];
   /** What should happen, in one plain sentence (shown before the run). */
   expected: string;
   check: (run: ScenarioRun) => ScenarioCheck;
@@ -111,15 +117,44 @@ export const SCENARIOS: Scenario[] = [
     },
   },
   {
+    // The id stays "asks_for_person": stored scenario results keep pointing at it.
     id: "asks_for_person",
-    title: "Asks for a person",
+    title: "Asks for a person once",
     language: "en",
     opening: "I'd rather talk to a person from your team, please.",
-    expected: "The agent hands the chat to a person and stops selling.",
+    expected: "The agent says yes and offers once to help now. It does not hand the chat over and does not request a call on the first ask.",
     check(run) {
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);
-      if (okCalls(run, "hand_off_to_human").length) return pass("Handed to a person.");
-      return fail("The agent replied without handing off to a person.");
+      const handedOff = okCalls(run, "hand_off_to_human").length > 0;
+      // A live voice call still passes the call to the team (the voice block in lib/agent/core/voice.ts), until the voice prompt follows the play.
+      if (run.channel === "voice" && handedOff) return pass("Handed to a person.");
+      if (handedOff) return fail("The agent handed the chat over on a first request for a person. It should offer to help first.");
+      if (okCalls(run, "request_callback").length) return fail("The agent requested a call on the first ask. It should offer to help first.");
+      if (run.conversationStatus !== "open") return fail("The chat left the agent.");
+      return pass("The agent offered to help and kept the chat going.");
+    },
+  },
+  {
+    id: "asks_for_person_twice",
+    title: "Asks for a person twice",
+    language: "en",
+    opening: "I'd rather talk to a person from your team, please.",
+    buyerTurns: ["No thanks, I'd really prefer to speak with someone. Tomorrow morning works for me."],
+    expected: "On the second request the agent requests a call with a person at a time inside contact hours, and keeps the chat going. No hand-off.",
+    check(run) {
+      if (agentReplies(run).length === 0) return notYet(NO_REPLY);
+      if (okCalls(run, "hand_off_to_human").length) return fail("The agent handed the chat over. It should request a call and keep the chat going.");
+      const buyerMessages = run.messages.filter((m) => m.actor === "buyer").length;
+      const callbacks = okCalls(run, "request_callback");
+      if (callbacks.length) {
+        if (buyerMessages < 2) return fail("The agent requested a call on the first ask. It should offer to help first.");
+        return run.conversationStatus === "open" ? pass("Call requested on the second ask; the chat stays with the agent.") : fail("A call was requested, but the chat left the agent.");
+      }
+      if (run.conversationStatus !== "open") return fail("The chat left the agent.");
+      if (buyerMessages < 2) return notYet("The agent offered to help. Send the second request.");
+      // The second ask was answered without a call request.
+      const repliesAfterSecond = run.messages.slice(run.messages.map((m) => m.actor).lastIndexOf("buyer") + 1).some((m) => m.actor === "agent");
+      return repliesAfterSecond ? fail("The buyer asked twice, but no call was requested.") : notYet(NO_REPLY);
     },
   },
   {
@@ -194,6 +229,18 @@ export const SCENARIOS: Scenario[] = [
     },
   },
 ];
+
+/**
+ * What the test lab fills in for the seller to send next: the opening on an
+ * empty chat, then each of the scenario's later buyer turns once the agent has
+ * answered the previous buyer message. Undefined when there is nothing left.
+ */
+export function nextBuyerText(s: Pick<Scenario, "opening" | "buyerTurns">, thread: readonly { actor: string }[]): string | undefined {
+  if (thread.length === 0) return s.opening;
+  if (thread.at(-1)!.actor !== "agent") return undefined;
+  const sent = thread.filter((m) => m.actor === "buyer").length;
+  return sent >= 1 ? s.buyerTurns?.[sent - 1] : undefined;
+}
 
 export function scenarioById(id: string | null | undefined): Scenario | null {
   return SCENARIOS.find((s) => s.id === id) ?? null;

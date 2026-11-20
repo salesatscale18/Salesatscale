@@ -663,6 +663,12 @@ export type Playbook = {
   maxDiscountBp: number;
   offerMeetingWhen: string;
   handOffWhen: string;
+  /**
+   * Who takes calls (O6), as the agent says it after "a call with", e.g. "our
+   * sales manager". Missing or empty = "a member of our team"
+   * (lib/agent/core/call-role.ts callRoleOf). Optional: older playbooks have none.
+   */
+  callRole?: string;
   neverDo: string[];
   /** Approved exceptions (optional: older playbooks have none). */
   exceptions?: PlaybookException[];

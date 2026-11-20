@@ -16,7 +16,7 @@ import { seesPlatformDetails } from "@/lib/auth/display";
 import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { conversationView } from "@/lib/agent/conversation";
-import { SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenarios";
+import { nextBuyerText, SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenarios";
 import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
 import { type IconName } from "@/components/sas/icon";
@@ -372,7 +372,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   ) : (
                     <Composer
                       slug={account.slug} conversationId={conv.id} dir={dir(locale)}
-                      initialText={scenario && thread.length === 0 ? scenario.opening : undefined}
+                      // A multi-turn scenario fills in its next buyer message after each reply (remounted so the new text shows).
+                      key={scenario ? `scn:${nextBuyerText(scenario, thread.map((x) => x.message)) ?? ""}` : "free"}
+                      initialText={scenario ? nextBuyerText(scenario, thread.map((x) => x.message)) : undefined}
                     />
                   )}
                   {/* A finished call has Call again instead: no take-over footer. */}

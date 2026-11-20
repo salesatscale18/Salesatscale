@@ -18,6 +18,7 @@ export const TRACE_LABEL: Record<string, string> = {
   check_payment: "payment.check",
   record_opt_out: "lead.opt_out",
   schedule_follow_up: "follow_up.schedule",
+  request_callback: "callback.request",
 };
 
 export type TraceLine = { label: string; sent: string; got: string; missing: string[] };
@@ -84,6 +85,10 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
     case "schedule_follow_up":
       sent = `${str(input.due_at)}${input.topic ? `: ${str(input.topic)}` : ""}`;
       got = result.due_local ? `Follow-up set for ${str(result.due_local)}` : "";
+      break;
+    case "request_callback":
+      sent = `${str(input.time)}${input.brief ? `: ${str(input.brief)}` : ""}`;
+      got = result.time_local ? `Call requested for ${str(result.time_local)}; the team confirms it` : "";
       break;
     default:
       sent = "";

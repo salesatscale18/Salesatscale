@@ -15,6 +15,7 @@ import { deriveStage, NO_STAGE_FACTS, questionBudgetOf, type StageFacts } from "
 import { namesInstruction, type BuyerNames } from "./core/names";
 import { conversationExamples, type ExampleCatalogItem } from "./core/examples";
 import { objectionAttemptsOf, openObjectionText } from "./core/objections";
+import { callRoleOf } from "./core/call-role";
 import { applyVoiceReplacements, STABLE_PROMPT_VOICE, voiceCallBlock, voiceStageText, type PromptChannel } from "./core/voice";
 
 const FIELD_STAGE: Record<PlaybookField["stage"], string> = {
@@ -59,7 +60,7 @@ function chatStablePrompt(p: Playbook, seller: { tradeName: string; currency: st
 
 Your instructions have three parts: how every conversation runs, this seller's playbook, and the sales plays. After them, each turn, comes "Stage now": where this conversation stands.
 
-${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p), objectionAttempts: objectionAttemptsOf(p) }, ex, channel)}
+${coreDesign({ tradeName: seller.tradeName, meeting: p.outcomes.meeting, questionBudget: questionBudgetOf(p), objectionAttempts: objectionAttemptsOf(p), callRole: callRoleOf(p) }, ex, channel)}
 
 ## Seller playbook: ${seller.tradeName}
 
@@ -123,6 +124,8 @@ export type TurnExtra = {
   localNow?: string | null;
   /** The follow-up already scheduled with this buyer (lib/follow-ups). */
   followUp?: { dueLocal: string; topic: string | null } | null;
+  /** The buyer's open call request (O6, lib/callbacks): its time in the lead's zone and whether the team confirmed it. */
+  callback?: { timeLocal: string; confirmed: boolean } | null;
   /** "voice": a live call (lib/voice/instructions.ts). Default: chat, unchanged. */
   channel?: PromptChannel;
 };
@@ -155,6 +158,9 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",
     extra.followUp
       ? `Follow-up scheduled: you write to the buyer on ${extra.followUp.dueLocal}${extra.followUp.topic ? ` about ${extra.followUp.topic}` : ""}. If the buyer asks for another time, call schedule_follow_up again.`
+      : "",
+    extra.callback
+      ? `Call with ${callRoleOf(p)} ${extra.callback.confirmed ? "confirmed by the team" : "requested, waiting for the team to confirm"}: ${extra.callback.timeLocal}. Keep answering until the call. If the buyer wants another time, call request_callback again.`
       : "",
     extra.localNow ? `Local time now: ${extra.localNow}` : "",
     plain.length
