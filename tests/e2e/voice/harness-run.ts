@@ -272,9 +272,9 @@ async function standbySection(browser: Browser, base: string) {
     await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
     await chat.context().close();
   }
-  // Without the form, a quiet call on standby ends (idle), and the chat says so.
+  // Without the form, a quiet call on standby ends (idle), and the chat says so. (Another buyer: a link allows 6 calls an hour.)
   {
-    const chat = await newPage(browser, `${base}/buyer?lang=en`, 390, 844);
+    const chat = await newPage(browser, `${base}/buyer?lang=en&who=empty`, 390, 844);
     await chat.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 });
     await chat.click("[data-voice-talk]");
     await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 });
@@ -499,6 +499,21 @@ async function main() {
         await page.waitForTimeout(2500);
         check(await page.locator("[data-voice-talk]").count() === 1, `${sh.name}: Switch to voice is back`);
         await shot(page, `buyer2-after-call-${sh.name}`);
+        await page.context().close();
+      }
+
+      // A chat that has not started (no message yet): voice is offered, and the call starts the conversation.
+      {
+        const page = await newPage(browser, `${h.url}/buyer?lang=en&who=empty`, 390, 844);
+        check(await page.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 }).then(() => true, () => false), "empty chat: Switch to voice is offered");
+        check((await page.locator(".c-msg").count()) === 0, "empty chat: no messages yet");
+        await page.click("[data-voice-talk]");
+        check(await waitPhase(page, "live", 20_000), "empty chat: the call starts (the conversation is created)");
+        const intro = await page.waitForSelector('.c-msg--in .c-bubble:has([data-spoken])', { timeout: 20_000 }).then(() => true, () => false);
+        check(intro && /automated assistant/i.test((await page.locator(".c-msg--in .c-bubble:has([data-spoken])").first().textContent()) ?? ""), "empty chat: the agent introduces itself (the normal opener)");
+        await shot(page, "buyer2-empty-chat-phone");
+        await page.click("[data-voice-back]");
+        check(await waitPhase(page, "ended", 15_000), "empty chat: Back to text ends the call; the chat goes on");
         await page.context().close();
       }
 

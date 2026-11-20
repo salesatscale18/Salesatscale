@@ -144,6 +144,10 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
     await db.update(conversations).set({ scenario: "ready_buyer", language: "en" }).where(eq(conversations.id, started.conversationId));
     buyers[lang] = { token: made.token, conversationId: started.conversationId };
   }
+  // A buyer whose chat has not started (a link, no conversation): /buyer?who=empty. Voice starts the conversation.
+  const emptyMade = await createSimulatedBuyer(db, { userId: me.id, actingAs: false }, account, { fullName: "Noa Levi", company: "Levi Shop", language: "en", country: "IL" });
+  if (!emptyMade.ok) throw new Error("empty buyer");
+  const emptyToken = emptyMade.token;
   const css = fs.readFileSync(path.join(ROOT, "components/sas/sas.css"), "utf8");
   const scenarios = Object.fromEntries(SCENARIOS.filter((s) => s.language === "en").map((s) => [s.id, { title: s.title, expected: s.expected }]));
 
@@ -198,18 +202,21 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       }
       if (req.method === "GET" && url.pathname === "/api/buyer-config") {
         const lang = url.searchParams.get("lang") === "he" ? "he" : "en";
-        const link = await resolveChatLink(db, buyers[lang].token);
+        const empty = url.searchParams.get("who") === "empty";
+        const token = empty ? emptyToken : buyers[lang].token;
+        const link = await resolveChatLink(db, token);
         if (!link) return send(404, "application/json", "{}");
         const ctx = link.ctx;
+        const conv = await buyerConversation(db, ctx);
         const tr = translator(lang);
         const names = await chatNames(db, ctx.account, lang);
         const chat = await buyerChat(db, ctx);
         const gate = await buyerVoiceGate(db, ctx, { env: gateEnv });
         chat.voice = buyerVoiceState(gate, ctx.lead);
         return send(200, "application/json", JSON.stringify({
-          token: buyers[lang].token, lang, seller: names.seller, initials: names.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
+          token, lang, seller: names.seller, initials: names.seller.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase(),
           strings: chatStrings(tr, names, lang), initial: chat, timeZone: "Asia/Jerusalem",
-          voice: { agentName: (await chatNames(db, ctx.account, "en")).agent, gender: names.gender, tabKey: voiceTabKey(buyers[lang].conversationId) },
+          voice: { agentName: (await chatNames(db, ctx.account, "en")).agent, gender: names.gender, tabKey: conv ? voiceTabKey(conv.id) : null },
           rootStyle: { ...brandVars(ctx.brandColor), "--bubble": buyerBubbleColor(ctx.brandColor) },
         }));
       }

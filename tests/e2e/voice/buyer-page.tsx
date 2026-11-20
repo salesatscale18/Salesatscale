@@ -13,7 +13,8 @@ import { ChatClient } from "@/app/chat/[token]/chat-client";
 type Props = Parameters<typeof ChatClient>[0] & { rootStyle: CSSProperties };
 
 const lang = new URLSearchParams(location.search).get("lang") === "he" ? "he" : "en";
-void fetch(`/api/buyer-config?lang=${lang}`).then((r) => r.json() as Promise<Props>).then(({ rootStyle, ...p }) => {
+const who = new URLSearchParams(location.search).get("who");
+void fetch(`/api/buyer-config?lang=${lang}${who ? `&who=${who}` : ""}`).then((r) => r.json() as Promise<Props>).then(({ rootStyle, ...p }) => {
   createRoot(document.getElementById("root")!).render(
     <div className="c-root" lang={p.lang} dir="ltr" style={rootStyle}>
       <ChatClient {...p} />
