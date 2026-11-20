@@ -127,20 +127,6 @@
       "when": 1795099278195,
       "tag": "0017_voice_sessions",
       "breakpoints": true
-    },
-    {
-      "idx": 18,
-      "version": "7",
-      "when": 1795206069874,
-      "tag": "0018_voice_buyer_calls_default",
-      "breakpoints": true
-    },
-    {
-      "idx": 19,
-      "version": "7",
-      "when": 1795206070593,
-      "tag": "0019_voice_buyer_calls_on",
-      "breakpoints": true
     }
   ]
 }
