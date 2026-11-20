@@ -78,7 +78,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "ask_team",
-    description: "Send a question you have no approved answer for to the seller's team, silently: the buyer is not told and the chat does not pause. The team answers in their list; the answer then shows in your context (\"Questions sent to the team\"), and if the buyer has gone quiet the app sends it to them as a message. Look the question up with lookup_knowledge first. Call again with the same question when the buyer says whether it is a must-have.",
+    description: "Send a question you have no approved answer for to the seller's team, silently: the buyer is not told and the conversation does not pause. The team answers in their list; the answer then shows in your context (\"Questions sent to the team\"), and if the buyer has gone quiet the app sends it to them as a message. Look the question up with lookup_knowledge first. Call again with the same question when the buyer says whether it is a must-have.",
     strict: true,
     input_schema: {
       type: "object",
