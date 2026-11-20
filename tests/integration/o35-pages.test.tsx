@@ -139,8 +139,8 @@ describe("O35 pages on the demo account", () => {
     expect(list).toContain('class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="Upset: false night alarms, and wants a person now">Upset: false night alarms, and wants a person now</span>');
     const lead = await render(LeadPage, { account: slug, leadId: upset.id });
     save("lead-upset", lead);
-    expect(lead).toContain('class="sas-oneline" data-handoff-why="" dir="auto" title="Upset: false night alarms, and wants a person now">Upset: false night alarms, and wants a person now</span>');
-    // The line is not cut (under 60 characters), so no second, restated copy of the reason.
+    // The banner: the same reason once, never cut, wrapping (no one-line class), no restated copy.
+    expect(lead).toContain('style="display:block;overflow-wrap:anywhere" data-handoff-why="" dir="auto">Upset: false night alarms, and wants a person now</span>');
     expect(lead).not.toContain("data-handoff-full");
     expect(text(lead)).not.toContain("The buyer is upset");
     // An agent-handled lead has none.
@@ -167,31 +167,31 @@ describe("O35 pages on the demo account", () => {
       // Conversations row: the same line, one line.
       const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
       expect(row.slice(0, row.indexOf("</li>"))).toContain(`class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
-      // Lead page banner: the same line, one line; neither reason is cut, so no full-reason line.
+      // Lead page banner: the same reason once, wrapping, never cut.
       const lead = await render(LeadPage, { account: slug, leadId: (await leadBy(c.lead.n)).id });
       if (c.lead === STATE_LEADS.human) save("lead-human", lead);
-      expect(lead).toContain(`class="sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
+      expect(lead).toContain(`style="display:block;overflow-wrap:anywhere" data-handoff-why="" dir="auto">${c.why}</span>`);
       expect(lead).not.toContain("data-handoff-full");
     }
     // The single-line rule is in the design system.
     expect(css).toMatch(/\.sas-oneline \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
   });
 
-  it("lead page: the whole stored reason shows under the line only when the line cuts it", async () => {
+  it("lead page: a long reason shows once, whole, wrapping; the lists cut it", async () => {
     const upset = await leadBy(STATE_LEADS.upset.n);
-    const reason = "The buyer is upset: the alarm went off three nights in a row at the Eilat branch and the guests asked reception for a refund.";
+    const detail = "the alarm went off three nights in a row at the Eilat branch and the guests asked reception for a refund";
     const [ev] = await db.insert(leadEvents).values({
       id: crypto.randomUUID(), accountId: account.id, leadId: upset.id, type: "handoff.requested", actor: "agent",
-      data: { reason }, createdAt: new Date(Date.now() + 60_000),
+      data: { reason: `The buyer is upset: ${detail}.` }, createdAt: new Date(Date.now() + 60_000),
     }).returning();
     try {
       const lead = await render(LeadPage, { account: slug, leadId: upset.id });
       save("lead-upset-long", lead);
-      expect(text(lead)).toMatch(/Upset: the alarm went off .*…/);
-      // As stored, no restated form.
-      expect(lead).toContain(`data-handoff-full="" dir="auto">${reason}</span>`);
-      // The cut line comes first, the full line under it.
-      expect(lead.indexOf("data-handoff-why")).toBeLessThan(lead.indexOf("data-handoff-full"));
+      expect(lead).toContain(`data-handoff-why="" dir="auto">Upset: ${detail}</span>`);
+      expect(lead.match(/data-handoff-why/g)).toHaveLength(1);
+      expect(lead).not.toContain("sas-oneline\" data-handoff-why");
+      const list = await render(ConversationsPage, { account: slug }, { filter: "needs_you" });
+      expect(text(list)).toMatch(/Upset: the alarm went off .*…/);
     } finally {
       await db.delete(leadEvents).where(eq(leadEvents.id, ev.id));
     }

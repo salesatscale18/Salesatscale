@@ -270,7 +270,7 @@ export default async function LeadCardPage({
             </form>
           ) : null}
         </header>
-        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} handoffWhy={handoffWhyLine?.why ?? null} handoffFull={handoffWhyLine?.full ?? null} handoffCut={handoffWhyLine?.cut ?? false} />
+        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} handoffWhy={handoffWhyLine?.whole ?? null} />
         {/* Phone only (sas.css): a compact deal summary, then tabs Chat · Deal · Timeline. Radio inputs, so they work without JS. */}
         {/* `?tab=deal` (Needs you's call items, O7) opens on the Deal tab, so the call card is in view. */}
         <input type="radio" name="lead-tab" id="lt-chat" className="sas-lead__tab-radio" defaultChecked={sp.tab !== "deal"} aria-label={t("lead.tabs.chat")} />

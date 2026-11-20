@@ -638,7 +638,7 @@ async function callRequested(db: Db, accountId: string, leadId: string, versionI
   }
   if (!r.ok) throw new Error(`Demo seed: call request refused: ${r.rule}`);
   await insertThread(db, accountId, id, "en", versionId, [{
-    actor: "agent", at, body: `Of course. I've asked for a call with a member of our team on ${r.timeLocal}; the team will confirm the time here. Meanwhile, I'm here for any question.`,
+    actor: "agent", at, body: `Of course. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here. Meanwhile, I'm here for any question.`,
     calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
   }]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));

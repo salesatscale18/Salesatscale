@@ -298,6 +298,9 @@ describe("demo account review states", () => {
     const askedConv = await convOf(asked.id);
     expect(askedConv.status).toBe("open");
     expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, askedConv.id))).map((c) => c.name)).toContain("request_callback");
+    // The agent's line names the time in the long buyer form ("Friday 20 November at 12:30"), as the agent says it.
+    const said = (await db.select().from(messages).where(eq(messages.conversationId, askedConv.id))).map((m) => m.body).find((b) => b.includes("asked for a call"));
+    expect(said).toMatch(/on [A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ at \d{2}:\d{2};/);
     const open = (await leadCallback(db, accountId, asked.id, NOW))!;
     expect(open).toMatchObject({ status: "requested", brief: CALL_BRIEFS.requested, conversationId: askedConv.id });
     expect(open.at.getTime()).toBeGreaterThan(NOW.getTime());

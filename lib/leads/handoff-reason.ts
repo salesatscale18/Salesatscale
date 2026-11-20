@@ -78,23 +78,26 @@ export function handoffWhy(e: { type: string; data: Record<string, unknown> | nu
  * The one line and whether the 60-character cut shortened the stored reason (`cut`). Dropping a
  * "The buyer is upset:" prefix that the label already says is not a cut. Pure.
  */
-export function handoffWhyCut(e: { type: string; data: Record<string, unknown> | null }): { why: string; cut: boolean } | null {
+export function handoffWhyCut(e: { type: string; data: Record<string, unknown> | null }, max = HANDOFF_DETAIL_MAX): { why: string; cut: boolean } | null {
   const label = handoffLabel(e);
   const raw = e.type === "handoff.requested" && typeof e.data?.reason === "string" ? e.data.reason : "";
   // No label: the stored reason as it is (one line, cut with "…"), whatever its language.
   if (!label) {
-    const line = oneLineCut(raw);
+    const line = oneLineCut(raw, max);
     return line.text ? { why: line.text, cut: line.cut } : null;
   }
-  const reason = raw ? handoffDetailCut(raw) : { text: "", cut: false };
+  const reason = raw ? handoffDetailCut(raw, max) : { text: "", cut: false };
   const name = t(`handoff.why.${label}` as MessageKey);
   return { why: reason.text ? `${name}: ${reason.text}` : name, cut: reason.cut };
 }
 
-/** The stored reason, whole (whitespace folded only), or null. The lead page shows it under the line when the line is cut. Pure. */
-export function handoffFullReason(e: { type: string; data: Record<string, unknown> | null }): string | null {
-  const raw = e.type === "handoff.requested" && typeof e.data?.reason === "string" ? e.data.reason.replace(/\s+/g, " ").trim() : "";
-  return raw || null;
+/**
+ * The same line, never cut: the label and the agent's whole reason ("Upset: false night alarms, and wants a
+ * person now"), or the stored reason whole. The lead page banner shows this, wrapping (UX: the one-line cut
+ * with "…" is for lists only). Pure.
+ */
+export function handoffWhyWhole(e: { type: string; data: Record<string, unknown> | null }): string | null {
+  return handoffWhyCut(e, Infinity)?.why ?? null;
 }
 
 /** The line for each lead's latest hand-off (scoped by account); leads with none are left out. */
@@ -105,11 +108,11 @@ export async function handoffWhyByLead(db: Db, accountId: string, leadIds: reado
 }
 
 /**
- * Each lead's latest hand-off (scoped by account): the one line, whether its text was cut (`cut`), and the
- * whole stored reason as stored (`full`); leads with no line are left out.
+ * Each lead's latest hand-off (scoped by account): the one line for lists (`why`) and the same line never cut
+ * (`whole`, for the lead page banner); leads with no line are left out.
  */
-export async function handoffReasonsByLead(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, { why: string; cut: boolean; full: string | null }>> {
-  const out = new Map<string, { why: string; cut: boolean; full: string | null }>();
+export async function handoffReasonsByLead(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, { why: string; whole: string }>> {
+  const out = new Map<string, { why: string; whole: string }>();
   if (!leadIds.length) return out;
   const rows = await db.select({ leadId: leadEvents.leadId, type: leadEvents.type, data: leadEvents.data }).from(leadEvents)
     .where(and(eq(leadEvents.accountId, accountId), inArray(leadEvents.leadId, [...new Set(leadIds)]), inArray(leadEvents.type, [...HANDOFF_WHY_EVENTS])))
@@ -119,7 +122,7 @@ export async function handoffReasonsByLead(db: Db, accountId: string, leadIds: r
     if (seen.has(r.leadId)) continue;
     seen.add(r.leadId);
     const line = handoffWhyCut(r);
-    if (line) out.set(r.leadId, { ...line, full: handoffFullReason(r) });
+    if (line) out.set(r.leadId, { why: line.why, whole: handoffWhyWhole(r) ?? line.why });
   }
   return out;
 }
