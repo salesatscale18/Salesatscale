@@ -45,11 +45,10 @@ describe("team questions: folding", () => {
 describe("team questions: when the answer is sent", () => {
   const base: AnswerFacts = {
     leadOptedOut: false, accountStatus: "live", needsLiveAccount: false, conversationStatus: "open",
-    answeredAt: at(0), lastBuyerAt: at(-5 * 60), withinContactHours: true, now: at(1),
+    answeredAt: at(0), lastBuyerAt: at(-5 * 60), now: at(1),
   };
-  it("a quiet buyer, inside contact hours: send", () => {
+  it("a quiet buyer: send, at any hour (an answer to the buyer's own question is a reply, not gated by contact hours)", () => {
     expect(decideAnswer(base)).toEqual({ action: "send" });
-    expect(decideAnswer({ ...base, withinContactHours: false })).toEqual({ action: "wait", why: "outside_hours" });
   });
   it("an active buyer: wait; once they wrote after the answer: it was in the agent's context", () => {
     expect(decideAnswer({ ...base, lastBuyerAt: at(-30) })).toEqual({ action: "wait", why: "buyer_active" });

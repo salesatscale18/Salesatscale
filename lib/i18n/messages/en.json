@@ -3455,5 +3455,8 @@
   "buyer.voice.why.not_agent": "This chat is handled by a person.",
   "buyer.voice.why.spend_cap": "AI limit reached.",
   "buyer.voice.why.platform_budget": "AI limit reached.",
-  "buyer.voice.why.account_not_live": "The account is paused."
+  "buyer.voice.why.account_not_live": "The account is paused.",
+  "callback.outside_hours_asked": "Outside your contact hours, the buyer asked for this time",
+  "followup.outside_hours_asked": "Outside your contact hours, the buyer asked for this time",
+  "followup.tz_plain": "Times are in {tz}."
 }

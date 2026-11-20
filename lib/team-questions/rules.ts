@@ -41,7 +41,8 @@ export const ANSWER_MAX = 1000;
  * "Gone quiet": no buyer message for this long. When the team's answer
  * arrives and the buyer has not written for QUIET_AFTER_MS (or goes quiet
  * afterwards without writing again), the app sends the answer as a follow-up
- * message, inside the lead's contact hours, once.
+ * message, once, at any hour: it answers the buyer's own question, so it is
+ * a reply, not contact the agent starts (contact hours, owner 20 Nov 2026).
  */
 export const QUIET_AFTER_MS = 4 * HOUR;
 /** Answers older than this are not sent any more (the conversation has moved on). */
@@ -153,21 +154,21 @@ export type AnswerFacts = {
   answeredAt: Date;
   /** The buyer's latest message in the conversation (null: none). */
   lastBuyerAt: Date | null;
-  withinContactHours: boolean;
   now: Date;
 };
 
 export type AnswerDecision =
   | { action: "in_chat" }
   | { action: "not_sent"; reason: "opted_out" | "conversation_closed" | "taken_over" | "too_old" }
-  | { action: "wait"; why: "buyer_active" | "account_paused" | "account_not_live" | "outside_hours" }
+  | { action: "wait"; why: "buyer_active" | "account_paused" | "account_not_live" }
   | { action: "send" };
 
 /**
  * First matching rule wins. The buyer wrote after the answer arrived: the
  * agent had it in its context for that reply ("in_chat"), nothing to send.
  * Otherwise the answer goes out as a message only once the buyer has gone
- * quiet (no buyer message for QUIET_AFTER_MS), inside contact hours.
+ * quiet (no buyer message for QUIET_AFTER_MS). Not gated by contact hours: an
+ * answer to the buyer's own question is a reply (owner, 20 Nov 2026).
  */
 export function decideAnswer(f: AnswerFacts): AnswerDecision {
   if (f.leadOptedOut) return { action: "not_sent", reason: "opted_out" };
@@ -179,7 +180,6 @@ export function decideAnswer(f: AnswerFacts): AnswerDecision {
   if (f.accountStatus === "paused") return { action: "wait", why: "account_paused" };
   if (f.needsLiveAccount && f.accountStatus !== "live") return { action: "wait", why: "account_not_live" };
   if (f.lastBuyerAt && f.now.getTime() - f.lastBuyerAt.getTime() < QUIET_AFTER_MS) return { action: "wait", why: "buyer_active" };
-  if (!f.withinContactHours) return { action: "wait", why: "outside_hours" };
   return { action: "send" };
 }
 

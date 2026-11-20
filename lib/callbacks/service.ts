@@ -12,7 +12,7 @@ import { atomic } from "@/db/atomic";
 import { auditLog, conversations, dealStates, leadEvents, leads, messages, sellerAccounts, toolCalls } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import type { AccountAccess } from "@/lib/accounts/service";
-import { summarizeContactHours } from "@/lib/accounts/contact-hours";
+import { isWithinContactHours, summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
@@ -33,7 +33,8 @@ const DAY = 24 * HOUR;
 // The agent's tool
 // ---------------------------------------------------------------------------
 
-export type CallbackInput = { time: unknown; brief: unknown };
+/** buyer_named_time: the buyer named this time themselves (true), or the agent proposed it (false or absent). */
+export type CallbackInput = { time: unknown; brief: unknown; buyer_named_time?: unknown };
 export type CallbackContext = { accountId: string; leadId: string; conversationId: string };
 
 export type CallbackResult =
@@ -49,8 +50,10 @@ export const callbackNextStep = (timeLocal: string, brief: string, confirmed = f
  * Records the call the buyer agreed to. One per lead: a new request replaces
  * the earlier one. Refused for an opted-out lead, a paused account, a chat a
  * person holds or that is closed, an unreadable time, a time in the past or
- * less than 15 minutes or more than 30 days ahead, and a time outside the
- * lead's contact hours (the result then offers the nearest allowed time).
+ * less than 15 minutes or more than 30 days ahead, and a time the agent
+ * proposed outside the lead's contact hours (the result then offers the
+ * nearest allowed time). A time the buyer named is accepted at any hour
+ * (owner, 20 Nov 2026); the request records that, so the call card can say so.
  * The conversation stays with the agent.
  */
 export async function requestCallback(db: Db, ctx: CallbackContext, input: CallbackInput, now = new Date()): Promise<CallbackResult> {
@@ -76,7 +79,8 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
   if (!at) {
     return { ok: false, rule: "Invalid time", extra: { message: `Give time as an ISO date-time with the offset of ${tz}, e.g. ${isoInZone(now, tz)}, or as a local date and time, e.g. ${isoInZone(now, tz).slice(0, 16)}.` } };
   }
-  const check = checkCallTime(contact.contactHours, tz, at, now);
+  const buyerNamed = input.buyer_named_time === true;
+  const check = checkCallTime(contact.contactHours, tz, at, now, { buyerNamed });
   if (!check.ok) {
     const rule = { past: "Time is in the past", too_soon: "Time is less than 15 minutes ahead", too_far: "Time is more than 30 days ahead", outside_hours: "Outside contact hours" }[check.why];
     return {
@@ -86,20 +90,26 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
             suggested_time: isoInZone(check.nearest, tz), suggested_local: formatBuyerLocal(check.nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
             message: `Not requested. Offer the buyer ${formatBuyerLocal(check.nearest, tz)} instead (in their own wording); when they agree, call request_callback with suggested_time.`,
           }
-        : { contact_hours: summarizeContactHours(contact.contactHours), message: "Not requested: ask the buyer for another time within the next 30 days and within contact hours." },
+        : {
+            contact_hours: summarizeContactHours(contact.contactHours),
+            message: buyerNamed ? "Not requested: ask the buyer for another time within the next 30 days." : "Not requested: ask the buyer for another time within the next 30 days and within contact hours.",
+          },
     };
   }
 
+  // Only a time the buyer named can be outside contact hours (checkCallTime): kept for the call card's note.
+  const outsideContactHours = !isWithinContactHours(contact.contactHours, tz, at);
+  const named = { buyerNamedTime: buyerNamed, ...(outsideContactHours ? { outsideContactHours: true } : {}) };
   const before = await leadCallback(db, ctx.accountId, ctx.leadId, now);
   const id = randomUUID();
   await atomic(db, (q) => [
     q.insert(leadEvents).values({
       id: randomUUID(), accountId: ctx.accountId, leadId: ctx.leadId, type: CALLBACK_EVENTS.requested, actor: "agent", createdAt: now,
-      data: { callbackId: id, at: at.toISOString(), timezone: tz, brief, conversationId: ctx.conversationId, ...(before ? { replaces: before.id } : {}) },
+      data: { callbackId: id, at: at.toISOString(), timezone: tz, brief, conversationId: ctx.conversationId, ...named, ...(before ? { replaces: before.id } : {}) },
     }),
     q.insert(auditLog).values({
       accountId: ctx.accountId, actorUserId: null, action: "callback.requested", targetType: "lead", targetId: ctx.leadId,
-      details: { callbackId: id, at: at.toISOString(), ...(before ? { replaces: before.id } : {}) },
+      details: { callbackId: id, at: at.toISOString(), ...named, ...(before ? { replaces: before.id } : {}) },
     }),
   ]);
   const request = (await leadCallback(db, ctx.accountId, ctx.leadId, now))!;

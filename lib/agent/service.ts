@@ -378,7 +378,7 @@ export async function unansweredQuestions(db: Db, accountId: string, limit = 10,
  * A person answers an unanswered question: the answer becomes an approved
  * fact sourced to the question. O4: each conversation that sent it to the
  * team gets the answer (the agent's context), and a buyer who went quiet gets
- * it as a message now, inside contact hours, or later from the scheduler.
+ * it as a message now (at any hour: a reply to their question), or later from the scheduler.
  */
 export async function answerQuestion(
   db: Db, actor: Actor, accountId: string, a: { question: string; answer: string; topic?: string },

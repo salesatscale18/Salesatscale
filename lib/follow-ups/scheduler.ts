@@ -22,6 +22,7 @@ import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } fro
 import type { TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { decideDue, followUpText, MAX_ATTEMPTS, type FollowUpReason } from "./rules";
+import { followUpBuyerNamed } from "./schedule";
 
 // ---------------------------------------------------------------------------
 // The platform scheduler
@@ -42,7 +43,8 @@ const MAX_BATCHES = 5;
  * cancel when the lead opted out, the account is paused (or, for real
  * WhatsApp chats, not live), the chat is closed or a person holds it, the
  * order is paid or the buyer wrote after it was scheduled; leave it scheduled
- * outside contact hours (the next run inside hours sends it); else write the
+ * outside contact hours (the next run inside hours sends it), unless the buyer
+ * asked for that time (sent at the time they named); else write the
  * fixed message into the conversation and deliver it through the channel's
  * send path. A failed send is retried by the next runs, up to MAX_ATTEMPTS.
  */
@@ -115,6 +117,7 @@ async function processOne(
     db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.accountId, f.accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"), gt(messages.createdAt, f.createdAt))).limit(1),
   ]);
+  const within = isWithinContactHours(contact.contactHours, contact.timezone, now);
   const decision = decideDue({
     leadOptedOut: lead.status === "opted_out",
     accountStatus: account.status,
@@ -122,7 +125,9 @@ async function processOne(
     conversationStatus: conv.status,
     paid: !!paid,
     buyerWroteAfterScheduling: !!wrote,
-    withinContactHours: isWithinContactHours(contact.contactHours, contact.timezone, now),
+    withinContactHours: within,
+    // A time the buyer asked for is kept even outside contact hours; only agent-chosen times wait for them.
+    buyerNamedTime: !within && (await followUpBuyerNamed(db, f)).buyerNamedTime,
   });
   if (decision.action === "cancel") {
     await atomic(db, (q) => [

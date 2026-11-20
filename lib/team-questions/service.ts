@@ -14,8 +14,6 @@ import { atomic } from "@/db/atomic";
 import { conversations, knowledgeFacts, leadEvents, leads, messages, sellerAccounts, toolCalls, type SellerAccount } from "@/db/schema";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX } from "@/lib/agent/knowledge";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
-import { isWithinContactHours } from "@/lib/accounts/contact-hours";
-import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import type { TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
@@ -227,11 +225,8 @@ async function deliverOne(db: Db, account: SellerAccount, a: TeamAnswer, transpo
     return "notSent";
   }
   const { lead, conv } = row;
-  const [[last], contact] = await Promise.all([
-    db.select({ at: max(messages.createdAt) }).from(messages)
-      .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"))),
-    leadContactSettings(db, account, lead.marketId),
-  ]);
+  const [last] = await db.select({ at: max(messages.createdAt) }).from(messages)
+    .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer")));
   const decision = decideAnswer({
     leadOptedOut: lead.status === "opted_out",
     accountStatus: account.status,
@@ -239,7 +234,6 @@ async function deliverOne(db: Db, account: SellerAccount, a: TeamAnswer, transpo
     conversationStatus: conv.status,
     answeredAt: a.answeredAt,
     lastBuyerAt: last?.at ?? null,
-    withinContactHours: isWithinContactHours(contact.contactHours, contact.timezone, now),
     now,
   });
   if (decision.action === "wait") return "waiting";

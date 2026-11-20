@@ -3,7 +3,8 @@
  * (ask_team) without pausing the chat or telling the buyer; Knowledge lists it
  * with the lead, the buyer's words and must-have; Needs you shows it as a
  * question to answer; the answer reaches the agent's turn context, and a quiet
- * buyer gets it as a message, inside contact hours, once. Scripted model only:
+ * buyer gets it as a message, once, at any hour (a reply to the buyer's own
+ * question is not gated by contact hours, owner 20 Nov 2026). Scripted model only:
  * nothing here calls the real API.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -228,7 +229,7 @@ describe("Park and continue: questions to the team (O4)", () => {
     expect(await appMessages(c.conversationId)).toHaveLength(0);
   });
 
-  it("sends the answer to a quiet buyer only, inside contact hours, once", async () => {
+  it("sends the answer to a quiet buyer only, once, also outside contact hours (it is a reply)", async () => {
     const quietAcc = await mkAccount("Quiet Co", MONDAY_NINE);
     const c = await mkChat(quietAcc, "Noa Quiet");
     const active = await mkChat(quietAcc, "Avi Active");
@@ -242,22 +243,20 @@ describe("Park and continue: questions to the team (O4)", () => {
       await runTool("ask_team", { question: "Is there a Hebrew manual?", buyer_words: "a Hebrew manual", must_have: false }, await ctxFor(quietAcc, x));
     }
     await answerQuestion(db, actor(), quietAcc.id, { question: "Is there a Hebrew manual?", answer: "Yes, a Hebrew PDF manual comes with every order." }, { transport: null, now: answeredAt });
-    // Outside contact hours: nothing yet, for either.
-    expect(await appMessages(c.conversationId)).toHaveLength(0);
+    // Outside contact hours, the quiet buyer gets it at once: an answer to their own question is a reply.
+    // The active one wrote 30 minutes before the answer: nothing yet.
     expect(await appMessages(active.conversationId)).toHaveLength(0);
-
-    // Next Monday 09:15 Jerusalem (07:15 UTC): inside hours. The quiet buyer gets it; the active one wrote 30 minutes before the answer…
-    const inside = new Date("2026-11-30T07:15:00Z");
-    // …and wrote again after it, so the agent had it in context: nothing is sent there.
-    await db.insert(messages).values({ accountId: quietAcc.id, conversationId: active.conversationId, actor: "buyer", body: "Thanks", language: "en", createdAt: new Date(answeredAt.getTime() + 5 * 60_000) });
-    const s1 = await runTeamAnswers(db, null, inside);
-    expect(s1.sent).toBeGreaterThanOrEqual(1);
     const sent = await appMessages(c.conversationId);
     expect(sent).toHaveLength(1);
     const [m] = await db.select().from(messages).where(eq(messages.id, sent[0].messageId!));
     expect(m).toMatchObject({ actor: "agent", body: 'Hi Noa, you asked: "a Hebrew manual". The answer: Yes, a Hebrew PDF manual comes with every order.' });
-    expect(await appMessages(active.conversationId)).toHaveLength(0);
     expect(await delivered(c.leadId)).toEqual(["sent"]);
+
+    // The active buyer wrote again after the answer, so the agent had it in context: nothing is sent there.
+    const inside = new Date(answeredAt.getTime() + 10 * 60_000);
+    await db.insert(messages).values({ accountId: quietAcc.id, conversationId: active.conversationId, actor: "buyer", body: "Thanks", language: "en", createdAt: new Date(answeredAt.getTime() + 5 * 60_000) });
+    await runTeamAnswers(db, null, inside);
+    expect(await appMessages(active.conversationId)).toHaveLength(0);
     expect(await delivered(active.leadId)).toEqual(["in_chat"]);
 
     // Once: later runs send nothing more.

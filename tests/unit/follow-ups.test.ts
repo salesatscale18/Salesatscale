@@ -132,6 +132,11 @@ describe("what the scheduler does with a due follow-up", () => {
     expect(decideDue({ ...ok, withinContactHours: false })).toEqual({ action: "defer" });
     expect(decideDue(ok)).toEqual({ action: "send" });
   });
+  it("a time the buyer asked for is sent then, even outside contact hours; cancellations still apply", () => {
+    expect(decideDue({ ...ok, withinContactHours: false, buyerNamedTime: true })).toEqual({ action: "send" });
+    expect(decideDue({ ...ok, withinContactHours: false, buyerNamedTime: false })).toEqual({ action: "defer" });
+    expect(decideDue({ ...ok, withinContactHours: false, buyerNamedTime: true, leadOptedOut: true })).toEqual({ action: "cancel", reason: "opted_out" });
+  });
   it("reasons read as plain words", () => {
     expect(reasonText("buyer_replied")).toBe("the buyer wrote first");
     expect(reasonText("whatsapp_window_closed")).toContain("24-hour window");
@@ -156,9 +161,10 @@ describe("cron route authorization", () => {
 });
 
 describe("agent side", () => {
-  it("schedule_follow_up has a strict { due_at, topic } schema", () => {
+  it("schedule_follow_up has a strict { due_at, topic, buyer_named_time } schema", () => {
     const def = TOOL_DEFS.find((d) => d.name === "schedule_follow_up");
-    expect(def).toMatchObject({ strict: true, input_schema: { type: "object", required: ["due_at", "topic"], additionalProperties: false } });
+    expect(def).toMatchObject({ strict: true, input_schema: { type: "object", required: ["due_at", "topic", "buyer_named_time"], additionalProperties: false } });
+    expect(def?.description).toContain("A time the buyer asked for is allowed at any hour; a time you proposed yourself must be inside contact hours");
   });
   it("the core design and the two play cards offer to come back yourself, never the sales team", () => {
     const core = coreDesign({ tradeName: "Polar", meeting: true });
