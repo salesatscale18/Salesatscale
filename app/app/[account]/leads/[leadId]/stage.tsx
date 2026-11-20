@@ -7,6 +7,7 @@ import { TextWithId } from "@/components/sas/id-text";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { t, type MessageKey } from "@/lib/i18n";
 import { STAGE_STEPS, type LeadStageView, type StageStep } from "@/lib/leads/stage";
+import { HandoffReasonLine } from "./handoff-reason-line";
 
 export const STEP_LABEL: Record<StageStep, MessageKey> = {
   open: "lead.stage.step.open", understand: "lead.stage.step.understand", recommend: "lead.stage.step.recommend",
@@ -79,12 +80,14 @@ export function stageSentence(v: LeadStageView, name: string): { wait: string; n
 export type PaidOrder = { label: string; amount: string };
 
 /** The stepper and the sentence. `v` null: no conversation yet. `paidOrder`: the lead's paid order, for the banner. */
-export function StageStepper({ v, name, paidOrder, handoffWhy, handoffFull }: {
+export function StageStepper({ v, name, paidOrder, handoffWhy, handoffFull, handoffCut }: {
   v: LeadStageView | null; name: string; paidOrder?: PaidOrder | null;
   /** O35: why the lead needs a person, in one line (lib/leads/handoff-reason.ts); shown while a person handles it. */
   handoffWhy?: string | null;
-  /** The whole stored hand-off reason, uncut (the lists cut it): shown under the line when the line does not already say it all. */
+  /** The whole stored hand-off reason, as stored: shown under the line only when the line is cut (see HandoffReasonLine). */
   handoffFull?: string | null;
+  /** True when the one line's 60-character text cut shortened the reason. */
+  handoffCut?: boolean;
 }) {
   const current = v ? STAGE_STEPS.indexOf(v.step) : -1;
   const paidBanner = !!(v && paidOrder && v.paid && v.step === "after" && !v.human && !v.objection);
@@ -128,8 +131,7 @@ export function StageStepper({ v, name, paidOrder, handoffWhy, handoffFull }: {
             <span style={{ minWidth: 0, flex: "1 1 auto" }}>
               {v.human || v.objection || v.closed || (v.step === "after" && v.paid) ? <><strong>{stageLabel(v)}.</strong>{" "}</> : null}
               <strong>{sentence.wait}</strong> {sentence.next}
-              {v.human && handoffWhy ? <span className="sas-oneline" data-handoff-why="" dir="auto" title={handoffWhy}>{handoffWhy}</span> : null}
-              {v.human && handoffFull && handoffFull !== handoffWhy ? <span className="sas-small" style={{ display: "block", overflowWrap: "anywhere" }} data-handoff-full="" dir="auto">{handoffFull}</span> : null}
+              {v.human && handoffWhy ? <HandoffReasonLine why={handoffWhy} full={handoffFull ?? null} cut={!!handoffCut} /> : null}
             </span>
           )}
         </div>

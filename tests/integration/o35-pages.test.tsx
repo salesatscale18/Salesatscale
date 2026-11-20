@@ -13,7 +13,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
 import { and, eq } from "drizzle-orm";
-import { leads, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
+import { leadEvents, leads, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -121,11 +121,11 @@ describe("O35 pages on the demo account", () => {
     for (const slot of ["Common reasons similar products fail", "What is different here"]) expect(tried).toContain(slot);
   });
 
-  it("Needs you: the hand-off reason after the name, and Show N more / Show less", async () => {
+  it("Needs you: the hand-off reason on its own line under the name, and Show N more / Show less", async () => {
     const html = await render(OverviewPage, { account: slug });
     save("overview", html);
-    expect(text(html)).toContain(`${STATE_LEADS.upset.fullName} needs a person · Upset: false night alarms, and wants a person now`);
-    expect(text(html)).toContain(`${STATE_LEADS.spendCap.fullName} needs a person · AI limit reached`);
+    expect(text(html)).toContain(`${STATE_LEADS.upset.fullName} needs a personUpset: false night alarms, and wants a person now`);
+    expect(text(html)).toContain(`${STATE_LEADS.spendCap.fullName} needs a personAI limit reached`);
     expect(text(html)).toContain(`Call requested`);
     if (html.includes("data-needs-more")) {
       expect(html).toMatch(/<span class="sas-ov__more-count">Show \d+ more<\/span><span class="sas-ov__more-less">Show less<\/span>/);
@@ -140,8 +140,9 @@ describe("O35 pages on the demo account", () => {
     const lead = await render(LeadPage, { account: slug, leadId: upset.id });
     save("lead-upset", lead);
     expect(lead).toContain('class="sas-oneline" data-handoff-why="" dir="auto" title="Upset: false night alarms, and wants a person now">Upset: false night alarms, and wants a person now</span>');
-    // The lists cut the reason, so the lead page also shows the whole stored reason, uncut.
-    expect(lead).toContain('data-handoff-full="" dir="auto">The buyer is upset: false night alarms, and wants a person now.</span>');
+    // The line is not cut (under 60 characters), so no second, restated copy of the reason.
+    expect(lead).not.toContain("data-handoff-full");
+    expect(text(lead)).not.toContain("The buyer is upset");
     // An agent-handled lead has none.
     const calm = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callRequested.n)).id });
     save("lead-call-requested", calm);
@@ -156,26 +157,44 @@ describe("O35 pages on the demo account", () => {
     const inbox = await render(ConversationsPage, { account: slug });
     save("conversations-all", inbox);
     const cases = [
-      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now", full: "The buyer is upset: false night alarms, and wants a person now." },
-      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON, full: HUMAN_HANDOFF_REASON },
+      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now" },
+      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON },
     ];
     for (const c of cases) {
-      // Needs you: name, then the reason as its own one-line, isolated part (cut with "…" by CSS).
-      expect(overview).toContain(`<strong class="sas-why-line" data-why-line="" title="${c.lead.fullName} needs a person · ${c.why}"><span class="sas-why-line__head"><bdi>${c.lead.fullName}</bdi> needs a person ·</span> <span class="sas-why-line__why sas-oneline" data-handoff-why="" dir="auto">${c.why}</span></strong>`);
+      // Needs you: "Name needs a person" (name isolated), then the reason on its own muted one-line row
+      // (isolated, dir="auto", cut with "…" by CSS), then company and time. The same layout for every hand-off.
+      expect(overview).toContain(`<strong data-handoff-title=""><bdi>${c.lead.fullName}</bdi> needs a person</strong><span class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span><span class="sas-small">${c.lead.company ? `${c.lead.company} · ` : ""}Handed to a person · `);
       // Conversations row: the same line, one line.
       const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
       expect(row.slice(0, row.indexOf("</li>"))).toContain(`class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
-      // Lead page banner: the same line, one line; the whole stored reason is on the page uncut.
+      // Lead page banner: the same line, one line; neither reason is cut, so no full-reason line.
       const lead = await render(LeadPage, { account: slug, leadId: (await leadBy(c.lead.n)).id });
       if (c.lead === STATE_LEADS.human) save("lead-human", lead);
       expect(lead).toContain(`class="sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
-      expect(text(lead)).toContain(c.full);
+      expect(lead).not.toContain("data-handoff-full");
     }
-    // The Hebrew reason fits the 60-character cut, so the banner line already says it all (no second copy).
-    const he = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.human.n)).id });
-    expect(he).not.toContain("data-handoff-full");
     // The single-line rule is in the design system.
     expect(css).toMatch(/\.sas-oneline \{[^}]*text-overflow: ellipsis;[^}]*white-space: nowrap;/);
+  });
+
+  it("lead page: the whole stored reason shows under the line only when the line cuts it", async () => {
+    const upset = await leadBy(STATE_LEADS.upset.n);
+    const reason = "The buyer is upset: the alarm went off three nights in a row at the Eilat branch and the guests asked reception for a refund.";
+    const [ev] = await db.insert(leadEvents).values({
+      id: crypto.randomUUID(), accountId: account.id, leadId: upset.id, type: "handoff.requested", actor: "agent",
+      data: { reason }, createdAt: new Date(Date.now() + 60_000),
+    }).returning();
+    try {
+      const lead = await render(LeadPage, { account: slug, leadId: upset.id });
+      save("lead-upset-long", lead);
+      expect(text(lead)).toMatch(/Upset: the alarm went off .*…/);
+      // As stored, no restated form.
+      expect(lead).toContain(`data-handoff-full="" dir="auto">${reason}</span>`);
+      // The cut line comes first, the full line under it.
+      expect(lead.indexOf("data-handoff-why")).toBeLessThan(lead.indexOf("data-handoff-full"));
+    } finally {
+      await db.delete(leadEvents).where(eq(leadEvents.id, ev.id));
+    }
   });
 
   it("Knowledge: \"1 unanswered question\" in the singular", async () => {

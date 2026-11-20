@@ -108,7 +108,7 @@ export default async function LeadCardPage({
   const hoursHref = contactHoursFixHref(account.slug, row.market ? marketList.find((m) => m.id === row.market!.id) : null);
   const now = new Date();
   // O35: why the lead needs a person, shown in the stage banner while a person handles it: the one line
-  // (as in Needs you and the Conversations row) and, since those cut it, the whole stored reason.
+  // (as in Needs you and the Conversations row) and the whole stored reason, shown only when the line is cut.
   const handoffWhyLine = stage?.human ? (await handoffReasonsByLead(appDb, account.id, [leadId])).get(leadId) ?? null : null;
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
   // Quote dates in the quote's market time zone, as the buyer's card shows them.
@@ -270,7 +270,7 @@ export default async function LeadCardPage({
             </form>
           ) : null}
         </header>
-        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} handoffWhy={handoffWhyLine?.why ?? null} handoffFull={handoffWhyLine?.full ?? null} />
+        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} handoffWhy={handoffWhyLine?.why ?? null} handoffFull={handoffWhyLine?.full ?? null} handoffCut={handoffWhyLine?.cut ?? false} />
         {/* Phone only (sas.css): a compact deal summary, then tabs Chat · Deal · Timeline. Radio inputs, so they work without JS. */}
         {/* `?tab=deal` (Needs you's call items, O7) opens on the Deal tab, so the call card is in view. */}
         <input type="radio" name="lead-tab" id="lt-chat" className="sas-lead__tab-radio" defaultChecked={sp.tab !== "deal"} aria-label={t("lead.tabs.chat")} />

@@ -144,9 +144,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
       case "quote_approval":
         return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), titleId: quoteRef(it.quoteNumber), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
       case "human_handling":
-        // O35: why the lead needs a person, after the name ("Dana Demo needs a person · Upset: false night alarms").
-        // The reason is its own part (`why`): one line, cut with "…" (UX).
-        return { title: it.why ? t("overview.needs.human_handling_why", { name: it.leadName, why: it.why }) : t("overview.needs.human_handling", { name: it.leadName }), why: it.why ?? undefined, detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
+        // O35: "Dana Demo needs a person", then why on its own line ("Upset: false night alarms"), one line cut with "…" (UX).
+        return { title: t("overview.needs.human_handling", { name: it.leadName }), why: it.why ?? undefined, detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
       case "bank_transfer":
       case "payment_failed":
         return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}`, detailId: orderLabel(account.tradeName, it.orderNumber) };
@@ -217,7 +216,11 @@ export default async function OverviewPage({ params, searchParams }: { params: P
               <Icon name={look.icon} />
             </span>
             <span className="sas-list__main">
-              {text.why ? <WhyTitle title={text.title} why={text.why} name={it.leadName} /> : <strong><TextWithId text={text.title} id={text.titleId ?? ""} size="inherit" /></strong>}
+              {it.kind === "human_handling"
+                ? <strong data-handoff-title=""><NameInText text={text.title} name={it.leadName} /></strong>
+                : <strong><TextWithId text={text.title} id={text.titleId ?? ""} size="inherit" /></strong>}
+              {/* O35: every hand-off item gives its reason a line of its own under the title, before company and time (UX). */}
+              {text.why ? <span className="sas-small sas-oneline" data-handoff-why="" dir="auto" title={text.why}>{text.why}</span> : null}
               <span className="sas-small"><TextWithId text={text.detail} id={text.detailId ?? ""} /></span>
             </span>
             <span className={look.tone === "human" ? buttonClass("takeover", "sm") : buttonClass("secondary", "sm")}>
@@ -385,23 +388,10 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   );
 }
 
-/**
- * "Dana Demo needs a person · Upset: …" on one line (UX): the head keeps the
- * name, the reason is its own isolated run (dir="auto", so a Hebrew reason
- * reads right to left and is cut at its own end) and gives way first, with "…".
- */
-function WhyTitle({ title, why, name }: { title: string; why: string; name: string }) {
-  const at = title.lastIndexOf(why);
-  const head = (at >= 0 ? title.slice(0, at) : title).trimEnd();
-  // The name is isolated too, so a Hebrew name keeps its place in the English line.
-  const n = name ? head.indexOf(name) : -1;
-  return (
-    <strong className="sas-why-line" data-why-line="" title={title}>
-      <span className="sas-why-line__head">{n >= 0 ? <>{head.slice(0, n)}<bdi>{name}</bdi>{head.slice(n + name.length)}</> : head}</span>
-      {/* The space keeps the text whole for copying and screen readers; the flex layout ignores it (the margin spaces it). */}
-      {at >= 0 ? <>{" "}<span className="sas-why-line__why sas-oneline" data-handoff-why="" dir="auto">{why}</span></> : null}
-    </strong>
-  );
+/** The title with the lead's name isolated (<bdi>), so a Hebrew name keeps its place in the English line. */
+function NameInText({ text, name }: { text: string; name: string }) {
+  const n = name ? text.indexOf(name) : -1;
+  return n >= 0 ? <>{text.slice(0, n)}<bdi>{name}</bdi>{text.slice(n + name.length)}</> : <>{text}</>;
 }
 
 function FunnelRow({ label, value, width, color }: { label: string; value: number; width: number; color: string }) {

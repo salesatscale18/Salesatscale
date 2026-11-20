@@ -3222,7 +3222,6 @@
   "buyer.app.declined": "We couldn't approve that price. Shall we look at what else could work for you?",
   "overview.needs.less": "Show less",
   "knowledge.summary_one_gap": "{total} facts · {approved} approved · {suggested} to review · 1 unanswered question.",
-  "overview.needs.human_handling_why": "{name} needs a person · {why}",
   "handoff.why.upset": "Upset",
   "handoff.why.complaint": "Complaint",
   "handoff.why.legal": "Legal",

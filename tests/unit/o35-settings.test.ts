@@ -12,7 +12,7 @@ import { applyObjection, objectionAttemptsOf, openObjectionText } from "@/lib/ag
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { playsOverview, playSlots } from "@/app/app/[account]/setup/playbook/plays/overview";
 import { mentionsUnknownQuestions } from "@/lib/agent/handoff-notice";
-import { handoffDetail, handoffLabel, handoffWhy } from "@/lib/leads/handoff-reason";
+import { handoffDetail, handoffLabel, handoffWhy, handoffWhyCut } from "@/lib/leads/handoff-reason";
 
 const pb: Playbook = defaultPlaybook("Acme", 500);
 const seller = { tradeName: "Acme", currency: "ILS", languages: ["en"] };
@@ -114,5 +114,16 @@ describe("the hand-off reason line", () => {
     expect(d.length).toBeLessThanOrEqual(61);
     expect(d.endsWith("…")).toBe(true);
     expect(handoffDetail("line one\nline two.")).toBe("line one line two");
+  });
+
+  it("says whether the 60-character cut shortened the reason (the lead page shows the full line only then)", () => {
+    // Dropping the "The buyer is upset:" prefix the label already says is not a cut.
+    expect(handoffWhyCut(ev({ reason: "The buyer is upset: false night alarms, and wants a person now." }))).toEqual({ why: "Upset: false night alarms, and wants a person now", cut: false });
+    expect(handoffWhyCut(ev({ reason: "delivery deadline" }))).toEqual({ why: "delivery deadline", cut: false });
+    expect(handoffWhyCut(ev({}, "handoff.spend_cap"))).toEqual({ why: "AI limit reached", cut: false });
+    const long = "the buyer needs installation at four sites before the end of the month and wants to agree the dates with someone";
+    expect(handoffWhyCut(ev({ reason: long }))).toMatchObject({ cut: true });
+    expect(handoffWhyCut(ev({ reason: `The buyer is upset: ${long}` }))).toMatchObject({ cut: true });
+    expect(handoffWhyCut(ev({}))).toBeNull();
   });
 });
