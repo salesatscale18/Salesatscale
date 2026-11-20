@@ -199,7 +199,8 @@ describe("Contact hours: a time the buyer names is allowed at any hour", () => {
     expect(html).toContain('data-testid="follow-up"');
     expect(html).not.toContain('data-testid="follow-up-outside-hours"');
     expect(html).not.toContain(NOTE);
-    expect(html).toContain(`Times are in ${TZ}.`);
+    // UX: a buyer-named follow-up says so; the agent-chosen wording ("inside your contact hours") would be wrong here.
+    expect(html).toContain(`Times are in ${TZ}. The buyer asked for this time.`);
     expect(html).not.toContain("The agent sends it inside your contact hours.");
 
     // At the buyer's time (Saturday, outside contact hours) the scheduler sends it rather than waiting.

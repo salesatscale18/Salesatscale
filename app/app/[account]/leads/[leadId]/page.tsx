@@ -43,7 +43,7 @@ import { leadStage } from "@/lib/leads/stage";
 import { handoffReasonsByLead } from "@/lib/leads/handoff-reason";
 import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
-import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
+import { followUpBuyerNamed, leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
 import { AfterCallPrompt, CallbackPanel } from "./callback";
 import { callbackAfterCall, leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
@@ -94,6 +94,8 @@ export default async function LeadCardPage({
     leadCallback(appDb, account.id, leadId),
     callbackAfterCall(appDb, account.id, leadId),
   ]);
+  // UX: an agent-chosen follow-up goes inside contact hours; one the buyer named goes at that time.
+  const followUpByBuyer = followUp && followUp.status === "scheduled" ? (await followUpBuyerNamed(appDb, followUp)).buyerNamedTime : false;
   if (!row) notFound();
   // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on, show the 24-hour window.
   const windowed = conversation?.conversation.channel === "whatsapp" || (conversation?.conversation.channel === SIMULATOR_CHANNEL && account.simulateWhatsappRules);
@@ -433,7 +435,7 @@ export default async function LeadCardPage({
             />
             <FollowUpPanel
               slug={account.slug} followUp={followUp} timezone={account.timezone}
-              canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"}
+              canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"} buyerNamed={followUpByBuyer}
             />
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
             {sp.verified ? <div className="sas-alert sas-alert--success" role="status" style={{ margin: "0 16px 12px" }}><Icon name="check-circle" /><span>{t("lead.card.verified_saved")}</span></div> : null}

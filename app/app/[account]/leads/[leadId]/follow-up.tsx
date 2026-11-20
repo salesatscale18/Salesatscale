@@ -10,8 +10,10 @@ import { cancelFollowUpAction } from "./follow-up-actions";
  * scheduled · Tue 18 Nov 10:00", in the account's time zone) with Cancel, or
  * one that could not be sent with Dismiss. Shown only when there is one.
  */
-export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled }: {
+export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled, buyerNamed = false }: {
   slug: string; followUp: FollowUp | null; timezone: string; canCancel: boolean; cancelled: boolean;
+  /** The buyer named this time (schedule_follow_up buyer_named_time): it goes out at that time, at any hour. */
+  buyerNamed?: boolean;
 }) {
   if (!followUp && !cancelled) return null;
   const failed = followUp?.status === "failed";
@@ -28,7 +30,7 @@ export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled }
           {followUp.topic ? <span className="sas-small" style={{ overflowWrap: "anywhere" }}>{t("followup.topic", { topic: followUp.topic })}</span> : null}
           {failed
             ? <span className="sas-small">{t("followup.why", { reason: reasonText(followUp.reason) })}</span>
-            : <span className="sas-small">{t("followup.tz", { tz: timezone })}</span>}
+            : <span className="sas-small">{t(buyerNamed ? "followup.tz_buyer" : "followup.tz", { tz: timezone })}</span>}
           {canCancel ? (
             <form action={cancelFollowUpAction}>
               <input type="hidden" name="slug" value={slug} />
