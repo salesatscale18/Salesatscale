@@ -181,20 +181,71 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
   });
 
-  it("asks for a person: hand-off, then the call ends after the agent's sentence", async () => {
+  it("asks for a person (the new card): yes and one offer to help; asked again, the call is booked, handed over, the call ends", async () => {
     const c = await newCall("asks_for_person");
     await c.run(15_000);
-    await c.speak();
+    await c.speak(); // first request
+    await c.run(30_000);
+    // One request: no hand-off yet, the agent offered to help and the objection is on record during the call.
+    expect(c.engine.isEnded).toBe(false);
+    expect((await calls(c.conversationId)).map((x) => x.name)).toEqual(["update_deal_state"]);
+    const [deal1] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
+    expect(deal1.objections).toEqual([{ play: "asks_for_person", words: "I'd rather talk to a person", steps: [1], status: "open", attempts: 0 }]);
+    await c.speak(); // asks again
+    await c.run(20_000);
+    expect(c.engine.isEnded).toBe(false);
+    await c.speak(); // agrees to the time
     await c.run(30_000);
     expect(c.engine.isEnded).toBe(true);
     const s = await sessionRow(c.sessionId);
     expect(s.endReason).toBe("handoff");
     expect((await conv(c.conversationId)).status).toBe("human");
-    const rows = await thread(c.conversationId);
-    const last = rows.filter((m) => m.actor === "agent").at(-1)!;
-    expect(last.body).toBe("Of course. Someone from the team will get back to you. Thanks for your time. Goodbye.");
+    const tc = await calls(c.conversationId);
+    expect(tc.map((x) => [x.name, x.outcome])).toEqual([["update_deal_state", "ok"], ["update_deal_state", "ok"], ["hand_off_to_human", "ok"]]);
+    expect(tc[2].input).toMatchObject({ reason: "call requested" });
+    const [deal2] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
+    expect(deal2.objections).toEqual([{ play: "asks_for_person", words: "I'd rather talk to a person", steps: [1, 3], status: "settled", attempts: 0 }]);
+    // The spoken line says someone will get back to them; the call does not go on.
+    const last = (await thread(c.conversationId)).filter((m) => m.actor === "agent").at(-1)!;
+    expect(last.body).toBe("Done. Someone from the team will get back to you to confirm the time. Thanks, goodbye.");
+    // What the model was told after the hand-off.
+    const handoff = c.conn().sent.toolResults.find((r) => r.name === "hand_off_to_human")!.result as { message: string };
+    expect(handoff.message).toMatch(/someone from the team will get back to them/);
+    expect(handoff.message).toMatch(/this call ends now/);
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
     expect(c.conn().closeCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  it("an open objection is in the call-start context and in the reconnect context, in call wording", async () => {
+    const c = await newCall("asks_for_person");
+    await c.run(15_000);
+    await c.speak();
+    await c.run(30_000);
+    c.conn().simulateGoAway();
+    await c.settle();
+    const second = c.conn();
+    expect(c.model.connections).toHaveLength(2);
+    expect(second.cfg.instructions).toContain("## Open objection\nThe buyer asks for a person, in the buyer's words: \"I'd rather talk to a person\"");
+    expect(second.cfg.instructions).toContain("1) [used] Say yes first.");
+    expect(second.cfg.instructions).toContain("Booking it ends this call");
+    expect(second.cfg.instructions).not.toContain("Do not pause the chat");
+    await hangUp(c);
+
+    // A call that starts with an objection already open has it in its first instructions.
+    const v = (await startVoiceTestConversation(db, acc, me.id, {}))!;
+    await db.insert(dealStates).values({ accountId: acc, leadId: v.leadId, objections: [{ play: "too_expensive", words: "too much", steps: [1], status: "open", attempts: 0 }] });
+    const s = await createVoiceSession(db, { accountId: acc, conversationId: v.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
+    if (!s.ok) throw new Error(s.reason);
+    const clock = new ManualClock();
+    const model = new ScriptedRealtime({ clock });
+    const e = new VoiceEngine({ db, model, sessionId: s.sessionId, send: () => {}, clock, limits: QUIET });
+    await e.start();
+    await e.idle();
+    const first = model.connections[0].cfg.instructions;
+    expect(first).toContain("## Open objection");
+    expect(first).toContain("keep the conversation going; do not end the call because of it");
+    expect(first).not.toContain("keep the chat going");
+    await e.stop("user_hangup");
   });
 
   it("says stop: opted out in code, the fixed reply, conversation closed, call ended", async () => {

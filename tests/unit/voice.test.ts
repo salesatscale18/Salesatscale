@@ -12,6 +12,9 @@ import { coreDesign } from "@/lib/agent/core/design";
 import { applyVoiceReplacements, CORE_DESIGN_VOICE, voiceStageText } from "@/lib/agent/core/voice";
 import { deriveStage, NO_STAGE_FACTS } from "@/lib/agent/core/stage";
 import { TOOL_DEFS } from "@/lib/agent/tools";
+import { OBJECTION_PLAYS } from "@/lib/agent/core/objections";
+import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
+import { PLAY_KEYS, type StoredObjection } from "@/db/schema";
 import {
   DEFAULT_REALTIME_PRICES, estimatedRealtimeUsage, estimateRealtimeCostMicros, RealtimeUsageAccumulator, realtimePriceTable, voiceCallCost,
 } from "@/lib/ai/models";
@@ -96,6 +99,15 @@ describe("tool schemas", () => {
     expect(cq.properties.lines.items).toEqual({ type: "object", properties: { sku: { type: "string" }, qty: { type: "integer" } }, required: ["sku", "qty"] });
     const uds = tools.find((t) => t.name === "update_deal_state")!.parameters as { properties: Record<string, Record<string, unknown>> };
     expect(uds.properties.objection).toMatchObject({ type: "object", nullable: true });
+    // The objection record (O1): an enum of plays, a nullable step, a boolean attempt, an enum of statuses; all required.
+    const obj = uds.properties.objection as { properties: Record<string, Record<string, unknown>>; required: string[] };
+    expect(obj.required).toEqual(["play", "buyer_words", "step", "attempt", "status"]);
+    expect(obj.properties.play).toMatchObject({ type: "string", enum: [...OBJECTION_PLAYS] });
+    expect(obj.properties.step).toMatchObject({ type: "integer", nullable: true });
+    expect(obj.properties.attempt).toMatchObject({ type: "boolean" });
+    expect(obj.properties.status).toMatchObject({ type: "string", enum: ["open", "settled", "dropped"] });
+    expect(obj.properties.play.nullable).toBeUndefined();
+    expect(uds.properties.updates).toMatchObject({ type: "array", items: { type: "object", properties: { provenance: { type: "string", enum: ["buyer", "inferred"] } } } });
     expect(tools.find((t) => t.name === "check_payment")!.parameters).toEqual({ type: "object" });
   });
 
@@ -127,6 +139,94 @@ describe("voice instructions", () => {
     expect(coreDesign({ tradeName: "Acme", meeting: true }, undefined, "chat")).toBe(coreDesign({ tradeName: "Acme", meeting: true }));
     const extra = { agentMessages: 2, opener: "Hi there.", stage: { ...NO_STAGE_FACTS, quote: "ready" as const } };
     expect(turnContext(pb, null, { ...extra, channel: "chat" })).toBe(turnContext(pb, null, extra));
+  });
+
+  /** Chat-only wording a call must not contain. Allowed: "the chat below", "in/to the chat", follow-ups by message ("I'll message you"). */
+  const chatOnly = (text: string): string[] => {
+    const t = text
+      .replace(/\b(?:in|into|to) the chat(?: below(?: the call)?)?\b/gi, "")
+      .replace(/the chat below/gi, "")
+      .replace(/\bI'll message you\b|\bShall I message you\b|\bbuyer messages\b|don't write to me again|you write to the buyer|in writing afterwards/gi, "");
+    const found: string[] = [];
+    for (const re of [
+      /\bmessages?\b/i, /\bchat\b/i, /\bwrite\b|\bwritten\b/i, /\b(?:give|send) the link\b/i, /\blink to choose\b/i,
+      /\bin the same message\b/i, /\bpause the chat\b/i, /\bconfirm here\b/i, /\bquestions here\b/i,
+    ]) {
+      const m = re.exec(t);
+      if (m) found.push(`${m[0]}: …${t.slice(Math.max(0, m.index - 60), m.index + 40)}…`);
+    }
+    return found;
+  };
+
+  it("no chat-only phrase is left anywhere in the call's instructions", () => {
+    const withAll = (o: Partial<Playbook>) => ({ ...pb, ...o });
+    const meeting = withAll({ outcomes: { ...pb.outcomes, meeting: true } });
+    for (const p of [pb, meeting]) {
+      for (const fillers of [true, false]) expect(chatOnly(stableSystemPrompt(p, seller, catalog, { channel: "voice", fillers }))).toEqual([]);
+    }
+    // The per-turn context of a call, with each objection play open (its card is quoted) and with earlier ones.
+    for (const play of OBJECTION_PLAYS) {
+      const objections: StoredObjection[] = [
+        { play, words: "words", steps: [1], status: "open", attempts: 1 },
+        { play: "too_expensive", words: "too much", steps: [1, 2], status: "settled", attempts: 1 },
+      ];
+      for (const stage of [NO_STAGE_FACTS, { ...NO_STAGE_FACTS, quote: "ready" as const }, { quote: "ready" as const, orderForm: "sent" as const, signed: true, paid: false }]) {
+        const text = buildVoiceInstructions({
+          playbook: pb, voiceSettings: null, seller, catalog, deal: { fields: {}, objections, nextStep: null, summary: null }, stage, agentMessages: 2,
+          names: { agent: "Ava", seller: "Acme", gender: "neutral", language: "en" }, opener: "Hi, this is Ava.", localNow: null,
+          followUp: { dueLocal: "Wed 18 Nov 10:00", topic: "the quote" }, recap: [],
+        });
+        expect(chatOnly(text), play).toEqual([]);
+      }
+    }
+    // The tool results' stage text in call wording.
+    const facts = { quote: "ready" as const, orderForm: "none" as const, signed: false, paid: false };
+    const objections: StoredObjection[] = [{ play: "asks_for_person", words: "a person", steps: [1], status: "open", attempts: 0 }];
+    expect(chatOnly(voiceStageText(deriveStage({ ...facts, playbook: pb, fields: {}, objections, agentMessages: 3 }).instruction))).toEqual([]);
+    // The scan itself catches what it should.
+    expect(chatOnly("Keep the chat going. Give the link. In the same message.")).toHaveLength(4);
+    expect(chatOnly("It is in the chat below. I'll message you tomorrow at 10.")).toEqual([]);
+  });
+
+  it("every play card's chat wording has a spoken form (seller's own cards stay as written)", () => {
+    const voice = stableSystemPrompt(pb, seller, null, { channel: "voice" });
+    for (const k of PLAY_KEYS) expect(voice, k).toContain(`### ${DEFAULT_PLAYS[k].title}\nWhen:`);
+    for (const line of [
+      "keep the conversation going; do not end the call because of it.",
+      "then sum it up for them in two or three short sentences",
+      "Give the main points in a short spoken summary for that reader",
+      "Propose a time, ask which time suits them if that one does not (never read a link aloud)",
+      "Booking it ends this call: say someone from the team will get back to them to confirm the time.",
+      "In the same turn, promise the outcome",
+      "never stop the conversation or end the call only because of one open question.",
+      "Offer to answer that person's questions in the chat, or to include them in a short call.",
+      'When what the buyer says matches a "When"',
+    ]) expect(voice, line).toContain(line);
+    // A seller's own card is not rewritten (and does not break the voice prompt).
+    const own = { ...pb, plays: { asks_for_person: { own: { when: "w", do: ["Do not pause the chat."], example: "e", notThis: "n" } } } } as Playbook;
+    expect(stableSystemPrompt(own, seller, null, { channel: "voice" })).toContain("1) Do not pause the chat.");
+  });
+
+  it("the voice block follows the plays: a request for a person, an upset buyer, objections, unanswered questions", () => {
+    const block = voiceStageText(stableSystemPrompt(pb, seller, null, { channel: "voice" }));
+    for (const line of [
+      '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time, then call hand_off_to_human with reason "call requested" and, in the summary, the time and what the person should have ready. Then say someone from the team will get back to them to confirm the time, and say goodbye: the call ends there.',
+      "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
+      '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
+      '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
+      "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found the team already sees the question: do not say you passed it on, and never say you are waiting for an answer.",
+      "This hands the conversation to the team and ends this call: say that someone from the team will get back to them to confirm the time, then say goodbye.",
+      "- Find the real objection. One question, in the same turn as the acknowledgement.",
+    ]) expect(block, line).toContain(line);
+    // The old first-request hand-off line is gone.
+    expect(block).not.toContain("If the buyer asks for a person: say someone from the team will get back to them, then call hand_off_to_human.");
+  });
+
+  it("call wording for the per-turn context is idempotent", () => {
+    const objections: StoredObjection[] = [{ play: "too_expensive", words: "too much", steps: [1], status: "open", attempts: 0 }];
+    const ctx = turnContext(pb, { fields: {}, objections, nextStep: null }, { agentMessages: 2, channel: "voice" });
+    expect(voiceStageText(voiceStageText(ctx))).toBe(voiceStageText(ctx));
+    expect(voiceStageText(ctx)).toContain("## Open objection");
   });
 
   it("the voice prompt has no chat-format lines left", () => {

@@ -14,6 +14,7 @@ import type { Db } from "@/db/types";
 import { messages, type AgentVersion, type Conversation, type DealState, type Lead, type SellerAccount } from "@/db/schema";
 import { stableSystemPrompt, turnContext } from "@/lib/agent/prompt";
 import { openerText } from "@/lib/agent/core/opener";
+import { voiceStageText } from "@/lib/agent/core/voice";
 import { buyerNames } from "@/lib/agent/core/names";
 import { loadStageFacts } from "@/lib/agent/core/stage-facts";
 import type { StageFacts } from "@/lib/agent/core/stage";
@@ -57,10 +58,12 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   const settings = resolveVoiceSettings(i.voiceSettings);
   const stable = stableSystemPrompt(i.playbook, { ...i.seller, languages: ["en"] }, i.catalog, { channel: "voice", fillers: settings.fillers });
   // The opener counts as an agent turn: the stage moves on once the buyer answers it.
-  const context = turnContext(i.playbook, i.deal, {
+  // The whole per-turn context in call wording: turnContext converts the stage block, and the
+  // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
+  const context = voiceStageText(turnContext(i.playbook, i.deal, {
     stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed ? null : i.opener, catalog: i.catalog, names: i.names,
     followUp: i.followUp, localNow: i.localNow, channel: "voice",
-  });
+  }));
   const recap = i.recap.slice(-RECAP_LINES).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
   const call = [
     "## This call",

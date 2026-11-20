@@ -102,11 +102,24 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     expectBuyer("Okay, thanks."),
     say("Thank you. Talk soon."),
   ],
+  // The card "The buyer asks for a person": say yes and offer help once; asked again, book the call
+  // (hand_off_to_human with reason "call requested" until call booking exists). The call then ends.
   asks_for_person: [
     expectBuyer("I'd rather talk to a person from your team, please."),
-    say("Of course. Someone from the team will get back to you."),
-    tool("hand_off_to_human", { reason: "The buyer asked for a person", summary: "Asked on a call to talk to a person.", suggested_reply: "" }),
-    say("Thanks for your time. Goodbye."),
+    tool("update_deal_state", {
+      updates: [], next_step: null, recommendation_confirmed: null, price_asked: null, asked: null,
+      objection: { play: "asks_for_person", buyer_words: "I'd rather talk to a person", step: 1, attempt: false, status: "open" },
+    }),
+    say("Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price or fit I can usually answer right now."),
+    expectBuyer("I'd just rather talk to a person, thanks."),
+    say("No problem. Does tomorrow at 10:00 work for a short call with one of our specialists?"),
+    expectBuyer("Yes, that works."),
+    tool("update_deal_state", {
+      updates: [], next_step: "call with a specialist tomorrow at 10:00", recommendation_confirmed: null, price_asked: null, asked: null,
+      objection: { play: "asks_for_person", buyer_words: "I'd rather talk to a person", step: 3, attempt: false, status: "settled" },
+    }),
+    tool("hand_off_to_human", { reason: "call requested", summary: "Call requested for tomorrow at 10:00. The buyer did not say what they want to cover.", suggested_reply: "" }),
+    say("Done. Someone from the team will get back to you to confirm the time. Thanks, goodbye."),
   ],
   says_stop: [
     // The engine hears the opt-out in code and asks for the fixed reply.

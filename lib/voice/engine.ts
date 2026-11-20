@@ -599,7 +599,14 @@ export class VoiceEngine {
       }
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
       if (name === "record_opt_out") this.afterOptOut();
-      if (name === "hand_off_to_human") this.endSoon("handoff");
+      if (name === "hand_off_to_human") {
+        // The conversation is now held by the team and this call ends after the agent's last sentence.
+        forModel = {
+          ...r.result,
+          message: "Done: the team takes over and this call ends now. Say in one short sentence that someone from the team will get back to them (to confirm the time, if a call was requested), then say goodbye. Do not say the call continues or that someone will join it, and do not continue selling.",
+        };
+        this.endSoon("handoff");
+      }
     }
     this.conn?.sendToolResult(callId, name, forModel);
     turn.awaitingContinuation = true;

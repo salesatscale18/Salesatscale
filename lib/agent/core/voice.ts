@@ -73,6 +73,57 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
     to: "- Introduce yourself once, in your opening line. Never introduce yourself again, unless the buyer asks who you are.",
   },
   { from: "- One value point per message.", to: "- One value point per turn." },
+  { from: 'Example, to "kk": "Thanks. I\'ll confirm here as soon as the order goes through."', to: 'Example, to "okay": "Thanks. I\'ll confirm in the chat as soon as the order goes through."' },
+  { from: "do not ask it again in the next messages.", to: "do not ask it again in the next turns." },
+  // The shared objection method (lib/agent/core/design.ts objectionMethod).
+  { from: "- Find the real objection. One question, in the same message as the acknowledgement.", to: "- Find the real objection. One question, in the same turn as the acknowledgement." },
+  { from: "Every turn, read the buyer's last message before choosing a step.", to: "Every turn, listen to what the buyer just said before choosing a step." },
+  {
+    from: "- Call with a person. Framed as a help, with a proposed time and a link to choose another.",
+    to: "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. Never read a link aloud.",
+  },
+  {
+    from: "This hands the conversation to the team.",
+    to: "This hands the conversation to the team and ends this call: say that someone from the team will get back to them to confirm the time, then say goodbye.",
+  },
+];
+
+/**
+ * The default play cards (lib/agent/core/plays.ts) as a call reads them. A
+ * seller's own card replaces a default one and stays as written, so every
+ * entry is optional. Also applied to the "Open objection" block, which quotes
+ * the card (voiceStageText).
+ */
+export const PLAYS_VOICE: readonly VoiceReplacement[] = [
+  { from: "End with one question that keeps the chat going.", to: "End with one question that keeps the conversation going.", optional: true },
+  {
+    from: "send a real approval request to the team, say you have asked, and keep the chat going.",
+    to: "send a real approval request to the team, say you have asked, and keep the conversation going; do not end the call because of it.",
+    optional: true,
+  },
+  {
+    from: "then write a short summary for them (what it solves, what it costs, the next step) and offer to answer their questions here.",
+    to: "then sum it up for them in two or three short sentences (what it solves, what it costs, the next step) and offer to answer their questions in the chat or on a short call.",
+    optional: true,
+  },
+  {
+    from: "Send the one approved item that fits, or a short summary written for that reader.",
+    to: "Give the main points in a short spoken summary for that reader, and offer to continue in the chat for anything they want to read later. Never read a link aloud.",
+    optional: true,
+  },
+  {
+    from: "If they ask again, or do not want to say: book the call. Propose a time, give the link to choose another, and say what the person will have ready.",
+    to: "If they ask again, or do not want to say: book the call. Propose a time, ask which time suits them if that one does not (never read a link aloud), and say what the person will have ready.",
+    optional: true,
+  },
+  {
+    from: "Keep answering until the call. Do not pause the chat.",
+    to: "Keep answering until the call is booked. Booking it ends this call: say someone from the team will get back to them to confirm the time.",
+    optional: true,
+  },
+  { from: "In the same message, promise the outcome", to: "In the same turn, promise the outcome", optional: true },
+  { from: "never pause the chat only because of one open question.", to: "never stop the conversation or end the call only because of one open question.", optional: true },
+  { from: "Offer to answer that person's questions here, or to include them in a short call.", to: "Offer to answer that person's questions in the chat, or to include them in a short call.", optional: true },
 ];
 
 /** lib/agent/prompt.ts stableSystemPrompt (the parts outside the core design). */
@@ -82,8 +133,10 @@ export const STABLE_PROMPT_VOICE: readonly VoiceReplacement[] = [
   { from: "do not ask for it in chat, unless send_order_form is refused", to: "do not ask for it by voice, unless send_order_form is refused" },
   { from: "- Never ask for or accept payment card details in chat. Payment happens on a secure page.", to: "- Never ask for or accept payment card details on the call. Payment happens on a secure page." },
   { from: "call record_opt_out at once, then send only the reply it gives you.", to: "call record_opt_out at once, then say only the reply it gives you." },
-  // Default play cards (a seller's own card is left as written).
-  { from: "End with one question that keeps the chat going.", to: "End with one question that keeps the conversation going.", optional: true },
+  // The plays' intro (lib/agent/core/design.ts playsText).
+  { from: 'When the buyer\'s message matches a "When",', to: 'When what the buyer says matches a "When",' },
+  // Default play cards (a seller's own card is left as written, so these are optional).
+  ...PLAYS_VOICE,
 ];
 
 /** The stage block (lib/agent/core/stage.ts), in the per-turn context and in update_deal_state results. */
@@ -101,9 +154,17 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
   },
   { from: "Do: this is your first message.", to: "Do: this is your first turn.", optional: true },
   { from: "the buyer ends the chat.", to: "the buyer ends the call.", optional: true },
+  { from: "in the next messages", to: "in the next turns", optional: true },
+  { from: "reply once that you will confirm here when the order goes through", to: "say once that you will confirm in the chat when the order goes through", optional: true },
+  // The "Open objection" block quotes the card's steps.
+  ...PLAYS_VOICE,
 ];
 
-/** The stage block as a call reads it. */
+/**
+ * The stage block, and the rest of the per-turn context (the "Open objection"
+ * block quotes a card), as a call reads it. Every entry is optional, and none
+ * of them matches its own result, so applying it twice changes nothing.
+ */
 export function voiceStageText(instruction: string): string {
   return applyVoiceReplacements(instruction, STAGE_VOICE, "stage");
 }
@@ -123,7 +184,11 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
       ? '- Before a tool that takes time, say a short filler first, for example "One moment, I\'m checking that."'
       : "- Do not announce your checks; just answer when you have the result.",
     "- If the buyer interrupts you, stop and answer what they said.",
-    "- If the buyer asks for a person: say someone from the team will get back to them, then call hand_off_to_human.",
+    "- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example \"Which is closest: the price, whether it fits, or the timing?\" One short sentence and one question per turn.",
+    "- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that \"Open objection\" shows as used.",
+    "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found the team already sees the question: do not say you passed it on, and never say you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have, and then propose a short call with a person.",
+    "- If the buyer asks for a person, follow the card \"The buyer asks for a person\": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time, then call hand_off_to_human with reason \"call requested\" and, in the summary, the time and what the person should have ready. Then say someone from the team will get back to them to confirm the time, and say goodbye: the call ends there.",
+    "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
     "- If the buyer says stop or asks not to be contacted: confirm, call record_opt_out, and say only the reply it gives you.",
     "- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.",
     "- Near the time limit, when the system tells you, say the call is about to end and offer to continue in the chat.",
