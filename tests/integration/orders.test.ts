@@ -84,7 +84,9 @@ describe("order forms, signatures and payments", () => {
     expect(r.url).toMatch(/\/f\/[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$/);
     expect(r.form.snapshot).toMatchObject({ oneTime: { totalMinor: 486_000 }, recurring: { totalMinor: 18_000 }, legal: [{ key: "sales_terms", version: 2 }], prefill: { company_name: "Rina's Kitchen", signatory_name: "Rina Cohen" } });
     expect(formIdFromToken(r.token)).toBe(r.form.id);
-    expect(formIdFromToken(r.token.slice(0, -2) + "AA")).toBeNull();
+    // Always a real change: if the token already ends in "AA", tamper with "BB" instead (else the test fails ~1 in 4,000 runs).
+    const tail = r.token.endsWith("AA") ? "BB" : "AA";
+    expect(formIdFromToken(r.token.slice(0, -2) + tail)).toBeNull();
     expect(await loadForm(db, "nope")).toBeNull();
     const view = await loadForm(db, r.token);
     expect(view?.state).toBe("open");
