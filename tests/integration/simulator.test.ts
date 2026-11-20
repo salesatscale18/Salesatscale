@@ -413,7 +413,7 @@ describe("Buyer simulator", () => {
     expect(tw.sent).toEqual([]);
   });
 
-  it("an existing lead can rehearse on a separate simulator conversation", async () => {
+  it("an existing (real) lead's chat runs on its own web chat channel, separate from WhatsApp", async () => {
     const res = await upsertLead(db, acc, actor(), {
       fullName: "Real Lead", company: null, email: null, phone: "+972501119999", language: "en", sourceLabel: null, sourceRef: null,
       consent: { wording: "ok", source: "Form", capturedAt: new Date(), ip: null, pageUrl: null },
@@ -426,8 +426,9 @@ describe("Buyer simulator", () => {
     const r = await receiveSimulatorInbound(db, await ctxFor(link!.token), "hi", randomUUID());
     if (r.kind !== "stored") throw new Error(r.kind);
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, r.conversationId));
-    expect(conv.channel).toBe("simulator");
-    // The real lead's WhatsApp opener is unaffected: the simulator chat is not a WhatsApp conversation.
+    // Reach RA: a real lead's web chat is "chat"; "simulator" is only for simulated buyers.
+    expect(conv.channel).toBe("chat");
+    // The real lead's WhatsApp opener is unaffected: the web chat is not a WhatsApp conversation.
     expect((await openerFacts(db, tw, acc, res.lead.id))?.refusal).not.toBe("already_started");
   });
 

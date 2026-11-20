@@ -1543,8 +1543,8 @@ label.st-voice__row { cursor: pointer; }
   color: var(--ink-muted); font-size: 13px; line-height: 19px; }
 .sas-channel-hint > .sas-ico { width: 15px; height: 15px; flex: none; margin-block-start: 2px; }
 @media (max-width: 560px) {
-  .sas-channel-row { flex-wrap: wrap; }
-  .sas-channel-row__side { order: -1; margin-inline-start: auto; }
+  .sas-channel-row { gap: 10px; padding: 14px 12px; }
+  .sas-channel-row__icon { display: none; }
   .sas-channel-fields, .sas-channel-fields--wide { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .sas-channel-fields dd { margin-block-end: 8px; }
 }

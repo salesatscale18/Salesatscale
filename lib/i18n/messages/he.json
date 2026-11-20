@@ -368,6 +368,5 @@
   "buyer.sms_stop.keep": "להמשיך לקבל",
   "buyer.sms_stop.done_title": "הודעות SMS הופסקו",
   "buyer.sms_stop.done_hint": "הצ׳אט נשאר פתוח. כדי לקבל שוב הודעות SMS, אפשר להפעיל אותן מתפריט הצ׳אט.",
-  "buyer.sms_stop.open_chat": "פתיחת הצ׳אט",
-  "buyer.consent_line": "בשליחה, את/ה מסכים/ה ש-{seller} תיצור קשר בנוגע לפנייה ב-SMS, וואטסאפ או מייל, גם בשעה שתבקש/י. אפשר להפסיק בכל עת."
+  "buyer.sms_stop.open_chat": "פתיחת הצ׳אט"
 }

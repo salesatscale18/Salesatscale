@@ -30,6 +30,8 @@ import { smsEntries } from "@/lib/sms/thread";
 import { stopTokenFor } from "@/lib/sms/token";
 import { MockSmsTransport } from "@/lib/sms/transport";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { consentLine } from "@/lib/leads/consent-line";
+import { CONSENT_WORDING_DEFAULT } from "@/lib/leads/rules";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
 vi.mock("@/lib/auth/account", () => ({
@@ -360,6 +362,12 @@ describe("Reach RA: web chat for real leads and SMS on the outbound paths", () =
     await db.update(conversations).set({ createdAt: old }).where(eq(conversations.leadId, lead.id));
     await db.update(messages).set({ createdAt: old }).where(and(eq(messages.accountId, acc)));
     expect((await chatLinkStatus(db, acc, lead.id))?.expired).toBe(false);
+  });
+
+  it("the lead form consent line names SMS, in English and Hebrew (board text)", () => {
+    expect(consentLine("en", "Polar Demo")).toBe("By sending, you agree that Polar Demo may contact you about your request by SMS, WhatsApp or email, including at a time you ask for. You can stop anytime.");
+    expect(consentLine("he", "Polar Demo")).toContain("ש-Polar Demo תיצור קשר בנוגע לפנייה ב-SMS");
+    expect(CONSENT_WORDING_DEFAULT).toContain("SMS");
   });
 
   it("thread SMS entries: delivered, test mode, not delivered with the reason, not sent; quiet refusals hidden", () => {

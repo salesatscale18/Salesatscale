@@ -3469,7 +3469,6 @@
   "buyer.sms_stop.done_title": "Text messages stopped",
   "buyer.sms_stop.done_hint": "Your chat stays open. To get SMS again, turn them back on from the chat menu.",
   "buyer.sms_stop.open_chat": "Open the chat",
-  "buyer.consent_line": "By sending, you agree that {seller} may contact you about your request by SMS, WhatsApp or email, including at a time you ask for. You can stop anytime.",
   "conv.who.buyer": "The buyer",
   "conv.channel.chat": "Web chat",
   "conv.chat_hint": "Shown in the buyer's chat. Send them the chat link by SMS from the lead card if they are away.",

@@ -21,7 +21,7 @@ import { InviteUserForm, RenewInvite } from "./users";
 import { SampleCheck } from "./sample-check";
 import { WhatsAppSection } from "./whatsapp";
 import { ChannelsSection } from "./channels";
-import { translator } from "@/lib/i18n";
+import { consentLine } from "@/lib/leads/consent-line";
 import { SimulationSection } from "./simulation";
 import { VoiceSection } from "./voice";
 import { voiceMode } from "@/lib/voice/settings";
@@ -326,7 +326,7 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
             </div>
             {(["en", "he"] as const).map((lang) => {
               const seller = account.tradeNameLocal?.[lang]?.trim() || account.tradeName;
-              const line = translator(lang)("buyer.consent_line", { seller });
+              const line = consentLine(lang, seller);
               return (
                 <div key={lang} className="sas-stack-2" style={{ gap: 6 }}>
                   <span className="sas-small">{t(`lang.${lang}`)}</span>
