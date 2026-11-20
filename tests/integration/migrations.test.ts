@@ -32,31 +32,44 @@ describe("migrations", () => {
   });
 });
 
-describe("migration 0018/0019: buyer calls on by default", () => {
-  it("new accounts default to on, and 0019 turns it on for the accounts that existed before", async () => {
-    // The migrations up to 0018 only (a copy of ./drizzle with the journal cut there), then an account saved with it off.
+describe("migration 0018: buyer calls as an opt-out", () => {
+  it("accounts saved before 0018 (even with the old switch off) and new accounts have buyer calls on; it can be turned off", async () => {
+    // The migrations up to 0017 only (a copy of ./drizzle with the journal cut there), then accounts saved in that shape.
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mig-"));
     fs.cpSync("drizzle", dir, { recursive: true });
     const journalPath = path.join(dir, "meta", "_journal.json");
     const journal = JSON.parse(fs.readFileSync(journalPath, "utf8")) as { entries: { idx: number; tag: string }[] };
-    expect(journal.entries.map((e) => e.tag)).toContain("0019_voice_buyer_calls_on");
-    fs.writeFileSync(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((e) => e.idx <= 18) }));
+    expect(journal.entries.map((e) => e.tag)).toContain("0018_voice_buyer_calls_off");
+    fs.writeFileSync(journalPath, JSON.stringify({ ...journal, entries: journal.entries.filter((e) => e.idx <= 17) }));
     const client = new PGlite();
     const db = drizzle({ client, schema });
     try {
       await migrate(db, { migrationsFolder: dir });
-      const base = { tradeName: "T", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCapMinor: 10_000 };
-      const [before] = await db.insert(sellerAccounts).values({ ...base, slug: "before-0019", voiceBuyerCalls: false }).returning();
-      expect(before.voiceBuyerCalls).toBe(false);
-      // The full set: 0019 runs once and sets it on for that account.
+      // Raw inserts in the test database: the current schema has a column that 0017 does not.
+      const insert = async (slug: string, buyerCalls: boolean) =>
+        (
+          await client.query<{ id: string }>(
+            `INSERT INTO seller_accounts (slug, trade_name, market, languages, timezone, currency, plan, monthly_spend_cap_minor, voice_buyer_calls)
+             VALUES ($1, 'T', 'IL', '{en}', 'Asia/Jerusalem', 'ILS', 'pilot', 10000, $2) RETURNING id`,
+            [slug, buyerCalls],
+          )
+        ).rows[0].id;
+      const existing = [await insert("old-off", false), await insert("old-on", true)];
+      // The full set: 0018 drops the old column and adds the opt-out (default false = buyer calls on).
       await migrate(db, { migrationsFolder: "drizzle" });
-      const [after] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, before.id));
-      expect(after.voiceBuyerCalls).toBe(true);
-      // The column's default (0018): a new account is on without saying so; it can still be turned off.
-      const [fresh] = await db.insert(sellerAccounts).values({ ...base, slug: "after-0019" }).returning();
-      expect(fresh.voiceBuyerCalls).toBe(true);
-      const [off] = await db.update(sellerAccounts).set({ voiceBuyerCalls: false }).where(eq(sellerAccounts.id, fresh.id)).returning();
-      expect(off.voiceBuyerCalls).toBe(false);
+      for (const id of existing) {
+        const [row] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
+        expect(row.voiceBuyerCallsOff).toBe(false);
+      }
+      const cols = await client.query<{ column_name: string }>(
+        "SELECT column_name FROM information_schema.columns WHERE table_name = 'seller_accounts' AND column_name LIKE 'voice_buyer%'",
+      );
+      expect(cols.rows.map((r) => r.column_name)).toEqual(["voice_buyer_calls_off"]);
+      const base = { tradeName: "T", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCapMinor: 10_000 };
+      const [fresh] = await db.insert(sellerAccounts).values({ ...base, slug: "after-0018" }).returning();
+      expect(fresh.voiceBuyerCallsOff).toBe(false);
+      const [off] = await db.update(sellerAccounts).set({ voiceBuyerCallsOff: true }).where(eq(sellerAccounts.id, fresh.id)).returning();
+      expect(off.voiceBuyerCallsOff).toBe(true);
     } finally {
       await client.close();
       fs.rmSync(dir, { recursive: true, force: true });

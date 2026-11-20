@@ -116,7 +116,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
   // Buyers (release 2): an English chat, and a Hebrew page whose conversation is in English (the call bar in RTL).
   const ALWAYS = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
   let gateEnv: Record<string, string | undefined> = ENV;
-  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCalls: true, allowSimulatedBuyers: true, contactHours: ALWAYS })
+  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCallsOff: false, allowSimulatedBuyers: true, contactHours: ALWAYS })
     .where(eq(sellerAccounts.id, acc));
   await publishDraftVersion(db, { userId: me.id, actingAs: false }, acc);
   await ensureDraftVersion(db, acc);
@@ -148,10 +148,10 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         // Harness only: turn one gate off (or reset all) to show why the button is disabled on a simulated chat.
         const which = url.searchParams.get("off") ?? "";
         const convIds = Object.values(buyers).map((b) => b.conversationId);
-        await db.update(sellerAccounts).set({ voiceBuyerCalls: true, status: "live", monthlySpendCapMinor: 10_000, contactHours: ALWAYS }).where(eq(sellerAccounts.id, acc));
+        await db.update(sellerAccounts).set({ voiceBuyerCallsOff: false, status: "live", monthlySpendCapMinor: 10_000, contactHours: ALWAYS }).where(eq(sellerAccounts.id, acc));
         for (const id of convIds) await db.update(conversations).set({ status: "open", language: "en" }).where(eq(conversations.id, id));
         gateEnv = ENV;
-        if (which === "buyer_calls_off") await db.update(sellerAccounts).set({ voiceBuyerCalls: false }).where(eq(sellerAccounts.id, acc));
+        if (which === "buyer_calls_off") await db.update(sellerAccounts).set({ voiceBuyerCallsOff: true }).where(eq(sellerAccounts.id, acc));
         if (which === "account_not_live") await db.update(sellerAccounts).set({ status: "paused" }).where(eq(sellerAccounts.id, acc));
         if (which === "not_english") for (const id of convIds) await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, id));
         if (which === "not_agent") for (const id of convIds) await db.update(conversations).set({ status: "human" }).where(eq(conversations.id, id));

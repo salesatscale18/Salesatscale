@@ -24,7 +24,7 @@ const Row = ({ title, hint, children, id }: { title: string; hint: string; child
 
 /**
  * Settings › Voice (board VoiceSettings), shown only while voice calls are on
- * for the platform: "Let buyers call the agent" (the account's voiceBuyerCalls,
+ * for the platform: "Let buyers call the agent" (checked unless the account's voiceBuyerCallsOff,
  * the only setting here), and read-only what the call uses and what buyers
  * are told. Recordings stay off (transcript only). This month: the paid buyer
  * calls (live model only).
@@ -53,7 +53,7 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
               <b>{t("settings.voice.buyer_calls")}</b>
               <span className="sas-small" id="voice-calls-hint">{t("settings.voice.buyer_calls_hint")}</span>
             </span>
-            <input type="checkbox" role="switch" className="sas-switch" name="buyerCalls" defaultChecked={account.voiceBuyerCalls} aria-describedby="voice-calls-hint" data-voice-buyer-calls="" />
+            <input type="checkbox" role="switch" className="sas-switch" name="buyerCalls" defaultChecked={!account.voiceBuyerCallsOff} aria-describedby="voice-calls-hint" data-voice-buyer-calls="" />
           </label>
           <Row id="voice-lang" title={t("settings.voice.language")} hint={t("settings.voice.language_hint")}><span className="sas-pill">{t("settings.voice.english")}</span></Row>
           <Row id="voice-voice" title={t("settings.voice.voice")} hint={t("settings.voice.voice_hint")}>

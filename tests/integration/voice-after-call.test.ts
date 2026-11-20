@@ -117,7 +117,7 @@ beforeAll(async () => {
   await seedPricing(db, id, [{ sku: "SEAT-M", oneTime: 10_000 }], { userId: me.id });
   await ensureDraftVersion(db, id);
   await publishDraftVersion(db, { userId: me.id, actingAs: false }, id);
-  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCalls: true, allowSimulatedBuyers: true, contactHours: ALWAYS }).where(eq(sellerAccounts.id, id));
+  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCallsOff: false, allowSimulatedBuyers: true, contactHours: ALWAYS }).where(eq(sellerAccounts.id, id));
   [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
 });
 afterAll(async () => tdb.close());

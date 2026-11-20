@@ -4,21 +4,23 @@
  * Server-only.
  *
  * "Switch to voice" is offered only when every gate holds: voice is on; the account
- * lets buyers call (`voiceBuyerCalls`, on by default) and is live; under the
+ * lets buyers call (on for every account unless a seller turned it off:
+ * `voiceBuyerCallsOff`) and is live; under the
  * spend cap and the platform budget
  * (live mode); the chat's conversation is open and held by the agent (not a
  * person, not closed, the buyer not opted out); and it is in English (calls
  * are English only). Contact hours do not apply: a buyer can chat or talk at
  * any hour (they limit only what the agent starts). A real buyer never sees why it is not there; on a
- * simulated chat (the seller's own test link) the button shows disabled with
- * the reason (buyerVoiceReason), so the tester can fix it.
+ * simulated chat (the seller's own test link), or when the person viewing the chat is signed in as a
+ * member of the seller's account or as a platform admin (lib/voice/chat-viewer.ts, checked on the
+ * server), the button shows disabled with the reason (buyerVoiceView), so they can fix it.
  *
  * A call joins the SAME conversation (its channel stays): the engine sees
  * the earlier chat and continues it (lib/voice/instructions.ts, continuing).
  */
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { agentVersions, consentRecords, conversations, leads, sellerAccounts, voiceSessions, type Conversation } from "@/db/schema";
+import { accountMembers, agentVersions, consentRecords, conversations, leads, sellerAccounts, voiceSessions, type Conversation, type User } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
@@ -95,7 +97,7 @@ export async function buyerVoiceGate(db: Db, ctx: Pick<ChatContext, "lead" | "ac
     db.select().from(leads).where(and(eq(leads.id, ctx.lead.id), eq(leads.accountId, ctx.account.id))),
   ]);
   if (!account || !lead) return { ok: false, reason: "no_conversation" };
-  if (!account.voiceBuyerCalls) return { ok: false, reason: "buyer_calls_off" };
+  if (account.voiceBuyerCallsOff) return { ok: false, reason: "buyer_calls_off" };
   // A simulated buyer counts a setting-up account as live (as for its chat); a paused account never is.
   const simulated = isSimulatedLead(lead);
   const status = simulated && account.status === "setting_up" ? "live" : account.status;
@@ -148,14 +150,38 @@ export async function startBuyerVoiceCall(
   };
 }
 
-/** What the chat page gets about voice: available, or (simulated chats only) why not. */
+/** What the chat page gets about voice: available, or (to a tester or the seller's staff only) why not. */
 export type BuyerVoiceState = { available: boolean; reason?: BuyerVoiceBlock };
 
-/** The page's voice state from a gate: reasons only for a simulated chat (a real buyer just sees no button). */
-export function buyerVoiceState(gate: BuyerVoiceGate, lead: Parameters<typeof isSimulatedLead>[0]): BuyerVoiceState {
+/**
+ * The page's voice state from a gate. The reason is shown on a simulated chat, or when `staffViewer`
+ * (the viewer is signed in as a member of the account or a platform admin); a real buyer just sees no button.
+ */
+export function buyerVoiceState(gate: BuyerVoiceGate, lead: Parameters<typeof isSimulatedLead>[0], staffViewer = false): BuyerVoiceState {
   if (gate.ok) return { available: true };
-  if (!isSimulatedLead(lead) || !SHOWN_BLOCKS.has(gate.reason)) return { available: false };
+  if (!SHOWN_BLOCKS.has(gate.reason) || (!staffViewer && !isSimulatedLead(lead))) return { available: false };
   return { available: false, reason: gate.reason };
+}
+
+/**
+ * buyerVoiceState for a request: asks `isStaffViewer` (the session check, lib/voice/chat-viewer.ts)
+ * only when its answer changes what is shown (a refused gate with a shown reason, on a real buyer's
+ * chat), so an available call or a simulated chat costs nothing extra.
+ */
+export async function buyerVoiceView(
+  gate: BuyerVoiceGate, lead: Parameters<typeof isSimulatedLead>[0], isStaffViewer: () => Promise<boolean>,
+): Promise<BuyerVoiceState> {
+  const needsViewer = !gate.ok && SHOWN_BLOCKS.has(gate.reason) && !isSimulatedLead(lead);
+  return buyerVoiceState(gate, lead, needsViewer ? await isStaffViewer() : false);
+}
+
+/** Whether a signed-in user may see why voice is off on this account's chats: a member of it, or a platform admin. */
+export async function seesBuyerVoiceReasons(db: Db, user: Pick<User, "id" | "role"> | null, accountId: string): Promise<boolean> {
+  if (!user) return false;
+  if (user.role === "super_admin") return true;
+  const [m] = await db.select({ userId: accountMembers.userId }).from(accountMembers)
+    .where(and(eq(accountMembers.accountId, accountId), eq(accountMembers.userId, user.id))).limit(1);
+  return !!m;
 }
 
 /**
@@ -189,8 +215,9 @@ export async function buyerCallRows(db: Db, accountId: string, conversationIds: 
 
 /** Settings › Voice: "Let buyers call the agent". Audited. The caller checks access and the voice mode. */
 export async function setVoiceBuyerCalls(db: Db, actor: Actor, accountId: string, on: boolean): Promise<void> {
-  await db.update(sellerAccounts).set({ voiceBuyerCalls: on }).where(eq(sellerAccounts.id, accountId));
-  await writeAudit(db, actor, { accountId, action: "voice.buyer_calls_changed", targetType: "account", targetId: accountId, details: { voiceBuyerCalls: on } });
+  // Stored as an opt-out: on = not turned off.
+  await db.update(sellerAccounts).set({ voiceBuyerCallsOff: !on }).where(eq(sellerAccounts.id, accountId));
+  await writeAudit(db, actor, { accountId, action: "voice.buyer_calls_changed", targetType: "account", targetId: accountId, details: { buyerCalls: on, voiceBuyerCallsOff: !on } });
 }
 
 export type VoiceMonth = { calls: number; minutes: number; costMicros: number };

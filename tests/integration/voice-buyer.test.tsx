@@ -11,12 +11,18 @@ import { EventEmitter } from "node:events";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { and, eq } from "drizzle-orm";
-import { auditLog, consentRecords, conversations, leads, messages, sellerAccounts, simulatorLinks, users, voiceSessions, type SellerAccount, type User } from "@/db/schema";
+import { accountMembers, auditLog, consentRecords, conversations, leads, messages, sellerAccounts, simulatorLinks, users, voiceSessions, type SellerAccount, type User } from "@/db/schema";
 import type { ContactHours } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
-const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown, clerkId: null as string | null, clerkCalls: 0 }));
+// The chat routes read the viewer's Clerk session (lib/voice/chat-viewer.ts): signed out unless a test signs in.
+vi.mock("@clerk/nextjs/server", () => ({
+  auth: async () => { holder.clerkCalls++; return { userId: holder.clerkId }; },
+  currentUser: async () => { throw new Error("no Clerk API call in tests"); },
+}));
+vi.mock("@/db", () => ({ get db() { return holder.db; } }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
 vi.mock("@/lib/auth/account", () => ({
   get appDb() { return holder.db; },
@@ -95,7 +101,7 @@ beforeAll(async () => {
   await saveLegalSection(db, id, me.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "Terms" });
   await ensureDraftVersion(db, id);
   await publishDraftVersion(db, { userId: me.id, actingAs: false }, id);
-  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCalls: true, allowSimulatedBuyers: true, contactHours: ALWAYS }).where(eq(sellerAccounts.id, id));
+  await db.update(sellerAccounts).set({ status: "live", voiceBuyerCallsOff: false, allowSimulatedBuyers: true, contactHours: ALWAYS }).where(eq(sellerAccounts.id, id));
   [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, id));
   holder.access = { account, user: me, actingAs: false, role: "seller_admin" };
 });
@@ -111,9 +117,9 @@ describe("the gates", () => {
     expect(await gate({})).toEqual({ ok: false, reason: "voice_off" });
 
     const set = (o: Partial<SellerAccount>) => db.update(sellerAccounts).set(o).where(eq(sellerAccounts.id, account.id));
-    await set({ voiceBuyerCalls: false });
+    await set({ voiceBuyerCallsOff: true });
     expect(await gate()).toEqual({ ok: false, reason: "buyer_calls_off" });
-    await set({ voiceBuyerCalls: true, status: "paused" });
+    await set({ voiceBuyerCallsOff: false, status: "paused" });
     expect(await gate()).toEqual({ ok: false, reason: "account_not_live" });
     await set({ status: "live", contactHours: null });
     // Contact hours do not limit a buyer's call: Saturday (hours off) and the middle of the night both work.
@@ -151,9 +157,9 @@ describe("why the button is off (a simulated chat's tester sees it; a real buyer
     const set = (o: Partial<SellerAccount>) => db.update(sellerAccounts).set(o).where(eq(sellerAccounts.id, account.id));
     expect(await state()).toEqual({ available: true });
     expect(await state({})).toEqual({ available: false }); // voice off for the platform: no button at all
-    await set({ voiceBuyerCalls: false });
+    await set({ voiceBuyerCallsOff: true });
     expect(await state()).toEqual({ available: false, reason: "buyer_calls_off" });
-    await set({ voiceBuyerCalls: true, status: "paused" });
+    await set({ voiceBuyerCallsOff: false, status: "paused" });
     expect(await state()).toEqual({ available: false, reason: "account_not_live" });
     // A setting-up account counts as live for a simulated chat.
     await set({ status: "setting_up" });
@@ -177,10 +183,10 @@ describe("why the button is off (a simulated chat's tester sees it; a real buyer
     expect(isEnglish("eng")).toBe(false);
     expect(isEnglish(null)).toBe(false);
     // A real (non-simulated) buyer is never told why.
-    await set({ voiceBuyerCalls: false });
+    await set({ voiceBuyerCallsOff: true });
     const real = { ...lead, buyerRef: null, phone: "+972501234567" };
     expect(buyerVoiceState(await buyerVoiceGate(db, ctx, { env: SCRIPTED, now: IN_HOURS }), real)).toEqual({ available: false });
-    await set({ voiceBuyerCalls: true });
+    await set({ voiceBuyerCallsOff: false });
   });
 
   it("the server refuses with the same reason (simulated chat), and the page re-checks on every poll", async () => {
@@ -188,13 +194,76 @@ describe("why the button is off (a simulated chat's tester sees it; a real buyer
     const b = await newBuyer("Poll Check");
     const get = async () => (await messagesRoute.GET(new Request(`https://app.example.com/chat/${b.token}/messages`), { params: Promise.resolve({ token: b.token }) })).json() as Promise<{ voice: unknown }>;
     expect((await get()).voice).toEqual({ available: true });
-    await db.update(sellerAccounts).set({ voiceBuyerCalls: false }).where(eq(sellerAccounts.id, account.id));
+    await db.update(sellerAccounts).set({ voiceBuyerCallsOff: true }).where(eq(sellerAccounts.id, account.id));
     expect((await get()).voice).toEqual({ available: false, reason: "buyer_calls_off" });
     const refused = await post("voice", b.token, {}, voiceRoute);
     expect(refused.status).toBe(409);
     expect(await refused.json()).toEqual({ ok: false, reason: "unavailable", gate: "buyer_calls_off" });
-    await db.update(sellerAccounts).set({ voiceBuyerCalls: true }).where(eq(sellerAccounts.id, account.id));
+    await db.update(sellerAccounts).set({ voiceBuyerCallsOff: false }).where(eq(sellerAccounts.id, account.id));
     expect((await get()).voice).toEqual({ available: true });
+  });
+});
+
+describe("why the button is off on a real buyer's chat: only the seller's signed-in staff or a platform admin see it", () => {
+  it("anonymous: nothing; member of the account: the reason; member of another account: nothing; platform admin: the reason", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("SUPER_ADMIN_EMAILS", "boss@p.test");
+    const b = await newBuyer("Real Buyer");
+    // A real buyer's chat (not a simulated lead), the seller's buyer calls off.
+    await db.update(leads).set({ buyerRef: null, phone: "+972501234567" }).where(eq(leads.id, b.leadId));
+    const ctx = await ctxOf(b);
+    const { isSimulatedLead } = await import("@/lib/simulator/rules");
+    expect(isSimulatedLead(ctx.lead)).toBe(false);
+    await db.update(sellerAccounts).set({ voiceBuyerCallsOff: true }).where(eq(sellerAccounts.id, account.id));
+    // A member of this account, and a member of another account only.
+    const [seller] = await db.insert(users).values({ clerkId: "clerk_seller", email: "seller@x.test", role: "user" }).returning();
+    await db.insert(accountMembers).values({ accountId: account.id, userId: seller.id, role: "seller_admin" });
+    const [other] = await db.insert(users).values({ clerkId: "clerk_other", email: "other@x.test", role: "user" }).returning();
+    const p = parseCreateAccount({ tradeName: "Other Co", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "X", ownerEmail: "x@x.test" });
+    if (!p.ok) throw new Error();
+    const otherAccount = (await createAccount(db, { userId: other.id, actingAs: false }, p.value)).account;
+    await db.insert(accountMembers).values({ accountId: otherAccount.id, userId: other.id, role: "seller_admin", isOwner: true });
+    await db.insert(users).values({ clerkId: "clerk_boss", email: "boss@p.test", role: "super_admin" });
+    const get = async () => (await (await messagesRoute.GET(new Request(`https://app.example.com/chat/${b.token}/messages`), { params: Promise.resolve({ token: b.token }) })).json() as { voice: unknown }).voice;
+    const start = async () => (await post("voice", b.token, {}, voiceRoute)).json();
+    const { default: ChatPage } = await import("@/app/chat/[token]/page");
+    const pageWhy = async () => {
+      const html = renderToStaticMarkup(await ChatPage({ params: Promise.resolve({ token: b.token }) }));
+      return /data-voice-why="([a-z_]+)"/.exec(html)?.[1] ?? null;
+    };
+    try {
+      // Anonymous (a real buyer): no reason on the poll, the start or the page; only the session check ran.
+      holder.clerkId = null;
+      holder.clerkCalls = 0;
+      expect(await get()).toEqual({ available: false });
+      expect(await start()).toEqual({ ok: false, reason: "unavailable" });
+      expect(await pageWhy()).toBeNull();
+      expect(holder.clerkCalls).toBe(3);
+      // A member of this seller's account.
+      holder.clerkId = "clerk_seller";
+      expect(await get()).toEqual({ available: false, reason: "buyer_calls_off" });
+      expect(await start()).toEqual({ ok: false, reason: "unavailable", gate: "buyer_calls_off" });
+      expect(await pageWhy()).toBe("buyer_calls_off");
+      // A member of another account only.
+      holder.clerkId = "clerk_other";
+      expect(await get()).toEqual({ available: false });
+      expect(await start()).toEqual({ ok: false, reason: "unavailable" });
+      expect(await pageWhy()).toBeNull();
+      // A platform admin (super admin from SUPER_ADMIN_EMAILS), not a member.
+      holder.clerkId = "clerk_boss";
+      expect(await get()).toEqual({ available: false, reason: "buyer_calls_off" });
+      expect(await start()).toEqual({ ok: false, reason: "unavailable", gate: "buyer_calls_off" });
+      expect(await pageWhy()).toBe("buyer_calls_off");
+      // An available call never asks who is looking.
+      await db.update(sellerAccounts).set({ voiceBuyerCallsOff: false }).where(eq(sellerAccounts.id, account.id));
+      holder.clerkId = null;
+      holder.clerkCalls = 0;
+      expect(await get()).toEqual({ available: true });
+      expect(holder.clerkCalls).toBe(0);
+    } finally {
+      holder.clerkId = null;
+      await db.update(sellerAccounts).set({ voiceBuyerCallsOff: false }).where(eq(sellerAccounts.id, account.id));
+    }
   });
 });
 
@@ -398,13 +467,13 @@ describe("buyer calls are on by default", () => {
     const p = parseCreateAccount({ tradeName: "Fresh", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "f@x.test" });
     if (!p.ok) throw new Error();
     const fresh = (await createAccount(db, { userId: me.id, actingAs: false }, p.value)).account;
-    expect(fresh.voiceBuyerCalls).toBe(true);
+    expect(fresh.voiceBuyerCallsOff).toBe(false);
     const [admin] = await db.insert(users).values({ clerkId: "sa", email: "sa@p.test", firstName: "Sam", role: "super_admin" }).returning();
     const { createDemoAccount } = await import("@/lib/demo/seed");
     const demo = await createDemoAccount(db, { id: admin.id, role: "super_admin" }, { ownerEmail: "demo-owner@x.test" });
     if (!demo.ok) throw new Error("demo");
     const [row] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, demo.summary.accountId));
-    expect(row.voiceBuyerCalls).toBe(true);
+    expect(row.voiceBuyerCallsOff).toBe(false);
   });
 });
 
@@ -524,7 +593,7 @@ describe("Settings › Voice", () => {
     }
   });
 
-  it("the switch writes voiceBuyerCalls (audited) and does nothing while voice calls are off", async () => {
+  it("the switch writes voiceBuyerCallsOff (audited) and does nothing while voice calls are off", async () => {
     const form = (on: boolean) => {
       const f = new FormData();
       f.set("slug", account.slug);
@@ -534,14 +603,14 @@ describe("Settings › Voice", () => {
     vi.stubEnv("VOICE_REALTIME", "off");
     const e1 = await saveVoiceBuyerCallsAction(form(false)).catch((e: { url?: string }) => e);
     expect((e1 as { url?: string }).url).toBe(`/app/${account.slug}/settings`);
-    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCalls).toBe(true);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCallsOff).toBe(false);
     vi.stubEnv("VOICE_REALTIME", "scripted");
     const e2 = await saveVoiceBuyerCallsAction(form(false)).catch((e: { url?: string }) => e);
     expect((e2 as { url?: string }).url).toBe(`/app/${account.slug}/settings?section=voice&saved=voice`);
-    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCalls).toBe(false);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCallsOff).toBe(true);
     const audits = await db.select().from(auditLog).where(and(eq(auditLog.accountId, account.id), eq(auditLog.action, "voice.buyer_calls_changed")));
     expect(audits).toHaveLength(1);
     await saveVoiceBuyerCallsAction(form(true)).catch(() => undefined);
-    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCalls).toBe(true);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCallsOff).toBe(false);
   });
 });

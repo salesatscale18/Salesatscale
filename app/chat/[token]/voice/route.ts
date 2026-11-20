@@ -4,7 +4,8 @@
  *
  * POST → { ok: true, sessionId, ticket, wsUrl, maxSec, mode, firstInConversation }
  *   or { ok: false, reason: "unavailable" | "rate_limited" | "already_in_call" }. On a simulated
- *   chat (the seller's own test link) a refused gate also says which (`gate`, `hours`), as the page does;
+ *   chat (the seller's own test link), or for a viewer signed in as the seller's staff or a platform
+ *   admin (lib/voice/chat-viewer.ts), a refused gate also says which (`gate`), as the page does;
  *   a real buyer is never told why.
  *
  * Every gate is checked here, on the server (lib/voice/buyer.ts): the button
@@ -13,7 +14,8 @@
  */
 import { appDb } from "@/lib/auth/account";
 import { resolveChatLink } from "@/lib/simulator/service";
-import { buyerVoiceState, startBuyerVoiceCall } from "@/lib/voice/buyer";
+import { buyerVoiceView, startBuyerVoiceCall } from "@/lib/voice/buyer";
+import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { voiceSocketUrlFrom } from "@/lib/voice/ws-url";
 
@@ -29,7 +31,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   if (link.state === "expired") return json({ ok: false, reason: "expired" }, 410);
   const r = await startBuyerVoiceCall(appDb, link.ctx, token, { deadlineSec: deploymentCallLimitSec() });
   if (!r.ok) {
-    const shown = r.gate ? buyerVoiceState({ ok: false, reason: r.gate }, link.ctx.lead) : null;
+    const shown = r.gate ? await buyerVoiceView({ ok: false, reason: r.gate }, link.ctx.lead, () => chatViewerIsStaff(link.ctx.account.id)) : null;
     return json({ ok: false, reason: r.reason, ...(shown?.reason ? { gate: shown.reason } : {}) }, r.reason === "rate_limited" ? 429 : 409);
   }
   return json({ ok: true, sessionId: r.sessionId, ticket: r.ticket, mode: r.mode, maxSec: r.maxSec, firstInConversation: r.firstInConversation, wsUrl: voiceSocketUrlFrom(req.headers) });

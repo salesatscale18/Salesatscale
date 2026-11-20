@@ -43,7 +43,7 @@ export type CreateVoiceSessionResult =
  * sessions and stores a `pending` session with the hash of a fresh one-time
  * ticket (32 random bytes, base64url, valid TICKET_TTL_SEC). The ticket is
  * returned once, for the browser to open the socket with.
- * `userId` null = the buyer (release 2: needs the account's voiceBuyerCalls).
+ * `userId` null = the buyer (release 2: refused when the seller turned buyer calls off).
  */
 export async function createVoiceSession(
   db: Db,
@@ -62,7 +62,7 @@ export async function createVoiceSession(
   if (account.status === "paused") return { ok: false, reason: "account_paused" };
   if (conv.status === "closed") return { ok: false, reason: "conversation_closed" };
   if (conv.status === "human") return { ok: false, reason: "human_handling" };
-  if (!a.isTest && !account.voiceBuyerCalls) return { ok: false, reason: "buyer_calls_off" };
+  if (!a.isTest && account.voiceBuyerCallsOff) return { ok: false, reason: "buyer_calls_off" };
   if (mode === "live") {
     // Scripted calls cost nothing; a live call is refused at the cap like a new chat.
     if (await spendCapped(db, a.accountId, now)) return { ok: false, reason: "spend_cap" };

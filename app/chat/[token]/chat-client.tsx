@@ -105,7 +105,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const [calls, setCalls] = useState(initial.calls ?? []);
-  // "Switch to voice" (live voice): the server's gates, refreshed on every poll (with the reason on a simulated chat).
+  // "Switch to voice" (live voice): the server's gates, refreshed on every poll (with the reason on a simulated chat or for the seller's signed-in staff).
   const [voiceState, setVoiceState] = useState<BuyerVoiceState>(initial.voice ?? { available: false });
   // The buyer's first switch in this conversation: the bar says what they say appears as text.
   const [firstNote, setFirstNote] = useState(false);
@@ -273,7 +273,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
           return;
         }
         if (r.gate) {
-          // A simulated chat: the button turns disabled with the reason (the server said why).
+          // A simulated chat or the seller's staff: the button turns disabled with the reason (the server said why).
           c.cancel();
           setVoiceState({ available: false, reason: r.gate });
           return;
@@ -298,7 +298,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   useEffect(() => () => clientRef.current?.dispose(), []);
   const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && !barHidden;
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
-  // A simulated chat with a gate off: the button stays, disabled, with the reason under the composer.
+  // A gate off, and the server said why (a simulated chat, or the seller's signed-in staff): the button stays, disabled, with the reason under the composer.
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
     ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey) : null;
 

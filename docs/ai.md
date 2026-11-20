@@ -112,7 +112,7 @@ lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run o
   conversation messages with `voice_session_id`, `spoken_at_ms` and, for agent turns, `answer_ms`.
 - **Buyer calls** (release 2, `lib/voice/buyer.ts`): "Switch to voice" at the edge of the buyer chat's
   composer, a channel switch from text to voice and back (End reads "Back to text"), with no notice
-  in between. Offered only when every gate holds (voice on, the account's `voiceBuyerCalls` (on by default; Settings › Voice turns it off), account
+  in between. Offered only when every gate holds (voice on, buyer calls not turned off for the account (`voiceBuyerCallsOff`, an opt-out: on for every account unless a seller turns it off in Settings › Voice), account
   live (a simulated chat counts a setting-up account as live), under the spend cap and platform budget in live mode, the chat open
   and held by the agent, the conversation in English, any case or region). Contact hours do not apply: a buyer can chat or talk at any hour (they limit only what the agent starts). On a simulated chat a
   failed gate shows the button disabled with the reason; a real buyer sees no button. The chat token
