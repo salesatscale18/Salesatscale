@@ -1,20 +1,22 @@
 import { Button, StatusPill, buttonClass, Chip } from "@/components/sas/primitives";
-import { TextWithId } from "@/components/sas/id-text";
+import { TextWithId, quoteRef } from "@/components/sas/id-text";
 import { Icon } from "@/components/sas/icon";
+import { AutoSubmit } from "@/components/sas/auto-submit";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
-import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn, relativeTime } from "@/lib/format";
-import { countAwaitingApproval, countQuotes, displayQuoteStatus, getQuote, listQuotes, QUOTE_SORT_DEFAULT, QUOTE_SORT_KEYS, quoteTimezones, type QuoteSortKey, type QuoteTab } from "@/lib/quotes/service";
+import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn } from "@/lib/format";
+import { countQuotes, displayQuoteStatus, DOC_PERIODS, getQuote, listQuotes, parseDocPeriod, periodStart, QUOTE_SORT_DEFAULT, QUOTE_SORT_KEYS, quoteTimezones, type QuoteSortKey } from "@/lib/quotes/service";
+import { endsSoon, ORDER_PAY_CHIPS, orderPayChip, QUOTE_WHERE_CHIPS, quoteDocs, quoteWhere, shownFormStatus, type OrderPayChip, type QuoteWhere, type QuoteWhereChip } from "@/lib/quotes/where";
 import { parseSort, type TableSort } from "@/lib/domain/table-sort";
 import { SortHeader } from "@/components/sas/sort-header";
 import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
-import { catalogItems, catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
+import { catalogItems, catalogVersions, markets, orderForms, orders, leads, priceLists, users, type Lead } from "@/db/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
 import { approveQuoteAction, cancelQuoteAction, declineQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
-import { docStatusByQuote, formsForQuote, linkFor, listOrders, ORDER_SORT_DEFAULT, ORDER_SORT_KEYS, orderForQuote, orderLabel, payLinkOpen, type OrderSortKey } from "@/lib/orders/service";
+import { formsForQuote, linkFor, listOrders, ORDER_SORT_DEFAULT, ORDER_SORT_KEYS, orderForQuote, orderLabel, payLinkOpen, type OrderSortKey } from "@/lib/orders/service";
 import { SignedFormLinks } from "./signed-form-links";
 import { CopyButton } from "@/components/sas/copy-button";
 import { estimateDelivery, formatDeliveryShort } from "@/lib/delivery/eta";
@@ -25,10 +27,6 @@ import { MARKET_PARAM, marketSelection, marketWhere, switcherReturnTo } from "@/
 import type { DocMarketFilter } from "@/lib/quotes/service";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
-/** "2 h ago", "12 min ago"; "just now" and dates stay as they are (round-4 review E7). */
-function agoText(rel: string): string {
-  return / (min|h)$/.test(rel) ? t("orders.ago", { time: rel }) : rel;
-}
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Orders of real (non-test) leads in the chosen market, for the tab count; the list itself loads only on the Orders tab. */
 async function countOrders(accountId: string, market: DocMarketFilter) {
@@ -56,7 +54,22 @@ async function deliveryByForm(accountId: string, formIds: string[]) {
   return out;
 }
 
-/** Quotes and orders (P3.5, canvas: Orders). The order form and payment columns fill in P5. */
+/**
+ * The Lead cell of both lists (Quotes and orders V2): the name with its small
+ * language tag, the company under it. Names are isolated, so a Hebrew name keeps
+ * start alignment and never pulls the tag into its run. Local until the Leads
+ * lane's lead cell is shared (MVP unifies them at merge).
+ */
+function LeadCell({ lead }: { lead: Pick<Lead, "fullName" | "company" | "language"> }) {
+  return (
+    <span className="lqq-lead">
+      <span className="lqq-lead__name"><bdi>{lead.fullName}</bdi><span className="lqq-lang" lang="en">{lead.language.toUpperCase()}</span></span>
+      {lead.company ? <span className="lqq-lead__company"><bdi>{lead.company}</bdi></span> : null}
+    </span>
+  );
+}
+
+/** Quotes and orders V2 (Q-1, Q-2; canvas: QuotesOrdersV2). */
 export default async function OrdersPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
@@ -71,19 +84,33 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   // `market` stays on this page's links only when the URL has it (the stored choice covers the rest).
   const urlMarket = showMarket ? one(sp[MARKET_PARAM]) || undefined : undefined;
   const tabRaw = one(sp.tab);
-  const tab: QuoteTab | "orders" = tabRaw === "approval" ? "approval" : tabRaw === "orders" ? "orders" : "quotes";
+  const tab: "quotes" | "orders" = tabRaw === "orders" ? "orders" : "quotes";
+  // The old "Awaiting approval" tab is now a chip: its links (Overview, older bookmarks) open the chip.
+  const whereRaw = tabRaw === "approval" ? "awaiting_approval" : one(sp.where);
+  const where: QuoteWhereChip | null = (QUOTE_WHERE_CHIPS as readonly string[]).includes(whereRaw) ? (whereRaw as QuoteWhereChip) : null;
+  const payRaw = one(sp.pay);
+  const pay: OrderPayChip | null = (ORDER_PAY_CHIPS as readonly string[]).includes(payRaw) ? (payRaw as OrderPayChip) : null;
+  // "Created: Last 30 days" (Quotes) / "Signed: Last 30 days" (Orders): `days` = 7 | 30 | 90 | any.
+  const days = parseDocPeriod(one(sp.days) || undefined);
   const quoteId = one(sp.quote);
   // Search (quote or order number, lead name, company) and sortable headings: in the URL, applied on the server.
   const q = one(sp.q).trim().slice(0, 100) || undefined;
   const quoteSort = parseSort(one(sp.sort), one(sp.dir), QUOTE_SORT_KEYS, QUOTE_SORT_DEFAULT);
   const orderSort = parseSort(one(sp.sort), one(sp.dir), ORDER_SORT_KEYS, ORDER_SORT_DEFAULT);
   const sortOf = tab === "orders" ? orderSort : quoteSort;
-  const isDefault = (s: TableSort<string>) => s.key === (tab === "orders" ? ORDER_SORT_DEFAULT : QUOTE_SORT_DEFAULT).key && s.dir === (tab === "orders" ? ORDER_SORT_DEFAULT : QUOTE_SORT_DEFAULT).dir;
-  /** This tab's URL with its search and sort, plus a patch (quote: the open panel). */
-  const listHref = (patch: { quote?: string; sort?: TableSort<string> } = {}) => {
+  const sortDefault = tab === "orders" ? ORDER_SORT_DEFAULT : QUOTE_SORT_DEFAULT;
+  const isDefault = (s: TableSort<string>) => s.key === sortDefault.key && s.dir === sortDefault.dir;
+  /** This tab's URL with its filters, search and sort, plus a patch (null removes a filter; quote: the open panel). */
+  type Patch = { quote?: string; sort?: TableSort<string>; where?: string | null; pay?: string | null };
+  const listHref = (patch: Patch = {}) => {
     const p = new URLSearchParams();
     if (tab !== "quotes") p.set("tab", tab);
+    const w = patch.where === undefined ? where : patch.where;
+    if (tab === "quotes" && w) p.set("where", w);
+    const y = patch.pay === undefined ? pay : patch.pay;
+    if (tab === "orders" && y) p.set("pay", y);
     if (q) p.set("q", q);
+    if (days !== 30) p.set("days", days ? String(days) : "any");
     if (urlMarket) p.set(MARKET_PARAM, urlMarket);
     const s = patch.sort ?? sortOf;
     if (!isDefault(s)) { p.set("sort", s.key); p.set("dir", s.dir); }
@@ -93,23 +120,36 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   };
   const quoteSortHref = (s: TableSort<QuoteSortKey>) => listHref({ sort: s });
   const orderSortHref = (s: TableSort<OrderSortKey>) => listHref({ sort: s });
+  const now = new Date();
+  const since = periodStart(days, now);
   // Round trip 1–2: lists, counts and the selected quote all start together;
-  // the doc statuses chain onto the quote list only.
-  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, tab, { q, sort: quoteSort, market: chosenMarket });
-  const [rows, docs, total, awaiting, orderRows, orderCount, detail] = await Promise.all([
+  // the latest order form and order of each listed quote chain onto the quote list only.
+  const quotesP = tab === "orders" ? Promise.resolve([] as Awaited<ReturnType<typeof listQuotes>>) : listQuotes(appDb, account.id, "quotes", { q, sort: quoteSort, market: chosenMarket, since });
+  const [allRows, docs, total, allOrderRows, orderCount, detail] = await Promise.all([
     quotesP,
-    quotesP.then((r) => docStatusByQuote(appDb, account.id, r.map((x) => x.quote.id))),
+    quotesP.then((r) => quoteDocs(appDb, account.id, r.map((x) => x.quote.id))),
     countQuotes(appDb, account.id, chosenMarket),
-    countAwaitingApproval(appDb, account.id, chosenMarket),
-    tab === "orders" ? listOrders(appDb, account.id, { q, sort: orderSort, market: chosenMarket }) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
+    tab === "orders" ? listOrders(appDb, account.id, { q, sort: orderSort, market: chosenMarket, since }) : Promise.resolve([] as Awaited<ReturnType<typeof listOrders>>),
     countOrders(account.id, chosenMarket),
     UUID.test(quoteId) ? getQuote(appDb, account.id, quoteId) : Promise.resolve(null),
   ]);
-  const now = new Date();
+  // Where each quote is; the chips count the period's quotes, the list shows the chosen chip.
+  const whereOf = new Map<string, QuoteWhere>(allRows.map((r) => [r.quote.id, quoteWhere({ status: r.quote.status, validUntil: r.version.validUntil }, docs.forms.get(r.quote.id), docs.orders.get(r.quote.id), now)]));
+  const whereCount = (w: QuoteWhereChip) => allRows.filter((r) => whereOf.get(r.quote.id) === w).length;
+  const rows = where ? allRows.filter((r) => whereOf.get(r.quote.id) === where) : allRows;
+  const payCount = (c: OrderPayChip) => allOrderRows.filter((r) => orderPayChip(r.order.paymentStatus) === c).length;
+  const orderRows = pay ? allOrderRows.filter((r) => orderPayChip(r.order.paymentStatus) === pay) : allOrderRows;
   /** Amounts in the document's own currency (from its price list), with the period for recurring ones. */
   const moneyIn = (currency: string) => (m: number, period?: string | null) =>
     formatMoney(m, currency, period === "year" || period === "month" ? { period } : {});
   const money = moneyIn(account.currency);
+  /** Total: the one-time amount, the recurring one under it ("+ ₪106.20/mo"). One currency per row, never added up. */
+  const totalCell = (currency: string, oneTime: number, recurring: number, period: string | null | undefined) => (
+    <span className="lqq-total">
+      <span>{formatMoney(oneTime, currency)}</span>
+      {recurring ? <span className="lqq-total__rec">{t(period === "year" ? "orders.total.year" : "orders.total.month", { amount: formatMoney(recurring, currency) })}</span> : null}
+    </span>
+  );
   const tabHref = (x: string) => {
     const p = new URLSearchParams();
     if (x !== "quotes") p.set("tab", x);
@@ -121,6 +161,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const marketCell = (m: { id: string | null; name: string | null } | null) => (
     <td className="sas-col-minor" data-label={t("orders.col.market")}><span data-market={m?.id ?? "home"}>{m?.name ?? homeName}</span></td>
   );
+  const filtered = !!(q || where || pay || days !== 30);
+  const periodLabel = t(tab === "orders" ? "orders.period.signed" : "orders.period.created");
 
   const cur = detail?.versions[0];
   const incomplete = !!cur?.lines.some((l) => l.unitPriceMinor === null);
@@ -163,6 +205,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   // Records: the exact date and time in the account's zone, the zone named on hover.
   const at = (d: Date) => formatShortDateTimeIn(d, account.timezone);
   const atFull = (d: Date) => formatDateTimeIn(d, account.timezone);
+  const day = (d: Date) => formatDayMonthIn(d, account.timezone);
   // Item names as the buyer read them in the chat (the catalog's chat name) lead; the internal name and code come second.
   const itemIds = [...new Set((cur?.lines ?? []).map((l) => l.catalogItemId).filter((x): x is string => !!x))];
   const chatNameOf = new Map(
@@ -204,116 +247,211 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     return detail?.versions.find(({ version }) => version.id === vid)?.version.version ?? null;
   })() : null;
 
+  /**
+   * The muted line under "Where it is", only from stored facts: the order form
+   * (sent and not opened, opened, link expired), the order and its payment, or
+   * why a quote waits for approval.
+   */
+  const whereDetail = (r: (typeof rows)[number], w: QuoteWhere) => {
+    const ord = docs.orders.get(r.quote.id);
+    if (w === "ordered" && ord) {
+      const label = orderLabel(account.tradeName, ord.number);
+      return (
+        <>
+          <a href={`${tabHref("orders")}&quote=${r.quote.id}`} data-where-order={ord.id}><TextWithId text={t("orders.where.order", { order: label })} id={label} /></a>
+          {" · "}{t(`orders.where.pay.${ord.paymentStatus}`)}
+        </>
+      );
+    }
+    const f = docs.forms.get(r.quote.id);
+    if (w === "form_sent" && f) {
+      const s = shownFormStatus(f, now);
+      if (s === "link_expired") return t("orders.where.form_expired");
+      if (s === "opened" && f.openedAt) return t("orders.where.form_opened", { date: day(f.openedAt) });
+      return t("orders.where.form_unopened", { date: day(f.createdAt) });
+    }
+    if (w === "awaiting_approval" && r.version.approvalReasons.length) return r.version.approvalReasons.map(approvalReasonText).join("; ");
+    return null;
+  };
+
+  /** The chips row: All plus one per state, each with its count; the chosen one is marked. */
+  const chipLink = (key: string | null, label: string, n: number, current: string | null, patch: Patch) => (
+    <a key={key ?? "all"} className="lqq-chip" href={listHref(patch)} aria-current={current === key ? "true" : undefined} data-chip={key ?? "all"}>
+      {label} <span className="sas-num">{n}</span>
+    </a>
+  );
+
+  /** Search (an icon that opens into a field) and the period, one GET form; a changed period applies at once. */
+  const toolbarForm = (
+    <form method="get" action={base} className="lqq-toolbar__form" role="search">
+      <AutoSubmit />
+      {tab !== "quotes" ? <input type="hidden" name="tab" value={tab} /> : null}
+      {tab === "quotes" && where ? <input type="hidden" name="where" value={where} /> : null}
+      {tab === "orders" && pay ? <input type="hidden" name="pay" value={pay} /> : null}
+      {urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
+      {!isDefault(sortOf) ? <><input type="hidden" name="sort" value={sortOf.key} /><input type="hidden" name="dir" value={sortOf.dir} /></> : null}
+      <label className={`sas-search lqq-search${q ? " lqq-search--open" : ""}`}>
+        <Icon name="search" />
+        <span className="sas-sr">{t("orders.search")}</span>
+        <input type="search" name="q" defaultValue={q ?? ""} placeholder={t("orders.search")} />
+      </label>
+      <label className="sas-filter lqq-period">
+        <span className="sas-sr">{periodLabel}</span>
+        <select className="sas-select" name="days" defaultValue={days ? String(days) : "any"}>
+          {DOC_PERIODS.map((d) => <option key={d} value={d}>{t("orders.period.value", { label: periodLabel, value: t("orders.period.days", { days: d }) })}</option>)}
+          <option value="any">{t("orders.period.value", { label: periodLabel, value: t("orders.period.any") })}</option>
+        </select>
+      </label>
+      <noscript><button type="submit" className={buttonClass("secondary", "sm")}>{t("leads.filter.apply")}</button></noscript>
+    </form>
+  );
+
+  /** A filter left the list empty: say so inside the card, with a way back to everything. */
+  const filteredEmpty = (text: string) => (
+    <div className="sas-empty lqq-empty">
+      <span className="sas-empty__icon sas-empty__icon--start"><Icon name="search" /></span>
+      <span className="sas-small">{text}</span>
+      <a className={buttonClass("secondary", "sm")} href={tabHref(tab)}>{t("orders.empty.show_all")}</a>
+    </div>
+  );
+
+  const tabs = (
+    <nav aria-label={t("orders.tabs")} className="sas-tabs lqq-tabs">
+      <a className="sas-tab" href={tabHref("quotes")} aria-current={tab === "quotes" ? "page" : undefined}>{t("orders.tab.quotes")} <span className="sas-num">{total}</span></a>
+      <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined}>{t("orders.tab.orders")} <span className="sas-num">{orderCount}</span></a>
+    </nav>
+  );
+
   return (
     <div className={detail ? "sas-with-panel" : undefined}>
       <main className="sas-shell__content">
         <header className="sas-stack-2">
           <div className="sas-page-head">
-            <h1 className="sas-title">{t("orders.title")}</h1>
+            <div className="sas-stack-2" style={{ gap: 4 }}>
+              <h1 className="sas-title">{t("orders.title")}</h1>
+              <span className="sas-small">{t("orders.subtitle")}</span>
+            </div>
             <div className="sas-page-head__actions">
               <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp, ["quote", "send"])} />
             </div>
           </div>
-          <nav aria-label={t("orders.tabs")} className="sas-tabs">
-            <a className="sas-tab" href={tabHref("quotes")} aria-current={tab === "quotes" ? "page" : undefined}>{t("orders.tab.quotes")} <span className="sas-num">{total}</span></a>
-            <a className="sas-tab" href={tabHref("orders")} aria-current={tab === "orders" ? "page" : undefined}>{t("orders.tab.orders")} <span className="sas-num">{orderCount}</span></a>
-            <a className="sas-tab" href={tabHref("approval")} aria-current={tab === "approval" ? "page" : undefined}>
-              {t("orders.tab.approval")} {awaiting ? <span className="sas-pill sas-pill--warning" style={{ height: 20 }}>{awaiting}</span> : <span className="sas-num">0</span>}
-            </a>
-          </nav>
-          <form method="get" action={base} className="sas-filters" role="search">
-            {tab !== "quotes" ? <input type="hidden" name="tab" value={tab} /> : null}
-            {urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
-            {!isDefault(sortOf) ? <><input type="hidden" name="sort" value={sortOf.key} /><input type="hidden" name="dir" value={sortOf.dir} /></> : null}
-            <label className="sas-search" style={{ maxWidth: 420 }}>
-              <Icon name="search" />
-              <span className="sas-sr">{t("orders.search")}</span>
-              <input type="search" name="q" defaultValue={q ?? ""} placeholder={t("orders.search")} />
-            </label>
-          </form>
         </header>
 
         {tab === "orders" ? (
-          orderRows.length === 0 ? (
-            <section className="sas-panel sas-empty">
-              <span className="sas-empty__icon sas-empty__icon--start"><Icon name={q ? "search" : "file-text"} /></span>
-              <span className="sas-small">{q ? t("orders.empty.search") : chosenMarket ? t("orders.empty.orders_market", { market: chosenMarket.name }) : t("orders.orders_soon")}</span>
-              {q ? <a className={buttonClass("secondary", "sm")} href={tabHref("orders")}>{t("leads.filter.clear")}</a> : null}
+          orderCount === 0 ? (
+            <section className="sas-panel lqq-card">
+              {tabs}
+              <div className="sas-empty lqq-empty">
+                <span className="sas-empty__icon sas-empty__icon--start"><Icon name="file-text" /></span>
+                <span className="sas-small">{chosenMarket ? t("orders.empty.orders_market", { market: chosenMarket.name }) : t("orders.orders_soon")}</span>
+              </div>
             </section>
           ) : (
-            <section className="sas-panel" style={{ overflow: "hidden" }}>
+            <section className="sas-panel lqq-card">
+              {tabs}
+              <div className="lqq-toolbar">
+                <nav className="lqq-chips" aria-label={t("orders.chips.orders")}>
+                  {chipLink(null, t("orders.chip.all"), allOrderRows.length, pay, { pay: null })}
+                  {ORDER_PAY_CHIPS.map((c) => chipLink(c, t(`orders.chip.pay.${c}`), payCount(c), pay, { pay: c }))}
+                </nav>
+                {toolbarForm}
+              </div>
+              {orderRows.length === 0 ? filteredEmpty(q && !pay && days === 30 ? t("orders.empty.search") : t("orders.empty.orders_filtered")) : (
+                <div style={{ overflowX: "auto" }}>
+                  {/* With the side panel open, the minor columns hide so Payment stays whole (R5-5, sas.css). */}
+                  <table className="sas-table sas-table--stack sas-table--panel-aware lqq-table" style={{ minWidth: detail ? 0 : showMarket ? 900 : 780 }}>
+                    <thead><tr>
+                      <SortHeader label={t("orders.col.order")} column="order" sort={orderSort} href={orderSortHref} firstDir="desc" />
+                      <SortHeader label={t("orders.col.lead")} column="lead" sort={orderSort} href={orderSortHref} />
+                      {showMarket ? <SortHeader label={t("orders.col.market")} column="market" sort={orderSort} href={orderSortHref} className="sas-col-minor" /> : null}
+                      <SortHeader label={t("orders.col.total")} column="one_time" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
+                      <SortHeader label={t("orders.col.payment")} column="payment" sort={orderSort} href={orderSortHref} />
+                      <SortHeader label={t("orders.col.signed")} column="signed" sort={orderSort} href={orderSortHref} firstDir="desc" />
+                      <th scope="col" className="sas-col-minor">{t("orders.col.delivery")}</th>
+                    </tr></thead>
+                    <tbody>
+                      {orderRows.map(({ order, lead, market: rowMarket }) => (
+                        <tr key={order.id} className={order.quoteId === quoteId ? "sas-row--selected" : undefined} data-order-row={order.id}>
+                          <td><a className="sas-id lqq-ref" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
+                          <td data-label={t("orders.col.lead")}><LeadCell lead={lead} /></td>
+                          {showMarket ? marketCell(rowMarket) : null}
+                          <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.total")}>{totalCell(order.currency, order.amountDueMinor, order.recurringMinor, null)}</td>
+                          <td data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
+                          <td className="sas-small sas-num" data-label={t("orders.col.signed")} title={atFull(order.createdAt)}>{day(order.createdAt)}</td>
+                          <td className="sas-small sas-col-minor" data-label={t("orders.col.delivery")} data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? "—"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+          )
+        ) : total === 0 ? (
+          <section className="sas-panel lqq-card">
+            {tabs}
+            <div className="sas-empty lqq-empty">
+              <span className="sas-empty__icon sas-empty__icon--start"><Icon name="file-text" /></span>
+              <strong>{chosenMarket ? t("orders.empty.quotes_market", { market: chosenMarket.name }) : t("orders.empty.title")}</strong>
+              <span className="sas-small">{t("orders.empty.body")}</span>
+              <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads`}>{t("orders.empty.go_leads")}</a>
+            </div>
+          </section>
+        ) : (
+          <section className="sas-panel lqq-card">
+            {tabs}
+            <div className="lqq-toolbar">
+              <nav className="lqq-chips" aria-label={t("orders.chips.quotes")}>
+                {chipLink(null, t("orders.chip.all"), allRows.length, where, { where: null })}
+                {QUOTE_WHERE_CHIPS.map((w) => chipLink(w, t(`status.quote_where.${w}`), whereCount(w), where, { where: w }))}
+              </nav>
+              {toolbarForm}
+            </div>
+            {rows.length === 0 ? filteredEmpty(q && !where && days === 30 ? t("orders.empty.search") : where === "awaiting_approval" && !q ? t("orders.empty.approval") : t("orders.empty.quotes_filtered")) : (
               <div style={{ overflowX: "auto" }}>
-                {/* With the side panel open, the minor columns hide so Payment stays whole (R5-5, sas.css). */}
-                <table className="sas-table sas-table--stack sas-table--panel-aware" style={{ minWidth: detail ? 0 : showMarket ? 880 : 760 }}>
+                {/* With the side panel open, the minor columns hide (the panel shows them) so Where it is is not cut (R5-5). */}
+                <table className="sas-table sas-table--stack sas-table--panel-aware lqq-table" style={{ minWidth: detail ? 0 : showMarket ? 960 : 840 }}>
                   <thead><tr>
-                    <SortHeader label={t("orders.col.order")} column="order" sort={orderSort} href={orderSortHref} firstDir="desc" />
-                    <SortHeader label={t("orders.col.lead")} column="lead" sort={orderSort} href={orderSortHref} />
-                    {showMarket ? <SortHeader label={t("orders.col.market")} column="market" sort={orderSort} href={orderSortHref} className="sas-col-minor" /> : null}
-                    <SortHeader label={t("orders.col.one_time")} column="one_time" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
-                    <SortHeader label={t("orders.col.monthly")} column="monthly" sort={orderSort} href={orderSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} className="sas-col-minor" />
-                    <SortHeader label={t("orders.col.payment")} column="payment" sort={orderSort} href={orderSortHref} />
-                    <SortHeader label={t("orders.col.signed")} column="signed" sort={orderSort} href={orderSortHref} firstDir="desc" />
-                    <th scope="col" className="sas-col-minor">{t("orders.col.delivery")}</th>
+                    <SortHeader label={t("orders.col.quote")} column="quote" sort={quoteSort} href={quoteSortHref} firstDir="desc" />
+                    <SortHeader label={t("orders.col.lead")} column="lead" sort={quoteSort} href={quoteSortHref} />
+                    {showMarket ? <SortHeader label={t("orders.col.market")} column="market" sort={quoteSort} href={quoteSortHref} className="sas-col-minor" /> : null}
+                    <SortHeader label={t("orders.col.total")} column="one_time" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
+                    <th scope="col">{t("orders.col.where")}</th>
+                    <SortHeader label={t("orders.col.created")} column="created" sort={quoteSort} href={quoteSortHref} firstDir="desc" className="sas-col-minor" />
+                    <SortHeader label={t("orders.col.valid_until")} column="valid_until" sort={quoteSort} href={quoteSortHref} className="sas-col-minor" />
                   </tr></thead>
                   <tbody>
-                    {orderRows.map(({ order, lead, market: rowMarket }) => (
-                      <tr key={order.id} className={order.quoteId === quoteId ? "sas-row--selected" : undefined}>
-                        <td><a className="sas-id" href={listHref({ quote: order.quoteId })}>{orderLabel(account.tradeName, order.number)}</a></td>
-                        <td data-label={t("orders.col.lead")}><bdi>{lead.company ?? lead.fullName}</bdi></td>
-                        {showMarket ? marketCell(rowMarket) : null}
-                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{moneyIn(order.currency)(order.amountDueMinor)}</td>
-                        <td className="sas-num sas-col-minor" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{order.recurringMinor ? moneyIn(order.currency)(order.recurringMinor) : "—"}</td>
-                        <td data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
-                        <td className="sas-small" data-label={t("orders.col.signed")} title={atFull(order.createdAt)}>{agoText(relativeTime(order.createdAt, now))}</td>
-                        <td className="sas-small sas-col-minor" data-label={t("orders.col.delivery")} data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? null}</td>
-                      </tr>
-                    ))}
+                    {rows.map((r) => {
+                      const { quote, version, lead, market: rowMarket } = r;
+                      const w = whereOf.get(quote.id)!;
+                      const toPrice = version.approvalReasons.some((x) => x.kind === "price_missing") && !version.approvedByUserId;
+                      const detailLine = whereDetail(r, w);
+                      const soon = endsSoon(w, version.validUntil, now);
+                      return (
+                        <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined} data-quote-row={quote.id} data-where={w}>
+                          <td><a className="lqq-ref" href={listHref({ quote: quote.id })}><span className="sas-id">{quoteRef(quote.number)}</span></a> <span className="lqq-ver">· v{quote.currentVersion}</span></td>
+                          <td data-label={t("orders.col.lead")}><LeadCell lead={lead} /></td>
+                          {showMarket ? marketCell(rowMarket) : null}
+                          <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.total")}>
+                            {toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : totalCell(version.currency, version.oneTimeTotalMinor, version.recurringTotalMinor, version.recurringPeriod)}
+                          </td>
+                          <td data-label={t("orders.col.where")} className="lqq-where-td">
+                            <span className="lqq-where">
+                              <StatusPill object="quote_where" state={w} />
+                              {detailLine ? <span className="lqq-where__detail" data-where-detail="">{detailLine}</span> : null}
+                            </span>
+                          </td>
+                          <td className="sas-small sas-num sas-col-minor" data-label={t("orders.col.created")} title={atFull(quote.createdAt)}>{day(quote.createdAt)}</td>
+                          <td className={`sas-small sas-num sas-col-minor${soon ? " lqq-soon" : ""}`} data-label={t("orders.col.valid_until")} data-valid-soon={soon ? "" : undefined}>
+                            {w === "ordered" ? "—" : formatDayMonthIn(version.validUntil, tzFor(quote.id))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
-            </section>
-          )
-        ) : rows.length === 0 ? (
-          <section className="sas-panel sas-empty">
-            <span className="sas-empty__icon sas-empty__icon--start"><Icon name={q ? "search" : "file-text"} /></span>
-            <strong>{q ? t("orders.empty.search") : tab === "approval" ? t("orders.empty.approval") : chosenMarket ? t("orders.empty.quotes_market", { market: chosenMarket.name }) : t("orders.empty.title")}</strong>
-            {q ? <a className={buttonClass("secondary", "sm")} href={tabHref(tab)}>{t("leads.filter.clear")}</a> : null}
-            {tab === "quotes" && !q ? <span className="sas-small">{t("orders.empty.body")}</span> : null}
-            {tab === "quotes" && !q ? <a className={buttonClass("secondary", "sm")} href={`/app/${account.slug}/leads`}>{t("orders.empty.go_leads")}</a> : null}
-          </section>
-        ) : (
-          <section className="sas-panel" style={{ overflow: "hidden" }}>
-            <div style={{ overflowX: "auto" }}>
-              {/* With the side panel open, Monthly and Form hide (the panel shows both) so Payment is not cut (R5-5). */}
-              <table className="sas-table sas-table--stack sas-table--panel-aware" style={{ minWidth: detail ? 0 : showMarket ? 840 : 720 }}>
-                <thead><tr>
-                  <SortHeader label={t("orders.col.quote")} column="quote" sort={quoteSort} href={quoteSortHref} firstDir="desc" />
-                  <SortHeader label={t("orders.col.lead")} column="lead" sort={quoteSort} href={quoteSortHref} />
-                  {showMarket ? <SortHeader label={t("orders.col.market")} column="market" sort={quoteSort} href={quoteSortHref} className="sas-col-minor" /> : null}
-                  <SortHeader label={t("orders.col.one_time")} column="one_time" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} />
-                  <SortHeader label={t("orders.col.monthly")} column="monthly" sort={quoteSort} href={quoteSortHref} firstDir="desc" style={{ textAlign: "end", whiteSpace: "nowrap" }} className="sas-col-minor" />
-                  <SortHeader label={t("orders.col.status")} column="status" sort={quoteSort} href={quoteSortHref} />
-                  <th scope="col" className="sas-col-minor">{t("orders.col.form")}</th><th scope="col">{t("orders.col.payment")}</th>
-                </tr></thead>
-                <tbody>
-                  {rows.map(({ quote, version, lead, market: rowMarket }) => {
-                    const toPrice = version.approvalReasons.some((r) => r.kind === "price_missing") && !version.approvedByUserId;
-                    return (
-                      <tr key={quote.id} className={quote.id === quoteId ? "sas-row--selected" : undefined}>
-                        <td><a className="sas-id" href={listHref({ quote: quote.id })}>Q-{quote.number} v{quote.currentVersion}</a></td>
-                        <td data-label={t("orders.col.lead")}><bdi>{lead.company ?? lead.fullName}</bdi></td>
-                        {showMarket ? marketCell(rowMarket) : null}
-                        <td className="sas-num" style={{ textAlign: "end" }} data-label={t("orders.col.one_time")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : moneyIn(version.currency)(version.oneTimeTotalMinor)}</td>
-                        <td className="sas-num sas-col-minor" style={{ textAlign: "end" }} data-label={t("orders.col.monthly")}>{toPrice ? <span className="sas-small">{t("quote.to_price")}</span> : version.recurringTotalMinor ? moneyIn(version.currency)(version.recurringTotalMinor, version.recurringPeriod === "year" ? "year" : null) : "—"}</td>
-                        <td data-label={t("orders.col.status")}><StatusPill object="quote" state={displayQuoteStatus(quote.status, version.validUntil, now, tzFor(quote.id), !!docs.get(quote.id)?.payment)} /></td>
-                        <td className="sas-col-minor" data-label={t("orders.col.form")}>{docs.get(quote.id)?.form ? <StatusPill object="order_form" state={docs.get(quote.id)!.form!} /> : <span className="sas-small">—</span>}</td>
-                        <td data-label={t("orders.col.payment")}>{docs.get(quote.id)?.payment ? <StatusPill object="payment" state={docs.get(quote.id)!.payment!} /> : <span className="sas-small">—</span>}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            )}
           </section>
         )}
       </main>

@@ -186,8 +186,8 @@ describe("W2: markets across the workspace", () => {
     it("all markets: switcher, every quote, a sortable Market column with each currency kept", async () => {
       const html = await page(OrdersPage(props(account.slug)));
       expect(html).toContain("data-market-switcher");
-      expect(html).toContain(`Q-${ukQuote} v1`);
-      expect(html).toContain(`Q-${homeQuote} v1`);
+      expect(html).toContain(`>Q-${ukQuote}<`);
+      expect(html).toContain(`>Q-${homeQuote}<`);
       expect(html).toContain('data-sort-col="market"');
       expect(html).toContain(`data-market="${uk.id}">United Kingdom</span>`);
       expect(html).toContain('data-market="home">Israel</span>');
@@ -198,8 +198,8 @@ describe("W2: markets across the workspace", () => {
     it("the URL parameter filters quotes, orders and the tab counts", async () => {
       const all = counts(await page(OrdersPage(props(account.slug))), "Document type");
       const html = await page(OrdersPage(props(account.slug, { market: uk.id })));
-      expect(html).toContain(`Q-${ukQuote} v1`);
-      expect(html).not.toContain(`Q-${homeQuote} v1`);
+      expect(html).toContain(`>Q-${ukQuote}<`);
+      expect(html).not.toContain(`>Q-${homeQuote}<`);
       const ukCounts = counts(html, "Document type");
       expect(ukCounts.slice(0, 2)).toEqual([1, 1]);
       expect(all[0]).toBeGreaterThan(1);
@@ -213,17 +213,17 @@ describe("W2: markets across the workspace", () => {
     it("the cookie filters when the URL has no market (home includes quotes without a market id)", async () => {
       holder.cookies.set(marketCookieName(account.id), il.id);
       const html = await page(OrdersPage(props(account.slug)));
-      expect(html).toContain(`Q-${homeQuote} v1`);
-      expect(html).not.toContain(`Q-${ukQuote} v1`);
+      expect(html).toContain(`>Q-${homeQuote}<`);
+      expect(html).not.toContain(`>Q-${ukQuote}<`);
       holder.cookies.set(marketCookieName(account.id), dach.id);
       expect(await page(OrdersPage(props(account.slug)))).toContain("No quotes in Germany and Austria yet");
     });
 
     it("sorts quotes by market", async () => {
       const asc = await page(OrdersPage(props(account.slug, { sort: "market", dir: "asc" })));
-      expect(asc.indexOf(`Q-${homeQuote} v1`)).toBeLessThan(asc.indexOf(`Q-${ukQuote} v1`));
+      expect(asc.indexOf(`>Q-${homeQuote}<`)).toBeLessThan(asc.indexOf(`>Q-${ukQuote}<`));
       const desc = await page(OrdersPage(props(account.slug, { sort: "market", dir: "desc" })));
-      expect(desc.indexOf(`Q-${ukQuote} v1`)).toBeLessThan(desc.indexOf(`Q-${homeQuote} v1`));
+      expect(desc.indexOf(`>Q-${ukQuote}<`)).toBeLessThan(desc.indexOf(`>Q-${homeQuote}<`));
       const ordDesc = await page(OrdersPage(props(account.slug, { tab: "orders", sort: "market", dir: "desc" })));
       expect(ordDesc.indexOf("£1,200.00")).toBeLessThan(ordDesc.indexOf("₪3,500.00"));
     });

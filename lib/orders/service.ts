@@ -7,7 +7,7 @@
  * person confirms a bank transfer. Snapshots and signatures are never updated.
  */
 import { createHash, randomUUID } from "node:crypto";
-import { and, asc, count, desc, eq, inArray, max, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, max, sql, type SQL } from "drizzle-orm";
 import type { AnyPgColumn } from "drizzle-orm/pg-core";
 import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
@@ -615,7 +615,7 @@ export type OrderSortKey = (typeof ORDER_SORT_KEYS)[number];
 export const ORDER_SORT_DEFAULT: TableSort<OrderSortKey> = { key: "signed", dir: "desc" };
 
 /** Orders of real leads; search by order number, lead name or company (lib/quotes/service.ts docSearchSql). */
-export async function listOrders(db: Db, accountId: string, opts: { q?: string; sort?: TableSort<OrderSortKey>; market?: DocMarketFilter } = {}) {
+export async function listOrders(db: Db, accountId: string, opts: { q?: string; sort?: TableSort<OrderSortKey>; market?: DocMarketFilter; since?: Date | null } = {}) {
   const sort = opts.sort ?? ORDER_SORT_DEFAULT;
   const col: Record<OrderSortKey, SQL | AnyPgColumn> = {
     order: orders.number,
@@ -628,7 +628,7 @@ export async function listOrders(db: Db, accountId: string, opts: { q?: string; 
   };
   return db.select({ order: orders, lead: leads, market: { id: markets.id, name: markets.name } }).from(orders).innerJoin(leads, eq(leads.id, orders.leadId))
     .leftJoin(markets, and(eq(markets.id, orders.marketId), eq(markets.accountId, orders.accountId)))
-    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), docSearchSql(opts.q, orders.number) ?? undefined, marketWhere(orders.marketId, opts.market ?? null)))
+    .where(and(eq(orders.accountId, accountId), eq(leads.isTest, false), docSearchSql(opts.q, orders.number) ?? undefined, marketWhere(orders.marketId, opts.market ?? null), opts.since ? gte(orders.createdAt, opts.since) : undefined))
     .orderBy(sort.dir === "asc" ? sql`${col[sort.key]} asc nulls last` : sql`${col[sort.key]} desc nulls last`, desc(orders.createdAt))
     .limit(200);
 }

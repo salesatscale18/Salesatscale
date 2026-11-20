@@ -266,8 +266,8 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     const list = await page(OrdersPage(props(account.slug)));
     const qRow = list.match(new RegExp(`<tr[^>]*>(?:(?!</tr>)[\\s\\S])*quote=${ids.eliQuote}(?:(?!</tr>)[\\s\\S])*</tr>`))?.[0] ?? "";
     expect(qRow).toContain(">Ordered<");
-    // A quote whose form is only out stays Sent.
-    expect(list.match(/>Sent</g)?.length).toBeGreaterThanOrEqual(1);
+    // A quote whose form is only out is "Order form sent" (Quotes and orders V2: one Where it is pill).
+    expect(list.match(/>Order form sent</g)?.length).toBeGreaterThanOrEqual(1);
   });
 
   it("C: Quotes and orders search by quote number, lead name or company, with sortable headings", async () => {
