@@ -18,6 +18,7 @@
  */
 import type { VoiceUsage } from "@/db/schema";
 import { OPT_OUT_REPLY } from "@/lib/agent/safety";
+import { scenarioById } from "@/lib/agent/scenarios";
 import { pcmDurationMs, VOICE_SAMPLE_RATE } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 
@@ -35,8 +36,8 @@ export type ScriptCtx = {
   last(name: string): Record<string, unknown> | undefined;
   /** Deal-state fields listed in the instructions. */
   fields: ScriptField[];
-  /** "Local time now" from the instructions, as a local date ("2026-11-20") and time ("14:05"); null when missing. */
-  localNow: { date: string; time: string } | null;
+  /** "Local time now" from the instructions: local date ("2026-11-20"), time ("14:05"), weekday ("Fri") and UTC offset ("+02:00"); null when missing. */
+  localNow: { date: string; time: string; weekday?: string; offset?: string } | null;
 };
 
 export type ScriptStep = (
@@ -59,10 +60,13 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "
 
 /** "Local time now: Fri 20 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)" from the instructions, as a local date and time. */
 export function localNowFromInstructions(instructions: string): ScriptCtx["localNow"] {
-  const m = /^Local time now: \w+ (\d{1,2}) (\w{3}) (\d{4}) (\d{2}:\d{2})/m.exec(instructions);
-  const month = m ? MONTHS.indexOf(m[2]) : -1;
+  const m = /^Local time now: (\w+) (\d{1,2}) (\w{3}) (\d{4}) (\d{2}:\d{2})(?: \([^,]+, UTC([+-]\d{2}:\d{2})\))?/m.exec(instructions);
+  const month = m ? MONTHS.indexOf(m[3]) : -1;
   if (!m || month < 0) return null;
-  return { date: `${m[3]}-${String(month + 1).padStart(2, "0")}-${m[1].padStart(2, "0")}`, time: m[4] };
+  return {
+    date: `${m[4]}-${String(month + 1).padStart(2, "0")}-${m[2].padStart(2, "0")}`, time: m[5], weekday: m[1],
+    ...(m[6] ? { offset: m[6] } : {}),
+  };
 }
 
 /** A local date and time ("2026-11-21T10:00") `days` after "Local time now", at `time`. */
@@ -73,10 +77,23 @@ export function localDayAt(ctx: ScriptCtx, days: number, time: string): string {
   return `${day.toISOString().slice(0, 10)}T${time}`;
 }
 
-/** Before-quote fields from the instructions, with a value that is not a placeholder. */
-function quoteFieldUpdates(ctx: ScriptCtx) {
+const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+/**
+ * The next `weekday` after "Local time now" (never today), at `time`, as an ISO date-time
+ * with the offset from "Local time now" ("2026-11-27T10:00:00+02:00"): schedule_follow_up's form.
+ */
+export function nextWeekdayAt(ctx: ScriptCtx, weekday: string, time: string): string {
+  const today = WEEKDAYS.indexOf(ctx.localNow?.weekday ?? "");
+  const want = WEEKDAYS.indexOf(weekday);
+  const days = today < 0 || want < 0 ? 7 : ((want - today + 7) % 7) || 7;
+  return `${localDayAt(ctx, days, time)}:00${ctx.localNow?.offset ?? "+00:00"}`;
+}
+
+/** Before-quote fields from the instructions, with a value that is not a placeholder (`size`: the number of sites, users, …). */
+function quoteFieldUpdates(ctx: ScriptCtx, size = 1) {
   return ctx.fields.filter((f) => f.neededForQuote).map((f) => ({
-    key: f.key, value: /number|how many|count|quantity|qty|sites?|users?|seats?|locations?/i.test(`${f.key} ${f.label}`) ? "1" : "Small business", provenance: "buyer" as const,
+    key: f.key, value: /number|how many|count|quantity|qty|sites?|users?|seats?|locations?/i.test(`${f.key} ${f.label}`) ? String(size) : "Small business", provenance: "buyer" as const,
   }));
 }
 
@@ -113,6 +130,189 @@ const askedForPerson = (status: "open" | "settled", step: number) => ({
 const CALL_BRIEF = "The buyer prefers to talk to a person; topic not given. Have the offer and prices for their business ready.";
 /** The last request_callback was refused with another time to offer. */
 const callbackRefused = (ctx: ScriptCtx) => ctx.last("request_callback")?.ok === false && typeof ctx.last("request_callback")?.suggested_time === "string";
+
+
+// ---------------------------------------------------------------------------
+// Objection scenarios (O7): the buyer's lines come from the scenario itself
+// (lib/agent/scenarios.ts opening and buyerTurns). Each script records the
+// objection with update_deal_state as chat does and follows the card's ladder.
+// ---------------------------------------------------------------------------
+
+/** The scenario's buyer lines: the opening, then its later turns. */
+function buyerLines(id: string): string[] {
+  const sc = scenarioById(id);
+  if (!sc) throw new Error(`No scenario ${id}`);
+  return [sc.opening, ...(sc.buyerTurns ?? [])];
+}
+
+type ObjectionStatus = "open" | "settled" | "dropped";
+/** update_deal_state recording one objection step (nothing else). */
+const objectionStep = (play: string, words: string, step: number | null, attempt: boolean, status: ObjectionStatus) => ({
+  updates: [], next_step: null, recommendation_confirmed: null, price_asked: null, asked: null,
+  objection: { play, buyer_words: words, step, attempt, status },
+});
+const recordObjection = (play: string, words: string, step: number | null, attempt: boolean, status: ObjectionStatus = "open") =>
+  tool("update_deal_state", objectionStep(play, words, step, attempt, status));
+
+/** The fields a quote needs, the buyer's size, and the two facts that open prices and the quote. */
+const quoteFacts = (size: number) => tool("update_deal_state", (ctx: ScriptCtx) => ({
+  updates: quoteFieldUpdates(ctx, size), next_step: "quote", objection: null, recommendation_confirmed: true, price_asked: true, asked: null,
+}));
+/** A quote of `size` units of the first item sold here, for `size` sites; no discount. */
+const quoteFor = (size: number) => tool("create_quote", (ctx: ScriptCtx) => ({
+  lines: [{ sku: firstSoldSku(ctx), qty: size }], discount_percent: 0, sites: size, remove_auto_added: null, exception: null, headline: null, assumed: null,
+}));
+/** Facts, catalog and quote for `size` locations, as one step of a turn. */
+const quoteSteps = (size: number): ScriptStep[] => [quoteFacts(size), tool("search_catalog", { query: "" }), quoteFor(size)];
+const totalOf = (ctx: ScriptCtx) => {
+  const t = ctx.last("create_quote")?.totals as Record<string, unknown> | undefined;
+  return typeof t?.total_today_including_vat === "string" ? t.total_today_including_vat : "the total on the quote";
+};
+
+/** A question with no approved answer: look it up, and when nothing is found, send it to the team silently. */
+const UNKNOWN = { question: "Does it work with the alarm panel the buyer already has?", words: "Does it work with the alarm panel we already have?" };
+const lookupThenAsk = (mustHave: boolean | null): ScriptStep[] => [
+  tool("lookup_knowledge", { query: "works with an alarm panel the buyer already has" }),
+  onlyIf((ctx) => (ctx.last("lookup_knowledge")?.facts as unknown[] | undefined)?.length === 0, askTeam(mustHave)),
+];
+const askTeam = (mustHave: boolean | null) => tool("ask_team", { question: UNKNOWN.question, buyer_words: UNKNOWN.words, must_have: mustHave });
+const asked = (ctx: ScriptCtx) => ctx.last("ask_team")?.sent === true;
+const PROMISE = "I don't have that detail yet, and I'll make sure you get an exact answer. Is it a must-have for you, or good to know?";
+const orderFormSay = say("The order form is in the chat below. Fill in your company details, sign and pay; it takes about two minutes.");
+
+/** A time tool refused with another time to offer: offer it, hear the yes, use it. */
+const offerSuggested = (name: "request_callback" | "schedule_follow_up", key: "suggested_time" | "suggested_due_at", args: (time: string) => Record<string, unknown>): ScriptStep[] => {
+  const refused = (ctx: ScriptCtx) => ctx.last(name)?.ok === false && typeof ctx.last(name)?.[key] === "string";
+  return [
+    onlyIf(refused, say((ctx) => `That time is not open. How about ${String(ctx.last(name)?.suggested_local ?? "the next open time")}?`)),
+    onlyIf(refused, expectBuyer("Yes, that works.")),
+    onlyIf(refused, tool(name, (ctx: ScriptCtx) => args(String(ctx.last(name)?.[key] ?? "")))),
+  ];
+};
+
+/** Scripted calls for the objection scenarios: each passes its check by voice, judged as chat is. */
+function objectionScripts(): Record<string, Script> {
+  const [pbOpen, pbTooMuch, pbBudget] = buyerLines("price_budget");
+  const [pcOpen, pcWhat] = buyerLines("price_competitor");
+  const [tpOpen, tpPartner, tpTime] = buyerLines("think_partner");
+  const [prOpen, prPrice, prYes] = buyerLines("asks_for_person_reflex");
+  const [gkOpen, gkGood] = buyerLines("unknown_good_to_know");
+  const [mhOpen, mhMust, mhTime] = buyerLines("unknown_must_have");
+  const [bsOpen, bsHmm, bsYes] = buyerLines("buying_signal");
+  const [toOpen, toTooMuch, toPartner, toStillHigh] = buyerLines("two_objections");
+  const FIND_PRICE = "I understand. Is it more than you planned to spend, or more than another offer you have?";
+  const brief = "The buyer needs to know whether it works with the alarm panel they already have; a must-have. Bring the exact answer.";
+  return {
+    // Too expensive, over budget: find which kind, then a smaller first step (a smaller quote). No discount.
+    price_budget: [
+      expectBuyer(pbOpen),
+      ...quoteSteps(3),
+      say((ctx) => `For all three locations the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      expectBuyer(pbTooMuch),
+      recordObjection("too_expensive", pbTooMuch, 1, false),
+      say(FIND_PRICE),
+      expectBuyer(pbBudget),
+      recordObjection("too_expensive", pbBudget, 2, true),
+      quoteFor(1),
+      say((ctx) => `Then let's start smaller, with one location first. That comes to ${totalOf(ctx)}, and the new quote is in the chat below. Would that fit this year?`),
+    ],
+    // A competitor's offer: ask what matters, then what this price includes. No claims about them, no discount.
+    price_competitor: [
+      expectBuyer(pcOpen),
+      recordObjection("competitor", pcOpen, 1, false),
+      say("Fair question. What matters most to you when you compare the two offers?"),
+      expectBuyer(pcWhat),
+      tool("search_catalog", { query: "" }),
+      recordObjection("competitor", pcWhat, 2, true),
+      say((ctx) => {
+        const item = ((ctx.last("search_catalog")?.items ?? []) as { plain_name?: string; sold_here?: boolean }[]).find((i) => i.sold_here);
+        return `With us, the price includes the ${item?.plain_name ?? "whole set"} with setup help in the first week. Is that the part that matters most to you?`;
+      }),
+    ],
+    // "I need to think": find what is behind it (a partner decides), a short spoken summary, a follow-up at the agreed time.
+    think_partner: [
+      expectBuyer(tpOpen),
+      recordObjection("need_to_think", tpOpen, 1, false),
+      say("Of course. So I can help: is it the price, whether it fits, or does someone else need to agree?"),
+      expectBuyer(tpPartner),
+      recordObjection("someone_else_decides", tpPartner, 1, false),
+      say("That makes sense. What will matter most to your partner?"),
+      expectBuyer(tpTime),
+      recordObjection("someone_else_decides", tpTime, 2, true),
+      tool("schedule_follow_up", (ctx: ScriptCtx) => ({ due_at: nextWeekdayAt(ctx, "Fri", "10:00"), topic: "what the partner decided about the monthly cost" })),
+      ...offerSuggested("schedule_follow_up", "suggested_due_at", (due) => ({ due_at: due, topic: "what the partner decided about the monthly cost" })),
+      onlyIf((ctx) => ctx.last("schedule_follow_up")?.ok === true, recordObjection("someone_else_decides", tpTime, 4, false)),
+      say((ctx) => `For your partner, in short: it covers your location, and the monthly cost is set by the plan you pick. I'll come back to you on ${String(ctx.last("schedule_follow_up")?.due_local ?? "Friday morning")}.`),
+    ],
+    // Asks for a person, then only needs the price: help once, answer, close. No call request.
+    asks_for_person_reflex: [
+      expectBuyer(prOpen),
+      recordObjection("asks_for_person", prOpen, 1, false),
+      say("Of course, I can set that up. So they come prepared, what would you like to cover?"),
+      expectBuyer(prPrice),
+      recordObjection("asks_for_person", prPrice, 2, true, "settled"),
+      ...quoteSteps(1),
+      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      expectBuyer(prYes),
+      tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
+      orderFormSay,
+    ],
+    // An unknown question that is good to know: parked silently, the sale reaches the quote.
+    unknown_good_to_know: [
+      expectBuyer(gkOpen),
+      ...lookupThenAsk(null),
+      say(PROMISE),
+      expectBuyer(gkGood),
+      onlyIf(asked, askTeam(false)),
+      ...quoteSteps(1),
+      say((ctx) => `Got it. For your one location the total is ${totalOf(ctx)}, and the quote is in the chat below. Shall I send the order form?`),
+    ],
+    // An unknown must-have: parked silently, details collected, then a call with a person who brings the answer.
+    unknown_must_have: [
+      expectBuyer(mhOpen),
+      ...lookupThenAsk(null),
+      say(PROMISE),
+      expectBuyer(mhMust),
+      onlyIf(asked, askTeam(true)),
+      recordObjection("no_answer", mhMust, 1, false),
+      say("Understood, that matters for your decision. How many locations do you have?"),
+      expectBuyer(mhTime),
+      tool("update_deal_state", (ctx: ScriptCtx) => ({ updates: quoteFieldUpdates(ctx, 2), next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null })),
+      tool("request_callback", (ctx: ScriptCtx) => ({ time: localDayAt(ctx, 1, "10:00"), brief })),
+      ...offerSuggested("request_callback", "suggested_time", (time) => ({ time, brief })),
+      onlyIf((ctx) => ctx.last("request_callback")?.ok === true, recordObjection("no_answer", mhTime, 4, false)),
+      say((ctx) => `Done. ${String(ctx.last("request_callback")?.time_local ?? "The time")} is requested with a member of our team, who will have the exact answer, and the team will confirm it by message. Is there anything else I can help with?`),
+    ],
+    // A buying signal mid-objection: stop handling it at once and send the order form.
+    buying_signal: [
+      expectBuyer(bsOpen),
+      ...quoteSteps(1),
+      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      expectBuyer(bsHmm),
+      recordObjection("too_expensive", bsHmm, 1, false),
+      say(FIND_PRICE),
+      expectBuyer(bsYes),
+      recordObjection("too_expensive", bsHmm, null, false, "settled"),
+      tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
+      orderFormSay,
+    ],
+    // Two objections: price, then a partner (a new objection replaces it), then price again: its next step, never a repeat.
+    two_objections: [
+      expectBuyer(toOpen),
+      ...quoteSteps(1),
+      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      expectBuyer(toTooMuch),
+      recordObjection("too_expensive", toTooMuch, 1, false),
+      say(FIND_PRICE),
+      expectBuyer(toPartner),
+      recordObjection("someone_else_decides", toPartner, 1, false),
+      say("Of course. What will matter most to your partner when you talk?"),
+      expectBuyer(toStillHigh),
+      recordObjection("too_expensive", toStillHigh, 2, true),
+      say("Then think of it per month: one location is covered from day one, with nothing else to buy. What would make the price work for you?"),
+    ],
+  };
+}
 
 /** One script per test-lab scenario (lib/agent/scenarios.ts). Calls are English only. */
 export const VOICE_SCRIPTS: Record<string, Script> = {
@@ -197,6 +397,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     })),
     say("Got it. Then let's carry on: how many people would use it?"),
   ],
+  ...objectionScripts(),
 };
 
 /** A call without a scenario: a short click-through with one lookup. */

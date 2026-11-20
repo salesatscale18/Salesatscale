@@ -25,7 +25,7 @@ import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { leadCallback } from "@/lib/callbacks/service";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
 import { priceApprovalContext } from "@/lib/agent/price-approval";
-import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
+import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { maskCardNumbers } from "./safety";
 import { paceInstruction, resolveVoiceSettings } from "./settings";
@@ -128,8 +128,9 @@ export async function loadVoiceInstructions(
     seller: { tradeName: account.tradeName, currency: account.currency, languages: contact.languages },
     catalog: activeItems, deal: a.deal, stage, agentMessages: agentCount.length, names, opener,
     localNow: localNowLine(a.now, contact.timezone),
-    followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
-    callback: callback ? { timeLocal: formatDueLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
+    // Times as the buyer should hear them ("Friday 20 November at 12:30"), as in a chat turn.
+    followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
+    callback: callback ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
     teamQuestions: teamQuestions || null,
     priceApproval: priceApproval || null,
     recap, resumed: opts.resumed,

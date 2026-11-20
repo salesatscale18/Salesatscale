@@ -31,7 +31,7 @@ import {
 } from "@/lib/voice/settings";
 import { ManualClock, flushAsync, type RealtimeEvent } from "@/lib/voice/realtime";
 import {
-  fieldsFromInstructions, lineForInstruction, localDayAt, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
+  DEFAULT_SCRIPT, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
 } from "@/lib/voice/scripted-realtime";
 import { assertLiveAllowed, clientEvents, GatewayRealtime, ServerEventMapper, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 
@@ -204,6 +204,22 @@ describe("voice instructions", () => {
     expect(chatOnly("It is in the chat below. I'll message you tomorrow at 10.")).toEqual([]);
   });
 
+  it("every scripted agent line (all scenarios) passes the chat-only scan", () => {
+    const fake: ScriptCtx = {
+      results: {}, fields: [], localNow: { date: "2026-11-20", time: "14:05", weekday: "Fri", offset: "+02:00" },
+      last: (name) => ({
+        create_quote: { ok: true, quote: "Q-1001 v1", totals: { total_today_including_vat: "₪100.00" } },
+        search_catalog: { ok: true, items: [{ sku: "S", plain_name: "user seat", sold_here: true }] },
+        schedule_follow_up: { ok: true, due_local: "Friday 27 November at 10:00", suggested_local: "Sunday 22 November at 09:00" },
+        request_callback: { ok: true, time_local: "Saturday 21 November at 10:00", suggested_local: "Sunday 22 November at 09:00" },
+      } as Record<string, Record<string, unknown>>)[name],
+    };
+    const lines = [...Object.values(VOICE_SCRIPTS), DEFAULT_SCRIPT].flat()
+      .flatMap((step) => (step.kind === "say" ? [typeof step.text === "function" ? step.text(fake) : step.text] : []));
+    expect(lines.length).toBeGreaterThan(40);
+    for (const line of lines) expect(chatOnly(line), line).toEqual([]);
+  });
+
   it("every play card's chat wording has a spoken form (seller's own cards stay as written)", () => {
     const voice = stableSystemPrompt(pb, seller, null, { channel: "voice" });
     for (const k of PLAY_KEYS) expect(voice, k).toContain(`### ${DEFAULT_PLAYS[k].title}\nWhen:`);
@@ -228,7 +244,7 @@ describe("voice instructions", () => {
     for (const line of [
       '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time and call request_callback. Never use hand_off_to_human for a call request.',
       "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is a callback request: call request_callback with the time and a brief (what the buyer wants to cover and what the person should have ready). If it offers another time, offer that time instead and call it again when the buyer agrees. Then say the team will confirm the time by message, and ask if there is anything else you can help with: this call goes on.",
-      '- Times: say them naturally, as a person would ("tomorrow at ten", "Thursday at half past two"). Work out the date from "Local time now" in your context, and pass the time to request_callback as a local date and time, for example "2026-11-18T10:00".',
+      '- Times: say them naturally, as a person would ("tomorrow at ten", "Friday 20 November at half past twelve"); the tools and your context give them in full ("Friday 20 November at 12:30"). Work out the date from "Local time now" in your context. Pass the time to request_callback as a local date and time, for example "2026-11-18T10:00", and to schedule_follow_up as a date-time with the offset shown in "Local time now", for example "2026-11-18T10:00:00+02:00".',
       "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it by message. Never read a link aloud.",
       '- Send the one approved item ("Send me information"): you cannot attach files or read links aloud. Give the summary in a few spoken sentences, and offer to continue in the chat for anything they want to read later.',
       "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
@@ -701,9 +717,13 @@ describe("call requests on a call (request_callback)", () => {
 
   it("scripted times come from \"Local time now\"", () => {
     const now = localNowFromInstructions("x\nLocal time now: Fri 20 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)\ny");
-    expect(now).toEqual({ date: "2026-11-20", time: "14:05" });
+    expect(now).toEqual({ date: "2026-11-20", time: "14:05", weekday: "Fri", offset: "+02:00" });
     expect(localDayAt({ results: {}, last: () => undefined, fields: [], localNow: { date: "2026-11-30", time: "09:00" } }, 1, "10:00")).toBe("2026-12-01T10:00");
     expect(localNowFromInstructions("no line")).toBeNull();
+    const ctx = { results: {}, last: () => undefined, fields: [], localNow: { date: "2026-11-20", time: "14:05", weekday: "Fri", offset: "+02:00" } };
+    // schedule_follow_up's form: the next Friday (never today), with the offset.
+    expect(nextWeekdayAt(ctx, "Fri", "10:00")).toBe("2026-11-27T10:00:00+02:00");
+    expect(nextWeekdayAt(ctx, "Sun", "09:30")).toBe("2026-11-22T09:30:00+02:00");
   });
 
   async function runTwice(firstResult: Record<string, unknown>) {

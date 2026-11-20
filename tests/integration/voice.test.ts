@@ -414,6 +414,51 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await db.delete(voiceSessions).where(eq(voiceSessions.id, c.sessionId));
   });
 
+  describe("objection scenarios (O7) by voice, judged as chat is", () => {
+    type Expect = { objections: { play: string; steps: number[]; status: string; attempts: number }[]; tools?: string[] };
+    const cases: Record<string, Expect> = {
+      price_budget: { objections: [{ play: "too_expensive", steps: [1, 2], status: "open", attempts: 1 }], tools: ["create_quote"] },
+      price_competitor: { objections: [{ play: "competitor", steps: [1, 2], status: "open", attempts: 1 }] },
+      think_partner: {
+        objections: [{ play: "need_to_think", steps: [1], status: "dropped", attempts: 0 }, { play: "someone_else_decides", steps: [1, 2, 4], status: "open", attempts: 1 }],
+        tools: ["schedule_follow_up"],
+      },
+      asks_for_person_reflex: { objections: [{ play: "asks_for_person", steps: [1, 2], status: "settled", attempts: 1 }], tools: ["send_order_form"] },
+      unknown_good_to_know: { objections: [], tools: ["ask_team", "create_quote"] },
+      unknown_must_have: { objections: [{ play: "no_answer", steps: [1, 4], status: "open", attempts: 0 }], tools: ["ask_team", "request_callback"] },
+      buying_signal: { objections: [{ play: "too_expensive", steps: [1], status: "settled", attempts: 0 }], tools: ["send_order_form"] },
+      two_objections: { objections: [{ play: "someone_else_decides", steps: [1], status: "dropped", attempts: 0 }, { play: "too_expensive", steps: [1, 2], status: "open", attempts: 1 }] },
+    };
+    for (const [id, want] of Object.entries(cases)) {
+      it(`${id}: passes its check by voice; objections recorded as expected; the call stays live`, async () => {
+        const c = await newCall(id);
+        await c.run(15_000);
+        let result = await check(c.conversationId);
+        // The buyer speaks each scenario line (plus a "yes" when a tool offered another time) until the check decides.
+        for (let turn = 0; turn < 6 && result?.result !== "passed"; turn++) {
+          await c.speak();
+          await c.run(45_000);
+          result = await check(c.conversationId);
+          if (result?.result === "failed") break;
+        }
+        expect(result, JSON.stringify(result)).toMatchObject({ result: "passed" });
+        expect(c.engine.isEnded).toBe(false);
+        expect((await sessionRow(c.sessionId)).status).toBe("live");
+        expect((await conv(c.conversationId)).status).toBe("open");
+        const [deal] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
+        const recorded = (deal?.objections ?? []).map((o) => ({ play: (o as { play: string }).play, steps: (o as { steps: number[] }).steps, status: (o as { status: string }).status, attempts: (o as { attempts: number }).attempts }));
+        expect(recorded).toEqual(want.objections);
+        const ok = (await calls(c.conversationId)).filter((x) => x.outcome === "ok").map((x) => x.name);
+        for (const t of want.tools ?? []) expect(ok, t).toContain(t);
+        expect(ok).not.toContain("hand_off_to_human");
+        // Nothing the agent said tells the buyer a question went to the team.
+        const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).map((m) => m.body);
+        for (const line of agent) expect(line).not.toMatch(/\b(?:sent|passed|forwarded)\b[^.?!]*\bteam\b|\bwait(?:ing)? for\b|\bget back to you\b/i);
+        await hangUp(c);
+      });
+    }
+  });
+
   it("other language: the agent offers English or the chat (calls are English only); scenario passed", async () => {
     const c = await newCall("hebrew_buyer");
     expect((await conv(c.conversationId)).language).toBe("en");

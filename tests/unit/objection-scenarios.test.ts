@@ -64,8 +64,8 @@ describe("O7 scenario definitions", () => {
     expect(nextBuyerText(s, [{ actor: "buyer" }, { actor: "agent" }, { actor: "buyer" }, { actor: "agent" }, { actor: "buyer" }, { actor: "agent" }])).toBe(s.buyerTurns![2]);
   });
 
-  it("voice: the new scenarios have no scripted call yet, and a call on one falls back to the default script", async () => {
-    for (const id of NEW_IDS) expect(VOICE_SCRIPTS[id]).toBeUndefined();
+  it("voice: every new scenario has a scripted call (lib/voice/scripted-realtime.ts), and a call on one connects", async () => {
+    for (const id of NEW_IDS) expect(VOICE_SCRIPTS[id], id).toBeDefined();
     const model = new ScriptedRealtime({ tone: false });
     const conn = await model.connect({ instructions: "", tools: [], language: "en", toolBehavior: "blocking", scenario: "two_objections" }, () => {});
     expect(model.connections).toHaveLength(1);
