@@ -53,6 +53,30 @@ export function maskPhone(e164: string): string {
   return `+${cc} ${rest.slice(0, 2)}-***-${last4}`;
 }
 
+/**
+ * An E.164 number formatted for reading (display only; store E.164):
+ * "+972501112233" → "+972 50-111-2233", "+14155550123" → "+1 415-555-0123",
+ * "+447700900123" → "+44 7700 900123". Other known calling codes get groups
+ * of three; anything else comes back unchanged.
+ */
+export function formatPhone(e164: string): string {
+  if (!/^\+[1-9]\d{7,14}$/.test(e164)) return e164;
+  const d = e164.slice(1);
+  const cc = Object.values(CALLING_CODE).filter((c) => d.startsWith(c)).sort((a, b) => b.length - a.length)[0];
+  if (!cc) return e164;
+  const n = d.slice(cc.length);
+  if (cc === "972" && (n.length === 9 || n.length === 8)) {
+    const a = n.length - 7;
+    return `+972 ${n.slice(0, a)}-${n.slice(a, a + 3)}-${n.slice(a + 3)}`;
+  }
+  if (cc === "1" && n.length === 10) return `+1 ${n.slice(0, 3)}-${n.slice(3, 6)}-${n.slice(6)}`;
+  if (cc === "44" && n.length === 10) return `+44 ${n.slice(0, 4)} ${n.slice(4)}`;
+  const groups = n.match(/.{1,3}/g) ?? [n];
+  // Never leave a lone digit at the end: "123 456 7" → "123 4567".
+  if (groups.length > 1 && groups[groups.length - 1].length === 1) groups.splice(-2, 2, groups[groups.length - 2] + groups[groups.length - 1]);
+  return `+${cc} ${groups.join(" ")}`;
+}
+
 export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted by SMS, WhatsApp or email";
 
 export type LeadInput = {

@@ -3564,7 +3564,6 @@
   "settings.channels.whatsapp_body": "Off by default. Turn on after you connect a WhatsApp sender; then WhatsApp is used before SMS.",
   "settings.channels.whatsapp_platform": "For now the platform turns it on for every account.",
   "settings.channels.email": "Email",
-  "settings.channels.email_body": "Used when there is no mobile number, or SMS fails.",
   "settings.channels.saved.added": "Test number added.",
   "settings.channels.saved.removed": "Test number removed.",
   "settings.channels.saved.numbers": "Test numbers saved.",
@@ -3597,5 +3596,9 @@
   "buyer.voice.bubble.ended_limit": "Call ended · time limit",
   "buyer.voice.bubble.left": "{time} left",
   "buyer.voice.bubble.caption_more": "Show the whole line",
-  "buyer.voice.bubble.caption_less": "Show less"
+  "buyer.voice.bubble.caption_less": "Show less",
+  "settings.channels.whatsapp_off_hint": "Off for every account for now. Turning it on per account comes with WhatsApp setup.",
+  "settings.channels.not_yet": "Not yet",
+  "settings.channels.email_planned": "Email as a fallback is planned.",
+  "settings.channels.go_live_why": "SMS go live for the whole platform once the sender name is approved."
 }

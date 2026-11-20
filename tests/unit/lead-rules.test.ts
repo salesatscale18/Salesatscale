@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
-  bearerKey, csvEscape, csvToRawLeads, generateIntakeKey, hashIntakeKey, maskPhone, mergeLeadFields, normalizePhone, parseCsv, parseLead,
+  bearerKey, csvEscape, csvToRawLeads, formatPhone, generateIntakeKey, hashIntakeKey, maskPhone, mergeLeadFields, normalizePhone, parseCsv, parseLead,
 } from "@/lib/leads/rules";
 
 describe("normalizePhone", () => {
@@ -23,6 +23,33 @@ describe("maskPhone", () => {
   it("keeps the country code and last four digits", () => {
     expect(maskPhone("+972525550193")).toBe("+972 52-***-0193");
     expect(maskPhone("+14155550100")).toBe("+1 41-***-0100");
+  });
+});
+
+describe("formatPhone", () => {
+  it("formats Israeli mobiles and landlines for reading", () => {
+    expect(formatPhone("+972501112233")).toBe("+972 50-111-2233");
+    expect(formatPhone("+97221234567")).toBe("+972 2-123-4567");
+  });
+  it("formats NANP and UK numbers", () => {
+    expect(formatPhone("+14155550123")).toBe("+1 415-555-0123");
+    expect(formatPhone("+447700900123")).toBe("+44 7700 900123");
+  });
+  it("groups other known calling codes in threes, without a lone last digit", () => {
+    expect(formatPhone("+971501234567")).toBe("+971 501 234 567");
+    expect(formatPhone("+4930123456")).toBe("+49 301 234 56");
+    expect(formatPhone("+33612345678")).toBe("+33 612 345 678");
+    expect(formatPhone("+31612345678")).toBe("+31 612 345 678");
+    expect(formatPhone("+341234567890")).toBe("+34 123 456 7890");
+  });
+  it("returns anything else unchanged", () => {
+    expect(formatPhone("+8613812345678")).toBe("+8613812345678");
+    expect(formatPhone("0501112233")).toBe("0501112233");
+    expect(formatPhone("")).toBe("");
+    expect(formatPhone("+97250-111")).toBe("+97250-111");
+  });
+  it("always keeps every digit", () => {
+    for (const n of ["+972501112233", "+14155550123", "+447700900123", "+4930123456", "+61412345678"]) expect(formatPhone(n).replace(/[^\d+]/g, "")).toBe(n);
   });
 });
 
