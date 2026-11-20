@@ -138,7 +138,7 @@ export async function runBuyerTurn(
       teamQuestions,
       priceApproval,
       localNow: localNowLine(new Date(), contact.timezone),
-    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing; do not mention a technical problem." : ""}\nConversation language: ${lang}.`,
+    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nConversation language: ${lang}.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({
