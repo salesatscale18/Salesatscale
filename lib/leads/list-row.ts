@@ -76,13 +76,21 @@ export function needsCell(needs: LeadNeeds, ctx: RowCtx): StepCell {
 type LeadLike = { status: LeadStatus };
 
 /**
- * Next step for a lead with nothing waiting for the team: what the agent does
- * next, only from data the list already has (a scheduled follow-up, an order
- * form or order with the buyer, a sent quote, the lead's closed state). With
- * nothing known: "Waiting for the buyer's reply".
+ * Next step for a lead with nothing waiting for the team (and, outside Needs
+ * you, for a lead a person handles): what happens next, only from data the list
+ * already has (who has the chat, a confirmed call ahead, a scheduled follow-up,
+ * an order form or order with the buyer, a sent quote, the lead's closed
+ * state). With nothing known: "Waiting for the buyer's reply". `ownerName`: the
+ * person who took the chat (personName: a name or "You", never an email).
  */
-export function nextStepCell(lead: LeadLike, f: LeadListFacts, ctx: RowCtx): StepCell {
+export function nextStepCell(lead: LeadLike, f: LeadListFacts, ctx: RowCtx, ownerName: string | null = null): StepCell {
   if (lead.status === "opted_out") return { icon: null, title: t("leads.next.opted_out"), detail: t("leads.next.opted_out.detail") };
+  // A person has the chat, or it waits for one (Needs you itself says "Asked for a person").
+  if (lead.status === "human_handling") {
+    return ownerName
+      ? { icon: "user", title: t("leads.next.human_owner", { name: isolate(ownerName) }), detail: null }
+      : { icon: "user", title: t("leads.who.waiting"), detail: null };
+  }
   if (lead.status === "won" || f.order?.paymentStatus === "paid") {
     const o = f.order;
     const label = o ? orderLabel(ctx.tradeName, o.number) : null;
@@ -91,6 +99,10 @@ export function nextStepCell(lead: LeadLike, f: LeadListFacts, ctx: RowCtx): Ste
       : { icon: null, title: t("leads.next.won"), detail: null };
   }
   if (lead.status === "lost") return { icon: null, title: t("leads.next.lost"), detail: t("leads.next.lost.detail") };
+  // A confirmed call still ahead, in the account's time zone (the short seller form).
+  if (f.call) {
+    return { icon: "phone-call", title: t("leads.next.call", { when: isolate(formatDueLocal(f.call.at, ctx.timezone)) }), detail: f.call.brief ? isolate(f.call.brief) : null };
+  }
   if (f.followUp) {
     return { icon: "clock", title: t("leads.next.follow_up", { when: isolate(formatDueLocal(f.followUp.dueAt, ctx.timezone)) }), detail: f.followUp.topic ? isolate(f.followUp.topic) : t("leads.next.follow_up.detail") };
   }

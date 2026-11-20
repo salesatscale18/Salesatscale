@@ -2,11 +2,13 @@
  * Leads V2 list (UX L-3): what a row needs beyond the lead itself, read for
  * the listed leads in a fixed number of queries (no query per lead), every one
  * scoped by account id: the latest live quote (Deal value, Next step), the
- * latest order form and order, and the next scheduled follow-up.
+ * latest order form and order, the next scheduled follow-up, and a confirmed
+ * call still ahead (folded from the leads' call events, lib/callbacks/rules.ts).
  */
 import { and, asc, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { followUps, orderFormStatus, orderForms, orders, paymentStatus, quoteVersions, quotes, type QuoteStatus } from "@/db/schema";
+import { followUps, leadEvents, orderFormStatus, orderForms, orders, paymentStatus, quoteVersions, quotes, type QuoteStatus } from "@/db/schema";
+import { CALLBACK_EVENT_TYPES, currentCallbacks } from "@/lib/callbacks/rules";
 
 type OrderFormStatus = (typeof orderFormStatus.enumValues)[number];
 type PaymentStatus = (typeof paymentStatus.enumValues)[number];
@@ -21,15 +23,17 @@ export type LeadListFacts = {
   form: { status: OrderFormStatus; superseded: boolean; openedAt: Date | null; expiresAt: Date; quoteNumber: number } | null;
   order: { number: number; paymentStatus: PaymentStatus; amountMinor: number; currency: string } | null;
   followUp: { dueAt: Date; topic: string | null } | null;
+  /** A call the seller confirmed whose time is still ahead. */
+  call: { at: Date; brief: string } | null;
 };
 
-export const NO_FACTS: LeadListFacts = { quote: null, form: null, order: null, followUp: null };
+export const NO_FACTS: LeadListFacts = { quote: null, form: null, order: null, followUp: null, call: null };
 
-export async function leadListFacts(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, LeadListFacts>> {
+export async function leadListFacts(db: Db, accountId: string, leadIds: readonly string[], now = new Date()): Promise<Map<string, LeadListFacts>> {
   const out = new Map<string, LeadListFacts>();
   const ids = [...new Set(leadIds)];
   if (ids.length === 0) return out;
-  const [qs, forms, ords, fus] = await Promise.all([
+  const [qs, forms, ords, fus, calls] = await Promise.all([
     db.selectDistinctOn([quotes.leadId], {
       leadId: quotes.leadId, number: quotes.number, status: quotes.status, version: quotes.currentVersion,
       currency: quoteVersions.currency, oneTime: quoteVersions.oneTimeTotalMinor, recurring: quoteVersions.recurringTotalMinor,
@@ -55,6 +59,10 @@ export async function leadListFacts(db: Db, accountId: string, leadIds: readonly
       .from(followUps)
       .where(and(eq(followUps.accountId, accountId), inArray(followUps.leadId, ids), eq(followUps.status, "scheduled")))
       .orderBy(followUps.leadId, asc(followUps.dueAt)),
+    // The listed leads' call events in one query; each lead's current request is folded in memory.
+    db.select({ type: leadEvents.type, leadId: leadEvents.leadId, createdAt: leadEvents.createdAt, data: leadEvents.data })
+      .from(leadEvents)
+      .where(and(eq(leadEvents.accountId, accountId), inArray(leadEvents.leadId, ids), inArray(leadEvents.type, [...CALLBACK_EVENT_TYPES]))),
   ]);
   const get = (id: string) => {
     let f = out.get(id);
@@ -73,5 +81,8 @@ export async function leadListFacts(db: Db, accountId: string, leadIds: readonly
   }
   for (const o of ords) if (o.leadId) get(o.leadId).order = { number: o.number, paymentStatus: o.paymentStatus, amountMinor: o.amount, currency: o.currency };
   for (const u of fus) if (u.leadId) get(u.leadId).followUp = { dueAt: u.dueAt, topic: u.topic };
+  for (const c of currentCallbacks(calls)) {
+    if (c.status === "confirmed" && c.at.getTime() > now.getTime()) get(c.leadId).call = { at: c.at, brief: c.brief };
+  }
   return out;
 }

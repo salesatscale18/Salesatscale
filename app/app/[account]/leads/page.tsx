@@ -168,7 +168,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
         }
         data = { rows: rows.slice(0, limit), total: stageFilter ? rows.length : data.total };
       }
-      facts = await leadListFacts(appDb, account.id, data.rows.map((r) => r.lead.id));
+      facts = await leadListFacts(appDb, account.id, data.rows.map((r) => r.lead.id), now);
     }
   } catch (e) {
     console.error("[leads] list failed", e);
@@ -385,11 +385,14 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                         const any: LeadNeeds | undefined = needs.get(lead.id);
                         const shown = isNeeds ? shownNeeds.get(lead.id) ?? any : any;
                         const f = facts.get(lead.id) ?? NO_FACTS;
-                        const cell = shown ? needsCell(shown, ctx) : nextStepCell(lead, f, ctx);
+                        const ownerName = owner ? personName(owner, me.id, t("people.you")) : null;
+                        // Outside Needs you, a lead a person handles says who has the chat (or that it waits for one).
+                        const personStep = !isNeeds && lead.status === "human_handling";
+                        const cell = personStep || !shown ? nextStepCell(lead, f, ctx, ownerName) : needsCell(shown, ctx);
                         const value = dealValue(f);
-                        const who = whoOnIt(lead, owner ? personName(owner, me.id, t("people.you")) : null);
+                        const who = whoOnIt(lead, ownerName);
                         const stage = stages.get(lead.id);
-                        const href = rowHref(`/app/${account.slug}`, lead.id, shown);
+                        const href = rowHref(`/app/${account.slug}`, lead.id, personStep ? null : shown);
                         return (
                           <tr key={lead.id} className="sas-lrow" data-needs={any ? "" : undefined} data-group={shown?.group}>
                             <td className="sas-lrow__lead">

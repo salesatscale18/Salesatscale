@@ -9,7 +9,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { randomUUID } from "node:crypto";
 import type { ReactElement } from "react";
 import { eq } from "drizzle-orm";
-import { catalogVersions, leads, quotes, quoteVersions, sellerAccounts, users, type Lead, type SellerAccount, type User } from "@/db/schema";
+import { catalogVersions, leadEvents, leads, orders, quotes, quoteVersions, sellerAccounts, users, type Lead, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -39,6 +39,7 @@ const { leadListFacts } = await import("@/lib/leads/list-facts");
 const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
 const { countItemsByGroup, NEEDS_GROUPS } = await import("@/lib/overview/needs-groups");
+const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 
 const page = async (el: Promise<ReactElement>) => renderToStaticMarkup(await el);
 const props = (account: string, sp: Record<string, string> = {}) => ({ params: Promise.resolve({ account }), searchParams: Promise.resolve(sp) });
@@ -266,6 +267,64 @@ describe("Leads V2 (LQ-L)", () => {
     // A group link lands on the filtered Leads view.
     const leadsHtml = await page(LeadsPage(props(account.slug, { view: "needs_you", need: "person" })));
     expect(rows(leadsHtml).length).toBe(new Set(items.filter((i) => i.kind === "human_handling").map((i) => i.leadId)).size);
+  });
+
+  it("Next step outside Needs you: who has the chat, or Waiting for a person; Needs you keeps Asked for a person", async () => {
+    const team = await page(LeadsPage(props(account.slug, { view: "with_team" })));
+    const h = row(team, "Hana Handoff")!;
+    expect(h.html).toContain(">Waiting for a person</span>");
+    expect(h.html).not.toContain(">Asked for a person<");
+    // The person's name (here the viewer: "You"), isolated, never an email.
+    const i = row(team, "Ido Handoff")!;
+    expect(i.html).toContain(">⁨You⁩ is handling the chat</span>");
+    expect(i.html).not.toContain("lql@platform.test");
+    expect(i.html).toContain(`href="/app/${account.slug}/leads/${ido.id}"`);
+    // The rose edge stays: they still need you.
+    expect(h.html).toContain("data-needs");
+    const needs = await page(LeadsPage(props(account.slug, { need: "person" })));
+    expect(row(needs, "Ido Handoff")!.html).toContain(">Asked for a person<");
+  });
+
+  it("a confirmed call ahead is the Next step (before the sent quote), read in one batch per page", async () => {
+    const cara = await mkLead(account, "Cara Call", "agent_handling", 1);
+    await mkQuote(account, cara.id, "sent", 10_000);
+    const callbackId = randomUUID();
+    const at = new Date("2030-11-22T10:30:00Z");
+    await db.insert(leadEvents).values([
+      { accountId: account.id, leadId: cara.id, type: "callback.requested", actor: "agent", data: { callbackId, at: at.toISOString(), timezone: "Asia/Jerusalem", brief: "Pricing for 3 sites" }, createdAt: new Date(NOW.getTime() - 2 * H) },
+      { accountId: account.id, leadId: cara.id, type: "callback.confirmed", actor: "human", data: { callbackId, at: at.toISOString(), timezone: "Asia/Jerusalem" }, createdAt: new Date(NOW.getTime() - H) },
+    ]);
+    const facts = await leadListFacts(db, account.id, [cara.id, sam.id]);
+    expect(facts.get(cara.id)?.call?.at.toISOString()).toBe(at.toISOString());
+    expect(facts.get(sam.id)?.call ?? null).toBeNull();
+    expect((await leadListFacts(db, other.id, [cara.id])).size).toBe(0);
+    const html = await page(LeadsPage(props(account.slug, { view: "agent_working" })));
+    const c = row(html, "Cara Call")!;
+    // The account's time zone (Asia/Jerusalem): 10:30 UTC is 12:30.
+    expect(c.html).toMatch(/>Call · ⁨Fri 22 Nov,? 12:30⁩<\/span>/);
+    expect(c.html).toContain("Pricing for 3 sites");
+    expect(c.html).not.toContain(">Quote sent<");
+    // Once the call time has passed, it is no longer ahead.
+    expect((await leadListFacts(db, account.id, [cara.id], new Date(at.getTime() + H))).get(cara.id)?.call ?? null).toBeNull();
+  });
+
+  it("lead page Orders card: Review transfer / Payment failed: open order go to the order's panel", async () => {
+    const item = (await needsYou(db, account.id, new Date())).find((i) => i.kind === "bank_transfer");
+    expect(item).toBeTruthy();
+    if (!item || item.kind !== "bank_transfer") return;
+    const open = async () => page(LeadCardPage({ params: Promise.resolve({ account: account.slug, leadId: item.leadId }), searchParams: Promise.resolve({}) }) as Promise<ReactElement>);
+    const html = await open();
+    expect(html).toContain(`href="/app/${account.slug}/orders?tab=orders&amp;quote=${item.quoteId}" data-order-action="review_transfer"`);
+    expect(html).toMatch(/data-order-action="review_transfer">.*?Review transfer<\/a>/);
+    await db.update(orders).set({ paymentStatus: "failed" }).where(eq(orders.id, item.orderId));
+    try {
+      const failed = await open();
+      expect(failed).toMatch(/data-order-action="payment_failed">.*?Payment failed: open order<\/a>/);
+      await db.update(orders).set({ paymentStatus: "paid" }).where(eq(orders.id, item.orderId));
+      expect(await open()).not.toContain("data-order-action");
+    } finally {
+      await db.update(orders).set({ paymentStatus: "bank_transfer_expected" }).where(eq(orders.id, item.orderId));
+    }
   });
 
   it("services: Deal value sorts in SQL; list facts and lead ids stay inside the account", async () => {

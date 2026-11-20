@@ -107,7 +107,8 @@ describe("W6: workspace and markets review fixes", () => {
       const orders = section(html, "orders-card");
       // Line 3: the three order actions together, after the row link.
       const links = orders.split("</a>").slice(1).join("</a>");
-      expect(orders).toMatch(/<\/a><div class="sas-lead-doc__links"><div style="[^"]*" data-signed-form-links="">/);
+      // Leads V2: a transfer to confirm (or a failed payment) adds its direct action first on that line.
+      expect(orders).toMatch(/<\/a><div class="sas-lead-doc__links">(<a [^>]*data-order-action="[a-z_]+">[\s\S]*?<\/a>)?<div style="[^"]*" data-signed-form-links="">/);
       for (const label of ["Signed form", "Open pay page", "Copy link"]) expect(links).toContain(label);
       // No leftover single-row classes.
       expect(orders).not.toContain("sas-list__main");

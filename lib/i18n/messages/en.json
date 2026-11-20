@@ -3454,5 +3454,9 @@
   "leads.value.recurring": "+ {amount}/{per}",
   "leads.row.open": "Open {name}",
   "overview.needs.oldest": "Oldest waiting:",
-  "overview.needs.open_leads": "Open in Leads"
+  "overview.needs.open_leads": "Open in Leads",
+  "leads.next.human_owner": "{name} is handling the chat",
+  "leads.next.call": "Call · {when}",
+  "lead.card.order_review_transfer": "Review transfer",
+  "lead.card.order_payment_failed": "Payment failed: open order"
 }

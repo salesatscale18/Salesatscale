@@ -1412,3 +1412,5 @@ label.st-voice__row { cursor: pointer; }
 .sas-app a.sas-ovn__open { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--primary); text-decoration: none; }
 .sas-app a.sas-ovn__open .sas-ico { width: 16px; height: 16px; }
 @media (max-width: 1100px) { .sas-app .sas-ov__row.sas-ovn-row { grid-template-columns: minmax(0, 1fr); } .sas-ovn { align-self: stretch; } }
+/* LQ-L: the Orders card's direct action (Review transfer / Payment failed: open order) sits on the links line. */
+.sas-lead-doc__links { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

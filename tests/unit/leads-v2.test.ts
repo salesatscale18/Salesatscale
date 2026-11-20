@@ -136,6 +136,20 @@ describe("row cells (L-3, L-4)", () => {
     expect(nextStepCell({ status: "lost" }, NO_FACTS, ctx).title).toBe("Marked lost");
   });
 
+  it("Next step: who has the chat for a lead a person handles; a confirmed call comes before a follow-up", () => {
+    expect(nextStepCell({ status: "human_handling" }, NO_FACTS, ctx)).toMatchObject({ icon: "user", title: "Waiting for a person" });
+    const named = nextStepCell({ status: "human_handling" }, NO_FACTS, ctx, "Dana Cohen");
+    expect(stripIsolates(named.title)).toBe("Dana Cohen is handling the chat");
+    const call = { at: new Date("2026-11-20T10:30:00Z"), brief: "Pricing for 3 sites" };
+    const followUp = { dueAt: new Date("2026-11-22T08:00:00Z"), topic: "Talking to a partner first" };
+    const c = nextStepCell({ status: "agent_handling" }, { ...NO_FACTS, call, followUp }, ctx);
+    expect(c.icon).toBe("phone-call");
+    expect(stripIsolates(c.title)).toMatch(/^Call · Fri 20 Nov,? 12:30$/);
+    expect(stripIsolates(c.detail!)).toBe("Pricing for 3 sites");
+    // A person handling the chat wins over a call.
+    expect(nextStepCell({ status: "human_handling" }, { ...NO_FACTS, call }, ctx).title).toBe("Waiting for a person");
+  });
+
   it("Deal value: the latest quote's one-time total with '+ x/mo' under it; none without a quote; never added across currencies", () => {
     expect(dealValue(NO_FACTS)).toBeNull();
     const quote = { number: 1, version: 1, status: "sent" as const, currency: "ILS", oneTimeMinor: 1_295_640, recurringMinor: 31_860, recurringPeriod: "month", toPrice: false };
