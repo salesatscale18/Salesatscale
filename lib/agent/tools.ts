@@ -732,7 +732,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const plan = account ? deliveryPlanFor(account, quoteMarket) : null;
     const now = new Date();
     // A ready quote goes to the buyer as the app's own message, in a fixed layout; the agent adds only the closing sentence.
-    // Awaiting approval: no message and no totals to promise (the agent says it is confirming the price with the team).
+    // Awaiting approval: no message and no totals to promise (the agent says it has asked the team, and keeps going).
     const quoteTz = account ? marketTimezone(account, quoteMarket) : "UTC";
     const quoteMessageId = !awaiting && !r.reused ? await sendQuoteMessage(ctx, r.quote.number, v, quoteTz) : null;
     // The buyer has the quote now (card on the web chats, its text on WhatsApp): Draft → Sent.
@@ -773,7 +773,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
         ...(headline ? { headline } : {}),
         ...(assumedNow.length ? { quoted_on_assumption: assumedNow } : {}),
         message: (awaiting
-          ? "The seller must approve this quote. Tell the buyer you are confirming the price with the team and will get back to them. Do not give totals."
+          ? "The seller must approve this quote. Tell the buyer you have asked the team to approve that price, and keep going: the conversation does not pause. The app tells the buyer the team's decision. Do not give totals."
           : "The quote message was sent to the buyer by the app. Do not repeat the lines or totals. Add only the closing sentence.")
           + (assumedNow.length ? " Say in one short clause what you assumed and that the buyer can tell you if it is different." : ""),
       },

@@ -24,6 +24,7 @@ import { buyerNames } from "./core/names";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { leadCallback } from "@/lib/callbacks/service";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
+import { priceApprovalContext } from "./price-approval";
 import { formatDueLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 
@@ -87,7 +88,7 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp, contact, callback, teamQuestions] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, contact, callback, teamQuestions, priceApproval] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
@@ -99,6 +100,8 @@ export async function runBuyerTurn(
     leadCallback(db, args.accountId, conv.leadId),
     // Questions sent to the team and their answers (O4, lib/team-questions): the agent uses an answer at a natural point.
     teamQuestionsContext(db, args.accountId, conv.leadId, conv.id),
+    // The team's decline of a special price (O1 part 5): the agent continues the price ladder from it.
+    priceApprovalContext(db, args.accountId, conv.leadId),
   ]);
   const recent = recentDesc.reverse();
   const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
@@ -126,6 +129,7 @@ export async function runBuyerTurn(
       followUp: followUp ? { dueLocal: formatDueLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
       callback: callback ? { timeLocal: formatDueLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
       teamQuestions,
+      priceApproval,
       localNow: localNowLine(new Date(), contact.timezone),
     })}\nConversation language: ${lang}.`,
   ];

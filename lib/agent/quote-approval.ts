@@ -11,13 +11,22 @@
  * language ("If this looks right, I'll send the order form now…"); after
  * "Send N% instead" it first says the team can offer N% and sends the new
  * card. These are app messages (lib/agent/app-message.ts), stored in the
- * conversation so the agent sees them in its history.
+ * conversation so the agent sees them in its history. An approval as is also
+ * tells the buyer the team approved it, in the close (O1 part 5).
+ *
+ * "Decline" (O1 part 5, declineHeldQuote): the held quote is withdrawn (status
+ * cancelled, a "quote.declined" event), the buyer gets an app message ("We
+ * couldn't approve that price…", with the best in-limit offer when the
+ * discount was the only reason), and the agent reads the decline in its turn
+ * context ("Price approval", lib/agent/price-approval.ts) to continue the price ladder.
  */
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leads, messages, quotes, quoteVersions, sellerAccounts, toolCalls } from "@/db/schema";
+import { conversations, leadEvents, leads, messages, quotes, quoteVersions, sellerAccounts, toolCalls, type ApprovalReason } from "@/db/schema";
+import { writeAudit } from "@/lib/accounts/audit";
+import { approvalReasonText } from "@/lib/catalog/pricing";
 import type { AccountAccess } from "@/lib/accounts/service";
 import { marketTimezone } from "@/lib/markets/settings";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
@@ -34,6 +43,7 @@ import { customPricesOf, requestLinesOf } from "@/lib/quotes/pricing";
 
 type Access = Pick<AccountAccess, "account" | "user" | "actingAs" | "role">;
 type Refused = { ok: false; reason: "forbidden" | "quote_not_found" | "quote_closed" | "not_discount_only" };
+type Conv = typeof conversations.$inferSelect;
 
 /** Every member of a seller account is its admin today; a platform admin acting as one may approve too. */
 export const mayApproveQuotes = (a: Pick<Access, "role">) => a.role === "seller_admin" || a.role === "platform_admin";
@@ -88,7 +98,8 @@ async function safeFollowUp(db: Db, accountId: string, quoteId: string, opts: { 
 /**
  * Writes the next step into the conversation where the agent made the held
  * quote (its create_quote call):
- * - web chats with the placeholder card, approved as is: the close only (the card is replaced in place);
+ * - web chats with the placeholder card, approved as is: the close only, starting "The team approved
+ *   your quote." (the card is replaced in place);
  * - "Send N% instead" (`offerBp`): "The team can offer N%…", the new card, then the close;
  * - WhatsApp (no placeholder there): the quote as text, then the close, through the
  *   existing send path and its rules; nothing is written when the 24-hour window is closed.
@@ -97,21 +108,9 @@ async function safeFollowUp(db: Db, accountId: string, quoteId: string, opts: { 
 export async function followUpApprovedQuote(
   db: Db, accountId: string, quoteId: string, opts: { offerBp?: number } = {}, transport: TwilioTransport | null = null, now = new Date(),
 ): Promise<ApprovalFollowUp> {
-  const [call] = await db.select({ conversationId: toolCalls.conversationId, result: toolCalls.result }).from(toolCalls)
-    .where(and(
-      eq(toolCalls.accountId, accountId), eq(toolCalls.name, "create_quote"), eq(toolCalls.outcome, "ok"),
-      sql`${toolCalls.result} ->> 'quote_id' = ${quoteId}`,
-    ))
-    .orderBy(desc(toolCalls.createdAt)).limit(1);
-  if (!call) return { sent: false, reason: "no_conversation" };
-  const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
-    .innerJoin(leads, eq(leads.id, conversations.leadId))
-    .where(and(eq(conversations.id, call.conversationId), eq(conversations.accountId, accountId), eq(leads.accountId, accountId)));
-  if (!row) return { sent: false, reason: "no_conversation" };
-  const { conv, lead } = row;
-  if (lead.status === "opted_out") return { sent: false, reason: "opted_out" };
-  if (conv.status === "closed") return { sent: false, reason: "closed" };
-  if (conv.channel === "whatsapp" && !(await conversationWindow(db, accountId, conv.id, now)).open) return { sent: false, reason: "window_closed" };
+  const found = await heldQuoteConversation(db, accountId, quoteId, now);
+  if (!found.ok) return { sent: false, reason: found.reason };
+  const { conv, call } = found;
 
   const [quote] = await db.select().from(quotes).where(and(eq(quotes.id, quoteId), eq(quotes.accountId, accountId)));
   const [version] = quote
@@ -156,9 +155,11 @@ export async function followUpApprovedQuote(
   // The close says the card's delivery date, as the agent's close does.
   const card = (await loadQuoteCards(db, accountId, [conv.id], { audience: "buyer", now }))[cardId!];
   const date = card?.state === "sent" ? card.deliveryDate : null;
-  const close = date
+  const closeOnly = date
     ? t("buyer.app.close_by", { by: deliveryByPhrase(date, language) }, language)
     : t("buyer.app.close", undefined, language);
+  // Approved as is (O1 part 5): the close first says the team approved it ("Send N% instead" already says what the team offers).
+  const close = opts.offerBp === undefined ? `${t("buyer.app.approved", undefined, language)} ${closeOnly}` : closeOnly;
   await atomic(db, (q) => [
     ...write(q, "quote_close", close),
     q.update(conversations).set({ updatedAt: new Date(at) }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, accountId))),
@@ -172,4 +173,105 @@ export async function followUpApprovedQuote(
     for (const m of out) await deliverText(db, transport, { accountId, conversationId: conv.id, messageId: m.id, body: m.body }, { statusCallback, now });
   }
   return { sent: true, channel: conv.channel, messages: out };
+}
+
+/**
+ * The conversation where the agent made this quote (its create_quote call),
+ * if the buyer can still be written to there: not opted out, not closed, and
+ * on WhatsApp inside the 24-hour window.
+ */
+async function heldQuoteConversation(db: Db, accountId: string, quoteId: string, now: Date): Promise<
+  { ok: true; conv: Conv; call: { conversationId: string; result: Record<string, unknown> | null } } | { ok: false; reason: "no_conversation" | "closed" | "opted_out" | "window_closed" }
+> {
+  const [call] = await db.select({ conversationId: toolCalls.conversationId, result: toolCalls.result }).from(toolCalls)
+    .where(and(
+      eq(toolCalls.accountId, accountId), eq(toolCalls.name, "create_quote"), eq(toolCalls.outcome, "ok"),
+      sql`${toolCalls.result} ->> 'quote_id' = ${quoteId}`,
+    ))
+    .orderBy(desc(toolCalls.createdAt)).limit(1);
+  if (!call) return { ok: false, reason: "no_conversation" };
+  const [row] = await db.select({ conv: conversations, lead: leads }).from(conversations)
+    .innerJoin(leads, eq(leads.id, conversations.leadId))
+    .where(and(eq(conversations.id, call.conversationId), eq(conversations.accountId, accountId), eq(leads.accountId, accountId)));
+  if (!row) return { ok: false, reason: "no_conversation" };
+  const { conv, lead } = row;
+  if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
+  if (conv.status === "closed") return { ok: false, reason: "closed" };
+  if (conv.channel === "whatsapp" && !(await conversationWindow(db, accountId, conv.id, now)).open) return { ok: false, reason: "window_closed" };
+
+  return { ok: true, conv, call: { conversationId: call.conversationId, result: (call.result ?? null) as Record<string, unknown> | null } };
+}
+
+// ---------------------------------------------------------------------------
+// Decline (O1 part 5): the buyer is told, the agent continues the price ladder
+// ---------------------------------------------------------------------------
+
+export type DeclineResult =
+  | { ok: true; quoteId: string; followUp: ApprovalFollowUp }
+  | Refused;
+
+/** The best in-limit offer a decline can name: only when the discount over the limit was the only reason, and the limit is above 0. */
+export function declineOfferBp(reasons: readonly ApprovalReason[]): number | null {
+  const over = reasons.find((r) => r.kind === "discount_over_limit");
+  if (!over || over.kind !== "discount_over_limit" || reasons.some((r) => r.kind !== "discount_over_limit")) return null;
+  return over.limitBp > 0 ? over.limitBp : null;
+}
+
+/**
+ * "Decline" on a held quote (the thread's approval panel or the Quotes and
+ * orders screen). Account admins only. The quote is withdrawn (cancelled: no
+ * order form can be sent for it, the buyer's placeholder card shows it
+ * withdrawn), a "quote.declined" event keeps what was declined and what the
+ * buyer was told, and the buyer gets an app message in their language in the
+ * conversation where the agent made the quote. The agent reads the decline in
+ * its next turn ("Price approval", priceApprovalContext). No model turn.
+ */
+export async function declineHeldQuote(db: Db, a: Access, quoteId: string, transport?: TwilioTransport | null, now = new Date()): Promise<DeclineResult> {
+  if (!mayApproveQuotes(a)) return { ok: false, reason: "forbidden" };
+  const accountId = a.account.id;
+  const q = await getQuote(db, accountId, quoteId);
+  if (!q) return { ok: false, reason: "quote_not_found" };
+  if (q.quote.status !== "awaiting_approval") return { ok: false, reason: "quote_closed" };
+  const current = q.versions.find((v) => v.version.version === q.quote.currentVersion);
+  if (!current) return { ok: false, reason: "quote_not_found" };
+  const reasons = current.version.approvalReasons;
+  const offerBp = declineOfferBp(reasons);
+
+  const found = await heldQuoteConversation(db, accountId, quoteId, now);
+  const language = found.ok && isLocale(found.conv.language) ? found.conv.language : "en";
+  const body = offerBp !== null
+    ? t("buyer.app.declined_offer", { n: percentText(offerBp) }, language)
+    : t("buyer.app.declined", undefined, language);
+  const messageId = found.ok ? randomUUID() : null;
+  await atomic(db, (tx) => [
+    tx.update(quotes).set({ status: "cancelled" }).where(and(eq(quotes.id, quoteId), eq(quotes.accountId, accountId), eq(quotes.status, "awaiting_approval"))),
+    tx.insert(leadEvents).values({
+      accountId, leadId: q.quote.leadId, type: "quote.declined", actor: "human", actorUserId: a.user.id, createdAt: now,
+      data: {
+        quoteId, number: q.quote.number, version: current.version.version, discountBp: current.version.discountBp,
+        reasons: reasons.map(approvalReasonText), offerBp, toldBuyer: found.ok ? body : null,
+      },
+    }),
+    ...(found.ok && messageId ? [
+      tx.insert(messages).values({ id: messageId, accountId, conversationId: found.conv.id, actor: "agent", body, language, createdAt: now }),
+      tx.insert(toolCalls).values({
+        accountId, conversationId: found.conv.id, messageId, sequence: 0, name: APP_MESSAGE_CALL, input: {},
+        result: { message_id: messageId, kind: "quote_declined", quote_id: quoteId }, outcome: "ok", createdAt: now,
+      }),
+      tx.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, found.conv.id), eq(conversations.accountId, accountId))),
+    ] : []),
+  ]);
+  await writeAudit(db, { userId: a.user.id, actingAs: a.actingAs }, { accountId, action: "quote.declined", targetType: "quote", targetId: quoteId, details: { version: current.version.version } });
+
+  if (!found.ok || !messageId) return { ok: true, quoteId, followUp: { sent: false, reason: found.ok ? "no_conversation" : found.reason } };
+  const conv = found.conv;
+  if (conv.channel === "whatsapp" || conv.channel === SIMULATOR_CHANNEL) {
+    try {
+      await deliverText(db, transport === undefined ? defaultTransport() : transport, { accountId, conversationId: conv.id, messageId, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
+    } catch (e) {
+      // The decline itself succeeded: a failed delivery is logged, never undoes it.
+      console.error("quote decline message failed", e);
+    }
+  }
+  return { ok: true, quoteId, followUp: { sent: true, channel: conv.channel, messages: [{ id: messageId, kind: "quote_declined", body }] } };
 }

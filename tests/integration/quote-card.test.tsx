@@ -212,7 +212,7 @@ describe("Quote card", () => {
     // In place: the card is the placeholder; the close is the only new message, after the buyer's.
     expect(chat.messages.filter((m) => m.kind === "quote" || m.kind === "quote_held")).toHaveLength(1);
     expect(last).toMatchObject({ from: "agent", kind: "quote_close" });
-    expect(last.body).toBe(`If this looks right, I'll send the order form now and it can be with you ${chat.cards[id].delivery!.replace("Delivery ", "")}. Sounds good?`);
+    expect(last.body).toBe(`The team approved your quote. If this looks right, I'll send the order form now and it can be with you ${chat.cards[id].delivery!.replace("Delivery ", "")}. Sounds good?`);
     // The agent sees it in its history: an agent message of this conversation, delivered on the simulator (read once the chat loaded it).
     const [row] = await db.select().from(messages).where(eq(messages.id, last.id));
     expect(row).toMatchObject({ actor: "agent", conversationId: b.conversationId, language: "en", deliveryStatus: "read" });
@@ -252,7 +252,7 @@ describe("Quote card", () => {
     const out = await run(approveQuoteAction(form({ slug: acc.slug, quoteId: String(r.result.quote_id) })));
     expect(out).toEqual({ redirect: `/app/${acc.slug}/orders?quote=${r.result.quote_id}&approved=1` });
     const last = (await b.chat()).messages.at(-1)!;
-    expect(last).toMatchObject({ kind: "quote_close", body: "If this looks right, I'll send the order form now. Sounds good?" });
+    expect(last).toMatchObject({ kind: "quote_close", body: "The team approved your quote. If this looks right, I'll send the order form now. Sounds good?" });
   });
 
   it("WhatsApp: the quote as text and the close go through the send path; nothing when the 24-hour window is closed", async () => {
@@ -273,7 +273,7 @@ describe("Quote card", () => {
     rows.sort((x, y) => x.createdAt.getTime() - y.createdAt.getTime());
     expect(rows).toHaveLength(2);
     expect(rows[0].body).toMatch(/^\*Quote Q-\d+\*/);
-    expect(rows[1].body).toMatch(/^If this looks right, I'll send the order form now and it can be with you by about /);
+    expect(rows[1].body).toMatch(/^The team approved your quote\. If this looks right, I'll send the order form now and it can be with you by about /);
     // The existing send rules decided: a simulated buyer has no phone, so not sent to the provider.
     expect(rows.map((m) => [m.deliveryStatus, m.deliveryError])).toEqual([["not_sent", "simulated_lead"], ["not_sent", "simulated_lead"]]);
     // The seller's thread shows the text quote as the card, then the close.

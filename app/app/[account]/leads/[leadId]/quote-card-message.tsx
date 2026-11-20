@@ -4,7 +4,7 @@ import { QuoteCard } from "@/components/sas/quote-card";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { percentText } from "@/lib/agent/quote-message";
 import { t } from "@/lib/i18n";
-import { approveQuoteInThreadAction, sendInLimitAction } from "./quote-card-actions";
+import { approveQuoteInThreadAction, declineQuoteInThreadAction, sendInLimitAction } from "./quote-card-actions";
 
 /**
  * A quote message in the seller's thread (board QuoteSeller): exactly the
@@ -64,6 +64,8 @@ function ApprovalPanel({ card, slug, back }: { card: QuoteCardView; slug: string
           <form action={sendInLimitAction}>{hidden}<button type="submit" className={buttonClass("secondary", "sm")}>{t("conv.qcard.in_limit", { rate: percentText(a.inLimitBp) })}</button></form>
         ) : null}
         <a className={buttonClass("ghost", "sm")} href={`/app/${slug}/leads/${card.leadId}/quote?from=${card.quoteId}`}>{t("conv.qcard.edit")}</a>
+        {/* O1 part 5: the buyer is told the price could not be approved; the agent continues the price ladder. */}
+        <form action={declineQuoteInThreadAction}>{hidden}<button type="submit" className={buttonClass("ghost", "sm")} data-decline=""><Icon name="x" />{t("conv.qcard.decline")}</button></form>
       </div>
       <span className="sas-small" style={{ color: "var(--ink)" }}>{t("conv.qcard.buyer_sees")}</span>
     </section>

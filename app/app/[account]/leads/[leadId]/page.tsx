@@ -40,6 +40,7 @@ import { contactHoursFixHref } from "@/lib/markets/lead-settings";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
 import { leadStage } from "@/lib/leads/stage";
+import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
@@ -106,6 +107,8 @@ export default async function LeadCardPage({
   // "Fix hours" on an outside-contact-hours refusal: the lead's own market's hours when it sets them (the gates use the account's for a lead with no market).
   const hoursHref = contactHoursFixHref(account.slug, row.market ? marketList.find((m) => m.id === row.market!.id) : null);
   const now = new Date();
+  // O35: why the lead needs a person (one line), shown in the stage banner while a person handles it.
+  const handoffWhyLine = stage?.human ? (await handoffWhyByLead(appDb, account.id, [leadId])).get(leadId) ?? null : null;
   const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
   // Quote dates in the quote's market time zone, as the buyer's card shows them.
   const [tzOf, docs] = await Promise.all([
@@ -266,7 +269,7 @@ export default async function LeadCardPage({
             </form>
           ) : null}
         </header>
-        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} />
+        <StageStepper v={stage} name={lead.fullName.trim().split(/\s+/)[0] || lead.fullName} paidOrder={paidOrder} handoffWhy={handoffWhyLine} />
         {/* Phone only (sas.css): a compact deal summary, then tabs Chat · Deal · Timeline. Radio inputs, so they work without JS. */}
         <input type="radio" name="lead-tab" id="lt-chat" className="sas-lead__tab-radio" defaultChecked aria-label={t("lead.tabs.chat")} />
         <input type="radio" name="lead-tab" id="lt-deal" className="sas-lead__tab-radio" aria-label={t("lead.tabs.deal")} />

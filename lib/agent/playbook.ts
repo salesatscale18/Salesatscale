@@ -5,6 +5,7 @@ import { MAX_OPENER_TOPICS, writtenIn } from "./core/opener";
 import { AGENT_GENDERS, languageName, writtenInScript, type AgentGender } from "./core/names";
 import { QUESTION_BUDGET } from "./core/stage";
 import { CALL_ROLE_MAX } from "./core/call-role";
+import { MAX_OBJECTION_ATTEMPTS, MIN_OBJECTION_ATTEMPTS } from "./core/objections";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -19,7 +20,8 @@ export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playb
     ],
     objections: [],
     maxDiscountBp,
-    offerMeetingWhen: "The buyer asks to talk to a person, needs approval from a partner, or the deal is large or unusual.",
+    // A request for a person and a partner's approval have their own plays (help first, then a call), so they are not meeting triggers here.
+    offerMeetingWhen: "The deal is large or unusual.",
     handOffWhen: "The buyer is upset, complains, raises a legal or existing-customer issue, or insists on a person.",
     neverDo: [],
   };
@@ -44,6 +46,8 @@ export type PlaybookRowsInput = {
   agentNameLocal?: Partial<Record<string, string>>;
   /** "Questions before recommending" (B2), as typed; undefined when the form did not show it (the stored one is kept). */
   questionBudget?: string;
+  /** "Attempts per objection" (O1 part 3), as typed; undefined when the form did not show it (the stored one is kept). */
+  objectionAttempts?: string;
   /** "female" | "male" | "neutral"; undefined when the form did not show it (the stored one is kept). */
   agentGender?: string;
   goal: string;
@@ -178,6 +182,7 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
     agentName: scalar.agentName ?? "",
     ...(localNames(scalar) ? { agentNameLocal: localNames(scalar) } : {}),
     ...("questionBudget" in scalar ? { questionBudget: scalar.questionBudget } : {}),
+    ...("objectionAttempts" in scalar ? { objectionAttempts: scalar.objectionAttempts } : {}),
     ...("agentGender" in scalar ? { agentGender: scalar.agentGender } : {}),
     goal: scalar.goal ?? "",
     tone: scalar.tone ?? "",
@@ -313,6 +318,12 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
     if (!input.questionBudget.trim() || !Number.isInteger(n) || n < QUESTION_BUDGET.min || n > QUESTION_BUDGET.max) errors.questionBudget = `Choose a number from ${QUESTION_BUDGET.min} to ${QUESTION_BUDGET.max}.`;
     else questionBudget = n;
   }
+  let objectionAttempts: number | undefined;
+  if (input.objectionAttempts !== undefined) {
+    const n = Number(input.objectionAttempts.trim());
+    if (!input.objectionAttempts.trim() || !Number.isInteger(n) || n < MIN_OBJECTION_ATTEMPTS || n > MAX_OBJECTION_ATTEMPTS) errors.objectionAttempts = `Choose a number from ${MIN_OBJECTION_ATTEMPTS} to ${MAX_OBJECTION_ATTEMPTS}.`;
+    else objectionAttempts = n;
+  }
   const gender = input.agentGender?.trim() ?? "";
   if (input.agentGender !== undefined && !(AGENT_GENDERS as readonly string[]).includes(gender)) errors.agentGender = "Choose female, male or neutral.";
   const callRole = oneLine(input.callRole ?? "");
@@ -405,6 +416,7 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
       // Only the versions typed; the save removes the languages sent empty (Reset).
       ...(Object.keys(agentNameLocal).length ? { agentNameLocal } : {}),
       ...(questionBudget !== undefined ? { questionBudget } : {}),
+      ...(objectionAttempts !== undefined ? { objectionAttempts } : {}),
       ...(input.agentGender !== undefined ? { agentGender: gender as AgentGender } : {}),
       goal,
       tone: input.tone.trim().slice(0, 300),

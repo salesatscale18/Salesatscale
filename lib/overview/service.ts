@@ -9,6 +9,7 @@ import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import { requestedCallbacks } from "@/lib/callbacks/service";
 import { openTeamQuestions } from "@/lib/team-questions/service";
+import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
 import {
@@ -25,7 +26,8 @@ type LeadRef = { leadId: string; leadName: string; company: string | null; marke
 /** One thing a person on the seller's team should act on. `at` is when it started needing them. */
 export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "quote_approval"; quoteId: string; quoteNumber: number; version: number; reasons: ApprovalReason[] }
-  | { kind: "human_handling" }
+  /** `why`: the hand-off reason in one line ("Upset: false night alarms", lib/leads/handoff-reason.ts), or null. */
+  | { kind: "human_handling"; why: string | null }
   | { kind: "bank_transfer"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   | { kind: "payment_failed"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   | { kind: "form_unsigned"; quoteId: string; formId: string; quoteNumber: number; openedAt: Date }
@@ -109,7 +111,11 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     failedFollowUps(db, accountId, now),
   ]);
   // A call request waiting for the seller (lib/callbacks, O6), and questions sent to the team (lib/team-questions, O4).
-  const [callbacks, questions] = await Promise.all([requestedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
+  const [callbacks, questions, whys] = await Promise.all([
+    requestedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
+    // Why each handed lead needs a person (O35): the latest hand-off's reason line.
+    handoffWhyByLead(db, accountId, handed.map((r) => r.leadId)),
+  ]);
 
   const items: NeedsYouItem[] = [];
   const ref = (r: LeadRef): LeadRef => ({ leadId: r.leadId, leadName: r.leadName, company: r.company, marketId: r.marketId });
@@ -120,7 +126,7 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       quoteId: r.quote.id, quoteNumber: r.quote.number, version: r.version.version, reasons: r.version.approvalReasons,
     });
   }
-  for (const r of handed) items.push({ ...ref(r), kind: "human_handling", id: `lead:${r.leadId}`, at: r.at });
+  for (const r of handed) items.push({ ...ref(r), kind: "human_handling", id: `lead:${r.leadId}`, at: r.at, why: whys.get(r.leadId) ?? null });
   for (const r of orderRows) {
     const o = r.order;
     const kind = o.paymentStatus === "failed" ? "payment_failed" : "bank_transfer";

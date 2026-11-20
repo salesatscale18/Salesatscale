@@ -141,7 +141,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
       case "quote_approval":
         return { title: t("overview.needs.quote_approval", { number: it.quoteNumber }), detail: [who, ...it.reasons.map(approvalReasonText)].join(" · ") };
       case "human_handling":
-        return { title: t("overview.needs.human_handling", { name: it.leadName }), detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
+        // O35: why the lead needs a person, after the name ("Dana Demo needs a person · Upset: false night alarms").
+        return { title: it.why ? t("overview.needs.human_handling_why", { name: it.leadName, why: it.why }) : t("overview.needs.human_handling", { name: it.leadName }), detail: [it.company, t("overview.needs.human_handling.detail", { when: timeAgo(it.at, now, account.timezone) })].filter(Boolean).join(" · ") };
       case "bank_transfer":
       case "payment_failed":
         return { title: t(`overview.needs.${it.kind}`), detail: `${who} · ${orderLabel(account.tradeName, it.orderNumber)} · ${formatMoney(it.amountMinor, it.currency)}` };
@@ -346,7 +347,9 @@ export default async function OverviewPage({ params, searchParams }: { params: P
               {needRows.length > NEEDS_SHOWN ? (
                 <details className="sas-ov__more" data-needs-more="">
                   <summary className="sas-ov__more-toggle">
-                    <Icon name="chevron-down" />{t("overview.needs.more", { count: needRows.length - NEEDS_SHOWN })}
+                    <Icon name="chevron-down" />
+                    <span className="sas-ov__more-count">{t("overview.needs.more", { count: needRows.length - NEEDS_SHOWN })}</span>
+                    <span className="sas-ov__more-less">{t("overview.needs.less")}</span>
                   </summary>
                   <ul className="sas-list">{needRows.slice(NEEDS_SHOWN)}</ul>
                 </details>

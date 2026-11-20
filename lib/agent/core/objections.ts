@@ -24,17 +24,18 @@ export type ObjectionPlay = (typeof OBJECTION_PLAYS)[number];
 export const OBJECTION_STATUSES = ["open", "settled", "dropped"] as const satisfies readonly ObjectionStatus[];
 
 /**
- * Attempts per objection: the platform default. The seller's "Attempts per
- * objection" setting (1 to 3) comes with part 3; until then every playbook
- * reads this, through objectionAttemptsOf, the one place to read the setting from.
+ * Attempts per objection: the platform default and the range of the seller's
+ * "Attempts per objection" setting (Playbook.objectionAttempts, part 3).
+ * Everything reads it through objectionAttemptsOf.
  */
 export const DEFAULT_OBJECTION_ATTEMPTS = 2;
 export const MIN_OBJECTION_ATTEMPTS = 1;
 export const MAX_OBJECTION_ATTEMPTS = 3;
 
-/** The attempts allowed per objection for this playbook. Hook for part 3: read the playbook setting here. */
-export function objectionAttemptsOf(_playbook?: Partial<Playbook> | null): number {
-  return DEFAULT_OBJECTION_ATTEMPTS;
+/** The attempts allowed per objection for this playbook: the seller's setting within 1..3, else 2. */
+export function objectionAttemptsOf(playbook?: Pick<Playbook, "objectionAttempts"> | Partial<Playbook> | null): number {
+  const n = playbook?.objectionAttempts;
+  return typeof n === "number" && Number.isInteger(n) ? Math.min(MAX_OBJECTION_ATTEMPTS, Math.max(MIN_OBJECTION_ATTEMPTS, n)) : DEFAULT_OBJECTION_ATTEMPTS;
 }
 
 /** Most objections kept on one deal; the oldest settled or dropped ones go first. */

@@ -131,6 +131,11 @@ export type TurnExtra = {
    * lib/team-questions teamQuestionsContext): a ready block, shown next to the open objection.
    */
   teamQuestions?: string | null;
+  /**
+   * The team's latest decline of a held quote on this lead, until the agent makes a new quote
+   * (O1 part 5, lib/agent/quote-approval.ts priceApprovalContext): a ready "Price approval" block.
+   */
+  priceApproval?: string | null;
   /** "voice": a live call (lib/voice/instructions.ts). Default: chat, unchanged. */
   channel?: PromptChannel;
 };
@@ -162,6 +167,8 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
     openObjectionText(deal?.objections, p, objectionAttemptsOf(p)),
     // O4: "Answer from the team to the buyer's question: …" and the questions still open with the team.
     extra.teamQuestions ?? "",
+    // O1 part 5: the team declined a special price; the agent continues the price ladder from it.
+    extra.priceApproval ?? "",
     deal?.nextStep ? `Your planned next step: ${deal.nextStep}` : "",
     extra.followUp
       ? `Follow-up scheduled: you write to the buyer on ${extra.followUp.dueLocal}${extra.followUp.topic ? ` about ${extra.followUp.topic}` : ""}. If the buyer asks for another time, call schedule_follow_up again.`

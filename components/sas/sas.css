@@ -69,7 +69,7 @@
 .sas-ico { width: 16px; height: 16px; flex: none; }
 .sas-num { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
 /* Codes and IDs only (Q-1003 v1, PD-10002, SKUs, buyer IDs): the code font. Money and counts use .sas-num (round-4 review D11). */
-.sas-id { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
+.sas-id { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; white-space: nowrap; }
 
 /* Typography helpers (design system type styles) */
 .sas-display { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
@@ -1044,6 +1044,12 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-ov__more-toggle { display: flex; align-items: center; gap: 6px; padding: 10px 20px; font-size: 13px; font-weight: 600; color: var(--primary); cursor: pointer; }
 .sas-ov__more[open] > .sas-ov__more-toggle .sas-ico { transform: rotate(180deg); }
 .sas-ov__more > .sas-list { border-block-start: 1px solid var(--line); }
+/* Open: the toggle sits below the items it revealed and reads "Show less" (O35). */
+.sas-ov__more[open] { display: flex; flex-direction: column-reverse; }
+.sas-ov__more[open] > .sas-list { border-block-start: 0; border-block-end: 1px solid var(--line); }
+.sas-ov__more .sas-ov__more-less { display: none; }
+.sas-ov__more[open] .sas-ov__more-less { display: inline; }
+.sas-ov__more[open] .sas-ov__more-count { display: none; }
 /* "Your markets": fixed-width cards from the start side, wrapping; the last one adds a market. */
 .sas-mcards { display: flex; flex-direction: column; gap: var(--space-3); }
 .sas-mcards__head { display: flex; align-items: baseline; justify-content: space-between; gap: var(--space-3); flex-wrap: wrap; }

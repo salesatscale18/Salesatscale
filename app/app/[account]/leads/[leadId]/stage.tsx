@@ -79,7 +79,11 @@ export function stageSentence(v: LeadStageView, name: string): { wait: string; n
 export type PaidOrder = { label: string; amount: string };
 
 /** The stepper and the sentence. `v` null: no conversation yet. `paidOrder`: the lead's paid order, for the banner. */
-export function StageStepper({ v, name, paidOrder }: { v: LeadStageView | null; name: string; paidOrder?: PaidOrder | null }) {
+export function StageStepper({ v, name, paidOrder, handoffWhy }: {
+  v: LeadStageView | null; name: string; paidOrder?: PaidOrder | null;
+  /** O35: why the lead needs a person, in one line (lib/leads/handoff-reason.ts); shown while a person handles it. */
+  handoffWhy?: string | null;
+}) {
   const current = v ? STAGE_STEPS.indexOf(v.step) : -1;
   const paidBanner = !!(v && paidOrder && v.paid && v.step === "after" && !v.human && !v.objection);
   // A paid deal: the green success banner, a win (S1); the Leads list chip stays neutral.
@@ -122,6 +126,7 @@ export function StageStepper({ v, name, paidOrder }: { v: LeadStageView | null; 
             <span>
               {v.human || v.objection || v.closed || (v.step === "after" && v.paid) ? <><strong>{stageLabel(v)}.</strong>{" "}</> : null}
               <strong>{sentence.wait}</strong> {sentence.next}
+              {v.human && handoffWhy ? <span style={{ display: "block" }} data-handoff-why="" dir="auto">{handoffWhy}</span> : null}
             </span>
           )}
         </div>

@@ -211,9 +211,9 @@ function stageLines(stage: Stage, d: Detail): string[] {
     case "quote_close":
       if (d.quote === "awaiting_approval") {
         return [
-          "The quote waits for the seller's approval.",
-          "Do: tell the buyer you are confirming the price with the team and will get back to them. Do not send the order form and do not present the totals as final.",
-          "Moves on when: the seller approves the quote.",
+          "The quote waits for the seller's approval: you asked the team for that price.",
+          "Do: tell the buyer once that you have asked the team to approve that price, then keep going: answer questions and handle anything else they raise. Do not send the order form and do not present the totals as final.",
+          "Moves on when: the team decides. The app tells the buyer either way; a decline shows under \"Price approval\".",
         ];
       }
       return [

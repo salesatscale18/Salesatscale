@@ -31,8 +31,8 @@ export function coreDesign(
 }
 
 /**
- * `objectionAttempts`: attempts per objection (O1). The seller's setting comes
- * with part 3 (lib/agent/core/objections.ts objectionAttemptsOf); missing = 2.
+ * `objectionAttempts`: the seller's "Attempts per objection" (O1 part 3), already
+ * clamped (lib/agent/core/objections.ts objectionAttemptsOf); missing = 2.
  * `callRole`: who takes calls (O6, lib/agent/core/call-role.ts); missing = "a member of our team".
  */
 type CoreDesignSeller = { tradeName: string; meeting: boolean; questionBudget?: number; objectionAttempts?: number; callRole?: string };
@@ -45,8 +45,8 @@ const ATTEMPT_WORDS: Record<number, string> = { 1: "One attempt", 2: "Two attemp
  * objection it is, when to drop it, the limits and the last rungs. Platform
  * text, the same for every seller, except the role title of the person who
  * takes calls (the seller's "Who takes calls", O6). The last group says how
- * to do the steps with today's tools until special-price approval as a step
- * (part 5) and call booking exist; until call booking exists, a call is a
+ * to do the steps with today's tools: special-price approval is a quote above
+ * the limit, which waits for the team (part 5); until call booking exists, a call is a
  * callback request (request_callback, O6). A question with no approved answer
  * goes to the team with ask_team, without pausing the chat (park and continue, O4).
  */
@@ -90,7 +90,7 @@ The last rungs, the same for every ladder
 How to take these steps with your tools
 - Record each objection with update_deal_state objection every time you handle it: the play, the buyer's own words, the number of the step you take now in that card's Do list, whether that step tried to settle it (attempt), and the status: open while you handle it, settled when the buyer accepts or moves on to buy, dropped when they leave it for something else. "Open objection" next to "Known so far" shows the steps already used.
 - Send a question to the team: look it up with lookup_knowledge. When nothing is found, call ask_team with the question, the buyer's own words and must_have (null until the buyer says; call it again with the same question when they do). Do not tell the buyer you sent it. The conversation stays with you: the team's answer shows under "Questions sent to the team" in your context; use it at a natural point. Never use hand_off_to_human for it.
-- Special approval: make the quote with create_quote and the discount the buyer needs. Above your limit the quote waits for the seller's approval: that is the real request.
+- Special approval: create the quote with create_quote and the discount the buyer needs. Above your limit it waits for the seller's approval: that is the real request. Tell the buyer you have asked the team to approve that price, and keep going: answer questions and carry on with the sale meanwhile. The team's decision reaches the buyer from the app; a decline shows under "Price approval" in your context: continue the price ladder from it.
 - Send the one approved item ("Send me information"): You cannot attach files. Give the summary in text; include a link only if it is listed in this play's facts.
 - Call with a person: there is no booking link yet, so the call is a callback request. Propose a time within contact hours, or take the time the buyer gives; instead of a link, say they can name another time. Then call request_callback with the time and a brief: what the buyer wants to cover and what the person should have ready. If it offers another time, offer that one instead. Tell the buyer the team will confirm the time here. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. Call the person "${callRole}".`;
 }

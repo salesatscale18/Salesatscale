@@ -9,6 +9,7 @@ import { readOpener } from "@/lib/agent/core/opener";
 import { AGENT_GENDERS, agentGenderOf, localAgentName, type NameRow } from "@/lib/agent/core/names";
 import { QUESTION_BUDGET, QUESTION_CEILING, questionBudgetOf } from "@/lib/agent/core/stage";
 import { CALL_ROLE_MAX, DEFAULT_CALL_ROLE } from "@/lib/agent/core/call-role";
+import { MAX_OBJECTION_ATTEMPTS, MIN_OBJECTION_ATTEMPTS, objectionAttemptsOf } from "@/lib/agent/core/objections";
 import { dismissHandoffNoticeAction, savePlaybookAction, type PlaybookFormState } from "./actions";
 import { OpeningSection, type OpeningValues } from "./opening";
 import { LocalNames } from "../local-names";
@@ -62,6 +63,8 @@ export function playbookFormValues(p: Playbook, state: PlaybookFormState) {
     agentNameLocal: sent ? sent.agentNameLocal : undefined,
     agentGender: sent?.agentGender ?? p.agentGender ?? "neutral",
     questionBudget: sent?.questionBudget !== undefined && Number.isInteger(Number(sent.questionBudget)) ? questionBudgetOf({ questionBudget: Number(sent.questionBudget) }) : questionBudgetOf(p),
+    /** Attempts per objection (O1 part 3), within 1..3. */
+    objectionAttempts: sent?.objectionAttempts !== undefined && Number.isInteger(Number(sent.objectionAttempts)) ? objectionAttemptsOf({ objectionAttempts: Number(sent.objectionAttempts) }) : objectionAttemptsOf(p),
     tone: sent?.tone ?? p.tone, outcomes: sent?.outcomes ?? p.outcomes,
     maxDiscount: sent?.maxDiscount ?? String(p.maxDiscountBp / 100), offerMeetingWhen: sent?.offerMeetingWhen ?? p.offerMeetingWhen, handOffWhen: sent?.handOffWhen ?? p.handOffWhen,
     /** Who takes calls (O6): as typed; empty shows the default as the placeholder. */
@@ -138,6 +141,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const [agentName, setAgentName] = useState(v.agentName);
   const [gender, setGender] = useState(v.agentGender);
   const [budget, setBudget] = useState(v.questionBudget);
+  const [attempts, setAttempts] = useState(v.objectionAttempts);
   const [maxDiscount, setMaxDiscount] = useState(v.maxDiscount);
   const nameRows = v.agentNameLocal ? names.rows.map((r) => ({ ...r, own: v.agentNameLocal?.[r.lang] ?? r.own })) : names.rows;
   const lastId = useRef(1000);
@@ -306,6 +310,20 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
               <output id="pb-questionBudget" htmlFor="pb-questionBudget-input" aria-live="polite">{budget}</output>
               <input type="hidden" id="pb-questionBudget-input" name="questionBudget" value={budget} />
               <button type="button" onClick={() => setBudget((n) => Math.min(QUESTION_BUDGET.max, n + 1))} disabled={budget >= QUESTION_BUDGET.max} aria-label={t("playbook.questions.more")}><Icon name="plus" /></button>
+            </span>
+          </div>
+          {/* O1 part 3: attempts per objection, the same stepper; − off at 1, + off at 3. */}
+          <div data-testid="objection-attempts" style={{ display: "flex", flexWrap: "wrap", gap: "12px 20px", alignItems: "center", padding: 14, borderRadius: 10, background: "var(--surface)" }}>
+            <div className="sas-stack-2" style={{ flex: "1 1 260px", gap: 2, minWidth: 0 }}>
+              <b><label htmlFor="pb-objectionAttempts" id="pb-objectionAttempts-label">{t("playbook.objections.attempts")}</label>{isNew}</b>
+              <span className="sas-small" id="pb-objectionAttempts-hint">{t("playbook.objections.attempts_hint")}</span>
+              {err("objectionAttempts")}
+            </div>
+            <span role="group" aria-labelledby="pb-objectionAttempts-label" aria-describedby="pb-objectionAttempts-hint" className="pb-stepper" data-testid="attempts-stepper">
+              <button type="button" onClick={() => setAttempts((n) => Math.max(MIN_OBJECTION_ATTEMPTS, n - 1))} disabled={attempts <= MIN_OBJECTION_ATTEMPTS} aria-label={t("playbook.objections.attempts_fewer")}><Icon name="minus" /></button>
+              <output id="pb-objectionAttempts" htmlFor="pb-objectionAttempts-input" aria-live="polite">{attempts}</output>
+              <input type="hidden" id="pb-objectionAttempts-input" name="objectionAttempts" value={attempts} />
+              <button type="button" onClick={() => setAttempts((n) => Math.min(MAX_OBJECTION_ATTEMPTS, n + 1))} disabled={attempts >= MAX_OBJECTION_ATTEMPTS} aria-label={t("playbook.objections.attempts_more")}><Icon name="plus" /></button>
             </span>
           </div>
           {before > budget ? (

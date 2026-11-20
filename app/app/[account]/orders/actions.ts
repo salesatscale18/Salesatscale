@@ -6,7 +6,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { parseMajorToMinor } from "@/lib/accounts/rules";
 import { approveQuote, cancelQuote, getQuote } from "@/lib/quotes/service";
 import { createOrderForm, markBankTransferReceived } from "@/lib/orders/service";
-import { followUpAfterApproval } from "@/lib/agent/quote-approval";
+import { declineHeldQuote, followUpAfterApproval } from "@/lib/agent/quote-approval";
 
 /** Ids come from the form: refuse anything that isn't a UUID before it reaches a query. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -41,6 +41,15 @@ export async function approveQuoteAction(form: FormData) {
   if (r.ok) await followUpAfterApproval(appDb, a.account.id, quoteId);
   revalidatePath(`/app/${a.account.slug}/orders`);
   redirect(`/app/${a.account.slug}/orders?quote=${quoteId}${r.ok ? "&approved=1" : "&approve=" + r.reason}`);
+}
+
+/** "Decline" on a quote awaiting approval (O1 part 5): withdrawn, and the buyer is told in the chat. Admins only (checked in declineHeldQuote). */
+export async function declineQuoteAction(form: FormData) {
+  const a = await requireAccount(String(form.get("slug") ?? ""));
+  const quoteId = quoteIdOf(form, a.account.slug);
+  const r = await declineHeldQuote(appDb, a, quoteId);
+  revalidatePath(`/app/${a.account.slug}/orders`);
+  redirect(`/app/${a.account.slug}/orders?quote=${quoteId}${r.ok ? "&declined=1" : "&approve=" + r.reason}`);
 }
 
 export async function cancelQuoteAction(form: FormData) {

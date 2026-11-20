@@ -1,0 +1,161 @@
+/**
+ * O35 on the seeded demo account (no model call): the Playbook's "Attempts per
+ * objection" stepper (renders, saves, clamps 1..3) and the new plays' cards;
+ * Needs you with the hand-off reason and "Show less"; the Conversations row
+ * and the lead page banner with the same reason line; the Knowledge summary's
+ * singular; the seeded call states on the lead page.
+ *
+ * With O35_RENDER_DIR set, the rendered pages are written there as HTML (visual check).
+ */
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
+import path from "node:path";
+import type { ReactElement } from "react";
+import { and, eq } from "drizzle-orm";
+import { leads, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
+import { createTestDb, type TestDb } from "../helpers/db";
+
+const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
+vi.mock("@/lib/auth/account", () => ({
+  get appDb() { return holder.db; },
+  requireAccount: async () => holder.access,
+  actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
+}));
+vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ host: "localhost:3000" }),
+  cookies: async () => ({ get: () => undefined, set: () => {}, getAll: () => [] }),
+}));
+vi.mock("next/navigation", () => ({
+  redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
+  notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
+  usePathname: () => "/",
+  useRouter: () => ({ refresh: () => {} }),
+  useSearchParams: () => new URLSearchParams(),
+}));
+
+const { createDemoAccount } = await import("@/lib/demo/seed");
+const { OPEN_QUESTIONS, STATE_LEADS } = await import("@/lib/demo/states");
+const { ensureDraftVersion } = await import("@/lib/agent/service");
+const { savePlaybookForm } = await import("@/lib/agent/playbook-save");
+const { answerQuestion } = await import("@/lib/agent/service");
+const { default: PlaybookPage } = await import("@/app/app/[account]/setup/playbook/page");
+const { default: PlaysPage } = await import("@/app/app/[account]/setup/playbook/plays/page");
+const { default: PlayPage } = await import("@/app/app/[account]/setup/playbook/plays/[play]/page");
+const { default: OverviewPage } = await import("@/app/app/[account]/page");
+const { default: ConversationsPage } = await import("@/app/app/[account]/conversations/page");
+const { default: LeadPage } = await import("@/app/app/[account]/leads/[leadId]/page");
+const { default: KnowledgePage } = await import("@/app/app/[account]/setup/knowledge/page");
+
+const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8")
+  + fs.readFileSync(path.join(process.cwd(), "app/app/[account]/setup/playbook/playbook.css"), "utf8");
+const save = (name: string, html: string) => {
+  const dir = process.env.O35_RENDER_DIR;
+  if (!dir) return;
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${name}.html`), `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${css}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:block"><main class="sas-shell__main">${html}</main></div></div></body></html>`);
+};
+type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
+const render = async (P: unknown, params: Record<string, string>, sp: Record<string, string> = {}) =>
+  renderToStaticMarkup(await (P as Page)({ params: Promise.resolve(params), searchParams: Promise.resolve(sp) }));
+const text = (html: string) => html.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, "\"");
+
+describe("O35 pages on the demo account", () => {
+  let tdb: Awaited<ReturnType<typeof createTestDb>>;
+  let db: TestDb;
+  let admin: User;
+  let account: SellerAccount;
+  let slug = "";
+  const leadBy = async (n: number) => (await db.select().from(leads).where(and(eq(leads.accountId, account.id), eq(leads.sourceRef, `demo-seed:${n}`))))[0];
+  const form = (extra: [string, string][] = []): [string, string][] => [
+    ["slug", slug], ["agentName", "Maya"], ["goal", "Sell well."], ["tone", ""], ["maxDiscount", "5"], ["offerMeetingWhen", ""], ["handOffWhen", ""], ...extra,
+  ];
+
+  beforeAll(async () => {
+    tdb = await createTestDb();
+    db = tdb.db;
+    holder.db = db;
+    [admin] = await db.insert(users).values({ clerkId: "c_sa", email: "sa@platform.test", role: "super_admin", firstName: "Sam" }).returning();
+    const r = await createDemoAccount(db, admin, { ownerEmail: "u@seller.test" });
+    if (!r.ok) throw new Error("demo seed refused");
+    [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, r.summary.accountId));
+    slug = account.slug;
+    holder.access = { account, user: admin, actingAs: true, role: "seller_admin" };
+  }, 120_000);
+  afterAll(async () => { await tdb.close(); });
+
+  it("Playbook: the Attempts per objection stepper renders at 2, saves, and refuses outside 1..3", async () => {
+    const html = await render(PlaybookPage, { account: slug });
+    save("playbook", html);
+    expect(html).toContain('data-testid="attempts-stepper"');
+    expect(text(html)).toContain("Attempts per objection");
+    expect(html).toContain('name="objectionAttempts" value="2"');
+    expect(html).toContain('aria-label="Fewer attempts"');
+    // It sits right after the question budget.
+    expect(html.indexOf('data-testid="objection-attempts"')).toBeGreaterThan(html.indexOf('data-testid="question-budget"'));
+    expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "3"]]))).toEqual({ ok: true });
+    expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
+    expect(await render(PlaybookPage, { account: slug })).toContain('name="objectionAttempts" value="3"');
+    // At the maximum the + is off.
+    expect(await render(PlaybookPage, { account: slug })).toMatch(/aria-label="More attempts"|disabled="" aria-label="More attempts"/);
+    expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "4"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
+    expect(await savePlaybookForm(db, account.id, form([["objectionAttempts", "0"]]))).toMatchObject({ ok: false, errors: { objectionAttempts: "Choose a number from 1 to 3." } });
+    // A form without it keeps the stored value.
+    expect(await savePlaybookForm(db, account.id, form())).toEqual({ ok: true });
+    expect((await ensureDraftVersion(db, account.id)).playbook.objectionAttempts).toBe(3);
+    const at3 = await render(PlaybookPage, { account: slug });
+    expect(at3).toMatch(/<button type="button" disabled="" aria-label="More attempts">/);
+  });
+
+  it("Sales plays: the five new plays show as default cards with their fact prompts", async () => {
+    const list = text(await render(PlaysPage, { account: slug }));
+    for (const title of ['"Someone else decides"', '"We tried something like this and it failed"', '"It sounds complicated" or "we have no time to set it up"', '"I don\'t want to be locked in"', "A question with no approved answer"]) {
+      expect(list).toContain(title);
+    }
+    const locked = await render(PlayPage, { account: slug, play: "locked_in" });
+    save("play-locked-in", locked);
+    for (const slot of ["Contract length", "Notice period", "What can be changed and when"]) expect(text(locked)).toContain(slot);
+    const tried = text(await render(PlayPage, { account: slug, play: "tried_failed" }));
+    for (const slot of ["Common reasons similar products fail", "What is different here"]) expect(tried).toContain(slot);
+  });
+
+  it("Needs you: the hand-off reason after the name, and Show N more / Show less", async () => {
+    const html = await render(OverviewPage, { account: slug });
+    save("overview", html);
+    expect(text(html)).toContain(`${STATE_LEADS.upset.fullName} needs a person · Upset: false night alarms, and wants a person now`);
+    expect(text(html)).toContain(`${STATE_LEADS.spendCap.fullName} needs a person · AI limit reached`);
+    expect(text(html)).toContain(`Call requested`);
+    if (html.includes("data-needs-more")) {
+      expect(html).toMatch(/<span class="sas-ov__more-count">Show \d+ more<\/span><span class="sas-ov__more-less">Show less<\/span>/);
+    }
+  });
+
+  it("Conversations row and the lead page banner carry the same reason line", async () => {
+    const upset = await leadBy(STATE_LEADS.upset.n);
+    const list = await render(ConversationsPage, { account: slug }, { filter: "needs_you" });
+    save("conversations", list);
+    expect(list).toContain('data-handoff-why="" dir="auto">Upset: false night alarms, and wants a person now</span>');
+    const lead = await render(LeadPage, { account: slug, leadId: upset.id });
+    save("lead-upset", lead);
+    expect(lead).toContain('data-handoff-why="" dir="auto">Upset: false night alarms, and wants a person now</span>');
+    // An agent-handled lead has none.
+    const calm = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callRequested.n)).id });
+    save("lead-call-requested", calm);
+    expect(calm).not.toContain("data-handoff-why");
+    const done = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callDone.n)).id });
+    save("lead-call-done", done);
+    expect(text(done)).toContain("How did the call go?");
+  });
+
+  it("Knowledge: \"1 unanswered question\" in the singular", async () => {
+    const two = text(await render(KnowledgePage, { account: slug }));
+    expect(two).toContain("2 unanswered questions.");
+    await answerQuestion(db, { userId: admin.id, actingAs: true }, account.id, { question: OPEN_QUESTIONS[0], answer: "Yes, through the BMS gateway." }, { transport: null });
+    const one = await render(KnowledgePage, { account: slug });
+    save("knowledge", one);
+    expect(text(one)).toContain("1 unanswered question.");
+    expect(text(one)).not.toContain("1 unanswered questions");
+  });
+});

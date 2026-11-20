@@ -17,6 +17,7 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "quote.versioned": "file-text",
   "quote.approved": "check-circle",
   "quote.cancelled": "file-x",
+  "quote.declined": "x-circle",
   "handoff.requested": "user",
   "handoff.spend_cap": "user",
   "deal.verified": "shield-check",

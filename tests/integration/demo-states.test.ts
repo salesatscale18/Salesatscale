@@ -24,6 +24,10 @@ const { listIntakeKeys } = await import("@/lib/leads/service");
 const { aiUsageThisMonth } = await import("@/lib/ai/usage");
 const { getOrderFormSettings } = await import("@/lib/orders/settings");
 const { getAccountById } = await import("@/lib/accounts/service");
+const { CALL_BRIEFS } = await import("@/lib/demo/states");
+const { callbackAfterCall, leadCallback } = await import("@/lib/callbacks/service");
+const { handoffWhyByLead } = await import("@/lib/leads/handoff-reason");
+const { mentionsUnknownQuestions } = await import("@/lib/agent/handoff-notice");
 
 const NOW = new Date("2026-11-19T09:00:00Z");
 
@@ -285,5 +289,47 @@ describe("demo account review states", () => {
     const usage = await aiUsageThisMonth(db, accountId, NOW);
     expect(usage.byModel).toHaveLength(0);
     expect(usage.costMicros).toBe(0);
+  });
+
+  it("O35: an open call request (Needs you) and a confirmed call 3 hours ago (How did the call go?)", async () => {
+    const asked = await leadBy(STATE_LEADS.callRequested.n);
+    const done = await leadBy(STATE_LEADS.callDone.n);
+    // Open request: the agent's request_callback call and the event, at a future time; the chat stays with the agent.
+    const askedConv = await convOf(asked.id);
+    expect(askedConv.status).toBe("open");
+    expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, askedConv.id))).map((c) => c.name)).toContain("request_callback");
+    const open = (await leadCallback(db, accountId, asked.id, NOW))!;
+    expect(open).toMatchObject({ status: "requested", brief: CALL_BRIEFS.requested, conversationId: askedConv.id });
+    expect(open.at.getTime()).toBeGreaterThan(NOW.getTime());
+    const items = await needsYou(db, accountId, NOW);
+    expect(items.find((i) => i.leadId === asked.id)).toMatchObject({ kind: "callback_requested", brief: CALL_BRIEFS.requested });
+    // Confirmed call 3 hours ago: requested + confirmed, the confirmation in the thread, and the after-call prompt.
+    const types = (await db.select().from(leadEvents).where(eq(leadEvents.leadId, done.id))).map((e) => e.type);
+    expect(types).toEqual(expect.arrayContaining(["callback.requested", "callback.confirmed"]));
+    const after = (await callbackAfterCall(db, accountId, done.id, NOW))!;
+    expect(after).toMatchObject({ status: "confirmed", brief: CALL_BRIEFS.done });
+    expect(NOW.getTime() - after.at.getTime()).toBe(3 * 3_600_000);
+    const view = await conversationView(db, accountId, await convOf(done.id));
+    expect(view.thread.at(-1)!.message.body).toMatch(/^Your call is confirmed for .+\. Until then, I'm here for any question\.$/);
+    expect(view.thread.at(-1)!.message.deliveryStatus).toBeNull();
+    // Account-scoped.
+    expect(await leadCallback(db, otherId, asked.id, NOW)).toBeNull();
+  });
+
+  it("O35: the seeded hand-off rule is the new default (no Limits notice), the test-lab question reads as a real ask, and hand-offs have their reason line", async () => {
+    const [version] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live")));
+    expect(version.playbook.handOffWhen).toBe("The buyer is upset, complains, raises a legal or existing-customer issue, or insists on a person.");
+    expect(mentionsUnknownQuestions(version.playbook.handOffWhen)).toBe(false);
+    const q = (await unansweredQuestions(db, accountId)).find((x) => x.question === OPEN_QUESTIONS[1])!;
+    expect(q.question).toBe("Do you offer on-site training in our city?");
+    expect(q.asks).toEqual([expect.objectContaining({ isTest: true, buyerWords: "on-site training in our city" })]);
+    expect(q.times).toBe(1);
+    const upset = await leadBy(STATE_LEADS.upset.n);
+    const cap = await leadBy(STATE_LEADS.spendCap.n);
+    const whys = await handoffWhyByLead(db, accountId, [upset.id, cap.id]);
+    expect(whys.get(upset.id)).toBe("Upset: false night alarms, and wants a person now");
+    expect(whys.get(cap.id)).toBe("AI limit reached");
+    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === upset.id)).toMatchObject({ kind: "human_handling", why: "Upset: false night alarms, and wants a person now" });
+    expect((await handoffWhyByLead(db, otherId, [upset.id])).size).toBe(0);
   });
 });

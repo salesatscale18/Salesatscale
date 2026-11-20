@@ -13,6 +13,11 @@
  * as a real capped inbound message; the cap itself is not reached), and a saved
  * test-lab chat with recorded agent steps.
  *
+ * Call states (O6): a lead with an open call request (the agent's
+ * request_callback, waiting for the seller in Needs you) and a lead whose
+ * confirmed call was 3 hours ago, so "How did the call go?" shows. Both go
+ * through lib/callbacks/service.ts (requestCallback, confirmCallback).
+ *
  * Not seeded: a source in "processing". The status exists, but it is
  * transient by design: failStaleSources marks a source that has been
  * processing for 5 minutes as failed when Sources loads, so a seeded one
@@ -26,7 +31,11 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sources, toolCalls, type DealFieldValue, type DealObjection } from "@/db/schema";
+import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sellerAccounts, sources, toolCalls, users, type DealFieldValue, type DealObjection } from "@/db/schema";
+import { confirmCallback, requestCallback } from "@/lib/callbacks/service";
+import { CALLBACK_EVENTS } from "@/lib/callbacks/rules";
+import { askTeam } from "@/lib/team-questions/service";
+import { isoInZone } from "@/lib/follow-ups/rules";
 import { normalizeQuestion } from "@/lib/agent/knowledge";
 import type { Actor } from "@/lib/accounts/audit";
 import { handBack, takeOver } from "@/lib/agent/conversation";
@@ -166,6 +175,14 @@ export const STATE_LEADS = {
   spendCap: { n: 8, fullName: "Tal Demo", company: "Pizza Demo Ashdod", email: "tal@pizza-demo.example", language: "en" },
   handBack: { n: 9, fullName: "Noam Demo", company: "Grill Demo Netanya", email: "noam@grill-demo.example", language: "en" },
   upset: { n: 10, fullName: "Dana Demo", company: "Hotel Demo Eilat", email: "dana@hotel-demo.example", language: "en" },
+  callRequested: { n: 11, fullName: "Shira Demo", company: "Bistro Demo Rehovot", email: "shira@bistro-demo.example", language: "en" },
+  callDone: { n: 12, fullName: "Omer Demo", company: "Catering Demo Holon", email: "omer@catering-demo.example", language: "en" },
+} as const;
+
+/** O6: the briefs of the two seeded call requests. */
+export const CALL_BRIEFS = {
+  requested: "Wants to go over pricing for 3 sites before deciding; have the 3-site quote ready.",
+  done: "Wants to hear how installation works in a running kitchen; have the installation steps ready.",
 } as const;
 
 /** O4: the question the "needs you" lead asked, which the agent parked with the team (open in Knowledge and Needs you). */
@@ -178,7 +195,7 @@ export const STEPS_CHAT = {
 } as const;
 
 /** The questions the agent could not answer (open in Knowledge). */
-export const OPEN_QUESTIONS = ["Can the sensors connect to our building management system?", "on-site training in your city"] as const;
+export const OPEN_QUESTIONS = ["Can the sensors connect to our building management system?", "Do you offer on-site training in our city?"] as const;
 
 // ---------------------------------------------------------------------------
 // Seed
@@ -198,6 +215,8 @@ export type ReviewStates = {
   upsetConversationId: string;
   spendCapConversationId: string;
   handedBackConversationId: string;
+  callRequestedConversationId: string;
+  callDoneConversationId: string;
   stepsConversationId: string;
   passedConversationId: string;
   failedConversationId: string;
@@ -318,6 +337,9 @@ export async function seedReviewStates(
   // W6: one started at the AI spend cap (waits for a person), one taken over and handed back to the agent.
   const spendCapConversationId = await spendCapChat(db, accountId, leadIds.spendCap, liveVersionId, now);
   const handedBackConversationId = await handedBack(db, actor, accountId, leadIds.handBack, liveVersionId, now);
+  // O6: an open call request (Needs you "Call requested"), and a confirmed call 3 hours ago ("How did the call go?").
+  const callRequestedConversationId = await callRequested(db, accountId, leadIds.callRequested, liveVersionId, now);
+  const callDoneConversationId = await callDone(db, userId, accountId, leadIds.callDone, liveVersionId, now);
 
   // 10. Test lab: one scenario chat that passes its check and one that fails it.
   const passedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
@@ -326,8 +348,10 @@ export async function seedReviewStates(
     // O4: nothing approved, so the agent sends the question to the team silently and keeps the sale going.
     calls: [
       { name: "lookup_knowledge", input: { query: OPEN_QUESTIONS[1] }, result: noFacts() },
-      { name: "ask_team", input: { question: "Do you offer on-site training in the buyer's city, and how long does it take?", buyer_words: "on-site training in our city", must_have: null }, result: { ok: true, sent: true, must_have: null } },
+      { name: "ask_team", input: { question: OPEN_QUESTIONS[1], buyer_words: "on-site training in our city", must_have: null }, result: { ok: true, sent: true, must_have: null } },
     ],
+    // The record ask_team writes (asked-by line and the test-lab chat link in Knowledge), as a real ask shows.
+    ask: { question: OPEN_QUESTIONS[1], buyerWords: "on-site training in our city" },
     agent: "I don't have that detail yet. What do you need it for: is it a must-have, or good to know? I'll make sure you get an exact answer on that.",
   });
   const failedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
@@ -351,6 +375,7 @@ export async function seedReviewStates(
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
+    callRequestedConversationId, callDoneConversationId,
     passedConversationId, failedConversationId, analysisRuns,
   };
 }
@@ -574,6 +599,82 @@ async function handedBack(db: Db, actor: Actor & { userId: string }, accountId: 
   return id;
 }
 
+/**
+ * O6: the buyer asks for a person twice; the agent books a call request
+ * (request_callback, the same service as the tool) for tomorrow within
+ * contact hours. Needs you shows "Call requested" and the lead page its card.
+ */
+async function callRequested(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 25), "open");
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 25), body: "Hi, we have 3 bistros. Can I talk to someone about the price?" },
+    { actor: "agent", at: min(now, 24), body: "Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price I can usually answer right now." },
+    { actor: "buyer", at: min(now, 22), body: "Thanks, but I'd rather talk to a person." },
+  ]);
+  const at = min(now, 21);
+  // Tomorrow at 10:00 in the account's time zone; when that is outside contact hours, the nearest time the tool offers.
+  const [account] = await db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const tz = account?.timezone || "UTC";
+  const tomorrow = isoInZone(new Date(now.getTime() + 24 * 3_600_000), tz).slice(0, 10);
+  const ctx = { accountId, leadId, conversationId: id };
+  let input = { time: `${tomorrow}T10:00`, brief: CALL_BRIEFS.requested };
+  let r = await requestCallback(db, ctx, input, at);
+  if (!r.ok && typeof r.extra.suggested_time === "string") {
+    input = { ...input, time: r.extra.suggested_time };
+    r = await requestCallback(db, ctx, input, at);
+  }
+  if (!r.ok) throw new Error(`Demo seed: call request refused: ${r.rule}`);
+  await insertThread(db, accountId, id, "en", versionId, [{
+    actor: "agent", at, body: `Of course. I've asked for a call with a member of our team on ${r.timeLocal}; the team will confirm the time here. Meanwhile, I'm here for any question.`,
+    calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
+  }]);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("3", min(now, 25)) }, nextStep: `Call requested ${r.timeLocal}: ${CALL_BRIEFS.requested}` });
+  return id;
+}
+
+/**
+ * O6: a call the seller confirmed (confirmCallback, which writes the
+ * confirmation app message in the thread), whose time was 3 hours ago: the
+ * lead page asks "How did the call go?". The request is stored as the tool
+ * writes it, dated before the call (the call time may fall outside today's
+ * contact hours, which only the agent's tool checks).
+ */
+async function callDone(db: Db, userId: string, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 199), "open");
+  const callAt = min(now, 180);
+  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  if (!account) throw new Error("Demo seed: account not found");
+  const tz = account.timezone || "UTC";
+  const callbackId = randomUUID();
+  const input = { time: isoInZone(callAt, tz), brief: CALL_BRIEFS.done };
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 199), body: "Hi, we run a catering kitchen. I'd like to talk to someone about installation." },
+    { actor: "agent", at: min(now, 198), body: "Of course, I can set that up. So they come prepared, what would you like to cover?" },
+    { actor: "buyer", at: min(now, 197), body: "How installation works while the kitchen is running. A call is easier." },
+    {
+      actor: "agent", at: min(now, 196), body: "Understood. I've asked for a short call with a member of our team; the team will confirm the time here.",
+      calls: [{ name: "request_callback", input, result: { ok: true, requested: true } }],
+    },
+  ]);
+  await db.insert(leadEvents).values({
+    accountId, leadId, type: CALLBACK_EVENTS.requested, actor: "agent", createdAt: min(now, 196),
+    data: { callbackId, at: callAt.toISOString(), timezone: tz, brief: CALL_BRIEFS.done, conversationId: id },
+  });
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 196) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({ accountId, leadId, fields: {} });
+  // The seller confirms before the call (the same service as Confirm); the buyer gets the confirmation in the chat.
+  const [user] = await db.select().from(users).where(eq(users.id, userId));
+  const confirmed = await confirmCallback(db, { account, user: user!, actingAs: true, role: "seller_admin" }, leadId, callbackId, null, min(now, 190));
+  if (!confirmed.ok) throw new Error(`Demo seed: call not confirmed: ${confirmed.reason}`);
+  if (confirmed.buyer.told) {
+    // Fictional number: nothing is sent; the stored message reads like the seed's other messages.
+    await db.update(messages).set({ deliveryStatus: null, deliveryError: null }).where(and(eq(messages.accountId, accountId), eq(messages.id, confirmed.buyer.messageId)));
+  }
+  await db.update(leads).set({ lastActivityAt: min(now, 190) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return id;
+}
+
 /** A saved test-lab chat on the live version (no scenario) whose agent reply has recorded steps. */
 async function stepsChat(db: Db, accountId: string, userId: string, versionId: string, now: Date) {
   const test = await startTestConversation(db, accountId, userId, { language: "en", versionId });
@@ -595,7 +696,7 @@ async function stepsChat(db: Db, accountId: string, userId: string, versionId: s
 /** A test-lab chat on the live version for one scenario: the buyer's opening and the agent's stored reply. */
 async function scenarioChat(
   db: Db, accountId: string, userId: string, versionId: string, now: Date,
-  c: { scenario: string; language: "en" | "he"; buyer: string; calls: SeedCall[]; agent: string },
+  c: { scenario: string; language: "en" | "he"; buyer: string; calls: SeedCall[]; agent: string; ask?: { question: string; buyerWords: string } },
 ) {
   const test = await startTestConversation(db, accountId, userId, { language: c.language, scenario: c.scenario, versionId });
   if (!test) throw new Error(`Demo seed: test chat ${c.scenario} not started`);
@@ -603,6 +704,11 @@ async function scenarioChat(
     { actor: "buyer", at: min(now, 60), body: c.buyer },
     { actor: "agent", at: min(now, 59), body: c.agent, calls: c.calls },
   ]);
+  if (c.ask) {
+    // The same service as the agent's ask_team; the empty lookup of the same turn is covered by it.
+    const r = await askTeam(db, { accountId, leadId: test.leadId, conversationId: test.conversationId }, { question: c.ask.question, buyer_words: c.ask.buyerWords, must_have: null }, { lookups: [c.ask.question], now: min(now, 59) });
+    if (!r.ok || !r.sent) throw new Error("Demo seed: test-lab question not sent to the team");
+  }
   return test.conversationId;
 }
 

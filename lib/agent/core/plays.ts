@@ -214,7 +214,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     ],
     example: "That is useful to know. What went wrong last time?",
     notThis: "Ours is much better than that.",
-    sellerContentHint: "Common reasons similar products fail and what is different here.",
+    sellerContentHint: "Common reasons similar products fail; what is different here.",
   },
   complicated: {
     title: "\"It sounds complicated\" or \"we have no time to set it up\"",
@@ -240,7 +240,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     ],
     example: "Fair point. What would you want to be able to do: stop, or change the size later?",
     notThis: "\"You can cancel any time\" when that is not in the approved terms.",
-    sellerContentHint: "Contract length, notice period, what can be changed and when.",
+    sellerContentHint: "Contract length; notice period; what can be changed and when.",
   },
 };
 

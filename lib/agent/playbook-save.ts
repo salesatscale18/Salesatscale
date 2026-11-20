@@ -56,7 +56,7 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   const shown = entries.some(([k, v]) => k === "exceptionsShown" && v === "1");
   const kept = new Set(entries.filter(([k]) => k === "exceptionId").map(([, v]) => v));
   const exceptions = shown ? stored.filter((x) => kept.has(x.id)) : stored;
-  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, callRole, ...rest } = parsed.value;
+  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, ...rest } = parsed.value;
   void _x;
   const keepOpener = input.opener === undefined ? current.opener : opener;
   const keepPlays = input.plays === undefined ? current.plays : plays;
@@ -68,6 +68,8 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   // Gender and question budget: a form without them keeps what is stored.
   const keepGender = input.agentGender === undefined ? current.agentGender : agentGender;
   const keepBudget = input.questionBudget === undefined ? current.questionBudget : questionBudget;
+  // Attempts per objection (O1 part 3): likewise.
+  const keepAttempts = input.objectionAttempts === undefined ? current.objectionAttempts : objectionAttempts;
   // Who takes calls (O6): a form without it keeps what is stored; sent empty, it goes back to the default.
   const keepRole = input.callRole === undefined ? current.callRole : callRole;
   // Automatic name versions are kept; they are stale (and remade) when the name changed (lib/agent/names-auto.ts).
@@ -78,6 +80,7 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
     ...(keepAuto ? { agentNameAuto: keepAuto } : {}),
     ...(keepGender ? { agentGender: keepGender } : {}),
     ...(keepBudget !== undefined ? { questionBudget: keepBudget } : {}),
+    ...(keepAttempts !== undefined ? { objectionAttempts: keepAttempts } : {}),
     ...(keepRole ? { callRole: keepRole } : {}),
     ...(exceptions.length ? { exceptions } : {}),
     ...(keepOpener ? { opener: keepOpener } : {}),

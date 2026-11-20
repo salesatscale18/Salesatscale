@@ -155,7 +155,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
         </div>
         <span className="sas-small">
           {t("knowledge.intro")}{" "}
-          {t("knowledge.summary", { total: totals.total, approved: totals.approved, suggested: totals.suggested, gaps: questions.length })}
+          {t(questions.length === 1 ? "knowledge.summary_one_gap" : "knowledge.summary", { total: totals.total, approved: totals.approved, suggested: totals.suggested, gaps: questions.length })}
           {contradictions.length ? <> {t("knowledge.summary_contradictions", { n: contradictions.length })}</> : null}
         </span>
         <SetupSteps basePath={base} current="knowledge" completed={progress} />

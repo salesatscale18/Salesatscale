@@ -13,7 +13,7 @@ import { quoteTotalsRows, signedMoney } from "@/lib/agent/quote-card";
 import { catalogItems, catalogVersions, markets, orderForms, orders, leads, priceLists, users } from "@/db/schema";
 import { and, count, desc, eq, inArray, or, sql } from "drizzle-orm";
 import { t } from "@/lib/i18n";
-import { approveQuoteAction, cancelQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
+import { approveQuoteAction, cancelQuoteAction, declineQuoteAction, markBankPaidAction, sendOrderFormAction } from "./actions";
 import { docStatusByQuote, formsForQuote, linkFor, listOrders, ORDER_SORT_DEFAULT, ORDER_SORT_KEYS, orderForQuote, orderLabel, payLinkOpen, type OrderSortKey } from "@/lib/orders/service";
 import { SignedFormLinks } from "./signed-form-links";
 import { CopyButton } from "@/components/sas/copy-button";
@@ -350,6 +350,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               : <StatusPill object="quote" state={displayQuoteStatus(detail.quote.status, cur.version.validUntil, now, tzFor(detail.quote.id))} />}
           </div>
           {sp.approved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.approved_ok")}</span></div> : null}
+          {sp.declined ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("orders.detail.declined_ok")}</span></div> : null}
           {sp.approve ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("orders.detail.approve_failed")}</span></div> : null}
 
           <section className="sas-stack-2" aria-labelledby="items-h">
@@ -430,7 +431,12 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                   </div>
                 );
               })}
-              <div><Button type="submit" variant="primary" size="sm">{t("orders.detail.approve")}</Button></div>
+              {/* O1 part 5: Decline withdraws the quote and tells the buyer (formNoValidate: no price needed to decline). */}
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                <Button type="submit" variant="primary" size="sm">{t("orders.detail.approve")}</Button>
+                <Button type="submit" variant="secondary" size="sm" formAction={declineQuoteAction} formNoValidate data-decline="">{t("orders.detail.decline")}</Button>
+              </div>
+              <span className="sas-small" style={{ color: "var(--ink)" }}>{t("orders.detail.approval_buyer_sees")}</span>
             </form>
           ) : approver && cur.version.approvedAt ? (
             <span className="sas-small">

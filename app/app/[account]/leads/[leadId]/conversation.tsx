@@ -195,7 +195,7 @@ export function ConversationControls({
     </>
   );
   const noticeText = notice ? maybe(`conv.notice.${notice}`) : null;
-  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim" || notice === "quote_approved" || notice === "quote_in_limit";
+  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim" || notice === "quote_approved" || notice === "quote_in_limit" || notice === "quote_declined";
   const status = conversationStatusText(view, leadOptedOut, leadStatus);
   const ended = dealEnded(leadStatus);
   const replyId = `reply-${from}`;

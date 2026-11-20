@@ -217,7 +217,8 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
     ],
     maxDiscount: "5",
     offerMeetingWhen: "The buyer has more than 10 sites, asks to talk to a person, or needs a partner's approval.",
-    handOffWhen: "The buyer asks for a person, is upset, or asks something the approved knowledge does not answer.",
+    // The platform's default hand-off rule (lib/agent/playbook.ts defaultPlaybook): a request for a person and a question with no approved answer have their own plays.
+    handOffWhen: "The buyer is upset, complains, raises a legal or existing-customer issue, or insists on a person.",
     plays: PLAYS,
     opener: OPENER,
     neverDo: [

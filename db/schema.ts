@@ -654,6 +654,12 @@ export type Playbook = {
    * (lib/agent/core/stage.ts); the app's ceiling is 6 whatever the setting.
    */
   questionBudget?: number;
+  /**
+   * Attempts per objection (O1 part 3), 1 to 3: the steps that try to settle
+   * one objection before the agent takes the last rungs. Missing = 2
+   * (lib/agent/core/objections.ts objectionAttemptsOf). Optional: older playbooks have none.
+   */
+  objectionAttempts?: number;
   goal: string;
   tone: string;
   outcomes: { orderForm: boolean; bankTransfer: boolean; meeting: boolean };
