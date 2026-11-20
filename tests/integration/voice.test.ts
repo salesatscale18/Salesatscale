@@ -19,7 +19,7 @@ import { aiUsageThisMonth, platformUsageThisMonth } from "@/lib/ai/usage";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
 import type { ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
-import { expectBuyer, micPcm, say, ScriptedRealtime, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
+import { expectBuyer, micPcm, say, ScriptedRealtime, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
 import type { VoiceCallUsageRecord } from "@/lib/ai/models";
 import {
   closeStaleVoiceSessions, conversationVoiceMode, createVoiceSession, redeemVoiceTicket, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary,
@@ -132,7 +132,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(rows[2].voiceSessionId).toBeNull();
     expect(rows[2].body).toMatch(/Quote Q-\d+/);
     expect(rows[5].body).toMatch(/^Your order form: .*\/f\//);
-    expect(rows[3].body).toMatch(/^Thanks\. One moment, I'm checking that\. Your total today is .+ The quote is in the chat below\./);
+    expect(rows[3].body).toMatch(/^Thanks\. One moment, I'm checking that\. Your total today is .+ The quote is in the chat\./);
     expect(rows[3].answerMs).toBeGreaterThan(0);
     expect(rows[7].body).toMatch(/^Voice call ended · \d+:\d\d$/);
 
@@ -154,7 +154,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(c.json().filter((m) => m.t === "tool").map((m) => `${(m as { name: string }).name}:${(m as { status: string }).status}`)).toContain("create_quote:ok");
     // The model was told the link is in the chat, never given the link to read out.
     const formResult = c.conn().sent.toolResults.find((r) => r.name === "send_order_form")!.result as Record<string, unknown>;
-    expect(formResult.link).toBe("shown in the chat below the call");
+    expect(formResult.link).toBe("shown in the chat");
     expect(c.sent.some((m) => m instanceof Uint8Array)).toBe(true);
 
     const s = await sessionRow(c.sessionId);
@@ -562,6 +562,122 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     // The interruption became the buyer's turn (the next scripted line).
     expect(rows[1]).toMatchObject({ actor: "buyer" });
     expect(rows[1].body).toMatch(/^Hi, I run a business/);
+  });
+
+  describe("one stored message per agent line", () => {
+    const LINE = "One two three four five six seven eight nine ten eleven twelve.";
+    const callWith = (script: Script) => {
+      const clock = new ManualClock();
+      return newCall(null, { clock, model: new ScriptedRealtime({ clock, defaultScript: script }) });
+    };
+    const spoken = async (conversationId: string) =>
+      (await thread(conversationId)).filter((m) => m.voiceSessionId).map((m) => ({ actor: m.actor, body: m.body, at: m.spokenAtMs }));
+
+    it("barge-in, then the agent repeats the line: one message, the whole line, at the first time", async () => {
+      const c = await callWith([expectBuyer("Hello."), say(LINE), expectBuyer("Sorry, what?"), say(LINE)]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(1_000);
+      await c.speak(400); // cuts in after a few words
+      await c.run(10_000);
+      await hangUp(c);
+      const rows = await spoken(c.conversationId);
+      expect(c.json().some((m) => m.t === "flush")).toBe(true);
+      expect(rows.map((r) => [r.actor, r.body]).slice(1)).toEqual([["buyer", "Hello."], ["agent", LINE], ["buyer", "Sorry, what?"]]);
+      expect(rows.filter((r) => r.actor === "agent" && r.body.startsWith("One two"))).toHaveLength(1);
+      expect(rows[2].at).toBeLessThan(rows[3].at!);
+    });
+
+    it("barge-in, then a different answer: the cut line ends with \"…\", then the new line", async () => {
+      const c = await callWith([expectBuyer("Hello."), say(LINE), expectBuyer("Sorry, what?"), say("A different answer.")]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(1_000);
+      await c.speak(400);
+      await c.run(10_000);
+      await hangUp(c);
+      const agent = (await spoken(c.conversationId)).filter((r) => r.actor === "agent").slice(1).map((r) => r.body);
+      expect(agent).toHaveLength(2);
+      expect(agent[0]).toMatch(/^One two( \w+)*…$/);
+      expect(agent[0]).not.toBe(LINE);
+      expect(agent[1]).toBe("A different answer.");
+    });
+
+    it("hang-up mid-line: one cut line ending with \"…\"", async () => {
+      const c = await callWith([expectBuyer("Hello."), say(LINE)]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(1_000);
+      await hangUp(c);
+      const agent = (await spoken(c.conversationId)).filter((r) => r.actor === "agent").slice(1).map((r) => r.body);
+      expect(agent).toHaveLength(1);
+      expect(agent[0]).toMatch(/^One two( \w+)*…$/);
+    });
+
+    it("typed text while the agent speaks: the same rules (repeat → one line; the audio is flushed)", async () => {
+      const c = await callWith([expectBuyer("Hello."), say(LINE), expectBuyer("typed"), say(LINE)]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(1_000);
+      c.engine.onClientMessage({ t: "text", text: "Does it include setup?" });
+      await c.run(10_000);
+      await hangUp(c);
+      const rows = await spoken(c.conversationId);
+      expect(c.json().some((m) => m.t === "flush")).toBe(true);
+      expect(rows.map((r) => [r.actor, r.body]).slice(1)).toEqual([["buyer", "Hello."], ["agent", LINE], ["buyer", "Does it include setup?"]]);
+    });
+
+    it("typed text while the agent speaks, then a different answer: cut line with \"…\" plus the new line", async () => {
+      const c = await callWith([expectBuyer("Hello."), say(LINE), expectBuyer("typed"), say("Yes, setup is included.")]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(1_000);
+      c.engine.onClientMessage({ t: "text", text: "Does it include setup?" });
+      await c.run(10_000);
+      await hangUp(c);
+      const rows = (await spoken(c.conversationId)).slice(1).map((r) => [r.actor, r.body]);
+      expect(rows).toHaveLength(4);
+      expect(rows[1][1]).toMatch(/^One two( \w+)*…$/);
+      expect(rows.slice(2)).toEqual([["buyer", "Does it include setup?"], ["agent", "Yes, setup is included."]]);
+    });
+
+    it("a cut copy of the line just said is not stored again", async () => {
+      // After the script, every buyer turn gets the same short answer: the second one is cut by the hang-up.
+      const c = await callWith([expectBuyer("Hello.")]);
+      await c.run(15_000);
+      await c.speak(); // the script's buyer line
+      await c.run(5_000);
+      await c.speak(); // answered in full
+      await c.run(10_000);
+      await c.speak(); // answered again, cut by the hang-up
+      await c.run(1_000);
+      await hangUp(c);
+      const agent = (await spoken(c.conversationId)).filter((r) => r.actor === "agent").slice(1).map((r) => r.body);
+      expect(agent).toEqual(["Thanks. Is there anything else I can help with today?"]);
+    });
+  });
+
+  it("seller threads frame a call: a start marker before its first line and a summary marker after it (no stored end line shown)", async () => {
+    const c = await newCall(null);
+    await c.run(15_000);
+    await c.speak();
+    await c.run(10_000);
+    await hangUp(c);
+    const { conversationView } = await import("@/lib/agent/conversation");
+    const { markerText } = await import("@/app/app/[account]/leads/[leadId]/conversation");
+    const view = await conversationView(db, acc, await conv(c.conversationId));
+    const s = await sessionRow(c.sessionId);
+    const voice = (view.markers ?? []).filter((m) => m.kind === "voice_started" || m.kind === "voice_ended");
+    expect(voice.map((m) => m.kind)).toEqual(["voice_started", "voice_ended"]);
+    expect(voice[0].at.getTime()).toBe(s.connectedAt!.getTime());
+    expect(voice[1].at.getTime()).toBe(s.endedAt!.getTime());
+    expect(markerText(voice[0], null)).toBe("Voice call started");
+    expect(markerText(voice[1], null)).toBe(`Voice call · ${s.durationSec} s`);
+    // The start comes before the first spoken line; the engine's "Voice call ended" line is not shown again.
+    const first = view.thread.find(({ message: m }) => m.voiceSessionId)!.message;
+    expect(voice[0].at.getTime()).toBeLessThanOrEqual(first.createdAt.getTime());
+    expect(view.thread.some(({ message: m }) => m.actor === "system" && m.body.startsWith("Voice call ended"))).toBe(false);
+    expect((await thread(c.conversationId)).some((m) => m.actor === "system" && m.body.startsWith("Voice call ended"))).toBe(true);
   });
 
   it("mute drops mic audio", async () => {

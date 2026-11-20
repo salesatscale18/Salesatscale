@@ -75,7 +75,28 @@ type AgentTurn = {
   /** A tool result went to the model and it has not spoken since: the turn goes on. */
   awaitingContinuation: boolean;
   heardAudio: boolean;
+  /** The buyer cut in (barge-in, or typed text while the agent spoke). */
+  interrupted: boolean;
+  /** The model sent the turn's final transcript: what it said is complete unless interrupted. */
+  finalText: boolean;
 };
+
+/** Why a turn is stored: the model finished it, the model reports it was cut, or the turn ends under it (buyer turn, stop, reconnect). */
+type FinalizeReason = "done" | "interrupted" | "buyer" | "stop";
+
+/** The last agent line this call stored, to merge a resumed line into it or drop a repeated cut copy. */
+type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number };
+
+/** Text compared for "the same line": lower case, words only. */
+export const normLine = (s: string) => s.toLowerCase().replace(/…/g, " ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
+/** `longer` starts with `shorter` (normalised, whole words), and `shorter` has at least two words. */
+export function startsWithLine(longer: string, shorter: string): boolean {
+  const a = normLine(longer);
+  const b = normLine(shorter);
+  return b.split(" ").length >= 2 && (a === b || a.startsWith(`${b} `));
+}
+/** A line the buyer cut short, as stored: the words actually said, ending with "…". */
+export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
 
 type Loaded = { session: VoiceSession; conv: Conversation; lead: Lead; version: AgentVersion; account: SellerAccount };
 
@@ -111,6 +132,8 @@ export class VoiceEngine {
   private agentMessages = 0;
   private answerTimes: number[] = [];
   private lines: TranscriptLine[] = [];
+  /** The last agent line stored in this call (see finalizeAgentTurn). */
+  private lastLine: StoredLine | null = null;
   /** Usage snapshots, totalled whether the provider reports them per session or per turn. */
   private usageAcc = new RealtimeUsageAccumulator();
   private providerSessionId: string | null = null;
@@ -384,7 +407,7 @@ export class VoiceEngine {
 
   private warnLimit() {
     this.send({ t: "notice", kind: "limit_soon" });
-    this.conn?.requestResponse("The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat below.");
+    this.conn?.requestResponse("The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat.");
   }
 
   // -------------------------------------------------------------------------
@@ -413,9 +436,14 @@ export class VoiceEngine {
         return;
       }
       case "agent-transcript": {
+        const fresh = !this.agentTurn || !this.agentTurn.text;
         const turn = this.ensureAgentTurn();
         turn.awaitingContinuation = false;
         turn.text = maskCardNumbers(e.text).text;
+        if (e.final) turn.finalText = true;
+        // The model resumes (or re-says) the line the buyer cut: the live transcript keeps it on one line.
+        const last = this.lastLine;
+        if (fresh && last?.cut && (startsWithLine(turn.text, last.raw) || startsWithLine(last.raw, turn.text))) turn.id = last.turnId;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
       }
@@ -433,7 +461,8 @@ export class VoiceEngine {
         this.buyerActivity();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
         if (this.agentSpeaking) {
-          // Barge-in: the browser drops the agent audio it still has queued.
+          // Barge-in: the browser drops the agent audio it still has queued; the turn is stored as cut.
+          if (this.agentTurn) this.agentTurn.interrupted = true;
           this.send({ t: "flush" });
           this.agentSpeaking = false;
           this.setState("listening");
@@ -443,7 +472,7 @@ export class VoiceEngine {
         void this.enqueue(() => this.handleTool(e.callId, e.name, e.args));
         return;
       case "turn-done":
-        void this.enqueue(() => this.handleTurnDone());
+        void this.enqueue(() => this.handleTurnDone(!!e.interrupted));
         return;
       case "usage":
         this.usageAcc.add(e.usage);
@@ -463,7 +492,7 @@ export class VoiceEngine {
       // A new turn gets a new per-turn memo (lib/agent/tools.ts TurnMemo: never shared across turns).
       this.agentTurn = {
         id: `a${++this.turnSeq}`, text: "", startMs: this.offsetMs(), answerMs: null, tools: [],
-        memo: { account: this.loaded?.account }, awaitingContinuation: false, heardAudio: false,
+        memo: { account: this.loaded?.account }, awaitingContinuation: false, heardAudio: false, interrupted: false, finalText: false,
       };
     }
     return this.agentTurn;
@@ -509,8 +538,14 @@ export class VoiceEngine {
     const { conv, account } = this.loaded;
     const masked = maskCardNumbers(raw.replace(/\s+/g, " ").trim().slice(0, 4000));
     if (!masked.text) return;
+    // Typed while the agent speaks: like a barge-in, the browser drops the queued agent audio.
+    if (typed && this.agentSpeaking) {
+      if (this.agentTurn) this.agentTurn.interrupted = true;
+      this.send({ t: "flush" });
+      this.agentSpeaking = false;
+    }
     // What the agent said before this buyer turn is stored first, so the thread keeps its order.
-    await this.finalizeAgentTurn();
+    await this.finalizeAgentTurn("buyer");
     const turn = this.buyerTurn ?? { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
     this.buyerTurn = null;
     await this.db.insert(messages).values({
@@ -590,12 +625,12 @@ export class VoiceEngine {
     if (r.outcome === "ok") {
       if (name === "create_quote" && typeof r.result.quote_message_id === "string") this.send({ t: "message", messageId: r.result.quote_message_id });
       if (name === "send_order_form" && typeof r.result.link === "string") {
-        // The link goes into the chat below the call; the model is told it is there and never reads it out.
+        // The link goes into the chat; the model is told it is there and never reads it out.
         const id = await this.storeAppMessage(`Your order form: ${r.result.link}`);
         this.send({ t: "message", messageId: id });
         forModel = {
-          ...r.result, link: "shown in the chat below the call",
-          message: "The order form link is in the chat below the call. Say so in one short sentence, with what the buyer does there: fill in their company details, sign and pay. Never read the link aloud.",
+          ...r.result, link: "shown in the chat",
+          message: "The order form link is in the chat. Say so in one short sentence, with what the buyer does there: fill in their company details, sign and pay. Never read the link aloud.",
         };
       }
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
@@ -626,12 +661,12 @@ export class VoiceEngine {
     return id;
   }
 
-  private async handleTurnDone() {
+  private async handleTurnDone(interrupted = false) {
     if (this.ended) return;
     const turn = this.agentTurn;
     // The model goes on after a tool result (after a hand-off or opt-out too: the grace timer bounds it).
-    if (turn && turn.awaitingContinuation) return;
-    await this.finalizeAgentTurn();
+    if (turn && turn.awaitingContinuation && !interrupted) return;
+    await this.finalizeAgentTurn(interrupted ? "interrupted" : "done");
     this.agentSpeaking = false;
     if (this.pendingEnd) {
       void this.stop(this.pendingEnd);
@@ -641,15 +676,50 @@ export class VoiceEngine {
     this.startSilence();
   }
 
-  /** Stores the agent's turn: ONE message with the text actually spoken, and its tool calls, like lib/agent/turn.ts. */
-  private async finalizeAgentTurn() {
+  /**
+   * Stores the agent's turn: ONE message with the text actually spoken, and its tool calls, like
+   * lib/agent/turn.ts. A turn the buyer cut short ends with "…". One stored message per agent line:
+   * when the model resumes or re-says a line that was cut, the cut row is updated to the full line
+   * (its id, time in the call and tool calls kept); a cut copy of the line just said is not stored.
+   */
+  private async finalizeAgentTurn(reason: FinalizeReason = "done") {
     const turn = this.agentTurn;
     if (!turn || !this.loaded) return;
     this.agentTurn = null;
     // What the agent actually said (card numbers masked): the owner reviews calls from this transcript.
-    const body = maskCardNumbers(turn.text.trim()).text;
+    const raw = maskCardNumbers(turn.text.trim()).text;
+    // Cut: the model says so, or the turn ends under the agent (a buyer turn, the end of the call) before its final
+    // transcript, or after a barge-in. A turn the model completes normally ("done") is whole.
+    const cut = !!raw && (reason === "interrupted" || (reason !== "done" && (turn.interrupted || !turn.finalText)));
+    const body = cut ? cutLine(raw) : raw;
     if (!body && !turn.tools.length) return;
     const { conv, account, version, lead } = this.loaded;
+    const last = this.lastLine;
+    const toolRows = (messageId: string, from: number) => turn.tools.map((p, i) => ({
+      accountId: account.id, conversationId: conv.id, messageId, sequence: from + i + 1, name: p.name,
+      input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
+      result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
+    }));
+    const resumes = !!last && last.cut && !!raw && startsWithLine(raw, last.raw);
+    const repeatsCut = !!last && cut && !resumes && startsWithLine(last.raw, raw);
+    if (last && (resumes || repeatsCut)) {
+      // Resumed after the cut: the earlier row becomes the whole line. A cut copy of the line just said adds nothing.
+      const now = await this.stamp();
+      const newBody = resumes ? body : (last.cut ? cutLine(last.raw) : last.raw);
+      await atomic(this.db, (q) => [
+        ...(resumes ? [q.update(messages).set({ body: newBody }).where(and(eq(messages.id, last.messageId), eq(messages.accountId, account.id)))] : []),
+        ...(turn.tools.length ? [q.insert(toolCalls).values(toolRows(last.messageId, last.tools))] : []),
+        q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id))),
+      ]);
+      this.lastLine = resumes ? { ...last, raw, cut, tools: last.tools + turn.tools.length } : { ...last, tools: last.tools + turn.tools.length };
+      if (resumes) {
+        const i = this.lines.findLastIndex((l) => l.role === "agent");
+        if (i >= 0) this.lines[i] = { role: "agent", text: newBody };
+      }
+      this.send({ t: "transcript", id: last.turnId, role: "agent", text: newBody, final: true, atMs: last.startMs });
+      if (turn.id !== last.turnId) this.send({ t: "transcript", id: turn.id, role: "agent", text: resumes ? newBody : body, final: true, atMs: turn.startMs });
+      return;
+    }
     const messageId = randomUUID();
     const now = await this.stamp();
     await atomic(this.db, (q) => [
@@ -657,13 +727,7 @@ export class VoiceEngine {
         id: messageId, accountId: account.id, conversationId: conv.id, actor: "agent", body, language: conv.language, agentVersionId: version.id,
         voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, answerMs: turn.answerMs, createdAt: now,
       }),
-      ...(turn.tools.length
-        ? [q.insert(toolCalls).values(turn.tools.map((p, i) => ({
-            accountId: account.id, conversationId: conv.id, messageId, sequence: i + 1, name: p.name,
-            input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
-            result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
-          })))]
-        : []),
+      ...(turn.tools.length ? [q.insert(toolCalls).values(toolRows(messageId, 0))] : []),
       q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id))),
       // A new lead becomes agent-handled, only while the conversation is still open.
       q.update(leads).set({ status: "agent_handling", lastActivityAt: now }).where(and(
@@ -672,6 +736,7 @@ export class VoiceEngine {
       )),
     ]);
     this.agentMessages++;
+    if (raw) this.lastLine = { messageId, turnId: turn.id, raw, cut, tools: turn.tools.length, startMs: turn.startMs };
     if (body) this.lines.push({ role: "agent", text: body });
     this.send({ t: "transcript", id: turn.id, role: "agent", text: body, final: true, atMs: turn.startMs });
   }
@@ -691,7 +756,7 @@ export class VoiceEngine {
     this.reconnecting = true;
     this.setState("reconnecting");
     this.closeModel();
-    await this.finalizeAgentTurn();
+    await this.finalizeAgentTurn("stop");
     this.agentSpeaking = false;
     const { account, version, conv, lead } = this.loaded;
     const gen = this.gen;
@@ -727,7 +792,7 @@ export class VoiceEngine {
 
   private async finish(reason: VoiceEndReason) {
     try {
-      await this.finalizeAgentTurn();
+      await this.finalizeAgentTurn("stop");
     } catch (e) {
       console.error("[voice] could not store the last turn", e);
     }

@@ -20,6 +20,7 @@ import { SimulatedChip, TestLabChip } from "../simulated-chip";
 import { CopyButton } from "@/components/sas/copy-button";
 import { isolate } from "@/lib/leads/bidi";
 import { TOOL_ICON } from "@/components/sas/tool-chip";
+import { callLength } from "@/lib/voice/client/buyer-ui";
 import { callClock } from "@/lib/voice/lab";
 
 /** "18h 20m" until the window closes. */
@@ -76,6 +77,9 @@ export function markerText(m: ThreadMarker, meId: string | null): string {
   if (m.kind === "handoff") return t("conv.marker.handoff");
   if (m.kind === "handed_back") return t("conv.marker.handed_back");
   if (m.kind === "spend_cap") return t("conv.marker.spend_cap");
+  // A voice call's boundaries: "Voice call started · 15:44" and "Voice call · 30 s · 15:45" (the time is the marker's).
+  if (m.kind === "voice_started") return t("conv.marker.voice_started");
+  if (m.kind === "voice_ended") return t("conv.marker.voice_ended", { length: callLength(m.durationSec, t) });
   return m.by ? t("conv.marker.taken_over", { name: isolate(personName(m.by, meId, t("people.you_lower"))) }) : t("conv.marker.taken_over_unknown");
 }
 

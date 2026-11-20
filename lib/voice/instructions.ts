@@ -86,7 +86,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
     i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
       : i.continuing
-        ? "This call continues the chat below with the same buyer: you already introduced yourself in the chat, and the conversation so far is listed here. When the call connects, say your opening line (it tells the buyer it is you, an automated assistant, now on the call), then one short sentence that picks up from where the chat stopped, then listen. Do not introduce yourself again, do not repeat the chat's opening question, and never ask again for anything the buyer already answered in the chat."
+        ? "This call continues the chat with the same buyer: you already introduced yourself in the chat, and the conversation so far is listed here. When the call connects, say your opening line (it tells the buyer it is you, an automated assistant, now on the call), then one short sentence that picks up from where the chat stopped, then listen. Do not introduce yourself again, do not repeat the chat's opening question, and never ask again for anything the buyer already answered in the chat."
         : "When the call connects, say your opening line, then listen.",
     paceInstruction(settings.pace),
     i.deal?.summary ? `Summary so far: ${i.deal.summary}` : "",

@@ -149,16 +149,18 @@ export async function liveVoiceSessionOn(db: Db, accountId: string, conversation
   return rows.some((r) => r.status === "live" || r.createdAt.getTime() > now.getTime() - STALE_PENDING_SEC * 1000);
 }
 
-export type BuyerCallRow = { id: string; at: string; durationSec: number };
+/** A finished call: `startedAt` (connected) for "Voice call started · 10:42", `at` (ended) for "Voice call · 3 min 48 s · 10:46". */
+export type BuyerCallRow = { id: string; startedAt: string; at: string; durationSec: number };
 
-/** The chat's finished calls, for the "Voice call · 3 min 48 s · 10:46" rows. */
+/** The chat's finished calls, for the start and summary rows around each call's lines. */
 export async function buyerCallRows(db: Db, accountId: string, conversationIds: string[]): Promise<BuyerCallRow[]> {
   if (!conversationIds.length) return [];
   const rows = await db.select({ id: voiceSessions.id, endedAt: voiceSessions.endedAt, connectedAt: voiceSessions.connectedAt, durationSec: voiceSessions.durationSec })
     .from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, accountId), inArray(voiceSessions.conversationId, conversationIds), eq(voiceSessions.status, "ended"), eq(voiceSessions.isTest, false)))
     .orderBy(asc(voiceSessions.createdAt));
-  return rows.filter((r) => r.connectedAt && r.endedAt).map((r) => ({ id: r.id, at: r.endedAt!.toISOString(), durationSec: r.durationSec ?? 0 }));
+  return rows.filter((r) => r.connectedAt && r.endedAt)
+    .map((r) => ({ id: r.id, startedAt: r.connectedAt!.toISOString(), at: r.endedAt!.toISOString(), durationSec: r.durationSec ?? 0 }));
 }
 
 // ---------------------------------------------------------------------------

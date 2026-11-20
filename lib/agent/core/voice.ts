@@ -48,12 +48,12 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   { from: "3. Recommend. One message of four short sentences, one per part,", to: "3. Recommend. One turn of four short spoken sentences, one per part," },
   {
     from: 'The app writes the quote into the chat for you (lines, totals, tax, valid-until date). Give create_quote a headline: one short line on what the buyer gets, no prices. The buyer sees the quote card first, then your message: write only the close, with no lead-in such as "Here is your quote".',
-    to: "The app puts the quote in the chat below the call for you (lines, totals, tax, valid-until date). Give create_quote a headline: one short line on what the buyer gets, no prices. After create_quote, say the total once, say the quote is in the chat below, then close.",
+    to: "The app puts the quote in the chat for you (lines, totals, tax, valid-until date). Give create_quote a headline: one short line on what the buyer gets, no prices. After create_quote, say the total once, say the quote is in the chat, then close.",
   },
   { from: "Not this: writing the quote lines or totals yourself, or repeating them after the quote.", to: "Not this: reading out the quote lines, or saying the totals more than once." },
   {
     from: '5. Order form. When the buyer agrees: call send_order_form at once and send the link with one line on what to do there.\n   Example: "Here it is. Fill in your company details, sign and pay; it takes about 2 minutes."',
-    to: '5. Order form. When the buyer agrees: call send_order_form at once, then say the order form link is in the chat below, with one line on what to do there. Never read the link aloud.\n   Example: "The order form is in the chat below. Fill in your company details, sign and pay; it takes about 2 minutes."',
+    to: '5. Order form. When the buyer agrees: call send_order_form at once, then say the order form link is in the chat, with one line on what to do there. Never read the link aloud.\n   Example: "The order form is in the chat. Fill in your company details, sign and pay; it takes about 2 minutes."',
   },
   { from: "- Filled in the order form (company and signer details): never ask in chat.", to: "- Filled in the order form (company and signer details): never ask by voice." },
   {
@@ -150,12 +150,12 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
   { from: "in one message with four parts", to: "in one turn with four parts", optional: true },
   {
     from: "With the quote, close in the same message: a short lead-in, then offer to send the order form now,",
-    to: "With the quote, close in the same turn: say the total once, say the quote is in the chat below, then offer to send the order form now,",
+    to: "With the quote, close in the same turn: say the total once, say the quote is in the chat, then offer to send the order form now,",
     optional: true,
   },
   {
     from: "call send_order_form at once and send the link with one line on what to do there: fill in company details, sign and pay. Do not ask for company or signer details in chat.",
-    to: "call send_order_form at once and say the order form link is in the chat below, with one line on what to do there: fill in company details, sign and pay. Do not ask for company or signer details by voice.",
+    to: "call send_order_form at once and say the order form link is in the chat, with one line on what to do there: fill in company details, sign and pay. Do not ask for company or signer details by voice.",
     optional: true,
   },
   { from: "Do: this is your first message.", to: "Do: this is your first turn.", optional: true },
@@ -220,10 +220,10 @@ export const TOOL_DESCRIPTION_VOICE: readonly VoiceReplacement[] = [
   { from: "plain_name (what to call it in chat)", to: "plain_name (what to call it on the call)", optional: true },
   {
     from: "When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it.",
-    to: "When the quote is ready, the app shows the buyer the quote in the chat below the call (lines, VAT and totals): say the total once and do not read out the lines.",
+    to: "When the quote is ready, the app shows the buyer the quote in the chat (lines, VAT and totals): say the total once and do not read out the lines.",
     optional: true,
   },
-  { from: "Send the buyer the personal link to the seller's order form", to: "Put the buyer's personal link to the seller's order form in the chat below the call (never read it aloud)", optional: true },
+  { from: "Send the buyer the personal link to the seller's order form", to: "Put the buyer's personal link to the seller's order form in the chat (never read it aloud)", optional: true },
   { from: "Do not ask for company or signer details in the chat:", to: "Do not ask for company or signer details by voice:", optional: true },
   { from: "Opts the buyer out and closes the chat. Then send only the reply the result gives you.", to: "Opts the buyer out and ends the call. Then say only the reply the result gives you.", optional: true },
   { from: "the app tells the buyer.", to: "the app tells the buyer by message.", optional: true },

@@ -106,9 +106,11 @@ export class ServerEventMapper {
         return text ? [{ type: "buyer-transcript", text, final: true }] : [];
       }
       case "speech-started":
-        return [{ type: "speech-started" }];
+        return this.interrupt();
       case "response-created":
+        // A new response starts its own transcript (one cut by the buyer may never get a response-done).
         this.responseDone = false;
+        this.agentText = "";
         return [];
       case "function-call-arguments-done": {
         let args: unknown = {};
@@ -133,7 +135,7 @@ export class ServerEventMapper {
         if (e.rawType === "usageMetadata" && e.usage) return [{ type: "usage", usage: toVoiceUsage(e.usage) }];
         if (e.rawType === "goAway") return [{ type: "going-away" }];
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
-        if (/^interrupted$/i.test(e.rawType)) return [{ type: "speech-started" }];
+        if (/^interrupted$/i.test(e.rawType)) return this.interrupt();
         // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
         return [];
       }
@@ -145,6 +147,17 @@ export class ServerEventMapper {
       default:
         return [];
     }
+  }
+
+  /**
+   * The buyer cut in: what the agent said so far is final, and its next words belong to a new
+   * response. Without this, a response that never gets its response-done would carry the cut
+   * line into the next answer's transcript.
+   */
+  private interrupt(): RealtimeEvent[] {
+    const said = this.agentText;
+    this.agentText = "";
+    return [...(said ? [{ type: "agent-transcript" as const, text: said, final: true }, { type: "turn-done" as const, interrupted: true }] : []), { type: "speech-started" }];
   }
 
   private agentDelta(delta: string): RealtimeEvent[] {

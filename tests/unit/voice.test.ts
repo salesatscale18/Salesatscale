@@ -121,7 +121,7 @@ describe("tool schemas", () => {
   });
 
   it("descriptions use call wording", () => {
-    for (const t of realtimeTools("gemini")) expect(t.description, t.name).not.toMatch(/\bin chat\b|\bin the chat:|\bthe chat\b(?! below)(?!\.)/);
+    for (const t of realtimeTools("gemini")) expect(t.description, t.name).not.toMatch(/\bin chat\b|\bin the chat:|\bchat (?:below|above)\b|\b(?:below|above) the call\b/);
     const cb = realtimeTools("gemini").find((t) => t.name === "request_callback")!.description;
     expect(cb).toContain("the app tells the buyer by message.");
     expect(cb).toContain("The conversation stays with you: keep the call going.");
@@ -148,15 +148,16 @@ describe("voice instructions", () => {
     expect(turnContext(pb, null, { ...extra, channel: "chat" })).toBe(turnContext(pb, null, extra));
   });
 
-  /** Chat-only wording a call must not contain. Allowed: "the chat below", "in/to the chat", follow-ups by message ("I'll message you"). */
+  /** Chat-only wording a call must not contain. Allowed: "in/to the chat" (never "below"/"above"), follow-ups by message ("I'll message you"). */
   const chatOnly = (text: string): string[] => {
+    // On a call the chat is never "below" or "above" (cards can sit either side of the spoken line).
+    const placed = /\bchat (?:below|above)\b|\b(?:below|above) the call\b/i.exec(text);
     const t = text
       // The team's confirmation of a call time arrives as a chat message: legitimate on a call.
       .replace(/\bby message\b/gi, "")
-      .replace(/\b(?:in|into|to) the chat(?: below(?: the call)?)?\b/gi, "")
-      .replace(/the chat below/gi, "")
+      .replace(/\b(?:in|into|to) the chat\b(?! (?:below|above))/gi, "")
       .replace(/\bI'll message you\b|\bShall I message you\b|\bbuyer messages\b|don't write to me again|you write to the buyer|in writing afterwards/gi, "");
-    const found: string[] = [];
+    const found: string[] = placed ? [`${placed[0]}: …${text.slice(Math.max(0, placed.index - 60), placed.index + 40)}…`] : [];
     for (const re of [
       /\bmessages?\b/i, /\bchat\b/i, /\bwrite\b|\bwritten\b/i, /\b(?:give|send) the link\b/i, /\blink to choose\b/i,
       /\bin the same message\b/i, /\bpause the chat\b/i, /\bconfirm here\b/i, /\bquestions here\b/i, /\bin text\b/i, /\bconfirm (?:it|the time) here\b/i, /\bfrom the app\b/i, /\bthe app told\b/i,
@@ -201,7 +202,9 @@ describe("voice instructions", () => {
     expect(chatOnly(voiceStageText(deriveStage({ ...facts, playbook: pb, fields: {}, objections, agentMessages: 3 }).instruction))).toEqual([]);
     // The scan itself catches what it should.
     expect(chatOnly("Keep the chat going. Give the link. In the same message.")).toHaveLength(4);
-    expect(chatOnly("It is in the chat below. I'll message you tomorrow at 10.")).toEqual([]);
+    expect(chatOnly("It is in the chat. I'll message you tomorrow at 10.")).toEqual([]);
+    expect(chatOnly("It is in the chat below.")[0]).toMatch(/^chat below:/);
+    expect(chatOnly("The quote is in the chat above the call.")[0]).toMatch(/^chat above:/);
   });
 
   it("every scripted agent line (all scenarios) passes the chat-only scan", () => {
@@ -278,7 +281,7 @@ describe("voice instructions", () => {
     ]) expect(voiceStable, chatLine).not.toContain(chatLine);
     for (const voiceLine of [
       "on a live voice call", "One or two short spoken sentences per turn", "One question at a time", "Spoken language only",
-      "say the total once, say the quote is in the chat below", "the order form link is in the chat below", "never ask by voice",
+      "say the total once, say the quote is in the chat", "the order form link is in the chat", "never ask by voice",
       "### On a voice call (always)", "automated assistant", "hand_off_to_human", "record_opt_out", "card number", "English",
     ]) expect(voiceStable, voiceLine).toContain(voiceLine);
     // Follow-ups are still messages.
@@ -295,12 +298,13 @@ describe("voice instructions", () => {
     expect(none).toContain("Do not announce your checks");
   });
 
-  it("the stage block in a call speaks of the chat below", () => {
+  it("the stage block in a call speaks of the chat (never below or above)", () => {
     const facts = { quote: "ready" as const, orderForm: "none" as const, signed: false, paid: false };
     const s = deriveStage({ ...facts, playbook: pb, fields: {}, agentMessages: 3 }).instruction;
     expect(s).toContain("send the link");
     expect(voiceStageText(s)).not.toContain("send the link");
-    expect(voiceStageText(s)).toContain("the order form link is in the chat below");
+    expect(voiceStageText(s)).toContain("the order form link is in the chat,");
+    expect(voiceStageText(s)).not.toMatch(/chat (?:below|above)/);
     const ctx = turnContext(pb, null, { agentMessages: 1, opener: "Hi, this is Ava.", stage: facts, channel: "voice" });
     expect(ctx).toContain("Your opening line, which you say first when the call connects");
     expect(ctx).not.toContain("already sent");
@@ -801,5 +805,22 @@ describe("special-price approval on a call", () => {
       const p = { ...pb, objectionAttempts: n } as Playbook;
       expect(stableSystemPrompt(p, seller, null, { channel: "voice" })).toContain(`- ${words} per objection.`);
     }
+  });
+});
+
+describe("Gateway mapper: a cut line never carries into the next answer", () => {
+  it("speech-started (or Gemini's interrupted) ends the agent's transcript; the next response starts fresh", () => {
+    const m = new ServerEventMapper();
+    m.map({ type: "audio-transcript-delta", responseId: "r1", itemId: "i", delta: "The order form is in", raw: {} });
+    expect(m.map({ type: "speech-started", raw: {} })).toEqual([
+      { type: "agent-transcript", text: "The order form is in", final: true }, { type: "turn-done", interrupted: true }, { type: "speech-started" },
+    ]);
+    expect(m.map({ type: "audio-transcript-delta", responseId: "r2", itemId: "i", delta: "Yes, setup is included.", raw: {} }))
+      .toEqual([{ type: "agent-transcript", text: "Yes, setup is included.", final: false }]);
+    m.map({ type: "audio-transcript-delta", responseId: "r2", itemId: "i", delta: " More", raw: {} });
+    expect(m.map({ type: "custom", rawType: "interrupted", raw: {} })[0]).toEqual({ type: "agent-transcript", text: "Yes, setup is included. More", final: true });
+    m.map({ type: "audio-transcript-delta", responseId: "r3", itemId: "i", delta: "Left over", raw: {} });
+    m.map({ type: "response-created", responseId: "r4", raw: {} });
+    expect(m.map({ type: "audio-transcript-delta", responseId: "r4", itemId: "i", delta: "Fresh", raw: {} })).toEqual([{ type: "agent-transcript", text: "Fresh", final: false }]);
   });
 });

@@ -115,7 +115,7 @@ function totalLine(ctx: ScriptCtx): string {
   const q = ctx.last("create_quote");
   const totals = q?.totals as Record<string, unknown> | string | undefined;
   if (q?.ok && totals && typeof totals === "object" && typeof totals.total_today_including_vat === "string") {
-    return `Your total today is ${totals.total_today_including_vat}. The quote is in the chat below. Shall I send the order form now?`;
+    return `Your total today is ${totals.total_today_including_vat}. The quote is in the chat. Shall I send the order form now?`;
   }
   return "I'll confirm the price with the team and get back to you. Is that all right?";
 }
@@ -178,7 +178,7 @@ const lookupThenAsk = (mustHave: boolean | null): ScriptStep[] => [
 const askTeam = (mustHave: boolean | null) => tool("ask_team", { question: UNKNOWN.question, buyer_words: UNKNOWN.words, must_have: mustHave });
 const asked = (ctx: ScriptCtx) => ctx.last("ask_team")?.sent === true;
 const PROMISE = "I don't have that detail yet, and I'll make sure you get an exact answer. Is it a must-have for you, or good to know?";
-const orderFormSay = say("The order form is in the chat below. Fill in your company details, sign and pay; it takes about two minutes.");
+const orderFormSay = say("The order form is in the chat. Fill in your company details, sign and pay; it takes about two minutes.");
 
 /** A time tool refused with another time to offer: offer it, hear the yes, use it. */
 const offerSuggested = (name: "request_callback" | "schedule_follow_up", key: "suggested_time" | "suggested_due_at", args: (time: string) => Record<string, unknown>): ScriptStep[] => {
@@ -207,14 +207,14 @@ function objectionScripts(): Record<string, Script> {
     price_budget: [
       expectBuyer(pbOpen),
       ...quoteSteps(3),
-      say((ctx) => `For all three locations the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      say((ctx) => `For all three locations the total is ${totalOf(ctx)}. The quote is in the chat. Shall I send the order form?`),
       expectBuyer(pbTooMuch),
       recordObjection("too_expensive", pbTooMuch, 1, false),
       say(FIND_PRICE),
       expectBuyer(pbBudget),
       recordObjection("too_expensive", pbBudget, 2, true),
       quoteFor(1),
-      say((ctx) => `Then let's start smaller, with one location first. That comes to ${totalOf(ctx)}, and the new quote is in the chat below. Would that fit this year?`),
+      say((ctx) => `Then let's start smaller, with one location first. That comes to ${totalOf(ctx)}, and the new quote is in the chat. Would that fit this year?`),
     ],
     // A competitor's offer: ask what matters, then what this price includes. No claims about them, no discount.
     price_competitor: [
@@ -252,7 +252,7 @@ function objectionScripts(): Record<string, Script> {
       expectBuyer(prPrice),
       recordObjection("asks_for_person", prPrice, 2, true, "settled"),
       ...quoteSteps(1),
-      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat. Shall I send the order form?`),
       expectBuyer(prYes),
       tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
       orderFormSay,
@@ -265,7 +265,7 @@ function objectionScripts(): Record<string, Script> {
       expectBuyer(gkGood),
       onlyIf(asked, askTeam(false)),
       ...quoteSteps(1),
-      say((ctx) => `Got it. For your one location the total is ${totalOf(ctx)}, and the quote is in the chat below. Shall I send the order form?`),
+      say((ctx) => `Got it. For your one location the total is ${totalOf(ctx)}, and the quote is in the chat. Shall I send the order form?`),
     ],
     // An unknown must-have: parked silently, details collected, then a call with a person who brings the answer.
     unknown_must_have: [
@@ -287,7 +287,7 @@ function objectionScripts(): Record<string, Script> {
     buying_signal: [
       expectBuyer(bsOpen),
       ...quoteSteps(1),
-      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat. Shall I send the order form?`),
       expectBuyer(bsHmm),
       recordObjection("too_expensive", bsHmm, 1, false),
       say(FIND_PRICE),
@@ -300,7 +300,7 @@ function objectionScripts(): Record<string, Script> {
     two_objections: [
       expectBuyer(toOpen),
       ...quoteSteps(1),
-      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat below. Shall I send the order form?`),
+      say((ctx) => `For one location the total is ${totalOf(ctx)}. The quote is in the chat. Shall I send the order form?`),
       expectBuyer(toTooMuch),
       recordObjection("too_expensive", toTooMuch, 1, false),
       say(FIND_PRICE),
@@ -325,7 +325,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     say(totalLine),
     expectBuyer("Yes, please send it."),
     tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
-    say("The order form is in the chat below. Fill in your company details, sign and pay; it takes about two minutes."),
+    say("The order form is in the chat. Fill in your company details, sign and pay; it takes about two minutes."),
   ],
   discount_push: [
     expectBuyer("We have one location. I want your basic package, but only with 15% off."),
@@ -426,7 +426,7 @@ export function fieldsFromInstructions(instructions: string): ScriptField[] {
 export function lineForInstruction(instructions: string | undefined): string {
   const quoted = instructions ? /"([^"]+)"/.exec(instructions)?.[1] : undefined;
   if (quoted) return quoted;
-  if (instructions && /time limit|about to end|almost out of time/i.test(instructions)) return "We're almost out of time on this call. We can continue in the chat below.";
+  if (instructions && /time limit|about to end|almost out of time/i.test(instructions)) return "We're almost out of time on this call. We can continue in the chat.";
   if (instructions && /quiet|still there|silence/i.test(instructions)) return "Are you still there?";
   if (instructions && /opted out|opt-out/i.test(instructions)) return OPT_OUT;
   return "Sorry, could you say that again?";
@@ -558,6 +558,8 @@ export class ScriptedConnection implements RealtimeConnection {
   sendText(text: string): void {
     if (this.closed) return;
     this.sent.texts.push(text);
+    // Typed while the agent speaks cuts it short, as speech does (and as a live model stops for new input).
+    if (this.agentSpeaking) this.interrupted = true;
     this.buyerTurns.push({ typed: true, text });
     this.wake();
   }
@@ -721,6 +723,9 @@ export class ScriptedConnection implements RealtimeConnection {
     if (step?.kind === "expectBuyer") {
       this.position++;
       this.buyerSaid(turn, step.line);
+    } else if (!step) {
+      // The script has ended: the turn waits for the short answer after the script.
+      this.buyerTurns.unshift(turn);
     } else {
       this.buyerSaid(turn, "Sorry, go on.");
     }

@@ -11,7 +11,7 @@ import { randomUUID } from "node:crypto";
 import { and, desc, eq, gte, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { conversations, leadEvents, leads, messages, users, type Conversation, type LeadStatus } from "@/db/schema";
+import { conversations, leadEvents, leads, messages, users, voiceSessions, type Conversation, type LeadStatus } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { conversationMessages } from "./service";
 import { loadQuoteCards } from "./quote-card-data";
@@ -20,7 +20,7 @@ import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
-import { MARKER_EVENT_TYPES, threadMarkers, type ThreadMarker } from "./thread-markers";
+import { MARKER_EVENT_TYPES, threadMarkers, VOICE_CALL_ENDED_LINE, voiceMarkers, type ThreadMarker } from "./thread-markers";
 
 /** The system line capped conversations stored before W5; hidden where the spend-cap marker shows. */
 const SPEND_CAP_SYSTEM_LINE = "This month's AI spend cap is reached, so the agent did not start this conversation.";
@@ -186,7 +186,7 @@ export async function latestConversationForLead(db: Db, accountId: string, leadI
 
 export async function conversationView(db: Db, accountId: string, conv: Conversation): Promise<ConversationView> {
   // Messages (with their tool calls) and the suggested reply load in parallel.
-  const [thread, suggested, quoteCards, events] = await Promise.all([
+  const [thread, suggested, quoteCards, events, calls] = await Promise.all([
     conversationMessages(db, accountId, conv.id),
     conv.status === "human" ? latestSuggestedReply(db, accountId, conv.leadId) : Promise.resolve(null),
     loadQuoteCards(db, accountId, [conv.id], { audience: "seller" }),
@@ -194,6 +194,9 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
     db.select({ type: leadEvents.type, createdAt: leadEvents.createdAt, actorUserId: leadEvents.actorUserId, data: leadEvents.data })
       .from(leadEvents)
       .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, conv.leadId), inArray(leadEvents.type, [...MARKER_EVENT_TYPES]), gte(leadEvents.createdAt, conv.createdAt))),
+    // Voice calls on this conversation: a start and a summary marker each (live voice), from the session.
+    db.select({ connectedAt: voiceSessions.connectedAt, endedAt: voiceSessions.endedAt, status: voiceSessions.status, durationSec: voiceSessions.durationSec })
+      .from(voiceSessions).where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conv.id))),
   ]);
   const ids = [...new Set([conv.takenOverByUserId, ...thread.map((m) => m.message.actorUserId), ...events.map((e) => e.actorUserId)].filter((x): x is string => !!x))];
   const people = ids.length
@@ -202,11 +205,14 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
   const authors = Object.fromEntries(people.map((p) => [p.id, p]));
   // Prefill only until a person has replied after that hand-off.
   const answered = suggested && thread.some(({ message: m }) => m.actor === "human" && m.createdAt >= suggested.at);
-  const markers = threadMarkers(conv.id, thread, events, authors);
+  const markers = [...threadMarkers(conv.id, thread, events, authors), ...voiceMarkers(calls)].sort((a, b) => a.at.getTime() - b.at.getTime());
   // A capped chat says it once: the "Handed to a person: AI limit reached" marker replaces the system line
   // that conversations capped before W5 stored (new ones no longer store it).
-  const shown = markers.some((m) => m.kind === "spend_cap")
-    ? thread.filter(({ message: m }) => !(m.actor === "system" && m.body.startsWith(SPEND_CAP_SYSTEM_LINE)))
+  const capped = markers.some((m) => m.kind === "spend_cap");
+  // A call's summary marker replaces the "Voice call ended · 0:38" line the engine stores.
+  const called = markers.some((m) => m.kind === "voice_ended");
+  const shown = capped || called
+    ? thread.filter(({ message: m }) => !(m.actor === "system" && ((capped && m.body.startsWith(SPEND_CAP_SYSTEM_LINE)) || (called && VOICE_CALL_ENDED_LINE.test(m.body)))))
     : thread;
   return {
     conversation: conv,

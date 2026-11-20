@@ -65,7 +65,7 @@ export function openaiSchema(node: unknown): Json {
   return structuredClone((node ?? { type: "object", properties: {} }) as Json);
 }
 
-/** A tool description as a call reads it ("in chat" → "by voice", the quote and link in the chat below). */
+/** A tool description as a call reads it ("in chat" → "by voice", the quote and link in the chat). */
 export function voiceToolDescription(description: string): string {
   return applyVoiceReplacements(description, TOOL_DESCRIPTION_VOICE, "tool description");
 }

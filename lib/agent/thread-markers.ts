@@ -23,7 +23,28 @@ export type ThreadMarker =
   | { kind: "handoff"; at: Date; afterMessageId: string }
   | { kind: "taken_over"; at: Date; by: MarkerPerson | null }
   | { kind: "handed_back"; at: Date; by: MarkerPerson | null }
-  | { kind: "spend_cap"; at: Date };
+  | { kind: "spend_cap"; at: Date }
+  /** A voice call on this conversation: where it connected, and where it ended with its length (live voice). */
+  | { kind: "voice_started"; at: Date }
+  | { kind: "voice_ended"; at: Date; durationSec: number };
+
+/**
+ * The line the voice engine stores when a call ends ("Voice call ended · 0:38", lib/voice/engine.ts):
+ * seller threads show the call's summary marker instead (built from the session), so this line is not shown twice.
+ */
+export const VOICE_CALL_ENDED_LINE = /^Voice call ended · \d+:\d{2}$/;
+
+/** A conversation's voice calls, as stored on voice_sessions. */
+export type VoiceSessionRow = { connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null };
+
+/** The start and summary markers of each call that connected (a call still running has only its start). */
+export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker[] {
+  return sessions.flatMap((v): ThreadMarker[] => {
+    if (!v.connectedAt) return [];
+    const start: ThreadMarker = { kind: "voice_started", at: v.connectedAt };
+    return v.status === "ended" && v.endedAt ? [start, { kind: "voice_ended", at: v.endedAt, durationSec: v.durationSec ?? 0 }] : [start];
+  });
+}
 
 /** Lead event: a new conversation started with a person because the AI spend cap was reached. data: { conversationId, reason: "spend_cap" }. */
 export const SPEND_CAP_HANDOFF_EVENT = "handoff.spend_cap";

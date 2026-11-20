@@ -351,6 +351,7 @@
   "buyer.voice.sheet_not_now": "לא עכשיו",
   "buyer.voice.sheet_mic": "הדפדפן יבקש גישה למיקרופון.",
   "buyer.voice.call_row": "שיחה קולית · {length} · {time}",
+  "buyer.voice.call_started": "שיחה קולית התחילה · {time}",
   "buyer.voice.len_min_sec": "{m} דק׳ {s} שנ׳",
   "buyer.voice.len_min": "{m} דק׳",
   "buyer.voice.len_sec": "{s} שנ׳",

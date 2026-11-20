@@ -366,12 +366,18 @@ describe("the buyer sees state words only", () => {
         { id: "m1", from: "agent" as const, body: "Hi Dana", at: "2026-11-19T09:00:00.000Z", status: null, name: null, previews: [] },
         { id: "m2", from: "buyer" as const, body: "Four shops.", at: "2026-11-19T09:02:00.000Z", status: "read" as const, name: null, previews: [], call: { atMs: 80_000, typed: false } },
       ],
-      typing: false, ended: false, closedAt: null, cards: {}, calls: [{ id: "c1", at: "2026-11-19T09:05:00.000Z", durationSec: 228 }],
+      typing: false, ended: false, closedAt: null, cards: {}, calls: [{ id: "c1", startedAt: "2026-11-19T09:01:12.000Z", at: "2026-11-19T09:05:00.000Z", durationSec: 228 }],
       voice: { available: true, consented: false },
     };
     const html = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
     expect(html).toContain('aria-label="Talk to us"');
     expect(html).toContain("Voice call · 3 min 48 s · 11:05");
+    // The call is framed: its start row comes before its first line, its summary row after the last.
+    expect(html).toContain("Voice call started · 11:01");
+    const order = ["Hi Dana", "Voice call started · 11:01", "Four shops.", "Voice call · 3 min 48 s · 11:05"].map((x) => html.indexOf(x));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    const he = renderToStaticMarkup(<ChatClient token="t" lang="he" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+    expect(he).toContain("שיחה קולית התחילה · 11:01");
     expect(html).toContain('aria-label="Said in the call at 1:20"');
     expect(html).not.toContain("data-voice-tool");
     const off = renderToStaticMarkup(<ChatClient token="t" lang="en" seller="Acme" initials="AC" strings={strings} initial={{ ...initial, voice: { available: false, consented: false } }} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);

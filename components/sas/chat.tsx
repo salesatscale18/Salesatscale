@@ -85,8 +85,10 @@ export function AgentStepsSwitch({ slug, scope, show, back }: { slug: string; sc
   );
 }
 
-export type MarkerKind = "handoff" | "taken_over" | "handed_back" | "spend_cap";
-const MARKER_ICON: Record<MarkerKind, IconName> = { handoff: "user-plus", taken_over: "user", handed_back: "sparkles", spend_cap: "user-plus" };
+export type MarkerKind = "handoff" | "taken_over" | "handed_back" | "spend_cap" | "voice_started" | "voice_ended";
+const MARKER_ICON: Record<MarkerKind, IconName> = {
+  handoff: "user-plus", taken_over: "user", handed_back: "sparkles", spend_cap: "user-plus", voice_started: "phone-call", voice_ended: "phone-call",
+};
 
 /** A centred dashed marker in the thread: "Chat taken over by Dana · 14:02". Shown whether or not the steps are. */
 export function ThreadMarkerLine({ kind, text, time, timeTitle, dateTime }: { kind: MarkerKind; text: string; time: string; timeTitle?: string; dateTime?: string }) {
