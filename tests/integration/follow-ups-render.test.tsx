@@ -102,7 +102,9 @@ describe("Follow-ups on the seller's screens", () => {
     expect(html).toContain('data-testid="follow-up"');
     expect(html).toContain("Follow-up scheduled · Wed 18 Nov 10:00");
     expect(html).toContain("About: the quote for the second kitchen");
-    expect(html).toContain("Times are in Asia/Jerusalem.");
+    // An agent-chosen follow-up goes inside contact hours, and the row says so.
+    expect(html).toContain("Times are in Asia/Jerusalem. The agent sends it inside your contact hours.");
+    expect(html).not.toContain("The buyer asked for this time.");
     expect(html).toContain("Cancel follow-up");
     expect(html).toContain(`value="${followUp.id}"`);
 

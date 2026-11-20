@@ -34,7 +34,7 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "form_expiring"; quoteId: string; formId: string; quoteNumber: number; expiresAt: Date }
   | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
   /** O6: the agent took a time for a call; the seller confirms or changes it. `timezone` is the zone the time was set in. */
-  | { kind: "callback_requested"; callbackId: string; callAt: Date; timezone: string; brief: string; outsideHoursAsked?: boolean }
+  | { kind: "callback_requested"; callbackId: string; callAt: Date; timezone: string; brief: string }
   /** O7: a confirmed call whose time has passed, waiting for "How did the call go?" (who continues with the buyer). */
   | { kind: "call_finished"; callbackId: string; callAt: Date; timezone: string }
   /** O4: a question the agent sent to the team (ask_team); answered in Knowledge. The chat is not paused. */
@@ -169,7 +169,7 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
   for (const c of callbacks) {
     items.push({
       leadId: c.leadId, leadName: c.leadName, company: c.company, marketId: c.marketId, kind: "callback_requested", id: `callback:${c.id}`, at: c.requestedAt,
-      callbackId: c.id, callAt: c.at, timezone: c.timezone, brief: c.brief, outsideHoursAsked: c.outsideHoursAsked,
+      callbackId: c.id, callAt: c.at, timezone: c.timezone, brief: c.brief,
     });
   }
   for (const c of finished) {

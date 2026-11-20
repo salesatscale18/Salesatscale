@@ -2385,6 +2385,7 @@
   "followup.topic": "About: {topic}",
   "followup.why": "Why: {reason}",
   "followup.tz": "Times are in {tz}. The agent sends it inside your contact hours.",
+  "followup.tz_buyer": "Times are in {tz}. The buyer asked for this time.",
   "followup.cancel": "Cancel follow-up",
   "followup.dismiss": "Dismiss",
   "followup.cancelled": "Follow-up cancelled.",
@@ -3424,7 +3425,6 @@
   "leads.view_empty": "No leads here yet",
   "leads.need.human_handling": "Asked for a person",
   "leads.need.callback_requested": "Confirm call · {time}",
-  "leads.need.outside_hours": "Outside your hours",
   "leads.need.call_finished": "How did the call go?",
   "leads.need.call_finished.detail": "Call {time} · choose who goes on",
   "leads.need.team_question": "Question to answer",
@@ -3469,7 +3469,8 @@
   "buyer.voice.why.spend_cap": "AI limit reached.",
   "buyer.voice.why.platform_budget": "AI limit reached.",
   "buyer.voice.why.account_not_live": "The account is paused.",
-  "callback.outside_hours_asked": "Outside your contact hours, the buyer asked for this time",
-  "followup.outside_hours_asked": "Outside your contact hours, the buyer asked for this time",
-  "followup.tz_plain": "Times are in {tz}."
+  "buyer.sms_stop.title": "Stop text messages from {seller}?",
+  "buyer.sms_stop.body": "You can still write to {seller} in the chat.",
+  "buyer.sms_stop.button": "Stop text messages",
+  "buyer.sms_stop.done": "You won't get more text messages from {seller}."
 }

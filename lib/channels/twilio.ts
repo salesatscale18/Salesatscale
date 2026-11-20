@@ -1,5 +1,6 @@
 /**
- * Twilio WhatsApp provider (decision D2: Twilio as the BSP).
+ * Twilio WhatsApp provider (decision D2: Twilio as the BSP), also used for
+ * SMS (lib/sms: `channel: "sms"`).
  *
  * Plain REST over fetch, no SDK. Everything that talks to Twilio goes through
  * a `TwilioTransport`, so tests use a fake and never reach the network.
@@ -63,6 +64,14 @@ export type SendRequest = {
   from: string;
   messagingServiceSid?: string | null;
   statusCallback?: string | null;
+  /**
+   * "whatsapp" (default): `To`/`From` get the "whatsapp:" prefix. "sms": plain
+   * E.164 `To`, sent through the messaging service (lib/sms), which holds the
+   * registered alphanumeric sender.
+   */
+  channel?: "whatsapp" | "sms";
+  /** Seconds Twilio may queue the message before dropping it (ValidityPeriod; needs a messaging service). */
+  validityPeriodSeconds?: number | null;
 } & ({ body: string } | { contentSid: string; contentVariables: Record<string, string> });
 
 export type SendResult =
@@ -114,15 +123,17 @@ export class TwilioRestTransport implements TwilioTransport {
 
   async send(req: SendRequest): Promise<SendResult> {
     const form = new URLSearchParams();
-    form.set("To", toWhatsappAddress(req.to));
+    const address = req.channel === "sms" ? (n: string) => n : toWhatsappAddress;
+    form.set("To", address(req.to));
     if (req.messagingServiceSid) form.set("MessagingServiceSid", req.messagingServiceSid);
-    else form.set("From", toWhatsappAddress(req.from));
+    else form.set("From", address(req.from));
     if ("body" in req) form.set("Body", req.body);
     else {
       form.set("ContentSid", req.contentSid);
       form.set("ContentVariables", JSON.stringify(req.contentVariables));
     }
     if (req.statusCallback) form.set("StatusCallback", req.statusCallback);
+    if (req.validityPeriodSeconds) form.set("ValidityPeriod", String(Math.round(req.validityPeriodSeconds)));
     try {
       const res = await this.call(`${API}/Accounts/${encodeURIComponent(this.config.accountSid)}/Messages.json`, {
         method: "POST",

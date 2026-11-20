@@ -360,5 +360,9 @@
   "buyer.voice.why.not_agent": "אדם מהצוות מטפל בצ'אט הזה.",
   "buyer.voice.why.spend_cap": "הגעתם למגבלת ה-AI.",
   "buyer.voice.why.platform_budget": "הגעתם למגבלת ה-AI.",
-  "buyer.voice.why.account_not_live": "החשבון מושהה."
+  "buyer.voice.why.account_not_live": "החשבון מושהה.",
+  "buyer.sms_stop.title": "להפסיק הודעות SMS מ־{seller}?",
+  "buyer.sms_stop.body": "עדיין אפשר לכתוב ל־{seller} בצ׳אט.",
+  "buyer.sms_stop.button": "הפסקת הודעות SMS",
+  "buyer.sms_stop.done": "לא יישלחו אליך עוד הודעות SMS מ־{seller}."
 }
