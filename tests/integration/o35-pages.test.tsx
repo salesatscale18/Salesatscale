@@ -156,23 +156,19 @@ describe("O35 pages on the demo account", () => {
     expect(text(done)).toContain("How did the call go?");
   });
 
-  it("the buyer-named call on Saturday at 21:00: the call card notes it is outside contact hours; it is in Needs you under Calls", async () => {
+  it("the buyer-named call on Saturday at 21:00: the call card shows it with no outside-hours note; it is in Needs you under Calls, also with no note", async () => {
     const rotem = await leadBy(STATE_LEADS.buyerNamedCall.n);
     const lead = await render(LeadPage, { account: slug, leadId: rotem.id });
     save("lead-call-buyer-named", lead);
-    expect(lead).toContain('data-testid="callback-outside-hours"');
-    expect(text(lead)).toContain("Outside your contact hours, the buyer asked for this time");
     expect(text(lead)).toMatch(/Call requested[^<]*Sat/);
-    // The request inside contact hours has no note.
-    const inside = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callRequested.n)).id });
-    expect(inside).not.toContain('data-testid="callback-outside-hours"');
+    // The outside-hours note was removed (owner, 20 Nov 2026: a misreading).
+    expect(lead).not.toContain('data-testid="callback-outside-hours"');
+    expect(text(lead)).not.toContain("Outside your contact hours");
     const calls = text(await render(LeadsPage, { account: slug }, { view: "needs_you", need: "calls" }));
     expect(calls).toContain("Rotem Demo");
     expect(calls).toContain("Shira Demo");
-    // The Calls row says it before the seller opens the lead (UX): first in the detail line, so a long brief's "…" never hides it.
-    expect(calls).toMatch(/Rotem Demo[\s\S]*?Confirm call[^\n]*Outside your hours · /);
-    const shiraRow = calls.slice(calls.indexOf("Shira Demo"));
-    expect(shiraRow.slice(0, 300)).not.toContain("Outside your hours");
+    expect(calls).toMatch(/Rotem Demo[\s\S]*?Confirm call/);
+    expect(calls).not.toContain("Outside your hours");
   });
 
   it("the same one-line reason in all three places for the labelled leads; the taken-over Hebrew lead is in With your team, its reason on the row and the banner", async () => {

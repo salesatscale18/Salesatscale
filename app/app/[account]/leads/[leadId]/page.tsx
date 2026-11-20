@@ -434,7 +434,6 @@ export default async function LeadCardPage({
             <FollowUpPanel
               slug={account.slug} followUp={followUp} timezone={account.timezone}
               canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"}
-              outsideHoursAsked={!!followUp && events.some(({ event: e }) => e.type === "follow_up.scheduled" && e.data?.followUpId === followUp.id && e.data?.buyerNamedTime === true && e.data?.outsideContactHours === true)}
             />
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
             {sp.verified ? <div className="sas-alert sas-alert--success" role="status" style={{ margin: "0 16px 12px" }}><Icon name="check-circle" /><span>{t("lead.card.verified_saved")}</span></div> : null}

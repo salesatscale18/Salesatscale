@@ -8,13 +8,10 @@ import { cancelFollowUpAction } from "./follow-up-actions";
 /**
  * Lead card: the follow-up the agent agreed with the buyer ("Follow-up
  * scheduled · Tue 18 Nov 10:00", in the account's time zone) with Cancel, or
- * one that could not be sent with Dismiss. Shown only when there is one. A
- * time the buyer asked for outside contact hours is noted (it is sent then).
+ * one that could not be sent with Dismiss. Shown only when there is one.
  */
-export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled, outsideHoursAsked = false }: {
+export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled }: {
   slug: string; followUp: FollowUp | null; timezone: string; canCancel: boolean; cancelled: boolean;
-  /** The buyer asked for a time outside contact hours: it is sent then, and the row says so. */
-  outsideHoursAsked?: boolean;
 }) {
   if (!followUp && !cancelled) return null;
   const failed = followUp?.status === "failed";
@@ -29,15 +26,9 @@ export function FollowUpPanel({ slug, followUp, timezone, canCancel, cancelled, 
             <span>{t(failed ? "followup.failed" : "followup.scheduled", { when: formatDueLocal(followUp.dueAt, timezone) })}</span>
           </span>
           {followUp.topic ? <span className="sas-small" style={{ overflowWrap: "anywhere" }}>{t("followup.topic", { topic: followUp.topic })}</span> : null}
-          {!failed && outsideHoursAsked ? (
-            <span className="sas-small" data-testid="follow-up-outside-hours" style={{ display: "inline-flex", gap: 6, alignItems: "flex-start" }}>
-              <Icon name="clock" />
-              <span>{t("followup.outside_hours_asked")}</span>
-            </span>
-          ) : null}
           {failed
             ? <span className="sas-small">{t("followup.why", { reason: reasonText(followUp.reason) })}</span>
-            : <span className="sas-small">{t(outsideHoursAsked ? "followup.tz_plain" : "followup.tz", { tz: timezone })}</span>}
+            : <span className="sas-small">{t("followup.tz", { tz: timezone })}</span>}
           {canCancel ? (
             <form action={cancelFollowUpAction}>
               <input type="hidden" name="slug" value={slug} />

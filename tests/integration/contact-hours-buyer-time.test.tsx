@@ -53,7 +53,8 @@ const TZ = "Asia/Jerusalem";
 const DAY = 24 * 3_600_000;
 /** Sun–Thu 09:00–17:00; Friday and Saturday off. */
 const SUN_THU_9_17: ContactHours = Array.from({ length: 7 }, (_, i) => ({ on: i <= 4, from: "09:00", to: "17:00" }));
-const NOTE = "Outside your contact hours, the buyer asked for this time";
+/** The outside-hours note, removed (owner, 20 Nov 2026: a misreading); no page shows it any more. */
+const NOTE = "Outside your contact hours";
 const use = (id: string, name: string, input: unknown): Block => ({ type: "tool_use", id, name, input });
 const say = (text: string): Block => ({ type: "text", text });
 const step = (...content: Block[]) => () => ({ content });
@@ -128,18 +129,19 @@ describe("Contact hours: a time the buyer names is allowed at any hour", () => {
     const [ev] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "callback.requested")));
     expect(ev.data).toMatchObject({ buyerNamedTime: true, outsideContactHours: true });
 
+    // The call card shows the buyer's time with no outside-hours note.
     let html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
-    expect(html).toContain('data-testid="callback-outside-hours"');
-    expect(html).toContain(NOTE);
+    expect(html).not.toContain('data-testid="callback-outside-hours"');
+    expect(html).not.toContain(NOTE);
     expect(html).toContain("Call requested: Sat ");
 
-    // The seller confirms it as today: the note stays (it is still the buyer's time).
+    // The seller confirms it as is: still no note.
     expect((await confirmCallback(db, holder.access as never, c.leadId, cb.id, null)).ok).toBe(true);
     html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
     expect(html).toContain("Call confirmed: Sat ");
-    expect(html).toContain(NOTE);
+    expect(html).not.toContain(NOTE);
 
-    // The seller may set any future time, also outside contact hours; it is then theirs, so no note.
+    // The seller may set any future time, also outside contact hours.
     const changed = await changeCallback(db, holder.access as never, c.leadId, cb.id, { date: SAT, time: "22:00" }, null);
     expect(changed).toMatchObject({ ok: true, request: { status: "confirmed", changed: true } });
     expect(await leadCallback(db, acc.id, c.leadId)).toMatchObject({ outsideHoursAsked: false, changed: true });
@@ -181,7 +183,7 @@ describe("Contact hours: a time the buyer names is allowed at any hour", () => {
     expect(await db.select().from(followUps).where(eq(followUps.leadId, c.leadId))).toHaveLength(0);
   });
 
-  it("follow-ups: the buyer's Saturday 21:00 is scheduled, noted on the lead page and sent at that time; the agent's own time outside hours is refused", async () => {
+  it("follow-ups: the buyer's Saturday 21:00 is scheduled, shown on the lead page with no outside-hours note and sent at that time; the agent's own time outside hours is refused", async () => {
     const c = await mkChat(acc);
     const ctx = await ctxFor(acc, c);
     const agentOwn = await runTool("schedule_follow_up", { due_at: `${SAT}T21:00`, topic: "the quote", buyer_named_time: false }, ctx);
@@ -194,8 +196,10 @@ describe("Contact hours: a time the buyer names is allowed at any hour", () => {
     expect(ev.data).toMatchObject({ followUpId: f.id, buyerNamedTime: true, outsideContactHours: true });
 
     const html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
-    expect(html).toContain('data-testid="follow-up-outside-hours"');
-    expect(html).toContain(NOTE);
+    expect(html).toContain('data-testid="follow-up"');
+    expect(html).not.toContain('data-testid="follow-up-outside-hours"');
+    expect(html).not.toContain(NOTE);
+    expect(html).toContain(`Times are in ${TZ}.`);
     expect(html).not.toContain("The agent sends it inside your contact hours.");
 
     // At the buyer's time (Saturday, outside contact hours) the scheduler sends it rather than waiting.

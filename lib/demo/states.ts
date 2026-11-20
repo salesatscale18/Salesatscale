@@ -20,8 +20,7 @@
  * lead has a call the seller confirmed for tomorrow at 11:00 (Leads: "Call ·
  * <time>" as the Next step; the lead page's call card). A fourth lead's buyer
  * named a call time outside contact hours (Saturday at 21:00, allowed since the
- * buyer asked for it): the request waits in Needs you and the call card shows
- * "Outside your contact hours, the buyer asked for this time".
+ * buyer asked for it): the request waits in Needs you like any other.
  *
  * Quote states: an open quote (sent, no order) whose Valid until is tomorrow
  * in the account's time zone (amber on Quotes), and a held quote the seller
