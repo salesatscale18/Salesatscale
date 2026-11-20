@@ -112,7 +112,7 @@ describe("demo account: a finished buyer voice call", () => {
     const summary = await voiceSessionSummary(db, acc.id, convId);
     expect(summary).toMatchObject({ mode: "scripted", costMicros: 0, durationSec: VOICE_CALL.durationSec, endReason: "user_hangup" });
     expect(summary!.turns.map((x) => x.answerMs)).toEqual([null, 850, 700, 900]);
-    expect(await buyerCallRows(db, acc.id, [convId])).toEqual([{ id: s.id, startedAt: s.connectedAt!.toISOString(), at: s.endedAt!.toISOString(), durationSec: VOICE_CALL.durationSec }]);
+    expect(await buyerCallRows(db, acc.id, [convId])).toEqual([{ id: s.id, startedAt: s.connectedAt!.toISOString(), at: s.endedAt!.toISOString(), durationSec: VOICE_CALL.durationSec, empty: false }]);
   });
 
   it("stores the spoken lines in the conversation, linked to the call, after the chat and before the closing note", async () => {
