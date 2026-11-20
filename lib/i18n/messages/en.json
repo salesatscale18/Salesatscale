@@ -3219,7 +3219,6 @@
   "conv.notice.quote_declined": "Quote declined. The buyer was told in the chat, and the agent continues from there.",
   "lead.event.quote.declined": "Quote declined",
   "buyer.app.approved": "The team approved your quote.",
-  "buyer.app.declined_offer": "We couldn't approve that price. The best we can offer is {n} off. Shall I update your quote with that?",
   "buyer.app.declined": "We couldn't approve that price. Shall we look at what else could work for you?",
   "overview.needs.less": "Show less",
   "knowledge.summary_one_gap": "{total} facts · {approved} approved · {suggested} to review · 1 unanswered question.",

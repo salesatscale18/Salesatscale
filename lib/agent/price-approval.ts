@@ -33,11 +33,10 @@ export function priceApprovalText(d: Record<string, unknown>): string {
   const discount = typeof d.discountBp === "number" && d.discountBp > 0 ? ` with a ${percentText(d.discountBp)} discount` : "";
   const reasons = Array.isArray(d.reasons) ? d.reasons.filter((r): r is string => typeof r === "string") : [];
   const told = typeof d.toldBuyer === "string" ? d.toldBuyer : null;
-  const offer = typeof d.offerBp === "number" ? percentText(d.offerBp) : null;
   return [
     "## Price approval",
     `The team declined ${ref}${discount}${reasons.length ? ` (${reasons.join(" ")})` : ""}. That quote is withdrawn.`,
     told ? `The app told the buyer: "${told}"` : "The buyer has not been told yet: tell them in one short line that the team could not approve that price.",
-    `Continue the price ladder from the next step not yet used${offer ? `: if the buyer accepts ${offer}, make a new quote with it at once` : ""}. Other steps: a smaller first step, or a time to come back. Never ask the team to approve the same price again.`,
+    "Continue the price ladder from the next step not yet used: a smaller first step, a discount within your limit only as a trade (for deciding now, more units, or paying yearly), or a time to come back. Never ask the team to approve the same price again.",
   ].join("\n");
 }

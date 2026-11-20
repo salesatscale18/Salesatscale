@@ -141,30 +141,30 @@ describe("O1 part 5: special-price approval as a step", () => {
     expect((await he.chat()).messages.at(-1)!.body).toMatch(/^הצוות אישר את ההצעה שלך\. אם זה נראה לך נכון/);
   });
 
-  it("Decline: the quote is withdrawn and the buyer is told, with the in-limit offer, in English and Hebrew; audited", async () => {
+  it("Decline: the quote is withdrawn and the buyer is told (neutral line, no counter-offer), in English and Hebrew; audited", async () => {
     const en = await heldQuote("en", 10);
     const r = await declineHeldQuote(db, access(), en.quoteId, null);
     expect(r).toMatchObject({ ok: true, followUp: { sent: true, messages: [{ kind: "quote_declined" }] } });
     const chat = await en.chat();
-    expect(chat.messages.at(-1)).toMatchObject({ from: "agent", body: "We couldn't approve that price. The best we can offer is 5% off. Shall I update your quote with that?" });
+    expect(chat.messages.at(-1)).toMatchObject({ from: "agent", body: "We couldn't approve that price. Shall we look at what else could work for you?" });
     // The placeholder card shows the quote withdrawn; no order form can go out for it.
     expect(chat.cards[String(en.r.result.quote_message_id)]).toMatchObject({ state: "withdrawn" });
     const [q] = await db.select().from(quotes).where(eq(quotes.id, en.quoteId));
     expect(q.status).toBe("cancelled");
     const [ev] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, en.lead.id), eq(leadEvents.type, "quote.declined")));
-    expect(ev.data).toMatchObject({ discountBp: 1000, offerBp: 500, toldBuyer: "We couldn't approve that price. The best we can offer is 5% off. Shall I update your quote with that?" });
+    expect(ev.data).toMatchObject({ discountBp: 1000, toldBuyer: "We couldn't approve that price. Shall we look at what else could work for you?" });
     expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, acc.id), eq(auditLog.action, "quote.declined"), eq(auditLog.targetId, en.quoteId)))).toHaveLength(1);
     // The seller's thread: the withdrawn card, then the app's line to the buyer.
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, en.conversationId));
     const thread = renderToStaticMarkup(ConversationPanel({ slug: acc.slug, view: await conversationView(db, acc.id, conv), me, buyerName: "Rina Cohen", leadOptedOut: false }));
     save("thread-declined", thread);
-    expect(thread).toContain("We couldn&#x27;t approve that price. The best we can offer is 5% off.");
+    expect(thread).toContain("We couldn&#x27;t approve that price. Shall we look at what else could work for you?");
     // A second decline changes nothing.
     expect(await declineHeldQuote(db, access(), en.quoteId, null)).toEqual({ ok: false, reason: "quote_closed" });
 
     const he = await heldQuote("he", 10);
     expect(await declineHeldQuote(db, access(), he.quoteId, null)).toMatchObject({ ok: true });
-    expect((await he.chat()).messages.at(-1)!.body).toBe("לא הצלחנו לאשר את המחיר הזה. הכי טוב שנוכל להציע הוא 5% הנחה. לעדכן את ההצעה בהתאם?");
+    expect((await he.chat()).messages.at(-1)!.body).toBe("לא הצלחנו לאשר את המחיר הזה. נבדוק יחד מה עוד יכול להתאים לך?");
   });
 
   it("Decline without an in-limit offer (more than the discount, or no limit): the plain line, EN and HE", () => {
@@ -179,8 +179,9 @@ describe("O1 part 5: special-price approval as a step", () => {
     const ctx = await priceApprovalContext(db, acc.id, b.lead.id);
     expect(ctx).toContain("## Price approval");
     expect(ctx).toMatch(/The team declined Q-\d+ with a 10% discount \(Discount 10\.0% is above the 5\.0% limit\.\)\. That quote is withdrawn\./);
-    expect(ctx).toContain("The app told the buyer: \"We couldn't approve that price. The best we can offer is 5% off. Shall I update your quote with that?\"");
-    expect(ctx).toContain("if the buyer accepts 5%, make a new quote with it at once");
+    expect(ctx).toContain("The app told the buyer: \"We couldn't approve that price. Shall we look at what else could work for you?\"");
+    expect(ctx).toContain("a discount within your limit only as a trade (for deciding now, more units, or paying yearly)");
+    expect(ctx).not.toContain("if the buyer accepts");
     expect(ctx).toContain("Never ask the team to approve the same price again.");
     const llm = new ScriptedLlm([() => ({ content: [{ type: "text", text: "Done, here it is." }] })]);
     await runBuyerTurn(db, llm, { accountId: acc.id, conversationId: b.conversationId, text: "OK, 5% then." });
@@ -222,6 +223,6 @@ describe("O1 part 5: special-price approval as a step", () => {
     save("orders-declined", after);
     expect(after).toContain("Quote declined. If the agent made it in a chat, the buyer was told there and the agent continues from it.");
     const [m] = await db.select().from(messages).where(eq(messages.conversationId, c.conversationId)).orderBy(messages.createdAt).then((rows) => rows.slice(-1));
-    expect(m.body).toBe("We couldn't approve that price. The best we can offer is 5% off. Shall I update your quote with that?");
+    expect(m.body).toBe("We couldn't approve that price. Shall we look at what else could work for you?");
   });
 });

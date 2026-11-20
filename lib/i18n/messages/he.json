@@ -290,6 +290,5 @@
   "buyer.app.team_answer": "היי {name}, שאלת: \"{question}\". התשובה: {answer}",
   "buyer.app.team_answer_plain": "שאלת: \"{question}\". התשובה: {answer}",
   "buyer.app.approved": "הצוות אישר את ההצעה שלך.",
-  "buyer.app.declined_offer": "לא הצלחנו לאשר את המחיר הזה. הכי טוב שנוכל להציע הוא {n} הנחה. לעדכן את ההצעה בהתאם?",
   "buyer.app.declined": "לא הצלחנו לאשר את המחיר הזה. נבדוק יחד מה עוד יכול להתאים לך?"
 }

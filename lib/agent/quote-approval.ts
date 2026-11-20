@@ -235,13 +235,12 @@ export async function declineHeldQuote(db: Db, a: Access, quoteId: string, trans
   const current = q.versions.find((v) => v.version.version === q.quote.currentVersion);
   if (!current) return { ok: false, reason: "quote_not_found" };
   const reasons = current.version.approvalReasons;
-  const offerBp = declineOfferBp(reasons);
 
   const found = await heldQuoteConversation(db, accountId, quoteId, now);
   const language = found.ok && isLocale(found.conv.language) ? found.conv.language : "en";
-  const body = offerBp !== null
-    ? t("buyer.app.declined_offer", { n: percentText(offerBp) }, language)
-    : t("buyer.app.declined", undefined, language);
+  // Always the neutral line (UX): a decline never names a counter-offer, so it neither gives the limit away
+  // nor gives a discount with nothing in return. The seller has "Send N% instead" when they want to counter.
+  const body = t("buyer.app.declined", undefined, language);
   const messageId = found.ok ? randomUUID() : null;
   await atomic(db, (tx) => [
     tx.update(quotes).set({ status: "cancelled" }).where(and(eq(quotes.id, quoteId), eq(quotes.accountId, accountId), eq(quotes.status, "awaiting_approval"))),
@@ -249,7 +248,7 @@ export async function declineHeldQuote(db: Db, a: Access, quoteId: string, trans
       accountId, leadId: q.quote.leadId, type: "quote.declined", actor: "human", actorUserId: a.user.id, createdAt: now,
       data: {
         quoteId, number: q.quote.number, version: current.version.version, discountBp: current.version.discountBp,
-        reasons: reasons.map(approvalReasonText), offerBp, toldBuyer: found.ok ? body : null,
+        reasons: reasons.map(approvalReasonText), toldBuyer: found.ok ? body : null,
       },
     }),
     ...(found.ok && messageId ? [
