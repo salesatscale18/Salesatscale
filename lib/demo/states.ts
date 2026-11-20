@@ -18,7 +18,10 @@
  * confirmed call was 3 hours ago, so "How did the call go?" shows. Both go
  * through lib/callbacks/service.ts (requestCallback, confirmCallback). A third
  * lead has a call the seller confirmed for tomorrow at 11:00 (Leads: "Call ·
- * <time>" as the Next step; the lead page's call card).
+ * <time>" as the Next step; the lead page's call card). A fourth lead's buyer
+ * named a call time outside contact hours (Saturday at 21:00, allowed since the
+ * buyer asked for it): the request waits in Needs you and the call card shows
+ * "Outside your contact hours, the buyer asked for this time".
  *
  * Quote states: an open quote (sent, no order) whose Valid until is tomorrow
  * in the account's time zone (amber on Quotes), and a held quote the seller
@@ -41,7 +44,7 @@ import type { Db } from "@/db/types";
 import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sellerAccounts, sources, toolCalls, users, type DealFieldValue, type DealObjection } from "@/db/schema";
 import { confirmCallback, leadCallback, requestCallback } from "@/lib/callbacks/service";
 import { declineHeldQuote } from "@/lib/agent/quote-approval";
-import { CALLBACK_EVENTS } from "@/lib/callbacks/rules";
+import { CALLBACK_EVENTS, parseCallTime } from "@/lib/callbacks/rules";
 import { askTeam } from "@/lib/team-questions/service";
 import { isoInZone } from "@/lib/follow-ups/rules";
 import { normalizeQuestion } from "@/lib/agent/knowledge";
@@ -175,7 +178,7 @@ const ORDER_CHATS = {
   },
 } as const;
 
-/** Leads 4–15 (1–3 are the plain new leads of the seed). Each carries one state. */
+/** Leads 4–15 and 17 (1–3 are the plain new leads of the seed, 16 the voice call lead). Each carries one state. */
 export const STATE_LEADS = {
   bankTransfer: { n: 4, fullName: "רונית דמו", company: "מאפיית דמו רמת גן", email: "ronit@bakery-demo.example", language: "he" },
   payStep: { n: 5, fullName: "Avi Demo", company: "Deli Demo Jaffa", email: "avi@deli-demo.example", language: "en" },
@@ -189,6 +192,7 @@ export const STATE_LEADS = {
   callConfirmed: { n: 13, fullName: "Hila Demo", company: "Winery Demo Zichron", email: "hila@winery-demo.example", language: "en" },
   quoteExpiring: { n: 14, fullName: "Yoni Demo", company: "Ice Cream Demo Haifa", email: "yoni@icecream-demo.example", language: "en" },
   quoteDeclined: { n: 15, fullName: "Erez Demo", company: "Butcher Demo Petah Tikva", email: "erez@butcher-demo.example", language: "en" },
+  buyerNamedCall: { n: 17, fullName: "Rotem Demo", company: "Bakery Demo Rishon", email: "rotem@bakery-demo.example", language: "en" },
 } as const;
 
 /** O6: the briefs of the two seeded call requests. */
@@ -196,7 +200,11 @@ export const CALL_BRIEFS = {
   requested: "Wants to go over pricing for 3 sites before deciding; have the 3-site quote ready.",
   done: "Wants to hear how installation works in a running kitchen; have the installation steps ready.",
   confirmed: "Wants to plan sensors for a wine cellar and two cold rooms; have the cellar setup ready.",
+  buyerNamed: "Wants to go over sensors for 5 bakery fridges; free only on Saturday evening. Have the 1-site quote ready.",
 } as const;
+
+/** The call time the buyer names, outside the demo's contact hours (Saturday is off). */
+export const BUYER_NAMED_CALL = { weekday: 6, time: "21:00", words: "Saturday at 21:00" } as const;
 
 /** The confirmed call's local time, tomorrow (inside the demo's contact hours). */
 export const CONFIRMED_CALL_TIME = "11:00";
@@ -234,6 +242,7 @@ export type ReviewStates = {
   callRequestedConversationId: string;
   callDoneConversationId: string;
   callConfirmedConversationId: string;
+  buyerNamedCallConversationId: string;
   expiringQuoteId: string;
   declinedQuoteId: string;
   stepsConversationId: string;
@@ -361,6 +370,8 @@ export async function seedReviewStates(
   const callDoneConversationId = await callDone(db, userId, accountId, leadIds.callDone, liveVersionId, now);
   // A call the seller confirmed for tomorrow at 11:00: Leads shows "Call · <time>" as the agent's next step.
   const callConfirmedConversationId = await callConfirmed(db, userId, accountId, leadIds.callConfirmed, liveVersionId, now);
+  // The buyer names Saturday at 21:00 (outside contact hours, allowed for a buyer's time): Needs you "Call requested".
+  const buyerNamedCallConversationId = await buyerNamedCall(db, accountId, leadIds.buyerNamedCall, liveVersionId, now);
   // Quotes: one sent whose Valid until is tomorrow (amber), one held and declined by the seller.
   const expiringQuoteId = await expiringQuote(db, userId, accountId, leadIds.quoteExpiring, liveVersionId, now);
   const declinedQuoteId = await declinedQuote(db, userId, accountId, leadIds.quoteDeclined, liveVersionId, now);
@@ -400,7 +411,7 @@ export async function seedReviewStates(
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
-    callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, expiringQuoteId, declinedQuoteId,
+    callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, buyerNamedCallConversationId, expiringQuoteId, declinedQuoteId,
     passedConversationId, failedConversationId, analysisRuns,
   };
 }
@@ -767,6 +778,53 @@ async function callConfirmed(db: Db, userId: string, accountId: string, leadId: 
     await db.update(messages).set({ deliveryStatus: null, deliveryError: null }).where(and(eq(messages.accountId, accountId), eq(messages.id, confirmed.buyer.messageId)));
   }
   await db.update(leads).set({ lastActivityAt: confirmAt }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return id;
+}
+
+/**
+ * The next Saturday at 21:00 in the account's time zone, as a local
+ * "YYYY-MM-DDTHH:MM"; the following Saturday when that is less than 15 minutes
+ * ahead (or past) or more than 30 days ahead.
+ */
+export function nextBuyerNamedCallTime(now: Date, timezone: string): string {
+  const today = isoInZone(now, timezone).slice(0, 10);
+  const day = (d: string, add: number) => new Date(Date.parse(`${d}T12:00:00Z`) + add * 86_400_000).toISOString().slice(0, 10);
+  const dow = new Date(`${today}T12:00:00Z`).getUTCDay();
+  let date = day(today, (BUYER_NAMED_CALL.weekday - dow + 7) % 7);
+  for (let i = 0; i < 3; i++) {
+    const at = parseCallTime(`${date}T${BUYER_NAMED_CALL.time}`, timezone)!;
+    const ahead = at.getTime() - now.getTime();
+    if (ahead >= 15 * 60_000 && ahead <= 30 * 86_400_000) break;
+    date = day(date, 7);
+  }
+  return `${date}T${BUYER_NAMED_CALL.time}`;
+}
+
+/**
+ * The buyer names a call time outside contact hours (Saturday at 21:00); the
+ * agent books it with request_callback and buyer_named_time (requestCallback,
+ * as the tool). Left requested, not confirmed: Needs you shows "Call requested",
+ * and the call card notes the time is outside contact hours at the buyer's ask.
+ */
+async function buyerNamedCall(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 40), "open");
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 40), body: "Hi, we run a bakery with 5 fridges. I'd like to talk to someone about sensors." },
+    { actor: "agent", at: min(now, 39), body: "Of course, I can set that up. When suits you for a short call?" },
+    { actor: "buyer", at: min(now, 37), body: `I'm only free in the evening. Can someone call me on ${BUYER_NAMED_CALL.words}?` },
+  ]);
+  const at = min(now, 36);
+  const [account] = await db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const tz = account?.timezone || "UTC";
+  const input = { time: nextBuyerNamedCallTime(now, tz), brief: CALL_BRIEFS.buyerNamed, buyer_named_time: true };
+  const r = await requestCallback(db, { accountId, leadId, conversationId: id }, input, at);
+  if (!r.ok) throw new Error(`Demo seed: buyer-named call request refused: ${r.rule}`);
+  await insertThread(db, accountId, id, "en", versionId, [{
+    actor: "agent", at, body: `Sure. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here. Meanwhile, I'm here for any question.`,
+    calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
+  }]);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 40)) }, nextStep: `Call requested ${r.timeLocal}: ${CALL_BRIEFS.buyerNamed}` });
   return id;
 }
 

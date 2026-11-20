@@ -156,6 +156,21 @@ describe("O35 pages on the demo account", () => {
     expect(text(done)).toContain("How did the call go?");
   });
 
+  it("the buyer-named call on Saturday at 21:00: the call card notes it is outside contact hours; it is in Needs you under Calls", async () => {
+    const rotem = await leadBy(STATE_LEADS.buyerNamedCall.n);
+    const lead = await render(LeadPage, { account: slug, leadId: rotem.id });
+    save("lead-call-buyer-named", lead);
+    expect(lead).toContain('data-testid="callback-outside-hours"');
+    expect(text(lead)).toContain("Outside your contact hours, the buyer asked for this time");
+    expect(text(lead)).toMatch(/Call requested[^<]*Sat/);
+    // The request inside contact hours has no note.
+    const inside = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callRequested.n)).id });
+    expect(inside).not.toContain('data-testid="callback-outside-hours"');
+    const calls = text(await render(LeadsPage, { account: slug }, { view: "needs_you", need: "calls" }));
+    expect(calls).toContain("Rotem Demo");
+    expect(calls).toContain("Shira Demo");
+  });
+
   it("the same one-line reason in all three places for the labelled leads; the taken-over Hebrew lead is in With your team, its reason on the row and the banner", async () => {
     const needsList = await render(LeadsPage, { account: slug }, { view: "needs_you", need: "person" });
     const team = await render(LeadsPage, { account: slug }, { view: "with_team" });

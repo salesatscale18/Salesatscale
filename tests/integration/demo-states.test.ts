@@ -24,7 +24,7 @@ const { listIntakeKeys } = await import("@/lib/leads/service");
 const { aiUsageThisMonth } = await import("@/lib/ai/usage");
 const { getOrderFormSettings } = await import("@/lib/orders/settings");
 const { getAccountById } = await import("@/lib/accounts/service");
-const { CALL_BRIEFS, CONFIRMED_CALL_TIME } = await import("@/lib/demo/states");
+const { BUYER_NAMED_CALL, CALL_BRIEFS, CONFIRMED_CALL_TIME } = await import("@/lib/demo/states");
 const { leadListFacts } = await import("@/lib/leads/list-facts");
 const { quoteDocs, quoteWhere, endsSoon } = await import("@/lib/quotes/where");
 const { isoInZone } = await import("@/lib/follow-ups/rules");
@@ -320,6 +320,28 @@ describe("demo account review states", () => {
     expect(view.thread.at(-1)!.message.deliveryStatus).toBeNull();
     // Account-scoped.
     expect(await leadCallback(db, otherId, asked.id, NOW)).toBeNull();
+  });
+
+  it("a buyer-named call on Saturday at 21:00 (outside contact hours): requested by the agent's tool, waiting in Needs you under Calls", async () => {
+    const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+    const rotem = await leadBy(STATE_LEADS.buyerNamedCall.n);
+    expect(rotem).toMatchObject({ fullName: "Rotem Demo", company: "Bakery Demo Rishon", language: "en", status: "agent_handling" });
+    const conv = await convOf(rotem.id);
+    expect(conv.status).toBe("open");
+    // The agent's request_callback carries buyer_named_time, as the tool writes it.
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, conv.id));
+    expect(calls.find((c) => c.name === "request_callback")?.input).toMatchObject({ buyer_named_time: true, brief: CALL_BRIEFS.buyerNamed });
+    // NOW is Thursday 19 November: the next Saturday at 21:00 in the account's time zone.
+    const call = (await leadCallback(db, accountId, rotem.id, NOW))!;
+    expect(call).toMatchObject({ status: "requested", brief: CALL_BRIEFS.buyerNamed, buyerNamedTime: true, outsideHoursAsked: true });
+    expect(isoInZone(call.at, acc.timezone).slice(0, 16)).toBe(`2026-11-21T${BUYER_NAMED_CALL.time}`);
+    const bodies = (await conversationView(db, accountId, conv)).thread.map((e) => e.message.body);
+    expect(bodies).toContainEqual(expect.stringContaining(BUYER_NAMED_CALL.words));
+    expect(bodies.at(-1)).toMatch(/^Sure\. I've asked for a call with a member of our team on Saturday 21 November at 21:00;/);
+    // Not confirmed: Needs you shows it as a call request.
+    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === rotem.id)).toMatchObject({ kind: "callback_requested", brief: CALL_BRIEFS.buyerNamed });
+    // The other seeded request, inside contact hours, carries no note.
+    expect((await leadCallback(db, accountId, (await leadBy(STATE_LEADS.callRequested.n)).id, NOW))!.outsideHoursAsked).toBe(false);
   });
 
   it("LQ: a call confirmed for tomorrow 11:00 (the Next step), a sent quote valid until tomorrow, a declined held quote; Needs you unchanged", async () => {

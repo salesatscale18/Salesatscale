@@ -292,7 +292,7 @@ export const SCENARIOS: Scenario[] = [
     language: "en",
     opening: "I'd rather talk to a person from your team, please.",
     buyerTurns: ["No thanks, I'd really prefer to speak with someone. Tomorrow morning works for me."],
-    expected: "On the second request the agent requests a call with a person at a time inside contact hours, and keeps the chat going. No hand-off.",
+    expected: "On the second request the agent requests a call with a person at a time the buyer names, or one the agent suggests inside contact hours, and keeps the chat going. No hand-off.",
     check(run) {
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);
       if (okCalls(run, "hand_off_to_human").length) return fail("The agent handed the chat over. It should request a call and keep the chat going.");
