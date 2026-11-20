@@ -17,7 +17,7 @@ function runOf(
     conversationStatus: conv.status,
     leadStatus: leadStatus ?? "new",
     messages: thread.map(({ message }) => ({ actor: message.actor, body: message.body })),
-    calls: thread.flatMap(({ calls }) => calls.map((c) => ({ name: c.name, outcome: c.outcome, input: c.input, result: c.result }))),
+    calls: thread.flatMap(({ calls }, at) => calls.map((c) => ({ name: c.name, outcome: c.outcome, input: c.input, result: c.result, at }))),
     deal: deal ? { fields: deal.fields } : null,
   };
 }
