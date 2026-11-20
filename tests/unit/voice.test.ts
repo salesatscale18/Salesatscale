@@ -215,7 +215,7 @@ describe("voice instructions", () => {
       '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
       '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
       "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found the team already sees the question: do not say you passed it on, and never say you are waiting for an answer.",
-      "This hands the conversation to the team and ends this call: say that someone from the team will get back to them to confirm the time, then say goodbye.",
+      "Tell the buyer the team will confirm the time. Keep talking with the buyer after the request, and never use hand_off_to_human for a call.",
       "- Find the real objection. One question, in the same turn as the acknowledgement.",
     ]) expect(block, line).toContain(line);
     // The old first-request hand-off line is gone.

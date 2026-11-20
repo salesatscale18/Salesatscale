@@ -79,12 +79,12 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   { from: "- Find the real objection. One question, in the same message as the acknowledgement.", to: "- Find the real objection. One question, in the same turn as the acknowledgement." },
   { from: "Every turn, read the buyer's last message before choosing a step.", to: "Every turn, listen to what the buyer just said before choosing a step." },
   {
-    from: "- Call with a person. Framed as a help, with a proposed time and a link to choose another.",
-    to: "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. Never read a link aloud.",
+    from: "- Call with a person. Framed as a help, with a proposed time the buyer can change; the team confirms it.",
+    to: "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it. Never read a link aloud.",
   },
   {
-    from: "This hands the conversation to the team.",
-    to: "This hands the conversation to the team and ends this call: say that someone from the team will get back to them to confirm the time, then say goodbye.",
+    from: "Tell the buyer the team will confirm the time here. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call.",
+    to: "Tell the buyer the team will confirm the time. Keep talking with the buyer after the request, and never use hand_off_to_human for a call.",
   },
 ];
 
