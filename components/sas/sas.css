@@ -1428,10 +1428,11 @@ label.st-voice__row { cursor: pointer; }
   .sas-table.sas-ltable th, .sas-table.sas-ltable td { padding-inline: 12px; }
   .sas-table.sas-ltable th:first-child, .sas-table.sas-ltable td:first-child { padding-inline-start: 16px; }
   .sas-table.sas-ltable th { white-space: normal; vertical-align: bottom; }
-  .sas-ltable th.sas-lcol--lead { width: 188px; }
-  .sas-ltable th.sas-lcol--stage { width: 148px; }
-  .sas-ltable th.sas-lcol--value { width: 116px; }
-  .sas-ltable th.sas-lcol--who { width: 140px; }
+  .sas-ltable th.sas-lcol--lead { width: 176px; }
+  .sas-ltable th.sas-lcol--stage { width: 128px; }
+  .sas-ltable th.sas-lcol--value { width: 108px; }
+  /* Who's on it stays on one line (UX): "Waiting for a person" is 154px in Inter 600 14px; long names end in "…". */
+  .sas-ltable th.sas-lcol--who { width: 180px; }
   .sas-ltable th.sas-lcol--market { width: 112px; }
   .sas-ltable th.sas-lcol--when { width: 104px; }
   .sas-table.sas-ltable th.sas-ltable__chev, .sas-table.sas-ltable td.sas-lrow__chev { width: 32px; padding-inline: 0 12px; }
@@ -1441,9 +1442,10 @@ label.st-voice__row { cursor: pointer; }
   .sas-ltable .sas-lstep { max-width: none; }
   /* Stage pills keep their size; a long one ("Understand · objection") wraps inside the pill instead of widening the column. */
   .sas-ltable td.sas-lrow__stage .sas-pill { max-width: 100%; height: auto; min-height: 24px; padding-block: 4px; white-space: normal; border-radius: 12px; }
-  .sas-table.sas-ltable td.sas-lrow__who, .sas-table.sas-ltable td.sas-lrow__market { white-space: normal; }
-  .sas-ltable .sas-who { white-space: normal; align-items: baseline; }
-  .sas-ltable .sas-who::before { align-self: center; }
+  .sas-table.sas-ltable td.sas-lrow__market { white-space: normal; }
+  .sas-table.sas-ltable td.sas-lrow__who { white-space: nowrap; }
+  .sas-ltable .sas-who { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .sas-ltable .sas-who::before { display: inline-block; margin-inline-end: 6px; vertical-align: 1px; }
 }
 /* A narrower table (under about 1080px: viewports under about 1340px): no Market column; the market is a muted line under the company. */
 @container ltable (max-width: 1079px) {

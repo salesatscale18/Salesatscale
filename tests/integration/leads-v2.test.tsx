@@ -358,6 +358,9 @@ describe("Leads V2 (LQ-L)", () => {
     expect(fold).toBeLessThan(1142);
     expect(fold + 1 - fixed - w("market")).toBeGreaterThanOrEqual(240);
     expect(982 - fixed).toBeGreaterThanOrEqual(240);
+    // Who's on it stays on one line (UX): "● Waiting for a person" (dot, gap and text, Inter 600 14px) measured 154px; plus 24px padding.
+    expect(w("who") - 24).toBeGreaterThanOrEqual(154);
+    expect(block).toMatch(/\.sas-ltable \.sas-who \{ display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
   });
 
   it("every filter defaults to Any; Stage is a picker like What's needed; order numbers in detail lines use the text font (LQ fix 1)", async () => {
