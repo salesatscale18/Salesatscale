@@ -162,12 +162,13 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     expect(model.conns).toHaveLength(2);
     expect(model.conns[1].cfg.safe).toBe(true);
     expect(model.conns[1].responses).toHaveLength(1);
-    // The same explicit voice on every connection (no voice chosen: the family default), and in the session snapshot.
-    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Puck", "Puck"]);
-    expect((await row(c.sessionId)).settings?.voice).toBe("Puck");
+    // No voice chosen: the start pins the family default; the safe retry leaves it out (the working live config).
+    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Puck", undefined]);
+    expect("voice" in model.conns[1].cfg).toBe(false);
+    expect((await row(c.sessionId)).settings?.voice).toBe("model default");
     expect(c.engine.isEnded).toBe(false);
     expect(c.logs.text()).toContain(`[voice] ${short(c.sessionId)} model closed code=- reason="session ended" error=no after=300ms audio=no`);
-    expect(c.logs.text()).toMatch(/retry after early close connected in \d+ms \(proven session fields only\)/);
+    expect(c.logs.text()).toMatch(/retry without pinned default voice connected in \d+ms \(proven session fields only\)/);
     // It closes early again: the call ends as an error, model_closed_early, with the details stored.
     await c.clock.advance(200);
     model.conns[1].emit({ type: "closed", code: 1008, reason: "unsupported field", error: "invalid_request: unsupported field" });
@@ -188,6 +189,46 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     const sum = await voiceSessionSummary(db, acc, c.conversationId);
     expect(sum?.endDetail?.by).toBe("model_closed_early");
     expect(endDetailText(sum?.endDetail)).toBe('by model_closed_early · model closed 1008 "unsupported field" after 200 ms with an error · error: invalid_request: unsupported field');
+  });
+
+  it("the pinned default voice: sent at the start (stored); after a retry that dropped it, later connections omit it too", async () => {
+    const model = new FakeModel();
+    const c = await engineCall(model);
+    expect(model.conns[0].cfg.voice).toBe("Puck");
+    expect((await row(c.sessionId)).settings?.voice).toBe("Puck");
+    model.conns[0].emit({ type: "closed", code: 1007, reason: "invalid voice" });
+    await c.settle();
+    model.conns[1].emit({ type: "audio", pcm: new Uint8Array(480) });
+    await c.run(1_000);
+    // A later drop: the normal reconnect still has no pinned voice.
+    model.conns[1].emit({ type: "closed", code: 1011, reason: "" });
+    await c.settle();
+    expect(model.conns).toHaveLength(3);
+    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Puck", undefined, undefined]);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("a voice the seller chose is kept on the safe retry", async () => {
+    const s0 = await newSession();
+    const [sess] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, s0.sessionId));
+    const { agentVersions } = await import("@/db/schema");
+    const [v] = await db.select().from(agentVersions).where(eq(agentVersions.id, sess.agentVersionId!));
+    await db.update(agentVersions).set({ voiceSettings: { ...v.voiceSettings, voice: "Kore" } }).where(eq(agentVersions.id, v.id));
+    try {
+      const model = new FakeModel();
+      const c = await engineCall(model);
+      model.conns[0].emit({ type: "closed", code: 1000, reason: "" });
+      await c.settle();
+      expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Kore", "Kore"]);
+      expect(model.conns[1].cfg.safe).toBe(true);
+      expect(c.logs.text()).toMatch(/retry after early close connected/);
+      expect((await row(c.sessionId)).settings?.voice).toBe("Kore");
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+    } finally {
+      await db.update(agentVersions).set({ voiceSettings: v.voiceSettings }).where(eq(agentVersions.id, v.id));
+    }
   });
 
   it("a close after the agent spoke is a normal drop: one reconnect (resumed, full config); a second drop ends it (connection_lost)", async () => {
