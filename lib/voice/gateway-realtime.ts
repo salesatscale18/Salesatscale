@@ -109,6 +109,35 @@ export function toVoiceUsage(u: SdkUsage): VoiceUsage {
 const fromBase64 = (b64: string) => new Uint8Array(Buffer.from(b64, "base64"));
 
 /**
+ * Normal events we read nothing from (Gemini Live through the Gateway, seen in the live calls' logs): ignored
+ * without a log line. Anything else unknown is still logged once per type per call; error events always are.
+ */
+export const KNOWN_IGNORED_EVENTS: ReadonlySet<string> = new Set([
+  "custom:sessionResumptionUpdate", "custom:serverContent", "custom:generationComplete", "custom:voiceActivity", "custom:setupComplete",
+  "custom:turnComplete", "audio-done", "function-call-arguments-delta",
+]);
+
+const unknownEvent = (name: string): RealtimeEvent[] => (KNOWN_IGNORED_EVENTS.has(name) ? [] : [{ type: "provider-event", kind: "unknown", name }]);
+
+/**
+ * A custom event's provider type. The SDK names it `rawType`; when the Gateway leaves that out (the live logs'
+ * "custom:undefined"), the provider message's own key in `raw` (Gemini messages are `{ serverContent: … }`,
+ * `{ voiceActivity: … }`, or carry a `type`) names it.
+ */
+export function customEventName(e: { rawType?: unknown; raw?: unknown }): string {
+  if (typeof e.rawType === "string" && e.rawType) return e.rawType;
+  const raw = e.raw;
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    const r = raw as Record<string, unknown>;
+    if (typeof r.type === "string" && r.type) return r.type;
+    if (typeof r.rawType === "string" && r.rawType) return r.rawType;
+    const keys = Object.keys(r).filter((k) => k !== "usageMetadata" || Object.keys(r).length === 1);
+    if (keys.length) return keys[0];
+  }
+  return "unnamed";
+}
+
+/**
  * Maps normalized server events to ours. Stateful (one per connection): it
  * accumulates the turn's transcripts, so every transcript event we emit
  * carries the whole turn so far.
@@ -174,12 +203,13 @@ export class ServerEventMapper {
         return out;
       }
       case "custom": {
-        if (e.rawType === "usageMetadata" && e.usage) return [{ type: "usage", usage: toVoiceUsage(e.usage) }];
-        if (e.rawType === "goAway") return [{ type: "going-away" }];
+        const rawType = customEventName(e);
+        if (rawType === "usageMetadata" && e.usage) return [{ type: "usage", usage: toVoiceUsage(e.usage) }];
+        if (rawType === "goAway") return [{ type: "going-away" }];
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
-        if (/^interrupted$/i.test(e.rawType)) return this.interrupt();
-        // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption); reported once per type.
-        return [{ type: "provider-event", kind: "unknown", name: `custom:${e.rawType}` }];
+        if (/^interrupted$/i.test(rawType)) return this.interrupt();
+        // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
+        return unknownEvent(`custom:${rawType}`);
       }
       case "session-closed": {
         // The provider ended the session (a clean close): its reason, when it gives one.
@@ -190,8 +220,8 @@ export class ServerEventMapper {
         this.lastError = (e.code ? `${e.code}: ${e.message}` : String(e.message ?? "")).slice(0, 200);
         return [{ type: "provider-event", kind: "error", name: e.code ? `error:${e.code}` : "error", message: this.lastError }];
       default:
-        // Not used by us: reported once per type per call (the engine logs it).
-        return [{ type: "provider-event", kind: "unknown", name: String((e as { type?: unknown }).type ?? "?") }];
+        // Not used by us: reported once per type per call (the engine logs it), unless known and ignored.
+        return unknownEvent(String((e as { type?: unknown }).type ?? "?"));
     }
   }
 

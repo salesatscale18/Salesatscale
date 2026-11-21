@@ -25,6 +25,8 @@ import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { parseClientMessage, parseServerMessage, pcmDurationMs } from "@/lib/voice/protocol";
 import { geminiSchema, realtimeTools, schemaFamilyOf, toolLabel, VOICE_ONLY_TOOL_DEFS, VOICE_TOOL_NAMES, voiceToolDescription } from "@/lib/voice/tool-schema";
 import { voiceCallBlock } from "@/lib/agent/core/voice";
+import { callVoice } from "@/lib/voice/settings";
+import { defaultVoiceOf } from "@/lib/voice/lab";
 import { buildVoiceInstructions, continueFallback, continuingInstruction, CONTINUE_FALLBACK_HE, expectedCallLanguages, openerInstruction, reAskLine } from "@/lib/voice/instructions";
 import { lineLanguage } from "@/lib/voice/engine";
 import { isSpokenOptOut, safeTranscript } from "@/lib/voice/safety";
@@ -643,6 +645,20 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(toSdkSessionConfig({ ...cfg, expectedLanguages: ["en"] }, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({ language: "en", prompt: "The speaker most likely speaks English." });
   });
 
+  it("an explicit voice on every call: the version's choice, else the family default (Puck, alloy); none for the scripted model", () => {
+    expect(callVoice(null, "google/gemini-3.8-live")).toBe("Puck");
+    expect(callVoice("Kore", "google/gemini-3.8-live")).toBe("Kore");
+    expect(callVoice(undefined, "openai/gpt-realtime-2")).toBe("alloy");
+    expect(callVoice(null, "scripted")).toBeNull();
+    expect(defaultVoiceOf(voiceCapabilities("google/gemini-3.8-live"))).toBe(callVoice(null, "google/gemini-3.8-live"));
+  });
+
+  it("one steady speaking style: a voice-block line that holds the pace setting, chat unchanged", () => {
+    const line = "- Keep one steady speaking style for the whole call: the same calm, friendly tone, the same pace and the same volume from your first sentence to your last, including after you look something up, after a pause and when the language changes. The pace is the one \"This call\" sets (a natural, unhurried pace when it sets none): hold it. Never speed up, whisper, sing, imitate the buyer or change character.";
+    expect(voiceCallBlock({ fillers: true })).toContain(line);
+    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("steady speaking style");
+  });
+
   it("the retry after an early close sends only proven fields and values (Gemini: as at 6e06fe8)", () => {
     const risky = { ...cfg, language: "he", expectedLanguages: ["he"], turnTaking: { silenceMs: 900, threshold: 0.6 }, safe: true };
     const g = toSdkSessionConfig(risky, "google/gemini-3.8-live");
@@ -697,8 +713,15 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
   it("maps Gemini lifecycle and usage custom events, final input transcription, interruptions, errors", () => {
     const m = new ServerEventMapper();
     expect(m.map({ type: "custom", rawType: "goAway", raw: {} })).toEqual([{ type: "going-away" }]);
-    // Events we do not use are reported (the engine logs each type once per call).
-    expect(m.map({ type: "custom", rawType: "sessionResumptionUpdate", raw: {} })).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:sessionResumptionUpdate" }]);
+    // Normal Gemini events we read nothing from: ignored, no log line.
+    for (const rawType of ["sessionResumptionUpdate", "serverContent", "generationComplete", "voiceActivity"]) expect(m.map({ type: "custom", rawType, raw: {} })).toEqual([]);
+    for (const type of ["audio-done", "function-call-arguments-delta"]) expect(m.map({ type, raw: {} } as never)).toEqual([]);
+    // A custom event without rawType is named from its provider message (it was "custom:undefined").
+    expect(m.map({ type: "custom", raw: { voiceActivity: { speaking: true } } } as never)).toEqual([]);
+    expect(m.map({ type: "custom", raw: { toolCallCancellation: { ids: ["c"] } } } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:toolCallCancellation" }]);
+    expect(m.map({ type: "custom", raw: { usageMetadata: { totalTokenCount: 1 } }, usage: { inputTokens: 5 } } as never)).toEqual([{ type: "usage", usage: { audioInTokens: 0, textInTokens: 5, audioOutTokens: 0, textOutTokens: 0, cachedInTokens: 0 } }]);
+    expect(m.map({ type: "custom", raw: null } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:unnamed" }]);
+    // Truly unknown types are still reported (the engine logs each type once per call).
     expect(m.map({ type: "session-usage", usage: { seconds: 3 }, raw: {} } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "session-usage" }]);
     expect(m.map({ type: "custom", rawType: "usageMetadata", usage: { inputTokens: 500, inputAudioTokens: 400, outputTokens: 90, outputAudioTokens: 80, cachedInputTokens: 20 }, raw: {} }))
       .toEqual([{ type: "usage", usage: { audioInTokens: 400, textInTokens: 100, audioOutTokens: 80, textOutTokens: 10, cachedInTokens: 20 } }]);

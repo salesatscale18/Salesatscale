@@ -47,6 +47,7 @@ export const VOICE_WORDS: Record<string, string> = {
 
 /** The voice a model uses when none is set (no voice sent). Gemini Live: Puck; OpenAI realtime: alloy. */
 export function defaultVoiceOf(caps: VoiceCapabilities): string | null {
+  // The same default the call sends (lib/voice/settings.ts callVoice).
   if (caps.voices.includes("Puck")) return "Puck";
   if (caps.voices.includes("alloy")) return "alloy";
   return null;

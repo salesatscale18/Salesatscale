@@ -162,6 +162,9 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     expect(model.conns).toHaveLength(2);
     expect(model.conns[1].cfg.safe).toBe(true);
     expect(model.conns[1].responses).toHaveLength(1);
+    // The same explicit voice on every connection (no voice chosen: the family default), and in the session snapshot.
+    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Puck", "Puck"]);
+    expect((await row(c.sessionId)).settings?.voice).toBe("Puck");
     expect(c.engine.isEnded).toBe(false);
     expect(c.logs.text()).toContain(`[voice] ${short(c.sessionId)} model closed code=- reason="session ended" error=no after=300ms audio=no`);
     expect(c.logs.text()).toMatch(/retry after early close connected in \d+ms \(proven session fields only\)/);

@@ -28,7 +28,7 @@ import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
-import { maxCallSeconds, resolveVoiceSettings, turnTakingFor } from "./settings";
+import { callVoice, maxCallSeconds, resolveVoiceSettings, turnTakingFor } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
@@ -566,7 +566,7 @@ export class VoiceEngine {
     this.modelUp(conn);
     this.callStart = this.clock.now();
     await this.db.update(voiceSessions)
-      .set({ status: "live", connectedAt: new Date(this.callStart), model: this.model.modelId, mode: this.model.mode, settings: { ...version.voiceSettings, maxCallSec: this.maxSec } })
+      .set({ status: "live", connectedAt: new Date(this.callStart), model: this.model.modelId, mode: this.model.mode, settings: this.settingsSnapshot() })
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "pending")));
     // Limits: an announcement before the end, then the end.
     if (this.maxSec > this.limits.limitWarnSec) this.timer("warn", (this.maxSec - this.limits.limitWarnSec) * 1000, () => this.warnLimit());
@@ -576,6 +576,24 @@ export class VoiceEngine {
     // The agent speaks first: the chat's opener, in its voice.
     // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
     conn.requestResponse(ctx.openerPrompt);
+  }
+
+  /**
+   * The voice sent to the model: the seller's choice always; otherwise our pinned family default (Puck/alloy),
+   * except after the early-close retry (which runs on proven fields only): from then on this call omits the
+   * pinned default and the model uses its own default, as in the owner's working live calls.
+   */
+  private voiceInEffect(): string | null {
+    const chosen = resolveVoiceSettings(this.loaded!.version.voiceSettings).voice;
+    if (chosen) return chosen;
+    return this.safeConfig ? null : callVoice(null, this.model.modelId);
+  }
+
+  /** The session's settings snapshot: the version's settings, the voice actually in effect ("model default" when none is sent) and the limit. */
+  private settingsSnapshot() {
+    const version = this.loaded!.version;
+    const voice = this.voiceInEffect() ?? (callVoice(null, this.model.modelId) ? "model default" : undefined);
+    return { ...version.voiceSettings, voice, maxCallSec: this.maxSec };
   }
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
@@ -596,7 +614,8 @@ export class VoiceEngine {
       // The call starts in the conversation's language; the buyer may switch (never locked).
       language: languages?.language ?? (this.loaded!.conv.language || "en"),
       ...(languages ? { expectedLanguages: languages.expectedLanguages } : {}),
-      ...(settings.voice ? { voice: settings.voice } : {}),
+      // Always an explicit voice (the family default when none is chosen), on every connection: the same voice all call.
+      ...(this.voiceInEffect() ? { voice: this.voiceInEffect()! } : {}),
       ...(tt ? { turnTaking: tt } : {}),
       scenario: this.loaded!.conv.scenario,
     };
@@ -1223,7 +1242,10 @@ export class VoiceEngine {
     await this.finalizeAgentTurn("stop");
     this.agentSpeaking = false;
     const fresh = early && !this.openerDone && !this.lastLine;
-    const opened = await this.openModel({ resumed: !fresh }, this.limits.reconnectMs, early ? "retry after early close" : "reconnect");
+    // Our pinned default voice has never been proven on every account: the retry leaves it out (the model's own default).
+    const droppedVoice = early && !resolveVoiceSettings(this.loaded.version.voiceSettings).voice && !!callVoice(null, this.model.modelId);
+    const what = early ? (droppedVoice ? "retry without pinned default voice" : "retry after early close") : "reconnect";
+    const opened = await this.openModel({ resumed: !fresh }, this.limits.reconnectMs, what);
     if (!opened || this.ended) {
       opened?.conn.close();
       this.reconnecting = false;
@@ -1233,6 +1255,8 @@ export class VoiceEngine {
     this.modelUp(opened.conn);
     this.reconnecting = false;
     this.setState("listening");
+    // The snapshot shows the voice now in effect ("model default" after the pinned one was dropped).
+    if (droppedVoice) await this.db.update(voiceSessions).set({ settings: this.settingsSnapshot() }).where(eq(voiceSessions.id, this.sessionId));
     // The opening line was never heard: the retried session says it.
     if (fresh) opened.conn.requestResponse(opened.openerPrompt);
     else this.startQuiet();

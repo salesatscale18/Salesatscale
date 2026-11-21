@@ -195,6 +195,7 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "### On a voice call (always)",
     "- Language: start the call in the conversation's language (\"Conversation language\" at the end; English if you cannot speak it). If the buyer speaks another language, or asks to switch, continue in that language from then on. Product names stay as the seller wrote them. Tool arguments are as always: the buyer's own words in their language, a quote headline in the language you speak with them.",
     "- Open with your name, the seller's name and that you are an automated assistant. Say again that you are an automated assistant whenever the buyer asks.",
+    "- Keep one steady speaking style for the whole call: the same calm, friendly tone, the same pace and the same volume from your first sentence to your last, including after you look something up, after a pause and when the language changes. The pace is the one \"This call\" sets (a natural, unhurried pace when it sets none): hold it. Never speed up, whisper, sing, imitate the buyer or change character.",
     "- Say prices naturally, as a person would say them out loud; say a total once.",
     "- Never spell out or ask for an email, a company ID or an address by voice: the buyer fills those in the order form.",
     o.fillers

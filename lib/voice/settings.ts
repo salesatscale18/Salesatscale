@@ -60,6 +60,19 @@ export function voiceCapabilities(modelId: string): VoiceCapabilities {
   return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true };
 }
 
+/**
+ * The voice a call sends to the model: the version's choice, else the model family's default (the one the
+ * picker shows as "(default)": Puck for Gemini, alloy for OpenAI). Always explicit, so the provider never picks
+ * one per session. Null for the scripted model (it has no voices).
+ */
+export function callVoice(chosen: string | null | undefined, modelId: string): string | null {
+  if (typeof chosen === "string" && chosen.trim()) return chosen.trim();
+  const voices = voiceCapabilities(modelId).voices;
+  if (voices.includes("Puck")) return "Puck";
+  if (voices.includes("alloy")) return "alloy";
+  return null;
+}
+
 export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice">> & { voice: string | null };
 
 export const DEFAULT_VOICE_SETTINGS: ResolvedVoiceSettings = {
