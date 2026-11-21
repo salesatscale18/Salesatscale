@@ -451,7 +451,16 @@ export type ScriptedOptions = {
   speechRms?: number;
   /** Emit a soft tone (true) or silence (false) as agent audio. */
   tone?: boolean;
+  /**
+   * Transcription markers, as a live model's transcription produces them ("<no speech detected>"): "with_text"
+   * puts one before each agent line and a marker-only buyer transcript before each buyer line; "only" makes every
+   * buyer turn a marker and nothing else (noise). Tests and the harness prove they are dropped everywhere.
+   */
+  markers?: "with_text" | "only";
 };
+
+/** The marker the scripted model emits in `markers` mode. */
+export const SCRIPTED_MARKER = "<no speech detected>";
 
 export class ScriptedRealtime implements RealtimeModel {
   readonly modelId = "scripted";
@@ -470,7 +479,7 @@ export class ScriptedRealtime implements RealtimeModel {
     const scripts = this.opts.scripts ?? VOICE_SCRIPTS;
     const script = (cfg.scenario && scripts[cfg.scenario]) || this.opts.defaultScript || DEFAULT_SCRIPT;
     const c = new ScriptedConnection(cfg, onEvent, script, {
-      clock: this.opts.clock ?? systemClock, wordMs: this.opts.wordMs ?? 250, speechRms: this.opts.speechRms ?? 0.02, tone: this.opts.tone ?? true,
+      clock: this.opts.clock ?? systemClock, wordMs: this.opts.wordMs ?? 250, speechRms: this.opts.speechRms ?? 0.02, tone: this.opts.tone ?? true, markers: this.opts.markers,
       // A resumed call (reconnect) carries on after the script position it had.
       resumed: this.connections.length > 0,
       startAt: this.connections.at(-1)?.position ?? 0,
@@ -519,7 +528,7 @@ export class ScriptedConnection implements RealtimeConnection {
     readonly cfg: RealtimeSessionConfig,
     private emit: (e: RealtimeEvent) => void,
     private script: Script,
-    private o: { clock: Clock; wordMs: number; speechRms: number; tone: boolean; resumed: boolean; startAt: number; results?: Record<string, Record<string, unknown>[]> },
+    private o: { clock: Clock; wordMs: number; speechRms: number; tone: boolean; markers?: "with_text" | "only"; resumed: boolean; startAt: number; results?: Record<string, Record<string, unknown>[]> },
   ) {
     this.position = o.startAt;
     this.vad = new EnergyVad({ threshold: o.speechRms, minSpeechMs: 200, endSilenceMs: 700 });
@@ -735,6 +744,8 @@ export class ScriptedConnection implements RealtimeConnection {
   /** The buyer's turn as transcribed: the scripted line for speech, nothing for typed text (the engine has it). */
   private buyerSaid(turn: BuyerTurn, line: string) {
     if (turn.typed) return;
+    if (this.o.markers) this.emit({ type: "buyer-transcript", text: SCRIPTED_MARKER, final: this.o.markers === "only" });
+    if (this.o.markers === "only") return;
     const words = line.split(" ");
     const half = words.slice(0, Math.max(1, Math.floor(words.length / 2))).join(" ");
     this.emit({ type: "buyer-transcript", text: half, final: false });
@@ -765,7 +776,9 @@ export class ScriptedConnection implements RealtimeConnection {
     this.interrupted = false;
     const base = this.turnText ? `${this.turnText} ` : "";
     const words = text.split(/\s+/).filter(Boolean);
-    let spoken = "";
+    // Markers mode: the transcription starts with a marker (the engine strips it; it is never shown or stored).
+    let spoken = this.o.markers === "with_text" ? SCRIPTED_MARKER : "";
+    if (spoken) this.emit({ type: "agent-transcript", text: base + spoken, final: false });
     for (const w of words) {
       if (this.interrupted || this.closed) break;
       await this.sleep(this.o.wordMs);

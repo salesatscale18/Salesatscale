@@ -21,6 +21,7 @@ import type { VoiceUsage } from "@/db/schema";
 import { VOICE_SAMPLE_RATE } from "./protocol";
 import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionConfig } from "./realtime";
 import { schemaFamilyOf } from "./tool-schema";
+import { cleanTranscript } from "./transcript-clean";
 import { voiceModelId } from "./settings";
 
 /** "he" → "Hebrew" (the code itself when unknown). */
@@ -109,7 +110,7 @@ export class ServerEventMapper {
       case "transcript-fragment":
         return e.speaker === "assistant" ? this.agentDelta(e.delta) : this.buyerDelta(e.delta);
       case "input-transcription-completed": {
-        const text = (e.transcript || this.buyerText).trim();
+        const text = cleanTranscript((e.transcript || this.buyerText).trim());
         this.buyerText = "";
         return text ? [{ type: "buyer-transcript", text, final: true }] : [];
       }
@@ -133,7 +134,8 @@ export class ServerEventMapper {
       case "response-done": {
         this.responseDone = true;
         const out: RealtimeEvent[] = [...this.closeBuyerTurn()];
-        if (this.agentText) out.push({ type: "agent-transcript", text: this.agentText, final: true });
+        const said = cleanTranscript(this.agentText);
+        if (said) out.push({ type: "agent-transcript", text: said, final: true });
         this.agentText = "";
         out.push({ type: "turn-done", ...(e.status === "cancelled" || e.status === "incomplete" ? { interrupted: true } : {}) });
         if (e.usage) out.push({ type: "usage", usage: toVoiceUsage(e.usage) });
@@ -163,19 +165,22 @@ export class ServerEventMapper {
    * line into the next answer's transcript.
    */
   private interrupt(): RealtimeEvent[] {
-    const said = this.agentText;
+    const said = cleanTranscript(this.agentText);
     this.agentText = "";
     return [...(said ? [{ type: "agent-transcript" as const, text: said, final: true }, { type: "turn-done" as const, interrupted: true }] : []), { type: "speech-started" }];
   }
 
+  /** Transcription markers ("<no speech detected>", lib/voice/transcript-clean.ts) are no text: nothing goes out for them. */
   private agentDelta(delta: string): RealtimeEvent[] {
     this.agentText += delta;
-    return [...this.closeBuyerTurn(), { type: "agent-transcript", text: this.agentText, final: false }];
+    const text = cleanTranscript(this.agentText);
+    return [...this.closeBuyerTurn(), ...(text ? [{ type: "agent-transcript" as const, text, final: false }] : [])];
   }
 
   private buyerDelta(delta: string): RealtimeEvent[] {
     this.buyerText += delta;
-    return [{ type: "buyer-transcript", text: this.buyerText.trim(), final: false }];
+    const text = cleanTranscript(this.buyerText.trim());
+    return text ? [{ type: "buyer-transcript", text, final: false }] : [];
   }
 
   /**
@@ -184,9 +189,9 @@ export class ServerEventMapper {
    * turn is final now, so it is stored before the answer.
    */
   private closeBuyerTurn(): RealtimeEvent[] {
-    const text = this.buyerText.trim();
-    if (!text) return [];
+    const text = cleanTranscript(this.buyerText.trim());
     this.buyerText = "";
+    if (!text) return [];
     return [{ type: "buyer-transcript", text, final: true }];
   }
 }

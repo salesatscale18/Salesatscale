@@ -34,6 +34,7 @@ import { CALL_RULES } from "./call-rules";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes } from "./form-context";
+import { cleanTranscript } from "./transcript-clean";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -262,18 +263,28 @@ export class VoiceEngine {
 
   /**
    * The order form open in another tab (lib/voice/form-context.ts): a quiet note to the model, throttled, never
-   * answered aloud. The form being open also lifts standby's idle end (noteOrderFormOpen). A note that arrives
-   * while the model is not connected (standby, a wake or a reconnect under way) never wakes it: the latest one
-   * is held and goes in with the next connection (modelUp), after its fresh instructions and recap.
+   * answered aloud. The form being open also lifts standby's idle end (noteOrderFormOpen). A note never wakes the
+   * model: the latest one is part of the instructions of every later connection (sessionConfig).
    */
   private formNotes: FormContextNotes | null = null;
-  private heldFormNote: string | null = null;
+  /** The latest form note: part of the instructions of every later model connection (a wake, a reconnect). */
+  private formNote: string | null = null;
+  /**
+   * Gemini Live answers any completed client turn, and the Gateway's text item reaches it as one: a note sent
+   * mid-call can make it speak with nothing to say (the live call's "<no speech detected>"). On Gemini a note
+   * therefore never goes in mid-call; it rides in the instructions of the next connection instead.
+   */
+  private notesMidCall(): boolean {
+    return schemaFamilyOf(this.model.modelId) !== "gemini";
+  }
   private onFormContext(msg: Extract<import("./protocol").ClientMessage, { t: "context" }>): void {
     this.noteOrderFormOpen();
     this.formNotes ??= new FormContextNotes(this.clock, (note) => {
       if (this.ended) return;
+      this.formNote = note;
+      if (!this.notesMidCall()) return;
+      // Off the line (standby, a wake or a reconnect under way): nothing now, the next connection's instructions carry it.
       if (this.conn && !this.reconnecting && !this.waking && this.standbySince === null) this.conn.sendNote?.(note);
-      else this.heldFormNote = note;
     });
     this.formNotes.push({ step: msg.step, event: msg.event });
   }
@@ -423,11 +434,6 @@ export class VoiceEngine {
     this.conn = conn;
     this.activeSince = this.clock.now();
     this.usageAcc.newSession();
-    // A form note held while the model was away (standby, wake, reconnect): it reads it now, with the recap.
-    if (this.heldFormNote) {
-      conn.sendNote?.(this.heldFormNote);
-      this.heldFormNote = null;
-    }
   }
 
   /** Cost so far, from the latest usage snapshot and the model-connected time (0 for the scripted model). */
@@ -531,7 +537,9 @@ export class VoiceEngine {
     const family = schemaFamilyOf(this.model.modelId);
     const tt = turnTakingFor(settings.style, this.model.modelId);
     return {
-      instructions, tools: realtimeTools(family), toolBehavior: "blocking", pace: settings.pace,
+      // The order form's latest step (a note the model reads, never answers), on every connection after it came.
+      instructions: this.formNote ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
+      tools: realtimeTools(family), toolBehavior: "blocking", pace: settings.pace,
       // The call starts in the conversation's language; the buyer may switch (never locked).
       language: languages?.language ?? (this.loaded!.conv.language || "en"),
       ...(languages ? { expectedLanguages: languages.expectedLanguages } : {}),
@@ -578,10 +586,13 @@ export class VoiceEngine {
         return;
       }
       case "agent-transcript": {
+        // A transcription marker ("<no speech detected>") is no text: never shown, stored or a caption.
+        const said = cleanTranscript(e.text);
+        if (!said) return;
         const fresh = !this.agentTurn || !this.agentTurn.text;
         const turn = this.ensureAgentTurn();
         turn.awaitingContinuation = false;
-        turn.text = maskCardNumbers(e.text).text;
+        turn.text = maskCardNumbers(said).text;
         if (e.final) turn.finalText = true;
         // The model resumes (or re-says) the line the buyer cut: the live transcript keeps it on one line.
         const last = this.lastLine;
@@ -590,13 +601,16 @@ export class VoiceEngine {
         return;
       }
       case "buyer-transcript": {
+        // A marker only (noise, silence) is not the buyer talking: no turn, no answer, no standby reset, no wake heard.
+        const heard = cleanTranscript(e.text);
+        if (!heard.trim()) return;
         this.buyerActivity();
-        if (e.text.trim()) this.markHeard();
+        this.markHeard();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
         if (e.final) {
-          void this.enqueue(() => this.handleBuyerFinal(e.text, false));
+          void this.enqueue(() => this.handleBuyerFinal(heard, false));
         } else {
-          this.send({ t: "transcript", id: this.buyerTurn.id, role: "buyer", text: maskPartialDigits(e.text), final: false, atMs: this.buyerTurn.startMs });
+          this.send({ t: "transcript", id: this.buyerTurn.id, role: "buyer", text: maskPartialDigits(heard), final: false, atMs: this.buyerTurn.startMs });
         }
         return;
       }
