@@ -6,6 +6,7 @@
 import { elapsedSec, type VoicePhase, type VoiceSnapshot } from "./state";
 import { MAX_CAPTION, type MirrorPhase, type MirrorState, type OutputDevice } from "./tab-link";
 import type { Tr } from "./buyer-ui";
+import { cleanTranscript } from "../transcript-clean";
 
 /** Phases with a bubble (the call is on or being set up after the microphone). */
 const BUBBLE_PHASES: ReadonlySet<VoicePhase> = new Set(["connecting", "live", "reconnecting", "ending"]);
@@ -20,8 +21,9 @@ export function mirrorPhase(phase: VoicePhase): MirrorPhase | null {
 export function captionOf(s: VoiceSnapshot): MirrorState["caption"] {
   for (let i = s.items.length - 1; i >= 0; i--) {
     const it = s.items[i];
-    if (it.kind === "line" && it.role === "agent" && it.text.trim()) {
-      const text = it.text.replace(/\s+/g, " ").trim();
+    if (it.kind === "line" && it.role === "agent" && cleanTranscript(it.text).trim()) {
+      // Only the agent's words: a transcription marker is never a caption (lib/voice/transcript-clean.ts).
+      const text = cleanTranscript(it.text).replace(/\s+/g, " ").trim();
       return { id: it.key, text: text.length > MAX_CAPTION ? `…${text.slice(text.length - MAX_CAPTION + 1)}` : text };
     }
   }

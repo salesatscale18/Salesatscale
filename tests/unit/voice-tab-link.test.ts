@@ -238,6 +238,10 @@ describe("bubble view", () => {
     expect(bubbleView({ ...LIVE }, he, "Maya").word).toBe("מקשיבים");
     expect(bubbleView({ ...LIVE, phase: "ended", live: null }, he, "Maya")).toMatchObject({ ended: true, word: "השיחה הסתיימה" });
     expect(captionOf(snap({}))).toBeNull();
+    // A marker is never a caption; a line with one shows without it.
+    const line = (text: string) => ({ kind: "line" as const, key: "a9", turnId: "a9", role: "agent" as const, text, final: true, atMs: 0 });
+    expect(captionOf(snap({ items: [line("<no speech detected>…")] }))).toBeNull();
+    expect(captionOf(snap({ items: [line("How many sites?<no speech detected>")] }))?.text).toBe("How many sites?");
   });
 
   it("standby: calm and still, the same words as the strip, the menu wakes the agent; how the call ended", () => {
