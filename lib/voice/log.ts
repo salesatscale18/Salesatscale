@@ -3,11 +3,12 @@
  * Never transcript text, personal data or tokens: ids are shortened, provider messages truncated.
  * Injectable, so tests read the lines (a fake logger).
  */
-export type VoiceLog = { info(line: string): void; warn(line: string): void };
+export type VoiceLog = { info(line: string): void; warn(line: string): void; error?(line: string): void };
 
 export const consoleVoiceLog: VoiceLog = {
   info: (line) => console.info(line),
   warn: (line) => console.warn(line),
+  error: (line) => console.error(line),
 };
 
 /** The session id as logs show it: its first 8 characters. */

@@ -70,6 +70,8 @@ export interface RealtimeConnection {
   requestResponse(instructions?: string): void;
   /** A note from the app the model reads but does not answer (no response is requested): the order form's step. */
   sendNote?(note: string): void;
+  /** The session config fields this connection sent (names only), for the log when the provider rejects them. */
+  readonly sessionFields?: readonly string[];
   /** Closes the provider socket. Safe to call more than once. */
   close(): void;
 }

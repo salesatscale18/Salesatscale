@@ -1018,7 +1018,7 @@ export type VoiceSessionMode = "scripted" | "live";
 
 /** Who or what ended a voice call (voice_sessions.usage.endDetail.by; lib/voice/engine.ts). */
 export type VoiceEndBy =
-  | "client_end" | "client_closed" | "client_idle" | "model_closed" | "model_closed_early" | "limit" | "idle" | "tool"
+  | "client_end" | "client_closed" | "client_idle" | "model_closed" | "model_closed_early" | "model_rejected_session" | "limit" | "idle" | "tool"
   | "take_over" | "ended_elsewhere" | "gate" | "error" | "deadline";
 
 /**

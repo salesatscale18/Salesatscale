@@ -24,11 +24,6 @@ import { schemaFamilyOf } from "./tool-schema";
 import { cleanTranscript, joinTranscript } from "./transcript-clean";
 import { voiceModelId } from "./settings";
 
-/** "he" → "Hebrew" (the code itself when unknown). */
-const languageName = (code: string) => {
-  try { return new Intl.DisplayNames(["en"], { type: "language" }).of(code) ?? code; } catch { return code; }
-};
-
 type SdkTool = NonNullable<SdkSessionConfig["tools"]>[number];
 
 /** How long the socket may take to open before the call gives up. */
@@ -51,8 +46,13 @@ export const CONNECT_TIMEOUT_MS = 10_000;
  */
 export const PROVEN_SESSION_FIELDS: Record<"gemini" | "openai", readonly (keyof SdkSessionConfig)[]> = {
   gemini: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions"],
-  openai: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools"],
+  // OpenAI has no proven call: its retry is the smallest config that still carries the playbook and the tools
+  // (the audio formats keep our PCM 24 kHz); voice, transcription and turn detection take the provider's defaults.
+  openai: ["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat", "tools"],
 };
+
+/** Every field our full session config can carry (the names a log line lists, never their values). */
+export const SESSION_FIELD_NAMES = ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions"] as const;
 
 /** Our session config as the normalized AI SDK session config (`cfg.safe`: proven fields and values only). */
 export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
@@ -61,8 +61,8 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
   const family = schemaFamilyOf(modelId);
   const keep = new Set<string>(PROVEN_SESSION_FIELDS[family]);
   const safe = Object.fromEntries(Object.entries(full).filter(([k]) => keep.has(k))) as SdkSessionConfig;
-  // Proven values: no transcription hints, plain server VAD.
-  return { ...safe, inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" } };
+  // Gemini's proven values: no transcription hints, plain server VAD. OpenAI: only the fields kept above.
+  return family === "gemini" ? { ...safe, inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" } } : safe;
 }
 
 function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
@@ -74,16 +74,14 @@ function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkS
     outputModalities: ["audio"],
     inputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
     outputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
-    // Input transcription hints, never a lock (the buyer may switch). The SDK's normalized config has exactly two
-    // fields for this: one `language` hint and a `prompt`. Both go to every model; the language only when one
-    // language is expected (a single hint would push a buyer of the other language towards it). Whether the
-    // Gateway passes them on to Gemini Live is not visible from here: the live calls show (a real-phone check).
-    // The expected languages are in the instructions too (lib/voice/instructions.ts).
-    // Gemini Live gets the proven empty setting: on 21 Nov 2026 a language/prompt hint here made live
-    // calls end 0.3 s after connecting. The expected languages reach Gemini through the instructions only.
-    inputAudioTranscription: !gemini && cfg.expectedLanguages?.length
-      ? { ...(cfg.expectedLanguages.length === 1 ? { language: cfg.expectedLanguages[0] } : {}), prompt: `The speaker most likely speaks ${cfg.expectedLanguages.map(languageName).join(" or ")}.` }
-      : {},
+    // Input transcription on, with no hints, for every model. A hint is not safe on either family:
+    // - Gemini Live: on 21 Nov 2026 a language/prompt hint here made live calls end 0.3 s after connecting.
+    // - OpenAI (GPT-Realtime 2.1 and mini, 22 Nov 2026): a `prompt` here was rejected ("invalid_value: The
+    //   'prompt' parameter is not supported for this model"), and with it the whole session setup, so the call
+    //   ran with no instructions, tools or transcription. The Gateway picks the transcription model; which one,
+    //   and whether it takes a language, cannot be seen from here.
+    // The expected languages reach every model through the instructions (lib/voice/instructions.ts).
+    inputAudioTranscription: {},
     outputAudioTranscription: {},
     // Gemini Live: server voice activity detection is always on and not tunable here.
     turnDetection: gemini || !tt
@@ -120,6 +118,11 @@ const fromBase64 = (b64: string) => new Uint8Array(Buffer.from(b64, "base64"));
 export const KNOWN_IGNORED_EVENTS: ReadonlySet<string> = new Set([
   "custom:sessionResumptionUpdate", "custom:serverContent", "custom:generationComplete", "custom:voiceActivity", "custom:setupComplete",
   "custom:turnComplete", "audio-done", "function-call-arguments-delta",
+  // OpenAI realtime's normal lifecycle events (the first GPT-Realtime calls, 22 Nov 2026): nothing we read.
+  "output-item-added", "output-item-done", "content-part-added", "content-part-done", "audio-committed", "speech-stopped",
+  "conversation-item-added", "custom:conversation.item.done", "custom:rate_limits.updated",
+  // A custom event that names nothing (no type, no raw message): seen once on Gemini; nothing to read.
+  "custom:unnamed",
 ]);
 
 const unknownEvent = (name: string): RealtimeEvent[] => (KNOWN_IGNORED_EVENTS.has(name) ? [] : [{ type: "provider-event", kind: "unknown", name }]);
@@ -130,7 +133,8 @@ const unknownEvent = (name: string): RealtimeEvent[] => (KNOWN_IGNORED_EVENTS.ha
  * `{ voiceActivity: … }`, or carry a `type`) names it.
  */
 export function customEventName(e: { rawType?: unknown; raw?: unknown }): string {
-  if (typeof e.rawType === "string" && e.rawType) return e.rawType;
+  // The Gateway has sent the type as the text "undefined" (the live logs' "custom:undefined"): no name, as if missing.
+  if (typeof e.rawType === "string" && e.rawType && e.rawType !== "undefined" && e.rawType !== "null") return e.rawType;
   const raw = e.raw;
   if (raw && typeof raw === "object" && !Array.isArray(raw)) {
     const r = raw as Record<string, unknown>;
@@ -376,6 +380,7 @@ export class GatewayRealtime implements RealtimeModel {
 
     const pendingResults = new Set<string>();
     return {
+      sessionFields: Object.keys(config),
       sendAudio: (pcm) => sendAll([clientEvents.audio(pcm)]),
       sendText: (text) => sendAll(clientEvents.text(text)),
       sendToolResult: (callId, name, result) => {
