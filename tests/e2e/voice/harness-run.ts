@@ -383,6 +383,59 @@ async function standbySection(browser: Browser, base: string) {
   await fetch(`${base}/api/limits?fast=0`, { method: "POST" });
 }
 
+/**
+ * The voice model picker (Versions and test lab › Voice settings): Gemini shows its voices and no turn-taking;
+ * a GPT model shows style, pause and interruptions as controls, and is marked not tried live yet. Then one
+ * scripted call per model id (the scripted model stands in): the "This call" card names the model and the
+ * session row stores it. Screenshots model-picker-gemini, model-picker-gpt, model-this-call.
+ */
+async function modelSection(browser: Browser, base: string) {
+  console.log("voice model picker");
+  const save = (model: string) => fetch(`${base}/api/settings`, {
+    method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({ model, maxCallSec: "270", fillers: "on" }).toString(),
+  });
+  await save("google/gemini-3.8-live");
+  {
+    const page = await newPage(browser, `${base}/?view=settings`, 1440, 1000);
+    await page.waitForSelector("[data-voice-model-field]", { timeout: 15_000 });
+    check((await page.inputValue("#vs-model")) === "google/gemini-3.8-live", "the panel starts on Gemini 3.8 Live");
+    check((await page.locator('[name="style"]').count()) === 0 && (await page.locator("#vs-pause").count()) === 0, "Gemini: no style, pause or interruption controls");
+    check((await page.locator("[data-voice-model-unproven]").count()) === 0, "Gemini is not marked as untried");
+    await shot(page, "model-picker-gemini");
+    await page.selectOption("#vs-model", "openai/gpt-realtime-2.1");
+    check((await page.locator('[name="style"]').count()) > 0 && (await page.locator("#vs-pause").count()) === 1 && (await page.locator("#vs-interrupt").count()) === 1,
+      "GPT-Realtime 2.1: style, pause and interruptions as real controls, before saving");
+    check(((await page.locator("[data-voice-model-unproven]").textContent()) ?? "").includes("Not tried on a live call yet"), "GPT-Realtime 2.1 is marked not tried live yet");
+    check(((await page.locator("[data-voice-model-cost]").textContent()) ?? "").includes("× the cost per minute of Gemini"), "a relative cost hint for GPT-Realtime 2.1");
+    check((await page.locator('#vs-voice option[value="Kore"]').count()) === 0 && (await page.locator('#vs-voice option[value="coral"]').count()) === 1, "the voices are OpenAI's");
+    await page.selectOption("#vs-pause", "1000");
+    await page.selectOption("#vs-interrupt", "low");
+    await shot(page, "model-picker-gpt");
+    await page.context().close();
+  }
+  // One scripted call per model: the card names it, the session row stores it.
+  for (const [id, label] of [["google/gemini-3.8-live", "Gemini 3.8 Live"], ["openai/gpt-realtime-2.1", "GPT-Realtime 2.1"], ["openai/gpt-realtime-mini", "GPT-Realtime mini"]] as const) {
+    await save(id);
+    const page = await newPage(browser, `${base}/?view=call&scenario=ready_buyer`);
+    await page.waitForSelector('[data-voice-action="start"]', { timeout: 15_000 });
+    check(((await page.locator("[data-voice-summary]").textContent()) ?? "").includes(label), `${label}: the summary line names the model`);
+    await page.click('[data-voice-action="start"]');
+    const live = await waitState(page, "speaking", 30_000) || await waitState(page, "listening", 10_000);
+    check(live, `${label}: a scripted call runs`);
+    await page.waitForTimeout(2_000);
+    await page.click("[data-voice-end]");
+    await waitState(page, "ended", 15_000);
+    check(((await page.locator("[data-voice-model]").textContent()) ?? "").includes(label), `${label}: the This call card names the model`);
+    const call = (await page.evaluate("window.__call")) as { conversationId: string };
+    const sum = (await (await fetch(`${base}/api/summary?c=${call.conversationId}`)).json()) as { model: string; mode: string };
+    check(sum.model === id && sum.mode === "scripted", `${label}: the session row stores ${id} (scripted stand-in)`);
+    if (id === "openai/gpt-realtime-mini") await shot(page, "model-this-call");
+    await page.context().close();
+  }
+  await save("google/gemini-3.8-live");
+}
+
 async function main() {
   const h = await startVoiceHarness();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "voice-harness-"));
@@ -393,7 +446,8 @@ async function main() {
   });
   try {
     // The existing sections first: they check the buyer's first switch in a fresh conversation.
-    if (process.env.VOICE_ONLY !== "bubble") {
+    if (!process.env.VOICE_ONLY || process.env.VOICE_ONLY === "models") await modelSection(browser, h.url);
+    if (process.env.VOICE_ONLY !== "bubble" && process.env.VOICE_ONLY !== "models") {
     // ---------------------------------------------------------------- states
     console.log("call bar states");
     {
@@ -634,11 +688,11 @@ async function main() {
       await gateOff("");
     }
     }
-    await bubbleSection(browser, h.url);
+    if (process.env.VOICE_ONLY !== "models") await bubbleSection(browser, h.url);
   } finally {
     await browser.close();
   }
-  if (process.env.VOICE_ONLY === "bubble") {
+  if (process.env.VOICE_ONLY === "bubble" || process.env.VOICE_ONLY === "models") {
     await h.close();
     fs.rmSync(tmp, { recursive: true, force: true });
     console.log(failures ? `\n${failures} check(s) failed` : "\nall checks passed");

@@ -25,7 +25,9 @@ import { ensureDraftVersion, listVersions, publishDraftVersion, saveDraftPlayboo
 import { SCENARIOS } from "@/lib/agent/scenarios";
 import { createVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary } from "@/lib/voice/service";
 import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC } from "@/lib/voice/socket-limits";
-import { DEFAULT_VOICE_MODEL, maxCallSeconds, resolveVoiceSettings, voiceCapabilities } from "@/lib/voice/settings";
+import { DEFAULT_VOICE_MODEL, maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelLabel } from "@/lib/voice/settings";
+import { voiceModelChoices } from "@/lib/voice/model-choices";
+import { voiceSettingsSummary } from "@/lib/voice/lab";
 import { createTestDb } from "../../helpers/db";
 import { seedCatalog, seedPricing } from "../../helpers/pricing";
 import { attachVoiceSockets } from "../../../scripts/voice-ws";
@@ -268,7 +270,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const d = (await listVersions(db, acc)).find((v) => v.status === "draft")!;
         const model = url.searchParams.get("model") ?? DEFAULT_VOICE_MODEL;
         return send(200, "application/json", JSON.stringify({
-          version: d.version, versionLabel: `v${d.version} Draft`, caps: voiceCapabilities(model), settings: resolveVoiceSettings(d.voiceSettings), scenarios,
+          version: d.version, versionLabel: `v${d.version} Draft`, models: voiceModelChoices(), platformModel: model, settings: resolveVoiceSettings(d.voiceSettings), scenarios,
+          summary: voiceSettingsSummary(resolveVoiceSettings(d.voiceSettings), versionModelId(d.voiceSettings, { VOICE_MODEL: model })),
           fx: { currency: "ILS", minorPerUsd: 370 }, maxSec: maxCallSeconds({ settings: d.voiceSettings, deadlineSec: CAP, env: ENV }), cap: CAP,
         }));
       }
@@ -282,6 +285,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         return send(200, "application/json", JSON.stringify({
           conversationId: c.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: `ws://${host}/api/voice/socket`, mode: s.mode,
           maxSec: maxCallSeconds({ settings: c.version.voiceSettings, deadlineSec: CAP, env: ENV }),
+          model: voiceModelLabel(versionModelId(c.version.voiceSettings, {})),
         }));
       }
       if (req.method === "GET" && url.pathname === "/api/summary") {
@@ -290,7 +294,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       if (req.method === "POST" && url.pathname === "/api/settings") {
         const f = new URLSearchParams(await body(req));
         const r = await saveDraftVoiceSettings(db, acc, {
-          voice: f.get("voice") ?? "", pace: f.get("pace") ?? "", fillers: f.get("fillers") === "on", maxCallSec: f.get("maxCallSec") ?? "",
+          model: f.get("model") ?? "", voice: f.get("voice") ?? "", pace: f.get("pace") ?? "", style: f.get("style") ?? "",
+          pauseMs: f.get("pauseMs") ?? "", interrupt: f.get("interrupt") ?? "", fillers: f.get("fillers") === "on", maxCallSec: f.get("maxCallSec") ?? "",
         }, ENV);
         return send(200, "application/json", JSON.stringify(r.ok ? { ok: true } : { ok: false, errors: r.errors }));
       }

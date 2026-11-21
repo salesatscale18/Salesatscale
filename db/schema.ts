@@ -744,6 +744,12 @@ export type VoiceSettings = {
   /** A short spoken filler before a tool that takes time ("One moment, I'm checking that"). */
   fillers?: boolean;
   maxCallSec?: number;
+  /** The realtime model this version's calls use (lib/voice/settings.ts VOICE_MODELS); unset = the platform default. */
+  model?: string;
+  /** Silence before the model answers, in ms (models with tunable turn detection); unset = the style's value. */
+  pauseMs?: number;
+  /** How easily the buyer can interrupt (models with tunable turn detection); unset = the style's value. */
+  interrupt?: "low" | "medium" | "high";
 };
 
 /** One play card: when it applies, the moves in order, a good reply and a reply to avoid. */

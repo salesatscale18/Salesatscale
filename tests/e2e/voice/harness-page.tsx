@@ -22,10 +22,12 @@ import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { INITIAL_SNAPSHOT, elapsedSec, type VoiceSnapshot } from "@/lib/voice/client/state";
 import { barView, type CostFormat } from "@/lib/voice/client/view";
 import { callLimitShort } from "@/lib/voice/lab";
-import type { ResolvedVoiceSettings, VoiceCapabilities } from "@/lib/voice/settings";
+import type { ResolvedVoiceSettings } from "@/lib/voice/settings";
+import type { VoiceModelChoice } from "@/lib/voice/model-choices";
 
 type Config = {
-  versionLabel: string; version: number; caps: VoiceCapabilities; settings: ResolvedVoiceSettings; scenarios: Record<string, { title: string; expected: string }>;
+  versionLabel: string; version: number; models: VoiceModelChoice[]; platformModel: string; settings: ResolvedVoiceSettings; summary: string;
+  scenarios: Record<string, { title: string; expected: string }>;
   fx: CostFormat; maxSec: number; cap: number;
 };
 
@@ -44,14 +46,16 @@ function CallView({ cfg }: { cfg: Config }) {
   const s = useVoiceSnapshot(client);
   const now = useNow(s.phase === "live");
   const sc = cfg.scenarios[scenario];
+  const [model, setModel] = useState<string | null>(null);
   const start = () => {
     client.begin({ maxSec: cfg.maxSec, mode: "scripted" });
     void (async () => {
       if (!(await client.prepare())) return;
-      const r = await json<{ sessionId: string; ticket: string; wsUrl: string; maxSec: number; mode: "scripted" }>("/api/call", {
+      const r = await json<{ sessionId: string; ticket: string; wsUrl: string; maxSec: number; mode: "scripted"; model: string }>("/api/call", {
         method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scenario }),
       });
       (window as unknown as { __call: unknown }).__call = r;
+      setModel(r.model);
       client.start(r);
     })();
   };
@@ -65,6 +69,8 @@ function CallView({ cfg }: { cfg: Config }) {
           <span className="sas-pill"><Icon name="flask-conical" />{t("voice.pill.scripted")}</span>
           <span className="sas-small hx-when">English · started 19 Nov 2026, 10:42</span>
         </div>
+        {/* The summary line under the choices row (the real page: test-lab page.tsx settingsLine). */}
+        <p className="sas-small" style={{ margin: "0 16px 8px" }} data-voice-summary="">{t("voice.settings.summary", { summary: cfg.summary })}</p>
         <VoiceCall
           client={client} onStart={start}
           context={{ readyLine: `English · ${cfg.versionLabel} · up to ${callLimitShort(cfg.maxSec)}`, savedNote: t("voice.ended.saved"), usageHref: "#usage", fx: cfg.fx }}
@@ -83,6 +89,7 @@ function CallView({ cfg }: { cfg: Config }) {
           <VoiceCallStats
             durationSec={elapsedSec(s, now)} maxSec={s.maxSec} costMicros={s.costMicros} scripted={s.mode === "scripted"} fx={cfg.fx}
             answerMsAvg={s.answerMsAvg} live={s.phase !== "ended"} endReason={s.phase === "ended" ? s.endReason : null} errorCode={s.errorCode}
+            model={model}
           />
         ) : null}
       </div>
@@ -155,7 +162,7 @@ function SettingsView({ cfg }: { cfg: Config }) {
             <a className="sas-sp__close" aria-label={t("kit.close")} href="?view=call"><Icon name="x" /></a>
           </header>
           <div className="sas-sp__body">
-            <VoiceSettingsForm action={action} slug="harness" caps={cfg.caps} initial={cfg.settings} version={cfg.version} closeHref="?view=call" deploymentLimitSec={cfg.cap} />
+            <VoiceSettingsForm action={action} slug="harness" models={cfg.models} platformModel={cfg.platformModel} initial={cfg.settings} version={cfg.version} closeHref="?view=call" deploymentLimitSec={cfg.cap} />
           </div>
         </section>
       </div>

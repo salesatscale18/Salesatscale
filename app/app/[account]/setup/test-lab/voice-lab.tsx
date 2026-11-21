@@ -28,7 +28,7 @@ import { startChatAction } from "./actions";
 // The lab's call (module level)
 // ---------------------------------------------------------------------------
 
-type LabCall = { conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean } | null;
+type LabCall = { conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean; model?: string | null } | null;
 
 let client: VoiceClient | null = null;
 let call: LabCall = null;
@@ -99,7 +99,7 @@ function useStartCall() {
         c.unavailable(r.reason, { retryAt: r.retryAt, ownCall: r.ownCall });
         return;
       }
-      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false });
+      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model });
       c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec, mode: r.mode });
       router.push(`${input.lab}?c=${r.conversationId}`, { scroll: false });
     })();
@@ -296,6 +296,7 @@ export function VoiceLabStats({ conversationId, children }: { conversationId: st
     <VoiceCallStats
       durationSec={elapsedSec(s, now)} maxSec={s.maxSec} costMicros={s.costMicros} scripted={s.mode === "scripted"} fx={mine.fx}
       answerMsAvg={s.answerMsAvg} live={s.phase !== "ended"} endReason={s.phase === "ended" ? s.endReason : null} errorCode={s.errorCode}
+      model={mine.model ?? null}
     />
   );
 }

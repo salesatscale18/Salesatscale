@@ -4,7 +4,7 @@
  * plain labels and the time texts. No server imports: client components use
  * them too, and constants live here, never in a "use client" file.
  */
-import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
+import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, voiceModelLabel, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
 
 export type VoiceLabAccess = "ok" | "not_admin" | "voice_off";
 
@@ -116,10 +116,12 @@ export function answerSpeedText(ms: number): string {
 const PACE_WORD: Record<ResolvedVoiceSettings["pace"], string> = { slower: "Slower pace", normal: "Normal pace", faster: "Faster pace" };
 const STYLE_WORD: Record<ResolvedVoiceSettings["style"], string> = { patient: "Patient", balanced: "Balanced", quick: "Quick" };
 
-/** The read-only line under "Call the agent": "Voice: Puck · upbeat, lively · Normal pace · Balanced" (only what the model supports). */
+/** The read-only line under "Call the agent": "Gemini 3.8 Live · Puck · upbeat, lively · Normal pace" (only what the model supports). */
 export function voiceSettingsSummary(s: ResolvedVoiceSettings, modelId: string): string {
   const caps = voiceCapabilities(modelId);
   const parts: string[] = [];
+  const model = voiceModelLabel(modelId);
+  if (model && model !== modelId) parts.push(model);
   const voice = s.voice ?? defaultVoiceOf(caps);
   if (caps.voices.length && voice) parts.push(voiceLabel(voice));
   if (caps.pace) parts.push(PACE_WORD[s.pace]);

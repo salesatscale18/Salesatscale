@@ -385,6 +385,36 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     expect(JSON.stringify(r)).not.toContain("Your company");
   });
 
+  it("model per version: saved on the draft (a Gemini voice dropped on the switch), recorded on the session, used for the whole call", async () => {
+    const { saveDraftVoiceSettings } = await import("@/lib/voice/service");
+    const { agentVersions } = await import("@/db/schema");
+    const GPT = "openai/gpt-realtime-2.1";
+    const before = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, acc), eq(agentVersions.status, "draft")));
+    await saveDraftVoiceSettings(db, acc, { voice: "Kore" }, {});
+    const saved = await saveDraftVoiceSettings(db, acc, { model: GPT, voice: "Kore", style: "balanced", pauseMs: "1100", interrupt: "low" }, {});
+    expect(saved).toEqual({ ok: true, settings: { model: GPT, style: "balanced", pauseMs: 1100, interrupt: "low" } });
+    try {
+      const clock = new ManualClock();
+      // The scripted model stands in for GPT-Realtime 2.1 (its id), so the engine builds the OpenAI session.
+      const model = new ScriptedRealtime({ clock });
+      Object.defineProperty(model, "modelId", { value: GPT });
+      const c = await newCall(null, { clock, model, limits: { standbyAfterQuietMs: 600_000 } });
+      const cfg = c.conn().cfg;
+      expect(cfg.voice).toBe("alloy");
+      expect(cfg.turnTaking).toEqual({ silenceMs: 1100, threshold: 0.7, prefixPaddingMs: 300 });
+      expect(cfg.tools.find((t) => t.name === "search_catalog")!.parameters).toMatchObject({ type: "object", additionalProperties: false });
+      await c.run(15_000);
+      const row = await sessionRow(c.sessionId);
+      // A scripted stand-in keeps the version's model on the row (mode says scripted); the snapshot names it too.
+      expect(row).toMatchObject({ model: GPT, mode: "scripted" });
+      expect((row.settings as Record<string, unknown>).model).toBe(GPT);
+      const sum = await voiceSessionSummary(db, acc, c.conversationId);
+      expect(sum).toMatchObject({ model: GPT });
+    } finally {
+      await db.update(agentVersions).set({ voiceSettings: before[0]?.voiceSettings ?? null }).where(and(eq(agentVersions.accountId, acc), eq(agentVersions.status, "draft")));
+    }
+  });
+
   it("a wake whose model connection fails is retried once; two failures end the call (connection_lost)", async () => {
     const clock = new ManualClock();
     const inner = new ScriptedRealtime({ clock });

@@ -169,10 +169,14 @@ export type RealtimePrice = { textIn: number; textOut: number; audioIn: number; 
  * {"google/gemini-3.8-live": {"audioIn": 3, "audioOut": 12}}.
  * - Gemini 3.8 Live: text in $0.75, text out $4.50, audio in $3, audio out $12 (no cached price given).
  * - GPT Realtime 2: text in $4, out $24, cached in $0.40, audio in $32, audio out $64.
+ * - GPT-Realtime 2.1 (owner, 22 Nov 2026): text in $4, out $24, cached in $0.40, audio in $32, audio out $64.
+ * - GPT-Realtime mini (owner, 22 Nov 2026): text in $0.60, out $2.40, cached in $0.06, audio in $10, audio out $20.
  */
 export const DEFAULT_REALTIME_PRICES: Record<string, RealtimePrice> = {
   "google/gemini-3.8-live": { textIn: 0.75, textOut: 4.5, audioIn: 3, audioOut: 12 },
   "openai/gpt-realtime-2": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
+  "openai/gpt-realtime-2.1": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
+  "openai/gpt-realtime-mini": { textIn: 0.6, textOut: 2.4, cachedIn: 0.06, audioIn: 10, audioOut: 20 },
 };
 
 const REALTIME_PRICE_KEYS = ["textIn", "textOut", "audioIn", "audioOut", "cachedIn"] as const;
@@ -236,16 +240,36 @@ export function estimateRealtimeCostMicros(model: string, u: RealtimeTokenUsage,
 export const REALTIME_AUDIO_TOKENS_PER_SECOND = 25;
 
 /**
+ * Audio tokens per second by model family, for the duration floor. UNVERIFIED for both: Gemini uses Google's
+ * published 25/s for Live audio; for OpenAI realtime the code has always assumed the same 25/s, and no OpenAI
+ * call has run here yet (a live call's usage snapshots will show the real rate; correct it then).
+ */
+export const AUDIO_TOKENS_PER_SECOND_BY_FAMILY: Record<"gemini" | "openai", number> = { gemini: 25, openai: 25 };
+
+/** The audio token rate assumed for a model id (its family's; the default otherwise). */
+export function audioTokensPerSecond(model: string): number {
+  if (/^openai\/|gpt-realtime/i.test(model)) return AUDIO_TOKENS_PER_SECOND_BY_FAMILY.openai;
+  if (/^google\/|gemini/i.test(model)) return AUDIO_TOKENS_PER_SECOND_BY_FAMILY.gemini;
+  return REALTIME_AUDIO_TOKENS_PER_SECOND;
+}
+
+/**
  * A rough usage from the call length: the model hears the whole call and
  * speaks about half of it. It is the floor of a live call's cost (voiceCallCost).
  */
-export function estimatedRealtimeUsage(durationSec: number): RealtimeTokenUsage {
+export function estimatedRealtimeUsage(durationSec: number, tokensPerSecond = REALTIME_AUDIO_TOKENS_PER_SECOND): RealtimeTokenUsage {
   const s = Math.max(0, durationSec);
   return {
-    audioInTokens: Math.round(s * REALTIME_AUDIO_TOKENS_PER_SECOND),
-    audioOutTokens: Math.round(s * 0.5 * REALTIME_AUDIO_TOKENS_PER_SECOND),
+    audioInTokens: Math.round(s * tokensPerSecond),
+    audioOutTokens: Math.round(s * 0.5 * tokensPerSecond),
     textInTokens: 0, textOutTokens: 0, cachedInTokens: 0,
   };
+}
+
+/** Estimated USD per minute of call for a model (the duration estimate's audio only), or null without a price. */
+export function realtimeUsdPerMinute(model: string, prices: Record<string, RealtimePrice> = realtimePriceTable()): number | null {
+  const micros = estimateRealtimeCostMicros(model, estimatedRealtimeUsage(60, audioTokensPerSecond(model)), prices);
+  return micros === null ? null : micros / 1_000_000;
 }
 
 const USAGE_BUCKETS = ["audioInTokens", "audioOutTokens", "textInTokens", "textOutTokens", "cachedInTokens"] as const;
@@ -268,11 +292,18 @@ export class RealtimeUsageAccumulator {
   first: RealtimeTokenUsage | null = null;
   last: RealtimeTokenUsage | null = null;
 
+  /**
+   * `per_response`: each snapshot is one response's own usage and every one is added in full. OpenAI's
+   * realtime API documents usage on each response.done for that response (its input counts the context it
+   * read), so the heuristic would undercount growing responses there. `auto`: the heuristic above (Gemini).
+   */
+  constructor(readonly mode: "auto" | "per_response" = "auto") {}
+
   add(snapshot: RealtimeTokenUsage): void {
     const clean = Object.fromEntries(USAGE_BUCKETS.map((k) => [k, Number.isFinite(snapshot[k]) && snapshot[k] > 0 ? Math.round(snapshot[k]) : 0])) as RealtimeTokenUsage;
     for (const k of USAGE_BUCKETS) {
       const prev = this.last?.[k] ?? 0;
-      this.total[k] += clean[k] >= prev ? clean[k] - prev : clean[k];
+      this.total[k] += this.mode === "per_response" ? clean[k] : clean[k] >= prev ? clean[k] - prev : clean[k];
     }
     this.events++;
     this.first ??= clean;
@@ -325,7 +356,7 @@ export function voiceCallCost(
   model: string, acc: RealtimeUsageAccumulator, durationSec: number, prices: Record<string, RealtimePrice> = realtimePriceTable(),
 ): { costMicros: number; usage: VoiceCallUsageRecord } {
   const usageCost = acc.events > 0 ? estimateRealtimeCostMicros(model, acc.total, prices) : null;
-  const durationCost = estimateRealtimeCostMicros(model, estimatedRealtimeUsage(durationSec), prices) ?? 0;
+  const durationCost = estimateRealtimeCostMicros(model, estimatedRealtimeUsage(durationSec, audioTokensPerSecond(model)), prices) ?? 0;
   const basis = usageCost !== null && usageCost >= durationCost ? "usage" : "duration";
   return {
     costMicros: Math.max(usageCost ?? 0, durationCost),

@@ -160,7 +160,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(c.sent.some((m) => m instanceof Uint8Array)).toBe(true);
 
     const s = await sessionRow(c.sessionId);
-    expect(s).toMatchObject({ status: "ended", endReason: "user_hangup", mode: "scripted", model: "scripted", costMicros: 0 });
+    expect(s).toMatchObject({ status: "ended", endReason: "user_hangup", mode: "scripted", model: "google/gemini-3.8-live", costMicros: 0 });
     expect(s.durationSec).toBeGreaterThan(60);
     expect(s.answerMsAvg).toBeGreaterThan(0);
     expect(s.usage?.audioOutTokens).toBeGreaterThan(0);
@@ -171,7 +171,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
 
     // Review afterwards: the summary and the per-turn answer times.
     const sum = await voiceSessionSummary(db, acc, c.conversationId);
-    expect(sum).toMatchObject({ mode: "scripted", model: "scripted", endReason: "user_hangup", errorCode: null, costMicros: 0, answerMsAvg: s.answerMsAvg });
+    expect(sum).toMatchObject({ mode: "scripted", model: "google/gemini-3.8-live", endReason: "user_hangup", errorCode: null, costMicros: 0, answerMsAvg: s.answerMsAvg });
     expect(sum!.turns.map((x) => x.answerMs === null)).toEqual([true, false, false]);
     expect(await conversationVoiceMode(db, acc, c.conversationId)).toBe("scripted");
   });

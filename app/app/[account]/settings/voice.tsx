@@ -8,7 +8,7 @@ import { usdMicrosToMinor } from "@/lib/ai/models";
 import { formatMoney } from "@/lib/domain/money";
 import { buyerVoiceMonth } from "@/lib/voice/buyer";
 import { callLimitShort, voiceSettingsSummary } from "@/lib/voice/lab";
-import { maxCallSeconds, resolveVoiceSettings, voiceModelId } from "@/lib/voice/settings";
+import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceBuyerCallsAction } from "./voice-actions";
 
@@ -56,9 +56,16 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
             <input type="checkbox" role="switch" className="sas-switch" name="buyerCalls" defaultChecked={!account.voiceBuyerCallsOff} aria-describedby="voice-calls-hint" data-voice-buyer-calls="" />
           </label>
           <Row id="voice-lang" title={t("settings.voice.language")} hint={t("settings.voice.language_hint")}><span className="sas-pill">{t("settings.voice.language_value")}</span></Row>
+          {/* The live version's model is what buyer calls use; it is picked per version in Versions and test lab. */}
+          <Row id="voice-model" title={t("settings.voice.model")} hint={t("settings.voice.model_hint")}>
+            <span className="st-voice__value">
+              <span className="sas-small" data-voice-live-model="">{voiceModelLabel(versionModelId(live?.voiceSettings))}</span>
+              <span className="sas-small st-voice__ro">{t("voice.settings.model_live_hint")}</span>
+            </span>
+          </Row>
           <Row id="voice-voice" title={t("settings.voice.voice")} hint={t("settings.voice.voice_hint")}>
             <span className="st-voice__value">
-              <span className="sas-small">{voiceSettingsSummary(settings, voiceModelId())}</span>
+              <span className="sas-small">{voiceSettingsSummary(settings, versionModelId(live?.voiceSettings))}</span>
               <span className="sas-small st-voice__ro">{t("settings.voice.voice_ro")}</span>
             </span>
           </Row>

@@ -23,6 +23,7 @@ export function VoiceCallStats({
   standby = null,
   technical = null,
   headingId = "voice-stats-h",
+  model = null,
 }: {
   durationSec: number;
   maxSec: number | null;
@@ -40,6 +41,8 @@ export function VoiceCallStats({
   /** Platform admins only: the technical line of how it ended (lib/voice/client/view.ts endDetailText). */
   technical?: string | null;
   headingId?: string;
+  /** The voice model's label ("Gemini 3.8 Live"): the call's own (its session row), so calls on different models are told apart. */
+  model?: string | null;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
   const money = costText(costMicros, fx);
@@ -50,6 +53,7 @@ export function VoiceCallStats({
     <section className="sas-panel sas-panel__body sas-stack-2 sas-vstats" aria-labelledby={headingId} data-voice-stats="">
       <h2 id={headingId} className="sas-heading">{t("voice.stats.title")}</h2>
       <dl className="sas-vstats__kv">
+        {model ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
         <dt>{t("voice.stats.length")}</dt><dd className="sas-num" data-voice-length="">{length}</dd>
         <dt>{t("voice.stats.cost")}</dt><dd className="sas-num" data-voice-cost="">{cost}</dd>
         <dt>{t("voice.stats.answer")}</dt>

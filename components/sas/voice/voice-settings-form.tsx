@@ -5,7 +5,8 @@ import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
 import { callLimitShort, defaultVoiceOf, hasAdvancedTuning, limitOptions, voiceOptions } from "@/lib/voice/lab";
-import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceCapabilities, type VoiceSettingsErrors } from "@/lib/voice/settings";
+import { DEFAULT_VOICE_SETTINGS, INTERRUPT_LEVELS, PAUSE_MS_RANGE, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceSettingsErrors } from "@/lib/voice/settings";
+import type { VoiceModelChoice } from "@/lib/voice/model-choices";
 
 export type VoiceSettingsFormState = { ok?: boolean; errors?: VoiceSettingsErrors; failed?: boolean };
 
@@ -28,34 +29,21 @@ function Segmented<T extends string>({ name, label, value, options, onChange, de
   );
 }
 
-/** A read-only meter for a value the conversation style sets (board: Advanced). */
-function Meter({ label, at, low, mid, high, hint }: { label: string; at: number; low: string; mid: string; high: string; hint: string }) {
-  const pct = Math.round(Math.max(0, Math.min(1, at)) * 100);
-  return (
-    <div className="sas-vs-field">
-      <span className="sas-input-label">{label}</span>
-      <span className="sas-vs-meter" role="meter" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-valuetext={mid} aria-label={label}>
-        <span className="sas-vs-meter__fill" style={{ width: `${pct}%` }} />
-        <span className="sas-vs-meter__knob" style={{ insetInlineStart: `calc(${pct}% - 8px)` }} />
-      </span>
-      <span className="sas-small sas-vs-meter__scale"><span>{low}</span><b className="sas-num">{mid}</b><span>{high}</span></span>
-      <span className="sas-small">{hint}</span>
-    </div>
-  );
-}
-
 /**
  * The voice settings of the draft version (board VoiceSettingsPanel), inside
- * the test lab's side panel. Shows only what the realtime model supports
- * (voiceCapabilities); unsupported settings are hidden, never disabled. When
- * nothing but "Filler phrases" and "Longest call" is left of the advanced
- * settings, there is no "Advanced" fold. The footer stays at the bottom of
- * the panel. `action` saves to the draft on the server and checks the role there.
+ * the test lab's side panel. "Voice model" comes first; the rest shows only what
+ * the chosen model supports (its capabilities, passed in from the server per
+ * model, so changing the model re-renders the settings before saving).
+ * Unsupported settings are hidden, never disabled. When nothing but "Filler
+ * phrases" and "Longest call" is left of the advanced settings, there is no
+ * "Advanced" fold. The footer stays at the bottom of the panel. `action` saves
+ * to the draft on the server and checks the role there.
  */
 export function VoiceSettingsForm({
   action,
   slug,
-  caps,
+  models,
+  platformModel,
   initial,
   version,
   closeHref,
@@ -64,7 +52,10 @@ export function VoiceSettingsForm({
 }: {
   action: (prev: VoiceSettingsFormState, form: FormData) => Promise<VoiceSettingsFormState>;
   slug: string;
-  caps: VoiceCapabilities;
+  /** The models a version may pick, with what each supports and its cost hint (lib/voice/model-choices.ts). */
+  models: VoiceModelChoice[];
+  /** The platform's default model: what a version without its own model uses. */
+  platformModel: string;
   initial: ResolvedVoiceSettings;
   version: number;
   closeHref: string;
@@ -80,13 +71,26 @@ export function VoiceSettingsForm({
   const clampMax = (x: ResolvedVoiceSettings) => ({ ...x, maxCallSec: Math.min(x.maxCallSec, options_[options_.length - 1]) });
   const [v, setV] = useState<ResolvedVoiceSettings>(() => clampMax(initial));
   const set = <K extends keyof ResolvedVoiceSettings>(k: K, val: ResolvedVoiceSettings[K]) => setV((x) => ({ ...x, [k]: val }));
+  const modelId = v.model ?? platformModel;
+  const model = models.find((m) => m.id === modelId) ?? models[0];
+  const caps = model.caps;
+  /** Another model: its own voices (a voice it does not have goes back to its default), the rest as it supports. */
+  const pickModel = (id: string) => {
+    const next = models.find((m) => m.id === id);
+    if (!next) return;
+    setV((x) => ({ ...x, model: next.id as ResolvedVoiceSettings["model"], voice: x.voice && next.caps.voices.includes(x.voice) ? x.voice : null }));
+  };
   const options = voiceOptions(caps);
   const voiceValue = v.voice && options.some((o) => o.value === v.voice) ? v.voice : "";
   const heard = voiceValue || defaultVoiceOf(caps);
   const sample = heard ? sampleUrl?.(heard) ?? null : null;
   const advanced = hasAdvancedTuning(caps);
   const e = state.errors ?? {};
-  const tt = turnTakingFor(v.style, caps.pauseMs ? "openai/gpt-realtime" : "") ?? { silenceMs: 600, threshold: 0.5 };
+  // What the style alone would set (shown as the default of the two Advanced values).
+  const fromStyle = turnTakingFor(v.style, caps.pauseMs ? model.id : "") ?? { silenceMs: 600, threshold: 0.5 };
+  const styleInterrupt = fromStyle.threshold >= 0.6 ? "low" : fromStyle.threshold <= 0.45 ? "high" : "medium";
+  const pauses: number[] = [];
+  for (let ms = PAUSE_MS_RANGE.min; ms <= PAUSE_MS_RANGE.max; ms += PAUSE_MS_RANGE.step) pauses.push(ms);
 
   const fillers = (
     <label className="sas-switch-row">
@@ -113,6 +117,18 @@ export function VoiceSettingsForm({
       <input type="hidden" name="slug" value={slug} />
       <div className="sas-vs-body">
         {state.failed || Object.keys(e).length ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("voice.settings.error")}</span></div> : null}
+        <div className="sas-input-group" data-voice-model-field="">
+          <label className="sas-input-label" htmlFor="vs-model">{t("voice.settings.model")}</label>
+          <select className="sas-select" id="vs-model" name="model" value={model.id} onChange={(ev) => pickModel(ev.target.value)} aria-describedby="vs-model-hint" aria-invalid={e.model ? true : undefined}>
+            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+          </select>
+          <span className="sas-small" id="vs-model-hint">
+            {model.note}
+            {model.proven ? null : <> <span className="sas-muted" data-voice-model-unproven="">{t("voice.settings.model_unproven")}</span></>}
+          </span>
+          <span className="sas-small sas-muted" data-voice-model-cost="">{model.costHint}</span>
+          {e.model ? <span className="sas-small sas-vs-err" role="alert">{e.model}</span> : null}
+        </div>
         {caps.voices.length ? (
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="vs-voice">{t("voice.settings.voice")}</label>
@@ -146,11 +162,26 @@ export function VoiceSettingsForm({
             <summary><Icon name="chevron-down" /><span className="sas-vs-adv__title">{t("voice.settings.advanced")}</span>{caps.style ? <span className="sas-small">{t("voice.settings.advanced_hint", { style: t(`voice.settings.style.${v.style}`) })}</span> : null}</summary>
             <div className="sas-vs-adv__body">
               {caps.pauseMs ? (
-                <Meter label={t("voice.settings.pause")} at={(tt.silenceMs - 300) / 1200} low="0.3 s" mid={`${(tt.silenceMs / 1000).toFixed(1)} s`} high="1.5 s" hint={t("voice.settings.pause_hint")} />
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor="vs-pause">{t("voice.settings.pause")}</label>
+                  <select className="sas-select" id="vs-pause" name="pauseMs" value={v.pauseMs ?? ""} onChange={(ev) => set("pauseMs", ev.target.value ? Number(ev.target.value) : null)} aria-describedby="vs-pause-hint" aria-invalid={e.pauseMs ? true : undefined}>
+                    <option value="">{t("voice.settings.from_style", { value: `${(fromStyle.silenceMs / 1000).toFixed(1)} s` })}</option>
+                    {pauses.map((ms) => <option key={ms} value={ms}>{(ms / 1000).toFixed(1)} s</option>)}
+                  </select>
+                  <span className="sas-small" id="vs-pause-hint">{t("voice.settings.pause_hint")}</span>
+                  {e.pauseMs ? <span className="sas-small sas-vs-err" role="alert">{e.pauseMs}</span> : null}
+                </div>
               ) : null}
               {caps.interruptSensitivity ? (
-                <Meter label={t("voice.settings.interrupt")} at={1 - (tt.threshold - 0.3) / 0.5} low={t("voice.settings.low")} high={t("voice.settings.high")}
-                  mid={tt.threshold >= 0.6 ? t("voice.settings.low") : tt.threshold <= 0.45 ? t("voice.settings.high") : t("voice.settings.medium")} hint={t("voice.settings.interrupt_hint")} />
+                <div className="sas-input-group">
+                  <label className="sas-input-label" htmlFor="vs-interrupt">{t("voice.settings.interrupt")}</label>
+                  <select className="sas-select" id="vs-interrupt" name="interrupt" value={v.interrupt ?? ""} onChange={(ev) => set("interrupt", (ev.target.value || null) as ResolvedVoiceSettings["interrupt"])} aria-describedby="vs-interrupt-hint" aria-invalid={e.interrupt ? true : undefined}>
+                    <option value="">{t("voice.settings.from_style", { value: t(`voice.settings.${styleInterrupt}`) })}</option>
+                    {INTERRUPT_LEVELS.map((l) => <option key={l} value={l}>{t(`voice.settings.${l}`)}</option>)}
+                  </select>
+                  <span className="sas-small" id="vs-interrupt-hint">{t("voice.settings.interrupt_hint")}</span>
+                  {e.interrupt ? <span className="sas-small sas-vs-err" role="alert">{e.interrupt}</span> : null}
+                </div>
               ) : null}
               {caps.fillers ? fillers : null}
               {longest}
@@ -168,7 +199,7 @@ export function VoiceSettingsForm({
         <div className="sas-vs-actions">
           <button type="submit" className={buttonClass("primary")} disabled={pending} data-voice-save="">{pending ? t("voice.settings.saving") : t("voice.settings.save")}</button>
           <a className={buttonClass("ghost")} href={closeHref}>{t("voice.settings.cancel")}</a>
-          <button type="button" className={`${buttonClass("ghost")} sas-vs-reset`} onClick={() => setV(clampMax({ ...DEFAULT_VOICE_SETTINGS }))}>{t("voice.settings.reset")}</button>
+          <button type="button" className={`${buttonClass("ghost")} sas-vs-reset`} onClick={() => setV(clampMax({ ...DEFAULT_VOICE_SETTINGS, model: v.model }))}>{t("voice.settings.reset")}</button>
         </div>
       </div>
     </form>

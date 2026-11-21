@@ -135,7 +135,7 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     await done;
     const id = short(s.sessionId);
     const text = logs.text();
-    expect(text).toContain(`[voice] ${id} socket accepted mode=scripted model=scripted maxSec=270 test`);
+    expect(text).toContain(`[voice] ${id} socket accepted mode=scripted model=scripted for=google/gemini-3.8-live maxSec=270 test`);
     expect(text).toMatch(new RegExp(`\\[voice\\] ${id} model connected in \\d+ms \\(scripted\\)`));
     expect(text).toContain(`[voice] ${id} client socket closed code=1001 reason="tab closed"`);
     expect(text).toMatch(new RegExp(`\\[voice\\] ${id} ended reason=connection_lost code=- durationSec=10 activeSec=10 by=client_closed client=1001/"tab closed"`));

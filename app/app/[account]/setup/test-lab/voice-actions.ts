@@ -15,7 +15,7 @@ import { isUuid } from "@/lib/security/ids";
 import { spendCapped, platformBudget } from "@/lib/ai/usage";
 import { usdRate } from "@/lib/ai/models";
 import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } from "@/lib/voice/service";
-import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceMode, voiceModelId } from "@/lib/voice/settings";
+import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { minorPerUsd, voiceSocketUrl } from "./voice-server";
@@ -27,6 +27,8 @@ const path = (slug: string) => `/app/${slug}/setup/test-lab`;
 export type StartVoiceCallResult =
   | {
       ok: true; conversationId: string; sessionId: string; ticket: string; wsUrl: string; mode: "scripted" | "live"; maxSec: number;
+      /** The call's voice model, as its label ("GPT-Realtime mini"): its version's. */
+      model: string;
       fx: { currency: string; minorPerUsd: number | null };
     }
   /**
@@ -70,6 +72,7 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const maxSec = maxCallSeconds({ settings: conv.version.voiceSettings, deadlineSec: deploymentCallLimitSec() });
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
+    model: voiceModelLabel(versionModelId(conv.version.voiceSettings)),
     fx: { currency: a.account.currency, minorPerUsd: minorPerUsd(usdRate(a.account.currency)) },
   };
 }
@@ -89,14 +92,20 @@ export async function saveVoiceSettingsAction(_prev: VoiceSettingsFormState, for
   if (voiceLabAccess(a.user) !== "ok") return { failed: true };
   const draft = (await listVersions(appDb, a.account.id)).find((v) => v.status === "draft");
   if (!draft) return { failed: true };
-  const caps = voiceCapabilities(voiceModelId());
   const current = resolveVoiceSettings(draft.voiceSettings);
   const str = (k: string) => (typeof form.get(k) === "string" ? String(form.get(k)) : "");
-  // Settings the model does not offer are not in the form: their stored values are kept.
+  // The model picked at the top of the panel (validated in saveDraftVoiceSettings); the rest is what it offers.
+  const model = str("model") || versionModelId(draft.voiceSettings);
+  const caps = voiceCapabilities(model);
+  // Settings the model does not offer are not in the form: their stored values are kept (a voice of another
+  // model's list is dropped by the validation when the model changes).
   const input = {
+    model: str("model") || draft.voiceSettings?.model,
     voice: caps.voices.length ? str("voice") : draft.voiceSettings?.voice,
     pace: caps.pace ? str("pace") : draft.voiceSettings?.pace,
     style: caps.style ? str("style") : draft.voiceSettings?.style,
+    pauseMs: caps.pauseMs ? str("pauseMs") : draft.voiceSettings?.pauseMs,
+    interrupt: caps.interruptSensitivity ? str("interrupt") : draft.voiceSettings?.interrupt,
     fillers: caps.fillers ? form.get("fillers") === "on" : current.fillers,
     maxCallSec: str("maxCallSec"),
   };

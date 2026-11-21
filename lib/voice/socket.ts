@@ -214,7 +214,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     if (!session) return refuse("ticket_invalid");
     // The mode the call was created in must still be on (a live call never runs as scripted, or the reverse).
     const mode = voiceMode(env);
-    const model = opts.model ?? (mode === session.mode ? await realtimeModelFor(mode, { clock, env }) : null);
+    const model = opts.model ?? (mode === session.mode ? await realtimeModelFor(mode, { clock, env, modelId: session.model }) : null);
     if (!model) {
       await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
       return refuse("model_unavailable");
@@ -229,7 +229,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
     sessionId = session.id;
-    log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
+    // A scripted stand-in also names the version's model it stands in for.
+    log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
     sendJson({ t: "call", maxSec, mode: model.mode });
     engine = new VoiceEngine({
       db: opts.db, model, sessionId: session.id, clock, log,

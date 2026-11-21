@@ -44,7 +44,8 @@ import { INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
 import { barView, endDetailText } from "@/lib/voice/client/view";
 import { callClock, callLimitShort, voiceLabAccess, voiceSettingsSummary } from "@/lib/voice/lab";
 import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
-import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceModelId } from "@/lib/voice/settings";
+import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelId, voiceModelLabel } from "@/lib/voice/settings";
+import { voiceModelChoices } from "@/lib/voice/model-choices";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
@@ -160,7 +161,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // One source for the limit: the same maxCallSeconds the relay reports in `{t:'call', maxSec}` (lib/voice/socket.ts).
   const limitLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.settings.limit_line", { limit: callLimitShort(callMax[v.value]) })]));
   const settingsVersion = draft ?? liveVersion;
-  const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), voiceModelId()) }) : null;
+  const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
   const settingsHref = draft ? `${lab}?${keep}panel=voice` : null;
   const voicePanel = voice && draft && one(sp.panel) === "voice";
@@ -335,6 +336,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 <StatusPill object="agent_version" state={convVersion.status} />
                 {onVoice ? <span className="sas-pill" data-voice-pill=""><Icon name="phone-call" />{t("voice.pill.call")}</span> : null}
                 {onVoice && voiceSummary?.mode === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
+                {/* The model this call ran on (its session row): calls on different models of one draft stay apart. */}
+                {onVoice && voiceSummary && voiceModelLabel(voiceSummary.model) !== voiceSummary.model ? <span className="sas-pill" data-voice-model-pill="">{voiceModelLabel(voiceSummary.model)}</span> : null}
                 {/* R5-14: when the chat started (its first message), not when the conversation row was made. */}
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
@@ -481,7 +484,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <VoiceCallStats
                 durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
                 answerMsAvg={savedEnded.answerMsAvg} live={false} costEstimated={savedEnded.costEstimated} endReason={savedEnded.endReason} errorCode={savedEnded.errorCode}
-                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null}
+                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null} model={voiceModelLabel(savedEnded.model) || null}
                 standby={savedEnded.standbySec !== null && savedEnded.activeSec !== null ? { activeSec: savedEnded.activeSec, standbySec: savedEnded.standbySec } : null}
               />
             ) : null;
@@ -571,7 +574,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           closeHref={conv ? `${lab}?c=${conv.id}` : lab}
         >
           <VoiceSettingsForm
-            action={saveVoiceSettingsAction} slug={account.slug} caps={voiceCapabilities(voiceModelId())} initial={resolveVoiceSettings(draft.voiceSettings)}
+            action={saveVoiceSettingsAction} slug={account.slug} models={voiceModelChoices()} platformModel={voiceModelId()} initial={resolveVoiceSettings(draft.voiceSettings)}
             version={draft.version} closeHref={conv ? `${lab}?c=${conv.id}` : lab} deploymentLimitSec={callLimit}
           />
         </SidePanel>

@@ -172,6 +172,20 @@ describe("saveVoiceSettingsAction", () => {
     // Gemini (the default model) has no conversation style: it is not taken from the form.
     expect(draft.voiceSettings).toEqual({ voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300 });
   });
+
+  it("the voice model: an admin switches the draft to GPT-Realtime mini (the Gemini voice goes, turn-taking is taken), a seller cannot", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(seller);
+    expect(await saveVoiceSettingsAction({}, form({ model: "openai/gpt-realtime-mini", maxCallSec: "300" }))).toEqual({ failed: true });
+    as(admin);
+    expect(await saveVoiceSettingsAction({}, form({ model: "openai/gpt-4o", maxCallSec: "300" }))).toMatchObject({ errors: { model: expect.any(String) } });
+    const err = await saveVoiceSettingsAction({}, form({ model: "openai/gpt-realtime-mini", voice: "Kore", pace: "slower", style: "patient", pauseMs: "1000", interrupt: "high", fillers: "on", maxCallSec: "300" })).catch((e: { url?: string }) => e);
+    expect((err as { url?: string }).url).toMatch(/voice_saved=/);
+    const [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
+    expect(draft.voiceSettings).toEqual({ model: "openai/gpt-realtime-mini", pace: "slower", style: "patient", pauseMs: 1000, interrupt: "high", fillers: true, maxCallSec: 300 });
+    // Back to the default for the page tests below.
+    await db.update(agentVersions).set({ voiceSettings: { voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300 } }).where(eq(agentVersions.id, draft.id));
+  });
 });
 
 describe("the test lab page", () => {
@@ -206,7 +220,7 @@ describe("the test lab page", () => {
     expect(html).toContain("Start chat");
     expect(html).toContain("Start call");
     expect(html).toContain("Buyer language");
-    expect(html).toContain("Calls: up to 4 min 30 s · Voice: Kore · firm, clear · Slower pace");
+    expect(html).toContain("Calls: up to 4 min 30 s · Voice: Gemini 3.8 Live · Kore · firm, clear · Slower pace");
     const panel = await render({ panel: "voice" });
     save("page-settings-panel", panel);
     expect(panel).toContain("Saved in draft v");

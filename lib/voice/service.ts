@@ -14,7 +14,7 @@ import { estimatedRealtimeUsage, estimateRealtimeCostMicros } from "@/lib/ai/mod
 import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
-import { PLATFORM_MAX_CALL_SEC, validateVoiceSettings, voiceMode, voiceModelId, type VoiceMode, type VoiceSettingsErrors } from "./settings";
+import { PLATFORM_MAX_CALL_SEC, validateVoiceSettings, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
 
@@ -82,9 +82,13 @@ export async function createVoiceSession(
       .where(and(eq(voiceSessions.accountId, a.accountId), inArray(voiceSessions.id, open.map((s) => s.id)), eq(voiceSessions.status, "pending")));
   }
   const ticket = randomBytes(32).toString("base64url");
+  // The model is the call's version's (its voice settings), else the platform default. A scripted call records it
+  // too (the scripted model stands in for it; `mode` says so), so the test lab shows which model was being tried.
+  const [version] = await db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
+    .where(and(eq(agentVersions.id, conv.agentVersionId), eq(agentVersions.accountId, a.accountId)));
   const [row] = await db.insert(voiceSessions).values({
     accountId: a.accountId, conversationId: conv.id, agentVersionId: conv.agentVersionId, startedByUserId: a.userId, isTest: a.isTest,
-    status: "pending", createdAt: now, model: mode === "scripted" ? "scripted" : voiceModelId(opts.env), mode,
+    status: "pending", createdAt: now, model: versionModelId(version?.voiceSettings, opts.env), mode,
     ticketHash: sha256(ticket),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
@@ -144,11 +148,14 @@ export function startVoiceTestConversation(db: Db, accountId: string, userId: st
  * The realtime model for a mode: the free scripted model, the paid Gateway
  * model (imported only here, so nothing else loads it), or null when voice is off.
  */
-export async function realtimeModelFor(mode: VoiceMode, opts: { clock?: Clock; env?: Record<string, string | undefined> } = {}): Promise<RealtimeModel | null> {
+export async function realtimeModelFor(
+  mode: VoiceMode, opts: { clock?: Clock; env?: Record<string, string | undefined>; modelId?: string | null } = {},
+): Promise<RealtimeModel | null> {
   if (mode === "scripted") return new ScriptedRealtime({ clock: opts.clock });
   if (mode === "live") {
     const { GatewayRealtime } = await import("./gateway-realtime");
-    return new GatewayRealtime(opts.env);
+    // The call's own model (its session row, from its version), the same for its whole length: wakes and retries too.
+    return new GatewayRealtime(opts.env, opts.modelId);
   }
   return null;
 }
@@ -161,9 +168,10 @@ export async function realtimeModelFor(mode: VoiceMode, opts: { clock?: Clock; e
 export async function saveDraftVoiceSettings(
   db: Db, accountId: string, input: unknown, env: Record<string, string | undefined> = process.env,
 ): Promise<{ ok: true; settings: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors }> {
-  const v = validateVoiceSettings(input, voiceModelId(env));
-  if (!v.ok) return v;
   const draft = await ensureDraftVersion(db, accountId);
+  // Checked against the model the draft uses now; a model change in the input re-checks the rest for the new one.
+  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env));
+  if (!v.ok) return v;
   await db.update(agentVersions).set({ voiceSettings: v.value })
     .where(and(eq(agentVersions.id, draft.id), eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));
   return { ok: true, settings: v.value };

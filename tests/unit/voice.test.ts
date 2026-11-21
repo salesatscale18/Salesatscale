@@ -514,7 +514,7 @@ describe("settings and modes", () => {
     const bad = validateVoiceSettings({ voice: "Robot", pace: "warp", maxCallSec: 5, fillers: "yes" });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(["fillers", "maxCallSec", "pace", "voice"]);
-    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480 });
+    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480, model: null, pauseMs: null, interrupt: null });
     expect(resolveVoiceSettings({ pace: "warp" as never, maxCallSec: 10 })).toMatchObject({ pace: "normal", maxCallSec: 60 });
   });
 });

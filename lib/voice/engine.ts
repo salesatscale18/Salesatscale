@@ -28,7 +28,7 @@ import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
-import { callVoice, maxCallSeconds, resolveVoiceSettings, turnTakingFor } from "./settings";
+import { callVoice, isProvenVoiceModel, maxCallSeconds, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
@@ -206,7 +206,8 @@ export class VoiceEngine {
   /** Tool calls of a turn that said nothing yet (cut before its first word), for the next line. */
   private carriedTools: ToolRun[] = [];
   /** Usage snapshots, totalled whether the provider reports them per session or per turn. */
-  private usageAcc = new RealtimeUsageAccumulator();
+  /** OpenAI reports usage per response (summed); Gemini: the cumulative-or-per-turn heuristic. Set in the constructor. */
+  private usageAcc: RealtimeUsageAccumulator;
   private providerSessionId: string | null = null;
   private pendingEnd: VoiceEndReason | null = null;
   private optedOut = false;
@@ -248,6 +249,7 @@ export class VoiceEngine {
   constructor(deps: VoiceEngineDeps) {
     this.db = deps.db;
     this.model = deps.model;
+    this.usageAcc = new RealtimeUsageAccumulator(/^openai\/|gpt-realtime/i.test(this.model.modelId) ? "per_response" : "auto");
     this.clock = deps.clock ?? systemClock;
     this.out = deps.send;
     this.sessionId = deps.sessionId;
@@ -558,7 +560,7 @@ export class VoiceEngine {
       this.log.warn(voiceLine(this.sessionId, `model connect failed after ${Math.round(this.clock.now() - t0)}ms: ${this.lastError}`));
       return this.fail("error", "model_unavailable");
     }
-    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId})`));
+    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId}${this.model.mode === "live" && !isProvenVoiceModel(this.model.modelId) ? ", not tried live before" : ""})`));
     if (this.ended || gen !== this.gen) {
       conn.close();
       return;
@@ -566,7 +568,8 @@ export class VoiceEngine {
     this.modelUp(conn);
     this.callStart = this.clock.now();
     await this.db.update(voiceSessions)
-      .set({ status: "live", connectedAt: new Date(this.callStart), model: this.model.modelId, mode: this.model.mode, settings: this.settingsSnapshot() })
+      // A live call records the model it ran on; a scripted call keeps its version's model (the scripted model stands in).
+      .set({ status: "live", connectedAt: new Date(this.callStart), ...(this.model.mode === "live" ? { model: this.model.modelId } : {}), mode: this.model.mode, settings: this.settingsSnapshot() })
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "pending")));
     // Limits: an announcement before the end, then the end.
     if (this.maxSec > this.limits.limitWarnSec) this.timer("warn", (this.maxSec - this.limits.limitWarnSec) * 1000, () => this.warnLimit());
@@ -593,7 +596,8 @@ export class VoiceEngine {
   private settingsSnapshot() {
     const version = this.loaded!.version;
     const voice = this.voiceInEffect() ?? (callVoice(null, this.model.modelId) ? "model default" : undefined);
-    return { ...version.voiceSettings, voice, maxCallSec: this.maxSec };
+    // The model in the snapshot: the one this call ran on (live), or its version's (a scripted stand-in).
+    return { ...version.voiceSettings, voice, maxCallSec: this.maxSec, model: this.model.mode === "live" ? this.model.modelId : versionModelId(version.voiceSettings) };
   }
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
@@ -606,7 +610,8 @@ export class VoiceEngine {
     const version = this.loaded!.version;
     const settings = resolveVoiceSettings(version.voiceSettings);
     const family = schemaFamilyOf(this.model.modelId);
-    const tt = turnTakingFor(settings.style, this.model.modelId);
+    // The version's own pause and interruption level replace the style's (models with tunable turn detection).
+    const tt = turnTakingFor(settings.style, this.model.modelId, { pauseMs: settings.pauseMs, interrupt: settings.interrupt });
     return {
       // The order form's latest step (a note the model reads, never answers), on every connection after it came.
       instructions: this.formNote ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,

@@ -42,7 +42,12 @@ export const CONNECT_TIMEOUT_MS = 10_000;
  * Session fields (and values) proven in working live calls, per model family: what the retry after an early
  * close sends (`cfg.safe`). Gemini: exactly what 6e06fe8 sent in the owner's working calls (20 Nov 2026):
  * instructions, tools, voice, audio out, PCM 24 kHz in and out, EMPTY input and output transcription,
- * plain server VAD and the Google BLOCKING tool option. OpenAI has no proven live call yet: the same minimal set.
+ * plain server VAD and the Google BLOCKING tool option.
+ * OpenAI (GPT-Realtime 2.1, GPT-Realtime mini) has no proven live call yet. Its first connect already sends only
+ * the SDK's documented normalized fields (instructions, voice, output modalities, PCM 24 kHz in and out, input and
+ * output transcription, server VAD with the version's tuning, tools; no providerOptions). The safe retry keeps
+ * the same fields with the optional values dropped: no transcription hint, plain server VAD, and (in the engine)
+ * no pinned default voice. Tools are plain JSON Schema; the normalized tool has no `strict` flag, so none is sent.
  */
 export const PROVEN_SESSION_FIELDS: Record<"gemini" | "openai", readonly (keyof SdkSessionConfig)[]> = {
   gemini: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions"],
@@ -309,10 +314,11 @@ export class GatewayRealtime implements RealtimeModel {
   readonly modelId: string;
   private readonly apiKey: string;
 
-  constructor(env: Record<string, string | undefined> = process.env) {
+  /** `modelId`: the call's model (its session row); the platform default when missing. One model for the whole call. */
+  constructor(env: Record<string, string | undefined> = process.env, modelId?: string | null) {
     assertLiveAllowed(env);
     this.apiKey = env.AI_GATEWAY_API_KEY!.trim();
-    this.modelId = voiceModelId(env);
+    this.modelId = modelId && modelId !== "scripted" ? modelId : voiceModelId(env);
   }
 
   async connect(cfg: RealtimeSessionConfig, onEvent: (e: RealtimeEvent) => void): Promise<RealtimeConnection> {
