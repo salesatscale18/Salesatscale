@@ -591,6 +591,49 @@ describe("the buyer sees state words only", () => {
   });
 });
 
+describe("a quote never paints as raw text", () => {
+  it("the poll holds a quote message (and what follows) until its card is linked; then both come together", async () => {
+    const b = await newBuyer("Quote Wait");
+    const ctx = await ctxOf(b);
+    const { createQuote } = await import("@/lib/quotes/service");
+    const { toolCalls } = await import("@/db/schema");
+    const q = await createQuote(db, account.id, { kind: "human", userId: me.id, actingAs: false }, b.leadId, { lines: [{ sku: "SEAT-M", qty: 2 }], discountBp: 0 });
+    if (!q.ok) throw new Error(q.reason);
+    // The live call's stored quote message (Hebrew chat), written mid-turn: its create_quote row is not stored yet.
+    const body = `*הצעת מחיר Q-${q.quote.number}* \n2 × User seat (SEAT-M): ₪200.00`;
+    const [quoteMsg] = await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "agent", body, language: "he" }).returning();
+    const [after] = await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "agent", body: "The total today is 200 shekels.", language: "en", createdAt: new Date(quoteMsg.createdAt.getTime() + 5) }).returning();
+    let chat = await buyerChat(db, ctx);
+    expect(chat.messages.some((m) => m.id === quoteMsg.id || m.body.includes("Q-"))).toBe(false);
+    expect(chat.messages.some((m) => m.id === after.id)).toBe(false);
+    // The turn ends: its create_quote row links the message to the quote; the next poll has the message and its card.
+    await db.insert(toolCalls).values({
+      accountId: account.id, conversationId: b.conversationId, messageId: after.id, sequence: 0, name: "create_quote", input: {}, outcome: "ok",
+      result: { quote: `Q-${q.quote.number} v1`, quote_id: q.quote.id, quote_version: 1, quote_message_id: quoteMsg.id, headline: "Two user seats" },
+    });
+    chat = await buyerChat(db, ctx);
+    expect(chat.messages.map((m) => m.id)).toEqual(expect.arrayContaining([quoteMsg.id, after.id]));
+    expect(chat.cards[quoteMsg.id]).toBeTruthy();
+    // An ordinary message that merely mentions a quote number is never held.
+    const { isQuoteMessageText } = await import("@/lib/agent/quote-message");
+    expect(isQuoteMessageText(body)).toBe(true);
+    expect(isQuoteMessageText("*Quote Q-1005*\n1 × Hub: 100")).toBe(true);
+    expect(isQuoteMessageText("Your quote Q-1005 is in the chat.")).toBe(false);
+  });
+
+  it("the page: a quote message whose card is late shows a quiet placeholder, never its text", () => {
+    const strings = new Proxy({ refused: {} }, { get: (o, k) => (k in o ? (o as Record<string, unknown>)[k as string] : String(k)) }) as never;
+    const at = new Date().toISOString();
+    const initial = {
+      messages: [{ id: "q1", from: "agent" as const, body: "*הצעת מחיר Q-1005* \n2 × User seat (SEAT-M): ₪200.00", at, status: null, name: null, previews: [] }],
+      typing: false, ended: false, closedAt: null, cards: {}, calls: [], voice: { available: true },
+    };
+    const html = renderToStaticMarkup(<ChatClient token="t" lang="he" seller="Acme" initials="AC" strings={strings} initial={initial} timeZone="Asia/Jerusalem" voice={{ agentName: "Maya", gender: "female" }} />);
+    expect(html).toContain("data-quote-waiting");
+    expect(html).not.toContain("הצעת מחיר Q-1005");
+  });
+});
+
 describe("Settings › Voice", () => {
   it("renders for a seller while voice calls are on (and is not in the menu while they are off)", async () => {
     const { default: SettingsPage } = await import("@/app/app/[account]/settings/page");

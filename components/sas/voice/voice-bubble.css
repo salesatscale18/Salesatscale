@@ -69,3 +69,5 @@
 .vb--standby .vb-btn { background: #fff; color: var(--vb-brand); box-shadow: inset 0 0 0 2px var(--vb-brand), 0 6px 18px rgba(15, 20, 32, .16); }
 .vb-wave--standby i { transition: none; opacity: .85; }
 .vb-item--wake { color: var(--vb-brand); font-weight: 600; }
+/* A note next to the bubble (the first switch's "what you say appears as text", or "Standing by · Just speak"): light, wraps. */
+.vb-caption--note { background: #fff; color: var(--vb-ink); border: 1px solid var(--vb-line); font-size: 13px; }

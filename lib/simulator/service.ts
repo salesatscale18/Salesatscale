@@ -12,6 +12,8 @@
  * Scoped by account id everywhere; the only lookup that is not is the public
  * token, which yields the account.
  */
+import { isQuoteMessageText } from "@/lib/agent/quote-message";
+import { QUOTE_CARD_WAIT_MS } from "./rules";
 import { marketOfLead } from "@/lib/markets/lead-settings";
 import { marketContactSettings } from "@/lib/markets/settings";
 import { randomUUID } from "node:crypto";
@@ -587,6 +589,13 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     buyerCallRows(db, accountId, ids),
   ]);
   const kinds = appMessageKinds(calls);
+  // A quote message is written while its turn runs; the link to its card (the turn's create_quote row) is stored
+  // when the turn ends (a chat turn, or the agent's turn in a call). Until then the message waits, with everything
+  // after it, so the buyer never sees the quote's raw text: it arrives together with its card. A quote message
+  // still without a card after QUOTE_CARD_WAIT_MS shows as text (its card could not be made).
+  const waiting = rows.findIndex(({ m }) => m.actor === "agent" && !m.voiceSessionId && !cards[m.id]
+    && now.getTime() - m.createdAt.getTime() < QUOTE_CARD_WAIT_MS && isQuoteMessageText(m.body));
+  if (waiting >= 0) rows.splice(waiting);
   return {
     typing: !ended && agentTyping(latest, last ?? null, ctx.account.status, now),
     closedAt,

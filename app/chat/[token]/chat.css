@@ -136,18 +136,6 @@
 /* The voice bubble's dock (components/sas/voice/voice-bubble.tsx): zero height between the messages and the
    composer, so the bubble sits at the bottom-end of the messages, just above the composer, and never covers Send. */
 .c-bubble-dock { position: relative; height: 0; flex: none; z-index: 3; }
-/* Once the call is live the bubble holds the controls (Mute, Speaker, Back to text) and the composer keeps Back to text:
-   the bar above the chat becomes a slim status strip (waveform, state word, clock, Voice mode). It is the full bar while
-   connecting, at the microphone prompt, on an error, reconnecting and after the call. The chat is a phone-sized frame on
-   every screen, so this holds on desktop too. */
-.c-voice[data-voice-phase="live"] .sas-vbar__controls, .c-voice[data-voice-phase="live"] .sas-vbar__sub { display: none; }
-.c-root .c-voice[data-voice-phase="live"].sas-app { padding-block: 6px 4px; }
-.c-root .c-voice[data-voice-phase="live"] .sas-vbar { padding-block: 6px; min-height: 0; }
-.c-voice[data-voice-phase="live"] .c-voice__meta { margin-block-start: 2px; }
-/* Standby in the strip reads like the bubble: "Standing by · Just speak" on one line, still waveform; tapping it wakes the agent. */
-.c-voice[data-voice-phase="live"] .sas-vbar[data-voice-state="standby"] .sas-vbar__text { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
-.c-voice[data-voice-phase="live"] .sas-vbar[data-voice-state="standby"] .sas-vbar__sub:not(.sas-vbar__sub--long) { display: inline; }
-.c-voice[data-voice-phase="live"] .sas-vbar[data-voice-state="standby"] .sas-vbar__sub:not(.sas-vbar__sub--long)::before { content: "· "; }
 /* While the bubble shows, the thread keeps room for it at the bottom (bubble 56 px + its 12 px lift + 12 px), so the last
    message never sits under it. */
 .c-frame:has(.c-bubble-dock .vb) .c-log { padding-block-end: 80px; }
@@ -187,3 +175,7 @@
 .c-stop__link:hover { text-decoration: underline; }
 .c-stop__icon { width: 52px; height: 52px; border-radius: 999px; background: var(--sunken); color: var(--ink); display: grid; place-items: center; }
 .c-stop__icon svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
+/* A quote whose card is on its way: a quiet card-shaped placeholder (never the quote's raw text). */
+.c-card-wait { width: 260px; max-width: 100%; height: 120px; border-radius: 14px; background: var(--raised); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; gap: 4px; }
+.c-card-wait i { width: 6px; height: 6px; border-radius: 999px; background: var(--muted); opacity: .5; }

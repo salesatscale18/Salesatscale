@@ -5,6 +5,8 @@ import type { BuyerChat, BuyerMessage, LinkPreview } from "@/lib/simulator/servi
 import { boldSegments } from "@/lib/agent/app-message";
 import { QuoteCard } from "@/components/sas/quote-card";
 import { replyButtonsAfter } from "@/lib/agent/quote-replies";
+import { isQuoteMessageText } from "@/lib/agent/quote-message";
+import { QUOTE_CARD_WAIT_MS } from "@/lib/simulator/rules";
 import { translator, type Locale, type MessageKey } from "@/lib/i18n";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
@@ -308,7 +310,9 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     return () => window.clearTimeout(id);
   }, [callSnap.phase, barHold]);
   useEffect(() => () => clientRef.current?.dispose(), []);
-  const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && !barHidden;
+  // The bar above the chat shows only what the bubble cannot carry: connecting, the microphone, errors and refusals,
+  // reconnecting, and the short ended note. While the call is live the bubble is the indicator (owner, 21 Nov).
+  const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && callSnap.phase !== "live" && !barHidden;
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
   // A gate off, and the server said why (a simulated chat, or the seller's signed-in staff): the button stays, disabled, with the reason under the composer.
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
@@ -354,6 +358,16 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       rows.push(
         <div key={m.id} className="c-msg c-msg--in c-msg--card">
           <QuoteCard card={card} />
+        </div>,
+      );
+      return;
+    }
+    // A quote message whose card has not arrived yet: a quiet placeholder, never its raw text (the server sends both
+    // together; this covers a card that is late). After QUOTE_CARD_WAIT_MS it shows as text, as the server does.
+    if (m.from === "agent" && !m.call && (m.kind === "quote" || isQuoteMessageText(m.body)) && Date.now() - new Date(m.at).getTime() < QUOTE_CARD_WAIT_MS) {
+      rows.push(
+        <div key={m.id} className="c-msg c-msg--in c-msg--card">
+          <div className="c-card-wait" role="status" aria-label={strings.typingLabel} data-quote-waiting=""><i /><i /><i /></div>
         </div>,
       );
       return;
@@ -442,7 +456,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       {showBar && clientRef.current ? (
         <BuyerCallBar
           client={clientRef.current} tr={tr} agentName={voice!.agentName} dir={dir}
-          firstNote={firstNote} onStartAgain={startCall} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); setBarHold(false); }} onHoldChange={setBarHold}
+          onStartAgain={startCall} onClose={() => { clientRef.current?.cancel(); setBarHidden(true); setBarHold(false); }} onHoldChange={setBarHold}
         />
       ) : null}
       <div className="c-log" ref={logRef} role="log" aria-label={strings.messages} dir={dir}>
@@ -452,7 +466,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       <div className="c-sr" aria-live="polite">{announce}</div>
       {voice && clientRef.current ? (
         // The voice bubble, above the composer at the bottom-end; it also links an order form tab to this call.
-        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={showBar || inCall} />
+        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={inCall} firstNote={firstNote} />
       ) : null}
       {notice ? <div className="c-notice" role="status" dir={dir}>{notice}</div> : null}
       {ended ? (

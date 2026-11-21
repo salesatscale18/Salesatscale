@@ -1,12 +1,11 @@
 "use client";
 
 /**
- * Buyer calls on the chat page (live voice, release 2): a switch of the chat
- * from text to voice and back, as in chat apps. The call bar sits above the
- * chat with "Voice mode" under it (and, on the buyer's first switch in this
- * conversation, that what they say appears as text and no audio is kept).
- * The buyer sees state words only: no tool names, no cost, no stats; Mute and
- * End, which reads "Back to text". Spoken lines arrive in the chat as messages.
+ * Buyer calls on the chat page (live voice): a switch of the chat from text to voice and back, as in chat apps.
+ * While the call is live the voice bubble (bottom-end, above the composer) is the indicator and holds the
+ * controls; the bar above the chat shows only what the bubble cannot carry: connecting, the microphone prompt
+ * or block, errors and refusals, reconnecting, and the short ended note. The buyer's first switch shows its note
+ * ("what you say appears as text") next to the bubble. State words only: no tool names, no cost, no stats.
  */
 import { useEffect, useRef, useState } from "react";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
@@ -24,10 +23,8 @@ import type { Tr } from "@/lib/voice/client/buyer-ui";
  * the call itself is English. After the call, or when the microphone is
  * blocked or calls are not available, a close button hides it.
  */
-export function BuyerCallBar({ client, tr, agentName, dir, firstNote, onStartAgain, onClose, onHoldChange }: {
+export function BuyerCallBar({ client, tr, agentName, dir, onStartAgain, onClose, onHoldChange }: {
   client: VoiceClient; tr: Tr; agentName: string; dir: "ltr" | "rtl"; onStartAgain: () => void; onClose: () => void;
-  /** The buyer's first switch to voice in this conversation: the note that what they say appears as text. */
-  firstNote: boolean;
   /** The pointer is over the bar or focus is inside it: the page holds it open (no auto-hide). */
   onHoldChange?: (hold: boolean) => void;
 }) {
@@ -43,8 +40,6 @@ export function BuyerCallBar({ client, tr, agentName, dir, firstNote, onStartAga
     else if (a.kind === "try_again") onStartAgain();
   };
   const closable = s.phase === "ended" || s.phase === "unavailable" || s.phase === "mic_blocked" || s.phase === "no_mic";
-  // Visible while the call is on: the mode, and on the first switch the transcript note (nothing about who is speaking).
-  const on = s.phase === "connecting" || s.phase === "live" || s.phase === "reconnecting";
   return (
     // The design system's tokens for the bar (light only), inside the chat's own styles.
     <div
@@ -58,15 +53,12 @@ export function BuyerCallBar({ client, tr, agentName, dir, firstNote, onStartAga
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18M6 6l12 12" /></svg>
         </button>
       ) : null}
-      {on ? (
-        <p className="c-voice__meta" data-voice-meta="">
-          <span className="c-voice__mode">{tr("buyer.voice.mode")}</span>
-          {firstNote ? <span className="c-voice__note" data-voice-first-note="">{tr("buyer.voice.first_note")}</span> : null}
-        </p>
-      ) : null}
     </div>
   );
 }
+
+/** How long the first switch's note stays next to the bubble. */
+const FIRST_NOTE_MS = 10_000;
 
 /** Runs a bubble command on the call (from this tab's bubble or an order form tab's). */
 function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) => void) {
@@ -81,10 +73,12 @@ function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) 
  * order form tab of this conversation show and control the same call (lib/voice/client/tab-link.ts). The form's
  * step reaches the call as a context message; the latest one is sent again once the call is live.
  */
-export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble }: {
+export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble, firstNote = false }: {
   client: VoiceClient; tabKey: string | null; tr: Tr; agentName: string; dir: "ltr" | "rtl";
   /** Show the bubble here (the tab link runs either way while a call is on). */
   showBubble: boolean;
+  /** The buyer's first switch to voice in this conversation: the note that what they say appears as text, once, next to the bubble. */
+  firstNote?: boolean;
 }) {
   const s = useVoiceSnapshot(client);
   const now = useNow(s.phase === "live");
@@ -131,11 +125,22 @@ export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble
   useEffect(() => {
     if (live && context.current) client.sendContext(context.current);
   }, [client, live]);
+  // The first switch's note, next to the bubble once the call is live, for a while (or until tapped).
+  const [noteOn, setNoteOn] = useState(false);
+  useEffect(() => {
+    if (!firstNote || !live) return;
+    setNoteOn(true);
+    const t = window.setTimeout(() => setNoteOn(false), FIRST_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [firstNote, live]);
   const state: MirrorState | null = mirrorFromSnapshot(s, { now, levels: { mic: 0, out: 0 }, outputs, output });
   if (!showBubble || !state || state.phase === "ended") return null;
   return (
     <div className="c-bubble-dock" dir={dir}>
-      <VoiceBubble state={state} agentName={agentName} tr={tr} dir={dir} levels={client.levels} onCommand={(c) => runCommand(client, c, setOutput)} placement="dock" />
+      <VoiceBubble
+        state={state} agentName={agentName} tr={tr} dir={dir} levels={client.levels} onCommand={(c) => runCommand(client, c, setOutput)} placement="dock"
+        note={noteOn ? tr("buyer.voice.first_note") : null} onNoteDone={() => setNoteOn(false)}
+      />
     </div>
   );
 }

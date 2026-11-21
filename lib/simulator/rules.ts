@@ -146,3 +146,6 @@ export function brandVars(brand: string | null | undefined, prefix = "--brand"):
   const c = brandTextColors(brand);
   return { [prefix]: c.brand, [`${prefix}-on`]: c.onBrand, [`${prefix}-text`]: c.brandText };
 }
+
+/** How long a quote message waits for its card before the buyer chat shows it as text (lib/simulator/service buyerChat). */
+export const QUOTE_CARD_WAIT_MS = 120_000;

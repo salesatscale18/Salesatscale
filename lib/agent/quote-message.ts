@@ -94,6 +94,14 @@ export function deliveryByPhrase(latestIso: string, language: string): string {
 const capFirst = (s: string) => (s ? s[0].toLocaleUpperCase() + s.slice(1) : s);
 
 /** The message body. Lines are grouped per SKU: one-time amount, plus the recurring amount. */
+/**
+ * True when a message is a quote message as quoteMessageText writes it: its first line is the bold title with the
+ * quote number ("*Quote Q-1005*", "*הצעת מחיר Q-1005*"). The buyer chat waits for such a message's card.
+ */
+export function isQuoteMessageText(body: string): boolean {
+  return /^\*[^*\n]*\bQ-\d+(?: v\d+)?[^*\n]*\*\s*(\n|$)/.test(body);
+}
+
 export function quoteMessageText(q: QuoteMessageInput): string {
   const locale = localeOf(q.language);
   const tr = (key: MessageKey, vars?: Record<string, string | number>) => t(key, vars, locale);

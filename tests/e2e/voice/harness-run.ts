@@ -88,8 +88,28 @@ const NO_SPEAKERS = `(() => {
   md.enumerateDevices = async () => (await orig()).filter((d) => d.kind !== "audiooutput");
 })();`;
 
+/**
+ * Records anything that must never paint: a quote's raw text in a chat bubble (it comes as its card), and a
+ * transcription marker ("<no speech detected>") anywhere in the chat, a caption or a note. window.__never.
+ */
+const NEVER_PAINT = `(() => {
+  window.__never = [];
+  const look = () => {
+    for (const el of document.querySelectorAll(".c-bubble")) {
+      const t = el.textContent || "";
+      if (/(Quote|הצעת מחיר) Q-\\d+/.test(t)) window.__never.push("raw quote: " + t.slice(0, 60));
+    }
+    for (const el of document.querySelectorAll(".c-bubble, [data-bubble-caption], [data-bubble-note], .c-log")) {
+      const t = el.textContent || "";
+      if (/no speech detected|<noise>/i.test(t)) window.__never.push("marker: " + t.slice(0, 60));
+    }
+  };
+  new MutationObserver(look).observe(document, { subtree: true, childList: true, characterData: true });
+})();`;
+
 async function newPage(browser: Browser, url: string, width = 1440, height = 900, o: { speakers?: boolean } = {}) {
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2 });
+  await ctx.addInitScript(NEVER_PAINT);
   if (o.speakers !== undefined) await ctx.addInitScript(o.speakers ? TWO_SPEAKERS : NO_SPEAKERS);
   await ctx.grantPermissions(["microphone"], { origin: new URL(url).origin }).catch(() => undefined);
   const page = await ctx.newPage();
@@ -212,7 +232,7 @@ async function bubbleSection(browser: Browser, base: string) {
     await chat.context().close();
   }
   await fetch(`${base}/api/reset-rate-limits`, { method: "POST" });
-  // A real lead's chat (their header: no simulated banner, the stop link, the "⋯" menu) with a call on: the strip,
+  // A real lead's chat (their header: no simulated banner, the stop link, the "⋯" menu) with a call on: no bar,
   // the bubble and the composer's voice button sit with it, in English and Hebrew.
   for (const lang of ["en", "he"] as const) {
     const sfx = lang === "he" ? "phone-he" : "phone";
@@ -222,9 +242,10 @@ async function bubbleSection(browser: Browser, base: string) {
     await chat.click("[data-voice-talk]");
     const live = await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 }).then(() => true, () => false);
     check(live, `real lead ${sfx}: the call runs under their header`);
-    const head = await chat.locator(".c-head").boundingBox();
-    const strip = await chat.locator("[data-buyer-call]").boundingBox();
-    check(!!head && !!strip && head.y + head.height <= strip.y + 1, `real lead ${sfx}: the strip sits under the header (and its menu)`);
+    check((await chat.locator("[data-buyer-call]").count()) === 0, `real lead ${sfx}: no bar under their header while live`);
+    const bub = await chat.locator("[data-bubble-button]").boundingBox();
+    const bar = await chat.locator(".c-bar").boundingBox();
+    check(!!bub && !!bar && bub.y + bub.height <= bar.y, `real lead ${sfx}: the bubble sits above the composer`);
     await chat.waitForTimeout(1500);
     await shot(chat, `bubble-real-lead-${sfx}`);
     await chat.click("[data-voice-back]").catch(() => undefined);
@@ -254,6 +275,37 @@ async function bubbleSection(browser: Browser, base: string) {
     await form.context().close();
   }
   await standbySection(browser, base);
+  await markersAndQuoteSection(browser, base);
+}
+
+/**
+ * The live call's two artefacts: transcription markers ("<no speech detected>", the scripted model emits them in
+ * both directions) never show in the chat, a caption or the form tab; and the quote made during the call never
+ * paints as raw text (it comes as its card). Every page watches with NEVER_PAINT.
+ */
+async function markersAndQuoteSection(browser: Browser, base: string) {
+  console.log("voice: markers and the quote during a call");
+  await fetch(`${base}/api/reset-rate-limits`, { method: "POST" });
+  await fetch(`${base}/api/markers?mode=with_text`, { method: "POST" });
+  const chat = await newPage(browser, `${base}/buyer?lang=en`, 390, 844);
+  await chat.waitForSelector("[data-voice-talk]:not([data-voice-disabled])", { timeout: 15_000 });
+  await chat.click("[data-voice-talk]");
+  await chat.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 });
+  const form = await chat.context().newPage();
+  await form.goto(`${base}/form?lang=en&step=order`);
+  await form.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 10_000 });
+  // The scripted buyer asks for a price: the agent makes the quote during the call.
+  const card = await chat.waitForSelector(".c-msg--card", { timeout: 90_000 }).then(() => true, () => false);
+  check(card, "a quote made during the call arrives as its card");
+  await chat.waitForTimeout(2_000);
+  const never = [...((await chat.evaluate("window.__never")) as string[]), ...((await form.evaluate("window.__never")) as string[])];
+  check(!never.some((x) => x.startsWith("raw quote")), `the quote never painted as raw text${never.length ? ` (${never[0]})` : ""}`);
+  check(!never.some((x) => x.startsWith("marker")), "no transcription marker in the chat, a caption or the form tab");
+  await shot(chat, "buyer2-quote-in-call-phone");
+  await chat.click("[data-voice-back]").catch(() => undefined);
+  await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).catch(() => undefined);
+  await chat.context().close();
+  await fetch(`${base}/api/markers?mode=off`, { method: "POST" });
 }
 
 /**
@@ -285,9 +337,11 @@ async function standbySection(browser: Browser, base: string) {
     check(await standbyIn(form, 2_000), `${sfx}: and in the form tab's bubble`);
     const want = lang === "he" ? "בהמתנה · פשוט לדבר" : "Standing by · Just speak";
     check((await chat.getAttribute("[data-bubble-button]", "aria-label"))?.includes(want) ?? false, `${sfx}: the bubble says "${want}"`);
-    const strip = chat.locator('[data-buyer-call] .sas-vbar[data-voice-state="standby"]');
-    const stripText = (await strip.count()) ? ((await strip.textContent()) ?? "") : "";
-    check(want.split(" · ").every((w) => stripText.includes(w)), `${sfx}: the strip has the same words`);
+    // No bar: standby says itself next to the bubble for a few seconds, in both tabs.
+    for (const [page, tab] of [[chat, "chat"], [form, "form tab"]] as const) {
+      const note = (await page.locator('[data-bubble-note="standby"]').count()) ? ((await page.locator('[data-bubble-note="standby"]').textContent()) ?? "") : "";
+      check(note.includes(want), `${sfx}: "${want}" next to the bubble (${tab})`);
+    }
     if (lang === "en") {
       check(await awake(chat, 20_000), "speech wakes it (no tap)");
       // Muted, so the microphone cannot wake it: standby again, and past the idle end (8 s here) the open form keeps the call on.
@@ -495,8 +549,9 @@ async function main() {
     // ------------------------------------- buyer: switch to voice and back (release 2, round 2)
     console.log("buyer: switch the chat to voice and back");
     {
+      // Live: the bubble is the indicator (no bar above the chat); the other phases still show the bar.
       const waitPhase = (page: Page, want: string, timeout = 30_000) =>
-        page.waitForSelector(`[data-buyer-call][data-voice-phase="${want}"]`, { timeout }).then(() => true, () => false);
+        page.waitForSelector(want === "live" ? '[data-voice-bubble][data-bubble-phase="live"]' : `[data-buyer-call][data-voice-phase="${want}"]`, { timeout }).then(() => true, () => false);
       const gateOff = (which: string) => fetch(`${h.url}/api/buyer-gate?off=${which}`, { method: "POST" });
       await gateOff("");
       type Shape = { name: string; w: number; hgt: number; lang: "en" | "he" };
@@ -514,15 +569,13 @@ async function main() {
         check((await page.locator("[data-voice-sheet]").count()) === 0, `${sh.name}: no sheet, the call starts at once`);
         check(await waitPhase(page, "live", 20_000), `${sh.name}: the call connects`);
         check(await page.waitForSelector("[data-voice-back]", { timeout: 5000 }).then(() => true, () => false), `${sh.name}: Back to text at the composer's edge`);
-        check((await page.getAttribute("[data-buyer-call] [data-voice-end]", "aria-label")) === (sh.lang === "he" ? "חזרה לטקסט" : "Back to text"), `${sh.name}: End reads Back to text`);
-        check((await page.locator("[data-buyer-call] .sas-rb--end").count()) === 0 && (await page.locator("[data-buyer-call] .sas-rb--back").count()) === 1, `${sh.name}: Back to text is neutral, not the red hang-up`);
+        check((await page.locator("[data-buyer-call]").count()) === 0, `${sh.name}: no bar above the chat while the call is live (the bubble is the indicator)`);
         // Typing during the call: the composer's button becomes Send, and Back to text again when the field is empty.
         await page.fill("#c-input", "x");
         check((await page.locator("[data-voice-back]").count()) === 0 && (await page.locator(".c-send:not(.c-send--hidden)").count()) === 1, `${sh.name}: typing turns the composer button into Send`);
         await page.fill("#c-input", "");
         check((await page.locator("[data-voice-back]").count()) === 1, `${sh.name}: an empty field shows Back to text again`);
-        check((await page.locator("[data-voice-meta]").textContent())?.includes(sh.lang === "he" ? "מצב קול" : "Voice mode") ?? false, `${sh.name}: Voice mode label`);
-        check((await page.locator("[data-voice-first-note]").count()) === (first ? 1 : 0), `${sh.name}: the transcript note only on the first switch in the conversation`);
+        check((await page.locator('[data-bubble-note="first"]').count()) === (first ? 1 : 0), `${sh.name}: the transcript note next to the bubble, only on the first switch in the conversation`);
         check(!/automated assistant/i.test((await page.locator("[data-buyer-call]").textContent()) ?? ""), `${sh.name}: no bot notice in the bar`);
         await page.waitForTimeout(sh.lang === "en" && first ? 9000 : 3500);
         await shot(page, `buyer2-call-live-${sh.name}`);

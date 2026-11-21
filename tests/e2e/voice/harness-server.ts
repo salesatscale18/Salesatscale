@@ -133,6 +133,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
   const models: ScriptedRealtime[] = [];
   // Standby timings for calls started from now on (/api/limits?fast=1: see standby and the idle end in seconds).
   let fastStandby = false;
+  // Transcription markers from the scripted model for calls started from now on (/api/markers?mode=with_text|only|off).
+  let markers: "with_text" | "only" | undefined;
   // Buyers (release 2): an English chat, and a Hebrew page whose conversation is in English (the call bar in RTL).
   const ALWAYS = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
   let gateEnv: Record<string, string | undefined> = ENV;
@@ -185,6 +187,11 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       if (req.method === "POST" && url.pathname === "/api/reset-rate-limits") {
         // Harness only: a buyer link allows 6 calls an hour; the sections below make more than that on the same links.
         await db.delete(rateLimits);
+        return send(200, "application/json", "{}");
+      }
+      if (req.method === "POST" && url.pathname === "/api/markers") {
+        const m = url.searchParams.get("mode");
+        markers = m === "with_text" || m === "only" ? m : undefined;
         return send(200, "application/json", "{}");
       }
       if (req.method === "POST" && url.pathname === "/api/limits") {
@@ -294,7 +301,7 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
     }
   });
   attachVoiceSockets(server, { db, env: ENV, deadlineSec: CAP, limits: () => (fastStandby ? { standbyAfterQuietMs: 3_000, standbyIdleEndMs: 8_000 } : undefined), makeModel: () => {
-    const m = new ScriptedRealtime();
+    const m = new ScriptedRealtime({ markers });
     models.push(m);
     return m;
   } });

@@ -63,7 +63,10 @@ function Wave({ bars, levels }: { bars: BubbleBars; levels?: Levels }) {
 /** How long the caption stays after the agent's line last changed (it also stays while the agent speaks). */
 const CAPTION_HOLD_MS = 4000;
 
-export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, caption = false, placement }: {
+/** How long the "Standing by · Just speak" line shows next to the bubble when the call goes on standby. */
+const STANDBY_NOTE_MS = 5000;
+
+export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, caption = false, placement, note = null, onNoteDone }: {
   state: MirrorState;
   agentName: string;
   tr: Tr;
@@ -74,6 +77,9 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
   caption?: boolean;
   /** "dock": inside the chat, above the composer; "fixed": the page's bottom corner (order form). */
   placement: "dock" | "fixed";
+  /** A short note next to the bubble (the buyer's first switch: what they say appears as text); a tap or onNoteDone ends it. */
+  note?: string | null;
+  onNoteDone?: () => void;
 }) {
   const view = bubbleView(state, tr, agentName);
   const [open, setOpen] = useState(false);
@@ -119,7 +125,19 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
     const t = window.setTimeout(() => setShownId(null), CAPTION_HOLD_MS);
     return () => window.clearTimeout(t);
   }, [caption, shownId, view.speaking, expanded, capText]);
-  const showCaption = caption && !!state.caption && shownId === state.caption.id && !view.ended && !open;
+  // Standby has no bar any more: when the call goes on standby, its words show next to the bubble for a few seconds.
+  const [standbyNote, setStandbyNote] = useState(false);
+  useEffect(() => {
+    if (!view.standby || state.muted) {
+      setStandbyNote(false);
+      return;
+    }
+    setStandbyNote(true);
+    const t = window.setTimeout(() => setStandbyNote(false), STANDBY_NOTE_MS);
+    return () => window.clearTimeout(t);
+  }, [view.standby, state.muted]);
+  const flash = open || view.ended ? null : note ?? (standbyNote ? view.word : null);
+  const showCaption = !flash && caption && !!state.caption && shownId === state.caption.id && !view.ended && !open;
 
   const act = (c: TabCommand) => {
     onCommand(c);
@@ -165,6 +183,11 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
             <Icon name="keyboard" />{tr("buyer.voice.back")}
           </button>
         </div>
+      ) : null}
+      {flash ? (
+        <button type="button" className="vb-caption vb-caption--note vb-caption--open" dir="auto" onClick={() => (note ? onNoteDone?.() : setStandbyNote(false))} data-bubble-note={note ? "first" : "standby"}>
+          <span>{flash}</span>
+        </button>
       ) : null}
       {showCaption && state.caption ? (
         <button

@@ -266,4 +266,12 @@ describe("the bubble", () => {
     expect(he).toContain("המיקרופון מושתק");
     expect(he).toContain("data-bubble-muted");
   });
+
+  it("a note next to the bubble (the first switch), in the page's language; markers never as a caption", () => {
+    const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("he")} dir="rtl" onCommand={() => {}} placement="dock" note={translator("he")("buyer.voice.first_note")} />);
+    expect(html).toContain('data-bubble-note="first"');
+    expect(html).toContain("מה שנאמר מופיע כטקסט בצ&#x27;אט הזה");
+    const marker = renderToStaticMarkup(<VoiceBubble state={{ ...live, caption: { id: "a", text: "<no speech detected>" } }} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="fixed" caption />);
+    expect(marker).not.toContain("no speech");
+  });
 });
