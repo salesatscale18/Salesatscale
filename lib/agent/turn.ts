@@ -23,6 +23,8 @@ import { plainChatText } from "./core/plain-text";
 import { buyerNames } from "./core/names";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { leadCallback } from "@/lib/callbacks/service";
+import { callUpcoming } from "@/lib/callbacks/rules";
+import { leadCallForContext, teamCallLogLine } from "@/lib/team-calls/service";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
 import { priceApprovalContext } from "./price-approval";
 import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
@@ -88,7 +90,7 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp, contact, callback, teamQuestions, priceApproval] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, contact, callback, loggedCall, teamQuestions, priceApproval] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
@@ -98,6 +100,8 @@ export async function runBuyerTurn(
     leadContactSettings(db, account, lead.marketId),
     // The buyer's open call request (O6): the agent keeps answering until the call.
     leadCallback(db, args.accountId, conv.leadId),
+    // The team's log of its call with the buyer (lib/team-calls): the agent reads the note before it continues.
+    leadCallForContext(db, args.accountId, conv.leadId),
     // Questions sent to the team and their answers (O4, lib/team-questions): the agent uses an answer at a natural point.
     teamQuestionsContext(db, args.accountId, conv.leadId, conv.id),
     // The team's decline of a special price (O1 part 5): the agent continues the price ladder from it.
@@ -134,7 +138,9 @@ export async function runBuyerTurn(
       // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
       // Times as the buyer should hear them ("Friday 20 November at 12:30", O7).
       followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
-      callback: callback ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
+      // A call still ahead (or an older request still waiting); once its slot has passed, the team's log says what happened.
+      callback: callback && (callback.status === "requested" || callUpcoming(callback, new Date())) ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
+      teamCall: teamCallLogLine(loggedCall, (at) => formatBuyerLocal(at, contact.timezone)),
       teamQuestions,
       priceApproval,
       localNow: localNowLine(new Date(), contact.timezone),

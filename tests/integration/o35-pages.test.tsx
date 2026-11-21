@@ -133,7 +133,9 @@ describe("O35 pages on the demo account", () => {
     save("leads-needs", leadsHtml);
     expect(text(leadsHtml)).toContain("Asked for a person\u2068Upset: false night alarms, and wants a person now\u2069");
     expect(text(leadsHtml)).toContain("\u2068AI limit reached\u2069");
-    expect(text(leadsHtml)).toContain("Confirm call · ");
+    // Calls: "Log the call" (reach boards); "Calls to confirm" is gone.
+    expect(text(leadsHtml)).toContain("Log the call");
+    expect(text(leadsHtml)).not.toContain("Confirm call · ");
   });
 
   it("Conversations row and the lead page banner carry the same reason line", async () => {
@@ -153,21 +155,24 @@ describe("O35 pages on the demo account", () => {
     expect(calm).not.toContain("data-handoff-why");
     const done = await render(LeadPage, { account: slug, leadId: (await leadBy(STATE_LEADS.callDone.n)).id });
     save("lead-call-done", done);
-    expect(text(done)).toContain("How did the call go?");
+    expect(text(done)).toContain("Log the call");
+    expect(text(done)).not.toContain("How did the call go?");
   });
 
-  it("the buyer-named call on Saturday at 21:00: the call card shows it with no outside-hours note; it is in Needs you under Calls, also with no note", async () => {
+  it("the buyer-named time on Saturday at 21:00: the Follow-up card says the buyer asked for it, with no outside-hours note; not in Needs you", async () => {
     const rotem = await leadBy(STATE_LEADS.buyerNamedCall.n);
     const lead = await render(LeadPage, { account: slug, leadId: rotem.id });
     save("lead-call-buyer-named", lead);
-    expect(text(lead)).toMatch(/Call requested[^<]*Sat/);
+    // A buyer-named time is now a follow-up (the talk-now SMS at that time), not a call to confirm.
+    expect(text(lead)).toMatch(/Follow-up scheduled · Sat/);
+    expect(text(lead)).toContain("The buyer asked for this time.");
     // The outside-hours note was removed (owner, 20 Nov 2026: a misreading).
     expect(lead).not.toContain('data-testid="callback-outside-hours"');
     expect(text(lead)).not.toContain("Outside your contact hours");
     const calls = text(await render(LeadsPage, { account: slug }, { view: "needs_you", need: "calls" }));
-    expect(calls).toContain("Rotem Demo");
-    expect(calls).toContain("Shira Demo");
-    expect(calls).toMatch(/Rotem Demo[\s\S]*?Confirm call/);
+    expect(calls).not.toContain("Rotem Demo");
+    expect(calls).not.toContain("Shira Demo");
+    expect(calls).toContain("Omer Demo");
     expect(calls).not.toContain("Outside your hours");
   });
 

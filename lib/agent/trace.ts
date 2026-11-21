@@ -89,8 +89,9 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
       got = result.due_short || result.due_local ? `Follow-up set for ${str(result.due_short ?? result.due_local)}` : "";
       break;
     case "request_callback":
-      sent = `${str(input.time)}${input.brief ? `: ${str(input.brief)}` : ""}`;
-      got = result.time_short || result.time_local ? `Call requested for ${str(result.time_short ?? result.time_local)}; the team confirms it` : "";
+      // Older calls carry the time the agent recorded; now the buyer picks it on the booking card.
+      sent = input.time ? `${str(input.time)}${input.brief ? `: ${str(input.brief)}` : ""}` : str(input.brief);
+      got = result.time_short || result.time_local ? `Call requested for ${str(result.time_short ?? result.time_local)}; the team confirms it` : result.ok === true ? "Booking link sent in the chat" : "";
       break;
     case "ask_team":
       sent = `"${str(input.question)}"${input.must_have === true ? " (must-have)" : input.must_have === false ? " (good to know)" : ""}`;

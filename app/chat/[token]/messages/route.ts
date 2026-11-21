@@ -25,6 +25,7 @@ import { buyerChat, receiveSimulatorInbound, resolveChatLink } from "@/lib/simul
 import { buyerConversation, buyerVoiceGate, buyerVoiceView, liveVoiceSessionOn } from "@/lib/voice/buyer";
 import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { pendingAfterCall, replyAfterCall } from "@/lib/voice/after-call";
+import { chatReach } from "@/lib/chat/reach";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
@@ -39,7 +40,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   if (link.state === "expired") return json({ error: "expired" }, 410);
   const ctx = link.ctx;
   const afterId = new URL(req.url).searchParams.get("after");
-  const [chat, gate, conv] = await Promise.all([buyerChat(appDb, ctx, { after: afterId }), buyerVoiceGate(appDb, ctx), buyerConversation(appDb, ctx)]);
+  const [chat, gate, conv, reach] = await Promise.all([buyerChat(appDb, ctx, { after: afterId }), buyerVoiceGate(appDb, ctx), buyerConversation(appDb, ctx), chatReach(appDb, ctx)]);
   // A call that ended on the buyer's unanswered turn, and the socket's function had no time to answer it:
   // this poll does (at most once: lib/voice/after-call.ts claims it). The page shows "typing…" meanwhile.
   const due = conv ? await pendingAfterCall(appDb, ctx.account.id, conv.id) : null;
@@ -50,7 +51,8 @@ export async function GET(req: Request, { params }: { params: Promise<{ token: s
   }
   // "Talk to us" follows the gates as they change (contact hours, a person taking over, the setting).
   // Why it is off: only on a simulated chat or for the seller's signed-in staff (never a real buyer).
-  return json({ ...chat, voice: await buyerVoiceView(gate, ctx.lead, () => chatViewerIsStaff(ctx.account.id)) });
+  // Reach RB: the booking card's state and the SMS chips, so a booking the team moves or cancels shows without a reload.
+  return json({ ...chat, reach, voice: await buyerVoiceView(gate, ctx.lead, () => chatViewerIsStaff(ctx.account.id)) });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ token: string }> }) {

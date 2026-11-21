@@ -18,13 +18,16 @@
  * O6). "team_answer" is the team's answer to a question the agent sent them,
  * sent to a buyer who went quiet (lib/team-questions, O4). "quote_declined" tells
  * the buyer the team could not approve the price of a held quote, with the best
- * in-limit offer when there is one (O1 part 5). Pure: safe in client components.
+ * in-limit offer when there is one (O1 part 5). "booking" is the booking card
+ * the agent's request_callback posts (lib/team-calls; web chats show the card,
+ * the text is the fallback), and "booked" the line after the buyer books or
+ * cancels the call on it. Pure: safe in client components.
  */
-export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up" | "callback" | "team_answer" | "quote_declined";
+export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up" | "callback" | "team_answer" | "quote_declined" | "booking" | "booked";
 
 /** The tool_calls name of a message the app wrote outside a model turn. */
 export const APP_MESSAGE_CALL = "app_message";
-const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback", "team_answer", "quote_declined"];
+const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback", "team_answer", "quote_declined", "booking", "booked"];
 
 /**
  * Text a team action sent (UX, O7): the callback time the seller confirmed, changed or cancelled,
@@ -34,7 +37,8 @@ const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "fo
 export const isTeamText = (k: AppMessageKind | undefined) => k === "callback" || k === "team_answer" || k === "quote_declined";
 
 /** Plain text the app wrote (not a quote card): shown as "Sent by the app" in seller views. */
-export const isAppText = (k: AppMessageKind | undefined) => k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback" || k === "team_answer" || k === "quote_declined";
+export const isAppText = (k: AppMessageKind | undefined) =>
+  k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback" || k === "team_answer" || k === "quote_declined" || k === "booking" || k === "booked";
 
 type CallLike = { name: string; outcome: string; result: Record<string, unknown> | null | undefined };
 

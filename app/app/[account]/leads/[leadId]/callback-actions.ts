@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { answerAfterCall, cancelCallback, changeCallback, confirmCallback, type SellerCallbackResult } from "@/lib/callbacks/service";
+import { cancelCallback, changeCallback, type SellerCallbackResult } from "@/lib/callbacks/service";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -13,16 +13,7 @@ function done(slug: string, leadId: string, r: SellerCallbackResult): never {
   const q = r.ok
     ? `callback=${r.request.changed ? "changed" : "confirmed"}${r.buyer.told ? "" : `&callback_not_told=${r.buyer.reason}`}`
     : `callback_error=${r.reason}`;
-  redirect(`/app/${slug}/leads/${leadId}?${q}#callback`);
-}
-
-/** Lead card: confirms the time the agent took. Admins only and account-scoped, checked in confirmCallback; audited; tells the buyer. */
-export async function confirmCallbackAction(form: FormData) {
-  const access = await requireAccount(String(form.get("slug") ?? ""));
-  const leadId = String(form.get("leadId") ?? "");
-  const callbackId = String(form.get("callbackId") ?? "");
-  if (!UUID.test(leadId) || !UUID.test(callbackId)) return;
-  done(access.account.slug, leadId, await confirmCallback(appDb, access, leadId, callbackId));
+  redirect(`/app/${slug}/leads/${leadId}?tab=deal&${q}#callback`);
 }
 
 /** Lead card: sets another time (date and time in the lead's time zone). Same checks as confirm. */
@@ -44,18 +35,5 @@ export async function cancelCallbackAction(form: FormData) {
   const slug = access.account.slug;
   const r = await cancelCallback(appDb, access, leadId, callbackId);
   revalidatePath(`/app/${slug}/leads/${leadId}`);
-  redirect(`/app/${slug}/leads/${leadId}?${r.ok ? `callback=cancelled${r.buyer.told ? "" : `&callback_not_told=${r.buyer.reason}`}` : `callback_error=${r.reason}`}#callback`);
-}
-
-/** "How did the call go?": back to the agent, or the seller takes the deal over (the Take over service). Admins only, account-scoped. */
-export async function afterCallAction(form: FormData) {
-  const access = await requireAccount(String(form.get("slug") ?? ""));
-  const leadId = String(form.get("leadId") ?? "");
-  const callbackId = String(form.get("callbackId") ?? "");
-  const choice = String(form.get("choice") ?? "");
-  if (!UUID.test(leadId) || !UUID.test(callbackId) || (choice !== "agent" && choice !== "seller")) return;
-  const slug = access.account.slug;
-  const r = await answerAfterCall(appDb, access, leadId, callbackId, choice);
-  revalidatePath(`/app/${slug}/leads/${leadId}`);
-  redirect(`/app/${slug}/leads/${leadId}?${r.ok ? `after_call=${r.choice}` : `after_call_error=${r.reason}`}#callback`);
+  redirect(`/app/${slug}/leads/${leadId}?tab=deal&${r.ok ? `callback=cancelled${r.buyer.told ? "" : `&callback_not_told=${r.buyer.reason}`}` : `callback_error=${r.reason}`}#callback`);
 }

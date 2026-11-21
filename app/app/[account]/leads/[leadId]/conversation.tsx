@@ -10,6 +10,7 @@ import type { ConversationView, SellerFormCard } from "@/lib/agent/conversation"
 import { describeCall } from "@/lib/agent/trace";
 import { displayName, personName } from "@/lib/auth/display";
 import { formatClockIn, formatDateTimeIn, formatDayIn, localDateIso } from "@/lib/format";
+import { formatDueLocal } from "@/lib/follow-ups/rules";
 import { isLocale, messages, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
@@ -79,6 +80,9 @@ export function markerText(m: ThreadMarker, meId: string | null, buyer?: string)
   // "Dana opened the chat · Sat 21:03" (board ReachSeller): the buyer's first name.
   if (m.kind === "chat_opened") return t("conv.marker.chat_opened", { name: isolate((buyer ?? "").trim().split(/\s+/)[0] || t("conv.who.buyer")) });
   if (m.kind === "sms") return smsStateText(m.sms);
+  // "Team call booked · Mon 23 Nov 15:30 · 15 min": the time in the zone it was booked in (the lead's market).
+  if (m.kind === "team_call_booked") return t("conv.marker.team_call_booked", { when: isolate(formatDueLocal(m.callAt, m.timezone)), minutes: m.minutes });
+  if (m.kind === "team_call_logged") return teamCallTitle(m);
   if (m.kind === "handed_back") return t("conv.marker.handed_back");
   if (m.kind === "spend_cap") return t("conv.marker.spend_cap");
   // A voice call's boundaries: "Voice call started · 15:44" and "Voice call · 30 s · 15:45" (the time is the marker's).
@@ -95,9 +99,48 @@ export function splitMarkers(markers: ThreadMarker[] | undefined) {
   return { timed, after };
 }
 
-export function MarkerEntry({ marker, meId, time, timeTitle, buyer }: { marker: ThreadMarker; meId: string | null; time: string; timeTitle: string; buyer?: string }) {
+export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref }: {
+  marker: ThreadMarker; meId: string | null; time: string; timeTitle: string; buyer?: string;
+  /** A logged team call: its Edit link (the Deal tab's log form). */
+  editHref?: string;
+}) {
   if (marker.kind === "sms") return <SmsThreadEntry sms={marker.sms} time={time} timeTitle={timeTitle} />;
-  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer)} time={time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
+  if (marker.kind === "team_call_logged") return <TeamCallEntry call={marker} meId={meId} editHref={editHref} />;
+  // The booked marker holds its own date and time.
+  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer)} time={marker.kind === "team_call_booked" ? "" : time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
+}
+
+type LoggedCall = Extract<ThreadMarker, { kind: "team_call_logged" }>;
+
+/** "Team call · 12 min · Mon 23 Nov 15:32"; "No answer · Mon 23 Nov 15:30" for a call that did not happen. */
+export function teamCallTitle(m: LoggedCall): string {
+  const when = isolate(formatDueLocal(m.startedAt, m.timezone));
+  if (m.outcome !== "spoke") return `${t("team_call.title")} · ${t("team_call.logged_outcome", { outcome: t(`team_call.outcome.${m.outcome}`), when })}`;
+  return m.lengthMin ? t("team_call.logged_title", { length: m.lengthMin, when }) : t("team_call.logged_title_short", { when });
+}
+
+/**
+ * A logged team call in the seller's thread (board ReachSeller): "Team call · 12 min ·
+ * Mon 23 Nov 15:32", "{who} called +972 50-•••-4567 · logged by {who}", the note, and Edit.
+ * The phone is masked here (only the Deal tab card shows it in full).
+ */
+export function TeamCallEntry({ call, meId, editHref }: { call: LoggedCall; meId: string | null; editHref?: string }) {
+  // Who calls is not recorded yet (anyone on the team): the person who logged it, "You" / "you" for the viewer.
+  const who = call.by ? isolate(personName(call.by, meId, t("people.you"))) : t("conv.who.team");
+  const by = call.by ? isolate(personName(call.by, meId, t("people.you_lower"))) : t("conv.who.team");
+  return (
+    <div className="sas-teamcall-entry" role="note" data-team-call-entry={call.outcome}>
+      <span className="sas-teamcall-entry__icon" aria-hidden="true"><Icon name="phone-call" /></span>
+      <div className="sas-teamcall-entry__body">
+        <div className="sas-teamcall-entry__head">
+          <strong>{teamCallTitle(call)}</strong>
+          {editHref ? <a href={editHref} className="sas-teamcall-entry__edit" data-team-call-edit="">{t("team_call.edit")}</a> : null}
+        </div>
+        <span className="sas-small">{call.phone ? t("team_call.logged_by", { who, by, phone: call.phone }) : t("team_call.logged_by_nophone", { who, by })}</span>
+        {call.note ? <p className="sas-teamcall-entry__note" dir="auto">{call.note}</p> : null}
+      </div>
+    </div>
+  );
 }
 
 const SMS_STATE_ICON: Record<SmsEntry["state"], IconName> = {
@@ -411,7 +454,10 @@ export function ConversationPanel({
   // Form notes and take-over / hand-back markers, merged by time and placed before the first later message.
   let pending: { at: Date; node: () => ReactNode }[] = [
     ...notes.filter((n) => !cardOfForm.has(n.id)).map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
-    ...timed.map((mk, i) => ({ at: mk.at, node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} /> })),
+    ...timed.map((mk, i) => ({
+      at: mk.at,
+      node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} />,
+    })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
   // The agent's hand-off: right after the reply that made it.

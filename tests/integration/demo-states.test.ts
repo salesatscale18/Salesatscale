@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { agentVersions, auditLog, conversations, quotes, quoteVersions, sellerAccounts, knowledgeFacts, leadEvents, leadIntakeKeys, leads, messages, orderForms, orders, sources, toolCalls, users, type User } from "@/db/schema";
+import { agentVersions, auditLog, conversations, followUps, quotes, quoteVersions, sellerAccounts, knowledgeFacts, leadEvents, leadIntakeKeys, leads, messages, orderForms, orders, sources, toolCalls, users, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 // No real model client may be built: the review states spend nothing.
@@ -28,6 +28,7 @@ const { BUYER_NAMED_CALL, CALL_BRIEFS, CONFIRMED_CALL_TIME } = await import("@/l
 const { leadListFacts } = await import("@/lib/leads/list-facts");
 const { quoteDocs, quoteWhere, endsSoon } = await import("@/lib/quotes/where");
 const { isoInZone } = await import("@/lib/follow-ups/rules");
+const { followUpBuyerNamed } = await import("@/lib/follow-ups/schedule");
 const { callbackAfterCall, leadCallback } = await import("@/lib/callbacks/service");
 const { handoffWhyByLead } = await import("@/lib/leads/handoff-reason");
 const { mentionsUnknownQuestions } = await import("@/lib/agent/handoff-notice");
@@ -324,27 +325,31 @@ describe("demo account review states", () => {
     expect(usage.costMicros).toBe(0);
   });
 
-  it("O35: an open call request (Needs you) and a confirmed call 3 hours ago (How did the call go?)", async () => {
+  it("reach boards: a team call the buyer booked on the agent's booking card (Next step, not Needs you) and a confirmed call 3 hours ago (Log the call)", async () => {
     const asked = await leadBy(STATE_LEADS.callRequested.n);
     const done = await leadBy(STATE_LEADS.callDone.n);
-    // Open request: the agent's request_callback call and the event, at a future time; the chat stays with the agent.
+    // The agent's request_callback posted the booking card; the buyer booked a slot; the chat stays with the agent.
     const askedConv = await convOf(asked.id);
     expect(askedConv.status).toBe("open");
-    expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, askedConv.id))).map((c) => c.name)).toContain("request_callback");
-    // The agent's line names the time in the long buyer form ("Friday 20 November at 12:30"), as the agent says it.
-    const said = (await db.select().from(messages).where(eq(messages.conversationId, askedConv.id))).map((m) => m.body).find((b) => b.includes("asked for a call"));
-    expect(said).toMatch(/on [A-Z][a-z]+day \d{1,2} [A-Z][a-z]+ at \d{2}:\d{2};/);
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, askedConv.id));
+    expect(calls.map((c) => c.name)).toContain("request_callback");
+    expect(calls.find((c) => c.name === "app_message" && (c.result as { kind?: string }).kind === "booking")?.result).toMatchObject({ brief: CALL_BRIEFS.requested });
+    const bodies = (await db.select().from(messages).where(eq(messages.conversationId, askedConv.id))).map((m) => m.body);
+    expect(bodies).toContain("Booked. Anything you'd like the team to prepare for the call?");
     const open = (await leadCallback(db, accountId, asked.id, NOW))!;
-    expect(open).toMatchObject({ status: "requested", brief: CALL_BRIEFS.requested, conversationId: askedConv.id });
+    expect(open).toMatchObject({ status: "confirmed", booked: true, setBy: "buyer", brief: CALL_BRIEFS.requested, conversationId: askedConv.id });
     expect(open.at.getTime()).toBeGreaterThan(NOW.getTime());
     const items = await needsYou(db, accountId, NOW);
-    expect(items.find((i) => i.leadId === asked.id)).toMatchObject({ kind: "callback_requested", brief: CALL_BRIEFS.requested });
-    // Confirmed call 3 hours ago: requested + confirmed, the confirmation in the thread, and the after-call prompt.
+    expect(items.some((i) => i.leadId === asked.id)).toBe(false);
+    // Never an SMS to a fictional demo number: the team_call SMS is not even tried.
+    expect((await db.select().from(leadEvents).where(eq(leadEvents.leadId, asked.id))).filter((e) => e.type.startsWith("sms."))).toEqual([]);
+    // Confirmed call 3 hours ago: requested + confirmed, the confirmation in the thread, and "Log the call".
     const types = (await db.select().from(leadEvents).where(eq(leadEvents.leadId, done.id))).map((e) => e.type);
     expect(types).toEqual(expect.arrayContaining(["callback.requested", "callback.confirmed"]));
     const after = (await callbackAfterCall(db, accountId, done.id, NOW))!;
     expect(after).toMatchObject({ status: "confirmed", brief: CALL_BRIEFS.done });
     expect(NOW.getTime() - after.at.getTime()).toBe(3 * 3_600_000);
+    expect(items.find((i) => i.leadId === done.id)).toMatchObject({ kind: "call_finished", callbackId: after.id });
     const view = await conversationView(db, accountId, await convOf(done.id));
     expect(view.thread.at(-1)!.message.body).toMatch(/^Your call is confirmed for .+\. Until then, I'm here for any question\.$/);
     expect(view.thread.at(-1)!.message.deliveryStatus).toBeNull();
@@ -352,26 +357,25 @@ describe("demo account review states", () => {
     expect(await leadCallback(db, otherId, asked.id, NOW)).toBeNull();
   });
 
-  it("a buyer-named call on Saturday at 21:00 (outside contact hours): requested by the agent's tool, waiting in Needs you under Calls", async () => {
+  it("a buyer-named time on Saturday at 21:00 (outside contact hours): the agent's schedule_follow_up with buyer_named_time, the follow-up, not Needs you", async () => {
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
     const rotem = await leadBy(STATE_LEADS.buyerNamedCall.n);
     expect(rotem).toMatchObject({ fullName: "Rotem Demo", company: "Bakery Demo Rishon", language: "en", status: "agent_handling" });
     const conv = await convOf(rotem.id);
     expect(conv.status).toBe("open");
-    // The agent's request_callback carries buyer_named_time, as the tool writes it.
+    // The agent's schedule_follow_up carries buyer_named_time, as the tool writes it.
     const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, conv.id));
-    expect(calls.find((c) => c.name === "request_callback")?.input).toMatchObject({ buyer_named_time: true, brief: CALL_BRIEFS.buyerNamed });
+    expect(calls.find((c) => c.name === "schedule_follow_up")?.input).toMatchObject({ buyer_named_time: true });
     // NOW is Thursday 19 November: the next Saturday at 21:00 in the account's time zone.
-    const call = (await leadCallback(db, accountId, rotem.id, NOW))!;
-    expect(call).toMatchObject({ status: "requested", brief: CALL_BRIEFS.buyerNamed, buyerNamedTime: true, outsideHoursAsked: true });
-    expect(isoInZone(call.at, acc.timezone).slice(0, 16)).toBe(`2026-11-21T${BUYER_NAMED_CALL.time}`);
+    const [f] = await db.select().from(followUps).where(and(eq(followUps.leadId, rotem.id), eq(followUps.status, "scheduled")));
+    expect(isoInZone(f.dueAt, acc.timezone).slice(0, 16)).toBe(`2026-11-21T${BUYER_NAMED_CALL.time}`);
+    expect(await followUpBuyerNamed(db, f)).toMatchObject({ buyerNamedTime: true });
     const bodies = (await conversationView(db, accountId, conv)).thread.map((e) => e.message.body);
     expect(bodies).toContainEqual(expect.stringContaining(BUYER_NAMED_CALL.words));
-    expect(bodies.at(-1)).toMatch(/^Sure\. I've asked for a call with a member of our team on Saturday 21 November at 21:00;/);
-    // Not confirmed: Needs you shows it as a call request.
-    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === rotem.id)).toMatchObject({ kind: "callback_requested", brief: CALL_BRIEFS.buyerNamed });
-    // The other seeded request, inside contact hours, carries no note.
-    expect((await leadCallback(db, accountId, (await leadBy(STATE_LEADS.callRequested.n)).id, NOW))!.outsideHoursAsked).toBe(false);
+    expect(bodies.at(-1)).toBe("Done. I'll message you on Saturday 21 November at 21:00 your time.");
+    // No call to confirm: nothing in Needs you.
+    expect((await needsYou(db, accountId, NOW)).some((i) => i.leadId === rotem.id)).toBe(false);
+    expect(await leadCallback(db, accountId, rotem.id, NOW)).toBeNull();
   });
 
   it("LQ: a call confirmed for tomorrow 11:00 (the Next step), a sent quote valid until tomorrow, a declined held quote; Needs you unchanged", async () => {

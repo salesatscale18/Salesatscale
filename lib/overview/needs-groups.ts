@@ -14,7 +14,7 @@ export type NeedsGroup = (typeof NEEDS_GROUPS)[number];
 /** The item kinds of each group. */
 export const NEEDS_GROUP_KINDS: Record<NeedsGroup, readonly NeedsYouKind[]> = {
   person: ["human_handling"],
-  calls: ["callback_requested", "call_finished"],
+  calls: ["call_finished"],
   questions: ["team_question"],
   payments: ["bank_transfer", "payment_failed"],
   prices: ["quote_approval"],

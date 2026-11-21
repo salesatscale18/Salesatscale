@@ -63,6 +63,21 @@ export async function nudgeOpener(db: Db, actor: Actor, accountId: string, leadI
   return nudgeBuyer(db, actor, { accountId, leadId, kind: "opener", messageId, now: deps.now }, deps);
 }
 
+/**
+ * The SMS after the scheduler wrote a follow-up into the web chat (`messageId`):
+ * a time the buyer named is a service message, "It's the time you asked for"
+ * (named_time, any hour, not behind SMS_AGENT_NUDGES); a time the agent chose
+ * is the commercial follow-up, off until SMS_AGENT_NUDGES=1.
+ */
+export async function nudgeFollowUp(
+  db: Db, accountId: string, leadId: string, messageId: string, buyerNamedTime: boolean, deps: NudgeDeps & { now?: Date } = {},
+): Promise<MaybeNudge> {
+  const lead = await realLead(db, accountId, leadId);
+  const skipped = skip(lead);
+  if (skipped) return skipped;
+  return nudgeBuyer(db, { userId: null, actingAs: false }, { accountId, leadId, kind: buyerNamedTime ? "named_time" : "follow_up", messageId, now: deps.now }, deps);
+}
+
 export type OfferFormResult =
   | { posted: true; conversationId: string; messageId: string; sms: MaybeNudge }
   | { posted: false; reason: "not_found" | "opted_out" | "test_lead" | "no_agent"; sms: null };

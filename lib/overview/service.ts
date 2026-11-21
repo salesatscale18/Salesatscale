@@ -7,7 +7,8 @@ import { cache } from "react";
 import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
-import { CONFIRMED_SHOWN_MS, finishedCallbacks, requestedCallbacks } from "@/lib/callbacks/service";
+import { finishedCallbacks } from "@/lib/callbacks/service";
+import { callEndsAt } from "@/lib/callbacks/rules";
 import { openTeamQuestions } from "@/lib/team-questions/service";
 import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
@@ -33,9 +34,11 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "form_unsigned"; quoteId: string; formId: string; quoteNumber: number; openedAt: Date }
   | { kind: "form_expiring"; quoteId: string; formId: string; quoteNumber: number; expiresAt: Date }
   | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
-  /** O6: the agent took a time for a call; the seller confirms or changes it. `timezone` is the zone the time was set in. */
-  | { kind: "callback_requested"; callbackId: string; callAt: Date; timezone: string; brief: string }
-  /** O7: a confirmed call whose time has passed, waiting for "How did the call go?" (who continues with the buyer). */
+  /**
+   * A booked (or confirmed) team call whose slot has ended, waiting for "Log the call" (reach boards; it
+   * replaces "How did the call go?"). Calls still ahead are not here: Leads shows them as Next step, and the
+   * seller confirmation step ("Calls to confirm") is gone. `timezone` is the zone the time was set in.
+   */
   | { kind: "call_finished"; callbackId: string; callAt: Date; timezone: string }
   /** O4: a question the agent sent to the team (ask_team); answered in Knowledge. The chat is not paused. */
   | { kind: "team_question"; question: string; buyerWords: string; mustHave: boolean | null; conversationId: string }
@@ -124,9 +127,9 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     // An agreed follow-up that could not be sent (lib/follow-ups): someone should write to the buyer.
     failedFollowUps(db, accountId, now),
   ]);
-  // A call request waiting for the seller (lib/callbacks, O6), and questions sent to the team (lib/team-questions, O4).
-  const [callbacks, finished, questions, whys] = await Promise.all([
-    requestedCallbacks(db, accountId, now), finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
+  // A team call to log (lib/callbacks), and questions sent to the team (lib/team-questions, O4).
+  const [finished, questions, whys] = await Promise.all([
+    finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
     // Why each handed lead needs a person (O35): the latest hand-off's reason line.
     handoffWhyByLead(db, accountId, handed.map((r) => r.leadId)),
   ]);
@@ -166,16 +169,10 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       followUpId: f.id, dueAt: f.dueAt, reason: f.reason,
     });
   }
-  for (const c of callbacks) {
-    items.push({
-      leadId: c.leadId, leadName: c.leadName, company: c.company, marketId: c.marketId, kind: "callback_requested", id: `callback:${c.id}`, at: c.requestedAt,
-      callbackId: c.id, callAt: c.at, timezone: c.timezone, brief: c.brief,
-    });
-  }
   for (const c of finished) {
     items.push({
       leadId: c.leadId, leadName: c.leadName, company: c.company, marketId: c.marketId, kind: "call_finished", id: `call_finished:${c.id}`,
-      at: new Date(c.at.getTime() + CONFIRMED_SHOWN_MS), callbackId: c.id, callAt: c.at, timezone: c.timezone,
+      at: callEndsAt(c), callbackId: c.id, callAt: c.at, timezone: c.timezone,
     });
   }
   for (const q of questions) {
@@ -218,9 +215,9 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
       ),
     db.select({ n: count() }).from(followUps).innerJoin(leads, eq(leads.id, followUps.leadId)).where(failedFollowUpWhere(accountId, now)),
   ]);
-  // Call requests are folded from lead events (lib/callbacks), so they are counted from the same read as the list.
-  const [c, cf, q] = await Promise.all([requestedCallbacks(db, accountId, now), finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
-  return a.n + h.n + o.n + f.n + u.n + c.length + cf.length + q.length;
+  // Calls are folded from lead events (lib/callbacks), so they are counted from the same read as the list.
+  const [cf, q] = await Promise.all([finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
+  return a.n + h.n + o.n + f.n + u.n + cf.length + q.length;
 }
 
 /** needsYouCount at the current time, cached per request (the nav badge in the layout). */
@@ -232,11 +229,9 @@ export function needsYouHref(base: string, item: NeedsYouItem): string {
     case "human_handling":
     case "follow_up_failed":
       return `${base}/leads/${item.leadId}`;
-    // The lead's Deal tab (phone) with the call card in view (O7, UX).
-    case "callback_requested":
-      return `${base}/leads/${item.leadId}?tab=deal#callback`;
+    // The lead's Deal tab (phone) with the Team call card, now the log form, in view (O7, UX; reach boards).
     case "call_finished":
-      return `${base}/leads/${item.leadId}?tab=deal#after-call`;
+      return `${base}/leads/${item.leadId}?tab=deal#callback`;
     case "team_question":
       // Knowledge's answer panel for this question (O4).
       return `${base}/setup/knowledge?${new URLSearchParams({ panel: "answer", question: item.question }).toString()}`;

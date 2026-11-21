@@ -10,7 +10,7 @@
 import { and, asc, desc, eq, inArray, notInArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { conversations, followUps, leadEvents, orderFormStatus, orderForms, orders, paymentStatus, quoteVersions, quotes, users, type QuoteStatus, type User } from "@/db/schema";
-import { CALLBACK_EVENT_TYPES, currentCallbacks } from "@/lib/callbacks/rules";
+import { CALLBACK_EVENT_TYPES, callUpcoming, currentCallbacks } from "@/lib/callbacks/rules";
 
 type OrderFormStatus = (typeof orderFormStatus.enumValues)[number];
 type PaymentStatus = (typeof paymentStatus.enumValues)[number];
@@ -25,8 +25,8 @@ export type LeadListFacts = {
   form: { status: OrderFormStatus; superseded: boolean; openedAt: Date | null; expiresAt: Date; quoteNumber: number } | null;
   order: { number: number; paymentStatus: PaymentStatus; amountMinor: number; currency: string } | null;
   followUp: { dueAt: Date; topic: string | null } | null;
-  /** A call the seller confirmed whose time is still ahead. */
-  call: { at: Date; brief: string } | null;
+  /** A booked team call (or a call the seller confirmed) whose slot has not ended. */
+  call: { at: Date; brief: string; booked: boolean } | null;
   /**
    * The person who has the chat: the user who took over the lead's conversation
    * that a person now holds (conversations.taken_over_by_user_id, set by takeOver).
@@ -98,7 +98,7 @@ export async function leadListFacts(db: Db, accountId: string, leadIds: readonly
   for (const o of ords) if (o.leadId) get(o.leadId).order = { number: o.number, paymentStatus: o.paymentStatus, amountMinor: o.amount, currency: o.currency };
   for (const u of fus) if (u.leadId) get(u.leadId).followUp = { dueAt: u.dueAt, topic: u.topic };
   for (const c of currentCallbacks(calls)) {
-    if (c.status === "confirmed" && c.at.getTime() > now.getTime()) get(c.leadId).call = { at: c.at, brief: c.brief };
+    if (callUpcoming(c, now)) get(c.leadId).call = { at: c.at, brief: c.brief, booked: c.booked };
   }
   for (const h of held) get(h.leadId).handler = { id: h.id, firstName: h.firstName, lastName: h.lastName, email: h.email };
   return out;

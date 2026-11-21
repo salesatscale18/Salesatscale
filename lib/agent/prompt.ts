@@ -124,8 +124,10 @@ export type TurnExtra = {
   localNow?: string | null;
   /** The follow-up already scheduled with this buyer (lib/follow-ups). */
   followUp?: { dueLocal: string; topic: string | null } | null;
-  /** The buyer's open call request (O6, lib/callbacks): its time in the lead's zone and whether the team confirmed it. */
+  /** The buyer's open call request (O6, lib/callbacks): its time in the lead's zone and whether the team confirmed it (a booked call is). */
   callback?: { timeLocal: string; confirmed: boolean } | null;
+  /** The team's log of its call with the buyer, with the note (lib/team-calls teamCallLogLine): the agent reads it before it continues. */
+  teamCall?: string | null;
   /**
    * Questions this conversation sent to the team and the team's answers (O4,
    * lib/team-questions teamQuestionsContext): a ready block, shown next to the open objection.
@@ -174,8 +176,11 @@ export function turnContext(p: Playbook, deal: Pick<DealState, "fields" | "objec
       ? `Follow-up scheduled: you write to the buyer on ${extra.followUp.dueLocal}${extra.followUp.topic ? ` about ${extra.followUp.topic}` : ""}. If the buyer asks for another time, call schedule_follow_up again.`
       : "",
     extra.callback
-      ? `Call with ${callRoleOf(p)} ${extra.callback.confirmed ? "confirmed by the team" : "requested, waiting for the team to confirm"}: ${extra.callback.timeLocal}. Keep answering until the call. If the buyer wants another time, call request_callback again.`
+      ? extra.callback.confirmed
+        ? `Call with ${callRoleOf(p)} booked: ${extra.callback.timeLocal}. Keep answering until the call. If the buyer wants another time, they can rebook with the same link; call request_callback again only to send it again.`
+        : `Call with ${callRoleOf(p)} requested, waiting for the team to confirm: ${extra.callback.timeLocal}. Keep answering until the call. If the buyer wants another time, call request_callback again.`
       : "",
+    extra.teamCall ?? "",
     extra.localNow ? `Local time now: ${extra.localNow}` : "",
     plain.length
       ? `## Products in plain words\nSay the plain name to the buyer; the SKU is for tool calls and the quote only.\n${plain.map((i) => `- ${i.sku}: ${i.plainName!.trim()}${i.valueLine?.trim() ? ` - ${i.valueLine.trim()}` : ""}`).join("\n")}`

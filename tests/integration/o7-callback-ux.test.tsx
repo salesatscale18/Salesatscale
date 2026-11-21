@@ -50,7 +50,8 @@ const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
 const { runTool } = await import("@/lib/agent/tools");
 const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { ensureDraftVersion, publishDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/service");
-const { answerAfterCall, cancelCallback, confirmCallback, leadCallback } = await import("@/lib/callbacks/service");
+const { answerAfterCall, callbackNextStep, cancelCallback, confirmCallback, leadCallback, requestCallback } = await import("@/lib/callbacks/service");
+const { applyAgentUpdates } = await import("@/lib/agent/service");
 const { needsYou, needsYouCount, needsYouHref } = await import("@/lib/overview/service");
 const { createSimulatedBuyer, startSimulatorConversation } = await import("@/lib/simulator/service");
 
@@ -98,9 +99,11 @@ describe("O7 callback UX fixes", () => {
   };
   const callbackTool = async (c: { leadId: string; conversationId: string }, at: Date) => {
     const [v] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, acc.id), eq(agentVersions.status, "live")));
-    return runTool("request_callback", { time: at.toISOString(), brief: "Price for 3 sites." }, {
-      db, accountId: acc.id, conversationId: c.conversationId, leadId: c.leadId, playbook: v.playbook, currency: "ILS", callId: `c${n++}`, language: "en",
-    });
+    // An older call request with a time (request_callback before the booking card), in the tool's result shape, with its next step.
+    const r = await requestCallback(db, { accountId: acc.id, leadId: c.leadId, conversationId: c.conversationId }, { time: at.toISOString(), brief: "Price for 3 sites." });
+    if (!r.ok) return { outcome: "refused", rule: r.rule, result: r.extra as Record<string, unknown> };
+    await applyAgentUpdates(db, acc.id, c.leadId, v.playbook, [], { nextStep: callbackNextStep(r.timeLocal, r.request.brief) });
+    return { outcome: "ok", result: { ok: true, time_local: r.timeForBuyer, time_short: r.timeLocal, ...(r.replaced ? { replaced_earlier: true } : {}) } as Record<string, unknown> };
   };
   /** A confirmed call moved into the past (events only), more than two hours ago. */
   const finishedCall = async (c: { leadId: string; conversationId: string }) => {
@@ -167,7 +170,7 @@ describe("O7 callback UX fixes", () => {
     expect(handoffWhy({ type: "handoff.spend_cap", data: null })).toBe("AI limit reached");
   });
 
-  it("3 and 4. Needs you \"Call finished: who continues?\": counted in the badge, opens the Deal tab at the prompt, gone once answered", async () => {
+  it("3 and 4. Needs you \"Log the call\" (it replaced \"Call finished: who continues?\"): counted in the badge, opens the Deal tab at the log form, gone once answered", async () => {
     const c = await mkChat(acc, "Bistro Demo");
     const cb = await finishedCall(c);
     const now = new Date();
@@ -175,7 +178,7 @@ describe("O7 callback UX fixes", () => {
     const item = items.find((i) => i.kind === "call_finished" && i.leadId === c.leadId)!;
     expect(item).toMatchObject({ kind: "call_finished", callbackId: cb.id });
     expect(await needsYouCount(db, acc.id, now)).toBe(items.length);
-    expect(needsYouHref("/app/x", item)).toBe(`/app/x/leads/${c.leadId}?tab=deal#after-call`);
+    expect(needsYouHref("/app/x", item)).toBe(`/app/x/leads/${c.leadId}?tab=deal#callback`);
 
     const html = await page(OverviewPage, { account: acc.slug });
     save("overview-finished", html);
@@ -184,15 +187,16 @@ describe("O7 callback UX fixes", () => {
     const list = await page(LeadsPage, { account: acc.slug }, { view: "needs_you", need: "calls" });
     save("leads-finished", list);
     expect(list).toContain(`<bdi>${c.name}</bdi>`);
-    expect(list).toContain(">How did the call go?<");
-    expect(list).toMatch(/Call \u2068\w{3} \d{1,2} \w{3},? \d{2}:\d{2}\u2069 · choose who goes on/);
-    expect(list).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#after-call"`);
+    expect(list).toContain(">Log the call<");
+    expect(list).toMatch(/Team call \u2068\w{3} \d{1,2} \w{3},? \d{2}:\d{2}\u2069 · Anyone on your team/);
+    expect(list).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#callback"`);
 
     // The lead page opens on the Deal tab when asked, on Chat otherwise.
     const deal = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { tab: "deal" });
     expect(deal).toMatch(/id="lt-deal"[^>]*checked=""/);
     expect(deal).not.toMatch(/id="lt-chat"[^>]*checked=""/);
     expect(deal).toContain('id="after-call"');
+    expect(deal).toContain('data-state="log"');
     const chat = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
     expect(chat).toMatch(/id="lt-chat"[^>]*checked=""/);
 
@@ -202,11 +206,10 @@ describe("O7 callback UX fixes", () => {
     expect(await needsYouCount(db, acc.id, new Date())).toBe(after.length);
   });
 
-  it("4. Confirm time in Needs you opens the Deal tab at the call card", async () => {
+  it("4. no \"Confirm time\" in Needs you any more (reach boards): an older request waits on the lead page only", async () => {
     const c = await mkChat(acc);
     expect((await callbackTool(c, ahead(30))).outcome).toBe("ok");
-    const item = (await needsYou(db, acc.id, new Date())).find((i) => i.kind === "callback_requested" && i.leadId === c.leadId)!;
-    expect(needsYouHref("/app/x", item)).toBe(`/app/x/leads/${c.leadId}?tab=deal#callback`);
+    expect((await needsYou(db, acc.id, new Date())).some((i) => i.leadId === c.leadId)).toBe(false);
   });
 
   it("5. the cancel wording, and the agent can take a new call request after a cancel", async () => {

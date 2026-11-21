@@ -1,7 +1,11 @@
 /**
- * Callback requests (O6): the agent's request_callback tool, the reads for the
- * agent's context, the lead page and Needs you, and the seller's Confirm and
- * Change time. Every function is scoped by account. The chat never pauses: the
+ * Calls with a person (O6; reach boards): the reads for the agent's context,
+ * the lead page and Needs you, and the seller's Change time and Cancel. The
+ * buyer books the call in the chat (lib/team-calls/service.ts: the agent's
+ * request_callback posts the booking card); `requestCallback` and
+ * `confirmCallback` are the older flow (the agent recorded a time, the seller
+ * confirmed it), kept for calls already in the data and the demo seed: the
+ * agent no longer calls it and the lead page has no Confirm. Every function is scoped by account. The chat never pauses: the
  * conversation stays with the agent until the call. Rules and the stored
  * shape (lead events): lib/callbacks/rules.ts.
  */
@@ -17,13 +21,14 @@ import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
-import { isWebChat } from "@/lib/simulator/rules";
+import { isSimulatedLead, isWebChat } from "@/lib/simulator/rules";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { isLocale, t } from "@/lib/i18n";
 import { handBack, takeOver } from "@/lib/agent/conversation";
+import { nudgeBuyer } from "@/lib/sms/service";
 import {
-  buyerCallTime, CALLBACK_EVENT_TYPES, CALLBACK_EVENTS, checkCallTime, cleanBrief, currentCallbackOf, currentCallbacks, parseCallTime,
-  type CallbackRequest,
+  buyerCallTime, CALLBACK_EVENT_TYPES, CALLBACK_EVENTS, callNeedsLog, checkCallTime, cleanBrief, currentCallbackOf, currentCallbacks, isCallNextStep, parseCallTime,
+  teamCallNextStep, type CallbackRequest,
 } from "./rules";
 
 const HOUR = 3_600_000;
@@ -125,9 +130,13 @@ export const CONFIRMED_SHOWN_MS = 2 * HOUR;
 /** How far back Needs you looks for requests: 30 days ahead at most, plus a week. */
 const LOOKBACK_MS = 37 * DAY;
 
-/** A request still to act on (waiting for the seller), or a confirmed call that has not passed yet. */
+/**
+ * A call still on the lead page: an older request the agent recorded (still
+ * waiting; its time can be set with Change time), a confirmed or booked call
+ * that has not passed yet, or one waiting for "Log the call" (callNeedsLog).
+ */
 export const isActiveCallback = (c: CallbackRequest | null, now: Date): c is CallbackRequest =>
-  !!c && (c.status === "requested" || c.at.getTime() + CONFIRMED_SHOWN_MS > now.getTime());
+  !!c && (c.status === "requested" || c.at.getTime() + CONFIRMED_SHOWN_MS > now.getTime() || callNeedsLog(c, now));
 
 /** The lead's active call request, if any. */
 export async function leadCallback(db: Db, accountId: string, leadId: string, now = new Date()): Promise<CallbackRequest | null> {
@@ -145,12 +154,12 @@ export async function requestedCallbacks(db: Db, accountId: string, now: Date): 
 }
 
 /**
- * Confirmed calls whose time has passed and that wait for "How did the call go?" (the same
- * condition as callbackAfterCall), for Needs you's "Call finished: who continues?" (O7, UX).
- * Gone once either choice is made.
+ * Calls whose slot has ended and that wait for "Log the call" (callNeedsLog, the same condition
+ * as callbackAfterCall), for Needs you › Calls (reach boards). Gone once the call is logged as
+ * "We spoke", moved to a new time or cancelled.
  */
 export async function finishedCallbacks(db: Db, accountId: string, now: Date): Promise<CallbackNeed[]> {
-  return (await callbackNeeds(db, accountId, now)).filter((c) => c.status === "confirmed" && !c.afterCall && !isActiveCallback(c, now));
+  return (await callbackNeeds(db, accountId, now)).filter((c) => callNeedsLog(c, now));
 }
 
 /** Each lead's current call request with the lead's name (not test leads, not closed leads). */
@@ -224,11 +233,11 @@ async function sellerSets(
   await Promise.all([
     db.insert(leadEvents).values({
       id: randomUUID(), accountId, leadId: c.leadId, type: CALLBACK_EVENTS[how], actor: "human", actorUserId: a.user.id, createdAt: now,
-      data: { callbackId: c.id, at: at.toISOString(), timezone, ...(how === "changed" ? { previousAt: c.at.toISOString() } : {}) },
+      data: { callbackId: c.id, at: at.toISOString(), timezone, conversationId: c.conversationId, ...(how === "changed" ? { previousAt: c.at.toISOString(), by: "team" } : {}) },
     }),
     writeAudit(db, actor, { accountId, action: `callback.${how}`, targetType: "lead", targetId: c.leadId, details: { callbackId: c.id, at: at.toISOString() } }),
     // The deal's next step says the confirmed time (seller views and the agent's context).
-    db.update(dealStates).set({ nextStep: callbackNextStep(timeLocal, c.brief, true) }).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, c.leadId))),
+    db.update(dealStates).set({ nextStep: c.booked ? teamCallNextStep(timeLocal) : callbackNextStep(timeLocal, c.brief, true) }).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, c.leadId))),
   ]);
   const buyer = await tellBuyer(db, accountId, c, at, timezone, how, transport === undefined ? defaultTransport() : transport, now);
   return { ok: true, leadId: c.leadId, request: { ...c, at, timezone, status: "confirmed", changed: c.changed || how === "changed" }, buyer };
@@ -254,9 +263,11 @@ async function tellBuyer(
   if (conv.status === "closed") return { told: false, reason: "closed" };
   if (conv.channel === "whatsapp" && !(await conversationWindow(db, accountId, conv.id, now)).open) return { told: false, reason: "window_closed" };
   const language = isLocale(conv.language) ? conv.language : "en";
+  // Every time shown to the buyer is in the buyer's own zone (spec 8): their browser's when they booked, else the market's.
+  const buyerZone = c.buyerTimezone ?? timezone;
   const body = how === "cancelled"
     ? t("buyer.app.callback_cancelled", undefined, language)
-    : t(how === "confirmed" ? "buyer.app.callback_confirmed" : "buyer.app.callback_changed", { time: buyerCallTime(at, timezone, language) }, language);
+    : t(how === "confirmed" ? "buyer.app.callback_confirmed" : "buyer.app.callback_changed", { time: buyerCallTime(at, buyerZone, language) }, language);
   const id = randomUUID();
   await atomic(db, (q) => [
     q.insert(messages).values({ id, accountId, conversationId: conv.id, actor: "agent", body, language, createdAt: now }),
@@ -269,6 +280,13 @@ async function tellBuyer(
   if (conv.channel === "whatsapp" || isWebChat(conv.channel)) {
     await deliverText(db, transport, { accountId, conversationId: conv.id, messageId: id, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
   }
+  // A real buyer's web chat: a new time also goes out as the team_call SMS (board ReachSms), in the buyer's zone.
+  if (how !== "cancelled" && isWebChat(conv.channel) && !conv.isTest && !lead.isTest && !isSimulatedLead(lead)) {
+    await nudgeBuyer(db, { userId: null, actingAs: false }, {
+      accountId, leadId: lead.id, kind: "team_call", messageId: id, now,
+      time: language === "he" ? buyerCallTime(at, buyerZone, "he") : formatDueLocal(at, buyerZone),
+    });
+  }
   return { told: true, messageId: id };
 }
 
@@ -276,9 +294,7 @@ async function tellBuyer(
 // The seller cancels the call, and answers "How did the call go?" (UX, O6 follow-up)
 // ---------------------------------------------------------------------------
 
-/** The deal's next step was the call (callbackNextStep): it goes back to none, so "Stage now" is as without the call. */
-const isCallNextStep = (s: string | null | undefined) => !!s && /^Call (requested|confirmed) /.test(s);
-
+/** The deal's next step was the call (callbackNextStep, teamCallNextStep): it goes back to none, so "Stage now" is as without the call. */
 async function clearCallNextStep(db: Db, accountId: string, leadId: string) {
   const [deal] = await db.select({ id: dealStates.id, nextStep: dealStates.nextStep }).from(dealStates).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, leadId)));
   if (deal && isCallNextStep(deal.nextStep)) await db.update(dealStates).set({ nextStep: null }).where(and(eq(dealStates.id, deal.id), eq(dealStates.accountId, accountId)));
@@ -313,16 +329,15 @@ export async function cancelCallback(db: Db, a: Access, leadId: string, callback
 }
 
 /**
- * The confirmed call whose card has gone (CONFIRMED_SHOWN_MS after its time)
- * and that waits for "How did the call go?". Null when there is none or it
- * was answered.
+ * The confirmed call whose slot has ended and that waits for "Log the call"
+ * (callNeedsLog). Null when there is none, or it was logged as "We spoke" or
+ * answered the older way.
  */
 export async function callbackAfterCall(db: Db, accountId: string, leadId: string, now = new Date()): Promise<CallbackRequest | null> {
   const rows = await db.select({ type: leadEvents.type, leadId: leadEvents.leadId, createdAt: leadEvents.createdAt, data: leadEvents.data }).from(leadEvents)
     .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), inArray(leadEvents.type, [...CALLBACK_EVENT_TYPES])));
   const c = currentCallbackOf(rows);
-  if (!c || c.status !== "confirmed" || c.afterCall || isActiveCallback(c, now)) return null;
-  return c;
+  return callNeedsLog(c, now) ? c : null;
 }
 
 export type AfterCallChoice = "agent" | "seller";

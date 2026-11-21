@@ -32,10 +32,9 @@ export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
   switch (it.kind) {
     case "human_handling":
       return { icon, title: t("leads.need.human_handling"), detail: it.why ? isolate(it.why) : t("overview.needs.human_handling.detail", { when: timeAgo(it.at, ctx.now, ctx.timezone) }) };
-    case "callback_requested":
-      return { icon, title: t("leads.need.callback_requested", { time: when(it.callAt, it.timezone) }), detail: it.brief ? isolate(it.brief) : null };
     case "call_finished":
-      return { icon, title: t("leads.need.call_finished"), detail: t("leads.need.call_finished.detail", { time: when(it.callAt, it.timezone) }) };
+      // "Log the call" · "Team call Mon 23 Nov 15:30 · Anyone on your team" (reach boards: who calls).
+      return { icon, title: t("leads.need.call_finished"), detail: t("leads.need.call_finished.detail", { time: when(it.callAt, it.timezone), who: t("team_call.who_anyone") }) };
     case "team_question": {
       const kind = it.mustHave === true ? t("team_question.must_have") : it.mustHave === false ? t("team_question.good_to_know") : null;
       const words = it.buyerWords || it.question;
@@ -99,9 +98,12 @@ export function nextStepCell(lead: LeadLike, f: LeadListFacts, ctx: RowCtx, owne
       : { icon: null, title: t("leads.next.won"), detail: null };
   }
   if (lead.status === "lost") return { icon: null, title: t("leads.next.lost"), detail: t("leads.next.lost.detail") };
-  // A confirmed call still ahead, in the account's time zone (the short seller form).
+  // A booked team call (or an older confirmed call) still ahead, in the account's time zone (the short seller form).
   if (f.call) {
-    return { icon: "phone-call", title: t("leads.next.call", { when: isolate(formatDueLocal(f.call.at, ctx.timezone)) }), detail: f.call.brief ? isolate(f.call.brief) : null };
+    return {
+      icon: "phone-call", title: t(f.call.booked ? "leads.next.team_call" : "leads.next.call", { when: isolate(formatDueLocal(f.call.at, ctx.timezone)) }),
+      detail: f.call.brief ? isolate(f.call.brief) : null,
+    };
   }
   if (f.followUp) {
     return { icon: "clock", title: t("leads.next.follow_up", { when: isolate(formatDueLocal(f.followUp.dueAt, ctx.timezone)) }), detail: f.followUp.topic ? isolate(f.followUp.topic) : t("leads.next.follow_up.detail") };
@@ -148,7 +150,7 @@ export function whoOnIt(lead: LeadLike, ownerName: string | null): WhoOnIt {
  * the lead page.
  *
  * - human_handling: the lead page (it opens at the latest message, where the person replies).
- * - callback_requested, call_finished: the Deal tab at the call card (#callback, #after-call; needsYouHref).
+ * - call_finished: the Deal tab at the Team call card, now the log form (#callback; needsYouHref).
  * - follow_up_failed: the Deal tab at the Follow-up card (#follow-up).
  * - bank_transfer, payment_failed: the Deal tab at the Orders card (#lead-orders).
  * - form_unsigned, form_expiring: the Deal tab at the Quotes card (#lead-quotes; it shows the form's state).

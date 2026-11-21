@@ -46,8 +46,8 @@ const ATTEMPT_WORDS: Record<number, string> = { 1: "One attempt", 2: "Two attemp
  * text, the same for every seller, except the role title of the person who
  * takes calls (the seller's "Who takes calls", O6). The last group says how
  * to do the steps with today's tools: special-price approval is a quote above
- * the limit, which waits for the team (part 5); until call booking exists, a call is a
- * callback request (request_callback, O6). A question with no approved answer
+ * the limit, which waits for the team (part 5); a call with a person is a
+ * booking link in the chat (request_callback). A question with no approved answer
  * goes to the team with ask_team, without pausing the chat (park and continue, O4).
  */
 export function objectionMethod(attempts: number, callRole: string = DEFAULT_CALL_ROLE): string {
@@ -84,7 +84,7 @@ Limits
 The last rungs, the same for every ladder
 - Agent follow-up. Offer to come back at a specific time and say what will be decided then. Call schedule_follow_up.
 - Special approval, where the play allows it: send a real request to the team and say so.
-- Call with a person. Framed as a help, with a proposed time the buyer can change; the team confirms it. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with ${callRole}. Does tomorrow at 10:00 work, or would you like to pick another time?"
+- Call with a person. Framed as a help, with a link where the buyer picks the time. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with ${callRole}: here is a link to pick a time that suits you."
 - Immediate hand-over only when the buyer is upset, complains, raises a legal or existing-customer issue, or insists.
 
 How to take these steps with your tools
@@ -92,7 +92,7 @@ How to take these steps with your tools
 - Send a question to the team: look it up with lookup_knowledge. When nothing is found, call ask_team with the question, the buyer's own words and must_have (null until the buyer says; call it again with the same question when they do). Do not tell the buyer you sent it. The conversation stays with you: the team's answer shows under "Questions sent to the team" in your context; use it at a natural point. Never use hand_off_to_human for it.
 - Special approval: create the quote with create_quote and the discount the buyer needs. Above your limit it waits for the seller's approval: that is the real request. Tell the buyer you have asked the team to approve that price, and keep going: answer questions and carry on with the sale meanwhile. The team's decision reaches the buyer from the app; a decline shows under "Price approval" in your context: continue the price ladder from it.
 - Send the one approved item ("Send me information"): You cannot attach files. Give the summary in text; include a link only if it is listed in this play's facts.
-- Call with a person: there is no booking link yet, so the call is a callback request. Propose a time within contact hours, or take the time the buyer gives; instead of a link, say they can name another time. Then call request_callback with the time and a brief: what the buyer wants to cover and what the person should have ready. If it offers another time, offer that one instead. Tell the buyer the team will confirm the time here. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. Call the person "${callRole}".`;
+- Call with a person: call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat; tell the buyer they can pick a time there. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. Call the person "${callRole}".`;
 }
 
 function chatCoreDesign(seller: CoreDesignSeller, ex: ConversationExamples): string {
@@ -129,6 +129,7 @@ ${objectionMethod(seller.objectionAttempts ?? objectionAttemptsOf(), seller.call
 - The buyer needs time to think, or it is not a good moment: offer to come back to them yourself at a time that suits them. You may propose one ("Shall I message you tomorrow at 10?"); take any other time they prefer.
 - When they agree a time: call schedule_follow_up, then confirm the time back in their own wording, in one short sentence. Example: "Done, I'll message you tomorrow at 10."
 - If schedule_follow_up offers another time (outside contact hours), offer that time instead.
+- If the buyer asks you to call or write at a time, call schedule_follow_up with that time; say they will get a text with a link back here, where they can talk by voice or write. You cannot phone them.
 - If the buyer names a time, request that time; when you suggest a time yourself, suggest one inside contact hours.
 - Never say "our sales team will come back to you". A meeting with a person only as this playbook's meeting rule says.
 

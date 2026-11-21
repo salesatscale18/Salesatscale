@@ -14,6 +14,10 @@ import { BuyerCallBar, ChatVoiceBubble } from "./voice";
 import { Icon } from "@/components/sas/icon";
 import type { BuyerVoiceState } from "@/lib/voice/buyer";
 import { resumeSmsAction } from "./actions";
+// Reach RB: the talk-now, new-time and booking cards, and the "SMS sent" chips (board ReachChat).
+import { BookingCard, CardRow, chipsBefore, NewTimeCard, SmsChip, TalkNowCard, useBuyerZone } from "./reach";
+import type { ChatReach } from "@/lib/chat/reach";
+import type { TalkNow } from "@/lib/follow-ups/named-time";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
@@ -93,7 +97,7 @@ const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", voice = null, simulated = true, sms = null }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
   /** A simulated buyer's chat: the "Simulated chat" banner shows (never on a real buyer's chat). */
   simulated?: boolean;
@@ -103,7 +107,15 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   timeZone?: string;
   /** Buyer calls (live voice): null while voice calls are off for the platform (nothing changes on the page). */
   voice?: { agentName: string; gender: string; /** The voice bubble's tab link to this conversation's order form tabs (lib/voice/tab-key.ts). */ tabKey?: string | null } | null;
+  /** Reach RB: the booking card's state and the SMS chips (refreshed on every poll). */
+  reach?: ChatReach | null;
+  /** Reach RB: opened from the named-time SMS: the talk-now card, or the new-time card after the second SMS. */
+  talkNow?: TalkNow | null;
 }) {
+  // Reach RB: card state, and the buyer's own zone for every time on the cards (the browser's, else the market's).
+  const [reach, setReach] = useState<ChatReach | null>(initialReach);
+  const [talkCard, setTalkCard] = useState<"talk_now" | "new_time" | null>(talkNow?.kind ?? null);
+  const buyerZone = useBuyerZone(timeZone);
   const [items, setItems] = useState<Shown[]>(initial.messages);
   const [cards, setCards] = useState(initial.cards ?? {});
   const [typing, setTyping] = useState(initial.typing);
@@ -153,6 +165,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       setCards(data.cards ?? {});
       setCalls(data.calls ?? []);
       if (data.voice) setVoiceState(data.voice);
+      const polledReach = (data as BuyerChat & { reach?: ChatReach }).reach;
+      if (polledReach) setReach(polledReach);
       // Messages confirmed by the server before this poll started are now in its answer.
       setItems((cur) => {
         const known = new Set(cur.map((m) => m.id));
@@ -343,11 +357,19 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       </div>,
     );
   };
+  // Reach RB: "SMS sent · Sat 21:00" chips, each before the message it points to.
+  const chipsLeft = [...(reach?.sms ?? [])];
   items.forEach((m, i) => {
     const d = new Date(m.at);
     // A call's start row goes before its first line (spoken lines are stored after the call connected).
     while (callRows.length && callRows[0].at <= m.at) pushCall(callRows.shift()!);
     separator(d, `d-${m.id}`);
+    for (const c of chipsBefore(chipsLeft, m.id, m.at)) rows.push(<SmsChip key={`sms-${c.at}`} at={c.at} tz={buyerZone} lang={lang} />);
+    // Reach RB: the latest booking card books; older ones stay as their text.
+    if (m.kind === "booking" && reach?.booking && reach.booking.offerMessageId === m.id) {
+      rows.push(<CardRow key={m.id}><BookingCard token={token} booking={reach.booking} tz={buyerZone} lang={lang} seller={seller} onReach={setReach} /></CardRow>);
+      return;
+    }
     const card = cards[m.id];
     if (card) {
       // The app's quote message shows as the designed card; the stored text stays the fallback (and what WhatsApp sends).
@@ -398,6 +420,23 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     }
   });
   callRows.forEach(pushCall);
+  for (const c of chipsLeft) rows.push(<SmsChip key={`sms-${c.at}`} at={c.at} tz={buyerZone} lang={lang} />);
+  // Reach RB: talk now at the time the buyer asked for (Talk now starts voice mode through the chat's own switch).
+  const canTalk = !!voice && voiceState.available && !inCall && !ended;
+  if (talkNow && talkCard === "talk_now" && !ended) {
+    rows.push(
+      <CardRow key="talk-now">
+        <TalkNowCard
+          talk={talkNow} tz={buyerZone} lang={lang} canTalk={canTalk}
+          onTalk={() => { setTalkCard(null); startCall(); }}
+          onWrite={() => { setTalkCard(null); inputRef.current?.focus(); }}
+          onPickAnother={() => setTalkCard("new_time")}
+        />
+      </CardRow>,
+    );
+  } else if (talkCard === "new_time" && !ended) {
+    rows.push(<CardRow key="new-time"><NewTimeCard token={token} tz={buyerZone} lang={lang} canTalk={canTalk} onTalk={() => { setTalkCard(null); startCall(); }} /></CardRow>);
+  }
   if (closedAt) {
     separator(new Date(closedAt), "d-closed");
     rows.push(
