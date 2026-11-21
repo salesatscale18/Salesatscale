@@ -304,7 +304,7 @@ describe("Reach RA: web chat for real leads and SMS on the outbound paths", () =
     try {
       expect(smsSender()).toEqual({ name: "PolarDemo", approved: false });
       const html = renderToStaticMarkup(await ChannelsSection({ account: await accountRow(acc), saved: "", error: "" }));
-      for (const s of ["Web chat", "Always on", "Test mode", "PolarDemo", "9 of 11 letters · registration pending", "+44 7700 900123", "Go live", "WhatsApp", "Email", "Team calls", "Fixed for now", "Next 7 days", "15 min", "Hidden from buyers", "Change contact hours"]) expect(html).toContain(s);
+      for (const s of ["Web chat", "Always on", "Test mode", "PolarDemo", "9 of 11 letters · registration pending", "+44 7700 900123", "Go live", "WhatsApp", "Email", "Team calls", "Fixed for now", "Next 7 days", "15 min", "Shown as unavailable", "Change contact hours"]) expect(html).toContain(s);
       expect(html).toMatch(/<button[^>]*disabled=""[^>]*aria-describedby="sms-golive-reason"[^>]*data-sms-go-live=""/);
       expect(html).toContain('id="sms-golive-reason" data-sms-go-live-why="">SMS go live for the whole platform once the sender name is approved.</span>');
       // Test numbers show formatted; the remove form still posts E.164.

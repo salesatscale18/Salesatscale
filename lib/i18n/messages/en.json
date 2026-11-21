@@ -3581,7 +3581,7 @@
   "settings.team_calls.length": "Call length",
   "settings.team_calls.length_value": "15 min",
   "settings.team_calls.taken": "Taken slots",
-  "settings.team_calls.taken_value": "Hidden from buyers",
+  "settings.team_calls.taken_value": "Shown as unavailable",
   "settings.team_calls.hint": "Editing times, call length and who calls comes with the team calendar.",
   "settings.team_calls.hours_link": "Change contact hours",
   "settings.intake.consent_line": "Consent line for your form",
