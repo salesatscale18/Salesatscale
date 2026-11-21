@@ -35,7 +35,7 @@ import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
-import { leadEventIcon, leadEventKey } from "@/lib/leads/event-icons";
+import { leadEventIcon, leadEventTitle } from "@/lib/leads/event-icons";
 import { contactHoursFixHref } from "@/lib/markets/lead-settings";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
@@ -141,8 +141,7 @@ export default async function LeadCardPage({
   /** The same inside a sentence ("added by you"). */
   const whoIn = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you_lower")));
   /** An event's title as text (the folded timeline's "last:" line). */
-  const eventTitle = (type: string, data: unknown) =>
-    t(`lead.event.${leadEventKey(type, data)}` as MessageKey);
+  const eventTitle = (type: string, data: unknown) => leadEventTitle(type, data, t);
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";

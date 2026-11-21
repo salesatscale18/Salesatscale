@@ -10,6 +10,7 @@ import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule"
 import { CONFIRMED_SHOWN_MS, finishedCallbacks, requestedCallbacks } from "@/lib/callbacks/service";
 import { openTeamQuestions } from "@/lib/team-questions/service";
 import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
+import { HIDDEN_LEAD_EVENTS } from "@/lib/leads/event-icons";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
 import {
@@ -398,7 +399,7 @@ export async function recentActivity(db: Db, accountId: string, limit = 10, opts
     .from(leadEvents)
     .innerJoin(leads, eq(leads.id, leadEvents.leadId))
     .leftJoin(users, eq(users.id, leadEvents.actorUserId))
-    .where(and(eq(leadEvents.accountId, accountId), realOnly(opts), marketWhere(leads.marketId, opts.market ?? null)))
+    .where(and(eq(leadEvents.accountId, accountId), notInArray(leadEvents.type, [...HIDDEN_LEAD_EVENTS]), realOnly(opts), marketWhere(leads.marketId, opts.market ?? null)))
     .orderBy(desc(leadEvents.createdAt), desc(leadEvents.id))
     .limit(limit);
 }

@@ -78,7 +78,7 @@ export function QuoteCard({ card, sellerOnly }: {
       {sellerOnly && card.sellerOnly ? (
         <div className="sas-qc__seller" dir="ltr" lang="en" data-seller-only="">
           <span className="sas-qc__seller-text">
-            {sellerOnly.label} {card.sellerOnly.skus.map((s, i) => <span key={s}>{i ? ", " : ""}<span className="sas-num">{s}</span></span>)}
+            {sellerOnly.label} {card.sellerOnly.skus.map((s, i) => <span key={s}>{i ? ", " : ""}<span className="sas-id sas-id--plain">{s}</span></span>)}
             {card.sellerOnly.priceList ? <> · {card.sellerOnly.priceList}</> : null}
           </span>
           {sellerOnly.openHref ? <a href={sellerOnly.openHref}>{sellerOnly.openLabel}</a> : null}
@@ -90,7 +90,7 @@ export function QuoteCard({ card, sellerOnly }: {
 
 const Num = ({ children }: { children: ReactNode }) => <span className="sas-qc__num">{children}</span>;
 /** The quote number ("Q-1003"): left-to-right, plain figures, no extra character spacing. */
-const Ref = ({ children }: { children: ReactNode }) => <span className="sas-qc__ref">{children}</span>;
+const Ref = ({ children }: { children: ReactNode }) => <span className="sas-qc__ref sas-id--plain">{children}</span>;
 
 /**
  * The headline. The agent's own takes its direction from its text; the

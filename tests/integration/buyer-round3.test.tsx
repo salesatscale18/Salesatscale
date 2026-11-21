@@ -231,7 +231,7 @@ describe("buyer pages, round-3 review", () => {
       total: { label: "Total", amount: "₪1.00" }, afterTotal: null, monthly: null, delivery: null, deliveryDate: null, firstCharge: null, validUntil: null,
       status: null, summary: null, sellerOnly: null, approval: null,
     } }));
-    expect(card).toContain('<span class="sas-qc__ref">Q-1003</span>');
+    expect(card).toContain('<span class="sas-qc__ref sas-id--plain">Q-1003</span>');
     expect(readFileSync("components/sas/quote-card.css", "utf8")).toMatch(/\.sas-qc__ref \{ font-variant-numeric: normal; letter-spacing: 0;/);
   });
 

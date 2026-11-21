@@ -218,7 +218,7 @@ describe("Reach RA2", () => {
     expect(conv).toContain('data-form-card=""');
     // Avi's form is signed and waits for payment: the pay card (RA3).
     expect(conv).toContain("Pay now");
-    expect(conv).toMatch(/Payment · <bdi class="sas-num">Q-\d+<\/bdi>/);
+    expect(conv).toMatch(/Payment · <bdi class="sas-id sas-id--plain">Q-\d+<\/bdi>/);
     // The link is never a text bubble of its own.
     expect(conv).not.toMatch(/<div class="sas-msg__bubble"[^>]*>https?:\/\/[^<]*\/f\//);
     // Order: the continuation line, the card, the private note, then the SMS card.

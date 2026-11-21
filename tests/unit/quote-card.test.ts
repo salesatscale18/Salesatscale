@@ -224,7 +224,7 @@ describe("card states", () => {
     expect(he.rows[1].label).toBe("מע״מ 18%");
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: he }));
     expect(html).toMatch(/<article class="sas-qc sas-qc--sent" dir="rtl" lang="he"/);
-    expect(html).toContain('<span class="sas-qc__ref">Q-1001</span>');
+    expect(html).toContain('<span class="sas-qc__ref sas-id--plain">Q-1001</span>');
     expect(html).toContain("sas-qc__ic--truck");
   });
 
@@ -234,6 +234,10 @@ describe("card states", () => {
     const html = renderToStaticMarkup(createElement(QuoteCard, { card: seller, sellerOnly: { label: "Only you see this:", openLabel: "Open quote", openHref: "/app/x/orders?quote=q1" } }));
     expect(html).toContain('data-seller-only=""');
     expect(html).toContain('<a href="/app/x/orders?quote=q1">Open quote</a>');
+    // IDs use normal digits (UX): the quote number and every product code carry the ID class, not the tabular .sas-num.
+    expect(html).toContain('<span class="sas-qc__ref sas-id--plain">Q-1001</span>');
+    for (const sku of ["SNS-200", "GW-10", "SVC-INST"]) expect(html).toContain(`<span class="sas-id sas-id--plain">${sku}</span>`);
+    expect(html).not.toMatch(/class="sas-num">(SNS-200|GW-10|SVC-INST|Q-1001)</);
     expect(renderToStaticMarkup(createElement(QuoteCard, { card: seller }))).not.toContain("SNS-200");
   });
 });

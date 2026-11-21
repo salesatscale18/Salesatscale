@@ -149,7 +149,7 @@ describe("Reach RA3", () => {
     const html = await page(LeadCardPage, { account: acc.slug, leadId: avi.id });
     save("lead-avi-pay", html);
     const conv = html.slice(html.indexOf('id="conversation"'));
-    expect(conv).toMatch(/Payment · <bdi class="sas-num">Q-\d+<\/bdi>/);
+    expect(conv).toMatch(/Payment · <bdi class="sas-id sas-id--plain">Q-\d+<\/bdi>/);
     expect(conv).toMatch(/data-card-pay="">Pay now<\/a>/);
     expect(conv).not.toContain("Open order form");
 
@@ -159,7 +159,7 @@ describe("Reach RA3", () => {
     if (!r.started) throw new Error();
     const he = await page(LeadCardPage, { account: acc.slug, leadId: ronit.id });
     // Hebrew chat: the card is in the chat's language.
-    expect(he).toMatch(/תשלום · <bdi class="sas-num">Q-\d+<\/bdi>/);
+    expect(he).toMatch(/תשלום · <bdi class="sas-id sas-id--plain">Q-\d+<\/bdi>/);
     expect(he).toContain(">לתשלום</a>");
   });
 

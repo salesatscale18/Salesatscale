@@ -371,7 +371,7 @@ describe("Leads V2 (LQ-L)", () => {
     // Desktop Stage: a direct child of the toolbar (sas.css gives it the What's needed look), still a native select.
     const toolbar = html.split('data-testid="leads-filters"')[1].split("</form>")[0];
     expect(toolbar).toMatch(/<\/details><label class="sas-filter"><span class="sas-sr">Stage<\/span><select class="sas-select" name="stage">/);
-    // The bank transfer's order number: one plain run (text font, tabular numbers), not the code font.
+    // The bank transfer's order number: one plain run (text font, normal digits), not the code font.
     const bank = (await needsYou(db, account.id, new Date())).find((i) => i.kind === "bank_transfer")!;
     const r = rows(html).find((x) => x.html.includes(`/leads/${bank.leadId}?`))!;
     expect(r.html).toMatch(/<span class="sas-id sas-id--plain">PD-\d+<\/span> · /);

@@ -27,7 +27,7 @@ export function BankDetails({ details, reference, tr }: { details: string | null
   const parts = details ? bankParts(details) : [];
   return (
     <dl className="b-bank" data-bank-details="">
-      <div><dt>{tr("buyer.bank_reference")}</dt><dd><bdi className="b-num">{reference}</bdi><CopyValue value={reference} name={tr("buyer.bank_reference")} {...copy} /></dd></div>
+      <div><dt>{tr("buyer.bank_reference")}</dt><dd><bdi className="b-id">{reference}</bdi><CopyValue value={reference} name={tr("buyer.bank_reference")} {...copy} /></dd></div>
       {parts.map((p, i) => p.kind === "text" ? (
         // The first unlabelled part is the bank's name, as the seller wrote it ("Bank" / "בנק"); any other stays unlabelled.
         <div key={i} data-bank-text="">{i === parts.findIndex((q) => q.kind === "text") ? <dt>{tr("buyer.bank_name")}</dt> : null}<dd><bdi>{p.text}</bdi></dd></div>

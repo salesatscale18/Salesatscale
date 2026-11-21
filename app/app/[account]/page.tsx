@@ -10,7 +10,7 @@ import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
 import { relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
-import { leadEventIcon, leadEventKey } from "@/lib/leads/event-icons";
+import { leadEventIcon, leadEventTitle } from "@/lib/leads/event-icons";
 import {
   PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, openLeadsByMarket, overviewCardNumbers, overviewKpis, parsePeriod, periodRange,
   previousRange, recentActivity,
@@ -122,7 +122,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: leadEventIcon(event.type, { data: event.data }),
     // A conversation started in the web chat (real or simulated) is not a WhatsApp start (leadEventKey).
-    title: t(`lead.event.${leadEventKey(event.type, event.data)}` as MessageKey),
+    title: leadEventTitle(event.type, event.data, t),
     detail: (
       <>
         <a href={`${base}/leads/${lead.id}`}>{lead.fullName}</a>

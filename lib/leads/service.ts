@@ -5,8 +5,9 @@
  * only from requireAccount() (pages/actions) or from a verified intake key
  * (webhook). Integration tests run these against PGlite.
  */
-import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { alias, type AnyPgColumn as AnyColumn } from "drizzle-orm/pg-core";
+import { HIDDEN_LEAD_EVENTS } from "@/lib/leads/event-icons";
 import type { TableSort } from "@/lib/domain/table-sort";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
@@ -378,7 +379,8 @@ export async function listLeadEvents(db: Db, accountId: string, leadId: string) 
     .select({ event: leadEvents, user: users })
     .from(leadEvents)
     .leftJoin(users, eq(users.id, leadEvents.actorUserId))
-    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId)))
+    // Internal events (an SMS delivery update) never show in the timeline (HIDDEN_LEAD_EVENTS).
+    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), notInArray(leadEvents.type, [...HIDDEN_LEAD_EVENTS])))
     .orderBy(desc(leadEvents.createdAt))
     .limit(LEAD_EVENTS_LIMIT);
 }

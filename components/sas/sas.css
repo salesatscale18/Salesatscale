@@ -68,8 +68,10 @@
 
 .sas-ico { width: 16px; height: 16px; flex: none; }
 .sas-num { font-family: var(--font-sans); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; }
-/* Codes and IDs only (Q-1003 v1, PD-10002, SKUs, buyer IDs): the code font. Money and counts use .sas-num (round-4 review D11). */
-.sas-id { font-family: var(--font-mono); font-variant-numeric: tabular-nums; font-size: 13px; font-weight: 500; white-space: nowrap; }
+/* Codes and IDs only (Q-1003 v1, PD-10002, SKUs, buyer IDs): the code font. Money and counts use .sas-num (round-4 review D11).
+   IDs use normal (proportional) digits: in Inter, tabular-nums also widens the hyphen, so "Q-1002" read as "Q - 1002".
+   Tabular digits stay for amounts, times and counts only. */
+.sas-id { font-family: var(--font-mono); font-variant-numeric: normal; font-size: 13px; font-weight: 500; white-space: nowrap; }
 
 /* Typography helpers (design system type styles) */
 .sas-display { font-size: 28px; line-height: 34px; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
@@ -1469,8 +1471,8 @@ label.st-voice__row { cursor: pointer; }
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") center / contain no-repeat; }
 .sas-lf > .sas-filter:has(option:checked:not([value=""])) { color: var(--primary); }
 .sas-lf > .sas-filter:has(option:checked:not([value=""])) .sas-select { border-color: var(--primary); color: var(--primary); }
-/* Quote and order numbers in list cells and detail lines: the text font with tabular numbers (still one unbroken run). */
-.sas-id.sas-id--plain { font-family: inherit; font-size: inherit; font-weight: inherit; font-variant-numeric: tabular-nums; }
+/* Quote and order numbers in list cells and detail lines: the text font with normal digits (still one unbroken run). */
+.sas-id.sas-id--plain { font-family: inherit; font-size: inherit; font-weight: inherit; font-variant-numeric: normal; }
 /* Overview: Your markets on the start side, Needs you on the end side, both top-aligned (OverviewV2). Two markets and
    Add market share one row while they fit: cards shrink from 264px toward 220px; Add market is the narrow one. */
 .sas-ovn-row .sas-mcards { container: mcards / inline-size; }
@@ -1571,3 +1573,5 @@ label.st-voice__row { cursor: pointer; }
 .sas-token, .sas-thread-note, .sas-sim-line, #simulator, .sas-sms-entry__text, .sas-input[readonly] {
   font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0;
 }
+/* IDs keep normal digits wherever they sit, also inside a tabular .sas-num run (UX: IDs use normal digits). Keep last. */
+.sas-id, .sas-id--plain, .sas-num .sas-id, .sas-num .sas-id--plain { font-variant-numeric: normal; }

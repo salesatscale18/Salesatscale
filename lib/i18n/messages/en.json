@@ -3621,5 +3621,21 @@
   "conv.notice.sent_chat": "Sent in the buyer's chat.",
   "inbox.preview.quote": "Quote {ref}",
   "inbox.preview.form": "Order form",
-  "inbox.preview.payment": "Payment"
+  "inbox.preview.payment": "Payment",
+  "lead.event.chat.opened": "Opened the chat",
+  "lead.event.sms.sent": "SMS sent: {what}",
+  "lead.event.sms.mocked": "SMS not sent (test mode): {what}",
+  "lead.event.sms.refused": "SMS not sent: {what}",
+  "lead.event.sms.failed": "SMS failed: {what}",
+  "lead.event.sms.stopped": "Text messages stopped",
+  "lead.event.sms.resumed": "Text messages turned back on",
+  "lead.event.sms_kind.opener": "opening message",
+  "lead.event.sms_kind.follow_up": "follow-up",
+  "lead.event.sms_kind.named_time": "the time they asked for",
+  "lead.event.sms_kind.named_time_retry": "still a good time?",
+  "lead.event.sms_kind.quote_ready": "quote ready",
+  "lead.event.sms_kind.order_form": "order form ready",
+  "lead.event.sms_kind.team_call": "team call booked",
+  "lead.event.sms_kind.chat_link": "chat link",
+  "lead.event.sms_kind.other": "text message"
 }

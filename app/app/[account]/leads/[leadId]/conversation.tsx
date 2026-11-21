@@ -173,7 +173,7 @@ function OrderFormCard({ p, locale }: { p: SellerFormCard["preview"]; locale: Lo
           <b dir="auto">{p.seller}</b>
           {/* The buyer sees a version only from v2 on, as on the buyer's card. */}
           {/* A signed form waiting for payment: "Payment · Q-1002" and "Pay now", as the buyer's card. */}
-          <span>{t(p.pay ? "buyer.sim.pay_label" : "buyer.sim.form_label", undefined, locale)} · <bdi className="sas-num">{p.ref.replace(/ v1$/, "")}</bdi></span>
+          <span>{t(p.pay ? "buyer.sim.pay_label" : "buyer.sim.form_label", undefined, locale)} · <bdi className="sas-id sas-id--plain">{p.ref.replace(/ v1$/, "")}</bdi></span>
           {p.oneTime || p.recurring ? (
             <span className="sas-fcard__sum">
               {p.oneTime ? <><bdi className="sas-num">{p.oneTime}</bdi> {t("buyer.sim.today_word", undefined, locale)}</> : null}
