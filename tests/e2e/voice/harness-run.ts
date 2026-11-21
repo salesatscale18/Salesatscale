@@ -576,7 +576,7 @@ async function main() {
         await page.fill("#c-input", "");
         check((await page.locator("[data-voice-back]").count()) === 1, `${sh.name}: an empty field shows Back to text again`);
         check((await page.locator('[data-bubble-note="first"]').count()) === (first ? 1 : 0), `${sh.name}: the transcript note next to the bubble, only on the first switch in the conversation`);
-        check(!/automated assistant/i.test((await page.locator("[data-buyer-call]").textContent()) ?? ""), `${sh.name}: no bot notice in the bar`);
+        check(!/automated assistant/i.test((await page.locator("[data-voice-bubble]").textContent()) ?? ""), `${sh.name}: no bot notice by the bubble`);
         await page.waitForTimeout(sh.lang === "en" && first ? 9000 : 3500);
         await shot(page, `buyer2-call-live-${sh.name}`);
         if (sh.lang === "en" && first) {
