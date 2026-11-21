@@ -41,7 +41,7 @@ import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
 import { VoiceSettingsForm } from "@/components/sas/voice/voice-settings-form";
 import { usdRate } from "@/lib/ai/models";
 import { INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
-import { barView } from "@/lib/voice/client/view";
+import { barView, endDetailText } from "@/lib/voice/client/view";
 import { callClock, callLimitShort, voiceLabAccess, voiceSettingsSummary } from "@/lib/voice/lab";
 import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
 import { maxCallSeconds, resolveVoiceSettings, voiceCapabilities, voiceModelId } from "@/lib/voice/settings";
@@ -481,6 +481,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <VoiceCallStats
                 durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
                 answerMsAvg={savedEnded.answerMsAvg} live={false} costEstimated={savedEnded.costEstimated} endReason={savedEnded.endReason} errorCode={savedEnded.errorCode}
+                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null}
                 standby={savedEnded.standbySec !== null && savedEnded.activeSec !== null ? { activeSec: savedEnded.activeSec, standbySec: savedEnded.standbySec } : null}
               />
             ) : null;

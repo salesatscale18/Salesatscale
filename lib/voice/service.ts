@@ -7,7 +7,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { agentVersions, conversations, messages, sellerAccounts, voiceSessions, type VoiceSettings, type VoiceEndReason, type VoiceSession, type VoiceSessionMode, type VoiceUsage } from "@/db/schema";
+import { agentVersions, conversations, messages, sellerAccounts, voiceSessions, type VoiceSettings, type VoiceEndReason, type VoiceSession, type VoiceSessionMode, type VoiceUsage, type VoiceEndDetail } from "@/db/schema";
 import { ensureDraftVersion, startTestConversation } from "@/lib/agent/service";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { estimatedRealtimeUsage, estimateRealtimeCostMicros } from "@/lib/ai/models";
@@ -255,6 +255,8 @@ export type VoiceSessionSummary = {
   /** Standby (lib/voice/call-rules.ts): seconds with the agent connected and on standby; null when the call had no standby. */
   activeSec: number | null;
   standbySec: number | null;
+  /** How it ended, technically (who ended it, socket and model close codes, the last error), when stored. */
+  endDetail: VoiceEndDetail | null;
   wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
@@ -281,6 +283,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     activeSec: s.usage?.standbys ? s.usage.activeSec ?? null : null,
     standbySec: s.usage?.standbys ? s.usage.standbySec ?? null : null,
     wakes: s.usage?.wakes ?? 0,
+    endDetail: s.usage?.endDetail ?? null,
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

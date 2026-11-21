@@ -177,6 +177,21 @@ function fullBarView(s: VoiceSnapshot, now: number, ctx: BarContext): Omit<BarVi
   }
 }
 
+/**
+ * The technical line under "How it ended" (platform admins only): who ended the call, the model's and the
+ * browser socket's close codes and reasons, and the last error. Null without a stored detail.
+ */
+export function endDetailText(d: import("@/db/schema").VoiceEndDetail | null | undefined): string | null {
+  if (!d) return null;
+  const parts = [`by ${d.by}`];
+  if (d.modelClose) {
+    parts.push(`model closed ${d.modelClose.code ?? "-"}${d.modelClose.reason ? ` "${d.modelClose.reason}"` : ""}${d.modelClose.msAfterConnect !== null ? ` after ${d.modelClose.msAfterConnect} ms` : ""}${d.modelClose.error ? " with an error" : ""}`);
+  }
+  if (d.clientClose) parts.push(`browser socket ${d.clientClose.code ?? "-"}${d.clientClose.reason ? ` "${d.clientClose.reason}"` : ""}`);
+  if (d.lastError) parts.push(`error: ${d.lastError}`);
+  return parts.join(" · ");
+}
+
 /** "How it ended" in plain words, for the saved call and the ended card. */
 export function endReasonText(reason: string | null | undefined): string | null {
   if (!reason) return null;

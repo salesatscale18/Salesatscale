@@ -1010,6 +1010,22 @@ export type VoiceEndReason = (typeof VOICE_END_REASONS)[number];
 /** scripted: the free fake model (VOICE_REALTIME=scripted), never counted in AI spend; live: a paid realtime model. */
 export type VoiceSessionMode = "scripted" | "live";
 
+/** Who or what ended a voice call (voice_sessions.usage.endDetail.by; lib/voice/engine.ts). */
+export type VoiceEndBy =
+  | "client_end" | "client_closed" | "client_idle" | "model_closed" | "model_closed_early" | "limit" | "idle" | "tool"
+  | "take_over" | "ended_elsewhere" | "gate" | "error" | "deadline";
+
+/**
+ * How a voice call ended, technically: stored with the call so a failed one is diagnosable without logs.
+ * Close reasons and the error are provider/socket strings, at most 200 characters; never transcript text.
+ */
+export type VoiceEndDetail = {
+  by: VoiceEndBy;
+  clientClose?: { code: number | null; reason: string };
+  modelClose?: { code: number | null; reason: string; msAfterConnect: number | null; error: boolean };
+  lastError?: string;
+};
+
 /**
  * Token usage of a voice call: the last snapshot the realtime model reported
  * (snapshots, not increments). Cached = the cached part of the input. `estimated`:
@@ -1029,6 +1045,7 @@ export type VoiceUsage = {
   wakes?: number;
   falseWakes?: number;
   wakeLog?: { by: "speech" | "typed" | "tap"; atMs: number; readyMs: number | null; firstAudioMs: number | null; heard: boolean }[];
+  endDetail?: VoiceEndDetail;
 };
 
 /**

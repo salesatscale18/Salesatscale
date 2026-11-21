@@ -35,7 +35,7 @@ import { ManualClock, flushAsync, type RealtimeEvent } from "@/lib/voice/realtim
 import {
   DEFAULT_SCRIPT, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
 } from "@/lib/voice/scripted-realtime";
-import { assertLiveAllowed, clientEvents, GatewayRealtime, ServerEventMapper, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
+import { assertLiveAllowed, clientEvents, GatewayRealtime, PROVEN_SESSION_FIELDS, ServerEventMapper, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 
 const seller = { tradeName: "Acme", currency: "ILS", languages: ["en", "he"] };
 const pb: Playbook = defaultPlaybook("Acme", 500);
@@ -643,6 +643,18 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(toSdkSessionConfig({ ...cfg, expectedLanguages: ["en"] }, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({ language: "en", prompt: "The speaker most likely speaks English." });
   });
 
+  it("the retry after an early close sends only proven fields and values (Gemini: as at 6e06fe8)", () => {
+    const risky = { ...cfg, language: "he", expectedLanguages: ["he"], turnTaking: { silenceMs: 900, threshold: 0.6 }, safe: true };
+    const g = toSdkSessionConfig(risky, "google/gemini-3.8-live");
+    expect(Object.keys(g).sort()).toEqual([...PROVEN_SESSION_FIELDS.gemini].sort());
+    expect(g).toMatchObject({ inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" }, providerOptions: { google: { defaultToolBehavior: "BLOCKING" } } });
+    const o = toSdkSessionConfig(risky, "openai/gpt-realtime-2");
+    expect(o).toMatchObject({ inputAudioTranscription: {}, turnDetection: { type: "server-vad" } });
+    expect(o.providerOptions).toBeUndefined();
+    // Without `safe`, OpenAI keeps its hints and turn-taking values.
+    expect(toSdkSessionConfig({ ...risky, safe: false }, "openai/gpt-realtime-2").turnDetection).toMatchObject({ silenceDurationMs: 900 });
+  });
+
   it("session config for OpenAI: turn-taking values, no Google options", () => {
     const c = toSdkSessionConfig({ ...cfg, turnTaking: { silenceMs: 900, threshold: 0.6, prefixPaddingMs: 300 } }, "openai/gpt-realtime-2");
     expect(c.turnDetection).toEqual({ type: "server-vad", threshold: 0.6, silenceDurationMs: 900, prefixPaddingMs: 300 });
@@ -685,7 +697,9 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
   it("maps Gemini lifecycle and usage custom events, final input transcription, interruptions, errors", () => {
     const m = new ServerEventMapper();
     expect(m.map({ type: "custom", rawType: "goAway", raw: {} })).toEqual([{ type: "going-away" }]);
-    expect(m.map({ type: "custom", rawType: "sessionResumptionUpdate", raw: {} })).toEqual([]);
+    // Events we do not use are reported (the engine logs each type once per call).
+    expect(m.map({ type: "custom", rawType: "sessionResumptionUpdate", raw: {} })).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:sessionResumptionUpdate" }]);
+    expect(m.map({ type: "session-usage", usage: { seconds: 3 }, raw: {} } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "session-usage" }]);
     expect(m.map({ type: "custom", rawType: "usageMetadata", usage: { inputTokens: 500, inputAudioTokens: 400, outputTokens: 90, outputAudioTokens: 80, cachedInputTokens: 20 }, raw: {} }))
       .toEqual([{ type: "usage", usage: { audioInTokens: 400, textInTokens: 100, audioOutTokens: 80, textOutTokens: 10, cachedInTokens: 20 } }]);
     expect(m.map({ type: "custom", rawType: "interrupted", raw: {} })).toEqual([{ type: "speech-started" }]);
@@ -693,9 +707,11 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(m.map({ type: "function-call-arguments-done", responseId: "r", itemId: "i", callId: "c", name: "x", arguments: "{broken", raw: {} }))
       .toEqual([{ type: "tool-call", callId: "c", name: "x", args: {} }]);
     expect(m.map({ type: "response-done", responseId: "r", status: "cancelled", raw: {} })).toEqual([{ type: "turn-done", interrupted: true }]);
-    expect(m.map({ type: "error", message: "bad", code: "x1", raw: {} })).toEqual([]);
+    expect(m.map({ type: "error", message: "bad", code: "x1", raw: {} })).toEqual([{ type: "provider-event", kind: "error", name: "error:x1", message: "x1: bad" }]);
     expect(m.lastError).toBe("x1: bad");
-    expect(m.map({ type: "session-closed", usage: { seconds: 1 }, reason: "done", raw: {} })).toEqual([{ type: "closed" }]);
+    // A clean session close carries the provider's reason (and the error that came before it).
+    expect(m.map({ type: "session-closed", usage: { seconds: 1 }, reason: "done", raw: {} })).toEqual([{ type: "closed", reason: "done", error: "x1: bad" }]);
+    expect(new ServerEventMapper().map({ type: "session-closed", usage: { seconds: 1 }, reason: "", raw: {} })).toEqual([{ type: "closed" }]);
   });
 
   it("usage with gross totals only", () => {

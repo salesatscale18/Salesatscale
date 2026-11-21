@@ -29,6 +29,11 @@ export type RealtimeSessionConfig = {
    * The real adapter never sends it.
    */
   scenario?: string | null;
+  /**
+   * Send only the session fields proven in working live calls for this model family (the retry after the
+   * model closed a session before it said anything): lib/voice/gateway-realtime.ts PROVEN_SESSION_FIELDS.
+   */
+  safe?: boolean;
 };
 
 /** Normalized events the engine reads. Transcript texts are the whole turn so far, not deltas. */
@@ -47,7 +52,13 @@ export type RealtimeEvent =
   | { type: "usage"; usage: VoiceUsage }
   /** The provider will close the connection soon (Gemini goAway). */
   | { type: "going-away" }
-  | { type: "closed"; error?: string };
+  /**
+   * The provider closed the session. `code`/`reason`: the WebSocket close code and reason, or the provider's
+   * own session-closed reason; `error`: an error message that came with it (or before it).
+   */
+  | { type: "closed"; error?: string; code?: number; reason?: string }
+  /** A provider event we do not use (`unknown`) or an error event: logged once per type per call. */
+  | { type: "provider-event"; kind: "unknown" | "error"; name: string; message?: string };
 
 export interface RealtimeConnection {
   /** Mic audio, PCM16 mono 24 kHz little-endian. */

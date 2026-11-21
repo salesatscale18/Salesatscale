@@ -21,6 +21,7 @@ export function VoiceCallStats({
   endReason,
   errorCode,
   standby = null,
+  technical = null,
   headingId = "voice-stats-h",
 }: {
   durationSec: number;
@@ -36,6 +37,8 @@ export function VoiceCallStats({
   errorCode?: string | null;
   /** Saved calls that went on standby: time with the agent connected (paid) and on standby. */
   standby?: { activeSec: number; standbySec: number } | null;
+  /** Platform admins only: the technical line of how it ended (lib/voice/client/view.ts endDetailText). */
+  technical?: string | null;
   headingId?: string;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
@@ -57,7 +60,15 @@ export function VoiceCallStats({
             <dd className="sas-num" data-voice-standby="">{t("voice.stats.standby_value", { standby: callClock(standby.standbySec), active: callClock(standby.activeSec) })}</dd>
           </>
         ) : null}
-        {ended ? <><dt>{t("voice.stats.ended")}</dt><dd data-voice-ended="">{ended}</dd></> : null}
+        {ended ? (
+          <>
+            <dt>{t("voice.stats.ended")}</dt>
+            <dd data-voice-ended="">
+              {ended}
+              {technical ? <span className="sas-small" style={{ display: "block", overflowWrap: "anywhere" }} data-voice-ended-detail="">{technical}</span> : null}
+            </dd>
+          </>
+        ) : null}
         {error ? <><dt>{t("voice.stats.error")}</dt><dd data-voice-error="">{error}</dd></> : null}
       </dl>
       <span className="sas-small">{scripted ? t("voice.stats.note_scripted") : t("voice.stats.note")}</span>

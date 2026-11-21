@@ -2992,6 +2992,7 @@
   "voice.error.spend_cap": "This month's AI spend cap is reached.",
   "voice.error.platform_budget": "The platform's AI budget for this month is used up.",
   "voice.error.model_unavailable": "The voice model is not available right now. Try again later.",
+  "voice.error.model_closed_early": "The voice model closed the call before it could start. Try again.",
   "voice.error.connection_lost": "The connection was lost.",
   "voice.error.internal": "Something went wrong on our side. Try again.",
   "voice.who.agent": "Agent",

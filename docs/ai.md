@@ -139,6 +139,17 @@ lines replaced, `lib/agent/core/voice.ts`) and calls the same tools, which run o
   `standbySec`, `standbys`, `wakes`, `falseWakes` and a `wakeLog` (per wake: what woke it, speech
   detected → model ready, → first agent audio). This replaced the spoken "are you still there?"
   check and the 25 s + 20 s silence end.
+- **Diagnostics** (`lib/voice/log.ts`): one `[voice] <session 8>` line per step, never transcript text
+  or tokens: socket accepted (mode, model, maxSec), model connected (ms), every model close (code,
+  reason, error or not, ms since connect, audio heard or not), reconnect/wake attempts (outcome, ms),
+  provider events we do not use or errors (once per type per call), the browser socket's close and
+  the end (reason, error code, durationSec, activeSec, who ended it). The same facts are stored in
+  `voice_sessions.usage.endDetail` (`by`, `clientClose`, `modelClose`, `lastError`), shown to platform
+  admins under "How it ended" in the test lab. A model that closes a session before it said anything
+  is never a normal end: one retry with only the session fields proven on that model family
+  (`PROVEN_SESSION_FIELDS` in `lib/voice/gateway-realtime.ts`; it says the opener if it was never
+  heard), then the call ends with `model_closed_early`. A connection's close is handled once (a
+  session-closed and the socket's close are one event).
 - **Loudspeaker** (`lib/voice/client/output.ts`): the agent plays through an `<audio>` element fed
   by a `MediaStreamAudioDestinationNode` (as a WebRTC call does), falling back to the AudioContext
   output. The mic keeps echo cancellation. `setOutputDevice` / `outputDevices` switch the output

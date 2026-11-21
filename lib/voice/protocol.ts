@@ -137,7 +137,7 @@ export type VoiceEndReasonWire =
 /** Error codes the call screen can show. */
 export const VOICE_ERROR_CODES = [
   "not_found", "ticket_invalid", "not_pending", "conversation_closed", "human_handling", "account_paused", "spend_cap", "platform_budget",
-  "model_unavailable", "connection_lost", "internal",
+  "model_unavailable", "model_closed_early", "connection_lost", "internal",
 ] as const;
 export type VoiceErrorCode = (typeof VOICE_ERROR_CODES)[number];
 

@@ -38,8 +38,29 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 // Pure mapping (unit-tested)
 // ---------------------------------------------------------------------------
 
-/** Our session config as the normalized AI SDK session config. */
+/**
+ * Session fields (and values) proven in working live calls, per model family: what the retry after an early
+ * close sends (`cfg.safe`). Gemini: exactly what 6e06fe8 sent in the owner's working calls (20 Nov 2026):
+ * instructions, tools, voice, audio out, PCM 24 kHz in and out, EMPTY input and output transcription,
+ * plain server VAD and the Google BLOCKING tool option. OpenAI has no proven live call yet: the same minimal set.
+ */
+export const PROVEN_SESSION_FIELDS: Record<"gemini" | "openai", readonly (keyof SdkSessionConfig)[]> = {
+  gemini: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions"],
+  openai: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools"],
+};
+
+/** Our session config as the normalized AI SDK session config (`cfg.safe`: proven fields and values only). */
 export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
+  const full = fullSdkSessionConfig(cfg, modelId);
+  if (!cfg.safe) return full;
+  const family = schemaFamilyOf(modelId);
+  const keep = new Set<string>(PROVEN_SESSION_FIELDS[family]);
+  const safe = Object.fromEntries(Object.entries(full).filter(([k]) => keep.has(k))) as SdkSessionConfig;
+  // Proven values: no transcription hints, plain server VAD.
+  return { ...safe, inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" } };
+}
+
+function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
   const gemini = schemaFamilyOf(modelId) === "gemini";
   const tt = cfg.turnTaking;
   return {
@@ -157,16 +178,20 @@ export class ServerEventMapper {
         if (e.rawType === "goAway") return [{ type: "going-away" }];
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
         if (/^interrupted$/i.test(e.rawType)) return this.interrupt();
-        // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
-        return [];
+        // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption); reported once per type.
+        return [{ type: "provider-event", kind: "unknown", name: `custom:${e.rawType}` }];
       }
-      case "session-closed":
-        return [{ type: "closed" }];
+      case "session-closed": {
+        // The provider ended the session (a clean close): its reason, when it gives one.
+        const reason = (e as { reason?: unknown }).reason;
+        return [{ type: "closed", ...(typeof reason === "string" && reason ? { reason: reason.slice(0, 200) } : {}), ...(this.lastError ? { error: this.lastError } : {}) }];
+      }
       case "error":
-        this.lastError = e.code ? `${e.code}: ${e.message}` : e.message;
-        return [];
+        this.lastError = (e.code ? `${e.code}: ${e.message}` : String(e.message ?? "")).slice(0, 200);
+        return [{ type: "provider-event", kind: "error", name: e.code ? `error:${e.code}` : "error", message: this.lastError }];
       default:
-        return [];
+        // Not used by us: reported once per type per call (the engine logs it).
+        return [{ type: "provider-event", kind: "unknown", name: String((e as { type?: unknown }).type ?? "?") }];
     }
   }
 
@@ -294,11 +319,14 @@ export class GatewayRealtime implements RealtimeModel {
         for (const ev of mapper.map(se)) onEvent(ev);
       }
     });
-    ws.on("close", () => {
-      if (!closedByUs) onEvent({ type: "closed", error: mapper.lastError ?? (open ? "socket closed" : "socket did not open") });
+    ws.on("close", (code: number, reason: Buffer) => {
+      // The WebSocket close code and reason (and an error that came before it) go to the engine, which logs and stores them.
+      if (closedByUs) return;
+      const why = reason?.toString?.("utf8").slice(0, 200) || (open ? "" : "socket did not open");
+      onEvent({ type: "closed", code, ...(why ? { reason: why } : {}), ...(mapper.lastError ? { error: mapper.lastError } : {}) });
     });
     ws.on("error", (err) => {
-      mapper.lastError = err instanceof Error ? err.message : String(err);
+      mapper.lastError = (err instanceof Error ? err.message : String(err)).slice(0, 200);
     });
 
     await new Promise<void>((resolve, reject) => {

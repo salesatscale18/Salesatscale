@@ -300,7 +300,7 @@ export type VoiceCallUsageRecord = RealtimeTokenUsage & {
   usageEvents: number;
   firstSnapshot: RealtimeTokenUsage | null;
   lastSnapshot: RealtimeTokenUsage | null;
-} & Partial<VoiceCallTimes>;
+} & Partial<VoiceCallTimes> & { endDetail?: import("@/db/schema").VoiceEndDetail };
 
 /**
  * How a call's time was spent (lib/voice/call-rules.ts standby): `activeSec` with the model connected

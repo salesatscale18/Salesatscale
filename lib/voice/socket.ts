@@ -25,6 +25,7 @@ import {
 import { systemClock, type Clock, type RealtimeModel, type TimerHandle } from "./realtime";
 import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from "./service";
 import { maxCallSeconds, voiceMode } from "./settings";
+import { clip, consoleVoiceLog, voiceLine, type VoiceLog } from "./log";
 
 /** The part of a `ws` WebSocket the relay uses (a `ws` socket satisfies it). */
 export interface VoiceSocket {
@@ -68,6 +69,8 @@ export type VoiceSocketOptions = {
    * the route answers a buyer turn the call left unanswered (lib/voice/after-call.ts). Never awaited past its own errors.
    */
   afterCall?: (sessionId: string) => Promise<unknown>;
+  /** One-line operational logs (default: console). */
+  log?: VoiceLog;
 };
 
 /** Raw `ws` message data as bytes (Buffer is a Uint8Array; a fragmented frame is a Buffer[]). */
@@ -101,6 +104,11 @@ function toText(data: unknown, isBinary: boolean): string | null {
 export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Promise<void> {
   const clock = opts.clock ?? systemClock;
   const env = opts.env ?? process.env;
+  const log = opts.log ?? consoleVoiceLog;
+  /** The session this socket carries, once the ticket was accepted (logs). */
+  let sessionId: string | null = null;
+  /** The browser socket's close code and reason, and whether we closed it for silence. */
+  let clientClose: { code: number | null; reason: string; idle?: boolean } | null = null;
   let phase: "auth" | "checking" | "live" | "closed" = "auth";
   let engine: VoiceEngine | null = null;
   let early: ClientMessage[] = [];
@@ -155,7 +163,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       return;
     }
     // The engine ends the call now ("connection_lost" unless it already ended for another reason).
-    e.stop("connection_lost").catch((err) => console.error("[voice] engine stop failed", err))
+    e.onClientGone(clientClose ?? undefined).catch((err) => console.error("[voice] engine stop failed", err))
       // The call is stored: an unanswered last buyer turn may be answered in the chat now.
       .then(() => opts.afterCall?.(e.sessionId))
       .catch((err) => console.error("[voice] after-call hook failed", err))
@@ -167,6 +175,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       timers.ping = null;
       if (phase === "closed") return;
       if (clock.now() - lastSeen > IDLE_TIMEOUT_MS) {
+        log.warn(voiceLine(sessionId, `client silent for ${Math.round((clock.now() - lastSeen) / 1000)}s: closing the socket`));
+        clientClose = { code: VOICE_CLOSE.goingAway, reason: "idle (no frames from the browser)", idle: true };
         closeSocket(VOICE_CLOSE.goingAway, "idle");
         finish();
         return;
@@ -218,9 +228,11 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       return;
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
+    sessionId = session.id;
+    log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
     sendJson({ t: "call", maxSec, mode: model.mode });
     engine = new VoiceEngine({
-      db: opts.db, model, sessionId: session.id, clock,
+      db: opts.db, model, sessionId: session.id, clock, log,
       limits: { ...opts.limits, deadlineSec: opts.deadlineSec, env },
       send: (msg) => {
         if (msg instanceof Uint8Array) {
@@ -240,7 +252,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // A last guard beyond the engine's own limit: the socket never outlives the call by much.
     timers.hard = clock.setTimeout(() => {
       timers.hard = null;
-      void engine?.stop("limit");
+      log.warn(voiceLine(sessionId, "socket hard limit reached"));
+      void engine?.stop("limit", undefined, "deadline");
       closeSocket(VOICE_CLOSE.normal, "limit");
     }, (maxSec + 30) * 1000);
     const queued = early;
@@ -287,8 +300,12 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   ws.on("pong", () => {
     lastSeen = clock.now();
   });
-  ws.on("close", () => {
+  ws.on("close", (code?: unknown, reason?: unknown) => {
     try {
+      const c = typeof code === "number" ? code : null;
+      const r = clip(reason instanceof Uint8Array ? new TextDecoder().decode(reason) : reason);
+      log.info(voiceLine(sessionId, `client socket closed code=${c ?? "-"} reason="${r}"`));
+      clientClose ??= { code: c, reason: r };
       finish();
     } catch (e) {
       console.error("[voice] socket close handling failed", e);
@@ -297,6 +314,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   });
   ws.on("error", (e: unknown) => {
     console.error("[voice] socket error", e);
+    clientClose ??= { code: null, reason: clip(`socket error: ${e instanceof Error ? e.message : String(e)}`) };
     try {
       closeSocket(VOICE_CLOSE.internal, "error");
       finish();

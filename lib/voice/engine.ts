@@ -16,7 +16,7 @@ import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
   agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, voiceSessions,
-  type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndReason, type VoiceSession,
+  type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
 import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
@@ -35,6 +35,7 @@ import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
+import { clip, consoleVoiceLog, voiceLine, type VoiceLog } from "./log";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -67,6 +68,12 @@ export type VoiceLimits = {
 /** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
 const END_AFTER_GOODBYE_MS = 2_500;
 
+/** The usage record of a call that never connected (no tokens): it still carries endDetail. */
+const EMPTY_USAGE = {
+  audioInTokens: 0, audioOutTokens: 0, textInTokens: 0, textOutTokens: 0, cachedInTokens: 0,
+  usageCostMicros: 0, durationCostMicros: 0, basis: "none" as const, usageEvents: 0, firstSnapshot: null, lastSnapshot: null,
+};
+
 const DEFAULTS = {
   limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000,
   standbyAfterQuietMs: CALL_RULES.standbyAfterQuietMs, standbyIdleEndMs: CALL_RULES.standbyIdleEndMs, preRollMs: CALL_RULES.preRollMs,
@@ -85,6 +92,15 @@ export type VoiceEngineDeps = {
   send: (msg: ServerMessage | Uint8Array) => void;
   clock?: Clock;
   limits?: VoiceLimits;
+  /** One-line operational logs (default: console). */
+  log?: VoiceLog;
+};
+
+export type { VoiceEndBy, VoiceEndDetail };
+
+const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
+  user_hangup: "client_end", agent_closed: "tool", limit: "limit", silence: "idle", idle: "idle", opt_out: "tool", handoff: "tool",
+  take_over: "take_over", connection_lost: "client_closed", budget: "gate", error: "error",
 };
 
 type ToolRun = { name: string; input: unknown; r: ToolResult };
@@ -148,6 +164,21 @@ export class VoiceEngine {
   private readonly out: (msg: ServerMessage | Uint8Array) => void;
   readonly sessionId: string;
 
+  private readonly log: VoiceLog;
+  private endBy: VoiceEndBy | null = null;
+  private clientClose: VoiceEndDetail["clientClose"];
+  private modelClose: VoiceEndDetail["modelClose"];
+  private lastError: string | undefined;
+  /** Provider event types already logged in this call (once per type). */
+  private providerSeen = new Set<string>();
+  /** When the current model connection came up, and whether it sent any agent audio yet. */
+  private connAt: number | null = null;
+  private connAudio = false;
+  /** The model generation whose close or going-away already started a reconnect (both can come for one connection). */
+  private closeHandledGen = -1;
+  /** The model closed a session before it said anything: one retry with proven session fields only. */
+  private earlyRetryUsed = false;
+  private safeConfig = false;
   private loaded: Loaded | null = null;
   private conn: RealtimeConnection | null = null;
   private gen = 0;
@@ -221,6 +252,7 @@ export class VoiceEngine {
     this.out = deps.send;
     this.sessionId = deps.sessionId;
     this.limits = { ...DEFAULTS, ...deps.limits };
+    this.log = deps.log ?? consoleVoiceLog;
     this.vad = new EnergyVad(this.limits.vad);
     this.preRoll = new PcmRing(this.limits.preRollMs);
   }
@@ -315,15 +347,20 @@ export class VoiceEngine {
     return this.standbySince !== null;
   }
 
-  /** The browser's socket dropped: the call ends now (never keep a paid model socket open). */
-  onClientGone(): void {
-    void this.stop("connection_lost");
+  /**
+   * The browser's socket dropped: the call ends now (never keep a paid model socket open). `close`: the socket's
+   * close code and reason; `idle`: the relay closed it because the browser went silent.
+   */
+  onClientGone(close?: { code?: number | null; reason?: string; idle?: boolean }): Promise<void> {
+    if (close && !this.ended) this.clientClose = { code: close.code ?? null, reason: clip(close.reason) };
+    return this.stop("connection_lost", undefined, close?.idle ? "client_idle" : "client_closed");
   }
 
-  /** Ends the call. Idempotent: a second call returns the first one's promise. */
-  stop(reason: VoiceEndReason, code?: VoiceErrorCode): Promise<void> {
+  /** Ends the call. Idempotent: a second call returns the first one's promise. `by`: what triggered it (else from the reason). */
+  stop(reason: VoiceEndReason, code?: VoiceErrorCode, by?: VoiceEndBy): Promise<void> {
     if (this.stopping) return this.stopping;
     this.ended = true;
+    this.endBy = by ?? BY_REASON[reason] ?? "error";
     if (code) this.errorCode = code;
     for (const k of Object.keys(this.timers) as (keyof typeof this.timers)[]) {
       this.clock.clearTimeout(this.timers[k]);
@@ -436,6 +473,8 @@ export class VoiceEngine {
   /** A model connection is up from now (start, reconnect, wake): its time is paid and its usage counters start at 0. */
   private modelUp(conn: RealtimeConnection) {
     this.conn = conn;
+    this.connAt = this.clock.now();
+    this.connAudio = false;
     this.activeSince = this.clock.now();
     this.usageAcc.newSession();
   }
@@ -464,13 +503,14 @@ export class VoiceEngine {
       .where(eq(voiceSessions.id, this.sessionId));
     if (row?.status !== "ended" || this.ended) return;
     this.endedExternally = true;
-    void this.stop(row.endReason ?? "user_hangup");
+    void this.stop(row.endReason ?? "user_hangup", undefined, "ended_elsewhere");
   }
 
-  private fail(reason: VoiceEndReason, code: VoiceErrorCode) {
+  private fail(reason: VoiceEndReason, code: VoiceErrorCode, by?: VoiceEndBy) {
     this.errorCode = code;
+    this.log.warn(voiceLine(this.sessionId, `call failing: ${code} (${by ?? BY_REASON[reason]})`));
     this.send({ t: "error", code });
-    void this.stop(reason, code);
+    void this.stop(reason, code, by);
   }
 
   // -------------------------------------------------------------------------
@@ -499,8 +539,8 @@ export class VoiceEngine {
     if (conv.status === "human") return this.fail("error", "human_handling");
     if (account.status === "paused") return this.fail("error", "account_paused");
     if (this.model.mode === "live") {
-      if (await spendCapped(this.db, accountId)) return this.fail("budget", "spend_cap");
-      if ((await platformBudget(this.db)).exceeded) return this.fail("budget", "platform_budget");
+      if (await spendCapped(this.db, accountId)) return this.fail("budget", "spend_cap", "gate");
+      if ((await platformBudget(this.db)).exceeded) return this.fail("budget", "platform_budget", "gate");
     }
     this.loaded = { session, conv, lead, version, account };
     this.maxSec = maxCallSeconds({ settings: version.voiceSettings, deadlineSec: this.limits.deadlineSec, env: this.limits.env });
@@ -510,12 +550,15 @@ export class VoiceEngine {
     const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) });
     const gen = ++this.gen;
     let conn: RealtimeConnection;
+    const t0 = this.clock.now();
     try {
       conn = await this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
     } catch (e) {
-      console.error("[voice] model connect failed", e);
+      this.lastError = clip(e instanceof Error ? e.message : e);
+      this.log.warn(voiceLine(this.sessionId, `model connect failed after ${Math.round(this.clock.now() - t0)}ms: ${this.lastError}`));
       return this.fail("error", "model_unavailable");
     }
+    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId})`));
     if (this.ended || gen !== this.gen) {
       conn.close();
       return;
@@ -527,7 +570,7 @@ export class VoiceEngine {
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "pending")));
     // Limits: an announcement before the end, then the end.
     if (this.maxSec > this.limits.limitWarnSec) this.timer("warn", (this.maxSec - this.limits.limitWarnSec) * 1000, () => this.warnLimit());
-    this.timer("limit", this.maxSec * 1000, () => void this.stop("limit"));
+    this.timer("limit", this.maxSec * 1000, () => void this.stop("limit", undefined, "limit"));
     this.statsLoop();
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
@@ -536,6 +579,12 @@ export class VoiceEngine {
   }
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
+    const cfg = this.fullSessionConfig(instructions, languages);
+    // After an early close: only the session fields proven on this model family (lib/voice/gateway-realtime.ts).
+    return this.safeConfig ? { ...cfg, safe: true } : cfg;
+  }
+
+  private fullSessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
     const version = this.loaded!.version;
     const settings = resolveVoiceSettings(version.voiceSettings);
     const family = schemaFamilyOf(this.model.modelId);
@@ -584,6 +633,7 @@ export class VoiceEngine {
           this.currentWake = null;
         }
         this.agentSpeaking = true;
+        this.connAudio = true;
         this.clearQuiet();
         this.setState("speaking");
         this.send(e.pcm);
@@ -644,11 +694,34 @@ export class VoiceEngine {
         this.sendStats();
         return;
       case "going-away":
+        // One reconnect per connection: a going-away and its close (or a session-closed and the socket's close) are one event.
+        if (this.closeHandledGen === gen) return;
+        this.closeHandledGen = gen;
+        this.log.info(voiceLine(this.sessionId, `model going away after ${this.msSinceConnect() ?? "?"}ms`));
         void this.enqueue(() => this.reconnect());
         return;
-      case "closed":
-        void this.enqueue(() => this.reconnect());
+      case "closed": {
+        const ms = this.msSinceConnect();
+        if (e.error) this.lastError = clip(e.error);
+        this.log.warn(voiceLine(this.sessionId, `model closed code=${e.code ?? "-"} reason="${clip(e.reason)}" error=${e.error ? "yes" : "no"} after=${ms ?? "?"}ms audio=${this.connAudio ? "yes" : "no"}`));
+        if (this.closeHandledGen === gen) return;
+        this.closeHandledGen = gen;
+        this.modelClose = { code: e.code ?? null, reason: clip(e.reason), msAfterConnect: ms, error: !!e.error };
+        // Closed before it said anything: not a normal drop (a session the provider refused, e.g. a setting it does not take).
+        const early = !this.connAudio;
+        void this.enqueue(() => this.reconnect(early));
         return;
+      }
+      case "provider-event": {
+        if (e.kind === "error") this.lastError = clip(e.message ?? e.name);
+        const key = `${e.kind}:${e.name}`;
+        if (this.providerSeen.has(key)) return;
+        this.providerSeen.add(key);
+        const line = voiceLine(this.sessionId, `provider ${e.kind} event ${clip(e.name, 60)}${e.message ? `: ${clip(e.message)}` : ""}`);
+        if (e.kind === "error") this.log.warn(line);
+        else this.log.info(line);
+        return;
+      }
     }
   }
 
@@ -723,7 +796,7 @@ export class VoiceEngine {
     }
     const left = this.limits.standbyIdleEndMs - (this.clock.now() - (this.quietSince ?? this.standbySince));
     this.timer("idle", Math.max(0, left), () => {
-      if (this.standbySince !== null) void this.stop("idle");
+      if (this.standbySince !== null) void this.stop("idle", undefined, "idle");
     });
   }
 
@@ -777,7 +850,7 @@ export class VoiceEngine {
     if (this.ended || !this.waking || !this.loaded) return false;
     let conn: RealtimeConnection | null = null;
     for (let attempt = 0; attempt < 2 && !conn && !this.ended; attempt++) {
-      conn = await this.openModel({ resumed: true, woke: true }, this.limits.wakeConnectMs);
+      conn = (await this.openModel({ resumed: true, woke: true }, this.limits.wakeConnectMs, `wake ${attempt + 1}`))?.conn ?? null;
     }
     if (this.ended) {
       conn?.close();
@@ -786,7 +859,7 @@ export class VoiceEngine {
     this.waking = false;
     if (!conn) {
       this.wakeAudio = [];
-      this.fail("connection_lost", "connection_lost");
+      this.fail("connection_lost", "connection_lost", "model_closed");
       return false;
     }
     this.modelUp(conn);
@@ -812,28 +885,38 @@ export class VoiceEngine {
    * One model connection with fresh instructions and the call's recap, within `ms`; null on failure
    * or timeout (a late connection is closed at once).
    */
-  private async openModel(opts: { resumed: true; woke?: boolean }, ms: number): Promise<RealtimeConnection | null> {
+  private async openModel(opts: { resumed: boolean; woke?: boolean }, ms: number, what: string): Promise<{ conn: RealtimeConnection; openerPrompt: string } | null> {
     const { account, version, conv, lead } = this.loaded!;
     const gen = this.gen;
+    const t0 = this.clock.now();
+    let openerPrompt = "";
     let timedOut = false;
     const timeout = new Promise<null>((resolve) => this.timer("reconnect", ms, () => { timedOut = true; resolve(null); }));
     const attempt = (async () => {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-        recap: this.lines.slice(-RECAP_LINES), ...opts,
+        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts,
       });
+      openerPrompt = ctx.openerPrompt;
       return this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
     })().catch((e) => {
-      console.error("[voice] model connect failed", e);
+      this.lastError = clip(e instanceof Error ? e.message : e);
       return null;
     });
     const conn = await Promise.race([attempt, timeout]);
     this.clearTimer("reconnect");
+    const took = Math.round(this.clock.now() - t0);
     if (!conn || timedOut || this.ended || gen !== this.gen) {
       void attempt.then((late) => late?.close());
+      this.log.warn(voiceLine(this.sessionId, `${what} failed after ${took}ms: ${timedOut ? "timed out" : this.ended ? "call ended" : clip(this.lastError) || "no connection"}`));
       return null;
     }
-    return conn;
+    this.log.info(voiceLine(this.sessionId, `${what} connected in ${took}ms${this.safeConfig ? " (proven session fields only)" : ""}`));
+    return { conn, openerPrompt };
+  }
+
+  private msSinceConnect(): number | null {
+    return this.connAt === null ? null : Math.max(0, Math.round(this.clock.now() - this.connAt));
   }
 
   private toolCtx(callId: string, memo: TurnMemo): ToolContext {
@@ -878,7 +961,7 @@ export class VoiceEngine {
     const [now] = await this.db.select({ status: conversations.status, takenOverByUserId: conversations.takenOverByUserId }).from(conversations)
       .where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id)));
     if (now?.status === "human" && !this.pendingEnd) {
-      void this.stop(now.takenOverByUserId ? "take_over" : "handoff");
+      void this.stop(now.takenOverByUserId ? "take_over" : "handoff", undefined, "take_over");
       return;
     }
     // Typed on standby: the agent reconnects first, then gets the text.
@@ -1112,30 +1195,47 @@ export class VoiceEngine {
   // Reconnect
   // -------------------------------------------------------------------------
 
-  /** The provider is going away or dropped: ONE fresh connection within reconnectMs, with a recap; else the call ends. */
-  private async reconnect() {
+  /**
+   * The provider is going away or dropped: ONE fresh connection within reconnectMs, with a recap; else the call ends.
+   * `early`: the model closed this session before it said anything. That is never a normal end: ONE retry with
+   * only the session fields proven on this model family; if that fails too, the call ends with model_closed_early.
+   * A call whose opening line was never spoken starts again with the opener.
+   */
+  private async reconnect(early = false) {
     if (this.ended || this.reconnecting || !this.loaded) return;
-    if (this.reconnectUsed) {
-      this.fail("connection_lost", "connection_lost");
-      return;
+    if (early) {
+      if (this.earlyRetryUsed) {
+        this.fail("error", "model_closed_early", "model_closed_early");
+        return;
+      }
+      this.earlyRetryUsed = true;
+      this.safeConfig = true;
+    } else {
+      if (this.reconnectUsed) {
+        this.fail("connection_lost", "connection_lost", "model_closed");
+        return;
+      }
+      this.reconnectUsed = true;
     }
-    this.reconnectUsed = true;
     this.reconnecting = true;
     this.setState("reconnecting");
     this.closeModel();
     await this.finalizeAgentTurn("stop");
     this.agentSpeaking = false;
-    const conn = await this.openModel({ resumed: true }, this.limits.reconnectMs);
-    if (!conn || this.ended) {
-      conn?.close();
+    const fresh = early && !this.openerDone && !this.lastLine;
+    const opened = await this.openModel({ resumed: !fresh }, this.limits.reconnectMs, early ? "retry after early close" : "reconnect");
+    if (!opened || this.ended) {
+      opened?.conn.close();
       this.reconnecting = false;
-      if (!this.ended) this.fail("connection_lost", "connection_lost");
+      if (!this.ended) early ? this.fail("error", "model_closed_early", "model_closed_early") : this.fail("connection_lost", "connection_lost", "model_closed");
       return;
     }
-    this.modelUp(conn);
+    this.modelUp(opened.conn);
     this.reconnecting = false;
     this.setState("listening");
-    this.startQuiet();
+    // The opening line was never heard: the retried session says it.
+    if (fresh) opened.conn.requestResponse(opened.openerPrompt);
+    else this.startQuiet();
   }
 
   // -------------------------------------------------------------------------
@@ -1169,6 +1269,16 @@ export class VoiceEngine {
       const a = this.usageAcc;
       usage = { ...a.total, usageCostMicros: 0, durationCostMicros: 0, basis: "none", usageEvents: a.events, firstSnapshot: a.first, lastSnapshot: a.last, ...times };
     }
+    // How it ended, technically: stored with the figures so a failed call can be read without logs.
+    const endDetail: VoiceEndDetail = {
+      by: this.endBy ?? BY_REASON[reason] ?? "error",
+      ...(this.clientClose ? { clientClose: this.clientClose } : {}),
+      ...(this.modelClose ? { modelClose: this.modelClose } : {}),
+      ...(this.lastError ? { lastError: this.lastError } : {}),
+    };
+    usage = usage ? { ...usage, endDetail } : ({ ...EMPTY_USAGE, endDetail } as VoiceCallUsageRecord);
+    this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${durationSec} activeSec=${activeSec} by=${endDetail.by}`
+      + `${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""}${this.modelClose ? ` model=${this.modelClose.code ?? "-"}/"${this.modelClose.reason}"@${this.modelClose.msAfterConnect ?? "?"}ms` : ""}`));
     const answerMsAvg = this.answerMsAvg();
     await this.db.update(voiceSessions).set({
       status: "ended", endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,
