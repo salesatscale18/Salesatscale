@@ -466,8 +466,12 @@ export async function receiveSimulatorInbound(db: Db, ctx: Pick<ChatContext, "le
   return receiveLeadMessage(db, lead, await webChatChannelFor(db, lead), `sim:${UUID.test(clientId) ? clientId.toLowerCase() : randomUUID()}`, body, now, { allowBeforeGoLive: simulated });
 }
 
-/** An order-form link card: the client lays it out per language, with amounts and IDs isolated left-to-right. */
-export type LinkPreview = { url: string; seller: string; ref: string; oneTime: string | null; recurring: string | null };
+/**
+ * An order-form link card: the client lays it out per language, with amounts and IDs isolated left-to-right.
+ * `pay`: the form is signed and its order waits for payment, so the card reads "Payment · Q-1002" / "Pay now"
+ * (the same link opens at the payment step).
+ */
+export type LinkPreview = { url: string; seller: string; ref: string; oneTime: string | null; recurring: string | null; pay?: boolean };
 
 export type BuyerMessage = {
   id: string;
@@ -520,6 +524,7 @@ export async function linkPreviews(db: Db, accountId: string, bodies: string[], 
       url: l.url, seller: displaySeller(view.form, lang), ref: `Q-${s.quote.number} v${s.quote.version}`,
       oneTime: s.oneTime.totalMinor ? formatMoney(s.oneTime.totalMinor, s.currency) : null,
       recurring: s.recurring.totalMinor ? formatMoney(s.recurring.totalMinor, s.currency) : null,
+      pay: view.state === "signed" && !!view.order && view.order.paymentStatus !== "paid" && view.order.paymentStatus !== "refunded",
     });
   }));
   return out;

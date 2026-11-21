@@ -35,7 +35,7 @@ import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
 import { isSimulatedLead, isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
-import { leadEventIcon } from "@/lib/leads/event-icons";
+import { leadEventIcon, leadEventKey } from "@/lib/leads/event-icons";
 import { contactHoursFixHref } from "@/lib/markets/lead-settings";
 import { SimulatorPanel } from "./simulator-panel";
 import { SimulatedChip } from "../simulated-chip";
@@ -142,18 +142,17 @@ export default async function LeadCardPage({
   const whoIn = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you_lower")));
   /** An event's title as text (the folded timeline's "last:" line). */
   const eventTitle = (type: string, data: unknown) =>
-    t(type === "conversation.started" && (data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${type}` as MessageKey);
+    t(`lead.event.${leadEventKey(type, data)}` as MessageKey);
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";
     const ord = won ? orderById.get(String((event.data as { orderId?: string } | null)?.orderId ?? "")) : undefined;
-    // A conversation started on the buyer simulator is not a WhatsApp start.
-    const startedSim = event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator";
+    // A conversation started in the web chat (real or simulated) is not a WhatsApp start (leadEventKey).
     const title = eventTitle(event.type, event.data);
     return {
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
-    icon: leadEventIcon(event.type, { simulator: startedSim }),
+    icon: leadEventIcon(event.type, { data: event.data }),
     // Wins get the filled green circle (round-4 review E7).
     tone: won ? ("success" as const) : undefined,
     title: won ? <span style={{ color: "var(--success)" }} data-tone="success">{title}</span> : title,

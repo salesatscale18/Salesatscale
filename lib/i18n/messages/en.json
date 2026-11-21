@@ -3604,5 +3604,12 @@
   "buyer.chat.continue.quote": "Hi {name}, it's {agent} again from {seller}, picking up where we left off. Here's your quote {ref} from {date}, any questions about it?",
   "buyer.chat.continue.form": "Hi {name}, it's {agent} again from {seller}. Your order form for {ref} is below; it takes about 2 minutes.",
   "buyer.chat.continue.pay": "Hi {name}, it's {agent} again from {seller}. Thanks for signing. Payment details are below.",
-  "buyer.chat.continue.other": "Hi {name}, it's {agent} again from {seller}, picking up where we left off. How can I help?"
+  "buyer.chat.continue.other": "Hi {name}, it's {agent} again from {seller}, picking up where we left off. How can I help?",
+  "buyer.sim.pay_label": "Payment",
+  "buyer.sim.pay_now": "Pay now",
+  "lead.event.conversation.started_chat": "Started in the web chat",
+  "conv.notice.sent_chat": "Sent in the buyer's chat.",
+  "inbox.preview.quote": "Quote {ref}",
+  "inbox.preview.form": "Order form",
+  "inbox.preview.payment": "Payment"
 }

@@ -10,7 +10,7 @@ import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
 import { relativeTime } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
-import { leadEventIcon } from "@/lib/leads/event-icons";
+import { leadEventIcon, leadEventKey } from "@/lib/leads/event-icons";
 import {
   PERIODS, marketCurrency, needsYouByMarket, needsYouForRequest, openLeadsByMarket, overviewCardNumbers, overviewKpis, parsePeriod, periodRange,
   previousRange, recentActivity,
@@ -120,9 +120,9 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const timeline: TimelineItem[] = activity.map(({ event, lead, user: by }) => ({
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
-    icon: leadEventIcon(event.type, { simulator: (event.data as { channel?: string } | null)?.channel === "simulator" }),
-    // A conversation started on the buyer simulator is not a WhatsApp start.
-    title: t(event.type === "conversation.started" && (event.data as { channel?: string } | null)?.channel === "simulator" ? "lead.event.conversation.started_sim" : `lead.event.${event.type}` as MessageKey),
+    icon: leadEventIcon(event.type, { data: event.data }),
+    // A conversation started in the web chat (real or simulated) is not a WhatsApp start (leadEventKey).
+    title: t(`lead.event.${leadEventKey(event.type, event.data)}` as MessageKey),
     detail: (
       <>
         <a href={`${base}/leads/${lead.id}`}>{lead.fullName}</a>

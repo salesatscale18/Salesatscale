@@ -26,6 +26,8 @@ import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
 import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
+import { previewText, type PreviewFacts } from "@/lib/conversations/preview";
+import { previewFacts } from "@/lib/conversations/preview-data";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -39,13 +41,14 @@ const GROUP_ORDER: InboxGroup[] = ["needs_you", "human", "agent", "closed"];
  * separate part: it gets its own direction and is cut at its own end, so a
  * Hebrew preview shows the start of the sentence (round-4 review F1).
  */
-function preview(r: Pick<InboxRow, "lastBody" | "lastActor" | "lastUserId">, meId: string): { who: string | null; text: string } {
+function preview(r: Pick<InboxRow, "lastBody" | "lastActor" | "lastUserId">, meId: string, facts?: PreviewFacts): { who: string | null; text: string } {
   if (!r.lastBody) return { who: null, text: t("inbox.no_messages") };
   const who = r.lastActor === "buyer" ? t("inbox.from.buyer")
     : r.lastActor === "agent" ? t("inbox.from.agent")
     : r.lastActor === "human" ? (r.lastUserId && r.lastUserId === meId ? t("inbox.from.you") : t("inbox.from.team"))
     : t("inbox.from.system");
-  return { who, text: r.lastBody.replace(/\s+/g, " ").slice(0, 120) };
+  // Readable, never the raw body (RA3): no emphasis markers, a quote reads "Quote Q-1003", a form link its card title.
+  return { who, text: previewText(r.lastBody, facts) };
 }
 
 /** Conversations inbox (canvas: Inbox, P6.6). Filters, search and the selected chat live in the URL. */
@@ -92,7 +95,12 @@ export default async function ConversationsPage({ params, searchParams }: { para
   // O35: why each conversation a person handles needs one (one line, as in Needs you and on the lead page):
   // a waiting hand-off, one a person took over (also while the buyer waits), and a lead in "Human handling".
   const showsWhy = (r: InboxRow) => r.group !== "closed" && (r.status === "human" || r.lead.status === "human_handling");
-  const whys = list ? await handoffWhyByLead(appDb, account.id, list.rows.filter(showsWhy).map((r) => r.lead.id)) : new Map<string, string>();
+  const [whys, facts] = list
+    ? await Promise.all([
+      handoffWhyByLead(appDb, account.id, list.rows.filter(showsWhy).map((r) => r.lead.id)),
+      previewFacts(appDb, account.id, list.rows, now),
+    ])
+    : [new Map<string, string>(), new Map<string, PreviewFacts>()];
 
   // The selected thread's data, in a second parallel batch.
   const thread = selected
@@ -204,7 +212,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                                 <span className="sas-small sas-when" title={r.lastAt.toISOString()}>{relativeTime(r.lastAt, now)}</span>
                               </span>
                               {(() => {
-                                const p = preview(r, me.id);
+                                const p = preview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
                                 return (
                                   <span className="sas-small sas-inbox__preview" data-preview="">
                                     {p.who ? <span className="sas-inbox__preview-who">{p.who}:</span> : null}

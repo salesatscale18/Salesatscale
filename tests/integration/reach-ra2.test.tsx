@@ -216,8 +216,9 @@ describe("Reach RA2", () => {
     save("lead-avi", html);
     const conv = html.slice(html.indexOf('id="conversation"'));
     expect(conv).toContain('data-form-card=""');
-    expect(conv).toContain("Open order form");
-    expect(conv).toMatch(/Order form · <bdi class="sas-num">Q-\d+<\/bdi>/);
+    // Avi's form is signed and waits for payment: the pay card (RA3).
+    expect(conv).toContain("Pay now");
+    expect(conv).toMatch(/Payment · <bdi class="sas-num">Q-\d+<\/bdi>/);
     // The link is never a text bubble of its own.
     expect(conv).not.toMatch(/<div class="sas-msg__bubble"[^>]*>https?:\/\/[^<]*\/f\//);
     // Order: the continuation line, the card, the private note, then the SMS card.
@@ -229,9 +230,9 @@ describe("Reach RA2", () => {
     expect(line).toBeLessThan(card);
     expect(card).toBeLessThan(note);
     expect(note).toBeLessThan(sms);
-    // The note's link and copy field keep their letters (no contextual alternates): set on .sas-thread-note in sas.css.
+    // The note's link and copy field keep their letters (no contextual alternates): set on .sas-thread-note in sas.css (not on .sas-id since RA3).
     const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
-    expect(css).toMatch(/\.sas-id, \.sas-token, \.sas-thread-note, \.sas-sim-line, #simulator, \.sas-sms-entry__text, \.sas-input\[readonly\] \{\s*font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0;/);
+    expect(css).toMatch(/\.sas-token, \.sas-thread-note, \.sas-sim-line, #simulator, \.sas-sms-entry__text, \.sas-input\[readonly\] \{\s*font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0;/);
   });
 
   it("Conversations shows the same card and note order", async () => {

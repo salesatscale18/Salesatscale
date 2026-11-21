@@ -26,8 +26,8 @@ function Row({ icon, title, pill, children, side }: { icon: IconName; title: str
       <div className="sas-channel-row__main">
         <div className="sas-channel-row__title"><h3>{title}</h3>{pill}</div>
         {children}
+        {side ? <div className="sas-channel-row__side">{side}</div> : null}
       </div>
-      {side ? <div className="sas-channel-row__side">{side}</div> : null}
     </div>
   );
 }

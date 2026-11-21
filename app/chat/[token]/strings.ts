@@ -26,6 +26,8 @@ export function chatStrings(tr: (key: MessageKey, vars?: Record<string, string |
     today: tr("buyer.sim.today"),
     yesterday: tr("buyer.sim.yesterday"),
     openForm: tr("buyer.sim.open_form"),
+    payLabel: tr("buyer.sim.pay_label"),
+    payNow: tr("buyer.sim.pay_now"),
     empty: tr("buyer.sim.empty"),
     notSent: tr("buyer.sim.not_sent"),
     messages: tr("buyer.sim.messages"),

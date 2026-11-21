@@ -1524,8 +1524,9 @@ label.st-voice__row { cursor: pointer; }
 .sas-channel-row__main > p { margin: 0; }
 .sas-channel-row__title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sas-channel-row__title h3 { margin: 0; font-size: 15px; line-height: 22px; font-weight: 600; }
-.sas-channel-row__side { flex: none; display: flex; align-items: center; }
-.sas-channel-golive { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; max-width: 200px; text-align: end; }
+/* The row's control (Go live and its reason) sits under the row's main content, full width, at every width. */
+.sas-channel-row__side { display: flex; align-items: flex-start; min-width: 0; }
+.sas-channel-golive { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; text-align: start; min-width: 0; }
 .sas-channel-fields { display: grid; grid-template-columns: minmax(0, 140px) minmax(0, 1fr); gap: 10px 16px; margin: 4px 0 0; align-items: start; }
 .sas-channel-fields--wide { grid-template-columns: minmax(0, 160px) minmax(0, 1fr); }
 .sas-channel-fields dt { color: var(--ink-muted); font-size: 14px; line-height: 20px; padding-block-start: 2px; }
@@ -1550,8 +1551,6 @@ label.st-voice__row { cursor: pointer; }
   .sas-channel-row { gap: 10px; padding: 14px 12px; }
   .sas-channel-row__icon { display: none; }
   .sas-channel-row { flex-wrap: wrap; }
-  .sas-channel-row__side { flex-basis: 100%; }
-  .sas-channel-golive { align-items: flex-start; max-width: none; text-align: start; }
   .sas-channel-fields, .sas-channel-fields--wide { grid-template-columns: minmax(0, 1fr); gap: 4px; }
   .sas-channel-fields dd { margin-block-end: 8px; }
 }
@@ -1567,7 +1566,8 @@ label.st-voice__row { cursor: pointer; }
 .sas-app a.sas-fcard__btn:hover { background: var(--surface); }
 .sas-app a.sas-fcard__btn:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
 
-/* RA2: IDs, links and tokens shown as text keep their letters: no contextual alternates ("8x1" never reads "8×1"). */
-.sas-id, .sas-token, .sas-thread-note, .sas-sim-line, #simulator, .sas-sms-entry__text, .sas-input[readonly] {
+/* RA2: links and tokens shown as text keep their letters: no contextual alternates ("8x1" never reads "8×1").
+   RA3: not on IDs (the sas id class): with alternates off the hyphen in "Q-1002" renders wide. */
+.sas-token, .sas-thread-note, .sas-sim-line, #simulator, .sas-sms-entry__text, .sas-input[readonly] {
   font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0;
 }

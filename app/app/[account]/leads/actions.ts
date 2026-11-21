@@ -12,6 +12,7 @@ import { getMarket } from "@/lib/markets/service";
 import type { Locale } from "@/lib/i18n";
 import { currentPlaybook, getConversation, verifyField } from "@/lib/agent/service";
 import { addHumanReply, handBack, takeOver } from "@/lib/agent/conversation";
+import { SIMULATOR_CHANNEL, WEB_CHAT_CHANNEL } from "@/lib/simulator/rules";
 
 // Server actions are public endpoints: every one re-checks access with requireAccount().
 // Ids from forms are checked to be UUIDs before any query (a bad id is refused, not a 500).
@@ -177,7 +178,7 @@ export async function humanReplyAction(form: FormData) {
   const notice = !r ? undefined
     : !r.ok ? r.reason
     : !r.delivery ? undefined
-    : r.delivery.delivered ? (conv?.channel === "simulator" ? "sent_sim" : "sent")
+    : r.delivery.delivered ? (conv?.channel === SIMULATOR_CHANNEL ? "sent_sim" : conv?.channel === WEB_CHAT_CHANNEL ? "sent_chat" : "sent")
     : r.delivery.reason === "window_closed" ? "window_closed" : "saved_not_sent";
   if (conv) revalidateConversation(access.account.slug, from, conv);
   redirect(conversationBack(access.account.slug, from, conv, notice));
