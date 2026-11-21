@@ -3720,5 +3720,12 @@
   "conv.marker.team_call_cancelled": "Team call cancelled · {when}",
   "lead.event.team_call.logged": "Team call logged",
   "lead.event.team_call.offered": "Booking card sent in the chat",
-  "leads.next.team_call": "Team call · {when}"
+  "leads.next.team_call": "Team call · {when}",
+  "buyer.sim.pay_label": "Payment",
+  "buyer.sim.pay_now": "Pay now",
+  "lead.event.conversation.started_chat": "Started in the web chat",
+  "conv.notice.sent_chat": "Sent in the buyer's chat.",
+  "inbox.preview.quote": "Quote {ref}",
+  "inbox.preview.form": "Order form",
+  "inbox.preview.payment": "Payment"
 }

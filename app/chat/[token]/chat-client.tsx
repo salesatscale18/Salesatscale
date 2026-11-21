@@ -21,7 +21,7 @@ import type { TalkNow } from "@/lib/follow-ups/named-time";
 
 export type ChatStrings = {
   bannerLead: string; banner: string; automated: string; typing: string; typingLabel: string; placeholder: string; send: string; ended: string; expired: string;
-  closedBy: string; today: string; yesterday: string; openForm: string; formLabel: string; todayWord: string; perMonth: string;
+  closedBy: string; today: string; yesterday: string; openForm: string; formLabel: string; payNow: string; payLabel: string; todayWord: string; perMonth: string;
   empty: string; notSent: string; messages: string; sent: string; delivered: string; read: string;
   /** Reply buttons after the close ("Sounds good" / "Change something"). */
   replyYes: string; replyChange: string; replies: string;
@@ -72,7 +72,8 @@ function Card({ p, s, initials, dir }: { p: LinkPreview; s: ChatStrings; initial
         <span className="c-card__text">
           <b className="c-card__seller">{p.seller}</b>
           {/* The buyer sees a version only from v2 on, as on the quote card and the form. */}
-          <span className="c-card__title">{s.formLabel} · <Num>{p.ref.replace(/ v1$/, "")}</Num></span>
+          {/* A signed form waiting for payment reads "Payment · Q-1002" with "Pay now" (same link, at the payment step). */}
+          <span className="c-card__title">{p.pay ? s.payLabel : s.formLabel} · <Num>{p.ref.replace(/ v1$/, "")}</Num></span>
           {p.oneTime || p.recurring ? (
             <span className="c-card__sum">
               {p.oneTime ? <><Num>{p.oneTime}</Num> {s.todayWord}</> : null}
@@ -82,7 +83,7 @@ function Card({ p, s, initials, dir }: { p: LinkPreview; s: ChatStrings; initial
           ) : null}
         </span>
       </div>
-      <a className="c-card__btn" href={p.url} target="_blank" rel="noopener noreferrer">{s.openForm}</a>
+      <a className="c-card__btn" href={p.url} target="_blank" rel="noopener noreferrer" data-card-pay={p.pay ? "" : undefined}>{p.pay ? s.payNow : s.openForm}</a>
     </div>
   );
 }

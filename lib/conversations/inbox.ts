@@ -43,6 +43,7 @@ const last = (col: SQL) => sql`(select ${col} from ${messages} where ${messages.
 const lastActor = last(sql`${messages.actor}`);
 const lastBody = last(sql`${messages.body}`);
 const lastUserId = last(sql`${messages.actorUserId}`);
+const lastMessageId = last(sql`${messages.id}`);
 const lastAt = sql`(select max(${messages.createdAt}) from ${messages} where ${messages.conversationId} = ${conversations.id})`;
 const lastBuyerAt = sql`(select max(${messages.createdAt}) from ${messages} where ${messages.conversationId} = ${conversations.id} and ${messages.actor} = 'buyer')`;
 
@@ -85,6 +86,8 @@ export type InboxRow = {
   /** The person who wrote the last message, if a person did. */
   lastUserId: string | null;
   lastBody: string | null;
+  /** The last message's id (the preview checks whether it is a quote card). */
+  lastMessageId: string | null;
   lastAt: Date;
   group: InboxGroup;
   /** WhatsApp conversations (and simulated ones with WhatsApp rules on) still in play; null otherwise. */
@@ -123,6 +126,7 @@ export async function listInbox(
       lead: { id: leads.id, fullName: leads.fullName, company: leads.company, status: leads.status, language: leads.language },
       marketName: markets.name,
       lastActor: sql<string | null>`${lastActor}`, lastUserId: sql<string | null>`${lastUserId}`, lastBody: sql<string | null>`${lastBody}`,
+      lastMessageId: sql<string | null>`${lastMessageId}`,
       lastAt: sql<unknown>`${lastAt}`, lastBuyerAt: sql<unknown>`${lastBuyerAt}`,
     })
       .from(conversations)
@@ -144,7 +148,7 @@ export async function listInbox(
       const lastAtDate = toDate(r.lastAt) ?? r.updatedAt;
       return {
         conversationId: r.conversationId, channel: r.channel, isTest: r.isTest, status: r.status, takenOverByUserId: r.takenOverByUserId,
-        lead: r.lead, marketName: r.marketName, lastActor: r.lastActor, lastUserId: r.lastUserId, lastBody: r.lastBody, lastAt: lastAtDate,
+        lead: r.lead, marketName: r.marketName, lastActor: r.lastActor, lastUserId: r.lastUserId, lastBody: r.lastBody, lastMessageId: r.lastMessageId, lastAt: lastAtDate,
         group: inboxGroup({ status: r.status, takenOverByUserId: r.takenOverByUserId, lastActor: r.lastActor, leadStatus: r.lead.status }),
         window: (r.channel === "whatsapp" || (r.channel === SIMULATOR_CHANNEL && !!opts.simulateRules)) && r.status !== "closed" ? windowState(toDate(r.lastBuyerAt), now) : null,
       };

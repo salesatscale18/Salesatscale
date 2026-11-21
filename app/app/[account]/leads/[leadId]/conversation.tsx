@@ -215,7 +215,8 @@ function OrderFormCard({ p, locale }: { p: SellerFormCard["preview"]; locale: Lo
         <span className="sas-fcard__text">
           <b dir="auto">{p.seller}</b>
           {/* The buyer sees a version only from v2 on, as on the buyer's card. */}
-          <span>{t("buyer.sim.form_label", undefined, locale)} · <bdi className="sas-num">{p.ref.replace(/ v1$/, "")}</bdi></span>
+          {/* A signed form waiting for payment: "Payment · Q-1002" and "Pay now", as the buyer's card. */}
+          <span>{t(p.pay ? "buyer.sim.pay_label" : "buyer.sim.form_label", undefined, locale)} · <bdi className="sas-num">{p.ref.replace(/ v1$/, "")}</bdi></span>
           {p.oneTime || p.recurring ? (
             <span className="sas-fcard__sum">
               {p.oneTime ? <><bdi className="sas-num">{p.oneTime}</bdi> {t("buyer.sim.today_word", undefined, locale)}</> : null}
@@ -225,7 +226,7 @@ function OrderFormCard({ p, locale }: { p: SellerFormCard["preview"]; locale: Lo
           ) : null}
         </span>
       </div>
-      <a className="sas-fcard__btn" href={p.url} target="_blank" rel="noreferrer">{t("buyer.sim.open_form", undefined, locale)}</a>
+      <a className="sas-fcard__btn" href={p.url} target="_blank" rel="noreferrer" data-card-pay={p.pay ? "" : undefined}>{t(p.pay ? "buyer.sim.pay_now" : "buyer.sim.open_form", undefined, locale)}</a>
     </div>
   );
 }
@@ -335,7 +336,7 @@ export function ConversationControls({
     </>
   );
   const noticeText = notice ? maybe(`conv.notice.${notice}`) : null;
-  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "started_sim" || notice === "quote_approved" || notice === "quote_in_limit" || notice === "quote_declined";
+  const success = notice === "sent" || notice === "started" || notice === "sent_sim" || notice === "sent_chat" || notice === "started_sim" || notice === "quote_approved" || notice === "quote_in_limit" || notice === "quote_declined";
   const status = conversationStatusText(view, leadOptedOut, leadStatus);
   const ended = dealEnded(leadStatus);
   const replyId = `reply-${from}`;

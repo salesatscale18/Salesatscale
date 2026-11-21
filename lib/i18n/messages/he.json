@@ -440,5 +440,7 @@
   "buyer.book.error.slot_taken": "הזמן הזה נתפס עכשיו. בחרו זמן אחר.",
   "buyer.book.error.invalid_phone": "הזינו מספר טלפון תקין.",
   "buyer.book.error.other": "לא הצלחנו לקבוע את השיחה. נסו שוב או כתבו כאן.",
-  "buyer.book.ics_title": "שיחה עם {seller}"
+  "buyer.book.ics_title": "שיחה עם {seller}",
+  "buyer.sim.pay_label": "תשלום",
+  "buyer.sim.pay_now": "לתשלום"
 }
