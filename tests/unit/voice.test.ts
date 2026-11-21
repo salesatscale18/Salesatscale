@@ -636,13 +636,13 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     });
   });
 
-  it("transcription hints: OpenAI gets the SDK's prompt and its one language hint; Gemini always gets the proven empty setting (a hint ended live calls at connect)", () => {
+  it("transcription: on with no hints for every model (a hint ended Gemini calls at connect; OpenAI rejected `prompt` and with it the whole setup)", () => {
     const langs = { ...cfg, language: "he", expectedLanguages: ["he", "en"] };
-    expect(toSdkSessionConfig(langs, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({ prompt: "The speaker most likely speaks Hebrew or English." });
-    expect(toSdkSessionConfig(langs, "google/gemini-3.8-live").inputAudioTranscription).toEqual({});
-    expect(toSdkSessionConfig(cfg, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({});
-    expect(toSdkSessionConfig({ ...cfg, expectedLanguages: ["en"] }, "google/gemini-3.8-live").inputAudioTranscription).toEqual({});
-    expect(toSdkSessionConfig({ ...cfg, expectedLanguages: ["en"] }, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({ language: "en", prompt: "The speaker most likely speaks English." });
+    for (const m of ["openai/gpt-realtime-2.1", "openai/gpt-realtime-mini", "google/gemini-3.8-live"]) {
+      expect(toSdkSessionConfig(langs, m).inputAudioTranscription).toEqual({});
+      expect(toSdkSessionConfig({ ...cfg, expectedLanguages: ["en"] }, m).inputAudioTranscription).toEqual({});
+      expect(JSON.stringify(toSdkSessionConfig(langs, m))).not.toMatch(/"prompt"|"language"/);
+    }
   });
 
   it("an explicit voice on every call: the version's choice, else the family default (Puck, alloy); none for the scripted model", () => {
@@ -664,10 +664,11 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     const g = toSdkSessionConfig(risky, "google/gemini-3.8-live");
     expect(Object.keys(g).sort()).toEqual([...PROVEN_SESSION_FIELDS.gemini].sort());
     expect(g).toMatchObject({ inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" }, providerOptions: { google: { defaultToolBehavior: "BLOCKING" } } });
+    // OpenAI's retry: the smallest config that still carries the instructions and tools.
     const o = toSdkSessionConfig(risky, "openai/gpt-realtime-2");
-    expect(o).toMatchObject({ inputAudioTranscription: {}, turnDetection: { type: "server-vad" } });
+    expect(Object.keys(o).sort()).toEqual([...PROVEN_SESSION_FIELDS.openai].sort());
     expect(o.providerOptions).toBeUndefined();
-    // Without `safe`, OpenAI keeps its hints and turn-taking values.
+    // Without `safe`, OpenAI keeps its turn-taking values.
     expect(toSdkSessionConfig({ ...risky, safe: false }, "openai/gpt-realtime-2").turnDetection).toMatchObject({ silenceDurationMs: 900 });
   });
 
@@ -720,7 +721,12 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(m.map({ type: "custom", raw: { voiceActivity: { speaking: true } } } as never)).toEqual([]);
     expect(m.map({ type: "custom", raw: { toolCallCancellation: { ids: ["c"] } } } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:toolCallCancellation" }]);
     expect(m.map({ type: "custom", raw: { usageMetadata: { totalTokenCount: 1 } }, usage: { inputTokens: 5 } } as never)).toEqual([{ type: "usage", usage: { audioInTokens: 0, textInTokens: 5, audioOutTokens: 0, textOutTokens: 0, cachedInTokens: 0 } }]);
-    expect(m.map({ type: "custom", raw: null } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:unnamed" }]);
+    // Nothing to name it by (also the Gateway's literal "undefined" type, Gemini's "custom:undefined"): ignored.
+    expect(m.map({ type: "custom", raw: null } as never)).toEqual([]);
+    expect(m.map({ type: "custom", rawType: "undefined" } as never)).toEqual([]);
+    // OpenAI's normal lifecycle events: ignored without a log line.
+    for (const type of ["output-item-added", "output-item-done", "content-part-added", "content-part-done", "audio-committed", "speech-stopped", "conversation-item-added"]) expect(m.map({ type, raw: {} } as never)).toEqual([]);
+    for (const rawType of ["conversation.item.done", "rate_limits.updated"]) expect(m.map({ type: "custom", rawType, raw: {} } as never)).toEqual([]);
     // Truly unknown types are still reported (the engine logs each type once per call).
     expect(m.map({ type: "session-usage", usage: { seconds: 3 }, raw: {} } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "session-usage" }]);
     expect(m.map({ type: "custom", rawType: "usageMetadata", usage: { inputTokens: 500, inputAudioTokens: 400, outputTokens: 90, outputAudioTokens: 80, cachedInputTokens: 20 }, raw: {} }))

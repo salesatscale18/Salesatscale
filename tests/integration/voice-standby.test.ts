@@ -62,14 +62,14 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     run: (ms: number) => Promise<void>; settle: () => Promise<void>; audio: (pcm: Uint8Array, stepMs?: number) => Promise<void>;
   };
 
-  async function newCall(scenario: string | null, o: { limits?: VoiceLimits; model?: RealtimeModel & { connections?: ScriptedConnection[] }; clock?: ManualClock } = {}): Promise<Call> {
+  async function newCall(scenario: string | null, o: { limits?: VoiceLimits; model?: RealtimeModel & { connections?: ScriptedConnection[] }; clock?: ManualClock; log?: import("@/lib/voice/log").VoiceLog } = {}): Promise<Call> {
     const c = (await startVoiceTestConversation(db, acc, me.id, { scenario }))!;
     const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
     if (!s.ok) throw new Error(s.reason);
     const clock = o.clock ?? new ManualClock();
     const model = (o.model ?? new ScriptedRealtime({ clock })) as ScriptedRealtime;
     const sent: (ServerMessage | Uint8Array)[] = [];
-    const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, send: (m) => sent.push(m), clock, limits: { env: {}, ...o.limits } });
+    const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, send: (m) => sent.push(m), clock, limits: { env: {}, ...o.limits }, ...(o.log ? { log: o.log } : {}) });
     const settle = async () => {
       for (let i = 0; i < 4; i++) {
         await flushAsync();
@@ -413,6 +413,88 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     } finally {
       await db.update(agentVersions).set({ voiceSettings: before[0]?.voiceSettings ?? null }).where(and(eq(agentVersions.accountId, acc), eq(agentVersions.status, "draft")));
     }
+  });
+
+  describe("OpenAI refusing the session setup (GPT-Realtime, 22 Nov 2026)", () => {
+    const GPT = "openai/gpt-realtime-2.1";
+    const PROMPT_ERR = "invalid_value: The 'prompt' parameter is not supported for this model.";
+    type Sdk = ReturnType<typeof import("@/lib/voice/gateway-realtime").toSdkSessionConfig>;
+    /**
+     * Stands in for GPT-Realtime through the Gateway: the session config as the adapter builds it; when `reject`
+     * names a reason, the whole setup is refused like the real one (an error event right after connect), and the
+     * session runs on without it. The scripted model plays the call.
+     */
+    async function rejectingModel(clock: ManualClock, reject: (sdk: Sdk) => string | null) {
+      const { toSdkSessionConfig } = await import("@/lib/voice/gateway-realtime");
+      const inner = new ScriptedRealtime({ clock });
+      const sent: Sdk[] = [];
+      const model = {
+        modelId: GPT, mode: "scripted" as const, connections: inner.connections,
+        async connect(cfg: RealtimeSessionConfig, onEvent: (e: RealtimeEvent) => void) {
+          const sdk = toSdkSessionConfig(cfg, GPT);
+          sent.push(sdk);
+          const conn = await inner.connect(cfg, onEvent);
+          const why = reject(sdk);
+          if (why) queueMicrotask(() => onEvent({ type: "provider-event", kind: "error", name: "error:invalid_value", message: why }));
+          return Object.assign(conn, { sessionFields: Object.keys(sdk) });
+        },
+      };
+      return { model, sent };
+    }
+    const logs = () => {
+      const lines: { level: string; line: string }[] = [];
+      return { lines, log: { info: (line: string) => lines.push({ level: "info", line }), warn: (line: string) => lines.push({ level: "warn", line }), error: (line: string) => lines.push({ level: "error", line }) } };
+    };
+    const hasPrompt = (sdk: Sdk) => (JSON.stringify(sdk.inputAudioTranscription ?? {}).includes('"prompt"') ? PROMPT_ERR : null);
+
+    it("the first connect sends no transcription prompt, so a model that rejects one accepts it: one connection, the opener spoken", async () => {
+      const clock = new ManualClock();
+      const { model, sent } = await rejectingModel(clock, hasPrompt);
+      const l = logs();
+      const c = await newCall(null, { clock, model: model as never, log: l.log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(15_000);
+      expect(sent).toHaveLength(1);
+      expect(hasPrompt(sent[0])).toBeNull();
+      expect(sent[0]).toMatchObject({ instructions: expect.any(String), voice: "alloy", inputAudioTranscription: {}, tools: expect.any(Array) });
+      expect(l.lines.some((x) => x.level === "error")).toBe(false);
+      expect(c.json().some((m) => m.t === "transcript" && m.role === "agent" && m.final)).toBe(true);
+      expect(c.engine.isEnded).toBe(false);
+    });
+
+    it("a setup error before the first audio is logged at error level with the fields sent, and ONE retry carries instructions and tools only", async () => {
+      const clock = new ManualClock();
+      // Refuses anything beyond the smallest config (as an unknown future refusal would).
+      const { model, sent } = await rejectingModel(clock, (sdk) => (sdk.inputAudioTranscription || sdk.voice || sdk.turnDetection ? PROMPT_ERR : null));
+      const l = logs();
+      const c = await newCall(null, { clock, model: model as never, log: l.log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(15_000);
+      const err = l.lines.find((x) => x.level === "error")!;
+      expect(err.line).toContain(`provider rejected the session setup: ${PROMPT_ERR}`);
+      expect(err.line).toMatch(/sent=instructions,voice,outputModalities,inputAudioFormat,outputAudioFormat,inputAudioTranscription,outputAudioTranscription,turnDetection,tools$/);
+      expect(err.line).not.toContain("Be brief");
+      expect(sent).toHaveLength(2);
+      expect(Object.keys(sent[1])).toEqual(["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat", "tools"]);
+      expect(sent[1].instructions).toBe(sent[0].instructions);
+      expect(sent[1].tools).toEqual(sent[0].tools);
+      // The retried session says the opener and the call goes on.
+      expect(c.json().some((m) => m.t === "transcript" && m.role === "agent" && m.final)).toBe(true);
+      expect(c.engine.isEnded).toBe(false);
+    });
+
+    it("refused again: the call ends (model_rejected_session, the provider's error kept) instead of running without its playbook", async () => {
+      const clock = new ManualClock();
+      const { model, sent } = await rejectingModel(clock, () => PROMPT_ERR);
+      const l = logs();
+      const c = await newCall(null, { clock, model: model as never, log: l.log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(15_000);
+      expect(sent).toHaveLength(2);
+      expect(c.engine.isEnded).toBe(true);
+      const row = await sessionRow(c.sessionId);
+      expect(row).toMatchObject({ endReason: "error", errorCode: "model_closed_early" });
+      const u = (await usageOf(c.sessionId)) as VoiceCallUsageRecord;
+      expect(u.endDetail).toMatchObject({ by: "model_rejected_session", lastError: PROMPT_ERR });
+      expect(l.lines.filter((x) => x.level === "error")).toHaveLength(2);
+    });
   });
 
   it("a wake whose model connection fails is retried once; two failures end the call (connection_lost)", async () => {

@@ -742,10 +742,8 @@ export class VoiceEngine {
           // An error before this connection said anything is the provider refusing (part of) the session setup:
           // never let it pass silently, and never run an agent without its playbook.
           if (!this.connAudio && gen === this.gen && !this.ended) {
-            const sent = this.conn?.sessionFields?.join(",") ?? "?";
-            const line = voiceLine(this.sessionId, `provider rejected the session setup: ${clip(e.message ?? e.name)} sent=${sent}`);
-            (this.log.error ?? this.log.warn).call(this.log, line);
-            void this.enqueue(() => this.afterSetupRejected());
+            const why = clip(e.message ?? e.name);
+            void this.enqueue(() => this.afterSetupRejected(why, gen));
             return;
           }
         }
@@ -1235,8 +1233,11 @@ export class VoiceEngine {
    * ONE retry with the smallest config that still carries the instructions and tools (`safe`); a second refusal
    * ends the call (model_rejected_session, with the provider's error in endDetail).
    */
-  private async afterSetupRejected() {
-    if (this.ended || this.reconnecting) return;
+  private async afterSetupRejected(why: string, gen: number) {
+    if (this.ended || this.reconnecting || gen !== this.gen) return;
+    // Queued: the refused connection is the current one now (its setup may race the error event).
+    const sent = this.conn?.sessionFields?.join(",") ?? "?";
+    (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `provider rejected the session setup: ${why} sent=${sent}`));
     if (this.earlyRetryUsed) {
       this.fail("error", "model_closed_early", "model_rejected_session");
       return;

@@ -84,26 +84,36 @@ describe("OpenAI session config (normalized SDK fields)", () => {
   };
   const tool = { type: "function", name: "search_catalog", description: tools[0].description, parameters: tools[0].parameters };
 
-  it("first connect: only documented normalized fields, with the version's turn-taking and the transcription hint; no providerOptions", () => {
+  it("first connect: documented normalized fields, the version's turn-taking, transcription on with no prompt or language; no providerOptions", () => {
     const first = toSdkSessionConfig(cfg as never, GPT);
     expect(first).toEqual({
       instructions: "Be brief.", voice: "alloy", outputModalities: ["audio"],
       inputAudioFormat: { type: "audio/pcm", rate: 24000 }, outputAudioFormat: { type: "audio/pcm", rate: 24000 },
-      inputAudioTranscription: { prompt: "The speaker most likely speaks Hebrew or English." }, outputAudioTranscription: {},
+      inputAudioTranscription: {}, outputAudioTranscription: {},
       turnDetection: { type: "server-vad", threshold: 0.35, silenceDurationMs: 800, prefixPaddingMs: 300 },
       tools: [tool],
     });
-    expect(Object.keys(first).every((k) => (PROVEN_SESSION_FIELDS.openai as readonly string[]).includes(k))).toBe(true);
+    expect(JSON.stringify(first)).not.toContain('"prompt"');
     // Plain JSON Schema for OpenAI (no Gemini subset), no strict flag on the normalized tool.
     expect(JSON.stringify(first.tools)).not.toContain("strict");
   });
 
-  it("safe retry: the same fields, optional values dropped (plain server VAD, no transcription hint); the engine leaves out a pinned default voice", () => {
-    expect(toSdkSessionConfig({ ...cfg, voice: undefined, safe: true } as never, MINI)).toEqual({
+  it("retry after a refused setup: the smallest config that still carries the instructions and tools", () => {
+    expect(toSdkSessionConfig({ ...cfg, safe: true } as never, MINI)).toEqual({
       instructions: "Be brief.", outputModalities: ["audio"],
-      inputAudioFormat: { type: "audio/pcm", rate: 24000 }, outputAudioFormat: { type: "audio/pcm", rate: 24000 },
-      inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" }, tools: [tool],
+      inputAudioFormat: { type: "audio/pcm", rate: 24000 }, outputAudioFormat: { type: "audio/pcm", rate: 24000 }, tools: [tool],
     });
+  });
+
+  it("the config snapshot per family (Gemini unchanged: exactly what its working calls sent)", () => {
+    const gem = { ...cfg, tools: realtimeTools("gemini").filter((t) => t.name === "search_catalog"), voice: "Puck", turnTaking: undefined };
+    expect(Object.keys(toSdkSessionConfig(gem as never, GEMINI))).toEqual([
+      "instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions",
+    ]);
+    expect(toSdkSessionConfig(gem as never, GEMINI)).toMatchObject({ inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" }, providerOptions: { google: { defaultToolBehavior: "BLOCKING" } } });
+    expect(Object.keys(toSdkSessionConfig(cfg as never, GPT))).toEqual([
+      "instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools",
+    ]);
   });
 });
 

@@ -269,6 +269,8 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
   it("provider events we do not use and error events are logged once per type; the error is stored", async () => {
     const model = new FakeModel();
     const c = await engineCall(model);
+    // Mid-call (the model has spoken): errors are logged, not a refused setup (that case: voice-standby.test.ts).
+    model.conns[0].emit({ type: "audio", pcm: new Uint8Array(480) });
     for (let i = 0; i < 3; i++) model.conns[0].emit({ type: "provider-event", kind: "unknown", name: "session-usage" });
     model.conns[0].emit({ type: "provider-event", kind: "error", name: "error:rate", message: "rate limited ".repeat(40) });
     model.conns[0].emit({ type: "provider-event", kind: "error", name: "error:rate", message: "again" });
