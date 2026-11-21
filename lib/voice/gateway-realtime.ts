@@ -53,7 +53,9 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
     // language is expected (a single hint would push a buyer of the other language towards it). Whether the
     // Gateway passes them on to Gemini Live is not visible from here: the live calls show (a real-phone check).
     // The expected languages are in the instructions too (lib/voice/instructions.ts).
-    inputAudioTranscription: cfg.expectedLanguages?.length
+    // Gemini Live gets the proven empty setting: on 21 Nov 2026 a language/prompt hint here made live
+    // calls end 0.3 s after connecting. The expected languages reach Gemini through the instructions only.
+    inputAudioTranscription: !gemini && cfg.expectedLanguages?.length
       ? { ...(cfg.expectedLanguages.length === 1 ? { language: cfg.expectedLanguages[0] } : {}), prompt: `The speaker most likely speaks ${cfg.expectedLanguages.map(languageName).join(" or ")}.` }
       : {},
     outputAudioTranscription: {},
