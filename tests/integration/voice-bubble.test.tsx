@@ -256,7 +256,7 @@ describe("the bubble", () => {
   const live = { phase: "live" as const, live: "listening" as const, muted: false, endReason: null, mic: 0.3, out: 0, caption: { id: "a", text: "Hi" }, secondsLeft: 120, outputs: [], output: null };
   it("a round button named by the state word, bottom-end in the page's direction; no tool names", () => {
     const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="dock" />);
-    expect(html).toContain('aria-label="Voice call: Listening. Call controls"');
+    expect(html).toContain('aria-label="Voice call, listening, 2:00 left"');
     expect(html).toContain('aria-haspopup="menu"');
     expect(html).toContain('data-bubble-live="listening"');
     expect(html).not.toContain("data-bubble-menu");
@@ -265,6 +265,31 @@ describe("the bubble", () => {
     expect(he).toContain("vb--fixed");
     expect(he).toContain("המיקרופון מושתק");
     expect(he).toContain("data-bubble-muted");
+  });
+
+  it("accessible name: the state and the time left (en, he); the live region changes with the state only", () => {
+    const render = (st: import("@/lib/voice/client/tab-link").MirrorState, lang: "en" | "he" = "en", placement: "dock" | "fixed" = "fixed") =>
+      renderToStaticMarkup(<VoiceBubble state={st} agentName="Maya" tr={translator(lang)} dir={lang === "he" ? "rtl" : "ltr"} onCommand={() => {}} placement={placement} caption />);
+    const region = (html: string) => /data-bubble-live-region="">([^<]*)</.exec(html)?.[1];
+    const label = (html: string) => /<button[^>]*aria-label="([^"]*)"[^>]*aria-haspopup/.exec(html)?.[1];
+    expect(label(render({ ...live, secondsLeft: 268 }))).toBe("Voice call, listening, 4:28 left");
+    expect(label(render({ ...live, live: "speaking", secondsLeft: 61 }))).toBe("Voice call, agent speaking, 1:01 left");
+    expect(label(render({ ...live, live: "standby" }))).toBe("Voice call, standing by, 2:00 left");
+    expect(label(render({ ...live, muted: true }))).toBe("Voice call, muted, 2:00 left");
+    expect(label(render({ ...live, phase: "ended", live: null, endReason: "idle", secondsLeft: null }))).toBe("Voice call, call ended");
+    expect(label(render({ ...live, secondsLeft: 268 }, "he"))).toBe("שיחה קולית, מקשיבים, נותרו 4:28");
+    expect(label(render({ ...live, live: "standby" }, "he"))).toBe("שיחה קולית, בהמתנה, נותרו 2:00");
+    // Levels, time and caption change: the live region does not.
+    const base = region(render(live));
+    expect(base).toBe("Listening");
+    expect(region(render({ ...live, mic: 0.9, out: 0.4, secondsLeft: 12, caption: { id: "z", text: "Another line" } }))).toBe(base);
+    // A state change does.
+    expect(region(render({ ...live, live: "standby" }))).toBe("Standing by · Just speak");
+    expect(region(render({ ...live, muted: true }))).toBe("You are muted");
+    expect(region(render({ ...live, live: "speaking" }))).toBe("Maya is speaking");
+    expect(region(render({ ...live, phase: "ended", live: null, endReason: "idle" }))).toBe("Call ended · it was quiet");
+    // In the chat, while the bar above says it (connecting), the bubble's region stays quiet: one announcement.
+    expect(region(render({ ...live, phase: "connecting", live: null }, "en", "dock"))).toBe("");
   });
 
   it("a note next to the bubble (the first switch), in the page's language; markers never as a caption", () => {

@@ -33,7 +33,7 @@ import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./to
 import { CALL_RULES } from "./call-rules";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
-import { FormContextNotes } from "./form-context";
+import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
@@ -267,6 +267,8 @@ export class VoiceEngine {
    * model: the latest one is part of the instructions of every later connection (sessionConfig).
    */
   private formNotes: FormContextNotes | null = null;
+  /** The last form context the buyer's form tab reported in this call (order_form_status). */
+  private formLast: import("./form-context").FormContext | null = null;
   /** The latest form note: part of the instructions of every later model connection (a wake, a reconnect). */
   private formNote: string | null = null;
   /**
@@ -279,6 +281,8 @@ export class VoiceEngine {
   }
   private onFormContext(msg: Extract<import("./protocol").ClientMessage, { t: "context" }>): void {
     this.noteOrderFormOpen();
+    // What order_form_status answers (a known step only: an unknown id is no step).
+    this.formLast = { step: msg.step, event: msg.event };
     this.formNotes ??= new FormContextNotes(this.clock, (note) => {
       if (this.ended) return;
       this.formNote = note;
@@ -924,6 +928,9 @@ export class VoiceEngine {
     } else if (name === "end_call") {
       // Voice-only: nothing to run; handleTool ends the call after the goodbye.
       r = { outcome: "ok", result: { ok: true } };
+    } else if (name === "order_form_status") {
+      // Voice-only: the form tab's last report (fixed step names, never values).
+      r = { outcome: "ok", result: { ok: true, ...orderFormStatus(this.formLast) } };
     } else {
       try {
         r = await runTool(name, args, this.toolCtx(callId, turn.memo));

@@ -414,6 +414,21 @@ export const DEFAULT_SCRIPT: Script = [
   say("Thanks, that helps. Is it one location or more?"),
 ];
 
+/**
+ * The buyer has the order form open and asks about it: the agent looks up the step (order_form_status, a
+ * voice-only tool) and answers naming it. For tests and the harness (`new ScriptedRealtime({ defaultScript })`).
+ */
+export const FORM_QUESTION_SCRIPT: Script = [
+  expectBuyer("What do I put here?"),
+  say("Let me see where you are."),
+  tool("order_form_status", {}),
+  say((ctx) => {
+    const s = ctx.last("order_form_status");
+    const step = typeof s?.step === "string" ? s.step : null;
+    return step ? `You're on ${step}. Fill in what it asks for there; I'm here if anything is unclear.` : "I don't see the order form open yet. Open the link in the chat and I'll walk you through it.";
+  }),
+];
+
 /** After the script: every buyer turn gets this short answer. */
 const AFTER_SCRIPT = { buyer: "Okay.", agent: "Thanks. Is there anything else I can help with today?" };
 

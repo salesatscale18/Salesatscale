@@ -336,7 +336,9 @@ async function standbySection(browser: Browser, base: string) {
     await shot(chat, `bubble-standby-chat-${sfx}`);
     check(await standbyIn(form, 2_000), `${sfx}: and in the form tab's bubble`);
     const want = lang === "he" ? "בהמתנה · פשוט לדבר" : "Standing by · Just speak";
-    check((await chat.getAttribute("[data-bubble-button]", "aria-label"))?.includes(want) ?? false, `${sfx}: the bubble says "${want}"`);
+    check(((await chat.locator("[data-bubble-live-region]").textContent()) ?? "").includes(want), `${sfx}: the bubble's live region says "${want}"`);
+    const name = (await chat.getAttribute("[data-bubble-button]", "aria-label")) ?? "";
+    check(lang === "he" ? /^שיחה קולית, בהמתנה, נותרו \d+:\d{2}$/.test(name) : /^Voice call, standing by, \d+:\d{2} left$/.test(name), `${sfx}: its name has the state and the time left (${name})`);
     // No bar: standby says itself next to the bubble for a few seconds, in both tabs.
     for (const [page, tab] of [[chat, "chat"], [form, "form tab"]] as const) {
       const note = (await page.locator('[data-bubble-note="standby"]').count()) ? ((await page.locator('[data-bubble-note="standby"]').textContent()) ?? "") : "";

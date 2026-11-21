@@ -90,8 +90,8 @@ describe("tool schemas", () => {
 
   it("every tool, Gemini dialect: one type per node, nullable flags, no unsupported keywords", () => {
     const tools = realtimeTools("gemini");
-    // The chat's tools, then the voice-only end_call.
-    expect(tools.map((t) => t.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call"]);
+    // The chat's tools, then the voice-only end_call and order_form_status.
+    expect(tools.map((t) => t.name)).toEqual([...TOOL_DEFS.map((d) => d.name), "end_call", "order_form_status"]);
     const allowed = new Set(["type", "description", "properties", "required", "items", "enum", "nullable", "format", "minimum", "maximum", "minItems", "maxItems"]);
     for (const t of tools) {
       walk(t.parameters, (n) => {
@@ -897,6 +897,21 @@ describe("call language (any chat language; the buyer can switch)", () => {
 });
 
 describe("voice-only end_call and the order form on the line", () => {
+  it("order_form_status is a call tool only, with no arguments, a test-lab label, and a voice-block line", async () => {
+    const { orderFormStatus } = await import("@/lib/voice/form-context");
+    expect(TOOL_DEFS.some((d) => d.name === "order_form_status")).toBe(false);
+    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("order_form_status");
+    expect(VOICE_TOOL_NAMES.has("order_form_status")).toBe(true);
+    expect(realtimeTools("gemini").find((t) => t.name === "order_form_status")!.parameters).toEqual({ type: "object" });
+    expect(toolLabel("order_form_status")).toBe("Checking the order form");
+    expect(voiceCallBlock({ fillers: true })).toContain("call order_form_status first, then help with the step they are on. Never ask for or repeat card or payment details.");
+    // Fixed step names, never values; submitted once the form is signed.
+    expect(orderFormStatus(null)).toEqual({ open: false, step: null, submitted: false });
+    expect(orderFormStatus({ step: "company", event: "step" })).toEqual({ open: true, step: "Company details", submitted: false });
+    expect(orderFormStatus({ step: "pay", event: "submitted" })).toEqual({ open: true, step: "Payment", submitted: true });
+    expect(orderFormStatus({ step: "card_4111", event: "step" })).toEqual({ open: false, step: null, submitted: false });
+  });
+
   it("end_call is a call tool only: not in the chat tools or the chat prompt", () => {
     expect(TOOL_DEFS.some((d) => d.name === "end_call")).toBe(false);
     expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("end_call");

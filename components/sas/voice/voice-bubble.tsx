@@ -10,7 +10,7 @@
  */
 import { useEffect, useId, useRef, useState } from "react";
 import { Icon } from "@/components/sas/icon";
-import { bubbleView, leftClock, type BubbleBars } from "@/lib/voice/client/bubble";
+import { bubbleLabel, bubbleView, leftClock, type BubbleBars } from "@/lib/voice/client/bubble";
 import type { Tr } from "@/lib/voice/client/buyer-ui";
 import type { MirrorState, TabCommand } from "@/lib/voice/client/tab-link";
 
@@ -144,7 +144,10 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
     if (c.cmd !== "mute" && c.cmd !== "unmute") setOpen(false);
     if (c.cmd === "wake") button.current?.focus();
   };
-  const label = tr("buyer.voice.bubble.label", { state: view.word });
+  // The accessible name: the state and the time left, kept current (a name change is not announced by itself).
+  const label = bubbleLabel(state, view, tr);
+  // In the chat the bar above says connecting, reconnecting and ending (its own live region): the bubble stays quiet then.
+  const announced = placement === "dock" && state.phase !== "live" ? "" : view.word;
   return (
     <div
       ref={root} dir={dir} className={`vb vb--${placement}${view.speaking ? " vb--speaking" : ""}${view.ended ? " vb--ended" : ""}${state.muted ? " vb--muted" : ""}${view.standby ? " vb--standby" : ""}`}
@@ -206,7 +209,9 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
         <Wave bars={view.bars} levels={levels} />
         {state.muted && !view.ended ? <span className="vb-btn__muted" aria-hidden="true"><Icon name="mic-off" /></span> : null}
       </button>
-      <span className="vb-sr" role="status" aria-live="polite">{view.word}</span>
+      {/* The one live region: it changes only with the state (listening, agent speaking, standing by, muted, ended),
+          never with the levels, the time or a caption, so a screen reader hears each state once. */}
+      <span className="vb-sr" role="status" aria-live="polite" data-bubble-live-region="">{announced}</span>
     </div>
   );
 }

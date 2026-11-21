@@ -83,8 +83,20 @@ export const END_CALL_TOOL: ToolDef = {
   input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
 };
 
+/**
+ * Voice-only tool: which step of the order form the buyer has open, as their form tab last reported it
+ * (lib/voice/form-context.ts: fixed step names, never what they typed). Handled by the engine; mid-call notes
+ * do not reach every model (Gemini gets the form's step only on its next connection), so the model asks.
+ */
+export const ORDER_FORM_STATUS_TOOL: ToolDef = {
+  name: "order_form_status",
+  description: "Which step of the order form the buyer has open right now, if any: { open, step, submitted }. Call it first when the buyer asks about the order form, or about \"this field\", \"this page\" or \"this step\". It never shows what the buyer typed.",
+  strict: true,
+  input_schema: { type: "object", properties: {}, required: [], additionalProperties: false },
+};
+
 /** The tools a call has besides the chat's: handled by the engine, never by runTool. */
-export const VOICE_ONLY_TOOL_DEFS: readonly ToolDef[] = [END_CALL_TOOL];
+export const VOICE_ONLY_TOOL_DEFS: readonly ToolDef[] = [END_CALL_TOOL, ORDER_FORM_STATUS_TOOL];
 
 /** Every agent tool (and the voice-only ones) as a realtime function definition for this schema family. */
 export function realtimeTools(family: SchemaFamily, defs: readonly ToolDef[] = [...TOOL_DEFS, ...VOICE_ONLY_TOOL_DEFS]): RealtimeToolDef[] {
@@ -113,6 +125,7 @@ export const TOOL_LABELS: Record<string, string> = {
   ask_team: "Noting the question",
   hand_off_to_human: "Passing to the team",
   end_call: "Ending the call",
+  order_form_status: "Checking the order form",
 };
 
 export const toolLabel = (name: string) => TOOL_LABELS[name] ?? "Checking";

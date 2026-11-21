@@ -61,26 +61,36 @@ export type BubbleView = {
   ended: boolean;
   /** On standby: the menu's first item brings the agent back (speaking or typing does too). */
   standby: boolean;
+  /** The state in a few words for the accessible name and the one live region ("listening", "standing by"). */
+  a11y: string;
 };
+
+/** The bubble's accessible name: the state and, during a call, the time left ("Voice call, listening, 4:28 left"). */
+export function bubbleLabel(m: MirrorState, v: BubbleView, tr: Tr): string {
+  return m.secondsLeft !== null && !v.ended
+    ? tr("buyer.voice.bubble.label_left", { state: v.a11y, time: leftClock(m.secondsLeft) })
+    : tr("buyer.voice.bubble.label", { state: v.a11y });
+}
 
 /** The bubble's view of a MirrorState, in the page's language (the buyer words of the call bar). */
 export function bubbleView(m: MirrorState, tr: Tr, agentName: string): BubbleView {
   const word = (k: string, vars?: Record<string, string | number>) => tr(`buyer.voice.${k}` as Parameters<Tr>[0], vars);
-  const v = (bars: BubbleBars, w: string, o: Partial<BubbleView> = {}): BubbleView => ({ bars, word: w, speaking: false, controls: true, ended: false, standby: false, ...o });
+  const a = (k: string) => word(`a11y.${k}`);
+  const v = (bars: BubbleBars, w: string, o: Partial<BubbleView> & { a11y: string }): BubbleView => ({ bars, word: w, speaking: false, controls: true, ended: false, standby: false, ...o });
   if (m.phase === "ended") {
     const k = m.endReason === "idle" ? "bubble.ended_idle" : m.endReason === "agent_closed" ? "bubble.ended_agent" : m.endReason === "limit" ? "bubble.ended_limit" : "bubble.ended";
-    return v("flat", word(k), { controls: false, ended: true });
+    return v("flat", word(k), { controls: false, ended: true, a11y: a("ended") });
   }
-  if (m.phase === "connecting") return v("pulse", word("connecting.title"), { controls: false });
-  if (m.phase === "reconnecting") return v("pulse", word("reconnecting.title"), { controls: false });
-  if (m.phase === "ending") return v("flat", word("ending.title"), { controls: false });
+  if (m.phase === "connecting") return v("pulse", word("connecting.title"), { controls: false, a11y: a("connecting") });
+  if (m.phase === "reconnecting") return v("pulse", word("reconnecting.title"), { controls: false, a11y: a("reconnecting") });
+  if (m.phase === "ending") return v("flat", word("ending.title"), { controls: false, a11y: a("ending") });
   // Muted outranks standby, as in the strip: "Just speak" would not be true (the menu still offers the wake).
-  if (m.muted) return v("flat", word("muted.title"), { standby: m.live === "standby" });
+  if (m.muted) return v("flat", word("muted.title"), { standby: m.live === "standby", a11y: a("muted") });
   // Standby: the same words as the call bar's strip ("Standing by · Just speak"), a calm still waveform.
-  if (m.live === "standby") return v("standby", `${word("standby.title")} · ${word("standby.sub")}`, { standby: true });
-  if (m.live === "speaking") return v("out", agentName ? word("speaking.named", { agent: agentName }) : word("speaking.title"), { speaking: true });
-  if (m.live === "checking") return v("pulse", word("checking.title"));
-  return v("mic", word("listening.title"));
+  if (m.live === "standby") return v("standby", `${word("standby.title")} · ${word("standby.sub")}`, { standby: true, a11y: a("standby") });
+  if (m.live === "speaking") return v("out", agentName ? word("speaking.named", { agent: agentName }) : word("speaking.title"), { speaking: true, a11y: a("speaking") });
+  if (m.live === "checking") return v("pulse", word("checking.title"), { a11y: a("checking") });
+  return v("mic", word("listening.title"), { a11y: a("listening") });
 }
 
 /** "1:05 left" style time for the menu (minutes:seconds). */

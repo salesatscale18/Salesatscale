@@ -367,6 +367,24 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     expect(u).toMatchObject({ falseWakes: 1 });
   });
 
+  it("order_form_status: the buyer asks \"what do I put here?\", the agent looks up the form's step and names it (no values)", async () => {
+    const { FORM_QUESTION_SCRIPT } = await import("@/lib/voice/scripted-realtime");
+    const clock = new ManualClock();
+    const c = await newCall(null, { clock, model: new ScriptedRealtime({ clock, defaultScript: FORM_QUESTION_SCRIPT }), limits: { standbyAfterQuietMs: 600_000 } });
+    await c.run(15_000);
+    c.engine.onClientMessage({ t: "context", kind: "order_form", step: "company", label: "Your company", event: "opened" });
+    await c.audio(tonePcm(1_200, 0.3));
+    await c.audio(tonePcm(1_000, 0));
+    await c.run(20_000);
+    const said = c.json().filter((m): m is Extract<ServerMessage, { t: "transcript" }> => m.t === "transcript" && m.role === "agent" && m.final).map((m) => m.text);
+    expect(said.some((t) => t.includes("You're on Company details"))).toBe(true);
+    // The test lab shows the chip; the result has the fixed step name only.
+    expect(c.json().some((m) => m.t === "tool" && m.name === "order_form_status" && m.label === "Checking the order form")).toBe(true);
+    const r = c.conn().sent.toolResults.find((x) => x.name === "order_form_status")!.result as Record<string, unknown>;
+    expect(r).toMatchObject({ open: true, step: "Company details", submitted: false });
+    expect(JSON.stringify(r)).not.toContain("Your company");
+  });
+
   it("a wake whose model connection fails is retried once; two failures end the call (connection_lost)", async () => {
     const clock = new ManualClock();
     const inner = new ScriptedRealtime({ clock });

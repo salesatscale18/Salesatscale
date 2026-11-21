@@ -28,6 +28,16 @@ export const FORM_STEP_NAMES: Readonly<Record<string, string>> = {
 
 export type FormContext = { step: string; event: FormContextEvent };
 
+/** What `order_form_status` (a voice-only tool) answers: the form's state as its tab last reported it, never its values. */
+export type OrderFormStatus = { open: boolean; step: string | null; submitted: boolean };
+
+/** The status from the last context the form tab reported (null: no form tab reported in this call). */
+export function orderFormStatus(last: FormContext | null): OrderFormStatus {
+  if (!last) return { open: false, step: null, submitted: false };
+  const step = FORM_STEP_NAMES[last.step] ?? null;
+  return { open: !!step, step, submitted: last.event === "submitted" || last.step === "pay" || last.step === "paid" };
+}
+
 /** The note for the model, or null for a step id it does not know. */
 export function formContextNote(c: FormContext): string | null {
   const name = FORM_STEP_NAMES[c.step];
