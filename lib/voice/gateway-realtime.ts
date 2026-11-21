@@ -21,7 +21,7 @@ import type { VoiceUsage } from "@/db/schema";
 import { VOICE_SAMPLE_RATE } from "./protocol";
 import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionConfig } from "./realtime";
 import { schemaFamilyOf } from "./tool-schema";
-import { cleanTranscript } from "./transcript-clean";
+import { cleanTranscript, joinTranscript } from "./transcript-clean";
 import { voiceModelId } from "./settings";
 
 /** "he" → "Hebrew" (the code itself when unknown). */
@@ -48,10 +48,14 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
     outputModalities: ["audio"],
     inputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
     outputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
-    // A language hint, never a lock (the buyer may switch). Gemini Live's input transcription takes no
-    // language setting, so for Gemini the expected languages go in the instructions only (lib/voice/instructions.ts);
-    // OpenAI's transcription takes a prompt.
-    inputAudioTranscription: !gemini && cfg.expectedLanguages?.length ? { prompt: `The speaker most likely speaks ${cfg.expectedLanguages.map(languageName).join(" or ")}.` } : {},
+    // Input transcription hints, never a lock (the buyer may switch). The SDK's normalized config has exactly two
+    // fields for this: one `language` hint and a `prompt`. Both go to every model; the language only when one
+    // language is expected (a single hint would push a buyer of the other language towards it). Whether the
+    // Gateway passes them on to Gemini Live is not visible from here: the live calls show (a real-phone check).
+    // The expected languages are in the instructions too (lib/voice/instructions.ts).
+    inputAudioTranscription: cfg.expectedLanguages?.length
+      ? { ...(cfg.expectedLanguages.length === 1 ? { language: cfg.expectedLanguages[0] } : {}), prompt: `The speaker most likely speaks ${cfg.expectedLanguages.map(languageName).join(" or ")}.` }
+      : {},
     outputAudioTranscription: {},
     // Gemini Live: server voice activity detection is always on and not tunable here.
     turnDetection: gemini || !tt
@@ -89,6 +93,8 @@ const fromBase64 = (b64: string) => new Uint8Array(Buffer.from(b64, "base64"));
 export class ServerEventMapper {
   private agentText = "";
   private buyerText = "";
+  /** A tool call ended the last segment: the next agent piece starts a new one (a space between them). */
+  private agentBoundary = false;
   /** Tool calls of the current response, and whether its response-done came. */
   readonly openCalls = new Set<string>();
   responseDone = false;
@@ -106,6 +112,8 @@ export class ServerEventMapper {
         return this.agentDelta(e.delta);
       case "audio-transcript-done":
         if (e.transcript) this.agentText = e.transcript;
+        // The next piece of this turn (after a tool call, or a new audio item) is a new segment.
+        this.agentBoundary = true;
         return [];
       case "transcript-fragment":
         return e.speaker === "assistant" ? this.agentDelta(e.delta) : this.buyerDelta(e.delta);
@@ -129,6 +137,7 @@ export class ServerEventMapper {
           args = {};
         }
         this.openCalls.add(e.callId);
+        this.agentBoundary = true;
         return [...this.closeBuyerTurn(), { type: "tool-call", callId: e.callId, name: e.name, args }];
       }
       case "response-done": {
@@ -172,7 +181,8 @@ export class ServerEventMapper {
 
   /** Transcription markers ("<no speech detected>", lib/voice/transcript-clean.ts) are no text: nothing goes out for them. */
   private agentDelta(delta: string): RealtimeEvent[] {
-    this.agentText += delta;
+    this.agentText = joinTranscript(this.agentText, delta, this.agentBoundary);
+    this.agentBoundary = false;
     const text = cleanTranscript(this.agentText);
     return [...this.closeBuyerTurn(), ...(text ? [{ type: "agent-transcript" as const, text, final: false }] : [])];
   }

@@ -331,6 +331,42 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     expect(u.wakeLog!.every((w) => w.by === "speech" && !w.heard)).toBe(true);
   });
 
+  it("transcription markers (\"<no speech detected>\"): never sent, stored or a buyer turn; a wake that only produced a marker is a false wake", async () => {
+    const { SCRIPTED_MARKER } = await import("@/lib/voice/scripted-realtime");
+    // The agent's lines come with a marker in front; every buyer turn is a marker and nothing else (noise).
+    const clock = new ManualClock();
+    const c = await newCall(null, { clock, model: new ScriptedRealtime({ clock, markers: "with_text" }) });
+    await c.run(15_000);
+    const voice = () => tonePcm(1_200, 0.3);
+    await c.audio(voice());
+    await c.audio(tonePcm(1_000, 0));
+    await c.run(20_000);
+    const said = JSON.stringify(c.json());
+    expect(said).not.toContain("no speech");
+    const rows = await thread(c.conversationId);
+    expect(rows.some((r) => r.body.includes("no speech"))).toBe(false);
+    // The agent's line is there without the marker; the buyer's turn (its real words) too.
+    expect(rows.some((r) => r.actor === "agent" && r.voiceSessionId)).toBe(true);
+    expect(SCRIPTED_MARKER).toBe("<no speech detected>");
+
+    const clock2 = new ManualClock();
+    const d = await newCall(null, { clock: clock2, model: new ScriptedRealtime({ clock: clock2, markers: "only" }) });
+    await toStandby(d);
+    const before = (await thread(d.conversationId)).filter((r) => r.actor === "buyer").length;
+    // A real-sounding voice wakes the detector, but the model only transcribes a marker: no words heard.
+    await d.audio(tonePcm(1_200, 0.3));
+    expect(d.engine.onStandby).toBe(false);
+    await d.audio(tonePcm(1_000, 0));
+    await d.run(CALL_RULES.falseWakeMs + 500);
+    expect(d.engine.onStandby).toBe(true);
+    expect((await thread(d.conversationId)).filter((r) => r.actor === "buyer").length).toBe(before);
+    expect(JSON.stringify(d.json())).not.toContain("no speech");
+    d.engine.onClientMessage({ t: "end" });
+    await d.run(5_000);
+    const u = await usageOf(d.sessionId);
+    expect(u).toMatchObject({ falseWakes: 1 });
+  });
+
   it("a wake whose model connection fails is retried once; two failures end the call (connection_lost)", async () => {
     const clock = new ManualClock();
     const inner = new ScriptedRealtime({ clock });

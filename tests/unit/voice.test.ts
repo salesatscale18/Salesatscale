@@ -634,11 +634,12 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     });
   });
 
-  it("transcription language hint: a prompt for OpenAI (never a lock); nothing for Gemini, which takes no language there", () => {
+  it("transcription hints: the SDK's prompt for every model (never a lock), and its one language hint only when one language is expected", () => {
     const langs = { ...cfg, language: "he", expectedLanguages: ["he", "en"] };
     expect(toSdkSessionConfig(langs, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({ prompt: "The speaker most likely speaks Hebrew or English." });
-    expect(toSdkSessionConfig(langs, "google/gemini-3.8-live").inputAudioTranscription).toEqual({});
+    expect(toSdkSessionConfig(langs, "google/gemini-3.8-live").inputAudioTranscription).toEqual({ prompt: "The speaker most likely speaks Hebrew or English." });
     expect(toSdkSessionConfig(cfg, "openai/gpt-realtime-2").inputAudioTranscription).toEqual({});
+    expect(toSdkSessionConfig({ ...cfg, expectedLanguages: ["en"] }, "google/gemini-3.8-live").inputAudioTranscription).toEqual({ language: "en", prompt: "The speaker most likely speaks English." });
   });
 
   it("session config for OpenAI: turn-taking values, no Google options", () => {

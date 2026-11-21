@@ -453,8 +453,9 @@ export type ScriptedOptions = {
   tone?: boolean;
   /**
    * Transcription markers, as a live model's transcription produces them ("<no speech detected>"): "with_text"
-   * puts one before each agent line and a marker-only buyer transcript before each buyer line; "only" makes every
-   * buyer turn a marker and nothing else (noise). Tests and the harness prove they are dropped everywhere.
+   * puts one before each agent line and a marker-only partial buyer transcript before each buyer line; "only" makes
+   * the buyer's speech a marker and nothing else (noise: no turn to answer). Tests and the harness prove they are
+   * dropped everywhere.
    */
   markers?: "with_text" | "only";
 };
@@ -621,6 +622,11 @@ export class ScriptedConnection implements RealtimeConnection {
     if (!ended && this.vad.end() !== "end") return;
     this.o.clock.clearTimeout(this.speechWatch);
     this.speechWatch = null;
+    // Markers only (noise): the transcription is a marker and there is no buyer turn to answer, as a live model.
+    if (this.o.markers === "only") {
+      this.emit({ type: "buyer-transcript", text: SCRIPTED_MARKER, final: true });
+      return;
+    }
     this.buyerTurns.push({ typed: false });
     this.wake();
   }
@@ -744,8 +750,7 @@ export class ScriptedConnection implements RealtimeConnection {
   /** The buyer's turn as transcribed: the scripted line for speech, nothing for typed text (the engine has it). */
   private buyerSaid(turn: BuyerTurn, line: string) {
     if (turn.typed) return;
-    if (this.o.markers) this.emit({ type: "buyer-transcript", text: SCRIPTED_MARKER, final: this.o.markers === "only" });
-    if (this.o.markers === "only") return;
+    if (this.o.markers === "with_text") this.emit({ type: "buyer-transcript", text: SCRIPTED_MARKER, final: false });
     const words = line.split(" ");
     const half = words.slice(0, Math.max(1, Math.floor(words.length / 2))).join(" ");
     this.emit({ type: "buyer-transcript", text: half, final: false });

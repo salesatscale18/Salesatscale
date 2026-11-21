@@ -29,7 +29,20 @@ export function cleanTranscript(text: string): string {
   if (!/[<[({]/.test(text)) return text;
   const out = text.replace(MARKER, " ");
   if (out === text) return text;
-  return out.replace(/\s{2,}/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim();
+  const tidy = out.replace(/\s{2,}/g, " ").replace(/\s+([,.!?;:])/g, "$1").trim();
+  // What is left of a marker-only line ("<no speech detected>…" leaves "…") is no text either.
+  return /[\p{L}\p{N}]/u.test(tidy) ? tidy : "";
+}
+
+/**
+ * Appends a streamed piece of the agent's transcript. Pieces of one turn can arrive as separate segments with
+ * no space between them ("…checking that." + "Understood, …"): at a segment boundary — after sentence
+ * punctuation, or after a tool call (`boundary`) — a single space goes in when the next piece starts with a
+ * letter or digit. A word split across pieces mid-word ("chec" + "king") is never broken.
+ */
+export function joinTranscript(prev: string, piece: string, boundary = false): string {
+  if (!prev || !piece || /\s$/.test(prev) || /^\s/.test(piece) || !/^[\p{L}\p{N}¿¡"'“‘(]/u.test(piece)) return prev + piece;
+  return boundary || /[.!?…:;]["'”’)]?$/.test(prev) ? `${prev} ${piece}` : prev + piece;
 }
 
 /** True when the transcript has no words once its markers are taken out. */

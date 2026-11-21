@@ -603,7 +603,11 @@ export class VoiceEngine {
       case "buyer-transcript": {
         // A marker only (noise, silence) is not the buyer talking: no turn, no answer, no standby reset, no wake heard.
         const heard = cleanTranscript(e.text);
-        if (!heard.trim()) return;
+        if (!heard.trim()) {
+          // The speech that opened a buyer turn was a marker only: that turn is over (else standby would wait for it).
+          if (e.final) this.buyerTurn = null;
+          return;
+        }
         this.buyerActivity();
         this.markHeard();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
