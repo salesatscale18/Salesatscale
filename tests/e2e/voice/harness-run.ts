@@ -403,7 +403,12 @@ async function modelSection(browser: Browser, base: string) {
     check((await page.locator('[name="style"]').count()) === 0 && (await page.locator("#vs-pause").count()) === 0, "Gemini: no style, pause or interruption controls");
     check((await page.locator("[data-voice-model-unproven]").count()) === 0, "Gemini is not marked as untried");
     await shot(page, "model-picker-gemini");
+    check((await page.locator("#vs-model option").allTextContents()).join("|") === "Gemini 3.8 Live · lowest cost|GPT-Realtime 2.1 · ~7× cost|GPT-Realtime mini · ~2× cost", "the cost shows next to each model name");
+    // A Gemini voice, then GPT: the voice changes to GPT's default, and the panel says so before saving.
+    await page.selectOption("#vs-voice", "Kore");
     await page.selectOption("#vs-model", "openai/gpt-realtime-2.1");
+    check(((await page.locator("[data-voice-changed]").textContent()) ?? "") === "Voice changed to Alloy: Kore isn't available on this model.", "the voice-changed note under Voice");
+    check((await page.inputValue("#vs-voice")) === "", "the voice is now the model's default (Alloy)");
     check((await page.locator('[name="style"]').count()) > 0 && (await page.locator("#vs-pause").count()) === 1 && (await page.locator("#vs-interrupt").count()) === 1,
       "GPT-Realtime 2.1: style, pause and interruptions as real controls, before saving");
     check(((await page.locator("[data-voice-model-unproven]").textContent()) ?? "").includes("Not tried on a live call yet"), "GPT-Realtime 2.1 is marked not tried live yet");
@@ -412,6 +417,10 @@ async function modelSection(browser: Browser, base: string) {
     await page.selectOption("#vs-pause", "1000");
     await page.selectOption("#vs-interrupt", "low");
     await shot(page, "model-picker-gpt");
+    // A voice both GPT models have carries over: no note.
+    await page.selectOption("#vs-voice", "coral");
+    await page.selectOption("#vs-model", "openai/gpt-realtime-mini");
+    check((await page.locator("[data-voice-changed]").count()) === 0 && (await page.inputValue("#vs-voice")) === "coral", "a voice that carries over: no note");
     await page.context().close();
   }
   // One scripted call per model: the card names it, the session row stores it.

@@ -8,8 +8,8 @@ import {
 import { PROVEN_SESSION_FIELDS, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 import { realtimeTools, schemaFamilyOf } from "@/lib/voice/tool-schema";
 import { RealtimeUsageAccumulator, audioTokensPerSecond, realtimeUsdPerMinute, voiceCallCost } from "@/lib/ai/models";
-import { modelCostHint, voiceModelChoices } from "@/lib/voice/model-choices";
-import { voiceSettingsSummary } from "@/lib/voice/lab";
+import { modelCostHint, modelCostShort, voiceModelChoices } from "@/lib/voice/model-choices";
+import { voiceChangeOnModel, voiceSettingsSummary } from "@/lib/voice/lab";
 import { VoiceSettingsForm } from "@/components/sas/voice/voice-settings-form";
 
 const GEMINI = "google/gemini-3.8-live";
@@ -140,6 +140,27 @@ describe("usage and cost per model", () => {
   });
 });
 
+describe("the picker's cost and voice notes", () => {
+  it("the cost next to each name, from the same price table as the hint under the field", () => {
+    expect([GEMINI, GPT, MINI].map((m) => modelCostShort(m))).toEqual(["lowest cost", "~7× cost", "~2× cost"]);
+    expect(voiceModelChoices().map((c) => `${c.label} · ${c.short}`)).toEqual(["Gemini 3.8 Live · lowest cost", "GPT-Realtime 2.1 · ~7× cost", "GPT-Realtime mini · ~2× cost"]);
+  });
+
+  it("a voice the new model lacks: the note names the default it changes to, the same as what is saved and sent", () => {
+    expect(voiceChangeOnModel("Kore", voiceCapabilities(GPT))).toEqual({ from: "Kore", to: "Alloy" });
+    expect(voiceChangeOnModel("coral", voiceCapabilities(GEMINI))).toEqual({ from: "Coral", to: "Puck" });
+    // Carries over (GPT to mini), or none chosen: no note.
+    expect(voiceChangeOnModel("coral", voiceCapabilities(MINI))).toBeNull();
+    expect(voiceChangeOnModel(null, voiceCapabilities(GPT))).toBeNull();
+    // What saving does with it: the voice is dropped, so the call sends the model's default, the one the note named.
+    const saved = validateVoiceSettings({ model: GPT, voice: "Kore" }, GEMINI);
+    expect(saved).toEqual({ ok: true, value: { model: GPT } });
+    expect(callVoice(saved.ok ? saved.value.voice : null, GPT)).toBe("alloy");
+    const keep = validateVoiceSettings({ model: MINI, voice: "coral" }, GPT);
+    expect(keep).toEqual({ ok: true, value: { model: MINI, voice: "coral" } });
+  });
+});
+
 describe("the settings panel per model", () => {
   const render = (model: string | null) => renderToStaticMarkup(
     <VoiceSettingsForm action={async () => ({})} slug="acme" models={voiceModelChoices()} platformModel={GEMINI}
@@ -149,8 +170,9 @@ describe("the settings panel per model", () => {
   it("Gemini: the model first, its voices, no style or turn-taking; GPT: style, pause and interruptions as real controls", () => {
     const g = render(null);
     expect(g.indexOf('name="model"')).toBeLessThan(g.indexOf('name="voice"'));
-    expect(g).toContain(">Gemini 3.8 Live</option>");
-    expect(g).toContain(">GPT-Realtime mini</option>");
+    expect(g).toContain(">Gemini 3.8 Live · lowest cost</option>");
+    expect(g).toContain(">GPT-Realtime mini · ~2× cost</option>");
+    expect(g).not.toContain("data-voice-changed");
     expect(g).not.toContain('name="style"');
     expect(g).not.toContain('name="pauseMs"');
     expect(g).not.toContain("data-voice-model-unproven");

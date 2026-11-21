@@ -6,7 +6,18 @@
 import { realtimeUsdPerMinute } from "@/lib/ai/models";
 import { DEFAULT_VOICE_MODEL, VOICE_MODELS, voiceCapabilities, type VoiceCapabilities } from "./settings";
 
-export type VoiceModelChoice = { id: string; label: string; note: string; proven: boolean; costHint: string; caps: VoiceCapabilities };
+/** `short`: the cost next to the name in the select ("~7× cost", "lowest cost"); `costHint`: the fuller line under it. */
+export type VoiceModelChoice = { id: string; label: string; note: string; proven: boolean; costHint: string; short: string; caps: VoiceCapabilities };
+
+/** The cost in a few words for the select option, from the same price table: "~7× cost" against Gemini, "lowest cost" for the cheapest. */
+export function modelCostShort(id: string, prices?: Parameters<typeof realtimeUsdPerMinute>[1]): string {
+  const own = realtimeUsdPerMinute(id, prices);
+  const all = VOICE_MODELS.map((m) => realtimeUsdPerMinute(m.id, prices)).filter((x): x is number => x !== null);
+  const base = realtimeUsdPerMinute(DEFAULT_VOICE_MODEL, prices);
+  if (own === null || base === null || base <= 0) return "no price";
+  if (own <= Math.min(...all)) return "lowest cost";
+  return `~${Math.round(own / base)}× cost`;
+}
 
 /** "About 7.1× the cost per minute of Gemini (estimate)": relative, from the audio prices of the duration estimate. */
 export function modelCostHint(id: string, prices?: Parameters<typeof realtimeUsdPerMinute>[1]): string {
@@ -21,5 +32,7 @@ export function modelCostHint(id: string, prices?: Parameters<typeof realtimeUsd
 
 /** Every model a version may pick, in the list's order, with its capabilities (the panel re-renders from these). */
 export function voiceModelChoices(prices?: Parameters<typeof realtimeUsdPerMinute>[1]): VoiceModelChoice[] {
-  return VOICE_MODELS.map((m) => ({ id: m.id, label: m.label, note: m.note, proven: m.proven, costHint: modelCostHint(m.id, prices), caps: voiceCapabilities(m.id) }));
+  return VOICE_MODELS.map((m) => ({
+    id: m.id, label: m.label, note: m.note, proven: m.proven, costHint: modelCostHint(m.id, prices), short: modelCostShort(m.id, prices), caps: voiceCapabilities(m.id),
+  }));
 }

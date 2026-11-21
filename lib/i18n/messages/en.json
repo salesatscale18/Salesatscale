@@ -3047,6 +3047,7 @@
   "voice.settings.interrupt_hint": "How much buyer speech stops the agent.",
   "voice.settings.model": "Voice model",
   "voice.settings.model_unproven": "Not tried on a live call yet.",
+  "voice.settings.voice_changed": "Voice changed to {to}: {from} isn't available on this model.",
   "voice.settings.from_style": "From the style ({value})",
   "voice.settings.model_live": "Voice model: {model}",
   "voice.settings.model_live_hint": "Change it in Versions and test lab.",

@@ -69,6 +69,18 @@ export function voiceLabel(name: string): string {
  * The picker's options (at most MAX_VOICE_OPTIONS): the model's default voice
  * first as the empty value (no voice stored), marked "(default)", then the others.
  */
+/**
+ * A model change and the chosen voice: when the new model does not have it, the voice it changes to (that
+ * model's default, what the call then sends) and the one it replaces, as names ("Alloy", "Kore"); null when the
+ * voice carries over or none was chosen. The same rule as saving (validateVoiceSettings drops it, callVoice
+ * pins the default).
+ */
+export function voiceChangeOnModel(chosen: string | null, next: VoiceCapabilities): { from: string; to: string } | null {
+  if (!chosen || next.voices.includes(chosen)) return null;
+  const to = defaultVoiceOf(next);
+  return to ? { from: titleCase(chosen), to: titleCase(to) } : null;
+}
+
 export function voiceOptions(caps: VoiceCapabilities): VoiceOption[] {
   const def = defaultVoiceOf(caps);
   const rest = caps.voices.filter((v) => v !== def);

@@ -4,7 +4,7 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
-import { callLimitShort, defaultVoiceOf, hasAdvancedTuning, limitOptions, voiceOptions } from "@/lib/voice/lab";
+import { callLimitShort, defaultVoiceOf, hasAdvancedTuning, limitOptions, voiceChangeOnModel, voiceOptions } from "@/lib/voice/lab";
 import { DEFAULT_VOICE_SETTINGS, INTERRUPT_LEVELS, PAUSE_MS_RANGE, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceSettingsErrors } from "@/lib/voice/settings";
 import type { VoiceModelChoice } from "@/lib/voice/model-choices";
 
@@ -75,9 +75,12 @@ export function VoiceSettingsForm({
   const model = models.find((m) => m.id === modelId) ?? models[0];
   const caps = model.caps;
   /** Another model: its own voices (a voice it does not have goes back to its default), the rest as it supports. */
+  // The voice a model change replaced (one line under Voice until the voice or the model changes again).
+  const [voiceNote, setVoiceNote] = useState<{ from: string; to: string } | null>(null);
   const pickModel = (id: string) => {
     const next = models.find((m) => m.id === id);
     if (!next) return;
+    setVoiceNote(voiceChangeOnModel(v.voice, next.caps));
     setV((x) => ({ ...x, model: next.id as ResolvedVoiceSettings["model"], voice: x.voice && next.caps.voices.includes(x.voice) ? x.voice : null }));
   };
   const options = voiceOptions(caps);
@@ -120,7 +123,7 @@ export function VoiceSettingsForm({
         <div className="sas-input-group" data-voice-model-field="">
           <label className="sas-input-label" htmlFor="vs-model">{t("voice.settings.model")}</label>
           <select className="sas-select" id="vs-model" name="model" value={model.id} onChange={(ev) => pickModel(ev.target.value)} aria-describedby="vs-model-hint" aria-invalid={e.model ? true : undefined}>
-            {models.map((m) => <option key={m.id} value={m.id}>{m.label}</option>)}
+            {models.map((m) => <option key={m.id} value={m.id}>{`${m.label} · ${m.short}`}</option>)}
           </select>
           <span className="sas-small" id="vs-model-hint">
             {model.note}
@@ -133,7 +136,7 @@ export function VoiceSettingsForm({
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="vs-voice">{t("voice.settings.voice")}</label>
             <span className="sas-vs-row">
-              <select className="sas-select" id="vs-voice" name="voice" aria-describedby={sample ? undefined : "vs-voice-hint"} value={voiceValue} onChange={(ev) => set("voice", ev.target.value || null)} aria-invalid={e.voice ? true : undefined}>
+              <select className="sas-select" id="vs-voice" name="voice" aria-describedby={sample ? undefined : "vs-voice-hint"} value={voiceValue} onChange={(ev) => { setVoiceNote(null); set("voice", ev.target.value || null); }} aria-invalid={e.voice ? true : undefined}>
                 {options.map((o) => <option key={o.value || "default"} value={o.value}>{o.isDefault ? t("voice.settings.default", { label: o.label }) : o.label}</option>)}
               </select>
               {sample ? (
@@ -142,6 +145,7 @@ export function VoiceSettingsForm({
                 </button>
               ) : null}
             </span>
+            {voiceNote ? <span className="sas-small" role="status" data-voice-changed="">{t("voice.settings.voice_changed", voiceNote)}</span> : null}
             {sample ? null : <span className="sas-small" id="vs-voice-hint">{t("voice.settings.voice_hint")}</span>}
             {e.voice ? <span className="sas-small sas-vs-err" role="alert">{e.voice}</span> : null}
           </div>
