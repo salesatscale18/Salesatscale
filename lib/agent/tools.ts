@@ -38,7 +38,7 @@ import { DEFAULT_PLAYS } from "./core/plays";
 import { OBJECTION_PLAYS, OBJECTION_STATUSES, parseObjectionInput, readObjections } from "./core/objections";
 import { localTradeName } from "./core/names";
 import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
-import { offerBooking } from "@/lib/team-calls/service";
+import { bookNamedTime, offerBooking } from "@/lib/team-calls/service";
 import { callRoleOf } from "./core/call-role";
 import { askTeam } from "@/lib/team-questions/service";
 
@@ -220,14 +220,15 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "request_callback",
-    description: "Send the buyer a link to book a call with a person on the seller's team. The buyer picks a time from the team's free slots; the team sees the booking with your brief. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier booking link.",
+    description: "Send the buyer a link to book a call with a person on the seller's team. The buyer picks a time from the team's free slots; the team sees the booking with your brief. When the buyer named a time for the call, pass it as time: if it is a free slot, the call is booked at that time; if not, nothing is booked and the result gives the nearest free times to offer. The link is sent either way. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier booking link.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
         brief: { type: "string", description: "What the buyer wants to cover and what the person should have ready, short." },
+        time: { type: ["string", "null"], description: 'The time the buyer named for the call: an ISO date-time with the offset of the buyer\'s time zone, e.g. "2026-11-24T15:30:00+02:00", or a local date and time, e.g. "2026-11-24T15:30", read in the buyer\'s time zone. Use "Local time now" from your context. null when the buyer did not name a time.' },
       },
-      required: ["brief"],
+      required: ["brief", "time"],
       additionalProperties: false,
     },
   },
@@ -867,8 +868,38 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "request_callback") {
+    const where = { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId };
+    // The time the buyer named (owner, 22 Nov): booked when it is a free slot, else the nearest free ones to offer.
+    if (typeof args.time === "string" && args.time.trim()) {
+      const b = await bookNamedTime(ctx.db, where, { brief: args.brief, time: args.time });
+      if (!b.ok) return refuse(b.rule, b.extra);
+      const role = callRoleOf(ctx.playbook);
+      if (b.booked) {
+        return {
+          outcome: "ok",
+          result: {
+            ok: true, booked: true, call_local: b.local, call_short: b.short, ...(b.replaced ? { replaced_earlier: true } : {}),
+            message: `Booked: the call with ${role} is set for ${b.local}, the buyer's time. The chat shows the booking and the buyer gets a text message with the details. Confirm the day and time back to the buyer in one short sentence in their wording. Keep answering their questions until the call.`,
+          },
+        };
+      }
+      const why = {
+        taken: "that time is already taken", outside_hours: "that time is not one of the team's call times", past: "that time has passed",
+        too_soon: "that time is less than an hour from now", too_far: "that time is more than 7 days ahead",
+      }[b.miss];
+      const offer = b.alternatives.map((a) => a.local).join("; ");
+      return {
+        outcome: "ok",
+        result: {
+          ok: true, booked: false, asked_local: b.local, asked_short: b.short, alternatives: b.alternatives, ...(b.replaced ? { replaced_earlier: true } : {}),
+          message: b.alternatives.length
+            ? `Not booked: ${why}. Offer the buyer the nearest free times, in their wording: ${offer}. The booking link is in the chat too, where they can pick another free time. When they choose one of these, call request_callback again with its time. Keep answering their questions until the call.`
+            : `Not booked: ${why}, and the team has no free time in the next 7 days. Tell the buyer, in one short sentence in their wording, that they can check the booking link in the chat for a time. Keep answering their questions until the call.`,
+        },
+      };
+    }
     // The booking card in the chat (lib/team-calls): the buyer picks the time; the booking sets the deal's next step.
-    const r = await offerBooking(ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, { brief: args.brief });
+    const r = await offerBooking(ctx.db, where, { brief: args.brief });
     if (!r.ok) return refuse(r.rule, r.extra);
     return {
       outcome: "ok",
