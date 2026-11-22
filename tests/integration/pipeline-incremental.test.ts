@@ -29,8 +29,9 @@ describe("stage 1 over new or changed sources only", () => {
   let acc: string;
   let priceId: string, specId: string, newId: string;
 
-  const fact = (sourceId: string, locator: string, statement: string, topic = "Product") =>
-    ({ topic, statement, language: "en", customer_specific: false, evidence: [{ source_id: sourceId, locator, quote: statement.slice(0, 40) }] });
+  // The quote must be words of the cited source (KQ3 quote check).
+  const fact = (sourceId: string, locator: string, statement: string, topic = "Product", quote = statement.slice(0, 40)) =>
+    ({ topic, statement, language: "en", customer_specific: false, evidence: [{ source_id: sourceId, locator, quote }] });
   const loc = async (id: string) => (await listSections(db, acc, id))[0].locator;
   const factsRun = async () => (await listRuns(db, acc, 20)).find((r) => r.kind === "facts" && r.status === "done")!;
 
@@ -92,7 +93,7 @@ describe("stage 1 over new or changed sources only", () => {
 
     const nl = await loc(newId);
     const llm = new ScriptedPipelineLlm([
-      () => ({ tool: { name: FACTS_TOOL, input: { ...EMPTY, facts: [fact(newId, nl, "A hotel group cut waste by 30% in a year.", "Proof")], gaps: [{ topic: "Proof", question: "Which hotel group?" }] } } }),
+      () => ({ tool: { name: FACTS_TOOL, input: { ...EMPTY, facts: [fact(newId, nl, "A hotel group cut waste by 30% in a year.", "Proof", "Hotel group: 30% less waste in a year.")], gaps: [{ topic: "Proof", question: "Which hotel group?" }] } } }),
       () => ({ tool: { name: PLAYBOOK_TOOL, input: PLAYBOOK } }),
     ]);
     expect((await analyzeSources(db, llm, acc)).failed).toBeNull();
@@ -123,11 +124,11 @@ describe("stage 1 over new or changed sources only", () => {
     const llm = new ScriptedPipelineLlm([
       () => ({ tool: { name: FACTS_TOOL, input: { ...EMPTY, facts: [
         // Reworded: same source, same words in another order.
-        fact(priceId, pl, "Prices are in ILS and do not include 18% VAT.", "Pricing terms"),
+        fact(priceId, pl, "Prices are in ILS and do not include 18% VAT.", "Pricing terms", "do not include VAT (18%)"),
         // Near-duplicate of the other source's fact, but from this source: kept (same-source rule).
-        fact(priceId, pl, "One GW-10 site gateway handles up to 30 units within about 50 m indoors."),
+        fact(priceId, pl, "One GW-10 site gateway handles up to 30 units within about 50 m indoors.", "Product", "Installation within 5 days"),
         // Genuinely new.
-        fact(priceId, pl, "Installation takes place within 5 days.", "Installation"),
+        fact(priceId, pl, "Installation takes place within 5 days.", "Installation", "Installation within 5 days"),
         // Another number: kept.
         fact(priceId, pl, "Prices are in ILS and do not include VAT (17%).", "Pricing terms"),
       ] } } }),
@@ -150,7 +151,7 @@ describe("stage 1 over new or changed sources only", () => {
     await updateNote(db, acc, specId, { title: "Product facts", body: "One GW-10 gateway handles up to 30 units within about 50 m indoors. Free setup call." });
     const sl = await loc(specId);
     const llm = new ScriptedPipelineLlm([
-      () => ({ tool: { name: FACTS_TOOL, input: { ...EMPTY, facts: [fact(specId, sl, "One GW-10 site gateway handles up to 30 units within about 50 m indoors.")] } } }),
+      () => ({ tool: { name: FACTS_TOOL, input: { ...EMPTY, facts: [fact(specId, sl, "One GW-10 site gateway handles up to 30 units within about 50 m indoors.", "Product", "One GW-10 gateway handles up to 30 units")] } } }),
       () => ({ tool: { name: PLAYBOOK_TOOL, input: PLAYBOOK } }),
     ]);
     expect((await analyzeSources(db, llm, acc)).failed).toBeNull();

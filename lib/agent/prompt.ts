@@ -120,7 +120,7 @@ export type TurnExtra = {
   catalog?: PlainItem[] | null;
   /** The agent's and the seller's names in the conversation language, with the agent's gender (lib/agent/core/names.ts). */
   names?: BuyerNames | null;
-  /** The seller's local time now, for schedule_follow_up ("Tue 17 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)"). */
+  /** Local time now in the buyer's stored zone, else the market's, for the tools' local times ("Tue 17 Nov 2026 14:05 (Asia/Jerusalem, UTC+02:00)"). */
   localNow?: string | null;
   /** The follow-up already scheduled with this buyer (lib/follow-ups). */
   followUp?: { dueLocal: string; topic: string | null } | null;

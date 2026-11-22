@@ -85,7 +85,7 @@ describe("knowledge -> playbook pipeline", () => {
         // A discount heard only in a call: never a fact.
         { topic: "Pricing terms", statement: "Installation is free of charge from three sites.", language: "en", customer_specific: false, evidence: [ev(callId, callLocs[4], "waive the installation fee")] },
         // Already exists as an approved fact: not added again.
-        { topic: "Company", statement: "We install within 5 business days.", language: "en", customer_specific: false, evidence: [ev(noteId, noteLoc, "x".repeat(300))] },
+        { topic: "Company", statement: "We install within 5 business days.", language: "en", customer_specific: false, evidence: [ev(noteId, noteLoc, "Warranty is 12 months")] },
       ],
       contradictions: [{
         topic: "Warranty", summary: "Sensor warranty length",

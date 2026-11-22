@@ -199,7 +199,8 @@ describe("Zone review 3: Next step, Last activity and the agent's context times"
     for (const [label, zone, expected] of [["a stored zone", BUYER, BUYER], ["no stored zone", undefined, MARKET]] as const) {
       it(`follow-up and call request lines: ${label} → ${expected}`, async () => {
         const { lead, conversationId } = await addLead({ zone });
-        const fu = await runTool("schedule_follow_up", { due_at: tomorrowNoon(), topic: "pricing" }, await toolCtx(lead.id, conversationId));
+        // 13:00 local, read in the buyer's stored zone (N1b): its times never equal the call's (12:00 in the market's zone).
+        const fu = await runTool("schedule_follow_up", { due_at: tomorrowNoon().replace("T12:00", "T13:00"), topic: "pricing" }, await toolCtx(lead.id, conversationId));
         expect(fu.outcome).toBe("ok");
         const [f] = await db.select().from(followUps).where(eq(followUps.leadId, lead.id));
         // The tool told the agent this time; the context now says the same one.
