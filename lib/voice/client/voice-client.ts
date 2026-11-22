@@ -39,6 +39,8 @@ export type VoiceClientOptions = {
   getUserMedia?: (c: MediaStreamConstraints) => Promise<MediaStream>;
 };
 
+/** The longest the page waits for its audio output before telling the relay it is ready anyway. */
+const READY_MAX_MS = 2_500;
 const DEFAULT_AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
 const PING_MS = 10_000;
 
@@ -285,8 +287,12 @@ export class VoiceClient {
     this.ws = ws;
     ws.onopen = () => {
       if (my !== this.attempt) return;
-      ws.send(JSON.stringify({ t: "auth", sessionId: p.sessionId, ticket: p.ticket }));
+      // waitAudio: the relay asks for the opening line once this page says it can play it (`ready`).
+      ws.send(JSON.stringify({ t: "auth", sessionId: p.sessionId, ticket: p.ticket, waitAudio: true }));
       this.timers.ping = setInterval(() => this.sendMsg({ t: "ping" }), PING_MS);
+      void this.whenOutputRuns().then(() => {
+        if (my === this.attempt) this.sendMsg({ t: "ready" });
+      });
     };
     ws.onmessage = (ev) => {
       if (my !== this.attempt) return;
@@ -454,6 +460,33 @@ export class VoiceClient {
     this.playing.add(src);
     src.onended = () => this.playing.delete(src);
     src.start(at);
+  }
+
+  /**
+   * Resolves once the agent's voice can be heard: the audio context runs and a short silent buffer has played
+   * through the output (the phone's output path is up), so the opening line's first words are not lost. Bounded:
+   * at most READY_MAX_MS, then it resolves anyway (the relay has its own timeout too).
+   */
+  private whenOutputRuns(): Promise<void> {
+    const ctx = this.ctx;
+    const out = this.outGain;
+    if (!ctx || !out) return Promise.resolve();
+    const played = (async () => {
+      if (ctx.state !== "running") await ctx.resume().catch(() => undefined);
+      await new Promise<void>((resolve) => {
+        try {
+          const buf = ctx.createBuffer(1, Math.round(VOICE_SAMPLE_RATE * 0.15), VOICE_SAMPLE_RATE);
+          const src = ctx.createBufferSource();
+          src.buffer = buf;
+          src.connect(out);
+          src.onended = () => resolve();
+          src.start();
+        } catch {
+          resolve();
+        }
+      });
+    })();
+    return Promise.race([played, new Promise<void>((r) => setTimeout(r, READY_MAX_MS))]);
   }
 
   private flushPlayback() {

@@ -246,6 +246,30 @@ describe("one agent at a time", () => {
     await c.settle();
   });
 
+  it("send_order_form on a call before the buyer agreed: held (not run), recorded as refused, the model told to offer it first", async () => {
+    const conv = await conversation();
+    const logs: string[] = [];
+    const c = await engineFor(conv, logs);
+    await c.engine.start();
+    await c.settle();
+    const emit = c.model.conns[0].emit;
+    emit({ type: "audio", pcm: new Uint8Array(480) });
+    emit({ type: "agent-transcript", text: "If the price worked, is anything else in the way?", final: true });
+    emit({ type: "turn-done" });
+    await c.run(300);
+    c.engine.onClientMessage({ t: "text", text: "Yeah, I guess so. I need a solution." });
+    await c.run(300);
+    emit({ type: "tool-call", callId: "f1", name: "send_order_form", args: { quote: "Q-1" } });
+    await c.run(500);
+    const r = c.model.conns[0].results.find((x) => x.name === "send_order_form")!.result;
+    expect(r).toMatchObject({ ok: false, rule: "Not agreed yet" });
+    expect(String(r.message)).toContain("The order form was NOT sent");
+    expect(String(r.message)).toContain("Offer it in one short sentence and wait for their yes");
+    expect(logs.some((l) => l.endsWith("tool send_order_form held: the buyer has not agreed to it yet"))).toBe(true);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
   it("the inherited-state line names counts and the stage, never content", () => {
     const line = inheritedSummary(2, true, { _asked_sites: { value: "2" }, sites: { value: "secret" } }, "x\n## Stage now: 3 Recommend\ny");
     expect(line).toBe('inherited: agentMessages=2 continuing=yes stage="3 Recommend" asked=sites:2');

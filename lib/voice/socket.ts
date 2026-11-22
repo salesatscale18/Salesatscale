@@ -252,7 +252,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     sendJson({ t: "call", maxSec, mode: model.mode });
     engine = new VoiceEngine({
       db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
-      limits: { ...opts.limits, deadlineSec: opts.deadlineSec, env },
+      limits: { ...opts.limits, deadlineSec: opts.deadlineSec, env, ...(auth.waitAudio ? { waitForClientAudio: true } : {}) },
       send: (msg) => {
         if (msg instanceof Uint8Array) {
           // Backpressure: drop agent audio, never protocol messages. A drop is a splice in what the buyer hears

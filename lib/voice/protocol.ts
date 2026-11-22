@@ -35,6 +35,11 @@ export type ClientMessage =
   | { t: "wake" }
   | { t: "ping" }
   /**
+   * The browser can play the agent now: its audio context runs and a short silent buffer has played through the
+   * output. The relay asks for the opening line only then (or after a timeout), so its first words are heard.
+   */
+  | { t: "ready" }
+  /**
    * The order form open in another tab of the buyer's browser (relayed by the chat tab): which step it shows.
    * `step` is a fixed id, `label` the step's name as the page shows it; never what the buyer typed.
    */
@@ -58,6 +63,7 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case "end":
     case "wake":
     case "ping":
+    case "ready":
       return { t: o.t };
     case "mute":
       return typeof o.on === "boolean" ? { t: "mute", on: o.on } : null;
@@ -88,7 +94,8 @@ function parseContext(o: Record<string, unknown>, size: number): ClientMessage |
  * browser got from the server action that created the call. Nothing else is
  * accepted before it, and it must arrive within AUTH_TIMEOUT_MS.
  */
-export type VoiceAuthMessage = { t: "auth"; sessionId: string; ticket: string };
+/** `waitAudio`: this browser sends `{t:"ready"}` once it can play the agent; the opening line waits for it. */
+export type VoiceAuthMessage = { t: "auth"; sessionId: string; ticket: string; waitAudio?: boolean };
 /** The relay closes a socket that has not authenticated after this long. */
 export const AUTH_TIMEOUT_MS = 5_000;
 
@@ -105,7 +112,7 @@ export function parseAuthMessage(raw: unknown): VoiceAuthMessage | null {
   const o = v as Record<string, unknown>;
   if (o.t !== "auth" || typeof o.sessionId !== "string" || typeof o.ticket !== "string") return null;
   if (o.sessionId.length > 64 || o.ticket.length > 128) return null;
-  return { t: "auth", sessionId: o.sessionId, ticket: o.ticket };
+  return { t: "auth", sessionId: o.sessionId, ticket: o.ticket, ...(o.waitAudio === true ? { waitAudio: true } : {}) };
 }
 
 /** WebSocket close codes the relay uses. */

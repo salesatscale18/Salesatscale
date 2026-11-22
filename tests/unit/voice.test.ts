@@ -51,6 +51,8 @@ describe("wire protocol", () => {
     expect(parseClientMessage({ t: "text", text: "  hello " })).toEqual({ t: "text", text: "hello" });
     expect(parseClientMessage({ t: "end", extra: 1 })).toEqual({ t: "end" });
     expect(parseClientMessage({ t: "ping" })).toEqual({ t: "ping" });
+    // The page can play the agent now: the opening line waits for this (23 Nov 2026).
+    expect(parseClientMessage('{"t":"ready"}')).toEqual({ t: "ready" });
     for (const bad of ["", "nope", "[]", "null", '{"t":"mute"}', '{"t":"mute","on":"yes"}', '{"t":"text","text":""}', '{"t":"text","text":5}', '{"t":"instructions"}', 42]) {
       expect(parseClientMessage(bad)).toBeNull();
     }
@@ -297,7 +299,7 @@ describe("voice instructions", () => {
     ]) expect(voiceStable, chatLine).not.toContain(chatLine);
     for (const voiceLine of [
       "on a live voice call", "One or two short spoken sentences per turn", "One question at a time", "Spoken language only",
-      "say the total once, say the quote is in the chat", "the order form link is in the chat", "never ask by voice",
+      "walk the buyer through it briefly as its result says", "the order form link is in the chat", "never ask by voice",
       "### On a voice call (always)", "automated assistant", "hand_off_to_human", "record_opt_out", "card number", "English",
     ]) expect(voiceStable, voiceLine).toContain(voiceLine);
     // Follow-ups are still messages.

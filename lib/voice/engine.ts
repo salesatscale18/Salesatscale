@@ -15,10 +15,11 @@ import { and, asc, desc, eq, exists, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, conversations, leads, messages, quotes, sellerAccounts, toolCalls, voiceSessions,
+  agentVersions, conversations, leads, messages, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls, voiceSessions,
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
+import { formatMoney } from "@/lib/domain/money";
 import { writtenByAgent } from "@/lib/agent/core/stage";
 import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
@@ -70,6 +71,10 @@ export type VoiceLimits = {
   statsEveryMs?: number;
   /** How often the live row gets the call's provisional duration and usage (the heartbeat; lib/voice/service.ts stale close). */
   heartbeatMs?: number;
+  /** The browser said it will send `{t:"ready"}` when it can play (auth `waitAudio`): the opening line waits for it. */
+  waitForClientAudio?: boolean;
+  /** The longest the opening line waits for the browser's `ready`. */
+  clientReadyMs?: number;
 };
 
 /** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
@@ -90,6 +95,8 @@ export const VOICE_HEARTBEAT_MS = 20_000;
 
 const DEFAULTS = {
   limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, heartbeatMs: VOICE_HEARTBEAT_MS,
+  // The opening line waits at most 3 s for the browser's `ready` (only for a browser that announced it).
+  waitForClientAudio: false, clientReadyMs: 3_000,
   standbyAfterQuietMs: CALL_RULES.standbyAfterQuietMs, standbyIdleEndMs: CALL_RULES.standbyIdleEndMs, preRollMs: CALL_RULES.preRollMs,
   wakeBufferMaxMs: CALL_RULES.wakeBufferMaxMs, wakeConnectMs: CALL_RULES.wakeConnectMs, falseWakeMs: CALL_RULES.falseWakeMs,
   falseWakesBeforeRaise: CALL_RULES.falseWakesBeforeRaise, maxThresholdBoost: CALL_RULES.maxThresholdBoost, minWakeGapMs: CALL_RULES.minWakeGapMs,
@@ -203,6 +210,34 @@ export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
   return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder;
 }
 
+/** The order form named in a line (English or Hebrew). */
+const FORM_WORDS = /\b(order form|the form|form|order|sign|send it|send me)\b|טופס|הזמנה|שלח/i;
+/** A reply that is not a yes (English or Hebrew). */
+const NOT_YES = /\b(no|not|don'?t|expensive|too much|later|wait|think)\b|לא|יקר|אחר כך|לחשוב/i;
+/** A line in English or Hebrew (other languages are not judged: the model decides). */
+const JUDGEABLE = /[A-Za-z\u0590-\u05FF]/;
+
+/**
+ * Whether the buyer agreed to the order form, from the call's last lines: "yes" when the buyer's last line asks for
+ * the form (or the order), or answers the agent's offer of the form with no "no", "expensive", "later"…; "no"
+ * otherwise. "unknown" (allowed) when there is no buyer line yet in this call or it is in another language: the
+ * guard never blocks what it cannot read. On 23 Nov 2026 the form was sent on "Yeah, I guess so. I need a
+ * solution." in reply to an objection question, two turns after "It's quite expensive".
+ */
+export function orderFormAgreed(lines: readonly { role: string; text: string }[]): "yes" | "no" | "unknown" {
+  const lastBuyerAt = lines.findLastIndex((l) => l.role === "buyer");
+  if (lastBuyerAt < 0) return "unknown";
+  const buyer = lines[lastBuyerAt].text;
+  if (!JUDGEABLE.test(buyer)) return "unknown";
+  if (FORM_WORDS.test(buyer) && !/\b(no|not|don'?t)\b|לא/i.test(buyer)) return "yes";
+  const agentBefore = lines.slice(0, lastBuyerAt).reverse().find((l) => l.role === "agent")?.text ?? "";
+  if (/order form|טופס/i.test(agentBefore) && !NOT_YES.test(buyer)) return "yes";
+  return "no";
+}
+
+/** How a call presents a ready quote (create_quote's result on a call, with `lines_for_call`). */
+export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four short spoken sentences: what they need and what each part costs, from lines_for_call (for example \"For your two locations you need twelve seats at 59 shekels each, and setup at 200 per location\"), then the total today and the monthly amount, once each, then that the quote is in the chat now. Then ask if it looks right.";
+
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
 export function configSummary(cfg: RealtimeSessionConfig): string {
   return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
@@ -305,6 +340,10 @@ export class VoiceEngine {
   private lastLine: StoredLine | null = null;
   /** The stage the voice model last saw (stageKey of its instructions or of the last full update_deal_state result). */
   private stageDelivered: string | null = null;
+  /** The browser said it can play the agent (`{t:"ready"}`). */
+  private clientReady = false;
+  /** The opening line, until it is asked for (see sendOpener). */
+  private pendingOpener: { prompt: string; kind: string; since: number } | null = null;
   /** The call continues a chat (a pick-up line instead of an opener). */
   private continuingCall = false;
   /** This call stored its first agent line (the pick-up line, on a continuing call). */
@@ -334,8 +373,8 @@ export class VoiceEngine {
   private reconnecting = false;
   private lastStamp = 0;
   private errorCode: VoiceErrorCode | null = null;
-  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat", TimerHandle | null> = {
-    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null,
+  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat" | "ready", TimerHandle | null> = {
+    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null, ready: null,
   };
 
   // Standby (lib/voice/call-rules.ts): the model is disconnected while the buyer is quiet; our detector listens.
@@ -418,6 +457,10 @@ export class VoiceEngine {
         return;
       case "ping":
         return;
+      case "ready":
+        this.clientReady = true;
+        this.sendOpener("ready");
+        return;
       case "context":
         this.onFormContext(msg);
         return;
@@ -467,6 +510,8 @@ export class VoiceEngine {
   }
 
   private forwardClientAudio(bytes: Uint8Array): void {
+    // Before the opening line is asked for, the buyer's audio does not reach the model (one opening only).
+    if (this.pendingOpener) return;
     if (this.standbySince !== null) return this.listenOnStandby(bytes);
     if (this.waking) return this.holdWakeAudio(bytes);
     if (!this.conn || this.reconnecting) return;
@@ -786,8 +831,12 @@ export class VoiceEngine {
     // The agent speaks first: the chat's opener (or the pick-up line of a call that continues a chat), once per
     // call, as the model's very first input: no buyer audio reaches the model before it (the row write below used
     // to come first, and mic audio sent meanwhile got its own answer before the opener: two answers at the start).
-    this.noteSent(ctx.continuing ? "pick-up line" : "opener");
-    conn.requestResponse(openerPrompt);
+    // The opening line waits until the browser can play it (its first words were lost while the phone's audio
+    // output started, 23 Nov 2026), at most clientReadyMs; meanwhile no buyer audio reaches the model, so a buyer
+    // who says "hello?" in that moment does not get an answer before the opening (one opening only).
+    this.pendingOpener = { prompt: openerPrompt, kind: ctx.continuing ? "pick-up line" : "opener", since: this.clock.now() };
+    if (!this.limits.waitForClientAudio || this.clientReady) this.sendOpener(this.clientReady ? "ready" : "now");
+    else this.timer("ready", this.limits.clientReadyMs, () => this.sendOpener("timeout"));
     await this.db.update(voiceSessions)
       // A live call records the model it ran on; a scripted call keeps its version's model (the scripted model stands in).
       .set({
@@ -840,6 +889,33 @@ export class VoiceEngine {
     }
     if (waited) this.log.info(voiceLine(this.sessionId, `voice start waited ${Math.round(this.clock.now() - t0)}ms for a text turn`));
     return waited;
+  }
+
+  /**
+   * A quote version's lines as a call says them: name, quantity and unit, unit price and line total in the quote's
+   * currency (one-time or per period), in the quote's order. Never ids or SKUs.
+   */
+  private async quoteLinesForCall(quoteId: unknown, version: unknown): Promise<{ item: string; qty: number; unit: string; unit_price: string | null; line_total: string | null }[]> {
+    if (typeof quoteId !== "string" || typeof version !== "number" || !this.loaded) return [];
+    const accountId = this.loaded.account.id;
+    const [v] = await this.db.select({ id: quoteVersions.id, currency: quoteVersions.currency }).from(quoteVersions)
+      .where(and(eq(quoteVersions.accountId, accountId), eq(quoteVersions.quoteId, quoteId), eq(quoteVersions.version, version)));
+    if (!v) return [];
+    const rows = await this.db.select().from(quoteLines).where(and(eq(quoteLines.accountId, accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(asc(quoteLines.sortOrder));
+    const money = (minor: number | null, period: string | null) =>
+      minor === null ? null : formatMoney(minor, v.currency, period === "month" || period === "year" ? { period } : {});
+    return rows.map((l) => ({ item: l.name, qty: l.qty, unit: l.unit, unit_price: money(l.unitPriceMinor, l.period), line_total: money(l.lineTotalMinor, l.period) }));
+  }
+
+  /** Asks the model for the opening (or pick-up) line, once: when the browser can play it, or at the timeout. */
+  private sendOpener(why: "ready" | "timeout" | "now") {
+    const o = this.pendingOpener;
+    if (!o || this.ended || !this.conn) return;
+    this.pendingOpener = null;
+    this.clearTimer("ready");
+    if (why !== "now") this.log.info(voiceLine(this.sessionId, `opening waited ${Math.round(this.clock.now() - o.since)}ms for the browser's audio (${why})`));
+    this.noteSent(o.kind);
+    this.conn.requestResponse(o.prompt);
   }
 
   /** One log line per text the engine puts into the model's conversation mid-call: its kind only, never its words. */
@@ -1164,6 +1240,8 @@ export class VoiceEngine {
     this.standbySince = this.clock.now();
     this.standbys++;
     this.quietSince ??= this.standbySince;
+    // Standby and wakes leave no rows: the log says when they happened (a silent stretch in the record).
+    this.log.info(voiceLine(this.sessionId, `standby: model disconnected after ${Math.round(this.limits.standbyAfterQuietMs / 1000)}s quiet`));
     this.vad.reset();
     this.preRoll.clear();
     this.setState("standby");
@@ -1217,6 +1295,7 @@ export class VoiceEngine {
     this.vad.reset();
     this.lastWakeAt = now;
     const entry: WakeEntry = { by, atMs: this.offsetMs(), readyMs: null, firstAudioMs: null, heard: by !== "speech" };
+    this.log.info(voiceLine(this.sessionId, `wake by ${by}`));
     this.wakeLog.push(entry);
     this.currentWake = { at: now, entry };
     // The buyer is talking (or about to): the bar shows listening while the agent reconnects.
@@ -1427,6 +1506,14 @@ export class VoiceEngine {
     this.timer("grace", graceMs, () => void this.stop(reason));
   }
 
+  /** A tool call the engine refuses on a call without running it, recorded like any other (the steps view shows it). */
+  private async refuseRecorded(turn: AgentTurn, callId: string, name: string, args: unknown, why: { rule: string; message: string }): Promise<ToolResult> {
+    await this.stamp();
+    const r: ToolResult = { outcome: "refused", rule: why.rule, result: { ok: false, rule: why.rule, message: why.message } };
+    turn.tools.push({ name, input: args, r });
+    return r;
+  }
+
   private async runRecorded(turn: AgentTurn, callId: string, name: string, args: unknown): Promise<ToolResult> {
     let r: ToolResult;
     await this.stamp(); // rows the tool writes come after everything stored so far
@@ -1507,7 +1594,15 @@ export class VoiceEngine {
     this.send({ t: "tool", id: callId, name, label, status: "running" });
     const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
     const t0 = this.clock.now();
-    const r = await this.runRecorded(turn, callId, name, args);
+    // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
+    const formGate = name === "send_order_form" ? orderFormAgreed(this.lines) : "yes";
+    const r = formGate === "no"
+      ? await this.refuseRecorded(turn, callId, name, args, {
+        rule: "Not agreed yet",
+        message: "The buyer has not agreed to the order form. Offer it in one short sentence and wait for their yes; if they raised the price or another concern, answer that first.",
+      })
+      : await this.runRecorded(turn, callId, name, args);
+    if (formGate === "no") this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the buyer has not agreed to it yet"));
     // One line per tool call: its name, outcome and time (never its arguments or result).
     this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
     let forModel: Record<string, unknown> = r.result;
@@ -1547,7 +1642,15 @@ export class VoiceEngine {
         const { quote_id: _qid, quote_message_id: _mid, ...rest } = r.result;
         void _qid;
         void _mid;
-        forModel = { ...rest, ...(typeof r.result.quote === "string" ? { message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}. Offer the order form and wait for the buyer's yes; when they agree (or if they already asked for it), call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}". Never send it unasked.`.trim() } : {}) };
+        // On a call the agent walks the buyer through the quote: what they need and what each part costs, from the
+        // quote's own lines (never invented), then the totals once.
+        const lines = r.result.status === "ready" ? await this.quoteLinesForCall(r.result.quote_id, r.result.quote_version).catch(() => []) : [];
+        forModel = {
+          ...rest, ...(lines.length ? { lines_for_call: lines } : {}),
+          ...(typeof r.result.quote === "string" ? {
+            message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}.${lines.length ? ` ${QUOTE_WALKTHROUGH}` : ""} Offer the order form and wait for the buyer's yes; when they agree (or if they already asked for it), call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}". Never send it unasked.`.trim(),
+          } : {}),
+        };
       }
       if (name === "record_opt_out" && OPT_OUT_REPLY[this.spokenLanguage]) {
         // The reply in the language the call speaks now (the tool gives the conversation's).
@@ -1803,6 +1906,9 @@ export class VoiceEngine {
     if (droppedVoice) await this.db.update(voiceSessions).set({ settings: this.settingsSnapshot() }).where(eq(voiceSessions.id, this.sessionId));
     // The opening line was never heard: the retried session says it.
     if (fresh) {
+      // The retried session says the opening now; a first one still waiting for the browser is not sent as well.
+      this.pendingOpener = null;
+      this.clearTimer("ready");
       this.noteSent("opener (retry)");
       opened.conn.requestResponse(opened.openerPrompt);
     }
