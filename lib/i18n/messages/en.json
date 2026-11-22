@@ -289,6 +289,7 @@
   "import.col.fix": "How to fix",
   "import.format": "File format",
   "import.download_template": "Download template",
+  "import.template_language": "The template's language column is optional (en or he). Without it, the market's language is used.",
   "import.required": "Required columns",
   "import.phone_col": "phone is the mobile number.",
   "import.consent_cols": "Consent, optional for each row",
@@ -2870,6 +2871,7 @@
   "settings.intake.field.source": "The label in your leads list, for example \"Website form\" (the default). Not the same as consent.source.",
   "settings.intake.field.consent_page_url": "The page the person agreed on.",
   "settings.intake.rules_note": "Leads who opted out are never re-added. Every call shows under Recent deliveries with its result.",
+  "settings.intake.consent_rule": "A lead your team saved without consent gets it back only when a delivery sends consent.given: true. Send it when the person accepted your form's consent line.",
   "conv.status.won": "This deal is won. The agent still answers the buyer's questions.",
   "conv.status.lost": "This deal is lost. The agent still answers the buyer's questions.",
   "people.you_lower": "you",
@@ -3839,5 +3841,5 @@
   "knowledge.conflict.hint": "The agent keeps using the approved fact until you choose.",
   "import.file_consent_hint": "Leads in your system asked to hear from you. Untick only if the people in this file must not be contacted by the agent.",
   "import.file_line_no_contact": "the agent won't contact these leads",
-  "settings.intake.field.consent_given": "Send false if the agent must not contact this person. Default: true."
+  "settings.intake.field.consent_given": "true when the person accepted your form's consent line. false if the agent must not contact this person. Without it: true for a new lead."
 }

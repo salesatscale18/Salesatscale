@@ -117,6 +117,8 @@ export type LeadInput = {
    * existing lead (one a person may have saved as "do not contact").
    */
   consentDefaulted?: boolean;
+  /** True when the input itself said yes (the form's box, CSV consent=yes, intake consent.given: true). */
+  consentExplicitYes?: boolean;
   /** The form's country field, used to choose the lead's market (lib/markets/match.ts). */
   formCountry?: string | null;
   /** True when no language came with the lead: the market's language is used instead. */
@@ -225,7 +227,7 @@ export function parseLead(
       sourceLabel: s(raw.sourceLabel).slice(0, 80) || null,
       sourceRef: s(raw.sourceRef).slice(0, 200) || null,
       consent,
-      ...(consent ? { consentDefaulted: !defaults.consentNeedsTick && !explicit } : {}),
+      ...(consent ? { consentDefaulted: !defaults.consentNeedsTick && !explicit, consentExplicitYes: yes(raw.consent) } : {}),
       formCountry: s(raw.country).slice(0, 60) || null,
       languageFromDefault: !langRaw,
     },
@@ -417,7 +419,8 @@ export function rawFromIntakeBody(body: Record<string, unknown>, callerIp?: stri
     language: body.language,
     sourceLabel: body.source ?? "Website form",
     sourceRef: body.source_id,
-    consent: consent.given ?? (consent.source ? "yes" : undefined),
+    // Only consent.given is a yes or no; a note (source, text) alone is a note (parseLead counts it as consent).
+    consent: consent.given,
     consentSource: consent.source,
     consentWording: consent.text ?? consent.wording,
     consentCapturedAt: consent.at ?? consent.captured_at,

@@ -194,7 +194,7 @@ describe("consent on by default", () => {
     expect(await consentLine(l.id)).toContain("Recorded by");
   });
 
-  it("the buyer sending the website form again gives consent to a lead saved unticked; a CSV re-import or a seller re-add does not", async () => {
+  it("a lead saved unticked gets consent back only from an intake delivery with consent.given: true; a CSV re-import, a seller re-add, a delivery without the field or with only a note do not", async () => {
     // Saved unticked by the seller.
     await add({ phone: "0525550300", after: "me" });
     const lead = await leadByPhone("+972525550300");
@@ -209,14 +209,24 @@ describe("consent on by default", () => {
     expect(await latestConsent(db, acc.id, lead.id)).toBeNull();
     expect(await ensureChatStarted(db, { accountId: acc.id, leadId: lead.id })).toEqual({ started: false, reason: "no_consent" });
 
-    // The buyer submits the website form (intake API) again, with no consent note: their own request.
     const { key } = await createIntakeKey(db, { userId: me.id, actingAs: false }, acc.id, "Website");
-    const res = await intakePost(new Request(`http://test/api/leads/${acc.slug}`, {
-      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
-      body: JSON.stringify({ full_name: "Rina Cohen", phone: "+972525550300" }),
-    }), { params: Promise.resolve({ account: acc.slug }) });
-    expect(res.status).toBe(200);
-    expect((await res.json()).id).toBe(lead.id);
+    const deliver = async (body: Record<string, unknown>) => {
+      const res = await intakePost(new Request(`http://test/api/leads/${acc.slug}`, {
+        method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({ full_name: "Rina Cohen", phone: "+972525550300", ...body }),
+      }), { params: Promise.resolve({ account: acc.slug }) });
+      expect(res.status).toBe(200);
+      expect((await res.json()).id).toBe(lead.id);
+    };
+    // A delivery without consent.given (a CRM re-push), or with only a note, or given: false: the seller's choice stands.
+    await deliver({});
+    await deliver({ consent: { source: "crm-sync", text: "Imported" } });
+    await deliver({ consent: { given: false } });
+    expect(await latestConsent(db, acc.id, lead.id)).toBeNull();
+    expect(await ensureChatStarted(db, { accountId: acc.id, leadId: lead.id })).toEqual({ started: false, reason: "no_consent" });
+
+    // The buyer submits the website form again; the form sends consent.given: true (they accepted the consent line).
+    await deliver({ consent: { given: true } });
     const c = await latestConsent(db, acc.id, lead.id);
     expect(c?.consent).toMatchObject({ source: 'Sent with intake key "Website"', wording: CONSENT_WORDING_DEFAULT, recordedByUserId: null });
     expect(await ensureChatStarted(db, { accountId: acc.id, leadId: lead.id })).toMatchObject({ started: true });

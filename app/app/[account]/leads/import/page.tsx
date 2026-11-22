@@ -27,6 +27,7 @@ export default async function ImportLeadsPage({ params }: { params: Promise<{ ac
         <aside className="sas-panel sas-panel__body sas-stack-4 sas-split__side" aria-labelledby="fmt-h">
           <h2 id="fmt-h" className="sas-heading">{t("import.format")}</h2>
           <a className={buttonClass("secondary", "sm")} href="/leads-template.csv" download style={{ alignSelf: "flex-start" }}><Icon name="download" />{t("import.download_template")}</a>
+          <span className="sas-small" data-template-language="">{t("import.template_language")}</span>
           <div className="sas-stack-2"><strong>{t("import.required")}</strong><span className="sas-chips"><Chip>full_name</Chip><Chip>phone</Chip></span><span className="sas-small" data-import-phone-hint="">{t("import.phone_col")} {t("lead.form.phone_hint")}</span></div>
           <div className="sas-stack-2"><strong>{t("import.consent_cols")}</strong><span className="sas-chips"><Chip>consent_source</Chip><Chip>consent_text</Chip><Chip>consent_at</Chip></span></div>
           <div className="sas-stack-2"><strong>{t("import.optional")}</strong><span className="sas-chips"><Chip>language</Chip><Chip>business</Chip><Chip>email</Chip><Chip>source_id</Chip><Chip>country</Chip></span><span className="sas-small">{t("import.country_hint")}</span></div>
