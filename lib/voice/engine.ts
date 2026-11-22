@@ -11,7 +11,7 @@
  * All database work runs through one serial queue, so messages keep their order.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, exists, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -159,6 +159,23 @@ type FinalizeReason = "done" | "interrupted" | "buyer" | "stop";
  */
 type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number };
 
+/** A typed buyer message younger than this with no reply is a chat turn in flight (voice start waits for it). */
+export const TEXT_TURN_FRESH_MS = 45_000;
+/** The longest a call's start waits for a chat turn in flight. */
+export const TEXT_TURN_WAIT_MS = 20_000;
+
+/**
+ * What the call starts from, for the log (no content): agent messages the stage counts, whether it continues a chat,
+ * the stage title from the instructions, and how often each field was asked (the `_asked_<field>` counters).
+ */
+export function inheritedSummary(agentMessages: number, continuing: boolean, fields: Record<string, { value?: string | null } | undefined> | null, instructions: string): string {
+  const stage = /## Stage now: ([^\n]+)/.exec(instructions)?.[1]?.trim() ?? "?";
+  const asked = Object.entries(fields ?? {})
+    .filter(([k]) => k.startsWith("_asked_"))
+    .map(([k, v]) => `${k.slice("_asked_".length)}:${Number(v?.value ?? 0) || 0}`);
+  return `inherited: agentMessages=${agentMessages} continuing=${continuing ? "yes" : "no"} stage="${stage}" asked=${asked.join(",") || "-"}`;
+}
+
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
 export function configSummary(cfg: RealtimeSessionConfig): string {
   return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
@@ -259,6 +276,10 @@ export class VoiceEngine {
   private lines: TranscriptLine[] = [];
   /** The last agent line stored in this call (see finalizeAgentTurn). */
   private lastLine: StoredLine | null = null;
+  /** The call continues a chat (a pick-up line instead of an opener). */
+  private continuingCall = false;
+  /** This call stored its first agent line (the pick-up line, on a continuing call). */
+  private firstLineStored = false;
   /** Tool calls the model cancelled (RealtimeEvent "tool-cancelled"). */
   private readonly cancelledCalls = new Set<string>();
   /** The row the late transcription of the last ended response belongs to ("none": it stored no row); null: none due. */
@@ -687,13 +708,20 @@ export class VoiceEngine {
     }
     this.loaded = { session, conv, lead, version, account };
     this.maxSec = maxCallSeconds({ settings: version.voiceSettings, deadlineSec: this.limits.deadlineSec, env: this.limits.env });
+    // One agent at a time: a chat turn still answering the buyer's typed message finishes first (its reply and its
+    // deal-state writes are then part of what this call starts from).
+    const waited = await this.waitForTextTurn(accountId, conv.id);
+    if (this.ended) return;
+    const dealNow = waited ? await readDealState(this.db, accountId, conv.leadId) : deal;
     this.agentMessages = (await this.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent")))).length;
 
     // Recording is decided before the instructions are built: a recorded call's voice block has one rule about it.
     const recording = await this.startRecording(account);
     this.recorded = recording.on;
-    const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, { recorded: this.recorded });
+    const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded });
+    this.continuingCall = ctx.continuing;
+    this.log.info(voiceLine(this.sessionId, inheritedSummary(this.agentMessages, ctx.continuing, dealNow?.fields ?? null, ctx.instructions)));
     this.spokenLanguage = ctx.language || "en";
     this.latinLanguage = NON_LATIN.test(this.spokenLanguage) ? "en" : this.spokenLanguage;
     const gen = ++this.gen;
@@ -741,6 +769,40 @@ export class VoiceEngine {
     this.statsLoop();
     this.heartbeatLoop();
     this.setState("listening");
+  }
+
+  /**
+   * The agent messages the stage counts (lib/agent/core/stage.ts: Recommend opens at 2): the conversation's agent
+   * messages, without the pick-up line of a call that continues a chat. That line re-asks the chat's last question
+   * (already counted as the chat's message); counting it again moved the stage on one exchange early.
+   */
+  private effectiveAgentMessages(): number {
+    return Math.max(0, this.agentMessages - (this.continuingCall && this.firstLineStored ? 1 : 0));
+  }
+
+  /**
+   * A chat turn in flight on this conversation: its last line is the buyer's typed message (not said on a call),
+   * stored less than TEXT_TURN_FRESH_MS ago, with no reply yet. The call waits for that reply (at most
+   * TEXT_TURN_WAIT_MS), so the two agents never answer the same message. Returns whether it waited.
+   */
+  private async waitForTextTurn(accountId: string, conversationId: string): Promise<boolean> {
+    const t0 = this.clock.now();
+    let waited = false;
+    for (;;) {
+      const [last] = await this.db.select({ actor: messages.actor, voiceSessionId: messages.voiceSessionId, createdAt: messages.createdAt }).from(messages)
+        .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId), inArray(messages.actor, ["buyer", "agent", "human"])))
+        .orderBy(desc(messages.createdAt), desc(messages.id)).limit(1);
+      const inFlight = !!last && last.actor === "buyer" && !last.voiceSessionId && Date.now() - last.createdAt.getTime() < TEXT_TURN_FRESH_MS;
+      if (!inFlight || this.ended) break;
+      if (this.clock.now() - t0 >= TEXT_TURN_WAIT_MS) {
+        this.log.warn(voiceLine(this.sessionId, `voice start waited ${Math.round(this.clock.now() - t0)}ms for a text turn; it has not answered: starting anyway`));
+        return true;
+      }
+      waited = true;
+      await new Promise<void>((r) => this.clock.setTimeout(r, 500));
+    }
+    if (waited) this.log.info(voiceLine(this.sessionId, `voice start waited ${Math.round(this.clock.now() - t0)}ms for a text turn`));
+    return waited;
   }
 
   /** One log line per text the engine puts into the model's conversation mid-call: its kind only, never its words. */
@@ -1179,7 +1241,7 @@ export class VoiceEngine {
     const attempt = (async () => {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
+        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES), agentMessages: this.effectiveAgentMessages() } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
       });
       openerPrompt = ctx.openerPrompt;
       const cfg = this.sessionConfig(ctx.instructions, ctx);
@@ -1210,7 +1272,7 @@ export class VoiceEngine {
     return {
       db: this.db, accountId: account.id, conversationId: conv.id, leadId: conv.leadId, playbook: version.playbook, currency: account.currency,
       // The model's call id, scoped to this call: the idempotency key for writes.
-      callId: `voice:${this.sessionId}:${callId}`, language: conv.language, memo, agentMessages: this.agentMessages,
+      callId: `voice:${this.sessionId}:${callId}`, language: conv.language, memo, agentMessages: this.effectiveAgentMessages(),
     };
   }
 
@@ -1619,6 +1681,7 @@ export class VoiceEngine {
       )),
     ]);
     this.agentMessages++;
+    this.firstLineStored = true;
     if (raw) this.lastLine = { messageId, turnId: turn.id, raw, cut, tools: turn.tools.length, startMs: turn.startMs };
     if (body) this.lines.push({ role: "agent", text: body });
     this.send({ t: "transcript", id: turn.id, role: "agent", text: body, final: true, atMs: turn.startMs });

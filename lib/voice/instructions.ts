@@ -117,7 +117,9 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   // The whole per-turn context in call wording: turnContext converts the stage block, and the
   // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
   const context = voiceStageText(turnContext(i.playbook, i.deal, {
-    stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed || i.continuing ? null : i.opener, catalog: i.catalog, names: i.names,
+    // The opener of a new call is the agent's first message (counted before it is spoken). A call that continues a
+    // chat re-asks the chat's last question (not a new message); a reconnect is given the call's own count.
+    stage: i.stage, agentMessages: i.agentMessages + (i.resumed || i.continuing ? 0 : 1), opener: i.resumed || i.continuing ? null : i.opener, catalog: i.catalog, names: i.names,
     followUp: i.followUp, callback: i.callback ?? null, teamCall: i.teamCall ?? null, teamQuestions: i.teamQuestions ?? null, priceApproval: i.priceApproval ?? null, localNow: i.localNow, channel: "voice",
   }));
   const recap = i.recap.slice(-(i.continuing ? CHAT_RECAP_LINES : RECAP_LINES)).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
@@ -276,7 +278,7 @@ export type VoiceCallContext = {
 export async function loadVoiceInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; language?: string; recorded?: boolean } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; language?: string; recorded?: boolean; agentMessages?: number } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
   const [stage, catalog, followUp, contact, earlier, agentCount, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
@@ -325,7 +327,7 @@ export async function loadVoiceInstructions(
   const instructions = buildVoiceInstructions({
     playbook: version.playbook, voiceSettings: version.voiceSettings,
     seller: { tradeName: account.tradeName, currency: account.currency, languages: contact.languages },
-    catalog: activeItems, deal: a.deal, stage, agentMessages: agentCount.length, names, opener,
+    catalog: activeItems, deal: a.deal, stage, agentMessages: opts.agentMessages ?? agentCount.length, names, opener,
     // "Local time now" in the buyer's zone: request_callback reads a local time in it (N1), so the agent works dates out from it.
     localNow: localNowLine(a.now, zone),
     // Times as the buyer should hear them ("Friday 20 November at 12:30"), as in a chat turn.
