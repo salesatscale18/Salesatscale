@@ -145,8 +145,11 @@ async function bubbleSection(browser: Browser, base: string) {
     const box = await chat.locator("[data-bubble-button]").boundingBox();
     const send = await chat.locator(".c-bar").boundingBox();
     check(!!box && !!send && box.y + box.height <= send.y, `${sh.name}: the bubble sits above the composer`);
-    const endSide = sh.lang === "he" ? (box?.x ?? 999) < sh.w / 2 || sh.w > 600 : true;
-    check(endSide, `${sh.name}: bottom-end (left in Hebrew)`);
+    // Centred above the composer, the same in English and Hebrew (owner, 22 Nov), 12 px above it.
+    const frame = await chat.locator(".c-bar").boundingBox();
+    const centred = !!box && !!frame && Math.abs(box.x + box.width / 2 - (frame.x + frame.width / 2)) <= 2;
+    check(centred, `${sh.name}: centred above the composer`);
+    check(!!box && !!send && Math.abs(send.y - (box.y + box.height) - 12) <= 2, `${sh.name}: 12 px above the composer`);
     await chat.waitForTimeout(2500);
     // The bubble never covers the last item: at the bottom of the thread, the last row ends above the bubble.
     const clearOf = async (page: Page, last: string) => page.evaluate(`(() => {
@@ -173,6 +176,8 @@ async function bubbleSection(browser: Browser, base: string) {
     await form.goto(`${base}/form?lang=${sh.lang}&step=order`);
     const mirrored = await form.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 10_000 }).then(() => true, () => false);
     check(mirrored, `${sh.name}: the form tab shows the same bubble, mirroring the call`);
+    const fb = await form.locator("[data-bubble-button]").boundingBox();
+    check(!!fb && Math.abs(fb.x + fb.width / 2 - sh.w / 2) <= 2, `${sh.name}: the form tab's bubble is centred`);
     const caption = await form.waitForSelector("[data-bubble-caption]", { timeout: 30_000 }).then(() => true, () => false);
     check(caption, `${sh.name}: the agent's line shows as a caption on the form`);
     await shot(form, `bubble-form-caption-${sh.name}`);

@@ -1,15 +1,15 @@
 /* The voice bubble (components/sas/voice/voice-bubble.tsx) on the buyer pages: the chat and the order form.
-   Seller-branded via --brand (both pages set it); logical properties only, so Hebrew mirrors. */
+   Seller-branded via --brand (both pages set it). Centred horizontally on both pages, the same in English and Hebrew
+   (owner, 22 Nov: physical left: 50%, no mirroring); its menu and short labels sit centred above it. */
 .vb { --vb-size: 60px; --vb-brand: var(--brand, #0f6b5a); --vb-on: var(--brand-on, #fff); --vb-ink: var(--ink, #0f1420);
   --vb-muted: var(--muted, #566073); --vb-line: var(--line, #dde1e8);
-  z-index: 30; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none;
+  z-index: 30; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none;
   font-family: inherit; font-size: 14px; line-height: 20px; color: var(--vb-ink); }
 .vb > * { pointer-events: auto; }
-/* In the chat: bottom-end of the messages, just above the composer (the dock sits between them). */
-.vb--dock { position: absolute; inset-block-end: 12px; inset-inline-end: max(12px, env(safe-area-inset-right)); }
-/* On the order form: the page's bottom-end corner, clear of the home indicator. */
-.vb--fixed { position: fixed; inset-block-end: calc(16px + env(safe-area-inset-bottom)); inset-inline-end: calc(16px + env(safe-area-inset-right)); }
-.vb[dir="rtl"].vb--fixed { inset-inline-end: calc(16px + env(safe-area-inset-left)); }
+/* In the chat: centred, 12 px above the composer (the dock sits between the messages and the composer). */
+.vb--dock { position: absolute; inset-block-end: 12px; left: 50%; transform: translateX(-50%); }
+/* On the order form: centred above the page's bottom edge, clear of the home indicator. */
+.vb--fixed { position: fixed; inset-block-end: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
 
 /* The bubble (board VoiceBubbleBack): 60 px, the brand colour, a white ring and a soft shadow, five rounded bars. */
 .vb-btn { position: relative; width: var(--vb-size); height: var(--vb-size); border-radius: 999px; border: 0; padding: 0; cursor: pointer;
@@ -65,9 +65,8 @@
 .vb-item--radio[aria-checked="true"] .vb-radio { border: 5px solid var(--vb-brand); }
 
 /* The agent's line on the order form: one line next to the bubble; tap for the whole line. */
-.vb-caption { max-width: min(320px, calc(100vw - 32px)); border: 0; border-radius: 14px 14px 4px 14px; padding: 8px 12px; background: var(--vb-ink); color: #fff;
+.vb-caption { max-width: min(320px, calc(100vw - 32px)); border: 0; border-radius: 14px; padding: 8px 12px; background: var(--vb-ink); color: #fff;
   font: inherit; font-size: 13px; line-height: 18px; text-align: start; cursor: pointer; box-shadow: 0 6px 18px rgba(15, 20, 32, .2); }
-.vb[dir="rtl"] .vb-caption { border-radius: 14px 14px 14px 4px; }
 .vb-caption span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .vb-caption--open span { white-space: normal; }
 .vb-caption:focus-visible { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 2px; }
@@ -75,11 +74,12 @@
 .vb-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
 @media print { .vb { display: none; } }
 /* The order form keeps room at the bottom so the bubble never covers its last button. */
-/* (bubble 56 px + its 16 px offset + 12 px, and the home indicator) */
-.b-root:has(.vb--fixed) .b-page { padding-block-end: calc(84px + env(safe-area-inset-bottom)); }
+/* (bubble 60 px + its 16 px offset + the outer ring's 17 px + 11 px, and the home indicator); the form has no sticky
+   bottom button, so its last button scrolls clear above the bubble. */
+.b-root:has(.vb--fixed) .b-page { padding-block-end: calc(104px + env(safe-area-inset-bottom)); }
 /* Standby: calm. A white bubble with a still, brand-coloured line; no ring, no motion. The menu's first item wakes the agent. */
 .vb--standby .vb-btn { background: #fff; color: var(--vb-brand); box-shadow: inset 0 0 0 2px var(--vb-brand), 0 6px 18px rgba(15, 20, 32, .16); }
 .vb-wave--standby i { transition: none; opacity: .85; }
 .vb-item--wake { color: var(--vb-brand); font-weight: 600; }
 /* A note next to the bubble (the first switch's "what you say appears as text", or "Standing by · Just speak"): light, wraps. */
-.vb-caption--note { background: #fff; color: var(--vb-ink); border: 1px solid var(--vb-line); font-size: 13px; }
+.vb-caption--note { background: #fff; color: var(--vb-ink); border: 1px solid var(--vb-line); font-size: 13px; text-align: center; }
