@@ -14,7 +14,8 @@ import type { Db } from "@/db/types";
 import { messages, type AgentVersion, type Conversation, type DealState, type Lead, type SellerAccount } from "@/db/schema";
 import { stableSystemPrompt, turnContext } from "@/lib/agent/prompt";
 import { openerText } from "@/lib/agent/core/opener";
-import { voiceStageText } from "@/lib/agent/core/voice";
+import { applyVoiceReplacements, voiceStageText } from "@/lib/agent/core/voice";
+import { recordedCallRule } from "./recording-settings";
 import { buyerNames } from "@/lib/agent/core/names";
 import { loadStageFacts } from "@/lib/agent/core/stage-facts";
 import type { StageFacts } from "@/lib/agent/core/stage";
@@ -77,6 +78,8 @@ export type VoiceInstructionInput = {
   language?: string;
   /** Languages the buyer most likely speaks: the conversation's, the seller's selling languages and English. */
   expectedLanguages?: string[];
+  /** The call is recorded: the voice block gets the one recording rule (recording-settings recordedCallRule). */
+  recorded?: boolean;
 };
 
 /** "Hebrew", "English", … (English names, for the instructions). */
@@ -104,7 +107,11 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   const settings = resolveVoiceSettings(i.voiceSettings);
   const language = i.language ?? "en";
   const expected = i.expectedLanguages ?? expectedCallLanguages(language, i.seller.languages);
-  const stable = stableSystemPrompt(i.playbook, i.seller, i.catalog, { channel: "voice", fillers: settings.fillers });
+  const spoken = stableSystemPrompt(i.playbook, i.seller, i.catalog, { channel: "voice", fillers: settings.fillers });
+  // A recorded call: one rule at the end of the voice block (before the deal-state fields), nothing anywhere else.
+  const stable = i.recorded
+    ? applyVoiceReplacements(spoken, [{ from: "\n\n### Deal-state fields\n", to: `\n${recordedCallRule()}\n\n### Deal-state fields\n` }], "recording rule")
+    : spoken;
   const fallback = continueFallback(language);
   // The opener counts as an agent turn: the stage moves on once the buyer answers it.
   // The whole per-turn context in call wording: turnContext converts the stage block, and the
@@ -269,7 +276,7 @@ export type VoiceCallContext = {
 export async function loadVoiceInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; language?: string } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; language?: string; recorded?: boolean } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
   const [stage, catalog, followUp, contact, earlier, agentCount, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
@@ -328,7 +335,7 @@ export async function loadVoiceInstructions(
     teamQuestions: teamQuestions || null,
     priceApproval: priceApproval || null,
     recap, resumed: opts.resumed, woke: opts.woke, continuing,
-    language, expectedLanguages: expectedCallLanguages(language, contact.languages),
+    language, expectedLanguages: expectedCallLanguages(language, contact.languages), recorded: opts.recorded,
   });
   return {
     instructions, opener, language, expectedLanguages: expectedCallLanguages(language, contact.languages),

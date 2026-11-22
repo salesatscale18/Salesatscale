@@ -89,10 +89,11 @@ export function withRecordingNotice(prompt: string, notice: string, o: { positio
     const line = o.position === "opener"
       ? (cut > 0 ? `${text.slice(0, cut)} ${notice} ${text.slice(cut).trim()}` : `${text}${text ? " " : ""}${notice}`)
       : `${notice}${text ? ` ${text}` : ""}`;
-    const where = o.position === "opener" ? "right after your greeting and introduction, before your first question" : "first, before anything else";
-    return `${prompt.slice(0, quoted.index)}"${line}"${prompt.slice(quoted.index + quoted[0].length)} The recording notice ("${notice}") comes ${where}: say exactly those words, once, and nothing else about recording (never the answer for when the buyer asks about it).${say}`;
+    // The notice is part of the line itself, nothing more: no sentence about the notice or about other recording
+    // answers (the 22 Nov 2026 calls: the model reached for those words unasked).
+    return `${prompt.slice(0, quoted.index)}"${line}"${prompt.slice(quoted.index + quoted[0].length)} Say all of it.${say}`;
   }
-  return `${prompt} Say this recording notice once, exactly as written, ${o.position === "opener" ? "right after your greeting and introduction" : "as your first sentence"}: "${notice}".${say}`;
+  return `${prompt} Start with: "${notice}"${say}`;
 }
 
 /**
@@ -110,17 +111,11 @@ export const RECORDING_WRITING_OFFER: Record<"en" | "he", string> = {
 };
 
 /**
- * The voice-only instruction a recorded call carries (and only a recorded one: without it the agent never says
- * calls are recorded). It answers only when the buyer raises the recording; if the buyer then objects, it offers
- * once to continue in writing. It never offers to stop the recording, never says the call is not recorded, never
- * explains why recordings are kept, never discusses it further and never brings the topic up itself.
+ * The one rule a recorded call (and only a recorded one) carries, inside the voice block (lib/voice/instructions.ts):
+ * the answer when the buyer asks, one offer to continue in writing if they object, otherwise silence on the topic.
+ * One short line in the middle of the playbook, never a section of its own at the end of the instructions (the
+ * 22 Nov 2026 calls: a section there was the model's most recent context, and it brought the recording up unasked).
  */
-export function recordingInstruction(): string {
-  return [
-    "### This call is recorded",
-    "- Your opening line uses only the words the opening instruction gives you. The two answers below are not part of any opening and never start a turn on their own: say one only in reply to the buyer, as described.",
-    `- Only if the buyer asks about or raises the recording, in reply to them: answer briefly and calmly with this sentence, in the language of the call: "${RECORDING_ASKED_REPLY.en}" (in Hebrew: "${RECORDING_ASKED_REPLY.he}"; in another language, the same meaning in that language). Then go back to the conversation.`,
-    `- Only if the buyer then objects to being recorded, add once: "${RECORDING_WRITING_OFFER.en}" (in Hebrew: "${RECORDING_WRITING_OFFER.he}"; in another language, the same meaning). Then go back to the conversation.`,
-    "- The recording does not stop on request. Never say the call is not recorded or that the recording stopped, never explain why recordings are kept, do not discuss it further, and never bring up the recording yourself, apart from the recording line when you are told to say it.",
-  ].join("\n");
+export function recordedCallRule(): string {
+  return `- If the buyer asks whether this call is recorded, say: "${RECORDING_ASKED_REPLY.en}" (in Hebrew: "${RECORDING_ASKED_REPLY.he}"). If they object, offer once: "${RECORDING_WRITING_OFFER.en}" (in Hebrew: "${RECORDING_WRITING_OFFER.he}"). Otherwise never mention recording.`;
 }

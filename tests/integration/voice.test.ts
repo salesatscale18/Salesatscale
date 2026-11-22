@@ -592,8 +592,10 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     // The instructions start the call in Hebrew and name the likely languages.
     const instr = c.model.connections[0].cfg.instructions;
     expect(instr).toContain("Language: start in Hebrew (if you cannot speak it, in English). The buyer most likely speaks Hebrew or English;");
-    // The call's instructions end with the conversation language; a recorded call (on by default) adds its recording block after.
-    expect(instr).toMatch(/Conversation language: he\.\n\n### This call is recorded\n[^#]+$/);
+    // The call's instructions end with the conversation language, recorded or not (on by default): the recording
+    // rule is one line inside the voice block, never a section at the end.
+    expect(instr.endsWith("Conversation language: he.")).toBe(true);
+    expect(instr).toMatch(/\n- If the buyer asks whether this call is recorded, [^\n]+\n\n### Deal-state fields\n/);
     expect(c.model.connections[0].cfg.language).toBe("he");
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
   });
@@ -702,7 +704,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     const spoken = async (conversationId: string) =>
       (await thread(conversationId)).filter((m) => m.voiceSessionId).map((m) => ({ actor: m.actor, body: m.body, at: m.spokenAtMs }));
 
-    it("barge-in, then the agent repeats the line: one message, the whole line, at the first time", async () => {
+    it("barge-in, then the agent repeats the line: both are stored, the cut one with \"…\", in order (the buyer heard both)", async () => {
       const c = await callWith([expectBuyer("Hello."), say(LINE), expectBuyer("Sorry, what?"), say(LINE)]);
       await c.run(15_000);
       await c.speak();
@@ -712,9 +714,12 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       await hangUp(c);
       const rows = await spoken(c.conversationId);
       expect(c.json().some((m) => m.t === "flush")).toBe(true);
-      expect(rows.map((r) => [r.actor, r.body]).slice(1)).toEqual([["buyer", "Hello."], ["agent", LINE], ["buyer", "Sorry, what?"]]);
-      expect(rows.filter((r) => r.actor === "agent" && r.body.startsWith("One two"))).toHaveLength(1);
-      expect(rows[2].at).toBeLessThan(rows[3].at!);
+      const said = rows.map((r) => [r.actor, r.body]).slice(1);
+      expect(said).toHaveLength(4);
+      expect(said[0]).toEqual(["buyer", "Hello."]);
+      expect(said[1][1]).toMatch(/^One two( \w+)*…$/);
+      expect(said.slice(2)).toEqual([["buyer", "Sorry, what?"], ["agent", LINE]]);
+      expect(rows[2].at).toBeLessThan(rows[4].at!);
     });
 
     it("barge-in, then a different answer: the cut line ends with \"…\", then the new line", async () => {
@@ -743,7 +748,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       expect(agent[0]).toMatch(/^One two( \w+)*…$/);
     });
 
-    it("typed text while the agent speaks: the same rules (repeat → one line; the audio is flushed)", async () => {
+    it("typed text while the agent speaks: the same rules (the cut line and the repeat both stored; the audio is flushed)", async () => {
       const c = await callWith([expectBuyer("Hello."), say(LINE), expectBuyer("typed"), say(LINE)]);
       await c.run(15_000);
       await c.speak();
@@ -753,7 +758,9 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       await hangUp(c);
       const rows = await spoken(c.conversationId);
       expect(c.json().some((m) => m.t === "flush")).toBe(true);
-      expect(rows.map((r) => [r.actor, r.body]).slice(1)).toEqual([["buyer", "Hello."], ["agent", LINE], ["buyer", "Does it include setup?"]]);
+      const said = rows.map((r) => [r.actor, r.body]).slice(1);
+      expect(said[1][1]).toMatch(/^One two( \w+)*…$/);
+      expect(said.slice(2)).toEqual([["buyer", "Does it include setup?"], ["agent", LINE]]);
     });
 
     it("typed text while the agent speaks, then a different answer: cut line with \"…\" plus the new line", async () => {
@@ -787,7 +794,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       expect(withCall.body.length).toBeGreaterThan(0);
     });
 
-    it("a cut copy of the line just said is not stored again", async () => {
+    it("a cut copy of the line just said is stored too, as cut (it was spoken)", async () => {
       // After the script, every buyer turn gets the same short answer: the second one is cut by the hang-up.
       const c = await callWith([expectBuyer("Hello.")]);
       await c.run(15_000);
@@ -799,7 +806,9 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       await c.run(1_000);
       await hangUp(c);
       const agent = (await spoken(c.conversationId)).filter((r) => r.actor === "agent").slice(1).map((r) => r.body);
-      expect(agent).toEqual(["Thanks. Is there anything else I can help with today?"]);
+      expect(agent[0]).toBe("Thanks. Is there anything else I can help with today?");
+      expect(agent).toHaveLength(2);
+      expect(agent[1]).toMatch(/^Thanks\.( \w+)*…$/);
     });
   });
 
