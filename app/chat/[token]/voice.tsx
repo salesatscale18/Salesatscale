@@ -2,14 +2,14 @@
 
 /**
  * Buyer calls on the chat page (live voice): a switch of the chat from text to voice and back, as in chat apps.
- * While the call is live the voice bubble (bottom-end, above the composer) is the indicator and holds the
- * controls; the bar above the chat shows only what the bubble cannot carry: connecting, the microphone prompt
- * or block, errors and refusals, reconnecting, and the short ended note. The buyer's first switch shows its note
- * ("what you say appears as text") next to the bubble. State words only: no tool names, no cost, no stats.
+ * In voice mode the voice bar ([Mute] · bubble · [Text], components/sas/voice/voice-bar.tsx) takes the composer's
+ * place; the bar above the chat shows only what the voice bar cannot carry: connecting, the microphone prompt or
+ * block, errors and refusals, reconnecting, and the short ended note. The buyer's first switch shows its note
+ * ("what you say appears as text") above the bubble. State words only: no tool names, no cost, no stats.
  */
 import { useEffect, useRef, useState } from "react";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
-import { VoiceBubble } from "@/components/sas/voice/voice-bubble";
+import { VoiceBar } from "@/components/sas/voice/voice-bar";
 import { useNow, useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import type { VoiceClient } from "@/lib/voice/client/voice-client";
 import { barView, type BarAction } from "@/lib/voice/client/view";
@@ -69,15 +69,15 @@ function runCommand(client: VoiceClient, c: TabCommand, setOutput: (id: string) 
 }
 
 /**
- * The chat tab's bubble while a call is on (above the composer, bottom-end), and the tab link that lets an
- * order form tab of this conversation show and control the same call (lib/voice/client/tab-link.ts). The form's
- * step reaches the call as a context message; the latest one is sent again once the call is live.
+ * The chat tab's voice bar while a call is on (in the composer's place), and the tab link that lets an order
+ * form tab of this conversation show and control the same call (lib/voice/client/tab-link.ts). The form's step
+ * reaches the call as a context message; the latest one is sent again once the call is live.
  */
 export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble, firstNote = false }: {
   client: VoiceClient; tabKey: string | null; tr: Tr; agentName: string; dir: "ltr" | "rtl";
-  /** Show the bubble here (the tab link runs either way while a call is on). */
+  /** Show the voice bar here (the tab link runs either way while a call is on). */
   showBubble: boolean;
-  /** The buyer's first switch to voice in this conversation: the note that what they say appears as text, once, next to the bubble. */
+  /** The buyer's first switch to voice in this conversation: the note that what they say appears as text, once, above the bubble. */
   firstNote?: boolean;
 }) {
   const s = useVoiceSnapshot(client);
@@ -136,9 +136,9 @@ export function ChatVoiceBubble({ client, tabKey, tr, agentName, dir, showBubble
   const state: MirrorState | null = mirrorFromSnapshot(s, { now, levels: { mic: 0, out: 0 }, outputs, output });
   if (!showBubble || !state || state.phase === "ended") return null;
   return (
-    <div className="c-bubble-dock" dir={dir}>
-      <VoiceBubble
-        state={state} agentName={agentName} tr={tr} dir={dir} levels={client.levels} onCommand={(c) => runCommand(client, c, setOutput)} placement="dock"
+    <div className="c-voicebar" dir={dir}>
+      <VoiceBar
+        state={state} agentName={agentName} tr={tr} dir={dir} levels={client.levels} onCommand={(c) => runCommand(client, c, setOutput)}
         note={noteOn ? tr("buyer.voice.first_note") : null} onNoteDone={() => setNoteOn(false)}
       />
     </div>

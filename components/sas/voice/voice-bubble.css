@@ -1,13 +1,15 @@
-/* The voice bubble (components/sas/voice/voice-bubble.tsx) on the buyer pages: the chat and the order form.
-   Seller-branded via --brand (both pages set it). Centred horizontally on both pages, the same in English and Hebrew
-   (owner, 22 Nov: physical left: 50%, no mirroring); its menu and short labels sit centred above it. */
+/* The voice bubble (components/sas/voice/voice-bubble.tsx) and the voice bar (voice-bar.tsx) on the buyer pages.
+   Seller-branded via --brand (both pages set it). In the chat the bubble sits in the voice bar, in the composer's
+   place; on the order form it floats centred at the bottom, the same in English and Hebrew (owner, 22 Nov: physical
+   left: 50%, no mirroring). Its short labels and the form's tray sit centred above it. */
 .vb { --vb-size: 60px; --vb-brand: var(--brand, #0f6b5a); --vb-on: var(--brand-on, #fff); --vb-ink: var(--ink, #0f1420);
   --vb-muted: var(--muted, #566073); --vb-line: var(--line, #dde1e8);
   z-index: 30; display: flex; flex-direction: column; align-items: center; gap: 8px; pointer-events: none;
   font-family: inherit; font-size: 14px; line-height: 20px; color: var(--vb-ink); }
 .vb > * { pointer-events: auto; }
-/* In the chat: centred, 12 px above the composer (the dock sits between the messages and the composer). */
-.vb--dock { position: absolute; inset-block-end: 12px; left: 50%; transform: translateX(-50%); }
+/* In the chat's voice bar: in line with Mute and Text; the short labels float above it (they never move the bar). */
+.vb--bar { position: relative; }
+.vb--bar .vb-flash { position: absolute; inset-block-end: calc(100% + 20px); left: 50%; transform: translateX(-50%); }
 /* On the order form: centred above the page's bottom edge, clear of the home indicator. */
 .vb--fixed { position: fixed; inset-block-end: calc(16px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); }
 
@@ -44,27 +46,39 @@
   .vb-wave i { transition: none; }
 }
 
-.vb-menu { min-width: 216px; max-width: min(280px, calc(100vw - 32px)); background: #fff; border: 1px solid var(--vb-line); border-radius: 14px; padding: 6px;
-  box-shadow: 0 12px 32px rgba(15, 20, 32, .2); display: flex; flex-direction: column; gap: 2px; }
-.vb-menu__state { margin: 0; padding: 8px 10px 6px; display: flex; flex-wrap: wrap; gap: 2px 8px; align-items: baseline; }
-.vb-menu__left { color: var(--vb-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.vb-item { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 0 10px; border: 0; border-radius: 10px; background: transparent;
-  font: inherit; color: var(--vb-ink); text-align: start; cursor: pointer; width: 100%; }
-.vb-item:hover:not(:disabled), .vb-item:focus-visible { background: var(--soft, #f2f4f3); outline: none; }
-.vb-item:focus-visible { box-shadow: inset 0 0 0 2px var(--focus, #2b6cb0); }
-.vb-item:disabled { color: var(--vb-muted); cursor: default; }
-.vb-item .sas-ico, .vb-item > svg { width: 18px; height: 18px; flex: none; }
-/* Switch to text: last, after a divider, in the normal colour. */
-.vb-sep { height: 1px; background: var(--vb-line); margin: 4px 6px; }
-.vb-item--end { color: var(--vb-ink); font-weight: 600; }
-.vb-item--end:disabled { color: var(--vb-muted); }
-.vb-group { display: flex; flex-direction: column; border-block-start: 1px solid var(--vb-line); padding-block-start: 4px; margin-block-start: 2px; }
-.vb-group__title { padding: 4px 10px 2px; font-size: 12px; color: var(--vb-muted); font-weight: 600; }
-.vb-item--radio { min-height: 40px; }
-.vb-radio { width: 16px; height: 16px; border-radius: 999px; border: 2px solid var(--vb-line); flex: none; box-sizing: border-box; }
-.vb-item--radio[aria-checked="true"] .vb-radio { border: 5px solid var(--vb-brand); }
+/* The voice bar (board VoiceBubbleBack 1): [Mute] · [Speaker] · bubble · [Text], centred on the composer's strip. */
+/* Three columns, so the bubble stays centred whether or not the Speaker control shows beside Mute. */
+.vb-bar { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 26px; }
+.vb-bar__side { display: flex; align-items: center; gap: 16px; }
+.vb-bar__side--start { justify-self: end; }
+.vb-bar__side--end { justify-self: start; }
+.vb-ctl { display: flex; flex-direction: column; align-items: center; gap: 4px; min-width: 64px; white-space: nowrap; padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-size: 11px; line-height: 14px; font-weight: 500; color: var(--muted, #566073); }
+.vb-ctl__circle { width: 44px; height: 44px; box-sizing: border-box; border-radius: 999px; background: #fff; color: var(--ink, #0f1420);
+  border: 1px solid var(--line-strong, #7d8697); display: grid; place-items: center; }
+.vb-ctl__circle .sas-ico, .vb-ctl__circle svg { width: 20px; height: 20px; }
+.vb-ctl:hover:not(:disabled) .vb-ctl__circle { background: #f2f4f6; }
+.vb-ctl:focus-visible { outline: none; }
+.vb-ctl:focus-visible .vb-ctl__circle { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 2px; }
+/* Muted: Mute turns dark (it now reads Unmute). */
+.vb-ctl--on .vb-ctl__circle, .vb-ctl--on:hover:not(:disabled) .vb-ctl__circle { background: var(--ink, #0f1420); border-color: var(--ink, #0f1420); color: #fff; }
+.vb-ctl:disabled { cursor: default; opacity: .5; }
+/* Speaker: a smaller fourth control, only where the browser offers a choice. */
+.vb-ctl--small { min-width: 52px; }
+.vb-ctl--small .vb-ctl__circle { width: 36px; height: 36px; }
+.vb-ctl--small .vb-ctl__circle svg { width: 18px; height: 18px; }
+@media (max-width: 380px) { .vb-bar { gap: 16px; } }
 
-/* The agent's line on the order form: one line next to the bubble; tap for the whole line. */
+/* The order form's tray (a tap on the bubble): Mute and Text, round, labels under; no headline. */
+.vb-tray { display: flex; gap: 12px; padding: 12px 14px 10px; background: #fff; border: 1px solid var(--vb-line); border-radius: 18px;
+  box-shadow: 0 12px 32px rgba(15, 20, 32, .2); }
+
+/* A short label above the bubble ("You are muted", "Standing by · Just speak", "1 min left", the first-switch note). */
+.vb-flash { max-width: min(280px, calc(100vw - 32px)); width: max-content; border: 0; border-radius: 14px; padding: 4px 10px; background: var(--vb-ink); color: #fff;
+  font: inherit; font-size: 12px; line-height: 16px; text-align: center; cursor: pointer; }
+.vb-flash:focus-visible { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 2px; }
+
+/* The agent's line on the order form: one line above the bubble; tap for the whole line. */
 .vb-caption { max-width: min(320px, calc(100vw - 32px)); border: 0; border-radius: 14px; padding: 8px 12px; background: var(--vb-ink); color: #fff;
   font: inherit; font-size: 13px; line-height: 18px; text-align: start; cursor: pointer; box-shadow: 0 6px 18px rgba(15, 20, 32, .2); }
 .vb-caption span { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -77,9 +91,5 @@
 /* (bubble 60 px + its 16 px offset + the outer ring's 17 px + 11 px, and the home indicator); the form has no sticky
    bottom button, so its last button scrolls clear above the bubble. */
 .b-root:has(.vb--fixed) .b-page { padding-block-end: calc(104px + env(safe-area-inset-bottom)); }
-/* Standby: calm. A white bubble with a still, brand-coloured line; no ring, no motion. The menu's first item wakes the agent. */
-.vb--standby .vb-btn { background: #fff; color: var(--vb-brand); box-shadow: inset 0 0 0 2px var(--vb-brand), 0 6px 18px rgba(15, 20, 32, .16); }
+/* Standby's still line (a tap on the bubble wakes the agent). */
 .vb-wave--standby i { transition: none; opacity: .85; }
-.vb-item--wake { color: var(--vb-brand); font-weight: 600; }
-/* A note next to the bubble (the first switch's "what you say appears as text", or "Standing by · Just speak"): light, wraps. */
-.vb-caption--note { background: #fff; color: var(--vb-ink); border: 1px solid var(--vb-line); font-size: 13px; text-align: center; }

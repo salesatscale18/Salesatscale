@@ -389,6 +389,8 @@
   "buyer.voice.bubble.speaker": "רמקול",
   "buyer.voice.end_call": "סיום שיחה",
   "buyer.voice.to_text": "מעבר לכתיבה",
+  "buyer.voice.bar.text": "כתיבה",
+  "buyer.voice.bubble.min_left": "נותרה דקה",
   "buyer.voice.sheet.text.title": "לעבור לכתיבה?",
   "buyer.voice.sheet.text.body": "השיחה ממשיכה כאן בכתב. אפשר לחזור לקול בכל רגע.",
   "buyer.voice.sheet.text.stay": "להישאר בקול",

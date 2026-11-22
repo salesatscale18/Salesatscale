@@ -10,6 +10,7 @@ import { QUOTE_CARD_WAIT_MS } from "@/lib/simulator/rules";
 import { translator, type Locale, type MessageKey } from "@/lib/i18n";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voice/client/buyer-ui";
+import { mirrorPhase } from "@/lib/voice/client/bubble";
 import { callClock } from "@/lib/voice/lab";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { BuyerCallBar, ChatVoiceBubble } from "./voice";
@@ -344,6 +345,15 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   // Back (board VoiceBubbleBack): "Switch to text?" during a call (the voice stops, the chat stays), else "Leave the chat?" (also for the seller's staff);
   // nothing once the link expired. During a call, closing or reloading the tab gets the browser's leave prompt.
   const callOn = !!voice && inCall && callSnap.phase !== "ending";
+  // Voice mode (board VoiceBubbleBack 1): connecting, live (standby too), reconnecting, ending. The composer is hidden
+  // and the voice bar takes its place; Text (or the call's end) brings the composer back, focused on desktop only
+  // (a phone would pop its keyboard).
+  const voiceMode = !!voice && inCall && mirrorPhase(callSnap.phase) !== null;
+  const wasVoice = useRef(false);
+  useEffect(() => {
+    if (wasVoice.current && !voiceMode && window.matchMedia?.("(pointer: fine)").matches) inputRef.current?.focus();
+    wasVoice.current = voiceMode;
+  }, [voiceMode]);
   const backGuard = useBackGuard({ ask: expired ? null : callOn ? "end_call" : "leave_chat", liveCall: callOn, onEndCall: () => clientRef.current?.end() });
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
   // A gate off, and the server said why (a simulated chat, or the seller's signed-in staff): the button stays, disabled, with the reason under the composer.
@@ -524,15 +534,15 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
         {showTyping ? <div className="c-msg c-msg--in"><div className="c-bubble c-dots" role="status" aria-label={strings.typingLabel}><i /><i /><i /></div></div> : null}
       </div>
       <div className="c-sr" aria-live="polite">{announce}</div>
-      {voice && clientRef.current ? (
-        // The voice bubble, above the composer at the bottom-end; it also links an order form tab to this call.
-        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={inCall} firstNote={firstNote} />
-      ) : null}
       {notice ? <div className="c-notice" role="status" dir={dir}>{notice}</div> : null}
       {backGuard.sheet ? <LeaveSheet ask={backGuard.sheet} tr={tr} dir={dir} onChoose={backGuard.choose} /> : null}
+      {voice && clientRef.current ? (
+        // Voice mode: the voice bar in the composer's place; it also links an order form tab to this call.
+        <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={voiceMode} firstNote={firstNote} />
+      ) : null}
       {ended ? (
         <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{expired ? strings.expired : strings.ended}</div>
-      ) : (
+      ) : voiceMode ? null : (
         <>
         <form className="c-bar" dir={dir} onSubmit={(e) => { e.preventDefault(); void send(); }}>
           <label className="c-sr" htmlFor="c-input">{strings.placeholder}</label>

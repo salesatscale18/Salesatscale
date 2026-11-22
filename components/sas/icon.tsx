@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, ClipboardList, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Globe, Hourglass, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Play, AudioLines, Trash2, History, ArrowRight, Mail, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Globe, Hourglass, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Volume2, Play, AudioLines, Trash2, History, ArrowRight, Mail, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -104,6 +104,8 @@ const ICONS = {
   loader: Loader,
   /** Voice calls: "Type instead". */
   keyboard: Keyboard,
+  /** Buyer voice bar: the speaker in use (where the browser offers a choice). */
+  volume: Volume2,
   /** Voice settings: Listen to a voice sample. */
   play: Play,
   /** Buyer chat: "Switch to voice" (voice mode, as in chat apps). */
