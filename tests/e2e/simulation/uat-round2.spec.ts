@@ -675,26 +675,22 @@ test("M4 Legal texts per market", async ({ browser }) => {
 
 // ───────────────────────── C. Leads ─────────────────────────
 
-async function addLead(o: { name: string; phone: string; language: "en" | "he"; company: string; consent?: boolean; market?: string; source?: string }) {
+async function addLead(o: { name: string; phone: string; language: "en" | "he"; company: string; consent?: boolean; market?: string }) {
   await page.goto(`${S.appBase}/leads?add=1`);
   await page.locator("#fullName").fill(o.name);
   await page.locator("#company").fill(o.company);
   await page.locator("#phone").fill(o.phone);
   await page.locator("#language").selectOption(o.language);
   if (o.market) await page.locator("#marketId").selectOption({ label: o.market });
-  if (o.consent !== false) await page.locator('input[name="consent"]').check();
-  await page.locator("#consentSource").fill(o.source ?? "UAT web form");
+  // The consent box is ticked by default (owner, 22 Nov); nobody types how the person agreed.
+  if (o.consent === false) await page.locator('input[name="consent"]').uncheck();
+  else await page.locator('input[name="consent"]').check();
   await page.getByRole("button", { name: "Save lead" }).click();
 }
 
 test("C1 Add an English lead", async () => {
   need(S.appBase);
-  // Saving without consent is refused.
-  await addLead({ name: "Rina Cohen", phone: phone(1), language: "en", company: "Rina's Kitchen", consent: false, source: "" });
-  await expect(page.getByText("Tick the consent box and say how this person agreed. Without it the lead can't be saved.")).toBeVisible();
-  await page.locator('input[name="consent"]').check();
-  await page.locator("#consentSource").fill("UAT web form");
-  await page.getByRole("button", { name: "Save lead" }).click();
+  await addLead({ name: "Rina Cohen", phone: phone(1), language: "en", company: "Rina's Kitchen" });
   await page.waitForURL(/\/leads\/[0-9a-f-]{36}/);
   S.leads.en = new URL(page.url()).pathname;
   await expect(page.getByRole("heading", { name: /Rina Cohen/ })).toBeVisible();
@@ -709,11 +705,12 @@ test("C1 Add an English lead", async () => {
   await expect(page.locator("tr", { hasText: "Rina Cohen" })).toContainText(HOME);
 });
 
-test("C1 Consent box left unticked is refused even with How they agreed filled", async () => {
-  // Fixed (Lane F): the manual form needs the box ticked AND a source (CSV and the webhook keep their rules).
+test("C1 Consent box left unticked saves a lead the agent never contacts", async () => {
+  // Owner, 22 Nov: unticked, the lead is saved without consent and "After saving" is "I'll contact them myself".
   need(S.appBase);
   await addLead({ name: "No Tick", phone: phone(9), language: "en", company: "No Tick Ltd", consent: false });
-  await expect(page.getByText("Tick the consent box and say how this person agreed. Without it the lead can't be saved.")).toBeVisible({ timeout: 8000 });
+  await page.waitForURL(/\/leads\/[0-9a-f-]{36}/);
+  await expect(page.getByTestId("consent")).toContainText("No consent record. This lead can't be contacted.");
 });
 
 test("C2 Add a Hebrew lead", async () => {

@@ -108,16 +108,17 @@ describe("UAT round 2 fixes", () => {
   describe("4–5. Add lead", () => {
     const add = (v: Record<string, string>) => run(addLeadAction({ status: "idle" }, form({ slug: acc.slug, fullName: "Shira Golan", company: "Golan Bakery", phone: "0525550193", ...v })));
 
-    it("an unticked consent box with a source is refused (was saved as consented)", async () => {
-      const r = await add({ consentSource: "Expo sheet" });
-      expect(r).toMatchObject({ status: "error", formError: "consent_required" });
-      expect(await db.select().from(leads).where(eq(leads.accountId, acc.id))).toHaveLength(0);
+    it("an unticked consent box (even with a source sent) saves the lead without consent (owner, 22 Nov)", async () => {
+      const r = await add({ phone: "0525550199", consentSource: "Expo sheet" });
+      expect((r as { redirect: string }).redirect).toMatch(/\/leads\/[0-9a-f-]{36}$/);
+      const [l] = await db.select().from(leads).where(and(eq(leads.accountId, acc.id), eq(leads.phone, "+972525550199")));
+      expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, l.id))).toHaveLength(0);
     });
 
     it("a manual add of an existing phone shows the duplicate and changes nothing", async () => {
       const first = await add({ consent: "yes", consentSource: "Expo sheet" });
       expect((first as { redirect: string }).redirect).toMatch(/\/leads\/[0-9a-f-]{36}$/);
-      const [lead] = await db.select().from(leads).where(eq(leads.accountId, acc.id));
+      const [lead] = await db.select().from(leads).where(and(eq(leads.accountId, acc.id), eq(leads.phone, "+972525550193")));
       const again = await add({ fullName: "Someone Else", company: "Other Co", phone: "+972 52-555-0193", consent: "yes", consentSource: "Phone call" });
       expect(again).toMatchObject({ status: "error", formError: "duplicate", duplicateId: lead.id });
       const [after] = await db.select().from(leads).where(eq(leads.id, lead.id));

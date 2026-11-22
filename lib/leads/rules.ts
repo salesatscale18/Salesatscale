@@ -79,6 +79,16 @@ export function formatPhone(e164: string): string {
 
 export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted by SMS, WhatsApp or email";
 
+/*
+ * The consent record's source when nobody typed one (owner decision, 22 Nov:
+ * leads asked to be called back, so consent is on by default and recorded
+ * automatically: who added the lead, when, and from where). Names come from
+ * the display-name helpers (lib/auth/display.ts), never a full email.
+ */
+export const consentSourceManual = (who: string) => `Added by ${who} in the app`.slice(0, 300);
+export const consentSourceImport = (fileName: string) => `Imported from ${fileName}`.slice(0, 300);
+export const consentSourceIntake = (keyName: string) => `Sent with intake key "${keyName}"`.slice(0, 300);
+
 export type LeadInput = {
   fullName: string;
   company: string | null;
@@ -87,8 +97,14 @@ export type LeadInput = {
   language: Locale;
   sourceLabel: string | null;
   sourceRef: string | null;
-  /** Null when the input carries no consent (allowed only for an existing lead). */
+  /** Null when the input carries no consent: the lead is saved, and the agent never contacts them. */
   consent: { wording: string; source: string; capturedAt: Date; ip: string | null; pageUrl: string | null } | null;
+  /**
+   * True when the consent came only from the default (no "yes" and no consent
+   * note in the input). It is recorded for a new lead only, never added to an
+   * existing lead (one a person may have saved as "do not contact").
+   */
+  consentDefaulted?: boolean;
   /** The form's country field, used to choose the lead's market (lib/markets/match.ts). */
   formCountry?: string | null;
   /** True when no language came with the lead: the market's language is used instead. */
@@ -100,7 +116,7 @@ export type LeadInput = {
   marketId?: string | null;
 };
 
-export type LeadFieldErrors = Partial<Record<"fullName" | "phone" | "language" | "email" | "consent" | "consentSource" | "consentText", string>>;
+export type LeadFieldErrors = Partial<Record<"fullName" | "phone" | "language" | "email" | "consent" | "consentSource", string>>;
 
 export type RawLead = {
   fullName?: unknown;
@@ -126,20 +142,25 @@ const LANGUAGE_ALIASES: Record<string, Locale> = { en: "en", english: "en", he: 
 
 /**
  * Validates one lead from any intake path. Consent is given by an explicit
- * "yes" or by a consent source; it then needs a description of how the person
- * agreed, and for CSV and the API (`requireConsentText`) the exact wording.
+ * "yes", by a consent note (source), or, with `consentByDefault`, unless the
+ * input says "no". Nobody has to type how the person agreed: without a note
+ * the record uses `defaults.consentSource` (who added the lead, the import
+ * file or the intake key) and the default wording.
  */
 export function parseLead(
   raw: RawLead,
   market: string,
   defaults: {
-    language: Locale; now: Date; requireConsentText?: boolean;
+    language: Locale; now: Date;
     /**
-     * The manual form: consent needs the box ticked AND a source. A source
-     * alone (box unticked) is no consent. CSV and the webhook keep their rule
-     * (an explicit yes, or a consent source).
+     * The manual form: consent only when the box is ticked (it is ticked by
+     * default). A source alone (box unticked) is no consent.
      */
     consentNeedsTick?: boolean;
+    /** CSV with the file box ticked, and the intake API: consent unless the input says "no". */
+    consentByDefault?: boolean;
+    /** The record's source when the input has no consent note. */
+    consentSource?: string;
   },
 ): { ok: true; value: LeadInput } | { ok: false; errors: LeadFieldErrors } {
   const errors: LeadFieldErrors = {};
@@ -160,11 +181,12 @@ export function parseLead(
   let consent: LeadInput["consent"] = null;
   const consentSource = s(raw.consentSource);
   const consentWording = s(raw.consentWording);
-  const noConsent = /^(0|false|no|n|off|לא)$/i.test(s(raw.consent));
-  const given = defaults.consentNeedsTick ? yes(raw.consent) : yes(raw.consent) || (!noConsent && consentSource);
+  const noConsent = raw.consent === false || /^(0|false|no|n|off|לא)$/i.test(s(raw.consent));
+  const explicit = yes(raw.consent) || (!noConsent && !!consentSource);
+  const given = defaults.consentNeedsTick ? yes(raw.consent) : explicit || (!noConsent && !!defaults.consentByDefault);
+  const source = consentSource || defaults.consentSource?.trim() || "";
   if (given) {
-    if (!consentSource) errors.consentSource = "Say how this person agreed to be contacted.";
-    if (defaults.requireConsentText && !consentWording) errors.consentText = "consent_text is missing: add the exact wording the person agreed to.";
+    if (!source) errors.consentSource = "Say how this person agreed to be contacted.";
     const capturedRaw = s(raw.consentCapturedAt);
     const capturedAt = capturedRaw ? new Date(capturedRaw) : defaults.now;
     if (Number.isNaN(capturedAt.getTime()) || capturedAt.getTime() > defaults.now.getTime() + 5 * 60_000) {
@@ -172,7 +194,7 @@ export function parseLead(
     }
     consent = {
       wording: consentWording || CONSENT_WORDING_DEFAULT,
-      source: consentSource,
+      source: source.slice(0, 300),
       capturedAt,
       ip: s(raw.consentIp) || null,
       pageUrl: s(raw.consentPageUrl) || null,
@@ -191,6 +213,7 @@ export function parseLead(
       sourceLabel: s(raw.sourceLabel).slice(0, 80) || null,
       sourceRef: s(raw.sourceRef).slice(0, 200) || null,
       consent,
+      ...(consent ? { consentDefaulted: !defaults.consentNeedsTick && !explicit } : {}),
       formCountry: s(raw.country).slice(0, 60) || null,
       languageFromDefault: !langRaw,
     },
@@ -257,20 +280,21 @@ export function csvTemplate(): string {
   return `${CSV_TEMPLATE_HEADER}\n${row.join(",")}\n`;
 }
 
-/** One consent statement for every row of a file (UX: "consent for the whole file"). */
-export type FileConsent = { source: string; wording: string };
+/**
+ * Consent for the whole file (the Import box, ticked by default): rows
+ * without their own consent note get a record with this source (the file
+ * name). Null: the box was unticked, and nobody in the file is contacted.
+ */
+export type FileConsent = { source: string };
 
 /**
- * Maps CSV rows to RawLead. Required columns: full_name, phone, language, and
- * consent_source + consent_text unless the whole file has one consent statement
- * (then rows without their own consent use it).
+ * Maps CSV rows to RawLead. Required columns: full_name, phone, language.
+ * Consent columns (consent_source, consent_text, consent_at) are optional.
  */
 export function csvToRawLeads(
   rows: string[][],
-  fileConsent?: FileConsent | null,
 ): { rows: { line: number; raw: RawLead }[]; unknownColumns: string[]; missingColumns: string[] } {
   const required: [keyof RawLead, string][] = [["fullName", "full_name"], ["phone", "phone"], ["language", "language"]];
-  if (!fileConsent) required.push(["consentSource", "consent_source"], ["consentWording", "consent_text"]);
   if (rows.length === 0) return { rows: [], unknownColumns: [], missingColumns: required.map(([, l]) => l) };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const keys = header.map((h) => CSV_COLUMNS[h]);
@@ -280,10 +304,6 @@ export function csvToRawLeads(
   const out = rows.slice(1).map((r, i) => {
     const raw: RawLead = {};
     keys.forEach((k, ci) => { if (k) (raw as Record<string, unknown>)[k] = r[ci] ?? ""; });
-    if (fileConsent && !s(raw.consentSource) && !yes(raw.consent)) {
-      raw.consentSource = fileConsent.source;
-      raw.consentWording = s(raw.consentWording) || fileConsent.wording;
-    }
     return { line: i + 2, raw };
   });
   return { rows: out, unknownColumns, missingColumns };
@@ -295,9 +315,7 @@ export const FIX_TEXT: Record<string, string> = {
   phone: "Use the full number with country code, for example +972 54 555 0123.",
   language: "Use en or he.",
   email: "Fix the email address or leave it empty.",
-  consentSource: "Add where and how the person agreed, or set one consent statement for the whole file.",
-  consentText: "Add the exact wording the person agreed to.",
-  consent_required: "Add consent_source and consent_text for this row.",
+  consentSource: "Fix consent_at (a past date and time), or leave it empty.",
   phone_conflict: "Check the phone and source_id: they point to two different leads.",
   opted_out: "This person asked not to be contacted. They can't be imported again without new consent.",
   duplicate_in_file: "Keep one of the two rows.",

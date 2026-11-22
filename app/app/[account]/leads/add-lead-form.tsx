@@ -1,17 +1,26 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t, type Locale } from "@/lib/i18n";
 import { addLeadAction, type AddLeadState } from "./actions";
 
-/** Add lead side panel (canvas: Leads). Consent is required to save. */
+/**
+ * Add lead side panel (canvas: Leads). Consent is ticked by default (owner, 22
+ * Nov: leads asked to be called back) and recorded automatically with who
+ * added the lead and when. Unticked: the lead is saved, the agent never
+ * contacts them, and "After saving" is "I'll contact them myself".
+ */
 export function AddLeadForm({ slug, languages, markets = [], closeHref }: { slug: string; languages: Locale[]; markets?: { id: string; name: string }[]; closeHref: string }) {
   const [state, action, pending] = useActionState<AddLeadState, FormData>(addLeadAction, { status: "idle" });
   const errors = state.status === "error" ? state.errors : {};
   const v = (k: string, d = "") => (state.status === "error" ? state.values[k] ?? d : d);
   const err = (k: keyof typeof errors) => (errors[k] ? { "aria-invalid": true as const, "aria-describedby": `${k}-error` } : {});
+  // After a failed save the form keeps what was sent: an unticked box sends nothing.
+  const [consent, setConsent] = useState(state.status === "error" ? state.values.consent === "yes" : true);
+  const [after, setAfter] = useState(v("after", "agent") === "me" ? "me" : "agent");
+  const afterShown = consent ? after : "me";
 
   return (
     <aside className="sas-side-panel" aria-labelledby="add-lead-h">
@@ -73,20 +82,15 @@ export function AddLeadForm({ slug, languages, markets = [], closeHref }: { slug
         <fieldset className="sas-fieldset" style={{ gridTemplateColumns: "1fr", padding: 12 }}>
           <legend>{t("lead.form.consent")}</legend>
           <label className="sas-check">
-            <input type="checkbox" name="consent" value="yes" defaultChecked={v("consent") === "yes"} />
+            <input type="checkbox" name="consent" value="yes" checked={consent} onChange={(e) => setConsent(e.target.checked)} aria-describedby="consent-hint" />
             {t("lead.form.consent_check")}
           </label>
-          <div className="sas-input-group">
-            <label className="sas-input-label" htmlFor="consentSource">{t("lead.form.consent_source")}</label>
-            <input className="sas-input" id="consentSource" name="consentSource" defaultValue={v("consentSource")} {...err("consentSource")} />
-            {errors.consentSource ? <span className="sas-error" id="consentSource-error">{errors.consentSource}</span> : null}
-          </div>
-          <span className="sas-hint">{t("lead.form.consent_hint")}</span>
+          <span className="sas-hint" id="consent-hint">{t("lead.form.consent_hint")}</span>
         </fieldset>
         <fieldset style={{ border: 0, padding: 0, margin: 0 }} className="sas-stack-2">
           <legend className="sas-input-label">{t("lead.form.after")}</legend>
-          <label className="sas-check"><input type="radio" name="after" value="agent" defaultChecked={v("after", "agent") === "agent"} />{t("lead.form.after_agent")}</label>
-          <label className="sas-check"><input type="radio" name="after" value="me" defaultChecked={v("after") === "me"} aria-describedby="after-me-hint" />{t("lead.form.after_me")}</label>
+          <label className="sas-check"><input type="radio" name="after" value="agent" checked={afterShown === "agent"} disabled={!consent} onChange={() => setAfter("agent")} />{t("lead.form.after_agent")}</label>
+          <label className="sas-check"><input type="radio" name="after" value="me" checked={afterShown === "me"} onChange={() => setAfter("me")} aria-describedby="after-me-hint" />{t("lead.form.after_me")}</label>
           <span className="sas-hint" id="after-me-hint" style={{ paddingInlineStart: 24 }}>{t("lead.form.after_me_hint")}</span>
         </fieldset>
         <div style={{ display: "flex", gap: 8 }}>

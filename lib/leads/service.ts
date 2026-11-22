@@ -63,7 +63,7 @@ async function findExisting(db: Db, accountId: string, input: Pick<LeadInput, "p
 
 export type UpsertResult =
   | { ok: true; lead: Lead; created: boolean }
-  | { ok: false; reason: "consent_required" | "phone_conflict" | "account_paused" }
+  | { ok: false; reason: "phone_conflict" | "account_paused" }
   | { ok: false; reason: "opted_out"; optedOutAt: Date | null }
   /** Only with `createOnly` (the manual add): a lead with this phone already exists and was not changed. */
   | { ok: false; reason: "duplicate"; leadId: string };
@@ -81,7 +81,10 @@ function updatedEventData(origin: LeadOrigin, proposed: Record<string, string>) 
 
 /**
  * Creates a lead, or updates the existing one with the same phone (or the same
- * source ID). A new lead needs a consent record; an update may add another.
+ * source ID). A new lead without consent is saved, and the agent never
+ * contacts them (the consent gates in lib/channels, lib/sms and
+ * lib/simulator). An update may add a consent record, but never one that only
+ * came from the default (`consentDefaulted`).
  * A lead who opted out is never re-added or changed from here (UX rule).
  * Intake (webhook, CSV) never overwrites an existing lead's name, language,
  * email or company (mergeLeadFields), and is refused while the account is paused.
@@ -104,7 +107,6 @@ export async function upsertLead(
   const existing = await findExisting(db, accountId, input);
 
   if (!existing) {
-    if (!input.consent) return { ok: false, reason: "consent_required" };
     let lead: Lead;
     try {
       [lead] = await db
@@ -130,9 +132,11 @@ export async function upsertLead(
       if (retry && isUniqueViolation(e)) return upsertLead(db, accountId, actor, input, origin, { ...opts, skipPausedCheck: true }, false);
       throw e;
     }
-    await db.insert(consentRecords).values({ accountId, leadId: lead.id, ...input.consent, recordedByUserId: actor.userId });
     await addEvent(db, accountId, lead.id, "lead.created", actor, { origin, source: input.sourceLabel });
-    await addEvent(db, accountId, lead.id, "consent.recorded", actor, { source: input.consent.source, wording: input.consent.wording });
+    if (input.consent) {
+      await db.insert(consentRecords).values({ accountId, leadId: lead.id, ...input.consent, recordedByUserId: actor.userId });
+      await addEvent(db, accountId, lead.id, "consent.recorded", actor, { source: input.consent.source, wording: input.consent.wording });
+    }
     return { ok: true, lead, created: true };
   }
 
@@ -156,7 +160,7 @@ export async function upsertLead(
     .where(and(eq(leads.id, existing.id), eq(leads.accountId, accountId)))
     .returning();
   await addEvent(db, accountId, lead.id, "lead.updated", actor, updatedEventData(origin, proposed));
-  if (input.consent) {
+  if (input.consent && !input.consentDefaulted) {
     await db.insert(consentRecords).values({ accountId, leadId: lead.id, ...input.consent, recordedByUserId: actor.userId });
     await addEvent(db, accountId, lead.id, "consent.recorded", actor, { source: input.consent.source, wording: input.consent.wording });
   }
@@ -175,7 +179,7 @@ export type PreviewResult =
 export async function previewLead(db: Db, accountId: string, input: LeadInput): Promise<PreviewResult> {
   if (await isPaused(db, accountId)) return { result: "rejected", reason: refusalText({ ok: false, reason: "account_paused" }).problem };
   const existing = await findExisting(db, accountId, input);
-  if (!existing) return input.consent ? { result: "created" } : { result: "rejected", reason: refusalText({ ok: false, reason: "consent_required" }).problem };
+  if (!existing) return { result: "created" };
   if (existing.status === "opted_out") {
     return { result: "rejected", reason: refusalText({ ok: false, reason: "opted_out", optedOutAt: existing.optedOutAt }).problem };
   }
@@ -468,7 +472,6 @@ export function refusalText(r: Exclude<UpsertResult, { ok: true }>): { problem: 
   if (r.reason === "opted_out") {
     return { problem: r.optedOutAt ? `Opted out on ${dateShort.format(r.optedOutAt)}` : "Opted out", fix: FIX_TEXT.opted_out };
   }
-  if (r.reason === "consent_required") return { problem: "No consent for this person", fix: FIX_TEXT.consent_required };
   if (r.reason === "account_paused") return { problem: "This account is paused", fix: FIX_TEXT.account_paused };
   return { problem: "Another lead already has this phone number", fix: FIX_TEXT.phone_conflict };
 }
@@ -550,7 +553,6 @@ async function importCandidates(
     const reject = (r: Exclude<UpsertResult, { ok: true }>) => outcomes.push({ kind: "rejected", line, name, ...refusalText(r) });
     const existing = byPhone.get(input.phone) ?? (input.sourceRef ? byRef.get(input.sourceRef) : undefined);
     if (!existing) {
-      if (!input.consent) return reject({ ok: false, reason: "consent_required" });
       if (freedPhones.has(input.phone)) {
         await flush();
         chunkStart = index;
@@ -564,9 +566,11 @@ async function importCandidates(
         id, accountId, fullName: input.fullName, company: input.company, email: input.email, phone: input.phone, language: input.language,
         origin: "csv", sourceLabel: input.sourceLabel, sourceRef: input.sourceRef, marketId: input.marketId ?? null, ownerUserId: null, createdByUserId: actor.userId, lastActivityAt: now,
       });
-      consents.push({ accountId, leadId: id, ...input.consent, recordedByUserId: actor.userId });
       event(id, "lead.created", { origin: "csv", source: input.sourceLabel });
-      event(id, "consent.recorded", { source: input.consent.source, wording: input.consent.wording });
+      if (input.consent) {
+        consents.push({ accountId, leadId: id, ...input.consent, recordedByUserId: actor.userId });
+        event(id, "consent.recorded", { source: input.consent.source, wording: input.consent.wording });
+      }
       byPhone.set(state.phone, state);
       if (state.sourceRef) byRef.set(state.sourceRef, state);
       outcomes.push({ kind: "created" });
@@ -587,7 +591,7 @@ async function importCandidates(
     if (sourceRef && sourceRef !== existing.sourceRef) byRef.set(sourceRef, existing);
     Object.assign(existing, fields, { phone: input.phone, sourceRef, marketId });
     event(existing.id, "lead.updated", updatedEventData("csv", proposed));
-    if (input.consent) {
+    if (input.consent && !input.consentDefaulted) {
       consents.push({ accountId, leadId: existing.id, ...input.consent, recordedByUserId: actor.userId });
       event(existing.id, "consent.recorded", { source: input.consent.source, wording: input.consent.wording });
     }
@@ -620,10 +624,16 @@ export async function importLeadsCsv(
   account: { id: string; market: string; languages: string[] },
   actor: LeadActor,
   csvText: string,
+  /**
+   * The Import box (ticked by default) gives `fileConsent`: everyone in the file can be contacted,
+   * with the file as the consent source unless a row has its own note. `null` (unticked): nobody in
+   * the file gets consent. Left out (scripts, tests): only rows with their own consent columns.
+   */
   opts: { fileConsent?: FileConsent | null; now?: Date } = {},
 ): Promise<ImportResult> {
   const now = opts.now ?? new Date();
-  const parsed = csvToRawLeads(parseCsv(csvText), opts.fileConsent);
+  const parsed = csvToRawLeads(parseCsv(csvText));
+  const fileConsent = opts.fileConsent;
   const result: ImportResult = {
     created: 0, updated: 0, rejected: [], totalRows: parsed.rows.length,
     unknownColumns: parsed.unknownColumns, missingColumns: parsed.missingColumns,
@@ -636,7 +646,9 @@ export async function importLeadsCsv(
   const candidates: ImportCandidate[] = [];
   for (const { line, raw } of parsed.rows) {
     const name = typeof raw.fullName === "string" && raw.fullName.trim() ? raw.fullName.trim() : "(empty)";
-    const p = parseLead(raw, account.market, { language: defaultLanguage, now, requireConsentText: true });
+    const p = parseLead(fileConsent === null ? { ...raw, consent: "no" } : raw, account.market, {
+      language: defaultLanguage, now, consentByDefault: !!fileConsent, consentSource: fileConsent?.source,
+    });
     if (!p.ok) {
       const [field, problem] = Object.entries(p.errors as LeadFieldErrors)[0];
       result.rejected.push({ line, name, problem: problem!, fix: FIX_TEXT[field] ?? "" });
@@ -664,7 +676,7 @@ export async function importLeadsCsv(
     await writeAudit(db, { userId: actor.userId, actingAs: actor.actingAs }, {
       accountId: account.id,
       action: "leads.imported",
-      details: { created: result.created, updated: result.updated, rejected: result.rejected.length, fileConsent: opts.fileConsent?.source ?? null },
+      details: { created: result.created, updated: result.updated, rejected: result.rejected.length, fileConsent: fileConsent?.source ?? null },
     });
   }
   return result;

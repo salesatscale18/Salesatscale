@@ -238,7 +238,6 @@ async function addLead(name: string, phone: string, language: "en" | "he", compa
   await page.locator("#phone").fill(phone);
   await page.locator("#language").selectOption(language);
   await page.locator('input[name="consent"]').check();
-  await page.locator("#consentSource").fill("E2E web form");
   await page.getByRole("button", { name: "Save lead" }).click();
   await page.waitForURL(/\/leads\/[0-9a-f-]{36}/);
   return new URL(page.url()).pathname;

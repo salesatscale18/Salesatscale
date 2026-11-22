@@ -464,5 +464,7 @@
   "buyer.book.error.other": "לא הצלחנו לקבוע את השיחה. נסו שוב או כתבו כאן.",
   "buyer.book.ics_title": "שיחה עם {seller}",
   "buyer.sim.pay_label": "תשלום",
-  "buyer.sim.pay_now": "לתשלום"
+  "buyer.sim.pay_now": "לתשלום",
+  "lead.form.consent_hint": "הלידים במערכת שלך ביקשו לשמוע ממך. בטלו את הסימון רק אם אסור שהסוכן יפנה לאדם הזה.",
+  "import.file_consent_hint": "הלידים במערכת שלך ביקשו לשמוע ממך. בטלו את הסימון רק אם אסור שהסוכן יפנה לאנשים בקובץ הזה."
 }
