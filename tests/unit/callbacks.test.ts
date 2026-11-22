@@ -175,7 +175,7 @@ describe("Who takes calls (setting) in the prompt", () => {
     const ctx = turnContext({ ...pb, callRole: "our sales manager" }, null, { callback: { timeLocal: "Thu 19 Nov 10:00", confirmed: false } });
     expect(ctx).toContain("Call with our sales manager requested, waiting for the team to confirm: Thu 19 Nov 10:00. Keep answering until the call. If the buyer wants another time, call request_callback again.");
     expect(turnContext(pb, null, { callback: { timeLocal: "Thu 19 Nov 10:00", confirmed: true } }))
-      .toContain("Call with a member of our team booked: Thu 19 Nov 10:00. Keep answering until the call. If the buyer wants another time, they can rebook with the same link; call request_callback again only to send it again.");
+      .toContain("Call with a member of our team booked: Thu 19 Nov 10:00. Keep answering until the call. If the buyer wants another time, they can rebook with the same link, or name a time: call request_callback again with that time, or without one to send the link again.");
     // The team's log of the call, with its note.
     expect(turnContext(pb, null, { teamCall: "The team spoke with the buyer on the phone on Thu 19 Nov 10:00 (12 min). Note from the team, read it before you continue: Haifa first." }))
       .toContain("Note from the team, read it before you continue: Haifa first.");
