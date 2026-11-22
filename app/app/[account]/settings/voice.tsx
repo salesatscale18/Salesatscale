@@ -12,6 +12,7 @@ import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelLabel }
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { RECORDING_KEEP_DAYS, RECORDING_NOTICE, resolveRecordingSettings } from "@/lib/voice/recording-settings";
 import { saveVoiceBuyerCallsAction } from "./voice-actions";
+import { RecordingLineSwitch } from "./recording-line-switch";
 
 const Row = ({ title, hint, children, id }: { title: string; hint: string; children?: React.ReactNode; id: string }) => (
   <div className="st-voice__row">
@@ -112,14 +113,9 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
             </select>
           </label>
           <Row id="voice-rec-hears" title={t("settings.voice.rec.hears")} hint={t("settings.voice.rec.hears_hint", { line: RECORDING_NOTICE.en })} />
-          <div className="st-voice__row" style={{ alignItems: "flex-start" }}>
-            <span className="sas-stack-2" style={{ gap: 6 }}>
-              <label htmlFor="voice-rec-line"><b>{t("settings.voice.rec.line")}</b></label>
-              <span className="sas-small" id="voice-line-hint">{t("settings.voice.rec.line_hint")}</span>
-              <span className="sas-alert sas-alert--warning st-voice__warn" id="voice-line-warn" data-voice-line-warning=""><Icon name="alert-triangle" /><span>{t("settings.voice.rec.line_warning")}</span></span>
-            </span>
-            <input type="checkbox" role="switch" className="sas-switch" id="voice-rec-line" name="recordingNotice" defaultChecked={recording.recordingNotice} aria-describedby="voice-line-hint voice-line-warn" data-voice-recording-notice="" />
-          </div>
+          <RecordingLineSwitch
+            defaultOn={recording.recordingNotice} label={t("settings.voice.rec.line")} hint={t("settings.voice.rec.line_hint")} warning={t("settings.voice.rec.line_warning")}
+          />
           <div className="st-voice__row">
             <span className="sas-small st-voice__law" data-voice-rec-law=""><Icon name="info" />{t("settings.voice.rec.law")}</span>
           </div>

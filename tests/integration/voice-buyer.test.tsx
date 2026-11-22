@@ -687,8 +687,11 @@ describe("Settings › Voice", () => {
     expect(html).toMatch(/<option value="180" selected="">180 days<\/option>/);
     expect(html).toContain('<option value="0">Until deleted</option>');
     expect(html).toContain("A change applies to new calls only.");
-    expect(html).toContain("Spoken once, on the buyer&#x27;s first recorded call: &quot;Some calls may be recorded for quality review.&quot; Nothing on screen.");
-    expect(html).toContain("Turning this off records buyers without telling them, which many markets don&#x27;t allow.");
+    expect(html).toContain("Spoken once per conversation, on its first recorded call: &quot;Some calls may be recorded for quality review.&quot; Nothing on screen.");
+    expect(html).toContain("Buyers hear one short line on the first recorded call of a conversation.");
+    // The line switch is on: its warning is not shown (the live region that announces it is there, empty).
+    expect(html).not.toContain("Turning this off records buyers without telling them");
+    expect(html).toContain('<span role="status" aria-live="polite" id="voice-line-warn"></span>');
     // One Save for the page; read-only rows say where they are set.
     expect((html.match(/data-voice-save=""/g) ?? []).length).toBe(1);
     expect(html).toContain("Change it in Versions and test lab.");
