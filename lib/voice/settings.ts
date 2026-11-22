@@ -96,9 +96,9 @@ export function voiceCapabilities(modelId: string): VoiceCapabilities {
 }
 
 /**
- * The voice a call sends to the model: the version's choice, else the model family's default (the one the
- * picker shows as "(default)": Puck for Gemini, alloy for OpenAI). Always explicit, so the provider never picks
- * one per session. Null for the scripted model (it has no voices).
+ * The version's voice, else the model family's default (the one the picker shows as "(default)": Puck for
+ * Gemini, alloy for OpenAI). Null for the scripted model (it has no voices). The engine sends the default only to
+ * OpenAI; Gemini with no choice gets no voice field (owner, 22 Nov), see VoiceEngine.voiceInEffect.
  */
 export function callVoice(chosen: string | null | undefined, modelId: string): string | null {
   if (typeof chosen === "string" && chosen.trim()) return chosen.trim();

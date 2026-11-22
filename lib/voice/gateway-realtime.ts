@@ -36,8 +36,9 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 /**
  * Session fields (and values) proven in working live calls, per model family (what the first connect sends).
  * Gemini, also its retry after an early close (`cfg.safe`): exactly what 6e06fe8 sent in the owner's working calls (20 Nov 2026):
- * instructions, tools, voice, audio out, PCM 24 kHz in and out, EMPTY input and output transcription,
- * plain server VAD and the Google BLOCKING tool option.
+ * instructions, tools, voice (only when the seller chose one; none sent otherwise, as then and again since
+ * 22 Nov), audio out, PCM 24 kHz in and out, EMPTY input and output transcription, plain server VAD and the
+ * Google BLOCKING tool option.
  * OpenAI (GPT-Realtime 2.1, GPT-Realtime mini): the full first connect was accepted in the live calls of 21-22 Nov
  * 2026 (session-updated, buyer lines transcribed, tools used): instructions, voice, output modalities, PCM 24 kHz in
  * and out, EMPTY input transcription (no prompt, no language), output transcription, server VAD with the version's

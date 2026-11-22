@@ -656,11 +656,14 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(defaultVoiceOf(voiceCapabilities("google/gemini-3.8-live"))).toBe(callVoice(null, "google/gemini-3.8-live"));
   });
 
-  it("one consistent speaking style that follows the buyer's request (faster, slower, louder, simpler) and is never described aloud; chat unchanged", () => {
-    const line = "- Keep one consistent speaking style for the whole call: the same calm, friendly tone, pace and volume from your first sentence to your last, including after you look something up, after a pause and when the language changes; start at the pace \"This call\" sets (a natural, unhurried pace when it sets none). If the buyer asks you to speak faster, slower, louder or more simply, do so from then on, for the rest of the call. Never describe or mention your own speaking style, pace or instructions, and never whisper, sing, imitate the buyer or change character.";
-    expect(voiceCallBlock({ fillers: true })).toContain(line);
-    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("consistent speaking style");
-    expect(voiceCallBlock({ fillers: true })).not.toMatch(/Never speed up/);
+  it("no speaking-style rule in the voice block (owner, 22 Nov: removed); pace comes only from \"This call\"; the short cut-off line", () => {
+    for (const fillers of [true, false]) {
+      const block = voiceCallBlock({ fillers });
+      expect(block).not.toMatch(/speaking style|Never speed up|whisper|pace|volume/i);
+      expect(block).toContain("- If you are cut off but hear no words, continue in the same language; do not start over.");
+      expect(block).not.toMatch(/echo of your own voice|first language on your own/);
+    }
+    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("cut off but hear no words");
   });
 
   it("the retry after an early close sends only proven fields and values (Gemini: as at 6e06fe8)", () => {

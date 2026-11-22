@@ -806,13 +806,14 @@ export class VoiceEngine {
   }
 
   /**
-   * The voice sent to the model: the seller's choice always; otherwise our pinned family default (Puck/alloy),
-   * except after the early-close retry (which runs on proven fields only): from then on this call omits the
-   * pinned default and the model uses its own default, as in the owner's working live calls.
+   * The voice sent to the model: the seller's choice always. With no choice: Gemini gets no voice field (its own
+   * default, as in the owner's working calls before 21 Nov; owner, 22 Nov: the pinned default sounded worse);
+   * OpenAI gets its pinned default (alloy), except after the early-close retry (proven fields only).
    */
   private voiceInEffect(): string | null {
     const chosen = resolveVoiceSettings(this.loaded!.version.voiceSettings).voice;
     if (chosen) return chosen;
+    if (schemaFamilyOf(this.model.modelId) === "gemini") return null;
     return this.safeConfig ? null : callVoice(null, this.model.modelId);
   }
 
@@ -1653,7 +1654,7 @@ export class VoiceEngine {
     this.agentSpeaking = false;
     const fresh = early && !this.openerDone && !this.lastLine;
     // Our pinned default voice has never been proven on every account: the retry leaves it out (the model's own default).
-    const droppedVoice = early && !resolveVoiceSettings(this.loaded.version.voiceSettings).voice && !!callVoice(null, this.model.modelId);
+    const droppedVoice = early && !resolveVoiceSettings(this.loaded.version.voiceSettings).voice && schemaFamilyOf(this.model.modelId) !== "gemini" && !!callVoice(null, this.model.modelId);
     const what = early ? (droppedVoice ? "retry without pinned default voice" : "retry after early close") : "reconnect";
     const opened = await this.openModel({ resumed: !fresh }, this.limits.reconnectMs, what);
     if (!opened || this.ended) {

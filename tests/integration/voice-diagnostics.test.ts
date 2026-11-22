@@ -168,13 +168,12 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     expect(model.conns).toHaveLength(2);
     expect(model.conns[1].cfg.safe).toBe(true);
     expect(model.conns[1].responses).toHaveLength(1);
-    // No voice chosen: the start pins the family default; the safe retry leaves it out (the working live config).
-    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Puck", undefined]);
-    expect("voice" in model.conns[1].cfg).toBe(false);
+    // No voice chosen on Gemini: no voice field on either connection (Gemini's own default, as before 21 Nov).
+    expect(model.conns.map((x) => "voice" in x.cfg)).toEqual([false, false]);
     expect((await row(c.sessionId)).settings?.voice).toBe("model default");
     expect(c.engine.isEnded).toBe(false);
     expect(c.logs.text()).toContain(`[voice] ${short(c.sessionId)} model closed code=- reason="session ended" error=no after=300ms audio=no`);
-    expect(c.logs.text()).toMatch(/retry without pinned default voice connected in \d+ms \(proven session fields only\)/);
+    expect(c.logs.text()).toMatch(/retry after early close connected in \d+ms \(proven session fields only\)/);
     // It closes early again: the call ends as an error, model_closed_early, with the details stored.
     await c.clock.advance(200);
     model.conns[1].emit({ type: "closed", code: 1008, reason: "unsupported field", error: "invalid_request: unsupported field" });
@@ -197,11 +196,26 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     expect(endDetailText(sum?.endDetail)).toBe('by model_closed_early · model closed 1008 "unsupported field" after 200 ms with an error · error: invalid_request: unsupported field');
   });
 
-  it("the pinned default voice: sent at the start (stored); after a retry that dropped it, later connections omit it too", async () => {
+  it("Gemini with no voice chosen sends no voice field (its own default), on the start and on every reconnect", async () => {
     const model = new FakeModel();
     const c = await engineCall(model);
-    expect(model.conns[0].cfg.voice).toBe("Puck");
-    expect((await row(c.sessionId)).settings?.voice).toBe("Puck");
+    expect("voice" in model.conns[0].cfg).toBe(false);
+    expect((await row(c.sessionId)).settings?.voice).toBe("model default");
+    model.conns[0].emit({ type: "audio", pcm: new Uint8Array(480) });
+    await c.run(1_000);
+    model.conns[0].emit({ type: "closed", code: 1011, reason: "" });
+    await c.settle();
+    expect(model.conns).toHaveLength(2);
+    expect("voice" in model.conns[1].cfg).toBe(false);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("OpenAI's pinned default voice (alloy): sent at the start (stored); after a retry that dropped it, later connections omit it too", async () => {
+    const model = new FakeModel("openai/gpt-realtime-2");
+    const c = await engineCall(model);
+    expect(model.conns[0].cfg.voice).toBe("alloy");
+    expect((await row(c.sessionId)).settings?.voice).toBe("alloy");
     model.conns[0].emit({ type: "closed", code: 1007, reason: "invalid voice" });
     await c.settle();
     model.conns[1].emit({ type: "audio", pcm: new Uint8Array(480) });
@@ -210,7 +224,8 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     model.conns[1].emit({ type: "closed", code: 1011, reason: "" });
     await c.settle();
     expect(model.conns).toHaveLength(3);
-    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["Puck", undefined, undefined]);
+    expect(model.conns.map((x) => x.cfg.voice)).toEqual(["alloy", undefined, undefined]);
+    expect(c.logs.text()).toMatch(/retry without pinned default voice connected in \d+ms \(proven session fields only\)/);
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });
