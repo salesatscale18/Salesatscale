@@ -8,7 +8,8 @@ import { SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
-import { relativeTime } from "@/lib/format";
+import { formatDateTimeIn, relativeTime } from "@/lib/format";
+import { readViewerZone } from "@/lib/viewer-zone-server";
 import { t, type MessageKey } from "@/lib/i18n";
 import { leadEventIcon, leadEventTitle } from "@/lib/leads/event-icons";
 import {
@@ -62,6 +63,9 @@ export default async function OverviewPage({ params, searchParams }: { params: P
   const sp = await searchParams;
   const { account, user } = await requireAccount(slug);
   const now = new Date();
+  // Recent activity (and the greeting) in the viewer's own zone (the sas_tz cookie), else the account's.
+  const viewerZone = await readViewerZone();
+  const zone = viewerZone ?? account.timezone;
   const period = parsePeriod(one(sp.period));
   // Simulated buyers (buyer simulator) are left out of the numbers unless asked for, like test chats.
   const includeSimulated = one(sp.sim) === "1";
@@ -122,7 +126,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: leadEventIcon(event.type, { data: event.data }),
     // A conversation started in the web chat (real or simulated) is not a WhatsApp start (leadEventKey).
-    title: leadEventTitle(event.type, event.data, t),
+    title: leadEventTitle(event.type, event.data, t, viewerZone),
     detail: (
       <>
         <a href={`${base}/leads/${lead.id}`}>{lead.fullName}</a>
@@ -130,7 +134,8 @@ export default async function OverviewPage({ params, searchParams }: { params: P
         {by ? ` · ${personName(by, user.id, t("people.you"))}` : event.actor === "agent" ? " · Agent" : ""}
       </>
     ),
-    time: relativeTime(event.createdAt, now),
+    time: relativeTime(event.createdAt, now, zone),
+    timeTitle: formatDateTimeIn(event.createdAt, zone),
   }));
 
   // L-6 (UX O-4): the Needs you counter card. One row per group with items, in the L-2 order
@@ -175,7 +180,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     <main className="sas-shell__content sas-ov">
       <header className="sas-page-head sas-ov__head">
         <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 280px", minWidth: 0 }}>
-          <h1 className="sas-title">{t(greetingKey(now, account.timezone, !!user.firstName?.trim()), { name: user.firstName?.trim() ?? "" })}</h1>
+          <h1 className="sas-title">{t(greetingKey(now, zone, !!user.firstName?.trim()), { name: user.firstName?.trim() ?? "" })}</h1>
           <span className="sas-small">
             {account.tradeName} · {needCount === 0 ? t("overview.sub.none") : needCount === 1 ? t("overview.sub.one") : t("overview.sub.many", { count: needCount })}
           </span>

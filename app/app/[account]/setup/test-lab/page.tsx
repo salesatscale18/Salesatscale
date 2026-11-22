@@ -21,6 +21,7 @@ import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from 
 import { getLead } from "@/lib/leads/service";
 import { type IconName } from "@/components/sas/icon";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
+import { readViewerZone } from "@/lib/viewer-zone-server";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
 import { toolLabel } from "../../leads/[leadId]/conversation";
@@ -90,8 +91,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const { account, user } = access;
   // Model and effort are platform details: sellers do not see them (live review 7.1.3).
   const showModel = seesPlatformDetails(access);
-  // Records in the account's time zone, the zone on hover (not "13:42 UTC").
-  const tz = account.timezone;
+  // Records in the viewer's own zone (the sas_tz cookie), else the account's; the zone on hover (not "13:42 UTC").
+  const viewerZone = await readViewerZone();
+  const tz = viewerZone ?? account.timezone;
   const local = (at: Date) => formatLocalDateTime(at, tz);
   const isAdmin = user.role === "super_admin";
   const base = `/app/${account.slug}`;
@@ -133,7 +135,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // Hand-off, take-over and hand-back markers show either way.
   const { timed: timedMarkers, after: markersAfter } = splitMarkers(view?.markers);
   let pendingMarkers = timedMarkers;
-  const markerNode = (mk: ThreadMarker, key: string) => <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} />;
+  const markerNode = (mk: ThreadMarker, key: string) => <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} />;
   // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.

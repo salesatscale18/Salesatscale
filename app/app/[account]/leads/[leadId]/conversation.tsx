@@ -401,7 +401,10 @@ export function ConversationPanel({
   slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead", timezone, takeOverInHeader = false,
   leadStatus = null, notes = [], rawToolNames = false, steps, viewerZone = null,
 }: {
-  /** The viewer's own zone (the sas_tz cookie) for scheduled moments in markers (team calls); message times keep `timezone`. */
+  /**
+   * The viewer's own zone (the sas_tz cookie): message times, day dividers and scheduled moments in
+   * markers (team calls) all use it, so one screen never mixes two zones; null: `timezone`.
+   */
   viewerZone?: string | null;
   /**
    * "Show agent steps" (board ConvSteps): off hides the tool chips under agent
@@ -415,7 +418,7 @@ export function ConversationPanel({
   notes?: FormNote[];
   /** Platform admins: the tool's internal name as the trace chip's tooltip. */
   rawToolNames?: boolean;
-  /** The viewer's time zone (the account's until people have their own): message times and day dividers. */
+  /** The account's zone: message times and day dividers when the viewer's own zone is not known. */
   timezone?: string | null;
   takeOverInHeader?: boolean;
   /** Where the controls send the seller back to after an action. */
@@ -433,15 +436,16 @@ export function ConversationPanel({
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.
   const kinds = appMessageKinds(thread.flatMap((x) => x.calls));
   const meId = (me as { id?: string }).id ?? null;
-  // Times in the viewer's zone, the zone named on hover; a divider when the day changes.
-  const clock = (d: Date) => formatClockIn(d, timezone);
-  const full = (d: Date) => formatDateTimeIn(d, timezone);
+  // Times in the viewer's own zone (else the account's), the zone named on hover; a divider when the day changes.
+  const zone = viewerZone || timezone;
+  const clock = (d: Date) => formatClockIn(d, zone);
+  const full = (d: Date) => formatDateTimeIn(d, zone);
   let lastDay = "";
   const divider = (d: Date) => {
-    const day = localDateIso(d, timezone);
+    const day = localDateIso(d, zone);
     if (day === lastDay) return null;
     lastDay = day;
-    return <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(d, timezone) })}><span>{formatDayIn(d, timezone)}</span></div>;
+    return <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(d, zone) })}><span>{formatDayIn(d, zone)}</span></div>;
   };
   const showSteps = steps?.show ?? true;
   const { timed, after } = splitMarkers(view.markers);

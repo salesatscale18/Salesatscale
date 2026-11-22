@@ -141,12 +141,13 @@ export default async function LeadCardPage({
   // The deal pane, one source with Conversations (lib/leads/deal-pane.ts): a signed form fills the company and
   // signer details (verified); after the sale the order's state is the next step; once the quote or the form is
   // with the buyer the stage says what happens next (the agent's free text only before that).
-  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName, timezone: account.timezone });
+  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName, timezone: viewerZone ?? account.timezone });
   const nextStep = pane.nextStep;
   // Quotes an order came from show "Ordered".
   const orderedQuotes = new Set(leadOrders.map(({ order }) => order.quoteId));
 
-  const tz = account.timezone;
+  // Display times on this page in the viewer's own zone, else the account's (one screen, one zone).
+  const tz = viewerZone ?? account.timezone;
   /** People by name, or "You" for the viewer (never the email); isolated so a Hebrew name never pulls in the date next to it (round-4 review F1). */
   const who = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you")));
   /** The same inside a sentence ("added by you"). */
@@ -181,7 +182,7 @@ export default async function LeadCardPage({
         ? undefined
         : event.type.startsWith("callback.") || event.type === "team_call.logged"
         // O6: the call time, in the viewer's own zone (else the zone it was set in; "· your time" when they differ), and who acted.
-        ? `${callTime(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
+        ? `${callTime(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? account.timezone))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : event.type === "lead.market_changed"
@@ -191,7 +192,7 @@ export default async function LeadCardPage({
           : event.type === "lead.created" || event.type === "lead.updated"
             ? t(`lead.origin.${String((event.data as { origin?: string } | null)?.origin ?? "manual")}` as MessageKey)
             : undefined,
-    // A record: the exact date and time in the account's zone (zone named on hover).
+    // A record: the exact date and time in the viewer's zone, else the account's (zone named on hover).
     time: formatShortDateTimeIn(event.createdAt, tz),
     timeTitle: formatDateTimeIn(event.createdAt, tz),
     };
@@ -317,7 +318,7 @@ export default async function LeadCardPage({
               <SimulatorPanel
                 slug={account.slug} leadId={lead.id} simulated={simulated}
                 url={chatLink ? publicUrl(chatPath(chatLink.token)) : null}
-                expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, account.timezone) : null} refusal={simFacts?.refusal ?? null} rules={simulated && account.simulateWhatsappRules}
+                expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, tz) : null} refusal={simFacts?.refusal ?? null} rules={simulated && account.simulateWhatsappRules}
                 started={isWebChat(conversation?.conversation.channel) || simFacts?.refusal === "already_started"}
                 notice={typeof sp.sim === "string" ? sp.sim : undefined} error={typeof sp.sim_error === "string" ? sp.sim_error : undefined} hoursHref={hoursHref}
                 why={typeof sp.why === "string" ? sp.why : undefined}

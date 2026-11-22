@@ -8,7 +8,7 @@ import type { EngineEntry } from "@/lib/pricing/engine";
 import type { FitRule } from "@/lib/catalog/fit";
 import type { AutoAddRule } from "@/lib/pricing/auto-add";
 import { countOf, estimateDeal, type EstimateInput, type EstimateItem } from "@/lib/leads/deal-estimate";
-import { dealSortValue, estimateValue, sortByDealValue } from "@/lib/leads/list-row";
+import { dealSortValue, estimateValue, roundEstimateOneTime, roundEstimateRecurring, sortByDealValue } from "@/lib/leads/list-row";
 import { NO_FACTS } from "@/lib/leads/list-facts";
 
 const entry = (sku: string, oneTimeMinor: number | null, extra: Partial<EngineEntry> = {}): EngineEntry => ({
@@ -109,11 +109,28 @@ describe("estimateDeal (demo catalog)", () => {
 });
 
 describe("estimate display and sort (display only)", () => {
-  it("reads '≈ ₪x est.' with the monthly amount, never a quote's words", () => {
-    const v = estimateValue({ currency: "ILS", oneTimeMinor: 350_000, recurringMinor: 36_000, recurringPeriod: "month" })!;
-    expect(v.oneTime).toMatch(/^≈\s₪3,500(\.00)? est\.$/);
-    expect(v.recurring).toMatch(/₪360(\.00)?\/mo/);
+  it("reads '≈ ₪x est.' with the monthly amount in whole, rounded units, never a quote's words", () => {
+    // The demo deal: 4,295.20 one-time and 424.80/mo.
+    const v = estimateValue({ currency: "ILS", oneTimeMinor: 429_520, recurringMinor: 42_480, recurringPeriod: "month" })!;
+    expect(v.oneTime).toBe("≈\u00a0₪4,300 est.");
+    expect(v.recurring).toBe("+ ₪425/mo");
+    const small = estimateValue({ currency: "ILS", oneTimeMinor: 87_449, recurringMinor: 4_249, recurringPeriod: "year" })!;
+    expect(small.oneTime).toBe("≈\u00a0₪870 est.");
+    expect(small.recurring).toBe("+ ₪42/yr");
+    expect(estimateValue({ currency: "ILS", oneTimeMinor: 350_000, recurringMinor: 0, recurringPeriod: null })!.recurring).toBeNull();
     expect(estimateValue(null)).toBeNull();
+  });
+
+  it("rounds one-time to 2 significant digits from 1,000, else to 10; monthly to 5 from 100, else to 1", () => {
+    expect([0, 4, 5, 994, 995, 999.99, 1000, 1049, 1050, 4295.2, 9949, 9950, 12_345, 987_654].map(roundEstimateOneTime))
+      .toEqual([0, 0, 10, 990, 1000, 1000, 1000, 1000, 1100, 4300, 9900, 10_000, 12_000, 990_000]);
+    expect([0, 0.4, 0.5, 42.49, 99.4, 99.5, 100, 102.4, 102.5, 424.8, 1234].map(roundEstimateRecurring))
+      .toEqual([0, 0, 1, 42, 99, 100, 100, 100, 105, 425, 1235]);
+  });
+
+  it("whole units in other currencies too", () => {
+    expect(estimateValue({ currency: "EUR", oneTimeMinor: 91_000, recurringMinor: 9_000, recurringPeriod: "month" })).toEqual({ oneTime: "≈\u00a0€910 est.", recurring: "+ €90/mo" });
+    expect(estimateValue({ currency: "JPY", oneTimeMinor: 123_456, recurringMinor: 0, recurringPeriod: null })!.oneTime).toBe("≈\u00a0¥120,000 est.");
   });
 
   it("sorts quotes and estimates together, leads with neither last in both directions, one currency never added to another", () => {

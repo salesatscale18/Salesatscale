@@ -141,15 +141,40 @@ export function dealValue(f: LeadListFacts): { oneTime: string; recurring: strin
 }
 
 /**
- * Deal value without a quote: the deal size estimate (lib/leads/deal-estimate.ts), "≈ ₪3,640 est." and
- * "+ ₪360/mo". Display only: shown muted, never in green, never added into a total, sum or KPI.
+ * An estimate never looks precise (UX, 22 Nov): whole units, rounded. One-time: 2 significant digits
+ * from 1,000 up (4,295.20 → 4,300), the nearest 10 below that. Monthly (or yearly): the nearest 5 from
+ * 100 up (424.80 → 425), else the nearest whole unit. Works in major units; returns a whole number.
+ */
+export function roundEstimateOneTime(major: number): number {
+  if (!(major > 0)) return 0;
+  if (major < 1000) return Math.round(major / 10) * 10;
+  const step = 10 ** (Math.floor(Math.log10(major)) - 1);
+  return Math.round(major / step) * step;
+}
+
+export function roundEstimateRecurring(major: number): number {
+  if (!(major > 0)) return 0;
+  return major >= 100 ? Math.round(major / 5) * 5 : Math.round(major);
+}
+
+/** A rounded estimate amount with its currency symbol and no decimals ("₪4,300"). Real quotes keep formatMoney's exact decimals. */
+function estimateMoney(minor: number, currency: string, round: (major: number) => number): string {
+  const opts = { style: "currency", currency, currencyDisplay: "narrowSymbol" } as const;
+  const digits = new Intl.NumberFormat("en-US", opts).resolvedOptions().maximumFractionDigits ?? 2;
+  return new Intl.NumberFormat("en-US", { ...opts, minimumFractionDigits: 0, maximumFractionDigits: 0 }).format(round(minor / 10 ** digits));
+}
+
+/**
+ * Deal value without a quote: the deal size estimate (lib/leads/deal-estimate.ts), rounded to whole
+ * units ("≈ ₪4,300 est." and "+ ₪425/mo"). Display only: shown muted, never in green, never added
+ * into a total, sum or KPI. Sorting uses the unrounded value (dealSortValue).
  */
 export function estimateValue(e: DealEstimate | null | undefined): { oneTime: string; recurring: string | null } | null {
   if (!e) return null;
   const per = e.recurringPeriod === "year" ? "yr" : "mo";
   return {
-    oneTime: t("leads.value.estimate", { amount: formatMoney(e.oneTimeMinor, e.currency) }),
-    recurring: e.recurringMinor ? t("leads.value.recurring", { amount: formatMoney(e.recurringMinor, e.currency), per }) : null,
+    oneTime: t("leads.value.estimate", { amount: estimateMoney(e.oneTimeMinor, e.currency, roundEstimateOneTime) }),
+    recurring: e.recurringMinor ? t("leads.value.recurring", { amount: estimateMoney(e.recurringMinor, e.currency, roundEstimateRecurring), per }) : null,
   };
 }
 
