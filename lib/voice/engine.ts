@@ -38,6 +38,8 @@ import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
+import { CallRecorder, recordingPrefix, recordingStoreFor, type RecordingStore } from "./recording";
+import { recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -107,6 +109,8 @@ export type VoiceEngineDeps = {
   log?: VoiceLog;
   /** Called once when the call starts ending, with the work that stores it: the host keeps running until it settles. */
   onEnding?: (work: Promise<unknown>) => void;
+  /** Tests: where the call records to (null: not recorded, with the reason). Default: lib/voice/recording.ts recordingStoreFor. */
+  recording?: { store: RecordingStore | null; reason: string };
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -115,6 +119,8 @@ export type { VoiceEndBy, VoiceEndDetail };
 type FinalRow = { connected: boolean; ended: boolean; durationSec: number; costMicros: number; answerMsAvg: number | null };
 /** A final row write that has not answered in this long is tried again (a hung query must not hold the end). */
 export const FINAL_WRITE_TIMEOUT_MS = 8_000;
+/** The recording's last chunk and its row update get at most this long after the call ended. */
+export const RECORDING_FINISH_TIMEOUT_MS = 20_000;
 
 const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
   user_hangup: "client_end", agent_closed: "tool", limit: "limit", silence: "idle", idle: "idle", opt_out: "tool", handoff: "tool",
@@ -218,6 +224,11 @@ export class VoiceEngine {
 
   private readonly log: VoiceLog;
   private readonly onEnding: VoiceEngineDeps["onEnding"];
+  private readonly recordingChoice: VoiceEngineDeps["recording"];
+  /** The call's recording (null: not recorded). */
+  private recorder: CallRecorder | null = null;
+  /** The call clock (ms since connect) when the call ended: the recording's end. */
+  private endedAtMs: number | null = null;
   private endBy: VoiceEndBy | null = null;
   private clientClose: VoiceEndDetail["clientClose"];
   private modelClose: VoiceEndDetail["modelClose"];
@@ -326,6 +337,7 @@ export class VoiceEngine {
     this.limits = { ...DEFAULTS, ...deps.limits };
     this.log = deps.log ?? consoleVoiceLog;
     this.onEnding = deps.onEnding;
+    this.recordingChoice = deps.recording;
     this.vad = new EnergyVad(this.limits.vad);
     this.preRoll = new PcmRing(this.limits.preRollMs);
   }
@@ -400,6 +412,8 @@ export class VoiceEngine {
 
   onClientAudio(bytes: Uint8Array): void {
     if (this.ended || this.muted) return;
+    // The recording's left channel: the mic as received (a muted mic sends nothing here: silence).
+    if (this.callStart !== null) this.recorder?.buyer(bytes, this.offsetMs());
     if (this.standbySince !== null) return this.listenOnStandby(bytes);
     if (this.waking) return this.holdWakeAudio(bytes);
     if (!this.conn || this.reconnecting) return;
@@ -433,6 +447,7 @@ export class VoiceEngine {
   stop(reason: VoiceEndReason, code?: VoiceErrorCode, by?: VoiceEndBy): Promise<void> {
     if (this.stopping) return this.stopping;
     this.ended = true;
+    if (this.callStart !== null) this.endedAtMs = this.offsetMs();
     this.endBy = by ?? BY_REASON[reason] ?? "error";
     if (code) this.errorCode = code;
     for (const k of Object.keys(this.timers) as (keyof typeof this.timers)[]) {
@@ -571,6 +586,8 @@ export class VoiceEngine {
   private statsLoop() {
     this.timer("stats", this.limits.statsEveryMs, () => {
       this.sendStats();
+      // The recording writes each chunk once the call clock passes its end, also while nobody speaks.
+      if (this.callStart !== null) this.recorder?.tick(this.offsetMs());
       this.statsLoop();
       void this.enqueue(() => this.checkEndedExternally());
     });
@@ -590,7 +607,10 @@ export class VoiceEngine {
   private async writeHeartbeat() {
     if (this.ended || this.callStart === null) return;
     const { durationSec, usage, costMicros } = this.callFigures();
-    await this.db.update(voiceSessions).set({ durationSec, usage, costMicros })
+    // The recording keeps writing chunks while the line is quiet (silence), and its progress goes on the row.
+    this.recorder?.tick(this.offsetMs());
+    const rec = this.recorder?.stored;
+    await this.db.update(voiceSessions).set({ durationSec, usage, costMicros, ...(rec ? { recordingChunks: rec.chunks, recordingBytes: rec.bytes, recordingSec: rec.sec } : {}) })
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "live")));
   }
 
@@ -687,9 +707,22 @@ export class VoiceEngine {
     }
     this.modelUp(conn);
     this.callStart = this.clock.now();
+    const recording = await this.startRecording(account);
+    // The recording notice: the first sentence of the agent's first line, once per call, in the call's language.
+    const noticeSaid = recording.on && recording.notice;
+    const openerPrompt = noticeSaid
+      ? withRecordingNotice(ctx.openerPrompt, recordingNoticeText(this.spokenLanguage), {
+        position: ctx.continuing ? "pickup" : "opener",
+        languageName: /^(en|he)\b/i.test(this.spokenLanguage) ? null : languageNameEn(this.spokenLanguage),
+      })
+      : ctx.openerPrompt;
     await this.db.update(voiceSessions)
       // A live call records the model it ran on; a scripted call keeps its version's model (the scripted model stands in).
-      .set({ status: "live", connectedAt: new Date(this.callStart), ...(this.model.mode === "live" ? { model: this.model.modelId } : {}), mode: this.model.mode, settings: this.settingsSnapshot() })
+      .set({
+        status: "live", connectedAt: new Date(this.callStart), ...(this.model.mode === "live" ? { model: this.model.modelId } : {}), mode: this.model.mode, settings: this.settingsSnapshot(),
+        recordingState: recording.on ? "recording" : "off", recordingRef: recording.prefix, recordingNoticeSaid: noticeSaid,
+        ...(recording.on ? { recordingChunks: 0, recordingBytes: 0, recordingSec: 0 } : {}),
+      })
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "pending")));
     // Limits: an announcement before the end, then the end.
     if (this.maxSec > this.limits.limitWarnSec) this.timer("warn", (this.maxSec - this.limits.limitWarnSec) * 1000, () => this.warnLimit());
@@ -699,7 +732,31 @@ export class VoiceEngine {
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
     // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
-    conn.requestResponse(ctx.openerPrompt);
+    conn.requestResponse(openerPrompt);
+  }
+
+  /**
+   * Whether this call is recorded (the company's switch, and a store: lib/voice/recording.ts recordingStoreFor),
+   * logged in one line. The recorder runs on the call clock from now.
+   */
+  private async startRecording(account: SellerAccount): Promise<{ on: boolean; notice: boolean; prefix: string | null }> {
+    const settings = resolveRecordingSettings(account.voiceSettings);
+    if (!settings.recordCalls) {
+      this.log.info(voiceLine(this.sessionId, "recording off: turned off in Settings › Voice"));
+      return { on: false, notice: false, prefix: null };
+    }
+    const choice = this.recordingChoice ?? await recordingStoreFor(this.model.mode, this.limits.env ?? process.env).catch(() => ({ store: null, reason: "store unavailable" }));
+    if (!choice.store) {
+      this.log.info(voiceLine(this.sessionId, `recording off: ${choice.reason}`));
+      return { on: false, notice: false, prefix: null };
+    }
+    const prefix = recordingPrefix(account.id, this.sessionId, this.limits.env ?? process.env);
+    this.recorder = new CallRecorder({
+      store: choice.store, prefix,
+      onError: (e) => (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `recording chunk write failed: ${errorSummary(e)}`)),
+    });
+    this.log.info(voiceLine(this.sessionId, `recording on: ${choice.reason}${settings.recordingNotice ? ", notice said" : ", no notice (switched off)"}`));
+    return { on: true, notice: settings.recordingNotice, prefix };
   }
 
   /**
@@ -801,6 +858,8 @@ export class VoiceEngine {
         this.clearQuiet();
         this.setState("speaking");
         this.send(e.pcm);
+        // The recording's right channel: as the browser plays it (queued after what it still has).
+        this.recorder?.agent(e.pcm, this.offsetMs());
         return;
       }
       case "agent-transcript": {
@@ -843,6 +902,8 @@ export class VoiceEngine {
           // Barge-in: the browser drops the agent audio it still has queued; the turn is stored as cut.
           if (this.agentTurn) this.agentTurn.interrupted = true;
           this.send({ t: "flush" });
+          // The browser drops the agent audio it still had queued: never heard, not in the recording.
+          this.recorder?.cut(this.offsetMs());
           this.agentSpeaking = false;
           this.setState("listening");
         }
@@ -1114,6 +1175,7 @@ export class VoiceEngine {
     if (typed && this.agentSpeaking) {
       if (this.agentTurn) this.agentTurn.interrupted = true;
       this.send({ t: "flush" });
+      this.recorder?.cut(this.offsetMs());
       this.agentSpeaking = false;
     }
     const turn = this.buyerTurn ?? { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
@@ -1647,5 +1709,24 @@ export class VoiceEngine {
     this.send({ t: "ended", reason, durationSec, costMicros, answerMsAvg });
     this.state = null;
     this.setState("ended");
+    await this.finishRecording();
+  }
+
+  /**
+   * The recording's last chunk (up to the end of the call), then its state on the row: saved when any chunk is
+   * stored, failed when none could be. Bounded, never throws; a chunk still being written when the function stops
+   * is simply missing (the chunks before it play).
+   */
+  private async finishRecording() {
+    const rec = this.recorder;
+    if (!rec) return;
+    try {
+      const p = await this.withTimeout(rec.finish(this.endedAtMs ?? this.offsetMs()), RECORDING_FINISH_TIMEOUT_MS);
+      await this.db.update(voiceSessions).set({ recordingState: p.chunks > 0 ? "saved" : "failed", recordingChunks: p.chunks, recordingBytes: p.bytes, recordingSec: p.sec })
+        .where(eq(voiceSessions.id, this.sessionId));
+      this.log.info(voiceLine(this.sessionId, `recording ${p.chunks > 0 ? "saved" : "failed"}: chunks=${p.chunks} bytes=${p.bytes} sec=${p.sec}${p.failed ? ` failed=${p.failed}` : ""}`));
+    } catch (e) {
+      (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `recording not finished: ${errorSummary(e)}`));
+    }
   }
 }

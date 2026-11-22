@@ -116,6 +116,14 @@ export async function redeemVoiceTicket(db: Db, sessionId: string, ticket: strin
   return row ?? null;
 }
 
+/**
+ * A stale call's recording: the chunks written before the function went away stay playable (saved), as counted by
+ * the last heartbeat; none written is failed.
+ */
+function staleRecording(s: { recordingState: VoiceSession["recordingState"]; recordingChunks: number | null }) {
+  return s.recordingState === "recording" ? { recordingState: (s.recordingChunks ?? 0) > 0 ? "saved" as const : "failed" as const } : {};
+}
+
 /** How a stale close records the end: the function that ran the call went away without storing it. */
 const RELAY_GONE: VoiceEndDetail = { by: "relay_gone" };
 
@@ -150,7 +158,7 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
     if (!s || !s.connectedAt || s.durationSec === null) continue;
     const lastBeat = s.connectedAt.getTime() + s.durationSec * 1000;
     const usage = { ...(s.usage ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
-    const done = await db.update(voiceSessions).set({ status: "ended", endedAt: new Date(lastBeat), endReason: "connection_lost", usage })
+    const done = await db.update(voiceSessions).set({ status: "ended", endedAt: new Date(lastBeat), endReason: "connection_lost", usage, ...staleRecording(s) })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
     if (!done.length) continue;
     closed++;
@@ -169,7 +177,7 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
     const base: VoiceUsage | null = s.mode === "live" ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
     const costMicros = s.mode === "live" && base ? estimateRealtimeCostMicros(s.model, base) ?? 0 : 0;
     const usage = { ...(base ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
-    const done = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros })
+    const done = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros, ...staleRecording(s) })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
     closed += done.length;
   }

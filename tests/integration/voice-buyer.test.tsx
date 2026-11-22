@@ -678,7 +678,11 @@ describe("Settings › Voice", () => {
     // No sheet and no opening sentence any more: a call continues the chat.
     expect(html).not.toMatch(/Opening sentence|on the call now/);
     expect(html).toContain("Transcript");
-    expect(html).toContain('data-voice-recordings="off"');
+    // Call recording and its notice: company-level switches, both on by default.
+    expect(html).toMatch(/data-voice-record-calls="" name="recordCalls" checked=""/);
+    expect(html).toMatch(/data-voice-recording-notice="" name="recordingNotice" checked=""/);
+    expect(html).toContain("Record calls");
+    expect(html).toContain("kept for 90 days");
     // One Save for the page; read-only rows say where they are set.
     expect((html.match(/data-voice-save=""/g) ?? []).length).toBe(1);
     expect(html).toContain("Change it in Versions and test lab.");
@@ -694,10 +698,12 @@ describe("Settings › Voice", () => {
   });
 
   it("the switch writes voiceBuyerCallsOff (audited) and does nothing while voice calls are off", async () => {
-    const form = (on: boolean) => {
+    const form = (on: boolean, rec: { recordCalls?: boolean; recordingNotice?: boolean } = { recordCalls: true, recordingNotice: true }) => {
       const f = new FormData();
       f.set("slug", account.slug);
       if (on) f.set("buyerCalls", "on");
+      if (rec.recordCalls) f.set("recordCalls", "on");
+      if (rec.recordingNotice) f.set("recordingNotice", "on");
       return f;
     };
     vi.stubEnv("VOICE_REALTIME", "off");
@@ -712,5 +718,13 @@ describe("Settings › Voice", () => {
     expect(audits).toHaveLength(1);
     await saveVoiceBuyerCallsAction(form(true)).catch(() => undefined);
     expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceBuyerCallsOff).toBe(false);
+    // The recording switches: unchanged (both on) writes nothing; turning them off is stored and audited.
+    expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, account.id), eq(auditLog.action, "voice.recording_changed")))).toHaveLength(0);
+    await saveVoiceBuyerCallsAction(form(true, { recordCalls: false, recordingNotice: false })).catch(() => undefined);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toEqual({ recordCalls: false, recordingNotice: false });
+    const rec = await db.select().from(auditLog).where(and(eq(auditLog.accountId, account.id), eq(auditLog.action, "voice.recording_changed")));
+    expect(rec.map((a) => a.details)).toEqual([{ recordCalls: false, recordingNotice: false }]);
+    await saveVoiceBuyerCallsAction(form(true)).catch(() => undefined);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toEqual({ recordCalls: true, recordingNotice: true });
   });
 });

@@ -99,8 +99,10 @@ export function splitMarkers(markers: ThreadMarker[] | undefined) {
   return { timed, after };
 }
 
-export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, viewerZone = null }: {
+export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, viewerZone = null, recordingBase }: {
   marker: ThreadMarker; meId: string | null; time: string; timeTitle: string; buyer?: string;
+  /** Seller threads: `/app/<slug>/calls`, the base of a call's recording route (the player shows only with it). */
+  recordingBase?: string;
   /** The viewer's own zone (the sas_tz cookie) for team call times; null: the call's zone. */
   viewerZone?: string | null;
   /** A logged team call: its Edit link (the Deal tab's log form). */
@@ -108,6 +110,18 @@ export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, vi
 }) {
   if (marker.kind === "sms") return <SmsThreadEntry sms={marker.sms} time={time} timeTitle={timeTitle} />;
   if (marker.kind === "team_call_logged") return <TeamCallEntry call={marker} meId={meId} editHref={editHref} viewerZone={viewerZone} />;
+  if (marker.kind === "voice_ended" && marker.recording && recordingBase) {
+    // A plain player under the call's summary row (the UX session draws the final one).
+    return (
+      <>
+        <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer, viewerZone)} time={time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />
+        <div className="sas-call-recording" data-call-recording={marker.recording.sessionId}>
+          <span className="sas-small">{t("conv.marker.recording", { length: callClock(marker.recording.sec) })}</span>
+          <audio controls preload="none" src={`${recordingBase}/${marker.recording.sessionId}/recording`} aria-label={t("conv.marker.recording", { length: callClock(marker.recording.sec) })} />
+        </div>
+      </>
+    );
+  }
   // The booked marker holds its own date and time.
   return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer, viewerZone)} time={marker.kind === "team_call_booked" ? "" : time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
 }
@@ -465,12 +479,12 @@ export function ConversationPanel({
     ...notes.filter((n) => !cardOfForm.has(n.id)).map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
     ...timed.map((mk, i) => ({
       at: mk.at,
-      node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} viewerZone={viewerZone} />,
+      node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} viewerZone={viewerZone} recordingBase={`/app/${slug}/calls`} />,
     })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
   // The agent's hand-off: right after the reply that made it.
-  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} viewerZone={viewerZone} />);
+  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} viewerZone={viewerZone} recordingBase={`/app/${slug}/calls`} />);
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>

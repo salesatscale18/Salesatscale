@@ -35,7 +35,7 @@ export type ThreadMarker =
   | { kind: "spend_cap"; at: Date }
   /** A voice call on this conversation: where it connected, and where it ended with its length (live voice). */
   | { kind: "voice_started"; at: Date }
-  | { kind: "voice_ended"; at: Date; durationSec: number }
+  | { kind: "voice_ended"; at: Date; durationSec: number; recording?: { sessionId: string; sec: number } }
   /** The buyer opened the chat from an SMS link. */
   | { kind: "chat_opened"; at: Date }
   /** An SMS to the buyer, with its state (Delivered, Not sent: test mode, Not delivered: reason). */
@@ -57,7 +57,11 @@ export const VOICE_CALL_ENDED_LINE = /^Voice call ended · \d+:\d{2}$/;
 export const voiceCallEndedLine = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
 /** A conversation's voice calls, as stored on voice_sessions. `buyerTurns`: the buyer's lines in the call (spoken or typed). */
-export type VoiceSessionRow = { connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null; buyerTurns?: number };
+export type VoiceSessionRow = {
+  connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null; buyerTurns?: number;
+  /** Seller threads: the call's saved recording (lib/voice/recording.ts), played from the call's summary row. */
+  id?: string; recordingState?: string | null; recordingSec?: number | null;
+};
 
 /** A finished call shorter than this with nothing from the buyer shows as one row (its summary), not a start and a summary. */
 export const EMPTY_CALL_MAX_SEC = 15;
@@ -76,7 +80,10 @@ export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker
     if (!v.connectedAt) return [];
     const start: ThreadMarker = { kind: "voice_started", at: v.connectedAt };
     if (!(v.status === "ended" && v.endedAt)) return [start];
-    const end: ThreadMarker = { kind: "voice_ended", at: v.endedAt, durationSec: v.durationSec ?? 0 };
+    const end: ThreadMarker = {
+      kind: "voice_ended", at: v.endedAt, durationSec: v.durationSec ?? 0,
+      ...(v.id && v.recordingState === "saved" ? { recording: { sessionId: v.id, sec: v.recordingSec ?? v.durationSec ?? 0 } } : {}),
+    };
     return isEmptyShortCall(v.durationSec, v.buyerTurns ?? 0) ? [end] : [start, end];
   });
 }

@@ -135,7 +135,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // Hand-off, take-over and hand-back markers show either way.
   const { timed: timedMarkers, after: markersAfter } = splitMarkers(view?.markers);
   let pendingMarkers = timedMarkers;
-  const markerNode = (mk: ThreadMarker, key: string) => <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} />;
+  const markerNode = (mk: ThreadMarker, key: string) => <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} recordingBase={`/app/${slug}/calls`} />;
   // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.

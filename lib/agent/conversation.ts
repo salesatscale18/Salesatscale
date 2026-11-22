@@ -231,7 +231,10 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
       .from(leadEvents)
       .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, conv.leadId), inArray(leadEvents.type, [...MARKER_EVENT_TYPES]), gte(leadEvents.createdAt, conv.createdAt))),
     // Voice calls on this conversation: a start and a summary marker each (live voice), from the session.
-    db.select({ id: voiceSessions.id, connectedAt: voiceSessions.connectedAt, endedAt: voiceSessions.endedAt, status: voiceSessions.status, durationSec: voiceSessions.durationSec })
+    db.select({
+      id: voiceSessions.id, connectedAt: voiceSessions.connectedAt, endedAt: voiceSessions.endedAt, status: voiceSessions.status, durationSec: voiceSessions.durationSec,
+      recordingState: voiceSessions.recordingState, recordingSec: voiceSessions.recordingSec,
+    })
       .from(voiceSessions).where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conv.id))),
     // SMS to the buyer of a web chat (board ReachSeller): a dashed card each, with its state.
     webChat

@@ -94,6 +94,8 @@ export const sellerAccounts = pgTable(
      * release 2) are on for every account unless this is set: an opt-out, so no data change is needed.
      */
     voiceBuyerCallsOff: boolean("voice_buyer_calls_off").notNull().default(false),
+    /** Company-level voice settings (Settings › Voice): call recording and its spoken notice. Null = the defaults (both on). */
+    voiceSettings: jsonb("voice_settings").$type<AccountVoiceSettings>(),
     rollout: rolloutMode("rollout").notNull().default("test_only"),
     status: accountStatus("status").notNull().default("setting_up"),
     wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
@@ -752,6 +754,20 @@ export type VoiceSettings = {
   interrupt?: "low" | "medium" | "high";
 };
 
+/**
+ * Company-level voice settings (Settings › Voice; lib/voice/recording-settings.ts). Every key is optional: a missing
+ * key is the default, which is on for both.
+ */
+export type AccountVoiceSettings = {
+  /** Record agent voice calls (both sides, kept 90 days, sellers only can play them). Default true. */
+  recordCalls?: boolean;
+  /** The agent says a short recording notice at the start of a recorded call. Default true. */
+  recordingNotice?: boolean;
+};
+
+/** A call's recording (lib/voice/recording.ts): off (not recorded), recording, saved, failed (nothing kept), deleted. */
+export type VoiceRecordingState = "off" | "recording" | "saved" | "failed" | "deleted";
+
 /** One play card: when it applies, the moves in order, a good reply and a reply to avoid. */
 export type PlayCard = { when: string; do: string[]; example: string; notThis: string };
 
@@ -1097,7 +1113,16 @@ export const voiceSessions = pgTable(
     ticketHash: text("ticket_hash").notNull(),
     ticketUsedAt: timestamp("ticket_used_at", { withTimezone: true }),
     recordingConsent: boolean("recording_consent"),
+    /** The recording's storage folder (lib/voice/recording.ts recordingPrefix): never a token or a signed URL. */
     recordingRef: text("recording_ref"),
+    /** The call's recording: null for calls before recordings existed. */
+    recordingState: text("recording_state").$type<VoiceRecordingState>(),
+    /** Chunks stored so far (about 30 s each), their bytes, and the seconds of call they cover. */
+    recordingChunks: integer("recording_chunks"),
+    recordingBytes: bigint("recording_bytes", { mode: "number" }),
+    recordingSec: integer("recording_sec"),
+    /** The agent said the recording notice at the start of this call. */
+    recordingNoticeSaid: boolean("recording_notice_said"),
   },
   (t) => [
     index("voice_sessions_account_created_idx").on(t.accountId, t.createdAt),

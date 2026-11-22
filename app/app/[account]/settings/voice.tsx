@@ -10,6 +10,7 @@ import { buyerVoiceMonth } from "@/lib/voice/buyer";
 import { callLimitShort, voiceSettingsSummary } from "@/lib/voice/lab";
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
+import { resolveRecordingSettings } from "@/lib/voice/recording-settings";
 import { saveVoiceBuyerCallsAction } from "./voice-actions";
 
 const Row = ({ title, hint, children, id }: { title: string; hint: string; children?: React.ReactNode; id: string }) => (
@@ -25,20 +26,21 @@ const Row = ({ title, hint, children, id }: { title: string; hint: string; child
 /**
  * Settings › Voice (board VoiceSettings), shown only while voice calls are on
  * for the platform: "Let buyers call the agent" (checked unless the account's voiceBuyerCallsOff,
- * the only setting here), and read-only what the call uses and what buyers
- * are told. Recordings stay off (transcript only). This month: the paid buyer
+ * call recording and its spoken notice (company level, both on by default), and read-only what the call uses
+ * and what buyers are told. This month: the paid buyer
  * calls (live model only).
  */
 export async function VoiceSection({ account, saved }: { account: SellerAccount; saved: boolean }) {
   const [versions, month] = await Promise.all([listVersions(appDb, account.id), buyerVoiceMonth(appDb, account.id)]);
   const live = versions.find((v) => v.status === "live") ?? versions.find((v) => v.status === "draft");
   const settings = resolveVoiceSettings(live?.voiceSettings);
+  const recording = resolveRecordingSettings(account.voiceSettings);
   const limit = maxCallSeconds({ settings: live?.voiceSettings ?? null, deadlineSec: deploymentCallLimitSec() });
   const minor = usdMicrosToMinor(month.costMicros, account.currency);
   const cost = minor === null ? formatMoney(Math.round(month.costMicros / 10_000), "USD") : formatMoney(minor, account.currency);
   const base = `/app/${account.slug}`;
   return (
-    // One form and one Save for the page (the switch is its only setting), in a bar that stays at the bottom.
+    // One form and one Save for the page (its switches), in a bar that stays at the bottom.
     <form action={saveVoiceBuyerCallsAction} className="sas-stack-4 st-voice-page">
       <input type="hidden" name="slug" value={account.slug} />
       {saved ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("settings.voice.saved")}</span></div> : null}
@@ -84,9 +86,21 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
         </div>
         <div className="st-voice">
           <Row id="voice-tr" title={t("settings.voice.transcript")} hint={t("settings.voice.transcript_hint")}><span className="sas-pill">{t("settings.voice.platform")}</span></Row>
-          <Row id="voice-rec" title={t("settings.voice.recordings")} hint={t("settings.voice.recordings_hint")}>
-            <span className="sas-pill" data-voice-recordings="off"><Icon name="mic-off" />{t("settings.voice.off")}</span>
-          </Row>
+          {/* Company level (seller_accounts.voice_settings): on by default; saved with the page's one Save. */}
+          <label className="st-voice__row">
+            <span className="sas-stack-2" style={{ gap: 2 }}>
+              <b>{t("settings.voice.recordings")}</b>
+              <span className="sas-small" id="voice-rec-hint">{t("settings.voice.recordings_hint")}</span>
+            </span>
+            <input type="checkbox" role="switch" className="sas-switch" name="recordCalls" defaultChecked={recording.recordCalls} aria-describedby="voice-rec-hint" data-voice-record-calls="" />
+          </label>
+          <label className="st-voice__row">
+            <span className="sas-stack-2" style={{ gap: 2 }}>
+              <b>{t("settings.voice.recording_notice")}</b>
+              <span className="sas-small" id="voice-notice-hint">{t("settings.voice.recording_notice_hint")}</span>
+            </span>
+            <input type="checkbox" role="switch" className="sas-switch" name="recordingNotice" defaultChecked={recording.recordingNotice} aria-describedby="voice-notice-hint" data-voice-recording-notice="" />
+          </label>
         </div>
       </section>
       <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="voice-month-h">
