@@ -85,7 +85,19 @@ export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted by SMS
  * automatically: who added the lead, when, and from where). Names come from
  * the display-name helpers (lib/auth/display.ts), never a full email.
  */
-export const consentSourceManual = (who: string) => `Added by ${who} in the app`.slice(0, 300);
+const MANUAL_SOURCE = { prefix: "Added by ", suffix: " in the app" } as const;
+export const consentSourceManual = (who: string) => `${MANUAL_SOURCE.prefix}${who.slice(0, 200)}${MANUAL_SOURCE.suffix}`;
+/**
+ * Whether a consent record is the automatic one from the Add lead panel (written
+ * by consentSourceManual with the person who added the lead). The lead card
+ * then leaves out "Recorded by", which would name the same person again.
+ * No schema field marks it, so writer and reader share MANUAL_SOURCE; a record
+ * with no recording user (intake, simulated) is never treated as one.
+ */
+export function isAutomaticManualConsent(c: { source: string; recordedByUserId: string | null }): boolean {
+  return !!c.recordedByUserId && c.source.startsWith(MANUAL_SOURCE.prefix) && c.source.endsWith(MANUAL_SOURCE.suffix)
+    && c.source.length > MANUAL_SOURCE.prefix.length + MANUAL_SOURCE.suffix.length;
+}
 export const consentSourceImport = (fileName: string) => `Imported from ${fileName}`.slice(0, 300);
 export const consentSourceIntake = (keyName: string) => `Sent with intake key "${keyName}"`.slice(0, 300);
 
@@ -105,6 +117,8 @@ export type LeadInput = {
    * existing lead (one a person may have saved as "do not contact").
    */
   consentDefaulted?: boolean;
+  /** True when the input itself said yes (the form's box, CSV consent=yes, intake consent.given: true). */
+  consentExplicitYes?: boolean;
   /** The form's country field, used to choose the lead's market (lib/markets/match.ts). */
   formCountry?: string | null;
   /** True when no language came with the lead: the market's language is used instead. */
@@ -169,7 +183,7 @@ export function parseLead(
   else if (fullName.length > 120) errors.fullName = "Use 120 characters or fewer.";
 
   const phone = normalizePhone(s(raw.phone), market);
-  if (!phone) errors.phone = "Enter a valid WhatsApp number, with the country code if it is not local.";
+  if (!phone) errors.phone = "Enter a valid mobile number, with the country code if it is not local.";
 
   const langRaw = s(raw.language).toLowerCase();
   const language = langRaw ? LANGUAGE_ALIASES[langRaw] : defaults.language;
@@ -213,7 +227,7 @@ export function parseLead(
       sourceLabel: s(raw.sourceLabel).slice(0, 80) || null,
       sourceRef: s(raw.sourceRef).slice(0, 200) || null,
       consent,
-      ...(consent ? { consentDefaulted: !defaults.consentNeedsTick && !explicit } : {}),
+      ...(consent ? { consentDefaulted: !defaults.consentNeedsTick && !explicit, consentExplicitYes: yes(raw.consent) } : {}),
       formCountry: s(raw.country).slice(0, 60) || null,
       languageFromDefault: !langRaw,
     },
@@ -288,13 +302,15 @@ export function csvTemplate(): string {
 export type FileConsent = { source: string };
 
 /**
- * Maps CSV rows to RawLead. Required columns: full_name, phone, language.
- * Consent columns (consent_source, consent_text, consent_at) are optional.
+ * Maps CSV rows to RawLead. Required columns: full_name, phone. language is
+ * optional, as in Lead intake: without it the lead's market language is used
+ * (parseLead's languageFromDefault, applied by applyLeadMarket). Consent
+ * columns (consent_source, consent_text, consent_at) are optional.
  */
 export function csvToRawLeads(
   rows: string[][],
 ): { rows: { line: number; raw: RawLead }[]; unknownColumns: string[]; missingColumns: string[] } {
-  const required: [keyof RawLead, string][] = [["fullName", "full_name"], ["phone", "phone"], ["language", "language"]];
+  const required: [keyof RawLead, string][] = [["fullName", "full_name"], ["phone", "phone"]];
   if (rows.length === 0) return { rows: [], unknownColumns: [], missingColumns: required.map(([, l]) => l) };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const keys = header.map((h) => CSV_COLUMNS[h]);
@@ -403,7 +419,8 @@ export function rawFromIntakeBody(body: Record<string, unknown>, callerIp?: stri
     language: body.language,
     sourceLabel: body.source ?? "Website form",
     sourceRef: body.source_id,
-    consent: consent.given ?? (consent.source ? "yes" : undefined),
+    // Only consent.given is a yes or no; a note (source, text) alone is a note (parseLead counts it as consent).
+    consent: consent.given,
     consentSource: consent.source,
     consentWording: consent.text ?? consent.wording,
     consentCapturedAt: consent.at ?? consent.captured_at,

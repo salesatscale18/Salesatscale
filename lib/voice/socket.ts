@@ -19,7 +19,7 @@ import type { Db } from "@/db/types";
 import { agentVersions } from "@/db/schema";
 import { VoiceEngine, type VoiceLimits } from "./engine";
 import {
-  AUTH_TIMEOUT_MS, MAX_CLIENT_AUDIO_BYTES, VOICE_CLOSE, VOICE_SAMPLE_RATE, parseAuthMessage, parseClientMessage,
+  AUTH_TIMEOUT_MS, MAX_CLIENT_AUDIO_BYTES, VOICE_CLOSE, VOICE_SAMPLE_RATE, parseAuthMessage, parseClientMessage, pcmDurationMs,
   type ClientMessage, type ServerMessage, type VoiceErrorCode,
 } from "./protocol";
 import { systemClock, type Clock, type RealtimeModel, type TimerHandle } from "./realtime";
@@ -121,6 +121,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   const log = opts.log ?? consoleVoiceLog;
   /** The session this socket carries, once the ticket was accepted (logs). */
   let sessionId: string | null = null;
+  /** Agent audio not sent because the browser's socket was too far behind (backpressure). */
+  let droppedAgentBytes = 0;
   /** The browser socket's close code and reason, and whether we closed it for silence. */
   let clientClose: { code: number | null; reason: string; idle?: boolean } | null = null;
   let phase: "auth" | "checking" | "live" | "closed" = "auth";
@@ -171,6 +173,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     phase = "closed";
     clearTimers();
     early = [];
+    if (droppedAgentBytes) log.warn(voiceLine(sessionId, `agent audio dropped in total: ${Math.round(pcmDurationMs(droppedAgentBytes))} ms`));
     const e = engine;
     if (!e) {
       resolveDone();
@@ -252,8 +255,13 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       limits: { ...opts.limits, deadlineSec: opts.deadlineSec, env },
       send: (msg) => {
         if (msg instanceof Uint8Array) {
-          // Backpressure: drop agent audio, never protocol messages.
-          if (ws.bufferedAmount > MAX_BUFFERED_AUDIO_BYTES) return;
+          // Backpressure: drop agent audio, never protocol messages. A drop is a splice in what the buyer hears
+          // (the recording still has it): logged on the first one, with the total at the end.
+          if (ws.bufferedAmount > MAX_BUFFERED_AUDIO_BYTES) {
+            if (!droppedAgentBytes) log.warn(voiceLine(session.id, "agent audio dropped: the browser's socket is more than 3 s behind"));
+            droppedAgentBytes += msg.byteLength;
+            return;
+          }
           safeSend(msg);
           return;
         }

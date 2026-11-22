@@ -294,6 +294,15 @@ describe("markets, accounts and leads (lane M)", () => {
       expect(await db.select().from(leads).where(eq(leads.phone, "+447700900203"))).toHaveLength(0);
     });
 
+    it("CSV import without a language column: each lead gets its market's language", async () => {
+      const csv = ["full_name,phone", "Uk NoLang,+447700900311", "Il NoLang,0525550312"].join("\n");
+      const r = await importLeadsCsv(db, alpha, actor(), csv, { fileConsent: { source: "Imported from x.csv" } });
+      expect(r).toMatchObject({ created: 2, rejected: [], missingColumns: [] });
+      const by = async (phone: string) => (await db.select().from(leads).where(and(eq(leads.accountId, alpha.id), eq(leads.phone, phone))))[0];
+      expect(await by("+447700900311")).toMatchObject({ marketId: ukId, language: "en" });
+      expect(await by("+972525550312")).toMatchObject({ language: "he" });
+    });
+
     it("CSV import: an optional country column, else the phone", async () => {
       const home = (await ensureHomeMarket(db, alpha.id))!;
       const csv = [

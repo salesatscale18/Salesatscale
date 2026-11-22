@@ -39,7 +39,7 @@ import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { CallRecorder, recordingPrefix, recordingStoreFor, type RecordingStore } from "./recording";
-import { recordingInstruction, recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
+import { recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -151,15 +151,18 @@ type AgentTurn = {
 /** Why a turn is stored: the model finished it, the model reports it was cut, or the turn ends under it (buyer turn, stop, reconnect). */
 type FinalizeReason = "done" | "interrupted" | "buyer" | "stop";
 
-/** The last agent line this call stored, to merge a resumed line into it or drop a repeated cut copy. */
-type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number; cutAtMs?: number };
-
 /**
- * A cut line followed, within this long and with no buyer line between, by a new agent line: the model was cut by
- * no words (noise, the echo of its own voice) and said its answer again, maybe in another language (the
- * 22 Nov 2026 call: a Hebrew answer cut, then the same answer in English 2 s later). One line is kept: the new one.
+ * The last agent line this call stored (tool calls of a turn with no words go with it). Every spoken agent turn is
+ * its own row, in order, a cut one ending with "…": nothing the buyer heard is merged away or dropped. (The merges
+ * of 21-22 Nov 2026, and the startsWith ones before them, rewrote or dropped spoken lines, so the record hid double
+ * answers and re-said lines the buyer really heard.)
  */
-export const FALSE_CUT_REDO_MS = 8_000;
+type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number };
+
+/** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
+export function configSummary(cfg: RealtimeSessionConfig): string {
+  return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
+}
 
 /** Languages written in a script other than Latin. */
 const NON_LATIN = /^(?:he|ar|fa|ur|ru|uk|bg|el|yi)\b/i;
@@ -189,54 +192,6 @@ export function lineLanguage(text: string, conversationLanguage: string | null):
   return conv;
 }
 
-/** Text compared for "the same line": lower case, words only. */
-export const normLine = (s: string) => s.toLowerCase().replace(/…/g, " ").replace(/[^\p{L}\p{N}\s]/gu, " ").replace(/\s+/g, " ").trim();
-/** `longer` starts with `shorter` (normalised, whole words), and `shorter` has at least two words. */
-export function startsWithLine(longer: string, shorter: string): boolean {
-  const a = normLine(longer);
-  const b = normLine(shorter);
-  return b.split(" ").length >= 2 && (a === b || a.startsWith(`${b} `));
-}
-/**
- * `longer` goes on from the cut line `cut`: like startsWithLine, and the cut line's last word may be the start of a
- * word (the transcript stops mid-word: "It is about 40 doll" → "It is about 40 dollars per seat").
- */
-export function continuesCutLine(longer: string, cut: string): boolean {
-  if (startsWithLine(longer, cut)) return true;
-  const a = normLine(longer).split(" ");
-  const b = normLine(cut).split(" ");
-  if (b.length < 2 || a.length < b.length) return false;
-  const last = b.length - 1;
-  return b.slice(0, last).every((w, i) => w === a[i]) && a[last].startsWith(b[last]) && a[last] !== b[last];
-}
-/**
- * A cut line and the line said next overlap (cut "A B C…", next "B C D": the model said the end of its line again
- * after a cut, e.g. after an echo of its own voice): the one line "A B C D", or null when they do not overlap. The
- * overlap is at least three words (the cut's last word may be a word cut short); a next line wholly inside the cut
- * one adds nothing (the cut line).
- */
-export function mergeCutOverlap(cut: string, next: string): string | null {
-  const cw = cut.trim().replace(/…$/u, "").split(/\s+/).filter(Boolean);
-  const nw = next.trim().replace(/…$/u, "").split(/\s+/).filter(Boolean);
-  const n = (w: string) => normLine(w);
-  for (let i = 1; i < cw.length; i++) {
-    const k = cw.length - i;
-    if (k < 3 && nw.length >= k) continue;
-    const span = Math.min(k, nw.length);
-    if (span < 3) continue;
-    let ok = true;
-    for (let j = 0; j < span && ok; j++) {
-      const a = n(cw[i + j]);
-      const b = n(nw[j]);
-      // The cut's very last word may stop mid-word.
-      ok = i + j === cw.length - 1 ? b.startsWith(a) : a === b;
-    }
-    if (!ok) continue;
-    return nw.length > k ? [...cw.slice(0, i), ...nw].join(" ") : cw.join(" ");
-  }
-  return null;
-}
-
 /** A line the buyer cut short, as stored: the words actually said, ending with "…". */
 export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
 
@@ -260,8 +215,12 @@ export class VoiceEngine {
   private recorder: CallRecorder | null = null;
   /** The call clock (ms since connect) when the call ended: the recording's end. */
   private endedAtMs: number | null = null;
-  /** A recorded call's instruction about the recording (recording-settings recordingInstruction); null when not recorded. */
-  private recordingNote: string | null = null;
+  /** This call is recorded: its instructions carry the one recording rule (lib/voice/instructions.ts RECORDED_CALL_RULE). */
+  private recorded = false;
+  /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
+  private handedOffHere = false;
+  /** Counts of the relay's diagnostics (RealtimeEvent "diagnostic"), logged when the call ends. */
+  private readonly diagnostics = new Map<string, number>();
   private endBy: VoiceEndBy | null = null;
   private clientClose: VoiceEndDetail["clientClose"];
   private modelClose: VoiceEndDetail["modelClose"];
@@ -300,8 +259,8 @@ export class VoiceEngine {
   private lines: TranscriptLine[] = [];
   /** The last agent line stored in this call (see finalizeAgentTurn). */
   private lastLine: StoredLine | null = null;
-  /** A buyer line was stored since the last agent line (a cut line then has its answer, not a re-say). */
-  private buyerSinceLastLine = false;
+  /** The text of a turn stored as cut by the buyer's line, until its response ends (agent-transcript). */
+  private cutText: string | null = null;
   /**
    * The language the call speaks now: the call's language at the start, then the language of the buyer's last
    * line (by script). Every instruction the engine injects names it, and reconnects and wakes start in it.
@@ -438,7 +397,10 @@ export class VoiceEngine {
       this.formNote = note;
       if (!this.notesMidCall()) return;
       // Off the line (standby, a wake or a reconnect under way): nothing now, the next connection's instructions carry it.
-      if (this.conn && !this.reconnecting && !this.waking && this.standbySince === null) this.conn.sendNote?.(note);
+      if (this.conn && !this.reconnecting && !this.waking && this.standbySince === null && this.conn.sendNote) {
+        this.noteSent("order form step");
+        this.conn.sendNote(note);
+      }
     });
     this.formNotes.push({ step: msg.step, event: msg.event });
   }
@@ -724,23 +686,24 @@ export class VoiceEngine {
     this.agentMessages = (await this.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent")))).length;
 
-    const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) });
+    // Recording is decided before the instructions are built: a recorded call's voice block has one rule about it.
+    const recording = await this.startRecording(account);
+    this.recorded = recording.on;
+    const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, { recorded: this.recorded });
     this.spokenLanguage = ctx.language || "en";
     this.latinLanguage = NON_LATIN.test(this.spokenLanguage) ? "en" : this.spokenLanguage;
-    // Recording is decided before the model connects: a recorded call's instructions say how to answer about it.
-    const recording = await this.startRecording(account);
-    if (recording.on) this.recordingNote = recordingInstruction();
     const gen = ++this.gen;
     let conn: RealtimeConnection;
     const t0 = this.clock.now();
+    const cfg = this.sessionConfig(ctx.instructions, ctx);
     try {
-      conn = await this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
+      conn = await this.model.connect(cfg, (e) => this.onModelEvent(e, gen));
     } catch (e) {
       this.lastError = clip(e instanceof Error ? e.message : e);
       this.log.warn(voiceLine(this.sessionId, `model connect failed after ${Math.round(this.clock.now() - t0)}ms: ${this.lastError}`));
       return this.fail("error", "model_unavailable");
     }
-    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId}${this.model.mode === "live" && !isProvenVoiceModel(this.model.modelId) ? ", not tried live before" : ""})`));
+    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId}${this.model.mode === "live" && !isProvenVoiceModel(this.model.modelId) ? ", not tried live before" : ""}) ${configSummary(cfg)}`));
     if (this.ended || gen !== this.gen) {
       conn.close();
       return;
@@ -771,7 +734,13 @@ export class VoiceEngine {
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
     // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
+    this.noteSent(ctx.continuing ? "pick-up line" : "opener");
     conn.requestResponse(openerPrompt);
+  }
+
+  /** One log line per text the engine puts into the model's conversation mid-call: its kind only, never its words. */
+  private noteSent(kind: string) {
+    this.log.info(voiceLine(this.sessionId, `note sent: ${kind}`));
   }
 
   /**
@@ -827,7 +796,7 @@ export class VoiceEngine {
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
     // A recorded call (and only one): how to answer if the buyer raises the recording; on every connection of the call.
-    const cfg = this.fullSessionConfig(this.recordingNote ? `${instructions}\n\n${this.recordingNote}` : instructions, languages);
+    const cfg = this.fullSessionConfig(instructions, languages);
     // After an early close: only the session fields proven on this model family (lib/voice/gateway-realtime.ts).
     return this.safeConfig ? { ...cfg, safe: true } : cfg;
   }
@@ -867,6 +836,7 @@ export class VoiceEngine {
     if (next === this.spokenLanguage) return;
     this.spokenLanguage = next;
     if (this.notesMidCall() && this.conn && !this.reconnecting && !this.waking && this.standbySince === null) {
+      this.noteSent("language");
       this.conn.sendNote?.(`(Note from the system, not from the buyer: the buyer now speaks ${languageNameEn(next)}. Speak ${languageNameEn(next)} from now on, also after an interruption or a pause, until the buyer speaks another language. Do not answer this note.)`);
     }
   }
@@ -875,6 +845,7 @@ export class VoiceEngine {
     // On standby (or waking) nobody is listening: the limit just ends the call.
     if (!this.conn || this.reconnecting) return;
     this.send({ t: "notice", kind: "limit_soon" });
+    this.noteSent("time limit");
     this.conn?.requestResponse(`The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
   }
 
@@ -914,14 +885,13 @@ export class VoiceEngine {
         // A transcription marker ("<no speech detected>") is no text: never shown, stored or a caption.
         const said = cleanTranscript(e.text);
         if (!said) return;
-        const fresh = !this.agentTurn || !this.agentTurn.text;
+        // The rest of the transcript of a response already stored as cut (typed text cut it; the provider's
+        // transcript of that response keeps coming, from its start): the same utterance, not a new one.
+        if (!this.agentTurn && this.cutText && maskCardNumbers(said).text.startsWith(this.cutText)) return;
         const turn = this.ensureAgentTurn();
         turn.awaitingContinuation = false;
         turn.text = maskCardNumbers(said).text;
         if (e.final) turn.finalText = true;
-        // The model resumes (or re-says) the line the buyer cut: the live transcript keeps it on one line.
-        const last = this.lastLine;
-        if (fresh && last?.cut && (continuesCutLine(turn.text, last.raw) || continuesCutLine(last.raw, turn.text) || mergeCutOverlap(last.raw, turn.text) !== null || this.redoesFalseCut(turn))) turn.id = last.turnId;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
       }
@@ -960,6 +930,7 @@ export class VoiceEngine {
         void this.enqueue(() => this.handleTool(e.callId, e.name, e.args));
         return;
       case "turn-done":
+        if (!this.agentTurn) this.cutText = null;
         void this.enqueue(() => this.handleTurnDone(!!e.interrupted));
         return;
       case "usage":
@@ -983,6 +954,21 @@ export class VoiceEngine {
         // Closed before it said anything: not a normal drop (a session the provider refused, e.g. a setting it does not take).
         const early = !this.connAudio;
         void this.enqueue(() => this.reconnect(early));
+        return;
+      }
+      case "diagnostic": {
+        const n = (this.diagnostics.get(e.kind) ?? 0) + 1;
+        this.diagnostics.set(e.kind, n);
+        // Every cleaned agent transcript is logged (the cleaner must never hide spoken junk silently); audio
+        // anomalies once, with their totals at the end of the call.
+        if (e.kind === "cleaned-transcript") this.log.warn(voiceLine(this.sessionId, `cleaned agent transcript: ${e.detail ?? "marker"}`));
+        else if (e.kind === "tool-continuation") this.log.info(voiceLine(this.sessionId, `tools: ${e.detail ?? "response requested"}`));
+        else if (n === 1) {
+          const what = e.kind === "audio-odd-bytes" ? "a piece with an odd byte count (carried to the next piece)"
+            : e.kind === "audio-after-cut" ? "audio of a cut response arrived after the cut (dropped)"
+            : "audio of an earlier response after a newer one";
+          this.log.warn(voiceLine(this.sessionId, `agent audio: ${what}`));
+        }
         return;
       }
       case "provider-event": {
@@ -1172,15 +1158,18 @@ export class VoiceEngine {
     const gen = this.gen;
     const t0 = this.clock.now();
     let openerPrompt = "";
+    let sent = `config=${this.safeConfig ? "safe" : "full"}`;
     let timedOut = false;
     const timeout = new Promise<null>((resolve) => this.timer("reconnect", ms, () => { timedOut = true; resolve(null); }));
     const attempt = (async () => {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, language: this.spokenLanguage,
+        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
       });
       openerPrompt = ctx.openerPrompt;
-      return this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
+      const cfg = this.sessionConfig(ctx.instructions, ctx);
+      sent = configSummary(cfg);
+      return this.model.connect(cfg, (e) => this.onModelEvent(e, gen));
     })().catch((e) => {
       this.lastError = clip(e instanceof Error ? e.message : e);
       return null;
@@ -1190,10 +1179,10 @@ export class VoiceEngine {
     const took = Math.round(this.clock.now() - t0);
     if (!conn || timedOut || this.ended || gen !== this.gen) {
       void attempt.then((late) => late?.close());
-      this.log.warn(voiceLine(this.sessionId, `${what} failed after ${took}ms: ${timedOut ? "timed out" : this.ended ? "call ended" : clip(this.lastError) || "no connection"}`));
+      this.log.warn(voiceLine(this.sessionId, `${what} failed after ${took}ms (${sent}): ${timedOut ? "timed out" : this.ended ? "call ended" : clip(this.lastError) || "no connection"}`));
       return null;
     }
-    this.log.info(voiceLine(this.sessionId, `${what} connected in ${took}ms${this.safeConfig ? " (proven session fields only)" : ""}`));
+    this.log.info(voiceLine(this.sessionId, `${what} connected in ${took}ms${this.safeConfig ? " (proven session fields only)" : ""} ${sent}`));
     return { conn, openerPrompt };
   }
 
@@ -1222,6 +1211,7 @@ export class VoiceEngine {
     // Typed while the agent speaks: like a barge-in, the browser drops the queued agent audio.
     if (typed && this.agentSpeaking) {
       if (this.agentTurn) this.agentTurn.interrupted = true;
+      this.conn?.cancelResponse?.();
       this.send({ t: "flush" });
       this.recorder?.cut(this.offsetMs());
       this.agentSpeaking = false;
@@ -1238,7 +1228,6 @@ export class VoiceEngine {
       accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: lineLanguage(masked.text, conv.language),
       voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, typedInCall: typed, createdAt: await this.stamp(),
     });
-    this.buyerSinceLastLine = true;
     this.trackSpokenLanguage(masked.text);
     const moved = late ? await this.moveAgentLinesAfterBuyer(turn.startMs) : 0;
     this.lines.splice(this.lines.length - moved, 0, { role: "buyer", text: masked.text });
@@ -1251,7 +1240,8 @@ export class VoiceEngine {
     // A person took the conversation over during the call: the agent stops (the buyer's words are kept).
     const [now] = await this.db.select({ status: conversations.status, takenOverByUserId: conversations.takenOverByUserId }).from(conversations)
       .where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id)));
-    if (now?.status === "human" && !this.pendingEnd) {
+    // A hand-off made on this call keeps the call going (the agent no longer sells); a person who takes it over ends it.
+    if (now?.status === "human" && !this.pendingEnd && (now.takenOverByUserId || !this.handedOffHere)) {
       void this.stop(now.takenOverByUserId ? "take_over" : "handoff", undefined, "take_over");
       return;
     }
@@ -1266,8 +1256,10 @@ export class VoiceEngine {
       await this.codeOptOut(masked.text);
     } else if (masked.found) {
       // Card details never belong in a call: the fixed security reply, as in chat.
+      this.noteSent("card number");
       this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY[this.spokenLanguage] ?? CARD_REPLY.en}"`);
     } else if (typed) {
+      this.noteSent("typed line");
       this.conn.sendText(masked.text);
     }
   }
@@ -1294,6 +1286,7 @@ export class VoiceEngine {
     const r = await this.runRecorded(turn, `optout-${this.turnSeq}`, "record_opt_out", { reason: said.slice(0, 200) });
     if (r.outcome !== "ok") return;
     this.afterOptOut();
+    this.noteSent("opt-out reply");
     this.conn?.requestResponse(`The buyer asked not to be contacted again and is now opted out. Say exactly this and nothing else: "${OPT_OUT_REPLY[this.spokenLanguage] ?? OPT_OUT_REPLY.en}"`);
   }
 
@@ -1388,7 +1381,10 @@ export class VoiceEngine {
     this.setState("checking");
     this.send({ t: "tool", id: callId, name, label, status: "running" });
     const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
+    const t0 = this.clock.now();
     const r = await this.runRecorded(turn, callId, name, args);
+    // One line per tool call: its name, outcome and time (never its arguments or result).
+    this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
     let forModel: Record<string, unknown> = r.result;
     if (name === "send_order_form" && r.outcome !== "ok") {
       // Never a success line for a form that was not sent (the 22 Nov 2026 call said "the link is in the chat").
@@ -1445,15 +1441,16 @@ export class VoiceEngine {
         };
       }
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
-      // A call request does not end this call (only a hand-off or an opt-out does).
+      // A call request or a hand-off does not end this call (only an opt-out, end_call, or the buyer does).
       if (name === "record_opt_out") this.afterOptOut();
       if (name === "hand_off_to_human") {
-        // The conversation is now held by the team and this call ends after the agent's last sentence.
+        // Owner decision (22 Nov 2026): the team gets back to the buyer, and the call goes on until the buyer ends
+        // it (or says goodbye and the agent calls end_call). The conversation is held by the team from now on.
+        this.handedOffHere = true;
         forModel = {
           ...r.result,
-          message: "Done: the team takes over and this call ends now. Say in one short sentence that someone from the team will get back to them (to confirm the time, if a call was requested), then say goodbye. Do not say the call continues or that someone will join it, and do not continue selling.",
+          message: "Done: the team will get back to the buyer. Say so in one short sentence (to confirm the time, if a call was requested), then ask if there is anything else you can help with. Do not continue selling. The call goes on until the buyer says goodbye: then say a short goodbye and call end_call.",
         };
-        this.endSoon("handoff");
       }
       if (name === "end_call") {
         // The buyer asked to end the call: the goodbye is spoken (or finished), then the call ends.
@@ -1469,8 +1466,9 @@ export class VoiceEngine {
     if (name === "request_callback" && r.outcome === "ok" && this.spokenLanguage === "he" && /^Link sent in the chat\./.test(String(r.result.message ?? ""))) {
       forModel = { ...forModel, message: `${String(forModel.message ?? "")} For example, in Hebrew: "${BOOKING_CARD_LINE_HE}"` };
     }
-    // A call in another language than English: the guidance (written in English) names the language to answer in.
-    if (this.spokenLanguage !== "en" && name !== "record_opt_out") {
+    // A call in another language than English: guidance the result already gives (written in English) names the
+    // language to answer in. A result with no guidance gets none: a silent tool (update_deal_state) stays silent.
+    if (this.spokenLanguage !== "en" && name !== "record_opt_out" && typeof forModel.message === "string") {
       forModel = { ...forModel, message: `${typeof forModel.message === "string" ? `${forModel.message} ` : ""}${this.sayIn()}` };
     }
     this.conn?.sendToolResult(callId, name, forModel);
@@ -1504,21 +1502,9 @@ export class VoiceEngine {
   }
 
   /**
-   * The model says its cut answer again after a cut that had no words from the buyer: the last stored line was
-   * cut, no buyer line came since, no buyer turn waits for its transcription, and this line starts within
-   * FALSE_CUT_REDO_MS of the cut. Then the cut row becomes this line (one line, in the language it was said in).
-   */
-  private redoesFalseCut(turn: AgentTurn): boolean {
-    const last = this.lastLine;
-    return !!last && last.cut && last.cutAtMs !== undefined && !this.buyerSinceLastLine && this.buyerTurn === null
-      && turn.startMs - last.cutAtMs <= FALSE_CUT_REDO_MS;
-  }
-
-  /**
    * Stores the agent's turn: ONE message with the text actually spoken, and its tool calls, like
-   * lib/agent/turn.ts. A turn the buyer cut short ends with "…". One stored message per agent line:
-   * when the model resumes or re-says a line that was cut, the cut row is updated to the full line
-   * (its id, time in the call and tool calls kept); a cut copy of the line just said is not stored.
+   * lib/agent/turn.ts. A turn the buyer cut short ends with "…". One stored message per spoken agent turn, in
+   * order: a line said again after a cut is a row of its own (the buyer heard both).
    */
   private async finalizeAgentTurn(reason: FinalizeReason = "done") {
     const turn = this.agentTurn;
@@ -1530,6 +1516,7 @@ export class VoiceEngine {
     // transcript, or after a barge-in. A turn the model completes normally ("done") is whole.
     const cut = !!raw && (reason === "interrupted" || (reason !== "done" && (turn.interrupted || !turn.finalText)));
     const body = cut ? cutLine(raw) : raw;
+    this.cutText = cut && reason === "buyer" ? raw : null;
     if (!body && !turn.tools.length) return;
     // Tools with nothing said (the buyer cut in before the first word): no empty line in the thread.
     // The calls go with the agent's next line in this call, or with its last one when the call ends.
@@ -1557,31 +1544,6 @@ export class VoiceEngine {
       input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
       result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
     }));
-    // A cut transcript may stop mid-word ("40 doll"): the whole line still continues it.
-    // The re-said line overlaps the cut one (cut "A B C…", then "B C D", e.g. after an echo): one line, "A B C D".
-    const overlap = last && last.cut && raw && !continuesCutLine(raw, last.raw) ? mergeCutOverlap(last.raw, raw) : null;
-    const resumes = !!last && last.cut && !!raw && (continuesCutLine(raw, last.raw) || !!overlap || this.redoesFalseCut(turn));
-    const repeatsCut = !!last && cut && !resumes && continuesCutLine(last.raw, raw);
-    if (last && (resumes || repeatsCut)) {
-      // Resumed after the cut: the earlier row becomes the whole line. A cut copy of the line just said adds nothing.
-      const now = await this.stamp();
-      const newBody = resumes ? (overlap ? (cut ? cutLine(overlap) : overlap) : body) : (last.cut ? cutLine(last.raw) : last.raw);
-      await atomic(this.db, (q) => [
-        ...(resumes ? [q.update(messages).set({ body: newBody, language: lineLanguage(newBody, conv.language) }).where(and(eq(messages.id, last.messageId), eq(messages.accountId, account.id)))] : []),
-        ...(turn.tools.length ? [q.insert(toolCalls).values(toolRows(last.messageId, last.tools))] : []),
-        q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id))),
-      ]);
-      this.lastLine = resumes
-        ? { ...last, raw: overlap ?? raw, cut, tools: last.tools + turn.tools.length, ...(cut ? { cutAtMs: this.offsetMs() } : { cutAtMs: undefined }) }
-        : { ...last, tools: last.tools + turn.tools.length };
-      if (resumes) {
-        const i = this.lines.findLastIndex((l) => l.role === "agent");
-        if (i >= 0) this.lines[i] = { role: "agent", text: newBody };
-      }
-      this.send({ t: "transcript", id: last.turnId, role: "agent", text: newBody, final: true, atMs: last.startMs });
-      if (turn.id !== last.turnId) this.send({ t: "transcript", id: turn.id, role: "agent", text: resumes ? newBody : body, final: true, atMs: turn.startMs });
-      return;
-    }
     const messageId = randomUUID();
     const now = await this.stamp();
     await atomic(this.db, (q) => [
@@ -1598,8 +1560,7 @@ export class VoiceEngine {
       )),
     ]);
     this.agentMessages++;
-    if (raw) this.lastLine = { messageId, turnId: turn.id, raw, cut, tools: turn.tools.length, startMs: turn.startMs, ...(cut ? { cutAtMs: this.offsetMs() } : {}) };
-    this.buyerSinceLastLine = false;
+    if (raw) this.lastLine = { messageId, turnId: turn.id, raw, cut, tools: turn.tools.length, startMs: turn.startMs };
     if (body) this.lines.push({ role: "agent", text: body });
     this.send({ t: "transcript", id: turn.id, role: "agent", text: body, final: true, atMs: turn.startMs });
   }
@@ -1669,7 +1630,10 @@ export class VoiceEngine {
     // The snapshot shows the voice now in effect ("model default" after the pinned one was dropped).
     if (droppedVoice) await this.db.update(voiceSessions).set({ settings: this.settingsSnapshot() }).where(eq(voiceSessions.id, this.sessionId));
     // The opening line was never heard: the retried session says it.
-    if (fresh) opened.conn.requestResponse(opened.openerPrompt);
+    if (fresh) {
+      this.noteSent("opener (retry)");
+      opened.conn.requestResponse(opened.openerPrompt);
+    }
     else this.startQuiet();
   }
 
@@ -1697,7 +1661,8 @@ export class VoiceEngine {
     };
     usage = usage ? { ...usage, endDetail } : ({ ...EMPTY_USAGE, endDetail } as VoiceCallUsageRecord);
     this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${durationSec} activeSec=${activeSec} by=${endDetail.by}`
-      + `${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""}${this.modelClose ? ` model=${this.modelClose.code ?? "-"}/"${this.modelClose.reason}"@${this.modelClose.msAfterConnect ?? "?"}ms` : ""}`));
+      + `${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""}${this.modelClose ? ` model=${this.modelClose.code ?? "-"}/"${this.modelClose.reason}"@${this.modelClose.msAfterConnect ?? "?"}ms` : ""}`
+      + `${this.diagnostics.size ? ` diagnostics=${[...this.diagnostics].map(([k, n]) => `${k}:${n}`).join(",")}` : ""}`));
     const answerMsAvg = this.answerMsAvg();
     const set = {
       status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,

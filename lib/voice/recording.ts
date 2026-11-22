@@ -147,9 +147,19 @@ export class Downsampler {
   /** Next output index. */
   private next = 0;
 
+  /** The first byte of a sample split across two pieces (an odd-length piece): joined with the next piece's first byte. */
+  private carry: number | null = null;
+
   push(pcm: Uint8Array): Int16Array {
     const view = new DataView(pcm.buffer, pcm.byteOffset, pcm.byteLength);
-    for (let i = 0; i + 1 < pcm.byteLength; i += 2) this.buf.push(view.getInt16(i, true));
+    let i = 0;
+    if (this.carry !== null && pcm.byteLength > 0) {
+      this.buf.push(((view.getUint8(0) << 8) | this.carry) << 16 >> 16);
+      this.carry = null;
+      i = 1;
+    }
+    for (; i + 1 < pcm.byteLength; i += 2) this.buf.push(view.getInt16(i, true));
+    if (i < pcm.byteLength) this.carry = view.getUint8(i);
     const out: number[] = [];
     for (;;) {
       const x = this.next * 1.5;

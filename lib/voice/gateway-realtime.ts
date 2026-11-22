@@ -166,6 +166,8 @@ export function customEventName(e: { rawType?: unknown; raw?: unknown }): string
  */
 export class ServerEventMapper {
   private agentText = "";
+  /** The transcript of the response the buyer just cut (as sent), until the next response starts. */
+  private cutSaid: string | null = null;
   private buyerText = "";
   /** A tool call ended the last segment: the next agent piece starts a new one (a space between them). */
   private agentBoundary = false;
@@ -181,11 +183,13 @@ export class ServerEventMapper {
         return e.sessionId ? [{ type: "session", providerSessionId: e.sessionId }] : [];
       case "audio-delta":
       case "audio-chunk":
-        return [...this.closeBuyerTurn(), { type: "audio", pcm: fromBase64(e.delta) }];
+        return [...this.closeBuyerTurn(), ...this.audio(e.delta, e.type === "audio-delta" ? e.responseId : undefined)];
       case "audio-transcript-delta":
         return this.agentDelta(e.delta);
       case "audio-transcript-done":
-        if (e.transcript) this.agentText = e.transcript;
+        // The whole transcript of a response the buyer cut: what it would have said, not what was heard (the cut
+        // line was already sent). Only words after the cut count, from the deltas.
+        if (e.transcript && !(this.cutSaid && e.transcript.trim().startsWith(this.cutSaid))) this.agentText = e.transcript;
         // The next piece of this turn (after a tool call, or a new audio item) is a new segment.
         this.agentBoundary = true;
         return [];
@@ -204,6 +208,7 @@ export class ServerEventMapper {
         // A new response starts its own transcript (one cut by the buyer may never get a response-done).
         this.responseDone = false;
         this.agentText = "";
+        this.cutSaid = null;
         return [];
       case "function-call-arguments-done": {
         let args: unknown = {};
@@ -218,7 +223,7 @@ export class ServerEventMapper {
       }
       case "response-done": {
         this.responseDone = true;
-        const out: RealtimeEvent[] = [...this.closeBuyerTurn()];
+        const out: RealtimeEvent[] = [...this.closeBuyerTurn(), ...this.cleanedNote()];
         const said = cleanTranscript(this.agentText);
         if (said) out.push({ type: "agent-transcript", text: said, final: true });
         this.agentText = "";
@@ -255,9 +260,76 @@ export class ServerEventMapper {
    * line into the next answer's transcript.
    */
   private interrupt(): RealtimeEvent[] {
+    const cleaned = this.cleanedNote();
     const said = cleanTranscript(this.agentText);
+    if (said) this.cutSaid = this.agentText.trim();
     this.agentText = "";
-    return [...(said ? [{ type: "agent-transcript" as const, text: said, final: true }, { type: "turn-done" as const, interrupted: true }] : []), { type: "speech-started" }];
+    // The browser drops the audio still queued: a half sample carried from the cut response belongs to nothing.
+    this.cutCurrentResponse();
+    return [...cleaned, ...(said ? [{ type: "agent-transcript" as const, text: said, final: true }, { type: "turn-done" as const, interrupted: true }] : []), { type: "speech-started" }];
+  }
+
+  /**
+   * `dropCutAudio` (OpenAI): audio of a response the buyer cut that still arrives after the cut (deltas in flight
+   * before the provider's cancel) is dropped: the browser was told to flush it, and playing it after the flush puts a
+   * fragment of the old answer before the new one. Gemini keeps its 5d1f427 behaviour (its response ids through the
+   * Gateway are not known to change per response).
+   */
+  constructor(private readonly o: { dropCutAudio?: boolean } = {}) {}
+  /** The response the buyer cut (its audio is dropped until another response speaks). */
+  private cutResponse: string | null = null;
+
+  /** The engine cut the current response (typed text): its remaining audio is dropped like a barge-in's. */
+  cutCurrentResponse(): void {
+    if (this.o.dropCutAudio && this.audioResponse) this.cutResponse = this.audioResponse;
+    this.audioCarry = null;
+  }
+
+  /** The last byte of an odd-length audio piece: the first byte of a sample whose second byte comes in the next piece. */
+  private audioCarry: number | null = null;
+  /** The response the last audio piece belonged to, and the earlier ones that sent audio on this connection. */
+  private audioResponse: string | null = null;
+  private readonly audioResponsesBefore = new Set<string>();
+
+  /**
+   * Agent audio as whole PCM16 samples. A piece with an odd byte count would shift every sample of the next piece by
+   * one byte (loud noise) wherever it is read as PCM16 (the browser's playback, the recording): its last byte is
+   * carried to the next piece of the same response instead. Both cases are reported for the log.
+   */
+  private audio(delta: string, responseId: string | undefined): RealtimeEvent[] {
+    const out: RealtimeEvent[] = [];
+    if (responseId && responseId === this.cutResponse) return [{ type: "diagnostic", kind: "audio-after-cut" }];
+    if (responseId && responseId !== this.audioResponse) {
+      if (this.audioResponsesBefore.has(responseId)) out.push({ type: "diagnostic", kind: "audio-interleaved" });
+      if (this.audioResponse) this.audioResponsesBefore.add(this.audioResponse);
+      this.audioResponse = responseId;
+      // A new response is a new stream: a half sample of the previous one is dropped.
+      this.audioCarry = null;
+    }
+    let bytes = fromBase64(delta);
+    if (bytes.byteLength % 2) out.push({ type: "diagnostic", kind: "audio-odd-bytes" });
+    if (this.audioCarry !== null) {
+      const joined = new Uint8Array(bytes.byteLength + 1);
+      joined[0] = this.audioCarry;
+      joined.set(bytes, 1);
+      bytes = joined;
+      this.audioCarry = null;
+    }
+    if (bytes.byteLength % 2) {
+      this.audioCarry = bytes[bytes.byteLength - 1];
+      bytes = bytes.subarray(0, bytes.byteLength - 1);
+    }
+    if (bytes.byteLength) out.push({ type: "audio", pcm: bytes });
+    return out;
+  }
+
+  /** The agent's transcript of this turn had markers taken out: one diagnostic (never the text itself). */
+  private cleanedNote(): RealtimeEvent[] {
+    const raw = this.agentText.trim();
+    if (!raw) return [];
+    const said = cleanTranscript(raw);
+    if (said === raw) return [];
+    return [{ type: "diagnostic", kind: "cleaned-transcript", detail: said ? "marker in a line" : "marker only" }];
   }
 
   /** Transcription markers ("<no speech detected>", lib/voice/transcript-clean.ts) are no text: nothing goes out for them. */
@@ -284,6 +356,43 @@ export class ServerEventMapper {
     this.buyerText = "";
     if (!text) return [];
     return [{ type: "buyer-transcript", text, final: true }];
+  }
+}
+
+/**
+ * When to ask for the model's next response after tool calls. As the AI SDK's own session (maybeRequestToolResponse):
+ * once BOTH the response that made the calls has ended AND every call has its result, whichever comes last.
+ * Until 22 Nov 2026 it was asked for only when a result arrived, so results that came before the response's end
+ * never got a response: the model then stayed silent until the buyer spoke. Each request is reported
+ * (diagnostic "tool-continuation"), so the live logs show it once per tool round.
+ */
+export class ToolResponseGate {
+  private readonly results = new Set<string>();
+  /**
+   * `atResponseEnd`: also request at the response's end (OpenAI). Gemini keeps its 5d1f427 behaviour (requested
+   * only with a result): with the BLOCKING tool option it continues on its own after the results, and a second
+   * request there could start a second response. Gemini's case is reported, so the live logs show which happens.
+   */
+  constructor(
+    private readonly mapper: Pick<ServerEventMapper, "openCalls" | "responseDone">, private readonly report: (e: RealtimeEvent) => void,
+    private readonly atResponseEnd = true,
+  ) {}
+
+  /** A result was sent (`callId`) or the response ended: the response-create to send now, if any. */
+  next(by: "result" | "response end", callId?: string): SdkClientEvent[] {
+    if (callId) this.results.add(callId);
+    const calls = this.mapper.openCalls;
+    if (!this.mapper.responseDone || !calls.size || ![...calls].every((id) => this.results.has(id))) return [];
+    if (by === "response end" && !this.atResponseEnd) {
+      calls.clear();
+      this.results.clear();
+      this.report({ type: "diagnostic", kind: "tool-continuation", detail: "results came before the response end; no response requested (the model continues itself)" });
+      return [];
+    }
+    calls.clear();
+    this.results.clear();
+    this.report({ type: "diagnostic", kind: "tool-continuation", detail: `response requested after the ${by}` });
+    return [{ type: "response-create" }];
   }
 }
 
@@ -346,10 +455,12 @@ export class GatewayRealtime implements RealtimeModel {
     if (!model.getServerWebSocketConfig) throw new Error("This realtime model has no server-owned connection");
     const { url, headers, protocols } = await model.getServerWebSocketConfig({ intent: "conversation" });
     const parse = model.createServerEventParser?.() ?? ((raw: unknown) => model.parseServerEvent(raw));
-    const mapper = new ServerEventMapper();
+    const mapper = new ServerEventMapper({ dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini" });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;
     let open = false;
+    const gate = new ToolResponseGate(mapper, onEvent, schemaFamilyOf(this.modelId) !== "gemini");
+    const maybeRequestToolResponse = (by: "result" | "response end", callId?: string) => gate.next(by, callId);
 
     const send = async (e: SdkClientEvent) => {
       if (ws.readyState !== WebSocket.OPEN) return;
@@ -372,6 +483,10 @@ export class GatewayRealtime implements RealtimeModel {
       const parsed = parse(raw);
       for (const se of Array.isArray(parsed) ? parsed : [parsed]) {
         for (const ev of mapper.map(se)) onEvent(ev);
+        if (se.type === "response-done") {
+          const more = maybeRequestToolResponse("response end");
+          if (more.length) sendAll(more);
+        }
       }
     });
     ws.on("close", (code: number, reason: Buffer) => {
@@ -393,23 +508,22 @@ export class GatewayRealtime implements RealtimeModel {
     const config = toSdkSessionConfig(cfg, this.modelId);
     await send(startup === "session-start" ? { type: "session-start", config } : { type: "session-update", config });
 
-    const pendingResults = new Set<string>();
     return {
       sessionFields: Object.keys(config),
       sendAudio: (pcm) => sendAll([clientEvents.audio(pcm)]),
       sendText: (text) => sendAll(clientEvents.text(text)),
       sendToolResult: (callId, name, result) => {
-        pendingResults.add(callId);
-        const events: SdkClientEvent[] = [clientEvents.toolResult(callId, name, result)];
-        // Like the SDK's own session: a response is requested once every call of the response has its result.
-        if (mapper.responseDone && [...mapper.openCalls].every((id) => pendingResults.has(id))) {
-          events.push({ type: "response-create" });
-          mapper.openCalls.clear();
-          pendingResults.clear();
-        }
-        sendAll(events);
+        // Like the SDK's own session: a response is requested once every call of the response has its result and
+        // the response has ended (else at the response's end: the message handler above).
+        sendAll([clientEvents.toolResult(callId, name, result), ...maybeRequestToolResponse("result", callId)]);
       },
       requestResponse: (instructions) => sendAll(clientEvents.respond(instructions)),
+      cancelResponse: () => {
+        // OpenAI: the response the buyer cut by typing stops (a spoken barge-in is cancelled by the provider's own
+        // turn detection); its audio still in flight is dropped. Gemini: a new text turn interrupts it on its own.
+        mapper.cutCurrentResponse();
+        if (schemaFamilyOf(this.modelId) !== "gemini") sendAll([{ type: "response-cancel" }]);
+      },
       sendNote: (note) => sendAll([clientEvents.note(note)]),
       close: () => {
         if (closedByUs) return;
