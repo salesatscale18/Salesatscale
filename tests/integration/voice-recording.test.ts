@@ -24,7 +24,8 @@ const { micPcm, ScriptedRealtime } = await import("@/lib/voice/scripted-realtime
 const { closeStaleVoiceSessions, createVoiceSession, startVoiceTestConversation } = await import("@/lib/voice/service");
 const { MemoryRecordingStore, RECORDING_CHUNK_SEC, RECORDING_RATE } = await import("@/lib/voice/recording");
 const { recordingResponse } = await import("@/lib/voice/recording-playback");
-const { RECORDING_NOTICE, saveRecordingSettings } = await import("@/lib/voice/recording-settings");
+const { RECORDING_ASKED_REPLY, RECORDING_NOTICE, saveRecordingSettings } = await import("@/lib/voice/recording-settings");
+const { expectBuyer, say } = await import("@/lib/voice/scripted-realtime");
 const route = await import("@/app/app/[account]/calls/[sessionId]/recording/route");
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
@@ -55,13 +56,13 @@ beforeEach(async () => {
   await db.update(sellerAccounts).set({ voiceSettings: null }).where(eq(sellerAccounts.id, acc));
 });
 
-async function newCall(o: { scenario?: string | null; store?: InstanceType<typeof MemoryRecordingStore> | null; conversationId?: string } = {}) {
+async function newCall(o: { scenario?: string | null; store?: InstanceType<typeof MemoryRecordingStore> | null; conversationId?: string; script?: import("@/lib/voice/scripted-realtime").Script } = {}) {
   const scenario = o.scenario ?? null;
   const c = o.conversationId ? { conversationId: o.conversationId } : (await startVoiceTestConversation(db, acc, me.id, { scenario, language: scenarioById(scenario)?.language ?? "en" }))!;
   const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
   if (!s.ok) throw new Error(s.reason);
   const clock = new ManualClock();
-  const model = new ScriptedRealtime({ clock });
+  const model = new ScriptedRealtime({ clock, ...(o.script ? { defaultScript: o.script } : {}) });
   const store = o.store === undefined ? new MemoryRecordingStore() : o.store;
   const lines: string[] = [];
   const engine = new VoiceEngine({
@@ -219,6 +220,57 @@ describe("playing a recording back (seller side)", () => {
     const offCall = await newCall({ store: null });
     await end(offCall);
     expect((await get("acme", offCall.sessionId)).status).toBe(404);
+  });
+});
+
+describe("the buyer raises the recording", () => {
+  /** The buyer asks; the scripted agent answers with what its instructions give for it (or asks again when nothing). */
+  const ASKS = [expectBuyer("Are you recording this?"), say((ctx) => ctx.recordingReply ?? "Sorry, could you say that again?")];
+
+  it("a recorded call: the instruction is there; the agent answers with the line and the recording goes on", async () => {
+    const c = await newCall({ script: ASKS });
+    const instructions = c.model.connections[0].cfg.instructions;
+    expect(instructions).toContain("### This call is recorded");
+    expect(instructions).toContain(`"${RECORDING_ASKED_REPLY.en}"`);
+    expect(instructions).toContain(RECORDING_ASKED_REPLY.he);
+    expect(instructions).toContain("Never say the call is not recorded or that the recording stopped");
+    await c.run(15_000);
+    await c.speak();
+    await c.run(10_000);
+    const said = await agentLines(c.conversationId, c.sessionId);
+    expect(said.at(-1)).toBe(RECORDING_ASKED_REPLY.en);
+    // Recording never stops on request: still recording, then saved with the whole call.
+    expect(await row(c.sessionId)).toMatchObject({ status: "live", recordingState: "recording" });
+    await c.run(10_000);
+    await end(c);
+    const r = await row(c.sessionId);
+    expect(r.recordingState).toBe("saved");
+    expect(r.recordingSec).toBe(r.durationSec);
+  });
+
+  it("a call that is not recorded (switched off, or no store): no instruction, and the agent never says it is recorded", async () => {
+    const none = await newCall({ script: ASKS, store: null });
+    expect(none.model.connections[0].cfg.instructions).not.toContain("This call is recorded");
+    expect(none.model.connections[0].cfg.instructions).not.toContain(RECORDING_ASKED_REPLY.en);
+    await none.run(15_000);
+    await none.speak();
+    await none.run(10_000);
+    await end(none);
+    expect((await agentLines(none.conversationId, none.sessionId)).join(" ")).not.toContain("recorded");
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 90 });
+    const off = await newCall({ script: ASKS });
+    expect(off.model.connections[0].cfg.instructions).not.toContain("This call is recorded");
+    await end(off);
+  });
+
+  it("the instruction is on every connection of a recorded call (a reconnect keeps it)", async () => {
+    const c = await newCall();
+    await c.run(15_000);
+    c.model.connections.at(-1)!.simulateGoAway();
+    await c.run(5_000);
+    expect(c.model.connections).toHaveLength(2);
+    expect(c.model.connections[1].cfg.instructions).toContain("### This call is recorded");
+    await end(c);
   });
 });
 

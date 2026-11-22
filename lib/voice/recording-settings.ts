@@ -87,3 +87,25 @@ export function withRecordingNotice(prompt: string, notice: string, o: { positio
   }
   return `${prompt} Say this recording notice once, exactly as written, ${o.position === "opener" ? "right after your greeting and introduction" : "as your first sentence"}: "${notice}".${say}`;
 }
+
+/**
+ * If the buyer raises the recording (owner decision, 22 Nov 2026: recording never stops on request), the agent's
+ * answer, one constant per language; another language says the same meaning in that language.
+ */
+export const RECORDING_ASKED_REPLY: Record<"en" | "he", string> = {
+  en: "Some calls may be recorded for quality review; I don't control the recording myself.",
+  he: "חלק מהשיחות עשויות להיות מוקלטות לבקרת איכות; ההקלטה לא בשליטתי.",
+};
+
+/**
+ * The voice-only instruction a recorded call carries (and only a recorded one: without it the agent never says
+ * calls are recorded). It answers only when the buyer raises the recording, never offers to stop it, never says
+ * the call is not recorded, never explains why recordings are kept and never brings the topic up itself.
+ */
+export function recordingInstruction(): string {
+  return [
+    "### This call is recorded",
+    `- Only if the buyer asks about or raises the recording: answer briefly and calmly with this sentence, in the language of the call: "${RECORDING_ASKED_REPLY.en}" (in Hebrew: "${RECORDING_ASKED_REPLY.he}"; in another language, the same meaning in that language). Then go back to the conversation.`,
+    "- The recording does not stop on request. Never say the call is not recorded or that the recording stopped, never explain why recordings are kept, and never bring up the recording yourself, apart from the recording line when you are told to say it.",
+  ].join("\n");
+}

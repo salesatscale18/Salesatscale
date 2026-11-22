@@ -39,7 +39,7 @@ import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { CallRecorder, recordingPrefix, recordingStoreFor, type RecordingStore } from "./recording";
-import { recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
+import { recordingInstruction, recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -229,6 +229,8 @@ export class VoiceEngine {
   private recorder: CallRecorder | null = null;
   /** The call clock (ms since connect) when the call ended: the recording's end. */
   private endedAtMs: number | null = null;
+  /** A recorded call's instruction about the recording (recording-settings recordingInstruction); null when not recorded. */
+  private recordingNote: string | null = null;
   private endBy: VoiceEndBy | null = null;
   private clientClose: VoiceEndDetail["clientClose"];
   private modelClose: VoiceEndDetail["modelClose"];
@@ -690,6 +692,9 @@ export class VoiceEngine {
     const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) });
     this.spokenLanguage = ctx.language || "en";
     this.latinLanguage = NON_LATIN.test(this.spokenLanguage) ? "en" : this.spokenLanguage;
+    // Recording is decided before the model connects: a recorded call's instructions say how to answer about it.
+    const recording = await this.startRecording(account);
+    if (recording.on) this.recordingNote = recordingInstruction();
     const gen = ++this.gen;
     let conn: RealtimeConnection;
     const t0 = this.clock.now();
@@ -707,7 +712,6 @@ export class VoiceEngine {
     }
     this.modelUp(conn);
     this.callStart = this.clock.now();
-    const recording = await this.startRecording(account);
     // The recording notice: the first sentence of the agent's first line, once per call, in the call's language.
     const noticeSaid = recording.on && recording.notice;
     const openerPrompt = noticeSaid
@@ -786,7 +790,8 @@ export class VoiceEngine {
   }
 
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
-    const cfg = this.fullSessionConfig(instructions, languages);
+    // A recorded call (and only one): how to answer if the buyer raises the recording; on every connection of the call.
+    const cfg = this.fullSessionConfig(this.recordingNote ? `${instructions}\n\n${this.recordingNote}` : instructions, languages);
     // After an early close: only the session fields proven on this model family (lib/voice/gateway-realtime.ts).
     return this.safeConfig ? { ...cfg, safe: true } : cfg;
   }

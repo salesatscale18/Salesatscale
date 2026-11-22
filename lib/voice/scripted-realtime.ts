@@ -41,6 +41,8 @@ export type ScriptCtx = {
   fields: ScriptField[];
   /** "Local time now" from the instructions: local date ("2026-11-20"), time ("14:05"), weekday ("Fri") and UTC offset ("+02:00"); null when missing. */
   localNow: { date: string; time: string; weekday?: string; offset?: string } | null;
+  /** A recorded call's answer when the buyer raises the recording (from its instructions); null when not recorded. */
+  recordingReply?: string | null;
 };
 
 export type ScriptStep = (
@@ -571,7 +573,10 @@ export class ScriptedConnection implements RealtimeConnection {
     this.position = o.startAt;
     this.vad = new EnergyVad({ threshold: o.speechRms, minSpeechMs: 200, endSilenceMs: 700 });
     const results: Record<string, Record<string, unknown>[]> = o.results ? structuredClone(o.results) : {};
-    this.ctx = { results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions), localNow: localNowFromInstructions(cfg.instructions) };
+    this.ctx = {
+      results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions), localNow: localNowFromInstructions(cfg.instructions),
+      recordingReply: /### This call is recorded\n- [^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
+    };
     this.usage.textInTokens = Math.ceil(cfg.instructions.length / 4);
   }
 
