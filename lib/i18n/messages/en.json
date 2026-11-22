@@ -3770,5 +3770,11 @@
   "leads.value.estimate_title": "Estimated from the deal details; no quote yet",
   "lead.card.estimate": "Estimated deal size",
   "time.your_time": "your time",
-  "leads.times_yours": "Times in your time zone ({zone})"
+  "leads.times_yours": "Times in your time zone ({zone})",
+  "knowledge.conflict.label": "Differs from an approved fact",
+  "knowledge.conflict.approved": "Approved fact",
+  "knowledge.conflict.replace": "Replace the approved fact",
+  "knowledge.conflict.keep": "Keep the approved fact",
+  "knowledge.done.replaced": "Approved fact replaced. The agent uses the new one now.",
+  "knowledge.done.kept": "Approved fact kept. The new one was rejected."
 }

@@ -17,7 +17,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { PLAY_KEYS } from "@/db/schema";
 
-export const PROMPT_VERSION = "system-v7";
+export const PROMPT_VERSION = "system-v8";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -66,6 +66,7 @@ const FACTS_SCHEMA = obj({
     statement: str("One self-contained sentence a buyer could be told, in the language of the source."),
     language: str("ISO 639-1 code of the statement, e.g. en or he."),
     customer_specific: { type: "boolean", description: "True only if the statement is about one particular customer. Prefer leaving such statements out." },
+    known_fact_id: str("The id of the known fact (from known_facts, e.g. K12) this statement says something different from; an empty string otherwise."),
     evidence: EVIDENCE,
   }), "General facts a buyer could ask about."),
   contradictions: arr(obj({

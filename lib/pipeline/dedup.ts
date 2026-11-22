@@ -74,3 +74,44 @@ export function nearDuplicate(a: string, b: string, threshold = NEAR_DUPLICATE_T
 export function wordsKey(text: string): string {
   return [...new Set(factTokens(text))].sort().join(" ");
 }
+
+// ---------------------------------------------------------------------------
+// Differs from an approved fact (the code's backstop to the model's known_fact_id)
+// ---------------------------------------------------------------------------
+
+/** Shared subject words / all subject words, from which two facts of one topic are about the same thing. */
+export const CONFLICT_THRESHOLD = 0.7;
+
+/** A number word ("24", "-40°c", "18%", "12-month"); a code like "gw-10" is not one. */
+const isNumberToken = (t: string) => /^[-+±]?\d/u.test(t);
+
+/** The words a statement is about: numbers and negation words left out. */
+export function subjectTokens(text: string): Set<string> {
+  return new Set(factTokens(text).filter((t) => !isNumberToken(t) && !NEGATIONS.has(t)));
+}
+
+/** Shared subject words / all subject words (0 to 1); 0 when either has fewer than two. */
+export function subjectSimilarity(a: string, b: string): number {
+  const A = subjectTokens(a);
+  const B = subjectTokens(b);
+  if (A.size < 2 || B.size < 2) return 0;
+  let shared = 0;
+  for (const t of A) if (B.has(t)) shared++;
+  return shared / (A.size + B.size - shared);
+}
+
+/**
+ * Whether a new statement says something different from an approved one
+ * about the same thing (callers also check the topic): nearly the same
+ * subject words, and either both give numbers and the numbers differ
+ * ("12-month" / "24-month"), or the numbers match and only one is negated
+ * ("includes" / "does not include").
+ */
+export function differs(a: string, b: string, threshold = CONFLICT_THRESHOLD): boolean {
+  const na = numberKey(a);
+  const nb = numberKey(b);
+  const numbersDiffer = na !== "" && nb !== "" && na !== nb;
+  const negationDiffers = na === nb && negated(factTokens(a)) !== negated(factTokens(b));
+  if (!numbersDiffer && !negationDiffers) return false;
+  return subjectSimilarity(a, b) >= threshold;
+}

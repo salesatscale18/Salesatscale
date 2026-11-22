@@ -152,6 +152,8 @@ export function estimateAnalysis(p: {
   dataTokens: number;
   /** The approved facts sent with the stage 1 instruction. */
   knownFactsTokens?: number;
+  /** PDFs stage 1 also reads as pages (uncached input, sent once). */
+  documentTokens?: number;
   model: string;
   prices?: Record<string, ModelPrice>;
 }): AnalysisEstimate {
@@ -172,11 +174,12 @@ export function estimateAnalysis(p: {
         u.inputTokens += c + INSTRUCTION_TOKENS + known;
         u.outputTokens += factsOutputTokens(c);
       });
+      u.inputTokens += p.documentTokens ?? 0;
       newFactTokens = chunks.reduce((s, c) => s + factsOutputTokens(c) - THINKING_TOKENS, 0);
       stages.push({ stage: "facts", model: p.model, calls: chunks.length, usage: u, costMicros: estimateCostMicros(p.model, u, p.prices) ?? 0 });
     } else {
       u.cacheWriteTokens = PREFIX_TOKENS + (cacheCorpus ? factsTokens : 0);
-      u.inputTokens = INSTRUCTION_TOKENS + known + (cacheCorpus ? 0 : factsTokens);
+      u.inputTokens = INSTRUCTION_TOKENS + known + (p.documentTokens ?? 0) + (cacheCorpus ? 0 : factsTokens);
       u.outputTokens = factsOutputTokens(factsTokens);
       newFactTokens = u.outputTokens - THINKING_TOKENS;
       stages.push({ stage: "facts", model: p.model, calls: 1, usage: u, costMicros: estimateCostMicros(p.model, u, p.prices) ?? 0 });

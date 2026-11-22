@@ -12,10 +12,10 @@ import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, factsInstruction, KNOW
 import { PLAYBOOK_INSTRUCTION, PROMPT_VERSION as PLAYBOOK_V } from "@/lib/pipeline/prompts/playbook";
 import { PROMPT_VERSION as SYSTEM_V, SYSTEM_PROMPT } from "@/lib/pipeline/prompts/system";
 
-describe("stage 1 instruction (facts-v2)", () => {
+describe("stage 1 instruction (facts-v3)", () => {
   it("bumps every prompt version that changed", () => {
-    expect(FACTS_V).toBe("facts-v2");
-    expect(SYSTEM_V).toBe("system-v7");
+    expect(FACTS_V).toBe("facts-v3");
+    expect(SYSTEM_V).toBe("system-v8");
     expect(PLAYBOOK_V).toBe("playbook-v6");
   });
 
@@ -58,7 +58,7 @@ describe("stage 1 instruction (facts-v2)", () => {
     const text = factsInstruction(FACTS_INSTRUCTION, [{ topic: "Warranty", statement: "Two years." }]);
     expect(text.startsWith(FACTS_INSTRUCTION)).toBe(true);
     expect(text).toContain("Do not return a fact that says the same thing as a known fact");
-    expect(text).toContain('<known_facts>\n[{"topic":"Warranty","statement":"Two years."}]\n</known_facts>');
+    expect(text).toContain('<known_facts>\n[{"id":"K1","topic":"Warranty","statement":"Two years."}]\n</known_facts>');
     const many = Array.from({ length: KNOWN_FACTS_MAX + 5 }, (_, i) => ({ topic: "T", statement: `S${i}` }));
     expect(factsInstruction(FACTS_INSTRUCTION, many).match(/"statement"/g)).toHaveLength(KNOWN_FACTS_MAX);
   });

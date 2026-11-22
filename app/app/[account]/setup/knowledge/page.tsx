@@ -9,7 +9,7 @@ import { ConfirmDelete, ListTable, ListToolbar, RowMenu, SidePanel, SortableTh, 
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { listFacts, listTopics, unansweredQuestions, type QuestionAsk } from "@/lib/agent/service";
-import { locateEvidence, openContradictions, sourceGaps, type EvidenceLink } from "@/lib/pipeline/service";
+import { locateEvidence, openContradictions, openFactConflicts, sourceGaps, type EvidenceLink } from "@/lib/pipeline/service";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { firstParam, hrefWith, sortParams, TRANSIENT_PARAMS } from "@/lib/list-kit";
@@ -17,7 +17,7 @@ import {
   DEFAULT_FACT_SORT, FACT_SORTS, factLead, filterFacts, LIST_KEYS, sortFacts, sourceChipIcon, sourceOptions, statusCounts,
 } from "@/lib/knowledge/facts-list";
 import {
-  addFactAction, answerQuestionsAction, approveAllAction, removeFactAction, resolveContradictionAction, setFactStatusAction, updateFactAction,
+  addFactAction, answerQuestionsAction, approveAllAction, removeFactAction, resolveContradictionAction, resolveFactConflictAction, setFactStatusAction, updateFactAction,
 } from "./actions";
 
 const ellipsis: CSSProperties = { overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", minWidth: 0 };
@@ -29,7 +29,7 @@ const ERRORS: Record<string, MessageKey> = {
 const DONE: Record<string, MessageKey> = {
   added: "knowledge.done.added", saved: "knowledge.done.saved", approved: "knowledge.done.approved", rejected: "knowledge.done.rejected",
   suggested: "knowledge.done.suggested", removed: "knowledge.done.removed", approved_all: "knowledge.done.approved_all", answered: "knowledge.done.answered",
-  resolved: "knowledge.done.resolved",
+  resolved: "knowledge.done.resolved", replaced: "knowledge.done.replaced", kept: "knowledge.done.kept",
 };
 /** Params a list link never carries: the open panel, the confirm step, the question being answered and one-off notices. */
 const DROP = [...TRANSIENT_PARAMS, "question", "done", "error", "n", "edit"] as const;
@@ -48,12 +48,13 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const [topics, allFacts, asked, gaps, contradictions, progress] = await Promise.all([
+  const [topics, allFacts, asked, gaps, contradictions, conflicts, progress] = await Promise.all([
     listTopics(appDb, account.id),
     listFacts(appDb, account.id),
     unansweredQuestions(appDb, account.id, 10),
     sourceGaps(appDb, account.id),
     openContradictions(appDb, account.id),
+    openFactConflicts(appDb, account.id),
     setupProgress(appDb, account),
   ]);
   const tz = account.timezone;
@@ -65,8 +66,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
     ...gaps.filter((g) => !askedKeys.has(g.question.toLowerCase())).map((g) => ({ question: g.question, times: 0, lastAskedAt: null as Date | null, topic: g.topic, asks: [] as QuestionAsk[] })),
   ];
   const links = await locateEvidence(appDb, account.id, account.slug, allFacts.filter((f) => f.sourceId && f.sourceLocator).map((f) => ({ sourceId: f.sourceId!, locator: f.sourceLocator! })));
-  // Facts in an open contradiction wait for the seller's choice: "Approve all" leaves them out.
-  const held = new Set(contradictions.flatMap((c) => c.facts.filter((f) => f.status === "suggested").map((f) => f.id)));
+  // Facts in an open contradiction, or that differ from an approved fact, wait for the seller's choice: "Approve all" leaves them out.
+  const held = new Set([...contradictions.flatMap((c) => c.facts.filter((f) => f.status === "suggested").map((f) => f.id)), ...conflicts.keys()]);
   const approvable = (topic?: string) => allFacts.filter((f) => f.status === "suggested" && !held.has(f.id) && (!topic || f.topic === topic)).length;
   const linkOf = (f: KnowledgeFact): EvidenceLink | null => (f.sourceId && f.sourceLocator ? links.get(`${f.sourceId}|${f.sourceLocator}`) ?? null : null);
   const chipText = (f: KnowledgeFact) => {
@@ -314,18 +315,41 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                     </tr>
                   ) : null}
                   {facts.flatMap((f) => {
+                    // A suggestion that differs from an approved fact: the seller replaces that fact or keeps it.
+                    const differsFrom = f.status === "suggested" ? conflicts.get(f.id) ?? null : null;
                     const row = (
                       <tr key={f.id} data-current={panel === f.id ? "" : undefined} data-fact={f.status}>
                         <td style={{ minWidth: 240, whiteSpace: "normal" }}>
                           <span style={{ display: "block", overflowWrap: "anywhere" }} dir="auto">{f.statement}</span>
                           <span className="sas-small" style={{ display: "block" }} dir="auto">{f.topic}</span>
+                          {differsFrom ? (
+                            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, marginTop: 8 }} data-conflict={differsFrom.id}>
+                              <span className="sas-pill sas-pill--warning"><Icon name="alert-triangle" />{t("knowledge.conflict.label")}</span>
+                              <span className="sas-small" style={{ overflowWrap: "anywhere" }} dir="auto">
+                                <span className="sas-sr">{t("knowledge.conflict.approved")}: </span>{differsFrom.statement}
+                              </span>
+                            </span>
+                          ) : null}
                         </td>
                         <td data-label={t("knowledge.col.source")} className="sas-td-under sas-td-kchip">{sourceChip(f)}</td>
                         <td data-label={t("knowledge.col.status")}>
                           {/* Approve sits with the status (in the row on a desktop and in the card on a phone, where the ⋯ takes the corner). */}
                           <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                             {statusPill(f)}
-                            {f.status === "suggested" ? (
+                            {differsFrom ? (
+                              <>
+                                <form action={resolveFactConflictAction}>
+                                  {hidden(f)}
+                                  <input type="hidden" name="choice" value="replace" />
+                                  <button type="submit" className={buttonClass("secondary", "sm")} aria-label={`${t("knowledge.conflict.replace")}: ${label(f)}`} data-replace="">{t("knowledge.conflict.replace")}</button>
+                                </form>
+                                <form action={resolveFactConflictAction}>
+                                  {hidden(f)}
+                                  <input type="hidden" name="choice" value="keep" />
+                                  <button type="submit" className={buttonClass("ghost", "sm")} aria-label={`${t("knowledge.conflict.keep")}: ${label(f)}`} data-keep="">{t("knowledge.conflict.keep")}</button>
+                                </form>
+                              </>
+                            ) : f.status === "suggested" ? (
                               <form action={setFactStatusAction}>
                                 {hidden(f)}
                                 <input type="hidden" name="status" value="approved" />
