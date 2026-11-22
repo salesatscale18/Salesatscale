@@ -6,7 +6,7 @@ import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { writeAudit } from "@/lib/accounts/audit";
 import { isFactStatus, parseFactInput } from "@/lib/agent/knowledge";
 import { addFact, answerQuestion, removeFact, setFactStatus, updateFact } from "@/lib/agent/service";
-import { approveAllSuggestedFacts, resolveContradiction } from "@/lib/pipeline/service";
+import { approveAllSuggestedFacts, resolveContradiction, resolveFactConflict } from "@/lib/pipeline/service";
 import { listQuery } from "@/lib/knowledge/facts-list";
 
 const str = (form: FormData, k: string) => String(form.get(k) ?? "");
@@ -102,4 +102,17 @@ export async function resolveContradictionAction(form: FormData) {
     runId: str(form, "runId"), index: Number(str(form, "index")) || 0, choice, other: str(form, "other").slice(0, 1000),
   });
   back(a.account.slug, form, ok ? { done: "resolved" } : { error: choice === "other" ? "other" : "missing" });
+}
+
+/**
+ * A suggestion that differs from an approved fact: "replace" approves it and
+ * retires the approved fact, "keep" rejects it (checked on the server: only
+ * while the suggestion is still open for this account).
+ */
+export async function resolveFactConflictAction(form: FormData) {
+  const a = await requireAccount(str(form, "slug"));
+  const choice = str(form, "choice");
+  if (choice !== "replace" && choice !== "keep") back(a.account.slug, form, { error: "missing" });
+  const ok = await resolveFactConflict(appDb, actorOf(a), a.account.id, { factId: str(form, "factId"), choice: choice as "replace" | "keep" });
+  back(a.account.slug, form, ok ? { done: choice === "replace" ? "replaced" : "kept" } : { error: "missing" });
 }

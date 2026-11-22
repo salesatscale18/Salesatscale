@@ -28,17 +28,18 @@ describe("conversation examples", () => {
     const ex = conversationExamples(demo, demoCatalog);
     expect(ex.recommend).toBe("Got it, <what they told you, in your own words>. What fits is the wireless fridge sensor and the kitchen hub. You get a WhatsApp alert the moment a fridge or freezer leaves its range, also at night and on weekends. Does that sound like what you need?");
     expect(ex.close).toBe("If this looks right, I'll send the order form now and you can have the wireless fridge sensor by about 1 Dec. Sounds good?");
-    expect(ex.neededForQuote).toBe("the number of sites");
+    expect(ex.neededForQuote).toBe("the number of sites or the number of fridges and freezers");
     expect(ex.assumed).toBe("I've quoted for <the number of sites you assumed>; tell me if that's different.");
     expect(ex.plays.need).toBe("How do you check your fridge temperatures today?");
     expect(ex.plays.fit).toBe("For <what they described>, the wireless fridge sensor and the kitchen hub cover it.");
     expect(ex.plays.value).toBe("You get a WhatsApp alert the moment a fridge or freezer leaves its range, also at night and on weekends.");
-    // One field needed for the quote: the two-question example stays the fixed one.
-    expect(ex.twoQuestions).toBe(MIXED_EXAMPLES.twoQuestions);
+    // Two fields needed for the quote (sites, then fridges: owner, 22 Nov): the two-question example is the demo's own.
+    expect(ex.twoQuestions).toBe("How many sites (kitchens or branches) would you like to monitor? How many fridges and freezers do you have in total?");
+    expect(ex.twoQuestions).not.toBe(MIXED_EXAMPLES.twoQuestions);
     const p = stableSystemPrompt(demo, seller, demoCatalog);
     expect(p).toContain(`   Example: "${ex.recommend}"`);
     expect(p).toContain(`   Example: "${ex.close}"`);
-    expect(p).toContain("- Needed for the quote (for example the number of sites): ask once.");
+    expect(p).toContain("- Needed for the quote (for example the number of sites or the number of fridges and freezers): ask once.");
     expect(p).toContain(`### Fitting the solution\nWhen: You know enough to recommend.\nDo: 1) Recommend one set`);
     expect(p).toContain(`Example: "${ex.plays.fit}"`);
   });

@@ -13,6 +13,7 @@ export default defineConfig({
     hookTimeout: 60_000,
     // WhatsApp is off by default in the app (WHATSAPP_ENABLED unset). The WhatsApp suites test the channel
     // itself, so it is on here; tests of the default stub it off (vi.stubEnv("WHATSAPP_ENABLED", "")).
-    env: { WHATSAPP_ENABLED: "1" },
+    // No file store in tests (BLOB_READ_WRITE_TOKEN empty): tests that keep files pass a fake store.
+    env: { WHATSAPP_ENABLED: "1", BLOB_READ_WRITE_TOKEN: "" },
   },
 });

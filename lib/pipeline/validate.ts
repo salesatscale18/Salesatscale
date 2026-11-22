@@ -53,7 +53,8 @@ export function isPricingHeardInCalls(statement: string, evidence: Evidence[], i
   return evidence.length > 0 && evidence.every((e) => index.get(e.sourceId)?.kind === "call") && PRICE_RE.test(statement);
 }
 
-export type CleanFact = { topic: string; statement: string; language: string | null; evidence: Evidence[] };
+/** knownFactRef: the known fact (its id in the instruction, e.g. "K12") the model says this fact differs from. */
+export type CleanFact = { topic: string; statement: string; language: string | null; evidence: Evidence[]; knownFactRef?: string };
 export type CleanContradiction = { topic: string; summary: string; options: CleanFact[] };
 export type Gap = { topic: string; question: string };
 export type SourceAbout = { sourceId: string; about: string };
@@ -96,7 +97,8 @@ export function parseFactsOutput(input: unknown, index: CorpusIndex): FactsResul
     const key = normalizeStatement(statement);
     if (seen.has(key)) { dropped.duplicates++; continue; }
     seen.add(key);
-    facts.push({ topic: topicOf(x.topic), statement, language: lang(x.language), evidence });
+    const ref = s(x.known_fact_id, 12);
+    facts.push({ topic: topicOf(x.topic), statement, language: lang(x.language), evidence, ...(ref ? { knownFactRef: ref } : {}) });
   }
 
   const contradictions: CleanContradiction[] = [];
