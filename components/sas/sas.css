@@ -1670,13 +1670,23 @@ label.st-voice__row { cursor: pointer; }
   background: var(--raised); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
 .c-root .rb-day b { font-size: 17px; line-height: 22px; color: var(--ink); }
 /* RB3: in a narrow card (a phone, the desktop chat column) the day chips scroll sideways and read so: 4.5 chips fit (the last one cut in half at the edge), and a
-   fade on the end side (the left in Hebrew) while more days are hidden there (data-more-end, set by the card). */
+   fade on the end side (the left in Hebrew) while more days are hidden there (data-more-end, set by the card), and on the start side once
+   the row is scrolled and earlier days are hidden there (data-more-start). Each fade shows only while there is hidden content on its side. */
 .c-root .rb-days { container-type: inline-size; }
 @container (max-width: 520px) {
   .c-root .rb-day { flex: 0 0 calc((100cqi - 32px) / 4.5); min-width: 52px; padding-inline: 4px; }
 }
-.c-root .rb-days[data-more-end] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
-.c-root .rb-days[data-more-end]:dir(rtl) { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
+.c-root .rb-days { --rb-fade-start: 0px; --rb-fade-end: 0px; }
+.c-root .rb-days[data-more-start] { --rb-fade-start: 32px; }
+.c-root .rb-days[data-more-end] { --rb-fade-end: 32px; }
+.c-root .rb-days:is([data-more-start], [data-more-end]) {
+  -webkit-mask-image: linear-gradient(to right, transparent, #000 var(--rb-fade-start), #000 calc(100% - var(--rb-fade-end)), transparent);
+  mask-image: linear-gradient(to right, transparent, #000 var(--rb-fade-start), #000 calc(100% - var(--rb-fade-end)), transparent);
+}
+.c-root .rb-days:is([data-more-start], [data-more-end]):dir(rtl) {
+  -webkit-mask-image: linear-gradient(to left, transparent, #000 var(--rb-fade-start), #000 calc(100% - var(--rb-fade-end)), transparent);
+  mask-image: linear-gradient(to left, transparent, #000 var(--rb-fade-start), #000 calc(100% - var(--rb-fade-end)), transparent);
+}
 .c-root .rb-day--on { border: 1.5px solid var(--brand); background: var(--bubble); color: var(--brand-text, var(--brand)); }
 .c-root .rb-day--on b { color: var(--brand-text, var(--brand)); }
 .c-root .rb-slots { display: flex; flex-wrap: wrap; gap: 8px; }

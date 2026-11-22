@@ -470,7 +470,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                             {isNeeds && shown ? (
                               <td className="sas-small sas-when sas-lrow__when" style={{ textAlign: "end" }} data-label={t("leads.col.waiting")} title={shown.since.toISOString()}>{waitingFor(shown.since, now)}</td>
                             ) : (
-                              <td className="sas-small sas-when sas-lrow__when" style={{ textAlign: "end" }} data-label={t("leads.col.activity")} title={lead.lastActivityAt.toISOString()}>{timeAgo(lead.lastActivityAt, now, account.timezone)}</td>
+                              <td className="sas-small sas-when sas-lrow__when" style={{ textAlign: "end" }} data-label={t("leads.col.activity")} title={lead.lastActivityAt.toISOString()}>{timeAgo(lead.lastActivityAt, now, viewerZone ?? account.timezone)}</td>
                             )}
                             <td className="sas-lrow__chev" data-label="" aria-hidden="true"><Icon name="chevron-right" /></td>
                           </tr>

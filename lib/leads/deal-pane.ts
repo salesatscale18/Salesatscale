@@ -17,6 +17,11 @@ import { eq } from "drizzle-orm";
 import { sellerAccounts } from "@/db/schema";
 import { asSentence, formatIsoDate, localDateIso } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
+import type { FollowUp } from "@/db/schema";
+import { callUpcoming, teamCallNextStep, type CallbackRequest } from "@/lib/callbacks/rules";
+import { callbackNextStep, leadCallback } from "@/lib/callbacks/service";
+import { followUpNextStep, scheduledFollowUp } from "@/lib/follow-ups/schedule";
+import { viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
 
 export type PaneField = {
   key: string; label: string; value?: string | null; provenance?: DealFieldValue["provenance"];
@@ -74,6 +79,42 @@ export function verifiedOf(v: Pick<DealFieldValue, "provenance" | "updatedAt" | 
 
 type LatestOrder = Parameters<typeof withSignedValues>[1] & { order: { number: number; paymentStatus: string } };
 
+type ScheduledCall = Pick<CallbackRequest, "at" | "timezone" | "status" | "booked" | "brief">;
+type ScheduledFollowUp = Pick<FollowUp, "dueAt" | "status" | "topic">;
+
+/**
+ * The next step of a lead with a live scheduled item (zone review, 22 Nov): the
+ * stored next step bakes the time in the account's zone ("Team call · Mon 23 Nov
+ * 10:00"), so the line is built again from the item's stored instant, in the
+ * viewer's zone as the cards show it, with the same wording as the stored text.
+ * A call still waiting or still ahead, or a scheduled follow-up; the sooner one
+ * when there are both. Null without one (the stored text is shown as it is).
+ * Display only: what the services store (and the agent reads) is unchanged.
+ */
+export function scheduledNextStep(i: {
+  callback: ScheduledCall | null | undefined;
+  followUp: ScheduledFollowUp | null | undefined;
+  /** The follow-up's zone when there is no viewer zone (the account's, as its card). */
+  timezone: string;
+  viewerZone: string | null | undefined;
+  now: Date;
+}): string | null {
+  const when = (at: Date, zone: string) => `${viewerTime(at, i.viewerZone, zone)}${yourTimeSuffix(at, i.viewerZone, zone)}`;
+  const c = i.callback && (i.callback.status === "requested" || callUpcoming(i.callback as CallbackRequest, i.now)) ? i.callback : null;
+  const f = i.followUp?.status === "scheduled" ? i.followUp : null;
+  if (c && (!f || c.at.getTime() <= f.dueAt.getTime())) {
+    const at = when(c.at, c.timezone);
+    return c.booked ? teamCallNextStep(at) : callbackNextStep(at, c.brief, c.status === "confirmed");
+  }
+  return f ? followUpNextStep(when(f.dueAt, i.timezone), f.topic) : null;
+}
+
+/** scheduledNextStep for one lead (Conversations, test lab): its live call and scheduled follow-up, read by account id. */
+export async function leadScheduledNextStep(db: Db, accountId: string, leadId: string, timezone: string, viewerZone: string | null, now = new Date()): Promise<string | null> {
+  const [callback, followUp] = await Promise.all([leadCallback(db, accountId, leadId, now), scheduledFollowUp(db, accountId, leadId)]);
+  return scheduledNextStep({ callback, followUp, timezone, viewerZone, now });
+}
+
 /**
  * The next step the seller reads. After the sale the order's state replaces
  * it; once the quote or the order form is with the buyer the stage says what
@@ -86,6 +127,8 @@ export function nextStepText(i: {
   agentNextStep: string | null | undefined;
   tradeName: string;
   buyerName: string;
+  /** scheduledNextStep: replaces the agent's stored text (its baked time) while a call or follow-up is live. */
+  scheduled?: string | null;
 }): string | null {
   if (i.latestOrder) {
     return t(i.latestOrder.order.paymentStatus === "paid" ? "lead.card.next_after_paid" : "lead.card.next_after_signed", { order: orderLabel(i.tradeName, i.latestOrder.order.number) });
@@ -93,7 +136,8 @@ export function nextStepText(i: {
   const name = i.buyerName.trim().split(/\s+/)[0] || i.buyerName;
   if (i.stage?.stage === "after") return t("lead.card.next_form_out", { name });
   if (i.stage?.stage === "order_form") return t("lead.card.next_quote_out", { name });
-  return i.agentNextStep ? asSentence(i.agentNextStep) : null;
+  const text = i.scheduled || i.agentNextStep;
+  return text ? asSentence(text) : null;
 }
 
 /** The pane from what the page loaded (pure). */
@@ -106,6 +150,8 @@ export function dealPaneView(i: {
   buyerName: string;
   /** The account's zone, for the verified dates. */
   timezone?: string | null;
+  /** scheduledNextStep for the lead, if any. */
+  scheduled?: string | null;
 }): DealPane {
   const playbookFields = i.playbook?.fields ?? [];
   // A signed form fills the company and signer details (verified).
@@ -121,7 +167,7 @@ export function dealPaneView(i: {
     laterUnknown,
     missingCount: laterUnknown.length,
     objections: paneObjections(i.deal?.objections),
-    nextStep: nextStepText({ latestOrder: i.latestOrder, stage: i.stage, agentNextStep: i.deal?.nextStep, tradeName: i.tradeName, buyerName: i.buyerName }),
+    nextStep: nextStepText({ latestOrder: i.latestOrder, stage: i.stage, agentNextStep: i.deal?.nextStep, tradeName: i.tradeName, buyerName: i.buyerName, scheduled: i.scheduled }),
     formVerified: shown.some((f) => f.verified?.source === "form"),
   };
 }
@@ -130,7 +176,7 @@ export function dealPaneView(i: {
  * One lead's pane (Conversations). Lead ids of another account find nothing: an empty pane.
  * `viewerZone`: the viewer's own zone for the verified dates; null: the account's.
  */
-export async function loadDealPane(db: Db, accountId: string, lead: { id: string; fullName: string }, tradeName: string, viewerZone: string | null = null): Promise<DealPane> {
+export async function loadDealPane(db: Db, accountId: string, lead: { id: string; fullName: string }, tradeName: string, viewerZone: string | null = null, now = new Date()): Promise<DealPane> {
   const [playbook, deal, orders, stage, [acc]] = await Promise.all([
     currentPlaybook(db, accountId),
     getDealState(db, accountId, lead.id),
@@ -138,5 +184,6 @@ export async function loadDealPane(db: Db, accountId: string, lead: { id: string
     leadStage(db, accountId, lead.id),
     db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
   ]);
-  return dealPaneView({ playbook, deal: deal ?? null, latestOrder: orders[0] ?? null, stage, tradeName, buyerName: lead.fullName, timezone: viewerZone ?? acc?.timezone });
+  const scheduled = await leadScheduledNextStep(db, accountId, lead.id, acc?.timezone ?? "UTC", viewerZone, now);
+  return dealPaneView({ playbook, deal: deal ?? null, latestOrder: orders[0] ?? null, stage, tradeName, buyerName: lead.fullName, timezone: viewerZone ?? acc?.timezone, scheduled });
 }

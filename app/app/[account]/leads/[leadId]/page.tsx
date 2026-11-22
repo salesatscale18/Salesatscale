@@ -28,7 +28,7 @@ import { ScrollLeadToHash, ScrollLeadToLatest } from "./scroll-latest";
 import { isolate } from "@/lib/leads/bidi";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
-import { dealPaneView } from "@/lib/leads/deal-pane";
+import { dealPaneView, scheduledNextStep } from "@/lib/leads/deal-pane";
 import { DealStatePane } from "./deal-pane";
 import { formatMoney } from "@/lib/domain/money";
 import { chatLinkStatus, simulatorOpenerFacts } from "@/lib/simulator/service";
@@ -141,7 +141,9 @@ export default async function LeadCardPage({
   // The deal pane, one source with Conversations (lib/leads/deal-pane.ts): a signed form fills the company and
   // signer details (verified); after the sale the order's state is the next step; once the quote or the form is
   // with the buyer the stage says what happens next (the agent's free text only before that).
-  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName, timezone: viewerZone ?? account.timezone });
+  // A live call or follow-up: the next step from its stored instant in the viewer's zone, as its card (not the stored text's baked time).
+  const scheduled = scheduledNextStep({ callback, followUp, timezone: account.timezone, viewerZone, now });
+  const pane = dealPaneView({ playbook, deal: deal ?? null, latestOrder, stage, tradeName: account.tradeName, buyerName: lead.fullName, timezone: viewerZone ?? account.timezone, scheduled });
   const nextStep = pane.nextStep;
   // Quotes an order came from show "Ordered".
   const orderedQuotes = new Set(leadOrders.map(({ order }) => order.quoteId));

@@ -266,7 +266,7 @@ export function BookingCard({ token, booking, tz, lang, seller, onReach }: {
   const dayRow = useRef<HTMLDivElement>(null);
   // The day row shows only while the card offers slots (not on "Call booked" until Change time).
   const rowShown = days.length > 0 && !(booking.booked && !reopen);
-  const moreEnd = useMoreAtEnd(dayRow, rowShown ? days.length : 0);
+  const more = useMoreOnSides(dayRow, rowShown ? days.length : 0);
   // RB3: the selected day in view, on load and on select (the row only: the chat log does not move).
   useEffect(() => {
     const row = dayRow.current;
@@ -353,7 +353,7 @@ export function BookingCard({ token, booking, tz, lang, seller, onReach }: {
       ) : null}
       {days.length === 0 ? <p className="rb-card__text">{t("buyer.book.none")}</p> : (
         <>
-          <div className="rb-days" role="group" aria-label={t("buyer.book.days")} ref={dayRow} data-more-end={moreEnd ? "" : undefined}>
+          <div className="rb-days" role="group" aria-label={t("buyer.book.days")} ref={dayRow} data-more-start={more.start ? "" : undefined} data-more-end={more.end ? "" : undefined}>
             {days.map((d) => {
               const g = parts(d.first, tz, locale, { weekday: "short", day: "numeric" });
               const on = d.key === shownDay?.key;
@@ -394,19 +394,32 @@ function scrollChipIntoView(row: HTMLElement, chip: HTMLElement) {
   else if (c.right > r.right - room) row.scrollLeft += c.right - r.right + room;
 }
 
-/** Whether a sideways row has more to scroll on its end side (right in LTR, left in RTL): the fade shows then. */
-function useMoreAtEnd(ref: React.RefObject<HTMLElement | null>, count: number): boolean {
-  const [more, setMore] = useState(false);
+/** Hidden content on each side of a sideways row (scrollMore), kept up to date as it scrolls or resizes. */
+function useMoreOnSides(ref: React.RefObject<HTMLElement | null>, count: number): { start: boolean; end: boolean } {
+  const [more, setMore] = useState({ start: false, end: false });
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    const check = () => setMore(Math.ceil(Math.abs(el.scrollLeft) + el.clientWidth) < el.scrollWidth - 1);
+    const check = () => {
+      const next = scrollMore(el);
+      setMore((m) => (m.start === next.start && m.end === next.end ? m : next));
+    };
     check();
     el.addEventListener("scroll", check, { passive: true });
     window.addEventListener("resize", check);
     return () => { el.removeEventListener("scroll", check); window.removeEventListener("resize", check); };
   }, [ref, count]);
   return more;
+}
+
+/**
+ * Whether a sideways row has more to scroll on its start side (left in LTR, right in RTL: scrolled past
+ * earlier days) and on its end side (right in LTR, left in RTL): the fade on that side shows then.
+ * scrollLeft runs 0 → positive in LTR and 0 → negative in RTL, so its size is the distance from the start.
+ */
+export function scrollMore(el: Pick<HTMLElement, "scrollLeft" | "clientWidth" | "scrollWidth">): { start: boolean; end: boolean } {
+  const fromStart = Math.abs(el.scrollLeft);
+  return { start: fromStart > 1, end: Math.ceil(fromStart + el.clientWidth) < el.scrollWidth - 1 };
 }
 
 const PHONE = "\u0000";
