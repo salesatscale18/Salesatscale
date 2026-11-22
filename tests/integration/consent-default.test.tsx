@@ -23,10 +23,12 @@ vi.mock("@/lib/auth/account", () => ({
   actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
+vi.mock("next/headers", () => ({ cookies: async () => ({ get: () => undefined }) }));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
   usePathname: () => "/",
+  useRouter: () => ({ refresh: () => {} }),
 }));
 
 const { addLeadAction, importLeadsAction } = await import("@/app/app/[account]/leads/actions");
@@ -36,6 +38,9 @@ const { startWhatsAppConversation } = await import("@/lib/channels/whatsapp");
 const { ensureChatStarted } = await import("@/lib/chat/start");
 const { nudgeBuyer } = await import("@/lib/sms/service");
 const { MockSmsTransport } = await import("@/lib/sms/transport");
+const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
+const { POST: intakePost } = await import("@/app/api/leads/[account]/route");
+const { createIntakeKey } = await import("@/lib/leads/service");
 
 const ALL_DAY = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
 const form = (v: Record<string, string | File>) => {
@@ -166,5 +171,51 @@ describe("consent on by default", () => {
       expect(await latestConsent(db, acc.id, lead.id)).toBeNull();
       expect(await ensureChatStarted(db, { accountId: acc.id, leadId: lead.id })).toEqual({ started: false, reason: "no_consent" });
     }
+  });
+
+  const consentLine = async (leadId: string) => {
+    const html = renderToStaticMarkup(await LeadCardPage({ params: Promise.resolve({ account: acc.slug, leadId }), searchParams: Promise.resolve({}) }));
+    return (html.split('data-testid="consent"')[1] ?? "").split("</span>")[0].replace(/^[^>]*>/, "").replace(/<[^>]+>/g, "").replace(/[\u2066-\u2069]/g, "");
+  };
+
+  it("Lead card: the automatic Add lead record has no 'Recorded by'; a typed or other source keeps it", async () => {
+    const auto = await consentLine((await leadByPhone("+972525550111")).id);
+    expect(auto).toMatch(/^Consent: Added by Dana Levi in the app, .+\.$/);
+    expect(auto).not.toContain("Recorded by");
+    // Import file and a row's own note: still "Recorded by".
+    expect(await consentLine((await leadByPhone("+972525550201")).id)).toMatch(/^Consent: Imported from expo-leads\.csv, .+\. Recorded by you\.$/);
+    expect(await consentLine((await leadByPhone("+972525550202")).id)).toContain("Recorded by you.");
+    // A note that only looks like the automatic one but has no recording user (intake) keeps the full line.
+    const [l] = await db.insert(leads).values({ accountId: acc.id, fullName: "Look Alike", phone: "+972525550299", language: "en", origin: "webhook" }).returning();
+    await db.insert(consentRecords).values({ accountId: acc.id, leadId: l.id, wording: "x", source: "Added by Someone in the app", capturedAt: new Date() });
+    expect(await consentLine(l.id)).toContain("Recorded by");
+  });
+
+  it("the buyer sending the website form again gives consent to a lead saved unticked; a CSV re-import or a seller re-add does not", async () => {
+    // Saved unticked by the seller.
+    await add({ phone: "0525550300", after: "me" });
+    const lead = await leadByPhone("+972525550300");
+    expect(await latestConsent(db, acc.id, lead.id)).toBeNull();
+
+    // Seller re-adds: shown as a duplicate, nothing changes.
+    expect(await add({ phone: "0525550300", consent: "yes" })).toMatchObject({ status: "error", formError: "duplicate" });
+    // CSV re-import with the whole-file box ticked: updated, still no consent.
+    const csv = "full_name,phone,language\nRina Cohen,0525550300,en";
+    const imp = await importLeadsAction({ status: "idle" }, form({ slug: acc.slug, fileConsent: "yes", file: new File([csv], "again.csv", { type: "text/csv" }) }));
+    expect(imp).toMatchObject({ status: "done", result: { updated: 1 } });
+    expect(await latestConsent(db, acc.id, lead.id)).toBeNull();
+    expect(await ensureChatStarted(db, { accountId: acc.id, leadId: lead.id })).toEqual({ started: false, reason: "no_consent" });
+
+    // The buyer submits the website form (intake API) again, with no consent note: their own request.
+    const { key } = await createIntakeKey(db, { userId: me.id, actingAs: false }, acc.id, "Website");
+    const res = await intakePost(new Request(`http://test/api/leads/${acc.slug}`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+      body: JSON.stringify({ full_name: "Rina Cohen", phone: "+972525550300" }),
+    }), { params: Promise.resolve({ account: acc.slug }) });
+    expect(res.status).toBe(200);
+    expect((await res.json()).id).toBe(lead.id);
+    const c = await latestConsent(db, acc.id, lead.id);
+    expect(c?.consent).toMatchObject({ source: 'Sent with intake key "Website"', wording: CONSENT_WORDING_DEFAULT, recordedByUserId: null });
+    expect(await ensureChatStarted(db, { accountId: acc.id, leadId: lead.id })).toMatchObject({ started: true });
   });
 });

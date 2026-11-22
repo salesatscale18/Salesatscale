@@ -85,9 +85,12 @@ describe("POST /api/leads/[account]", () => {
     expect(res.status).toBe(201);
     const { id } = await res.json();
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(0);
-    // A later delivery without a note does not add consent to that existing lead.
-    expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570" }, keyA)).status).toBe(200);
+    // Sent again with given: false, still none.
+    expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570", consent: { given: false } }, keyA)).status).toBe(200);
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(0);
+    // The buyer sends the form again without saying no: their own request, so consent is recorded (UX, 22 Nov).
+    expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570" }, keyA)).status).toBe(200);
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(1);
   });
 
   it("creates, then updates the same lead", async () => {

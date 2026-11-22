@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   bearerKey, csvEscape, csvToRawLeads, formatPhone, generateIntakeKey, hashIntakeKey, maskPhone, mergeLeadFields, normalizePhone, parseCsv, parseLead,
-  CONSENT_WORDING_DEFAULT, consentSourceImport, consentSourceIntake, consentSourceManual,
+  CONSENT_WORDING_DEFAULT, consentSourceImport, consentSourceIntake, consentSourceManual, isAutomaticManualConsent,
 } from "@/lib/leads/rules";
 import { displayName } from "@/lib/auth/display";
 
@@ -106,6 +106,11 @@ describe("parseLead", () => {
     expect(consentSourceManual("Dana Levi")).toBe("Added by Dana Levi in the app");
     expect(consentSourceImport("expo-leads.csv")).toBe("Imported from expo-leads.csv");
     expect(consentSourceIntake("Main site")).toBe('Sent with intake key "Main site"');
+    expect(isAutomaticManualConsent({ source: consentSourceManual("Dana Levi"), recordedByUserId: "u1" })).toBe(true);
+    expect(isAutomaticManualConsent({ source: consentSourceManual("Dana Levi"), recordedByUserId: null })).toBe(false);
+    expect(isAutomaticManualConsent({ source: "Signed sheet at the expo", recordedByUserId: "u1" })).toBe(false);
+    expect(isAutomaticManualConsent({ source: consentSourceImport("x.csv"), recordedByUserId: "u1" })).toBe(false);
+    expect(isAutomaticManualConsent({ source: "Added by  in the app".replace("  ", " "), recordedByUserId: "u1" })).toBe(false);
     expect(consentSourceManual(displayName({ firstName: null, lastName: null, email: "dana+test@seller.example" }))).toBe("Added by dana in the app");
   });
 

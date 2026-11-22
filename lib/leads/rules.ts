@@ -85,7 +85,19 @@ export const CONSENT_WORDING_DEFAULT = "This person asked to be contacted by SMS
  * automatically: who added the lead, when, and from where). Names come from
  * the display-name helpers (lib/auth/display.ts), never a full email.
  */
-export const consentSourceManual = (who: string) => `Added by ${who} in the app`.slice(0, 300);
+const MANUAL_SOURCE = { prefix: "Added by ", suffix: " in the app" } as const;
+export const consentSourceManual = (who: string) => `${MANUAL_SOURCE.prefix}${who.slice(0, 200)}${MANUAL_SOURCE.suffix}`;
+/**
+ * Whether a consent record is the automatic one from the Add lead panel (written
+ * by consentSourceManual with the person who added the lead). The lead card
+ * then leaves out "Recorded by", which would name the same person again.
+ * No schema field marks it, so writer and reader share MANUAL_SOURCE; a record
+ * with no recording user (intake, simulated) is never treated as one.
+ */
+export function isAutomaticManualConsent(c: { source: string; recordedByUserId: string | null }): boolean {
+  return !!c.recordedByUserId && c.source.startsWith(MANUAL_SOURCE.prefix) && c.source.endsWith(MANUAL_SOURCE.suffix)
+    && c.source.length > MANUAL_SOURCE.prefix.length + MANUAL_SOURCE.suffix.length;
+}
 export const consentSourceImport = (fileName: string) => `Imported from ${fileName}`.slice(0, 300);
 export const consentSourceIntake = (keyName: string) => `Sent with intake key "${keyName}"`.slice(0, 300);
 

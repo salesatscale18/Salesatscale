@@ -33,8 +33,9 @@ Leads sent here asked to hear from the seller, so a new lead gets a consent
 record automatically (the time it arrived and the intake key), unless
 `consent.given` is `false`: then the lead is saved and the agent never
 contacts them. A consent note that is sent is kept. A delivery for a lead that
-already exists adds a consent record only when it carries its own note or
-`consent.given: true`.
+already exists counts as the person's own request: it adds a consent record
+unless `consent.given` is `false`, also to a lead the seller saved without
+consent. (A CSV re-import or a seller adding the lead again never does.)
 
 Every lead gets a market: the market linked to the intake key, else the market whose form country values match `country`, else the market with the longest matching phone prefix, else the home market. A lead that already exists keeps its market.
 

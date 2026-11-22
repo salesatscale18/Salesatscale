@@ -11,7 +11,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { mayDeleteRecordings } from "@/lib/voice/recording-playback";
 import { nameInitials, personName } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
-import { maskPhone } from "@/lib/leads/rules";
+import { isAutomaticManualConsent, maskPhone } from "@/lib/leads/rules";
 import { formatDateTimeIn, formatDayMonthIn, formatShortDateTimeIn } from "@/lib/format";
 import { TIMELINE_COOKIE, timelineOpen } from "@/lib/leads/timeline-fold";
 import { TimelineFold } from "./timeline-fold";
@@ -478,7 +478,10 @@ export default async function LeadCardPage({
                     <div className="sas-stack-2" style={{ flex: 1 }}>
                     <span>
                       {consent
-                        ? t("lead.card.consent", {
+                        // The automatic record from Add lead already names who added the lead: no "Recorded by".
+                        ? isAutomaticManualConsent(consent.consent)
+                          ? t("lead.card.consent_auto", { date: formatDateTimeIn(consent.consent.capturedAt, tz), source: isolate(consent.consent.source) })
+                          : t("lead.card.consent", {
                             date: formatDateTimeIn(consent.consent.capturedAt, tz),
                             source: isolate(consent.consent.source),
                             who: consent.recordedBy ? whoIn(consent.recordedBy) : t("lead.origin.webhook"),

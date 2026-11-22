@@ -239,6 +239,7 @@
   "lead.card.learn": "Deal state",
   "lead.card.learn_pending": "No playbook yet. Set one up in Setup, Playbook, and what the agent learns shows here.",
   "lead.card.consent": "Consent: {source}, {date}. Recorded by {who}.",
+  "lead.card.consent_auto": "Consent: {source}, {date}.",
   "lead.card.consent_none": "No consent record. This lead can't be contacted.",
   "lead.card.timeline": "Timeline",
   "lead.card.opt_out": "Mark as opted out",
