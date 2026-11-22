@@ -265,15 +265,18 @@ export async function resolveShortCode(db: Db, code: string): Promise<{ token: s
 }
 
 export { CHAT_OPENED_EVENT };
-/** Opens of the short link closer together than this count once (a reload, a link preview). */
+/** Opens of the chat closer together than this count once (a reload, a link preview, /c/ then its redirect). */
 export const CHAT_OPEN_DEDUPE_MS = 10 * 60_000;
 
 /**
- * Records that the buyer opened the chat from an SMS: the seller's thread
- * shows "{buyer} opened the chat · {time}" (board ReachSeller), and any open
- * counts for the named-time retry. Once per CHAT_OPEN_DEDUPE_MS.
+ * Records that the buyer opened the chat: from an SMS (/c/<code>, via "sms")
+ * or straight from the chat link (/chat/<token>, via "link", RB2). The
+ * seller's thread shows "{buyer} opened the chat · {time}" (board
+ * ReachSeller), and any open counts for the named-time retry. Once per
+ * CHAT_OPEN_DEDUPE_MS, whichever way. The callers never record the seller's
+ * own staff or a platform admin (chatViewerIsStaff).
  */
-export async function recordChatOpen(db: Db, accountId: string, leadId: string, now = new Date()): Promise<boolean> {
+export async function recordChatOpen(db: Db, accountId: string, leadId: string, now = new Date(), via: "sms" | "link" = "sms"): Promise<boolean> {
   const [recent] = await db.select({ id: leadEvents.id }).from(leadEvents)
     .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), eq(leadEvents.type, CHAT_OPENED_EVENT),
       gt(leadEvents.createdAt, new Date(now.getTime() - CHAT_OPEN_DEDUPE_MS))))
@@ -283,7 +286,7 @@ export async function recordChatOpen(db: Db, accountId: string, leadId: string, 
     .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false)))
     .orderBy(desc(conversations.createdAt)).limit(1);
   await db.insert(leadEvents).values({
-    accountId, leadId, type: CHAT_OPENED_EVENT, actor: "buyer", data: { via: "sms", ...(conv ? { conversationId: conv.id } : {}) }, createdAt: now,
+    accountId, leadId, type: CHAT_OPENED_EVENT, actor: "buyer", data: { via, ...(conv ? { conversationId: conv.id } : {}) }, createdAt: now,
   });
   return true;
 }

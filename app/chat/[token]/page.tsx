@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
 import { isLocale, translator, type Locale } from "@/lib/i18n";
-import { buyerChat, chatNames, resolveChatLink } from "@/lib/simulator/service";
+import { buyerChat, chatNames, recordChatOpen, resolveChatLink } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
 import { ChatClient, type ChatSms } from "./chat-client";
 import { ensureChatStarted } from "@/lib/chat/start";
@@ -70,6 +70,15 @@ export default async function BuyerChatPage({ params, searchParams }: { params: 
   }
   // Every buyer chat starts with the agent's intro (lib/chat/start.ts): never an empty chat.
   await ensureChatStarted(appDb, { accountId: ctx.account.id, leadId: ctx.lead.id });
+  // RB2: the buyer opened the chat ("{buyer} opened the chat" in the seller's thread), from the SMS (/c/ redirects here with
+  // ?via=sms and records it first) or straight from the chat link. Once per 10 minutes (recordChatOpen). Never a simulated
+  // buyer, and never a viewer signed in as the seller's staff or a platform admin (a preview from the lead card).
+  // Who is looking is read once per page load (the voice button below asks the same).
+  let staffCheck: Promise<boolean> | null = null;
+  const viewerIsStaff = () => (staffCheck ??= chatViewerIsStaff(ctx.account.id));
+  if (!isSimulatedLead(ctx.lead) && !(await viewerIsStaff())) {
+    await recordChatOpen(appDb, ctx.account.id, ctx.lead.id, new Date(), sp.via === "sms" ? "sms" : "link");
+  }
   const chat = await buyerChat(appDb, ctx);
   // "Talk to us" (live voice): every gate on the server; the page only shows the button when they all hold.
   const voiceOn = voiceMode() !== "off";
@@ -79,7 +88,7 @@ export default async function BuyerChatPage({ params, searchParams }: { params: 
   if (voiceOn) {
     const gate = await buyerVoiceGate(appDb, ctx);
     // The reason it is off: a simulated chat, or a viewer signed in as the seller's staff or a platform admin.
-    chat.voice = await buyerVoiceView(gate, ctx.lead, () => chatViewerIsStaff(ctx.account.id));
+    chat.voice = await buyerVoiceView(gate, ctx.lead, viewerIsStaff);
   }
   // Times in the lead's market time zone, as the pay page and the seller's thread show them (R5-3). Read only: no market is created here.
   const timeZone = marketTimezone(ctx.account, ctx.lead.marketId ? await getMarket(appDb, ctx.account.id, ctx.lead.marketId) : null);

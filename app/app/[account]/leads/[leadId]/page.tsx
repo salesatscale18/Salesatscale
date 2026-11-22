@@ -166,6 +166,9 @@ export default async function LeadCardPage({
         : event.type.startsWith("team_question.")
         // O4: the question as the team reads it (and how the answer reached the buyer).
         ? `${String((event.data as { question?: string } | null)?.question ?? "")}${user ? ` · ${who(user)}` : ""}`
+        // RB2: the buyer's booking says its time in the title ("Call booked · {time}"): no second time under it.
+        : event.type === "callback.requested" && (event.data as { booked?: unknown } | null)?.booked === true
+        ? undefined
         : event.type.startsWith("callback.") || event.type === "team_call.logged"
         // O6: the call time, in the zone it was set in, and who acted.
         ? `${formatDueLocal(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`

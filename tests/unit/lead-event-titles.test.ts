@@ -90,4 +90,20 @@ describe("lead event titles", () => {
     expect(leadEventTitle("quote.created", null, t)).toBe("Quote created");
     for (const kind of SMS_KINDS) expect(keys[`lead.event.sms_kind.${kind}` as MessageKey], kind).toBeTruthy();
   });
+
+  it("RB2: a buyer's booking (callback.requested with booked: true) is \"Call booked · {time}\"; an older request stays \"Call requested\"", () => {
+    const at = "2026-11-23T13:30:00.000Z";
+    expect(leadEventTitle("callback.requested", { booked: true, at, timezone: "Asia/Jerusalem" }, t)).toBe("Call booked · Mon 23 Nov 15:30");
+    expect(leadEventTitle("callback.requested", { booked: true, at, timezone: "Europe/London" }, t)).toBe("Call booked · Mon 23 Nov 13:30");
+    // No zone, or one Intl does not know: UTC.
+    expect(leadEventTitle("callback.requested", { booked: true, at }, t)).toBe("Call booked · Mon 23 Nov 13:30");
+    expect(leadEventTitle("callback.requested", { booked: true, at, timezone: "Mars/Base" }, t)).toBe("Call booked · Mon 23 Nov 13:30");
+    // Older requests (the agent's request_callback, then the seller confirmed): unchanged.
+    expect(leadEventTitle("callback.requested", { at, timezone: "Asia/Jerusalem" }, t)).toBe("Call requested");
+    expect(leadEventTitle("callback.requested", { booked: false, at }, t)).toBe("Call requested");
+    expect(leadEventTitle("callback.requested", { booked: true, at: "not a time" }, t)).toBe("Call requested");
+    expect(leadEventTitle("callback.requested", null, t)).toBe("Call requested");
+    // A change keeps its own title.
+    expect(leadEventTitle("callback.changed", { at, by: "buyer" }, t)).toBe("Call time changed");
+  });
 });

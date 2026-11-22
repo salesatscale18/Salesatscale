@@ -23,6 +23,12 @@
  * lead's buyer asked to be contacted outside contact hours (Saturday at 21:00,
  * allowed since the buyer asked for it): a buyer-named follow-up, which goes
  * out as the "It's the time you asked for" SMS at that time.
+ * The booking flow is in the web chat (channel "chat"), which the buyer page
+ * lists (RB2): the bistro's booking card and booked call, a fifth lead's
+ * booking card nobody booked yet (day chips and slots), and a sixth lead whose
+ * buyer-named time was 20 minutes before the seed ran, already fired (follow-up
+ * message, named_time SMS in mock mode): opened with ?via=sms within 2 hours,
+ * the buyer page shows the talk-now card.
  *
  * Quote states: an open quote (sent, no order) whose Valid until is tomorrow
  * in the account's time zone (amber on Quotes), and a held quote the seller
@@ -42,14 +48,18 @@
 import { randomUUID } from "node:crypto";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sellerAccounts, sources, toolCalls, users, type DealFieldValue, type DealObjection } from "@/db/schema";
+import { agentVersions, consentRecords, conversations, dealStates, followUps, leadEvents, leads, messages, pipelineRuns, sellerAccounts, sources, toolCalls, users, type DealFieldValue, type DealObjection } from "@/db/schema";
 import { confirmCallback, leadCallback, requestCallback } from "@/lib/callbacks/service";
 import { bookCall, bookingView, offerBooking } from "@/lib/team-calls/service";
 import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
 import { declineHeldQuote } from "@/lib/agent/quote-approval";
 import { CALLBACK_EVENTS, parseCallTime } from "@/lib/callbacks/rules";
 import { askTeam } from "@/lib/team-questions/service";
-import { isoInZone } from "@/lib/follow-ups/rules";
+import { followUpText, isoInZone } from "@/lib/follow-ups/rules";
+import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
+import { ensureChatLink, recordChatOpen } from "@/lib/simulator/service";
+import { WEB_CHAT_CHANNEL } from "@/lib/simulator/rules";
+import { SMS_EVENTS, smsSegments } from "@/lib/sms/rules";
 import { normalizeQuestion } from "@/lib/agent/knowledge";
 import type { Actor } from "@/lib/accounts/audit";
 import { handBack, takeOver } from "@/lib/agent/conversation";
@@ -67,7 +77,7 @@ import { createQuote, markQuoteSent, QUOTE_VALID_DAYS, type QuoteInput } from "@
 import { addFile, addNote, addWebsite, listSections, saveParse } from "@/lib/sources/service";
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 import { seedVoiceCall } from "./voice-call-seed";
-import { seedDemoSms } from "./sms-seed";
+import { demoSmsText, seedDemoSms } from "./sms-seed";
 
 // ---------------------------------------------------------------------------
 // Content (fictional)
@@ -182,7 +192,7 @@ const ORDER_CHATS = {
   },
 } as const;
 
-/** Leads 4–15 and 17 (1–3 are the plain new leads of the seed, 16 the voice call lead). Each carries one state. */
+/** Leads 4–15 and 17–19 (1–3 are the plain new leads of the seed, 16 the voice call lead). Each carries one state. */
 export const STATE_LEADS = {
   bankTransfer: { n: 4, fullName: "רונית דמו", company: "מאפיית דמו רמת גן", email: "ronit@bakery-demo.example", language: "he" },
   payStep: { n: 5, fullName: "Avi Demo", company: "Deli Demo Jaffa", email: "avi@deli-demo.example", language: "en" },
@@ -197,6 +207,8 @@ export const STATE_LEADS = {
   quoteExpiring: { n: 14, fullName: "Yoni Demo", company: "Ice Cream Demo Haifa", email: "yoni@icecream-demo.example", language: "en" },
   quoteDeclined: { n: 15, fullName: "Erez Demo", company: "Butcher Demo Petah Tikva", email: "erez@butcher-demo.example", language: "en" },
   buyerNamedCall: { n: 17, fullName: "Rotem Demo", company: "Bakery Demo Rishon", email: "rotem@bakery-demo.example", language: "en" },
+  bookingOpen: { n: 18, fullName: "Yael Demo", company: "Cafe Demo Raanana", email: "yael@cafe-demo.example", language: "en" },
+  talkNow: { n: 19, fullName: "Ido Demo", company: "Pastry Demo Kfar Saba", email: "ido@pastry-demo.example", language: "en" },
 } as const;
 
 /** O6: the briefs of the two seeded call requests. */
@@ -205,7 +217,12 @@ export const CALL_BRIEFS = {
   done: "Wants to hear how installation works in a running kitchen; have the installation steps ready.",
   confirmed: "Wants to plan sensors for a wine cellar and two cold rooms; have the cellar setup ready.",
   buyerNamed: "Wants to go over sensors for 5 bakery fridges; free only on Saturday evening. Have the 1-site quote ready.",
+  bookingOpen: "Wants to hear how alerts reach the night staff; have the alert settings ready.",
 } as const;
+
+/** The buyer-named time of the talk-now lead: this many minutes before the seed ran (the talk-now card shows for 2 hours after it). */
+export const TALK_NOW_AGO_MIN = 20;
+export const TALK_NOW_TOPIC = "sensors for 4 pastry fridges";
 
 /** The call time the buyer names, outside the demo's contact hours (Saturday is off). */
 export const BUYER_NAMED_CALL = { weekday: 6, time: "21:00", words: "Saturday at 21:00" } as const;
@@ -247,6 +264,8 @@ export type ReviewStates = {
   callDoneConversationId: string;
   callConfirmedConversationId: string;
   buyerNamedCallConversationId: string;
+  bookingOpenConversationId: string;
+  talkNowConversationId: string;
   expiringQuoteId: string;
   declinedQuoteId: string;
   stepsConversationId: string;
@@ -370,12 +389,15 @@ export async function seedReviewStates(
   const spendCapConversationId = await spendCapChat(db, accountId, leadIds.spendCap, liveVersionId, now);
   const handedBackConversationId = await handedBack(db, actor, accountId, leadIds.handBack, liveVersionId, now);
   // O6: an open call request (Needs you "Call requested"), and a confirmed call 3 hours ago ("How did the call go?").
-  const callRequestedConversationId = await callRequested(db, accountId, leadIds.callRequested, liveVersionId, now);
+  const callRequestedConversationId = await callRequested(db, actor, accountId, leadIds.callRequested, liveVersionId, now);
   const callDoneConversationId = await callDone(db, userId, accountId, leadIds.callDone, liveVersionId, now);
   // A call the seller confirmed for tomorrow at 11:00: Leads shows "Call · <time>" as the agent's next step.
   const callConfirmedConversationId = await callConfirmed(db, userId, accountId, leadIds.callConfirmed, liveVersionId, now);
   // The buyer names Saturday at 21:00 (outside contact hours, allowed for a buyer's time): Needs you "Call requested".
   const buyerNamedCallConversationId = await buyerNamedCall(db, accountId, leadIds.buyerNamedCall, liveVersionId, now);
+  // The web chat's booking card before a booking (day chips and slots), and a buyer-named time 20 minutes ago (talk-now card).
+  const bookingOpenConversationId = await bookingOpen(db, actor, accountId, leadIds.bookingOpen, liveVersionId, now);
+  const talkNowConversationId = await talkNow(db, actor, accountId, leadIds.talkNow, liveVersionId, now);
   // Quotes: one sent whose Valid until is tomorrow (amber), one held and declined by the seller.
   const expiringQuoteId = await expiringQuote(db, userId, accountId, leadIds.quoteExpiring, liveVersionId, now);
   const declinedQuoteId = await declinedQuote(db, userId, accountId, leadIds.quoteDeclined, liveVersionId, now);
@@ -417,7 +439,7 @@ export async function seedReviewStates(
     sources: 6, facts: TO_REVIEW.length, leads: Object.keys(STATE_LEADS).length,
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
-    callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, buyerNamedCallConversationId, expiringQuoteId, declinedQuoteId,
+    callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, buyerNamedCallConversationId, bookingOpenConversationId, talkNowConversationId, expiringQuoteId, declinedQuoteId,
     passedConversationId, failedConversationId, analysisRuns,
   };
 }
@@ -471,9 +493,19 @@ async function insertThread(db: Db, accountId: string, conversationId: string, l
 
 const fact = (value: string, at: Date): DealFieldValue => ({ value, provenance: "buyer", updatedAt: at.toISOString() });
 
-async function newConversation(db: Db, accountId: string, leadId: string, versionId: string, language: string, at: Date, status: "open" | "human") {
+async function newConversation(
+  db: Db, accountId: string, leadId: string, versionId: string, language: string, at: Date, status: "open" | "human", channel: "whatsapp" | typeof WEB_CHAT_CHANNEL = "whatsapp",
+) {
   const id = randomUUID();
-  await db.insert(conversations).values({ id, accountId, leadId, channel: "whatsapp", agentVersionId: versionId, status, language, createdAt: at, updatedAt: at });
+  await db.insert(conversations).values({ id, accountId, leadId, channel, agentVersionId: versionId, status, language, createdAt: at, updatedAt: at });
+  return id;
+}
+
+/** A real lead's web chat (channel "chat", the one the buyer page lists) and the lead's chat link, as the voice call lead's. */
+async function newWebChat(db: Db, actor: Actor & { userId: string }, accountId: string, leadId: string, versionId: string, at: Date) {
+  await ensureChatLink(db, actor, accountId, leadId);
+  const id = await newConversation(db, accountId, leadId, versionId, "en", at, "open", WEB_CHAT_CHANNEL);
+  await db.insert(leadEvents).values({ accountId, leadId, type: "conversation.started", actor: "human", actorUserId: actor.userId, data: { conversationId: id, channel: WEB_CHAT_CHANNEL }, createdAt: at });
   return id;
 }
 
@@ -661,9 +693,11 @@ async function handedBack(db: Db, actor: Actor & { userId: string }, accountId: 
  * (bookCall, as the card: confirmed at once, the chat line, the team_call SMS,
  * which a fictional demo number never gets). Not in Needs you: Leads shows
  * "Team call · <time>" as the Next step, and the lead page the Team call card.
+ * In the web chat (channel "chat"), so the buyer page shows the booking card
+ * and the "Call booked" card (RB2: the buyer page lists web chats only).
  */
-async function callRequested(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
-  const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 25), "open");
+async function callRequested(db: Db, actor: Actor & { userId: string }, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newWebChat(db, actor, accountId, leadId, versionId, min(now, 25));
   await insertThread(db, accountId, id, "en", versionId, [
     { actor: "buyer", at: min(now, 25), body: "Hi, we have 3 bistros. Can I talk to someone about the price?" },
     { actor: "agent", at: min(now, 24), body: "Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price I can usually answer right now." },
@@ -838,6 +872,98 @@ async function buyerNamedCall(db: Db, accountId: string, leadId: string, version
   }]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 40)) }, nextStep: followUpNextStep(r.dueLocal, r.followUp.topic) });
+  return id;
+}
+
+/**
+ * RB2: the booking card before a booking. In the web chat the buyer asks for a
+ * person; the agent's request_callback posts the booking card (offerBooking,
+ * as the tool). Nobody books, so the buyer page shows the day chips and the
+ * free slots (the slot the bistro booked is taken). Stays with the agent: not
+ * in Needs you (an offered card is not a call yet).
+ */
+async function bookingOpen(db: Db, actor: Actor & { userId: string }, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newWebChat(db, actor, accountId, leadId, versionId, min(now, 15));
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 15), body: "Hi, we have a cafe with 3 fridges. Who gets the alert at night?" },
+    { actor: "agent", at: min(now, 14), body: "You choose who gets each alert, and after how many minutes out of range. Do you have staff on site at night?" },
+    { actor: "buyer", at: min(now, 12), body: "No. I'd like to talk this through with someone on your team." },
+  ]);
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 15)) } });
+  const input = { brief: CALL_BRIEFS.bookingOpen };
+  const offered = await offerBooking(db, { accountId, leadId, conversationId: id }, input, min(now, 11));
+  if (!offered.ok) throw new Error(`Demo seed: booking card refused: ${offered.rule}`);
+  await insertThread(db, accountId, id, "en", versionId, [{
+    actor: "agent", at: new Date(min(now, 11).getTime() + 1000), body: "Of course. Pick a time that suits you and someone from our team will call you. Meanwhile I'm here for any question.",
+    calls: [{ name: "request_callback", input, result: { ok: true } }],
+  }]);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 11) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  return id;
+}
+
+/**
+ * RB2: the talk-now card. In the web chat the buyer names a time (TALK_NOW_AGO_MIN
+ * minutes before the seed ran); the agent schedules it with schedule_follow_up and
+ * buyer_named_time (scheduleFollowUp, as the tool). Then the follow-up fires the
+ * way lib/follow-ups/scheduler.ts processOne does it (no cron run here, which
+ * would touch other accounts): the row is locked (scheduled → sent), the
+ * follow-up message is written into the chat as an app message, the row ends
+ * "sent" with its sentMessageId, and "follow_up.sent" is recorded. The
+ * named_time SMS is recorded as mock mode records it (sms.mocked, as
+ * lib/demo/sms-seed.ts does: a demo number never gets one). The buyer opened
+ * the chat from it 3 minutes later (chat.opened), so the named-time retry
+ * (runNamedTimeRetries) never texts this lead. For 2 hours after the named
+ * time, /chat/<token>?via=sms shows the talk-now card; "Pick another time"
+ * opens the new-time card.
+ */
+async function talkNow(db: Db, actor: Actor & { userId: string }, accountId: string, leadId: string, versionId: string, now: Date) {
+  const id = await newWebChat(db, actor, accountId, leadId, versionId, min(now, 75));
+  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const [lead] = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  const [version] = await db.select({ playbook: agentVersions.playbook }).from(agentVersions).where(and(eq(agentVersions.id, versionId), eq(agentVersions.accountId, accountId)));
+  if (!account || !lead || !version) throw new Error("Demo seed: talk-now account, lead or version not found");
+  const tz = account.timezone || "UTC";
+  const dueLocal = isoInZone(min(now, TALK_NOW_AGO_MIN), tz).slice(0, 16);
+  await insertThread(db, accountId, id, "en", versionId, [
+    { actor: "buyer", at: min(now, 75), body: "Hi, we have a pastry shop with 4 fridges. I'd like to hear about sensors." },
+    { actor: "agent", at: min(now, 74), body: "Of course. When suits you to go over it?" },
+    { actor: "buyer", at: min(now, 72), body: `I'm in the kitchen until ${dueLocal.slice(11, 16)}. Can you come back to me then?` },
+  ]);
+  const at = min(now, 71);
+  const input = { due_at: dueLocal, topic: TALK_NOW_TOPIC, buyer_named_time: true };
+  const r = await scheduleFollowUp(db, { accountId, leadId, conversationId: id, language: "en" }, input, at);
+  if (!r.ok) throw new Error(`Demo seed: talk-now follow-up refused: ${r.rule}`);
+  await insertThread(db, accountId, id, "en", versionId, [{
+    actor: "agent", at: new Date(at.getTime() + 1000), body: `Done. I'll message you on ${r.dueForBuyer} your time.`,
+    calls: [{ name: "schedule_follow_up", input, result: { ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal } }],
+  }]);
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 75)) } });
+  // The scheduler's lock: only one run moves a row out of "scheduled" (a cron run that took it first has fired it already).
+  const [f] = await db.update(followUps).set({ status: "sent", reason: "sending" })
+    .where(and(eq(followUps.id, r.followUp.id), eq(followUps.accountId, accountId), eq(followUps.status, "scheduled"))).returning();
+  const due = r.followUp.dueAt;
+  if (f) {
+    const body = followUpText({ language: "en", leadName: lead.fullName, topic: f.topic, playbook: version.playbook, account });
+    const messageId = randomUUID();
+    await db.insert(messages).values({ id: messageId, accountId, conversationId: id, actor: "agent", body, language: "en", deliveryStatus: "delivered", createdAt: due });
+    await db.insert(toolCalls).values({
+      accountId, conversationId: id, messageId, sequence: 0, name: APP_MESSAGE_CALL, input: {},
+      result: { message_id: messageId, kind: "follow_up", follow_up_id: f.id }, outcome: "ok", createdAt: due,
+    });
+    await db.update(followUps).set({ status: "sent", reason: null, sentMessageId: messageId }).where(and(eq(followUps.id, f.id), eq(followUps.accountId, accountId)));
+    await db.insert(leadEvents).values({ accountId, leadId, type: "follow_up.sent", actor: "agent", data: { followUpId: f.id }, createdAt: due });
+    await db.update(conversations).set({ updatedAt: due }).where(and(eq(conversations.accountId, accountId), eq(conversations.id, id)));
+    // The named_time SMS as mock mode records it (nudgeBuyer, no user: actor "system").
+    const text = await demoSmsText(db, accountId, leadId, "named_time");
+    if (!text) throw new Error("Demo seed: the talk-now lead has no chat link");
+    await db.insert(leadEvents).values({
+      accountId, leadId, type: SMS_EVENTS.mocked, actor: "system", createdAt: new Date(due.getTime() + 1000),
+      data: { kind: "named_time", messageId, conversationId: id, mode: "mock", notSent: "mock", segments: smsSegments(text), text },
+    });
+  }
+  // The buyer opened the chat from the SMS (the seller's thread: "Ido opened the chat"; no retry SMS).
+  await recordChatOpen(db, accountId, leadId, new Date(due.getTime() + 3 * 60_000));
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: due }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   return id;
 }
 

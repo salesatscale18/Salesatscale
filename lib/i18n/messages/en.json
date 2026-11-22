@@ -3682,7 +3682,6 @@
   "team_call.when": "{when} · {minutes} min",
   "team_call.booked_by": "Booked by {name} in the chat.",
   "team_call.set_by_team": "Time set by the team.",
-  "team_call.zone_same": "Buyer's time: same ({zone}).",
   "team_call.zone_differs": "Buyer's time: {time} ({zone}).",
   "team_call.who": "Who calls",
   "team_call.who_anyone": "Anyone on your team",
@@ -3711,7 +3710,6 @@
   "team_call.no_answer_hint": "One SMS with the chat link and \"pick a new time\". The call stays in Needs you until it is moved or cancelled.",
   "team_call.moved_submit": "Save, then set the new time",
   "team_call.moved_hint": "Set the new time with Change time. The buyer is told in the chat and by SMS.",
-  "team_call.save": "Save",
   "team_call.edit_title": "Edit the call log",
   "team_call.notice.save": "Call log saved.",
   "team_call.notice.agent": "Call logged. The agent goes on in the chat, and the buyer got the chat link.",
@@ -3764,5 +3762,8 @@
   "lead.event.sms_kind.order_form": "order form ready",
   "lead.event.sms_kind.team_call": "team call booked",
   "lead.event.sms_kind.chat_link": "chat link",
-  "lead.event.sms_kind.other": "text message"
+  "lead.event.sms_kind.other": "text message",
+  "lead.event.callback.booked": "Call booked · {time}",
+  "team_call.log_call": "Call · {when}",
+  "team_call.save_log": "Save log"
 }
