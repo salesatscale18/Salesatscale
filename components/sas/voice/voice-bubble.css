@@ -1,6 +1,6 @@
 /* The voice bubble (components/sas/voice/voice-bubble.tsx) on the buyer pages: the chat and the order form.
    Seller-branded via --brand (both pages set it); logical properties only, so Hebrew mirrors. */
-.vb { --vb-size: 56px; --vb-brand: var(--brand, #0f6b5a); --vb-on: var(--brand-on, #fff); --vb-ink: var(--ink, #0f1420);
+.vb { --vb-size: 60px; --vb-brand: var(--brand, #0f6b5a); --vb-on: var(--brand-on, #fff); --vb-ink: var(--ink, #0f1420);
   --vb-muted: var(--muted, #566073); --vb-line: var(--line, #dde1e8);
   z-index: 30; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; pointer-events: none;
   font-family: inherit; font-size: 14px; line-height: 20px; color: var(--vb-ink); }
@@ -11,27 +11,36 @@
 .vb--fixed { position: fixed; inset-block-end: calc(16px + env(safe-area-inset-bottom)); inset-inline-end: calc(16px + env(safe-area-inset-right)); }
 .vb[dir="rtl"].vb--fixed { inset-inline-end: calc(16px + env(safe-area-inset-left)); }
 
+/* The bubble (board VoiceBubbleBack): 60 px, the brand colour, a white ring and a soft shadow, five rounded bars. */
 .vb-btn { position: relative; width: var(--vb-size); height: var(--vb-size); border-radius: 999px; border: 0; padding: 0; cursor: pointer;
   background: var(--vb-brand); color: var(--vb-on); display: grid; place-items: center;
-  box-shadow: 0 6px 18px rgba(15, 20, 32, .22), 0 1px 3px rgba(15, 20, 32, .18); }
-.vb-btn:focus-visible { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 3px; }
-/* The agent speaks: a soft ring breathes around the bubble. */
-.vb--speaking .vb-btn::after { content: ""; position: absolute; inset: -6px; border-radius: 999px; border: 2px solid var(--vb-brand); opacity: .45;
-  animation: vb-ring 1.4s ease-out infinite; }
-@keyframes vb-ring { from { transform: scale(.92); opacity: .55; } to { transform: scale(1.12); opacity: 0; } }
+  box-shadow: 0 8px 22px rgba(15, 20, 32, .24), 0 0 0 3px #fff; }
+.vb-btn:focus-visible { outline: 3px solid var(--focus, #2b6cb0); outline-offset: 5px; }
+/* Rings around the bubble: connecting (dashed, turning), listening (one thin, still), agent speaking (two, pulsing outward). */
+.vb-ring { position: absolute; inset: -9px; border-radius: 999px; border: 2px solid var(--vb-brand); opacity: .35; pointer-events: none; }
+.vb--look-listening .vb-ring { inset: -6px; opacity: .25; }
+.vb--look-connecting .vb-ring { border-style: dashed; opacity: .6; animation: vb-turn 2.4s linear infinite; }
+@keyframes vb-turn { to { transform: rotate(360deg); } }
+.vb--look-speaking .vb-ring { animation: vb-ring 1.6s ease-out infinite; }
+.vb--look-speaking .vb-ring--2 { inset: -17px; opacity: .15; animation-delay: .8s; }
+@keyframes vb-ring { from { transform: scale(.88); opacity: .5; } to { transform: scale(1.14); opacity: 0; } }
+/* Muted: dark, the mic-off icon, nothing moves. */
+.vb--look-muted .vb-btn { background: #3a4252; color: #fff; }
+.vb-btn__icon { display: grid; place-items: center; }
+.vb-btn__icon .sas-ico, .vb-btn__icon svg { width: 24px; height: 24px; }
+/* Standing by: white with a brand outline, a still line. */
+.vb--look-standby .vb-btn { background: #fff; color: var(--vb-brand); box-shadow: 0 8px 22px rgba(15, 20, 32, .18), 0 0 0 3px #fff, inset 0 0 0 2px var(--vb-brand); }
 .vb--ended .vb-btn { background: var(--vb-muted); cursor: default; }
-.vb--muted .vb-btn { background: var(--vb-ink); }
-.vb-btn__muted { position: absolute; inset-block-start: -2px; inset-inline-end: -2px; width: 20px; height: 20px; border-radius: 999px; background: #fff;
-  color: var(--danger, #c0392b); display: grid; place-items: center; box-shadow: 0 1px 3px rgba(15, 20, 32, .25); }
-.vb-btn__muted .sas-ico, .vb-btn__muted svg { width: 12px; height: 12px; }
 
 .vb-wave { display: flex; align-items: center; gap: 3px; height: 26px; }
 .vb-wave i { display: block; width: 4px; border-radius: 2px; background: currentColor; transition: height 80ms linear; }
 .vb-wave--flat i { height: 4px !important; opacity: .8; }
 .vb-wave--pulse i { animation: vb-pulse 1.1s ease-in-out infinite; }
 @keyframes vb-pulse { 0%, 100% { transform: scaleY(.45); } 50% { transform: scaleY(1); } }
+/* Reduce motion: nothing moves (the rings and bars stay still; the state is in the bubble's name and live region). */
 @media (prefers-reduced-motion: reduce) {
-  .vb-wave--pulse i, .vb--speaking .vb-btn::after { animation: none; }
+  .vb-wave--pulse i, .vb-ring { animation: none !important; }
+  .vb--look-speaking .vb-ring { transform: none; }
   .vb-wave i { transition: none; }
 }
 

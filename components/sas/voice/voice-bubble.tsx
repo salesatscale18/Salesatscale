@@ -16,10 +16,10 @@ import type { MirrorState, TabCommand } from "@/lib/voice/client/tab-link";
 
 type Levels = () => { mic: number; out: number };
 
-/** Bar heights (px) at a full level, and the static picture with reduced motion. */
-const SHAPE = [10, 18, 24, 16, 12];
-/** Standby: a calm, still line (the agent is off the line; speaking brings it back). */
-const STANDBY = [6, 9, 12, 9, 6];
+/** Bar heights (px) at a full level, and the static picture with reduced motion (board VoiceBubbleBack). */
+const SHAPE = [10, 20, 26, 16, 22];
+/** Standby: a still line (the agent is off the line; speaking brings it back). */
+const STANDBY = [4, 4, 4, 4, 4];
 
 /** The still picture for a kind (also the start of the moving ones, and what reduced motion shows). */
 const still = (bars: BubbleBars, i: number) => (bars === "flat" ? 4 : bars === "standby" ? STANDBY[i] : bars === "pulse" ? SHAPE[i] : Math.round(SHAPE[i] * 0.6));
@@ -45,8 +45,8 @@ function Wave({ bars, levels }: { bars: BubbleBars; levels?: Levels }) {
       smooth = smooth * 0.7 + (bars === "mic" ? l.mic : l.out) * 0.3;
       items.forEach((b, i) => {
         const wobble = 0.6 + 0.4 * Math.sin(time / 130 + i * 1.9);
-        // A floor of 35% of the shape: at rest it still reads as a waveform, never as a row of dots.
-        b.style.height = `${Math.max(4, Math.round(SHAPE[i] * Math.max(0.35, Math.min(1, smooth * wobble * 1.5))))}px`;
+        // A floor of 25% of the shape: at rest it still reads as a waveform, never as a row of dots.
+        b.style.height = `${Math.max(4, Math.round(SHAPE[i] * Math.max(0.25, Math.min(1, smooth * wobble * 1.5))))}px`;
       });
       raf = requestAnimationFrame(tick);
     };
@@ -82,6 +82,10 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
   onNoteDone?: () => void;
 }) {
   const view = bubbleView(state, tr, agentName);
+  // The picture (board VoiceBubbleBack): a dashed ring turns while connecting; one thin ring while listening; two
+  // rings pulse outward while the agent speaks; muted: dark with the mic-off icon; standby: white, brand outline.
+  const look = view.ended ? "ended" : state.muted ? "muted" : state.phase === "connecting" || state.phase === "reconnecting" ? "connecting"
+    : view.standby ? "standby" : view.speaking ? "speaking" : view.bars === "mic" ? "listening" : "plain";
   const [open, setOpen] = useState(false);
   const menuId = useId();
   const root = useRef<HTMLDivElement>(null);
@@ -150,8 +154,8 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
   const announced = placement === "dock" && state.phase !== "live" ? "" : view.word;
   return (
     <div
-      ref={root} dir={dir} className={`vb vb--${placement}${view.speaking ? " vb--speaking" : ""}${view.ended ? " vb--ended" : ""}${state.muted ? " vb--muted" : ""}${view.standby ? " vb--standby" : ""}`}
-      data-voice-bubble="" data-bubble-phase={state.phase} data-bubble-live={state.live ?? ""} data-bubble-muted={state.muted ? "" : undefined}
+      ref={root} dir={dir} className={`vb vb--${placement} vb--look-${look}${view.speaking ? " vb--speaking" : ""}${view.ended ? " vb--ended" : ""}${state.muted ? " vb--muted" : ""}${view.standby ? " vb--standby" : ""}`}
+      data-voice-bubble="" data-bubble-look={look} data-bubble-phase={state.phase} data-bubble-live={state.live ?? ""} data-bubble-muted={state.muted ? "" : undefined}
     >
       {open ? <BubbleMenu id={menuId} state={state} view={view} tr={tr} act={act} /> : null}
       {flash ? (
@@ -173,8 +177,9 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
         ref={button} type="button" className="vb-btn" aria-label={label} title={label} aria-haspopup="menu" aria-expanded={open} aria-controls={open ? menuId : undefined}
         onClick={() => !view.ended && setOpen((x) => !x)} data-bubble-button=""
       >
-        <Wave bars={view.bars} levels={levels} />
-        {state.muted && !view.ended ? <span className="vb-btn__muted" aria-hidden="true"><Icon name="mic-off" /></span> : null}
+        {look === "connecting" || look === "listening" || look === "speaking" ? <span className="vb-ring" aria-hidden="true" /> : null}
+        {look === "speaking" ? <span className="vb-ring vb-ring--2" aria-hidden="true" /> : null}
+        {look === "muted" ? <span className="vb-btn__icon" aria-hidden="true"><Icon name="mic-off" /></span> : <Wave bars={view.bars} levels={levels} />}
       </button>
       {/* The one live region: it changes only with the state (listening, agent speaking, standing by, muted, ended),
           never with the levels, the time or a caption, so a screen reader hears each state once. */}

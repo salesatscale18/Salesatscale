@@ -50,7 +50,7 @@ async function bundlePage(entry = "harness-page.tsx"): Promise<{ js: string; css
     plugins: [{
       name: "server-actions-stub",
       setup(b) {
-        b.onResolve({ filter: /^\.\/actions$/ }, (args) => (args.importer.includes(`${path.sep}app${path.sep}chat${path.sep}`) ? { path: path.join(__dirname, "stub-server-actions.ts") } : undefined));
+        b.onResolve({ filter: /^\.\/(?:reach-)?actions$/ }, (args) => (args.importer.includes(`${path.sep}app${path.sep}chat${path.sep}`) ? { path: path.join(__dirname, "stub-server-actions.ts") } : undefined));
       },
     }],
     banner: { js: "globalThis.process ??= { env: {} };" },

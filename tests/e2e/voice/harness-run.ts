@@ -162,7 +162,7 @@ async function bubbleSection(browser: Browser, base: string) {
     await shot(chat, `bubble-chat-${sh.name}`);
     await chat.click("[data-bubble-button]");
     check(await chat.locator("[data-bubble-menu]").isVisible(), `${sh.name}: tapping the bubble opens the call controls`);
-    check((await chat.locator("[data-bubble-end]").textContent())?.includes(sh.lang === "he" ? "חזרה לטקסט" : "Back to text") ?? false, `${sh.name}: Back to text in the menu`);
+    check((await chat.locator("[data-bubble-end]").textContent())?.includes(sh.lang === "he" ? "סיום שיחה" : "End call") ?? false, `${sh.name}: End call in the menu`);
     check((await chat.locator("[data-bubble-speaker]").count()) === (desk ? 1 : 0), desk ? `${sh.name}: Speaker with two outputs` : `${sh.name}: no Speaker item where the browser offers no choice`);
     await shot(chat, `bubble-chat-menu-${sh.name}`);
     await chat.keyboard.press("Escape");
@@ -218,7 +218,7 @@ async function bubbleSection(browser: Browser, base: string) {
       await form.click("[data-bubble-button]");
       check((await form.getAttribute('[data-bubble-speaker] [role="menuitemradio"]:has-text("Headphones")', "aria-checked")) === "true", "and the form tab shows it picked");
       await form.click("[data-bubble-end]");
-      check(await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), "Back to text from the form tab ends the call in the chat tab");
+      check(await chat.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), "End call from the form tab ends the call in the chat tab");
       check(await form.waitForSelector('[data-voice-bubble][data-bubble-phase="ended"]', { timeout: 5000 }).then(() => true, () => false), "the form bubble says the call ended");
       await shot(form, `bubble-form-ended-${sh.name}`);
       check(await form.waitForSelector("[data-voice-bubble]", { state: "detached", timeout: 10_000 }).then(() => true, () => false), "then it goes");

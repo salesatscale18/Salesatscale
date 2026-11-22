@@ -47,7 +47,10 @@ export function mirrorFromSnapshot(
   };
 }
 
-/** Which waveform the bubble draws: the agent's audio, the buyer's mic, a slow pulse (checking, connecting), calm and still (standby), or flat. */
+/**
+ * Which waveform the bubble draws: the agent's audio, the buyer's mic, a slow pulse (checking), a still line
+ * (standby), or flat (connecting and reconnecting, where a dashed ring turns instead; muted; ending; ended).
+ */
 export type BubbleBars = "out" | "mic" | "pulse" | "standby" | "flat";
 
 export type BubbleView = {
@@ -81,8 +84,9 @@ export function bubbleView(m: MirrorState, tr: Tr, agentName: string): BubbleVie
     const k = m.endReason === "idle" ? "bubble.ended_idle" : m.endReason === "agent_closed" ? "bubble.ended_agent" : m.endReason === "limit" ? "bubble.ended_limit" : "bubble.ended";
     return v("flat", word(k), { controls: false, ended: true, a11y: a("ended") });
   }
-  if (m.phase === "connecting") return v("pulse", word("connecting.title"), { controls: false, a11y: a("connecting") });
-  if (m.phase === "reconnecting") return v("pulse", word("reconnecting.title"), { controls: false, a11y: a("reconnecting") });
+  // Connecting (board VoiceBubbleBack): the bars stay still; a dashed ring turns around the bubble.
+  if (m.phase === "connecting") return v("flat", word("connecting.title"), { controls: false, a11y: a("connecting") });
+  if (m.phase === "reconnecting") return v("flat", word("reconnecting.title"), { controls: false, a11y: a("reconnecting") });
   if (m.phase === "ending") return v("flat", word("ending.title"), { controls: false, a11y: a("ending") });
   // Muted outranks standby, as in the strip: "Just speak" would not be true (the menu still offers the wake).
   if (m.muted) return v("flat", word("muted.title"), { standby: m.live === "standby", a11y: a("muted") });

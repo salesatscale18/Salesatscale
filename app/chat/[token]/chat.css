@@ -136,9 +136,9 @@
 /* The voice bubble's dock (components/sas/voice/voice-bubble.tsx): zero height between the messages and the
    composer, so the bubble sits at the bottom-end of the messages, just above the composer, and never covers Send. */
 .c-bubble-dock { position: relative; height: 0; flex: none; z-index: 3; }
-/* While the bubble shows, the thread keeps room for it at the bottom (bubble 56 px + its 12 px lift + 12 px), so the last
-   message never sits under it. */
-.c-frame:has(.c-bubble-dock .vb) .c-log { padding-block-end: 80px; }
+/* While the bubble shows, the thread keeps room for it at the bottom (bubble 60 px + its 12 px lift + the outer ring's
+   17 px + 4 px), so the last message never sits under it. */
+.c-frame:has(.c-bubble-dock .vb) .c-log { padding-block-end: 93px; }
 
 /* RA (reach: web chat for real leads, board ReachChat / ReachSms). The chat menu in the header
    (stop text messages, or turn them back on), the "Stop text messages" link at the top of a chat
