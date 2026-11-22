@@ -113,7 +113,7 @@ describe("recording a call", () => {
     expect(c.lines.join("\n")).not.toContain("voice/");
   });
 
-  it("the notice: the first sentence of the agent's first line, once per call (not again after a reconnect)", async () => {
+  it("the notice: right after the greeting and introduction of the agent's first line, once per call (not again after a reconnect)", async () => {
     const c = await newCall();
     await c.run(15_000);
     c.model.connections.at(-1)!.simulateGoAway();
@@ -122,7 +122,7 @@ describe("recording a call", () => {
     await c.run(15_000);
     await end(c);
     const said = await agentLines(c.conversationId, c.sessionId);
-    expect(said[0].startsWith(`${RECORDING_NOTICE.en} Hi Test, this is `)).toBe(true);
+    expect(said[0]).toMatch(new RegExp(`^Hi Test, this is [^.]+, the automated assistant of Acme\\. ${RECORDING_NOTICE.en.replace(/\./g, "\\.")} \\S`));
     expect(said.join(" ").split(RECORDING_NOTICE.en)).toHaveLength(2);
     expect(c.model.connections).toHaveLength(2);
   });
@@ -132,7 +132,9 @@ describe("recording a call", () => {
     await c.run(15_000);
     await end(c);
     const said = await agentLines(c.conversationId, c.sessionId);
-    expect(said[0].startsWith(RECORDING_NOTICE.he)).toBe(true);
+    // After the Hebrew greeting and introduction, before the first question.
+    expect(said[0]).toContain(` ${RECORDING_NOTICE.he} `);
+    expect(said[0].indexOf(RECORDING_NOTICE.he)).toBeGreaterThan(0);
     expect(said[0]).not.toContain(RECORDING_NOTICE.en);
   });
 
@@ -235,6 +237,15 @@ describe("the player in the seller's thread", () => {
     expect(html).toContain("Recording · 1:35");
     for (const state of ["off", "failed", "recording", null]) {
       expect(voiceMarkers([{ ...base, id: "x", recordingState: state, recordingSec: 95 }])[1]).not.toHaveProperty("recording");
+    }
+    const dir = process.env.VOICE_RENDER_DIR;
+    if (dir) {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
+      const started = renderToStaticMarkup(createElement(MarkerEntry, { marker: { kind: "voice_started", at }, meId: null, time: "10:00", timeTitle: "" }));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "thread-call-recording.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css} body{margin:0}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:block;padding:24px;max-width:720px">${started}<div class="sas-small" style="margin:12px 0;text-align:center">(the call's lines)</div>${html}</div></div></body></html>`);
     }
     // Without the seller's route base (the buyer's thread) there is no player.
     expect(renderToStaticMarkup(createElement(MarkerEntry, { marker: saved, meId: null, time: "10:01", timeTitle: "" }))).not.toContain("<audio");

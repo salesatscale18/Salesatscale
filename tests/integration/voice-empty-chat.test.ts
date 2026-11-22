@@ -196,7 +196,8 @@ describe("voice on a chat that has not started", () => {
     await done;
     const said = ws.out.filter((x): x is string => typeof x === "string").map((x) => JSON.parse(x) as { t: string; role?: string; text?: string; final?: boolean })
       .filter((m) => m.t === "transcript" && m.role === "agent" && m.final);
-    expect(said[0]?.text).toBe("So, what made you get in touch today?");
+    // The call is recorded (on by default): the notice comes first, before the pick-up line.
+    expect(said[0]?.text).toBe("This call may be recorded to improve our service. So, what made you get in touch today?");
     expect(said.some((m) => /automated assistant/.test(m.text ?? ""))).toBe(false);
     // The chat has the opener once (written by the start), then the call's lines.
     const stored = await db.select().from(messages).where(and(eq(messages.conversationId, r.conversationId), eq(messages.actor, "agent")));

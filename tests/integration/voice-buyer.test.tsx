@@ -435,7 +435,8 @@ describe("the call continues the chat", () => {
     // The opener of a continuing call is the disclosure line.
     const [opener] = await db.select().from(messages).where(and(eq(messages.conversationId, b.conversationId), eq(messages.voiceSessionId, r.sessionId)));
     // The agent wrote last (its chat opener, a question not yet answered): the call re-asks it, spoken.
-    expect(opener.body).toBe("So, what made you get in touch today?");
+    // The call is recorded (on by default): the notice is the first sentence of the pick-up line.
+    expect(opener.body).toBe("This call may be recorded to improve our service. So, what made you get in touch today?");
     // The chat route refuses a separate chat turn while the call runs.
     const refused = await post("messages", b.token, { text: "hello?", clientId: crypto.randomUUID() }, messagesRoute);
     expect(refused.status).toBe(409);

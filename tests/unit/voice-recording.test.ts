@@ -158,12 +158,16 @@ describe("settings and the notice", () => {
     expect(resolveRecordingSettings({ recordingNotice: false })).toEqual({ recordCalls: true, recordingNotice: false });
   });
 
-  it("the notice goes first in the quoted line, in the call's language", () => {
+  it("the notice: owner wording; after the greeting and introduction on a new call, first on a pick-up; named language otherwise", () => {
+    expect(RECORDING_NOTICE).toEqual({ en: "This call may be recorded to improve our service.", he: "השיחה עשויה להיות מוקלטת לצורכי שיפור השירות." });
     expect(recordingNoticeText("he")).toBe(RECORDING_NOTICE.he);
     expect(recordingNoticeText("fr")).toBe(RECORDING_NOTICE.en);
-    const p = withRecordingNotice('The call has just connected. Say your opening line now, in your own voice: "Hi Dana, this is Maya."', RECORDING_NOTICE.en);
-    expect(p).toContain(`"${RECORDING_NOTICE.en} Hi Dana, this is Maya."`);
-    expect(p).toContain("The first sentence is the recording notice");
-    expect(withRecordingNotice("Say hello.", RECORDING_NOTICE.en)).toContain(`"${RECORDING_NOTICE.en}"`);
+    const opener = withRecordingNotice('The call has just connected. Say your opening line now, in your own voice: "Hi Dana, this is Maya from Polar. You asked about sensors. How many sites do you have?"', RECORDING_NOTICE.en, { position: "opener" });
+    expect(opener).toContain(`"Hi Dana, this is Maya from Polar. ${RECORDING_NOTICE.en} You asked about sensors. How many sites do you have?"`);
+    expect(opener).toContain("right after your greeting and introduction, before your first question");
+    const pickup = withRecordingNotice('The call has just connected; the buyer switched the chat to voice. … say: "I\'m here, go ahead."', RECORDING_NOTICE.en, { position: "pickup" });
+    expect(pickup).toContain(`"${RECORDING_NOTICE.en} I'm here, go ahead."`);
+    expect(withRecordingNotice('Say it: "Bonjour, ici Maya. Combien de sites?"', RECORDING_NOTICE.en, { position: "opener", languageName: "French" })).toMatch(/Say the recording notice in French\.$/);
+    expect(withRecordingNotice("Say hello.", RECORDING_NOTICE.en, { position: "pickup" })).toContain(`as your first sentence: "${RECORDING_NOTICE.en}".`);
   });
 });
