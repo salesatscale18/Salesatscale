@@ -16,9 +16,11 @@ import { BuyerCallBar, ChatVoiceBubble } from "./voice";
 import { Icon } from "@/components/sas/icon";
 import type { BuyerVoiceState } from "@/lib/voice/buyer";
 import { resumeSmsAction } from "./actions";
+import { rememberZoneAction } from "./reach-actions";
 // Reach RB: the talk-now, new-time and booking cards, and the "SMS sent" chips (board ReachChat).
 import { BookingCard, CardRow, chipsBefore, NewTimeCard, SmsChip, TalkNowCard, useBuyerZone } from "./reach";
 import type { ChatReach } from "@/lib/chat/reach";
+import { cursorOf, placeBookingCards } from "@/lib/chat/booking-order";
 import type { TalkNow } from "@/lib/follow-ups/named-time";
 
 export type ChatStrings = {
@@ -100,14 +102,19 @@ const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", rememberZone = false, voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
   /** A simulated buyer's chat: the "Simulated chat" banner shows (never on a real buyer's chat). */
   simulated?: boolean;
   /** A real lead's text messages: the stop link (opened from an SMS) and the chat menu. Null: no SMS on this chat. */
   sms?: ChatSms | null;
-  /** The lead's market time zone: times and dates read as on the pay page and the seller's thread (R5-3). */
+  /**
+   * RB3: the buyer's zone before the browser's is known (the server render): the one stored for this buyer, else the
+   * lead's market zone. Every time on the page (bubbles, dates, call rows, chips and cards) then uses the browser's.
+   */
   timeZone?: string;
+  /** A real buyer (not the seller's staff): the browser's zone is stored for the buyer when it differs from `timeZone`. */
+  rememberZone?: boolean;
   /** Buyer calls (live voice): null while voice calls are off for the platform (nothing changes on the page). */
   voice?: { agentName: string; gender: string; /** The voice bubble's tab link to this conversation's order form tabs (lib/voice/tab-key.ts). */ tabKey?: string | null } | null;
   /** Reach RB: the booking card's state and the SMS chips (refreshed on every poll). */
@@ -115,10 +122,14 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   /** Reach RB: opened from the named-time SMS: the talk-now card, or the new-time card after the second SMS. */
   talkNow?: TalkNow | null;
 }) {
-  // Reach RB: card state, and the buyer's own zone for every time on the cards (the browser's, else the market's).
+  // Reach RB: card state, and the buyer's own zone for every time on the page (the browser's, else the stored or market one).
   const [reach, setReach] = useState<ChatReach | null>(initialReach);
   const [talkCard, setTalkCard] = useState<"talk_now" | "new_time" | null>(talkNow?.kind ?? null);
   const buyerZone = useBuyerZone(timeZone);
+  // RB3: store the browser's zone for this buyer (once, when it differs), so the next render and the server's texts use it.
+  useEffect(() => {
+    if (rememberZone && buyerZone !== timeZone) void rememberZoneAction(token, buyerZone).catch(() => undefined);
+  }, [rememberZone, buyerZone, timeZone, token]);
   const [items, setItems] = useState<Shown[]>(initial.messages);
   const [cards, setCards] = useState(initial.cards ?? {});
   const [typing, setTyping] = useState(initial.typing);
@@ -147,7 +158,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const tr = translator((lang === "he" ? "he" : "en") as Locale);
   const logRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const lastId = useRef<string | null>(initial.messages.at(-1)?.id ?? null);
+  const lastId = useRef<string | null>(cursorOf(initial.messages));
   const busy = useRef(false);
   const base = `/chat/${token}/messages`;
   const locale = lang === "he" ? "he-IL" : "en-GB";
@@ -180,7 +191,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       });
       const incoming = data.messages.filter((m) => m.from !== "buyer");
       if (incoming.length) setAnnounce(incoming.map((m) => `${m.name ?? seller}: ${m.body}`).join("\n"));
-      if (data.messages.length) lastId.current = data.messages.at(-1)!.id;
+      if (data.messages.length) lastId.current = cursorOf(data.messages);
     } catch {
       // Offline for a moment: the next poll catches up.
     } finally {
@@ -333,13 +344,14 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
     ? tr(`buyer.voice.why.${voiceState.reason}` as MessageKey) : null;
 
-  const dayKey = dayKeyIn(timeZone);
+  // One zone for the whole page (RB3): the buyer's.
+  const dayKey = dayKeyIn(buyerZone);
   const now = new Date();
   const yesterday = new Date(now.getTime() - 86_400_000);
   const dateLabel = (d: Date) => dayKey(d) === dayKey(now) ? strings.today
     : dayKey(d) === dayKey(yesterday) ? strings.yesterday
-    : new Intl.DateTimeFormat(locale, { timeZone, day: "numeric", month: locale.startsWith("he") ? "long" : "short", ...(dayKey(d).slice(0, 4) !== dayKey(now).slice(0, 4) ? { year: "numeric" } : {}) }).format(d);
-  const timeOf = (d: Date) => new Intl.DateTimeFormat(locale, { timeZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
+    : new Intl.DateTimeFormat(locale, { timeZone: buyerZone, day: "numeric", month: locale.startsWith("he") ? "long" : "short", ...(dayKey(d).slice(0, 4) !== dayKey(now).slice(0, 4) ? { year: "numeric" } : {}) }).format(d);
+  const timeOf = (d: Date) => new Intl.DateTimeFormat(locale, { timeZone: buyerZone, hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(d);
 
   const rows: ReactNode[] = [];
   let prevDay = "";
@@ -364,7 +376,9 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   };
   // Reach RB: "SMS sent · Sat 21:00" chips, each before the message it points to.
   const chipsLeft = [...(reach?.sms ?? [])];
-  items.forEach((m, i) => {
+  // RB3: the booking card right under the agent's line that offered it, also when that line arrives in a later poll.
+  const shown = placeBookingCards(items, (m) => ({ id: m.id, actor: m.from, isCard: m.kind === "booking", offersCard: !!m.offersBooking }));
+  shown.forEach((m, i) => {
     const d = new Date(m.at);
     // A call's start row goes before its first line (spoken lines are stored after the call connected).
     while (callRows.length && callRows[0].at <= m.at) pushCall(callRows.shift()!);
@@ -395,7 +409,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       );
       return;
     }
-    const answered = items.slice(i + 1).some((n) => n.from !== "buyer" && !n.pending);
+    const answered = shown.slice(i + 1).some((n) => n.from !== "buyer" && !n.pending);
     const state = m.from !== "buyer" ? null : m.pending === "sending" || m.pending === "failed" ? "sent" : answered ? "read" : "delivered";
     const side = m.from === "buyer" ? "out" : "in";
     // A link with a card shows as the card (artboard SimDesktop), not as a raw URL; a message that is only the link is the card alone.

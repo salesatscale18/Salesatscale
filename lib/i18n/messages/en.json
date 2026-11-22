@@ -3656,7 +3656,7 @@
   "buyer.book.change": "Change",
   "buyer.book.phone_label": "Number to call",
   "buyer.book.phone_save": "Use this number",
-  "buyer.book.zone": "Times are your time ({zone}). Dashed: taken.",
+  "buyer.book.zone": "Times are {zone}. Dashed: taken.",
   "buyer.book.days": "Days",
   "buyer.book.slots": "Times",
   "buyer.book.taken": "{time}, taken",

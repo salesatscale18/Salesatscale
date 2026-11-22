@@ -147,7 +147,7 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
             <>
               <dt>{t("team_call.phone")}</dt>
               {/* The full number, here only (everywhere else it is masked). */}
-              <dd><span className="sas-num" dir="ltr" data-testid="team-call-phone">{formatPhone(phone)}</span> <CopyButton value={phone} label={t("team_call.copy")} variant="ghost" /></dd>
+              <dd className="sas-teamcall__phone"><span className="sas-num" dir="ltr" data-testid="team-call-phone">{formatPhone(phone)}</span> <CopyButton value={phone} label={t("team_call.copy")} variant="ghost" /></dd>
             </>
           ) : null}
         </dl>

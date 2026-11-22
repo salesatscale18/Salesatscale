@@ -5,6 +5,10 @@
  * route), so a booking the team moves or cancels shows without a reload.
  * The talk-now and new-time cards come from lib/follow-ups/named-time.ts
  * (page load only: they follow the SMS the buyer opened). Real leads only.
+ *
+ * The buyer's own time zone (RB3, one zone on the buyer page): the browser's,
+ * stored per buyer (lib/team-calls/zone.ts); the page uses the stored one, else
+ * the market's zone, until the browser's is known.
  */
 import { and, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";

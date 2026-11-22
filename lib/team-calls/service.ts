@@ -43,6 +43,7 @@ import { maskSmsPhone } from "@/lib/sms/thread";
 import { isSimulatedLead } from "@/lib/simulator/rules";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
 import { bookingSlots, isFreeSlot, validTimezone, type BookingSlot } from "./slots";
+import { storedBuyerZone } from "./zone";
 
 const DAY = 86_400_000;
 /** How far back the account's bookings are read for taken slots (a booking is at most 7 days ahead). */
@@ -207,7 +208,8 @@ export async function bookCall(
     if (!phone) return { ok: false, reason: "invalid_phone" };
     if (phone === lead.phone) phone = null;
   }
-  const buyerTimezone = validTimezone(input.timezone);
+  // The page sends the browser's zone; else the one stored for this buyer (RB3).
+  const buyerTimezone = validTimezone(input.timezone) ?? await storedBuyerZone(db, account.id, lead.id);
   const [contact, taken, current] = await Promise.all([
     leadContactSettings(db, account, lead.marketId),
     takenSlotTimes(db, account.id, now, lead.id),
