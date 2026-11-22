@@ -691,7 +691,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     });
   });
 
-  it("seller threads frame a call: a start marker before its first line and a summary marker after it (no stored end line shown)", async () => {
+  it("seller threads frame a call: a recorded one is one block; an older one has a start marker before its first line and a summary marker after it (no stored end line shown)", async () => {
     const c = await newCall(null);
     await c.run(15_000);
     await c.speak();
@@ -699,6 +699,12 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await hangUp(c);
     const { conversationView } = await import("@/lib/agent/conversation");
     const { markerText } = await import("@/app/app/[account]/leads/[leadId]/conversation");
+    // A recorded call (on by default) is one block at its summary row: no separate start row.
+    const recorded = await conversationView(db, acc, await conv(c.conversationId));
+    const blocks = (recorded.markers ?? []).filter((m) => m.kind === "voice_started" || m.kind === "voice_ended");
+    expect(blocks).toEqual([expect.objectContaining({ kind: "voice_ended", call: expect.objectContaining({ sessionId: c.sessionId, state: "saved" }) })]);
+    // A call from before recordings (no recording state): framed by a start and a summary row, as before.
+    await db.update(voiceSessions).set({ recordingState: null }).where(eq(voiceSessions.id, c.sessionId));
     const view = await conversationView(db, acc, await conv(c.conversationId));
     const s = await sessionRow(c.sessionId);
     const voice = (view.markers ?? []).filter((m) => m.kind === "voice_started" || m.kind === "voice_ended");
