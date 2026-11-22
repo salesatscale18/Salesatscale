@@ -41,6 +41,9 @@ export function applyVoiceReplacements(text: string, replacements: readonly Voic
 
 /** lib/agent/core/design.ts coreDesign: the chat lines and their spoken form. */
 export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
+  // A realtime model is not held to the tool schema: name where the flag goes (the 22 Nov 2026 call put it in `updates`).
+  { from: "call update_deal_state with recommendation_confirmed true", to: "call update_deal_state with recommendation_confirmed true (its own argument, never a key in updates)", optional: true },
+  { from: "record recommendation_confirmed true.", to: "record recommendation_confirmed true (the recommendation_confirmed argument of update_deal_state, never a key in updates).", optional: true },
   {
     from: '1. Open. One message: who you are, what the buyer asked about, one easy question about their situation today. When "Your opening message" is shown under "Stage now", the opening is already sent: it was your first message.',
     to: '1. Open. You speak first when the call connects, with the line under "Your opening line": who you are, that you are an automated assistant, what the buyer asked about, one easy question. Say it once, then listen.',
@@ -53,7 +56,7 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   { from: "Not this: writing the quote lines or totals yourself, or repeating them after the quote.", to: "Not this: reading out the quote lines, or saying the totals more than once." },
   {
     from: '5. Order form. When the buyer agrees: call send_order_form at once and send the link with one line on what to do there.\n   Example: "Here it is. Fill in your company details, sign and pay; it takes about 2 minutes."',
-    to: '5. Order form. When the buyer agrees: call send_order_form at once, then say the order form link is in the chat, with one line on what to do there, and that they can fill it in now while you stay on the line. Never read the link aloud.\n   Example: "The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I\'m staying on the line."',
+    to: '5. Order form. When the buyer agrees: call send_order_form at once; when its result says it was sent, say the order form link is in the chat, with one line on what to do there, and that they can fill it in now while you stay on the line (if it was not sent, never say it is in the chat). Never read the link aloud.\n   Example: "The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I\'m staying on the line."',
   },
   { from: "- Filled in the order form (company and signer details): never ask in chat.", to: "- Filled in the order form (company and signer details): never ask by voice." },
   {
@@ -147,6 +150,8 @@ export const STABLE_PROMPT_VOICE: readonly VoiceReplacement[] = [
 
 /** The stage block (lib/agent/core/stage.ts), in the per-turn context and in update_deal_state results. */
 export const STAGE_VOICE: readonly VoiceReplacement[] = [
+  // A realtime model is not held to the tool schema: name where the flag goes (the 22 Nov 2026 call put it in `updates`).
+  { from: "call update_deal_state with recommendation_confirmed true", to: "call update_deal_state with recommendation_confirmed true (its own argument, never a key in updates)", optional: true },
   { from: "in one message with four parts", to: "in one turn with four parts", optional: true },
   {
     from: "With the quote, close in the same message: a short lead-in, then offer to send the order form now,",
@@ -155,7 +160,7 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
   },
   {
     from: "call send_order_form at once and send the link with one line on what to do there: fill in company details, sign and pay. Do not ask for company or signer details in chat.",
-    to: "call send_order_form at once and say the order form link is in the chat, with one line on what to do there: fill in company details, sign and pay. Do not ask for company or signer details by voice.",
+    to: "call send_order_form at once and, when its result says it was sent, say the order form link is in the chat, with one line on what to do there: fill in company details, sign and pay (if it was not sent, never say it is in the chat). Do not ask for company or signer details by voice.",
     optional: true,
   },
   { from: "Do: this is your first message.", to: "Do: this is your first turn.", optional: true },
@@ -199,9 +204,10 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- Say prices naturally, as a person would say them out loud; say a total once.",
     "- Never spell out or ask for an email, a company ID or an address by voice: the buyer fills those in the order form.",
     o.fillers
-      ? '- Before a tool that takes time, say a short filler first, for example "One moment, I\'m checking that."'
+      ? '- Before a tool that takes time, say a short filler first, in the language you are speaking with the buyer, for example "One moment, I\'m checking that." said in that language'
       : "- Do not announce your checks; just answer when you have the result.",
     "- If the buyer interrupts you, stop and answer what they said.",
+    "- If you are cut off but hear no words from the buyer (noise, or the echo of your own voice): do not start the answer again and do not answer in another language. Go on from where you stopped, in the language you were speaking, or wait for the buyer. Never switch back to the conversation's first language on your own: keep the language the buyer last spoke.",
     "- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example \"Which is closest: the price, whether it fits, or the timing?\" One short sentence and one question per turn.",
     "- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that \"Open objection\" shows as used.",
     "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",

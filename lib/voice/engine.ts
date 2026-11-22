@@ -11,11 +11,11 @@
  * All database work runs through one serial queue, so messages keep their order.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, exists, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, exists, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, voiceSessions,
+  agentVersions, conversations, leads, messages, quotes, sellerAccounts, toolCalls, voiceSessions,
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
@@ -28,7 +28,7 @@ import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallTimes, type Voic
 import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
-import { loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
+import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine } from "./instructions";
 import { callVoice, isProvenVoiceModel, maxCallSeconds, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
@@ -142,7 +142,29 @@ type AgentTurn = {
 type FinalizeReason = "done" | "interrupted" | "buyer" | "stop";
 
 /** The last agent line this call stored, to merge a resumed line into it or drop a repeated cut copy. */
-type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number };
+type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean; tools: number; startMs: number; cutAtMs?: number };
+
+/**
+ * A cut line followed, within this long and with no buyer line between, by a new agent line: the model was cut by
+ * no words (noise, the echo of its own voice) and said its answer again, maybe in another language (the
+ * 22 Nov 2026 call: a Hebrew answer cut, then the same answer in English 2 s later). One line is kept: the new one.
+ */
+export const FALSE_CUT_REDO_MS = 8_000;
+
+/** Languages written in a script other than Latin. */
+const NON_LATIN = /^(?:he|ar|fa|ur|ru|uk|bg|el|yi)\b/i;
+
+/**
+ * The language the buyer speaks now, from their line (by script): Hebrew or Arabic letters name it; Latin letters
+ * keep the current language when it is a Latin-script one, else `latin` (the call's Latin-script default);
+ * no letters keep the current one.
+ */
+export function spokenLanguageOf(text: string, current: string, latin: string): string {
+  if (/[\u0590-\u05FF]/.test(text)) return "he";
+  if (/[\u0600-\u06FF]/.test(text)) return "ar";
+  if (/[A-Za-z]/.test(text)) return NON_LATIN.test(current) ? latin : current;
+  return current;
+}
 
 /**
  * The language a spoken line is stored with: the buyer may switch languages on a call. Cheap, by script:
@@ -233,6 +255,15 @@ export class VoiceEngine {
   private lines: TranscriptLine[] = [];
   /** The last agent line stored in this call (see finalizeAgentTurn). */
   private lastLine: StoredLine | null = null;
+  /** A buyer line was stored since the last agent line (a cut line then has its answer, not a re-say). */
+  private buyerSinceLastLine = false;
+  /**
+   * The language the call speaks now: the call's language at the start, then the language of the buyer's last
+   * line (by script). Every instruction the engine injects names it, and reconnects and wakes start in it.
+   */
+  private spokenLanguage = "en";
+  /** The call's Latin-script default (the call's language when Latin-script, else English). */
+  private latinLanguage = "en";
   /** Tool calls of a turn that said nothing yet (cut before its first word), for the next line. */
   private carriedTools: ToolRun[] = [];
   /** Usage snapshots, totalled whether the provider reports them per session or per turn. */
@@ -636,6 +667,8 @@ export class VoiceEngine {
       .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent")))).length;
 
     const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) });
+    this.spokenLanguage = ctx.language || "en";
+    this.latinLanguage = NON_LATIN.test(this.spokenLanguage) ? "en" : this.spokenLanguage;
     const gen = ++this.gen;
     let conn: RealtimeConnection;
     const t0 = this.clock.now();
@@ -713,11 +746,30 @@ export class VoiceEngine {
     };
   }
 
+  /** "Say it in Hebrew." for an injected instruction: the language the call speaks now, named. */
+  private sayIn(): string {
+    return `Say it in ${languageNameEn(this.spokenLanguage)}, the language you are speaking with the buyer.`;
+  }
+
+  /**
+   * The buyer's line sets the language the call speaks. When it changes, a model that takes notes mid-call
+   * (OpenAI) is told at once, so it does not drift back after an interruption; Gemini reads it in the
+   * instructions of its next connection.
+   */
+  private trackSpokenLanguage(text: string) {
+    const next = spokenLanguageOf(text, this.spokenLanguage, this.latinLanguage);
+    if (next === this.spokenLanguage) return;
+    this.spokenLanguage = next;
+    if (this.notesMidCall() && this.conn && !this.reconnecting && !this.waking && this.standbySince === null) {
+      this.conn.sendNote?.(`(Note from the system, not from the buyer: the buyer now speaks ${languageNameEn(next)}. Speak ${languageNameEn(next)} from now on, also after an interruption or a pause, until the buyer speaks another language. Do not answer this note.)`);
+    }
+  }
+
   private warnLimit() {
     // On standby (or waking) nobody is listening: the limit just ends the call.
     if (!this.conn || this.reconnecting) return;
     this.send({ t: "notice", kind: "limit_soon" });
-    this.conn?.requestResponse("The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat.");
+    this.conn?.requestResponse(`The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
   }
 
   // -------------------------------------------------------------------------
@@ -761,7 +813,7 @@ export class VoiceEngine {
         if (e.final) turn.finalText = true;
         // The model resumes (or re-says) the line the buyer cut: the live transcript keeps it on one line.
         const last = this.lastLine;
-        if (fresh && last?.cut && (continuesCutLine(turn.text, last.raw) || continuesCutLine(last.raw, turn.text))) turn.id = last.turnId;
+        if (fresh && last?.cut && (continuesCutLine(turn.text, last.raw) || continuesCutLine(last.raw, turn.text) || this.redoesFalseCut(turn))) turn.id = last.turnId;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
       }
@@ -1015,7 +1067,7 @@ export class VoiceEngine {
     const attempt = (async () => {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts,
+        ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, language: this.spokenLanguage,
       });
       openerPrompt = ctx.openerPrompt;
       return this.model.connect(this.sessionConfig(ctx.instructions, ctx), (e) => this.onModelEvent(e, gen));
@@ -1075,6 +1127,8 @@ export class VoiceEngine {
       accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: lineLanguage(masked.text, conv.language),
       voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, typedInCall: typed, createdAt: await this.stamp(),
     });
+    this.buyerSinceLastLine = true;
+    this.trackSpokenLanguage(masked.text);
     const moved = late ? await this.moveAgentLinesAfterBuyer(turn.startMs) : 0;
     this.lines.splice(this.lines.length - moved, 0, { role: "buyer", text: masked.text });
     this.send({ t: "transcript", id: turn.id, role: "buyer", text: masked.text, final: true, atMs: turn.startMs, ...(typed ? { typed: true as const } : {}) });
@@ -1101,7 +1155,7 @@ export class VoiceEngine {
       await this.codeOptOut(masked.text);
     } else if (masked.found) {
       // Card details never belong in a call: the fixed security reply, as in chat.
-      this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY.en}"`);
+      this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY[this.spokenLanguage] ?? CARD_REPLY.en}"`);
     } else if (typed) {
       this.conn.sendText(masked.text);
     }
@@ -1129,7 +1183,7 @@ export class VoiceEngine {
     const r = await this.runRecorded(turn, `optout-${this.turnSeq}`, "record_opt_out", { reason: said.slice(0, 200) });
     if (r.outcome !== "ok") return;
     this.afterOptOut();
-    this.conn?.requestResponse(`The buyer asked not to be contacted again and is now opted out. Say exactly this and nothing else: "${OPT_OUT_REPLY.en}"`);
+    this.conn?.requestResponse(`The buyer asked not to be contacted again and is now opted out. Say exactly this and nothing else: "${OPT_OUT_REPLY[this.spokenLanguage] ?? OPT_OUT_REPLY.en}"`);
   }
 
   private afterOptOut() {
@@ -1177,15 +1231,74 @@ export class VoiceEngine {
     }
   }
 
-  private async runToolForModel(callId: string, name: string, args: unknown) {
+  /**
+   * Tool arguments as the tool takes them, where a realtime model (not strict about the schema) gets them wrong:
+   * - update_deal_state: `recommendation_confirmed` / `price_asked` sent as deal-state fields in `updates` (the
+   *   22 Nov 2026 call: refused twice as "Unknown deal-state fields") become the top-level booleans they are;
+   * - send_order_form: a quote given by its internal id (a uuid from create_quote's result), or a number this
+   *   buyer has no quote for, becomes the buyer's current quote ("Q-<number>").
+   */
+  private async voiceToolArgs(name: string, args: unknown): Promise<unknown> {
+    if (!args || typeof args !== "object" || Array.isArray(args)) return args;
+    const a = { ...(args as Record<string, unknown>) };
+    if (name === "update_deal_state" && Array.isArray(a.updates)) {
+      const facts: Record<string, string> = { recommendation_confirmed: "recommendation_confirmed", _recommendation_confirmed: "recommendation_confirmed", price_asked: "price_asked", _price_asked: "price_asked" };
+      const keep: unknown[] = [];
+      for (const u of a.updates) {
+        const key = u && typeof u === "object" ? String((u as { key?: unknown }).key ?? "").trim() : "";
+        const fact = facts[key];
+        if (!fact) {
+          keep.push(u);
+          continue;
+        }
+        const v = String((u as { value?: unknown }).value ?? "").trim().toLowerCase();
+        if (typeof a[fact] !== "boolean" && /^(true|false|yes|no)$/.test(v)) a[fact] = v === "true" || v === "yes";
+      }
+      a.updates = keep;
+    }
+    if (name === "send_order_form" && this.loaded) {
+      const { account, conv } = this.loaded;
+      const given = String(a.quote ?? "").trim();
+      const number = /^\s*Q-?\d+(\s*v\d+)?\s*$/i.test(given) || /^\d+$/.test(given) ? Number(given.replace(/^\s*Q-?/i, "").replace(/\s*v\d+\s*$/i, "")) : NaN;
+      const own = (await this.db.select({ id: quotes.id, number: quotes.number }).from(quotes)
+        .where(and(eq(quotes.accountId, account.id), eq(quotes.leadId, conv.leadId))).orderBy(desc(quotes.createdAt), desc(quotes.number)));
+      const match = own.find((q) => q.number === number || q.id === given);
+      const pick = match ?? own[0];
+      if (pick && (!match || match.number !== number)) a.quote = `Q-${pick.number}`;
+    }
+    return a;
+  }
+
+  private async runToolForModel(callId: string, name: string, rawArgs: unknown) {
     const turn = this.ensureAgentTurn();
     const label = toolLabel(name);
     this.setState("checking");
     this.send({ t: "tool", id: callId, name, label, status: "running" });
+    const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
     const r = await this.runRecorded(turn, callId, name, args);
     let forModel: Record<string, unknown> = r.result;
+    if (name === "send_order_form" && r.outcome !== "ok") {
+      // Never a success line for a form that was not sent (the 22 Nov 2026 call said "the link is in the chat").
+      const why = typeof r.result.rule === "string" ? r.result.rule : typeof r.result.error === "string" ? r.result.error : "it could not be sent";
+      forModel = {
+        ...r.result,
+        message: `The order form was NOT sent (${why}). Do not say the order form or its link is in the chat. ${typeof r.result.message === "string" ? `${r.result.message} ` : ""}Tell the buyer in one short sentence what happens next.`,
+      };
+    }
     if (r.outcome === "ok") {
       if (name === "create_quote" && typeof r.result.quote_message_id === "string") this.send({ t: "message", messageId: r.result.quote_message_id });
+      if (name === "create_quote") {
+        // The model names a quote by its number only: internal ids out, and how to send the form for this one.
+        const { quote_id: _qid, quote_message_id: _mid, ...rest } = r.result;
+        void _qid;
+        void _mid;
+        forModel = { ...rest, ...(typeof r.result.quote === "string" ? { message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}: to send its order form, call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}".`.trim() } : {}) };
+      }
+      if (name === "record_opt_out" && OPT_OUT_REPLY[this.spokenLanguage]) {
+        // The reply in the language the call speaks now (the tool gives the conversation's).
+        const reply = OPT_OUT_REPLY[this.spokenLanguage];
+        forModel = { ...r.result, reply, message: `The buyer is opted out and will not be contacted again. Say exactly this and nothing else: ${reply}` };
+      }
       if (name === "send_order_form" && typeof r.result.link === "string") {
         // The link goes into the chat; the model is told it is there and never reads it out.
         const id = await this.storeAppMessage(`Your order form: ${r.result.link}`);
@@ -1218,6 +1331,10 @@ export class VoiceEngine {
     }
     // Every result message in call wording ("confirm it here" → "by message", …).
     if (typeof forModel.message === "string") forModel = { ...forModel, message: voiceToolResultMessage(forModel.message) };
+    // A call in another language than English: the guidance (written in English) names the language to answer in.
+    if (this.spokenLanguage !== "en" && name !== "record_opt_out") {
+      forModel = { ...forModel, message: `${typeof forModel.message === "string" ? `${forModel.message} ` : ""}${this.sayIn()}` };
+    }
     this.conn?.sendToolResult(callId, name, forModel);
     turn.awaitingContinuation = true;
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
@@ -1246,6 +1363,17 @@ export class VoiceEngine {
     }
     this.setState("listening");
     this.startQuiet();
+  }
+
+  /**
+   * The model says its cut answer again after a cut that had no words from the buyer: the last stored line was
+   * cut, no buyer line came since, no buyer turn waits for its transcription, and this line starts within
+   * FALSE_CUT_REDO_MS of the cut. Then the cut row becomes this line (one line, in the language it was said in).
+   */
+  private redoesFalseCut(turn: AgentTurn): boolean {
+    const last = this.lastLine;
+    return !!last && last.cut && last.cutAtMs !== undefined && !this.buyerSinceLastLine && this.buyerTurn === null
+      && turn.startMs - last.cutAtMs <= FALSE_CUT_REDO_MS;
   }
 
   /**
@@ -1292,18 +1420,20 @@ export class VoiceEngine {
       result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
     }));
     // A cut transcript may stop mid-word ("40 doll"): the whole line still continues it.
-    const resumes = !!last && last.cut && !!raw && continuesCutLine(raw, last.raw);
+    const resumes = !!last && last.cut && !!raw && (continuesCutLine(raw, last.raw) || this.redoesFalseCut(turn));
     const repeatsCut = !!last && cut && !resumes && continuesCutLine(last.raw, raw);
     if (last && (resumes || repeatsCut)) {
       // Resumed after the cut: the earlier row becomes the whole line. A cut copy of the line just said adds nothing.
       const now = await this.stamp();
       const newBody = resumes ? body : (last.cut ? cutLine(last.raw) : last.raw);
       await atomic(this.db, (q) => [
-        ...(resumes ? [q.update(messages).set({ body: newBody }).where(and(eq(messages.id, last.messageId), eq(messages.accountId, account.id)))] : []),
+        ...(resumes ? [q.update(messages).set({ body: newBody, language: lineLanguage(newBody, conv.language) }).where(and(eq(messages.id, last.messageId), eq(messages.accountId, account.id)))] : []),
         ...(turn.tools.length ? [q.insert(toolCalls).values(toolRows(last.messageId, last.tools))] : []),
         q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id))),
       ]);
-      this.lastLine = resumes ? { ...last, raw, cut, tools: last.tools + turn.tools.length } : { ...last, tools: last.tools + turn.tools.length };
+      this.lastLine = resumes
+        ? { ...last, raw, cut, tools: last.tools + turn.tools.length, ...(cut ? { cutAtMs: this.offsetMs() } : { cutAtMs: undefined }) }
+        : { ...last, tools: last.tools + turn.tools.length };
       if (resumes) {
         const i = this.lines.findLastIndex((l) => l.role === "agent");
         if (i >= 0) this.lines[i] = { role: "agent", text: newBody };
@@ -1328,7 +1458,8 @@ export class VoiceEngine {
       )),
     ]);
     this.agentMessages++;
-    if (raw) this.lastLine = { messageId, turnId: turn.id, raw, cut, tools: turn.tools.length, startMs: turn.startMs };
+    if (raw) this.lastLine = { messageId, turnId: turn.id, raw, cut, tools: turn.tools.length, startMs: turn.startMs, ...(cut ? { cutAtMs: this.offsetMs() } : {}) };
+    this.buyerSinceLastLine = false;
     if (body) this.lines.push({ role: "agent", text: body });
     this.send({ t: "transcript", id: turn.id, role: "agent", text: body, final: true, atMs: turn.startMs });
   }

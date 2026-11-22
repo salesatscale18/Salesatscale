@@ -20,7 +20,7 @@ import { aiUsageThisMonth, platformUsageThisMonth } from "@/lib/ai/usage";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
 import type { ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
-import { expectBuyer, micPcm, say, ScriptedRealtime, tool, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
+import { expectBuyer, FORM_NOT_SENT_LINE, micPcm, ORDER_FORM_REFUSED_SCRIPT, say, ScriptedRealtime, tool, VOICE_SCRIPTS, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
 import type { VoiceCallUsageRecord } from "@/lib/ai/models";
 import {
   closeStaleVoiceSessions, conversationVoiceMode, createVoiceSession, redeemVoiceTicket, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary,
@@ -972,6 +972,62 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       if (!r.ok) refused = r.reason;
     }
     expect(refused).toBe("rate_limited");
+  });
+
+  describe("tool calls a realtime model gets wrong (22 Nov 2026 call 965cf4af)", () => {
+    async function scripted(script: Script) {
+      const clock = new ManualClock();
+      const c = await newCall(null, { clock, model: new ScriptedRealtime({ clock, defaultScript: script }) });
+      await c.run(15_000);
+      await c.speak();
+      await c.run(30_000);
+      return c;
+    }
+
+    it("a refused order form: the model is told it was NOT sent, and the agent never says it is in the chat", async () => {
+      const c = await scripted(ORDER_FORM_REFUSED_SCRIPT);
+      await hangUp(c);
+      const r = c.conn().sent.toolResults.find((x) => x.name === "send_order_form")!.result as Record<string, unknown>;
+      expect(r).toMatchObject({ ok: false, refused: true });
+      // (Refused for the first reason it meets: here the fields needed before a quote.)
+      expect(r.message).toMatch(/^The order form was NOT sent \([^)]+\)\. Do not say the order form or its link is in the chat\./);
+      expect(r.link).toBeUndefined();
+      const said = (await thread(c.conversationId)).filter((m) => m.actor === "agent").map((m) => m.body);
+      expect(said.at(-1)).toBe(`One moment. ${FORM_NOT_SENT_LINE}`);
+      expect(said.some((b) => /order form is in the chat/i.test(b))).toBe(false);
+      expect(said.some((b) => /^Your order form:/.test(b))).toBe(false);
+    });
+
+    it("the order form for a quote named by its internal id goes out for the buyer's quote; the model gets the quote's number, not ids", async () => {
+      const script = VOICE_SCRIPTS.ready_buyer.map((st) => (st.kind === "tool" && st.name === "send_order_form" ? tool("send_order_form", { quote: randomUUID() }) : st));
+      const c = await scripted(script);
+      await c.speak();
+      await c.run(30_000);
+      await hangUp(c);
+      const results = c.conn().sent.toolResults;
+      const quote = results.find((x) => x.name === "create_quote")!.result as Record<string, unknown>;
+      expect(quote.quote_id).toBeUndefined();
+      expect(quote.quote_message_id).toBeUndefined();
+      expect(quote.message).toMatch(/to send its order form, call send_order_form with quote "Q-\d+"\.$/);
+      const sent = (await calls(c.conversationId)).find((x) => x.name === "send_order_form")!;
+      expect(sent.outcome).toBe("ok");
+      expect(sent.input).toEqual({ quote: String(quote.quote).split(" ")[0] });
+      expect((await thread(c.conversationId)).some((m) => /^Your order form: /.test(m.body))).toBe(true);
+    });
+
+    it("recommendation_confirmed sent as a deal-state field in updates is recorded as the flag it is (not refused)", async () => {
+      const c = await scripted([
+        expectBuyer("Yes, that sounds right. Send me the quote."),
+        tool("update_deal_state", { updates: [{ key: "recommendation_confirmed", value: "true", provenance: "buyer" }], next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null }),
+        say("Great."),
+      ]);
+      await hangUp(c);
+      const call = (await calls(c.conversationId)).find((x) => x.name === "update_deal_state")!;
+      expect(call.outcome).toBe("ok");
+      expect(call.input).toMatchObject({ updates: [], recommendation_confirmed: true });
+      const [deal] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
+      expect(deal.fields._recommendation_confirmed?.value).toBe("yes");
+    });
   });
 
   it("stale sessions: pending after 2 minutes and live after the max plus 2 minutes are ended", async () => {

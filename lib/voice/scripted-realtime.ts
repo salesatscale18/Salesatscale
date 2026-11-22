@@ -317,6 +317,23 @@ function objectionScripts(): Record<string, Script> {
   };
 }
 
+/** The order form went out: its latest send_order_form result is ok. */
+const formSent = (ctx: ScriptCtx) => ctx.last("send_order_form")?.ok === true;
+/** What the agent says when the order form could not be sent: never that it is in the chat. */
+export const FORM_NOT_SENT_LINE = "I couldn't put the order form in the chat just yet. The team will send it to you shortly; is there anything else I can help with meanwhile?";
+
+/**
+ * The buyer asks for the order form before there is a quote it can go with: send_order_form is refused, and the
+ * agent says it was not sent (tests and the harness: `new ScriptedRealtime({ defaultScript: ORDER_FORM_REFUSED_SCRIPT })`).
+ */
+export const ORDER_FORM_REFUSED_SCRIPT: Script = [
+  expectBuyer("Please send me the order form now."),
+  say("One moment."),
+  tool("send_order_form", { quote: "Q-999999" }),
+  onlyIf(formSent, say("The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I'm staying on the line.")),
+  onlyIf((ctx) => !formSent(ctx), say(FORM_NOT_SENT_LINE)),
+];
+
 /** One script per test-lab scenario (lib/agent/scenarios.ts). A call starts in the conversation's language. */
 export const VOICE_SCRIPTS: Record<string, Script> = {
   ready_buyer: [
@@ -328,7 +345,9 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     say(totalLine),
     expectBuyer("Yes, please send it."),
     tool("send_order_form", (ctx: ScriptCtx) => ({ quote: String(ctx.last("create_quote")?.quote ?? "").split(" ")[0] })),
-    say("The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I'm staying on the line."),
+    // Only a form that was sent is said to be in the chat.
+    onlyIf(formSent, say("The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I'm staying on the line.")),
+    onlyIf((ctx) => !formSent(ctx), say(FORM_NOT_SENT_LINE)),
   ],
   discount_push: [
     expectBuyer("We have one location. I want your basic package, but only with 15% off."),

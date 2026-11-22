@@ -64,7 +64,8 @@ describe("segments of one turn are joined with a space", () => {
     ];
     const texts = evs.filter((e) => e.type === "agent-transcript" || e.type === "buyer-transcript").map((e) => `${e.type}:${(e as { text: string }).text}`);
     expect(texts.join("\n")).not.toMatch(/no speech/);
-    expect(texts.filter((t) => t.startsWith("buyer"))).toEqual([]);
+    // No buyer words: only the empty final that closes the buyer's turn (nobody spoke).
+    expect(texts.filter((t) => t.startsWith("buyer"))).toEqual(["buyer-transcript:"]);
     expect(evs.filter((e) => e.type === "agent-transcript" && (e as { final: boolean }).final).map((e) => (e as { text: string }).text))
       .toEqual(["One moment, I'm checking that. Understood, you check by hand?"]);
   });

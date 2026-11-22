@@ -193,7 +193,9 @@ export class ServerEventMapper {
       case "input-transcription-completed": {
         const text = cleanTranscript((e.transcript || this.buyerText).trim());
         this.buyerText = "";
-        return text ? [{ type: "buyer-transcript", text, final: true }] : [];
+        // An empty transcription (noise, the echo of the agent's own voice) still closes the buyer's turn: the
+        // engine then knows nobody spoke (no line, no answer due).
+        return [{ type: "buyer-transcript", text, final: true }];
       }
       case "speech-started":
         return this.interrupt();

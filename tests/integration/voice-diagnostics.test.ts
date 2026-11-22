@@ -35,17 +35,22 @@ function fakeLog() {
 class FakeModel implements RealtimeModel {
   constructor(readonly modelId = "google/gemini-3.8-live") {}
   readonly mode = "scripted" as const; // never priced
-  readonly conns: { cfg: RealtimeSessionConfig; emit: (e: RealtimeEvent) => void; responses: (string | undefined)[]; closed: boolean }[] = [];
+  readonly conns: {
+    cfg: RealtimeSessionConfig; emit: (e: RealtimeEvent) => void; responses: (string | undefined)[]; closed: boolean;
+    notes: string[]; toolResults: { name: string; result: Record<string, unknown> }[];
+  }[] = [];
   failNext = 0;
   async connect(cfg: RealtimeSessionConfig, onEvent: (e: RealtimeEvent) => void): Promise<RealtimeConnection> {
     if (this.failNext > 0) {
       this.failNext--;
       throw new Error("gateway said no");
     }
-    const c = { cfg, emit: onEvent, responses: [] as (string | undefined)[], closed: false };
+    const c = { cfg, emit: onEvent, responses: [] as (string | undefined)[], closed: false, notes: [] as string[], toolResults: [] as { name: string; result: Record<string, unknown> }[] };
     this.conns.push(c);
     return {
-      sendAudio: () => undefined, sendText: () => undefined, sendToolResult: () => undefined,
+      sendAudio: () => undefined, sendText: () => undefined,
+      sendToolResult: (_id, name, result) => void c.toolResults.push({ name, result: result as Record<string, unknown> }),
+      sendNote: (n) => void c.notes.push(n),
       requestResponse: (i) => void c.responses.push(i),
       close: () => void (c.closed = true),
     };
@@ -398,6 +403,123 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
         ["agent", "Hi, this is Maya from Acme."], ["buyer", "How much is it?"], ["agent", "It starts at about 590 shekels per sensor, and…"],
         ["buyer", "Per month?"], ["agent", "No, once."],
       ]);
+    });
+  });
+
+  describe("the language the call speaks, and an answer said twice after a cut with no words (22 Nov 2026 call 965cf4af)", () => {
+    type Sdk = Parameters<ServerEventMapper["map"]>[0];
+    function openai(model: FakeModel) {
+      const mapper = new ServerEventMapper();
+      return (e: Record<string, unknown>) => { for (const x of mapper.map({ raw: {}, ...e } as Sdk)) model.conns[model.conns.length - 1].emit(x); };
+    }
+    const spokenRows = async (sessionId: string) => (await db.select({ actor: messages.actor, body: messages.body, language: messages.language }).from(messages)
+      .where(and(eq(messages.voiceSessionId, sessionId), eq(messages.accountId, acc))).orderBy(asc(messages.createdAt))).map((m) => [m.actor, m.body, m.language]);
+    const HE_Q = "אתה יכולה לדבר גם בעברית?";
+    const HE_CUT = "בוודאי. אז רק כדי לוודא, איך אתם בודקים את";
+    const EN_REDO = "Sure, no problem. How do you currently check your fridge temperatures?";
+    async function answer(c: Awaited<ReturnType<typeof engineCall>>, send: (e: Record<string, unknown>) => void, id: string, text: string, o: { done?: boolean } = {}) {
+      send({ type: "response-created", responseId: id });
+      send({ type: "audio-delta", delta: "AAAA" });
+      await c.settle();
+      send({ type: "audio-transcript-delta", delta: text });
+      await c.settle();
+      if (o.done !== false) {
+        send({ type: "audio-transcript-done", transcript: text });
+        send({ type: "response-done", responseId: id, status: "completed" });
+        await c.run(500);
+      }
+    }
+    async function hebrewThenFalseCut(gapMs: number, between?: string) {
+      const model = new FakeModel("openai/gpt-realtime-mini");
+      const c = await engineCall(model);
+      const send = openai(model);
+      await answer(c, send, "r0", "Hi, this is Maya from Acme.");
+      send({ type: "speech-started" });
+      await c.run(1_000);
+      send({ type: "input-transcription-completed", itemId: "i1", transcript: HE_Q });
+      await c.run(300);
+      await answer(c, send, "r1", HE_CUT, { done: false });
+      await c.run(700);
+      // The echo of the agent's own voice on a loudspeaker: speech, then an empty transcription.
+      send({ type: "speech-started" });
+      await c.run(300);
+      send({ type: "input-transcription-completed", itemId: "i2", transcript: between ?? "" });
+      await c.run(gapMs);
+      await answer(c, send, "r2", EN_REDO);
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+      return { c, model };
+    }
+
+    it("a cut with no words, then the same answer again (in English): one line is kept, the one said last", async () => {
+      const { c, model } = await hebrewThenFalseCut(1_500);
+      expect(await spokenRows(c.sessionId)).toEqual([
+        ["agent", "Hi, this is Maya from Acme.", "en"], ["buyer", HE_Q, "he"], ["agent", EN_REDO, "en"],
+      ]);
+      // The live transcript shows it on one line too: the cut turn's id gets the new text.
+      const finals = c.sent.filter((m): m is Extract<ServerMessage, { t: "transcript" }> => !(m instanceof Uint8Array) && m.t === "transcript" && m.final && m.role === "agent");
+      const cutId = finals.find((m) => m.text.startsWith("בוודאי"))!.id;
+      expect(finals.filter((m) => m.id === cutId).at(-1)!.text).toBe(EN_REDO);
+      // The model was told at once that the buyer now speaks Hebrew (OpenAI takes notes mid-call).
+      expect(model.conns[0].notes).toEqual([expect.stringContaining("the buyer now speaks Hebrew. Speak Hebrew from now on, also after an interruption")]);
+    });
+
+    it("the buyer really spoke between, or the new line came much later: both lines are kept", async () => {
+      const spoke = await hebrewThenFalseCut(1_500, "כן");
+      expect((await spokenRows(spoke.c.sessionId)).map((r) => r[0])).toEqual(["agent", "buyer", "agent", "buyer", "agent"]);
+      const later = await hebrewThenFalseCut(9_000);
+      const rows = await spokenRows(later.c.sessionId);
+      expect(rows.map((r) => r[0])).toEqual(["agent", "buyer", "agent", "agent"]);
+      expect(String(rows[2][1]).endsWith("…")).toBe(true);
+    });
+
+    it("every instruction the engine injects names the language the call speaks now: tool guidance, the card reply, a reconnect", async () => {
+      const model = new FakeModel("openai/gpt-realtime-mini");
+      const c = await engineCall(model);
+      const send = openai(model);
+      await answer(c, send, "r0", "Hi, this is Maya from Acme.");
+      send({ type: "speech-started" });
+      await c.run(500);
+      send({ type: "input-transcription-completed", itemId: "i1", transcript: "כמה זה עולה?" });
+      await c.run(300);
+      send({ type: "function-call-arguments-done", responseId: "r1", itemId: "f1", callId: "call-1", name: "search_catalog", arguments: JSON.stringify({ query: "" }) });
+      await c.run(500);
+      expect(model.conns[0].toolResults[0].result.message).toMatch(/Say it in Hebrew, the language you are speaking with the buyer\.$/);
+      // A card number read out in Hebrew: the fixed reply in Hebrew.
+      send({ type: "speech-started" });
+      await c.run(500);
+      send({ type: "input-transcription-completed", itemId: "i2", transcript: "הכרטיס שלי 4111 1111 1111 1111" });
+      await c.run(300);
+      expect(model.conns[0].responses.at(-1)).toContain("לביטחונך");
+      // A reconnect starts in the language the call speaks now.
+      model.conns[0].emit({ type: "audio", pcm: new Uint8Array(480) });
+      model.conns[0].emit({ type: "closed", code: 1006, reason: "gone" });
+      await c.run(1_000);
+      expect(model.conns[1].cfg.instructions).toContain("Language: start in Hebrew");
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+    });
+
+    it("Gemini: no note mid-call (it reads the language at its next connection); English calls get no language line", async () => {
+      const model = new FakeModel();
+      const c = await engineCall(model);
+      const send = openai(model);
+      send({ type: "transcript-fragment", speaker: "user", delta: "כמה זה עולה?" });
+      send({ type: "audio-delta", delta: "AAAA" });
+      await c.run(500);
+      expect(model.conns[0].notes).toEqual([]);
+      const en = new FakeModel("openai/gpt-realtime-mini");
+      const e = await engineCall(en);
+      const sendEn = openai(en);
+      sendEn({ type: "speech-started" });
+      await e.run(500);
+      sendEn({ type: "input-transcription-completed", itemId: "i1", transcript: "How much is it?" });
+      await e.run(300);
+      sendEn({ type: "function-call-arguments-done", responseId: "r1", itemId: "f1", callId: "call-1", name: "search_catalog", arguments: JSON.stringify({ query: "" }) });
+      await e.run(500);
+      expect(String(en.conns[0].toolResults[0].result.message ?? "")).not.toContain("Say it in");
+      expect(en.conns[0].notes).toEqual([]);
+      for (const x of [c, e]) { x.engine.onClientMessage({ t: "end" }); await x.settle(); }
     });
   });
 });

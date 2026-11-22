@@ -265,7 +265,7 @@ export type VoiceCallContext = {
 export async function loadVoiceInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; language?: string } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
   const [stage, catalog, followUp, contact, earlier, agentCount, callback, teamQuestions, priceApproval] = await Promise.all([
@@ -289,9 +289,9 @@ export async function loadVoiceInstructions(
   // is spoken by the model). A call that goes on from a conversation (the pick-up line, a reconnect) speaks the
   // language of its latest messages, with the agent's languages as fallback: never the page's UI language, which
   // a test-lab conversation was created with (the 22 Nov 2026 call: a Hebrew pick-up line in an English chat).
-  const language = continuing || opts.resumed
-    ? conversationTalkLanguage(earlier, [...contact.languages, conv.language])
-    : conv.language || "en";
+  // A reconnect or wake within a call: the language the call is speaking now (the engine's, from the buyer's last line).
+  const language = opts.language
+    || (continuing || opts.resumed ? conversationTalkLanguage(earlier, [...contact.languages, conv.language]) : conv.language || "en");
   const locale = isLocale(language) ? language : "en";
   const names = buyerNames(version.playbook, account, locale);
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";

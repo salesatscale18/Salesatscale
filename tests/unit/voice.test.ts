@@ -1014,7 +1014,8 @@ describe("voice-only end_call and the order form on the line", () => {
     // The payment rule is unchanged.
     expect(block).toContain("- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.");
     const voice = stableSystemPrompt(pb, seller, catalog, { channel: "voice" });
-    expect(voice).toContain("and that they can fill it in now while you stay on the line. Never read the link aloud.");
+    expect(voice).toContain("and that they can fill it in now while you stay on the line (if it was not sent, never say it is in the chat). Never read the link aloud.");
+    expect(voice).toContain("when its result says it was sent, say the order form link is in the chat");
     expect(voice).toContain('Example: "The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I\'m staying on the line."');
   });
 });
