@@ -19,6 +19,7 @@ import {
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
+import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
 import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
@@ -63,6 +64,8 @@ export type VoiceLimits = {
   endGraceMs?: number;
   /** How often `{t:'stats'}` goes out. */
   statsEveryMs?: number;
+  /** How often the live row gets the call's provisional duration and usage (the heartbeat; lib/voice/service.ts stale close). */
+  heartbeatMs?: number;
 };
 
 /** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
@@ -74,8 +77,15 @@ const EMPTY_USAGE = {
   usageCostMicros: 0, durationCostMicros: 0, basis: "none" as const, usageEvents: 0, firstSnapshot: null, lastSnapshot: null,
 };
 
+/**
+ * The heartbeat: while a call is live, its row gets the provisional duration and usage this often. When the hosting
+ * function goes away without running the close path (the 21 Nov 2026 production call 1c240beb: "socket accepted",
+ * "model connected", never "ended"), the stale close ends the row at its last heartbeat (lib/voice/service.ts).
+ */
+export const VOICE_HEARTBEAT_MS = 20_000;
+
 const DEFAULTS = {
-  limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000,
+  limitWarnSec: 45, reconnectMs: 8_000, endGraceMs: 6_000, statsEveryMs: 5_000, heartbeatMs: VOICE_HEARTBEAT_MS,
   standbyAfterQuietMs: CALL_RULES.standbyAfterQuietMs, standbyIdleEndMs: CALL_RULES.standbyIdleEndMs, preRollMs: CALL_RULES.preRollMs,
   wakeBufferMaxMs: CALL_RULES.wakeBufferMaxMs, wakeConnectMs: CALL_RULES.wakeConnectMs, falseWakeMs: CALL_RULES.falseWakeMs,
   falseWakesBeforeRaise: CALL_RULES.falseWakesBeforeRaise, maxThresholdBoost: CALL_RULES.maxThresholdBoost, minWakeGapMs: CALL_RULES.minWakeGapMs,
@@ -166,7 +176,7 @@ export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "
 type Loaded = { session: VoiceSession; conv: Conversation; lead: Lead; version: AgentVersion; account: SellerAccount };
 
 /** The engine's closing system note, "Voice call ended · m:ss" (exported for the demo seeds). */
-export const CALL_ENDED_TEXT = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+export const CALL_ENDED_TEXT = voiceCallEndedLine;
 
 export class VoiceEngine {
   private readonly db: Db;
@@ -227,8 +237,8 @@ export class VoiceEngine {
   private reconnecting = false;
   private lastStamp = 0;
   private errorCode: VoiceErrorCode | null = null;
-  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect", TimerHandle | null> = {
-    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null,
+  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat", TimerHandle | null> = {
+    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null,
   };
 
   // Standby (lib/voice/call-rules.ts): the model is disconnected while the buyer is quiet; our detector listens.
@@ -519,6 +529,47 @@ export class VoiceEngine {
     });
   }
 
+  private heartbeatLoop() {
+    this.timer("heartbeat", this.limits.heartbeatMs, () => {
+      this.heartbeatLoop();
+      void this.enqueue(() => this.writeHeartbeat());
+    });
+  }
+
+  /**
+   * The live row's provisional figures: duration so far and the usage and cost as if the call ended now (no
+   * endDetail). Only while the row is live: the call's own end (or an end from elsewhere) is never overwritten.
+   */
+  private async writeHeartbeat() {
+    if (this.ended || this.callStart === null) return;
+    const { durationSec, usage, costMicros } = this.callFigures();
+    await this.db.update(voiceSessions).set({ durationSec, usage, costMicros })
+      .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "live")));
+  }
+
+  /**
+   * The call's figures as of now: duration (the whole call), and the usage record and cost. Live: the larger of the
+   * usage-based and the duration-based cost (active seconds), both kept with the basis (never undercounted).
+   * Scripted: always 0; the fake counts are kept with basis "none".
+   */
+  private callFigures(): { connected: boolean; durationSec: number; activeSec: number; usage: VoiceCallUsageRecord | null; costMicros: number } {
+    const connected = this.callStart !== null;
+    const durationSec = connected ? Math.round(this.offsetMs() / 1000) : 0;
+    // Paid time is the model-connected time (standby excluded); durationSec stays the whole call.
+    const activeSec = Math.min(durationSec, this.activeSec());
+    const times: VoiceCallTimes = { activeSec, standbySec: Math.max(0, durationSec - activeSec), standbys: this.standbys, wakes: this.wakeLog.length, falseWakes: this.falseWakes, wakeLog: this.wakeLog };
+    let usage: VoiceCallUsageRecord | null = null;
+    let costMicros = 0;
+    if (this.model.mode === "live" && connected) {
+      ({ costMicros, usage } = voiceCallCost(this.model.modelId, this.usageAcc, activeSec));
+      usage = { ...usage, ...times };
+    } else if (this.usageAcc.events > 0 || connected) {
+      const a = this.usageAcc;
+      usage = { ...a.total, usageCostMicros: 0, durationCostMicros: 0, basis: "none", usageEvents: a.events, firstSnapshot: a.first, lastSnapshot: a.last, ...times };
+    }
+    return { connected, durationSec, activeSec, usage, costMicros };
+  }
+
   /** On each stats tick: a session row ended elsewhere ("End that call") stops this call. */
   private async checkEndedExternally() {
     const [row] = await this.db.select({ status: voiceSessions.status, endReason: voiceSessions.endReason }).from(voiceSessions)
@@ -595,6 +646,7 @@ export class VoiceEngine {
     if (this.maxSec > this.limits.limitWarnSec) this.timer("warn", (this.maxSec - this.limits.limitWarnSec) * 1000, () => this.warnLimit());
     this.timer("limit", this.maxSec * 1000, () => void this.stop("limit", undefined, "limit"));
     this.statsLoop();
+    this.heartbeatLoop();
     this.setState("listening");
     // The agent speaks first: the chat's opener, in its voice.
     // A call that continues a chat starts with the short disclosure line instead (lib/voice/instructions.ts).
@@ -1350,22 +1402,9 @@ export class VoiceEngine {
     } catch (e) {
       console.error("[voice] could not store the last turn", e);
     }
-    const connected = this.callStart !== null;
-    const durationSec = connected ? Math.round(this.offsetMs() / 1000) : 0;
-    // Paid time is the model-connected time (standby excluded); durationSec stays the whole call.
-    const activeSec = Math.min(durationSec, this.activeSec());
-    const times: VoiceCallTimes = { activeSec, standbySec: Math.max(0, durationSec - activeSec), standbys: this.standbys, wakes: this.wakeLog.length, falseWakes: this.falseWakes, wakeLog: this.wakeLog };
-    // Live: the larger of the usage-based and the duration-based cost (active seconds), both kept with the basis (never undercounted).
-    // Scripted: always 0; the fake counts are kept with basis "none".
-    let usage: VoiceCallUsageRecord | null = null;
-    let costMicros = 0;
-    if (this.model.mode === "live" && connected) {
-      ({ costMicros, usage } = voiceCallCost(this.model.modelId, this.usageAcc, activeSec));
-      usage = { ...usage, ...times };
-    } else if (this.usageAcc.events > 0 || connected) {
-      const a = this.usageAcc;
-      usage = { ...a.total, usageCostMicros: 0, durationCostMicros: 0, basis: "none", usageEvents: a.events, firstSnapshot: a.first, lastSnapshot: a.last, ...times };
-    }
+    const figures = this.callFigures();
+    const { connected, durationSec, activeSec, costMicros } = figures;
+    let { usage } = figures;
     // How it ended, technically: stored with the figures so a failed call can be read without logs.
     const endDetail: VoiceEndDetail = {
       by: this.endBy ?? BY_REASON[reason] ?? "error",

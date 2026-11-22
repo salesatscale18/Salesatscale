@@ -12,6 +12,7 @@ import { runDueFollowUps } from "@/lib/follow-ups/scheduler";
 import { runTeamAnswers } from "@/lib/team-questions/service";
 import { AnthropicLlm } from "@/lib/agent/llm";
 import { runAfterCallReplies } from "@/lib/voice/after-call";
+import { closeStaleVoiceSessions } from "@/lib/voice/service";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -23,10 +24,13 @@ export async function GET(req: Request) {
   const summary = await runDueFollowUps(appDb, defaultTransport());
   // O4: the team's answers to questions the agent sent them, to buyers who went quiet.
   const teamAnswers = await runTeamAnswers(appDb, defaultTransport());
+  // Live voice: calls whose function went away without storing their end are ended at their last heartbeat
+  // (no model call). The after-call sweep below leaves those out (lib/voice/after-call.ts).
+  const staleCalls = await closeStaleVoiceSessions(appDb, null);
   // Live voice: a buyer call that ended on an unanswered turn, when neither the call nor a page poll answered it.
   // The model client is made only when a reply is due (no API key needed otherwise).
   const afterCalls = await runAfterCallReplies(appDb, { create: (req) => new AnthropicLlm().create(req) });
   // Counts only: never names, numbers or message text in the log.
-  console.info("[follow-ups] run", JSON.stringify({ ...summary, teamAnswers, afterCalls }));
-  return NextResponse.json({ ok: true, ...summary, teamAnswers, afterCalls });
+  console.info("[follow-ups] run", JSON.stringify({ ...summary, teamAnswers, staleCalls, afterCalls }));
+  return NextResponse.json({ ok: true, ...summary, teamAnswers, staleCalls, afterCalls });
 }

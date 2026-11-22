@@ -12,7 +12,7 @@
  * Three paths can trigger it, and each is safe to run more than once:
  * - the voice socket, right after the call is stored, when its function has time left;
  * - the buyer page's next poll (`/chat/<token>/messages`), when the socket's function did not;
- * - the platform cron (`/api/cron/follow-ups`), when the buyer closed the page.
+ * - the platform cron (`/api/cron/follow-ups`), when the buyer closed the page (not for a call closed as stale).
  * The durable marker is the conversation itself (its last message is the call's
  * buyer line); a conditional update on the session (`settings._afterCall`)
  * claims the reply, so it is produced at most once. A buyer chat message sent
@@ -105,12 +105,15 @@ export async function replyAfterCall(db: Db, llm: LlmClient, sessionId: string):
  * The cron's sweep: buyer calls that ended in the last 24 hours with an
  * unanswered last turn nobody took yet (the buyer closed the page, and the
  * socket's function had no time left). At most `limit` per run.
+ * Calls closed as stale (endDetail by "relay_gone": the function died, lib/voice/service.ts) are left out: the cron
+ * spends no model call on them. The buyer page's next poll still answers such a turn when the buyer comes back.
  */
 export async function runAfterCallReplies(db: Db, llm: LlmClient, now = new Date(), limit = 5): Promise<{ replied: number; checked: number }> {
   const recent = await db.select().from(voiceSessions)
     .where(and(
       eq(voiceSessions.isTest, false), eq(voiceSessions.status, "ended"), gt(voiceSessions.endedAt, new Date(now.getTime() - AFTER_CALL_MAX_AGE_MS)),
       inArray(voiceSessions.endReason, [...AFTER_CALL_REASONS]), isNull(sql`${voiceSessions.settings}->>${CLAIM_KEY}`),
+      sql`coalesce(${voiceSessions.usage}->'endDetail'->>'by', '') <> 'relay_gone'`,
     ))
     .orderBy(desc(voiceSessions.endedAt)).limit(50);
   let replied = 0;

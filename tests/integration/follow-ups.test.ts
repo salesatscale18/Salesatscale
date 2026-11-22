@@ -458,7 +458,8 @@ describe("Agreed follow-ups", () => {
       const res = await call(`Bearer ${SECRET}`);
       expect(res.status).toBe(200);
       const body = await res.json();
-      expect(body).toMatchObject({ ok: true, sent: 1 });
+      // The cron also closes voice calls whose function went away (none here).
+      expect(body).toMatchObject({ ok: true, sent: 1, staleCalls: 0 });
       const text = JSON.stringify(body);
       expect(text).not.toContain("Secret");
       expect(text).not.toContain("private");

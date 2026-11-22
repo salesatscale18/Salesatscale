@@ -107,6 +107,31 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     return c.clock.now();
   };
 
+  it("the heartbeat: every 20 s the live row gets the provisional duration and usage; the end overwrites them; nothing after the end", async () => {
+    const c = await newCall(null, { limits: { standbyAfterQuietMs: 600_000 } });
+    expect((await sessionRow(c.sessionId)).durationSec).toBeNull();
+    await c.run(19_000);
+    expect((await sessionRow(c.sessionId)).durationSec).toBeNull();
+    await c.run(1_000);
+    let r = await sessionRow(c.sessionId);
+    expect(r.status).toBe("live");
+    expect(r.durationSec).toBe(20);
+    expect(r.usage).toMatchObject({ basis: "none", activeSec: 20 });
+    expect(r.usage?.endDetail).toBeUndefined();
+    expect(r.costMicros).toBe(0);
+    await c.run(20_000);
+    expect((await sessionRow(c.sessionId)).durationSec).toBe(40);
+    await c.run(5_000);
+    c.engine.onClientMessage({ t: "end" });
+    await c.run(1_000);
+    r = await sessionRow(c.sessionId);
+    expect(r).toMatchObject({ status: "ended", endReason: "user_hangup", durationSec: 45 });
+    expect(r.usage?.endDetail).toMatchObject({ by: "client_end" });
+    // No heartbeat after the end.
+    await c.run(60_000);
+    expect(await sessionRow(c.sessionId)).toMatchObject({ status: "ended", durationSec: 45 });
+  });
+
   it("a quiet buyer: standby 30 s after the agent finished (not at 2 s), the model closed, no message stored", async () => {
     const c = await newCall(null);
     await c.run(15_000); // opener spoken (ends at or before 15 s)

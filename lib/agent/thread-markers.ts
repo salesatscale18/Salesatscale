@@ -41,6 +41,8 @@ export type ThreadMarker =
  * seller threads show the call's summary marker instead (built from the session), so this line is not shown twice.
  */
 export const VOICE_CALL_ENDED_LINE = /^Voice call ended · \d+:\d{2}$/;
+/** The line itself, for a call of `sec` seconds (stored by the engine, and by the stale close: lib/voice/service.ts). */
+export const voiceCallEndedLine = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
 /** A conversation's voice calls, as stored on voice_sessions. `buyerTurns`: the buyer's lines in the call (spoken or typed). */
 export type VoiceSessionRow = { connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null; buyerTurns?: number };

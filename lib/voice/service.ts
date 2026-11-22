@@ -14,6 +14,7 @@ import { estimatedRealtimeUsage, estimateRealtimeCostMicros } from "@/lib/ai/mod
 import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
+import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
 import { PLATFORM_MAX_CALL_SEC, validateVoiceSettings, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
@@ -24,8 +25,13 @@ export const TICKET_TTL_SEC = 60;
 export const TEST_CALLS_PER_HOUR = 30;
 /** A session still pending after this is stale. */
 export const STALE_PENDING_SEC = 120;
-/** Grace after the platform maximum before a live session counts as stale. */
+/** Grace after the platform maximum before a live session counts as stale (a row with no heartbeat: older deployments). */
 export const STALE_LIVE_GRACE_SEC = 120;
+/**
+ * A live session whose last heartbeat (lib/voice/engine.ts VOICE_HEARTBEAT_MS, every 20 s) is older than this is
+ * stale: the function running it went away without storing the end (four missed heartbeats, plus margin).
+ */
+export const STALE_HEARTBEAT_SEC = 90;
 
 const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
 
@@ -110,29 +116,57 @@ export async function redeemVoiceTicket(db: Db, sessionId: string, ticket: strin
   return row ?? null;
 }
 
+/** How a stale close records the end: the function that ran the call went away without storing it. */
+const RELAY_GONE: VoiceEndDetail = { by: "relay_gone" };
+
 /**
- * Ends this account's stale sessions: pending ones older than 2 minutes, and
- * live ones older than the platform maximum plus 2 minutes (a relay that
- * died without ending its call). Duration is capped at the platform maximum;
- * a stale live call is priced from that duration (estimated), so it still
- * counts in AI spend. Returns how many were closed.
+ * Ends stale sessions (`accountId`: this account's; null: every account, the cron): pending ones older than 2
+ * minutes, and live ones whose relay died without ending its call. Returns how many were closed.
+ * - A live row with a heartbeat (the engine writes the provisional duration, usage and cost every 20 s) is stale
+ *   once that heartbeat is STALE_HEARTBEAT_SEC old. It ends at its last heartbeat (endedAt = connectedAt + that
+ *   duration), keeps the stored usage and cost, and gets the "Voice call ended" line a normal end stores.
+ * - A live row with no heartbeat (a call from an older deployment) keeps the old rule: stale after the platform
+ *   maximum plus 2 minutes, duration capped at the platform maximum and priced from it (estimated).
  */
-export async function closeStaleVoiceSessions(db: Db, accountId: string, now = new Date()): Promise<number> {
+export async function closeStaleVoiceSessions(db: Db, accountId: string | null, now = new Date()): Promise<number> {
+  const scope = accountId ? eq(voiceSessions.accountId, accountId) : undefined;
   const pending = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec: 0 })
-    .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.status, "pending"), lt(voiceSessions.createdAt, new Date(now.getTime() - STALE_PENDING_SEC * 1000))))
+    .where(and(scope, eq(voiceSessions.status, "pending"), lt(voiceSessions.createdAt, new Date(now.getTime() - STALE_PENDING_SEC * 1000))))
     .returning({ id: voiceSessions.id });
+  let closed = pending.length;
+  // With a heartbeat: ended at the last one.
+  const beating = await db.select().from(voiceSessions)
+    .where(and(scope, eq(voiceSessions.status, "live"), isNotNull(voiceSessions.durationSec), isNotNull(voiceSessions.connectedAt)));
+  for (const s of beating) {
+    const lastBeat = s.connectedAt!.getTime() + (s.durationSec ?? 0) * 1000;
+    if (lastBeat >= now.getTime() - STALE_HEARTBEAT_SEC * 1000) continue;
+    const endedAt = new Date(lastBeat);
+    const usage = { ...(s.usage ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
+    const done = await db.update(voiceSessions).set({ status: "ended", endedAt, endReason: "connection_lost", usage })
+      .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
+    if (!done.length) continue;
+    closed++;
+    // The line a normal end stores, after the call's last stored line.
+    const [last] = await db.select({ at: messages.createdAt }).from(messages)
+      .where(and(eq(messages.accountId, s.accountId), eq(messages.conversationId, s.conversationId), eq(messages.voiceSessionId, s.id)))
+      .orderBy(desc(messages.createdAt)).limit(1);
+    const at = new Date(Math.max(lastBeat, (last?.at.getTime() ?? 0) + 1));
+    await db.insert(messages).values({ accountId: s.accountId, conversationId: s.conversationId, actor: "system", body: CALL_ENDED_TEXT(s.durationSec ?? 0), language: "en", createdAt: at });
+  }
+  // No heartbeat (older deployments): the old rule.
   const cutoff = new Date(now.getTime() - (PLATFORM_MAX_CALL_SEC + STALE_LIVE_GRACE_SEC) * 1000);
   const live = await db.select().from(voiceSessions)
-    .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.status, "live"), lt(sql`coalesce(${voiceSessions.connectedAt}, ${voiceSessions.createdAt})`, cutoff)));
+    .where(and(scope, eq(voiceSessions.status, "live"), isNull(voiceSessions.durationSec), lt(sql`coalesce(${voiceSessions.connectedAt}, ${voiceSessions.createdAt})`, cutoff)));
   for (const s of live) {
     const started = (s.connectedAt ?? s.createdAt).getTime();
     const durationSec = Math.min(PLATFORM_MAX_CALL_SEC, Math.max(0, Math.round((now.getTime() - started) / 1000)));
-    const usage: VoiceUsage | null = s.mode === "live" ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
-    const costMicros = s.mode === "live" && usage ? estimateRealtimeCostMicros(s.model, usage) ?? 0 : 0;
+    const base: VoiceUsage | null = s.mode === "live" ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
+    const costMicros = s.mode === "live" && base ? estimateRealtimeCostMicros(s.model, base) ?? 0 : 0;
+    const usage = { ...(base ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
     await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live")));
   }
-  return pending.length + live.length;
+  return closed + live.length;
 }
 
 /**

@@ -236,6 +236,40 @@ describe("a buyer turn the call left unanswered is answered in the chat", () => 
     expect(after.map((m) => m.body)).toEqual([REPLY]);
   });
 
+  it("the call's function goes away mid-call (no close path): the stale close ends it at the last heartbeat; the cron spends no model call on it, the page poll still answers", async () => {
+    const b = await newBuyer("Dana Gone");
+    const r = await startBuyerVoiceCall(db, await ctxOf(b), b.token, { deadlineSec: 270, env: SCRIPTED, now: new Date() });
+    if (!r.ok) throw new Error(r.reason);
+    const ws = new FakeSocket();
+    const clock = new ManualClock();
+    const model = new ScriptedRealtime({ clock, defaultScript: WAITS() });
+    void handleVoiceSocket(ws, { db, deadlineSec: 270, env: SCRIPTED, clock, model, limits: { standbyAfterQuietMs: 600_000 } });
+    const settle = async () => { for (let i = 0; i < 6; i++) { await flushAsync(4); await new Promise((x) => setTimeout(x, 5)); } };
+    ws.emit("message", Buffer.from(JSON.stringify({ t: "auth", sessionId: r.sessionId, ticket: r.ticket })), false);
+    await settle();
+    await clock.advance(15_000, settle);
+    ws.emit("message", Buffer.from(JSON.stringify({ t: "text", text: "Does it include setup?" })), false);
+    await clock.advance(30_000, settle);
+    // The function is gone: nothing runs any more (no close, no timers). Two heartbeats were written (20 s, 40 s).
+    const [live] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
+    expect(live).toMatchObject({ status: "live", durationSec: 40 });
+    const { closeStaleVoiceSessions } = await import("@/lib/voice/service");
+    expect(await closeStaleVoiceSessions(db, null, new Date(live.connectedAt!.getTime() + 40_000 + 60_000))).toBe(0);
+    expect(await closeStaleVoiceSessions(db, null, new Date(live.connectedAt!.getTime() + 40_000 + 100_000))).toBe(1);
+    const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
+    expect(s).toMatchObject({ status: "ended", endReason: "connection_lost", durationSec: 40 });
+    expect(s.endedAt!.getTime()).toBe(live.connectedAt!.getTime() + 40_000);
+    expect(s.usage?.endDetail).toEqual({ by: "relay_gone" });
+    // The transcript is kept, with the end line after it, as a normal end stores.
+    const { rows, ended } = await chatAfter(b.conversationId);
+    expect(ended?.body).toBe("Voice call ended · 0:40");
+    expect(rows.some((m) => m.actor === "buyer" && m.body === "Does it include setup?" && m.voiceSessionId === r.sessionId)).toBe(true);
+    // The cron spends no model call on a call closed as stale; the buyer page's poll still answers it.
+    expect(await runAfterCallReplies(db, noLlm())).toEqual({ replied: 0, checked: 0 });
+    expect((await pendingAfterCall(db, account.id, b.conversationId))?.claimed).toBe(false);
+    expect(await replyAfterCall(db, llmReplying(), r.sessionId)).toEqual({ status: "replied" });
+  });
+
   it("the platform AI budget is used up: no reply, a person takes over (as in chat)", async () => {
     const b = await newBuyer("Dana Nine");
     const sid = await buyerCall(b, { script: WAITS(), turn: "typed" });

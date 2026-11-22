@@ -1019,7 +1019,9 @@ export type VoiceSessionMode = "scripted" | "live";
 /** Who or what ended a voice call (voice_sessions.usage.endDetail.by; lib/voice/engine.ts). */
 export type VoiceEndBy =
   | "client_end" | "client_closed" | "client_idle" | "model_closed" | "model_closed_early" | "model_rejected_session" | "limit" | "idle" | "tool"
-  | "take_over" | "ended_elsewhere" | "gate" | "error" | "deadline";
+  | "take_over" | "ended_elsewhere" | "gate" | "error" | "deadline"
+  /** Closed as stale: the function running the call went away without storing its end (lib/voice/service.ts). */
+  | "relay_gone";
 
 /**
  * How a voice call ended, technically: stored with the call so a failed one is diagnosable without logs.

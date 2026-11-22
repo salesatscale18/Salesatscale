@@ -5,7 +5,7 @@
  */
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { conversations, dealStates, leadEvents, leads, messages, quotes, rateLimits, sellerAccounts, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { leadCallback } from "@/lib/callbacks/service";
 import { recordTeamAnswer } from "@/lib/team-questions/service";
@@ -995,6 +995,37 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect((await sessionRow(l2.id)).status).toBe("live");
     await db.delete(voiceSessions).where(eq(voiceSessions.id, l1.id));
     await db.delete(voiceSessions).where(eq(voiceSessions.id, l2.id));
+  });
+
+  it("stale sessions with a heartbeat: ended at the last heartbeat with the stored usage and cost, after 90 s without one; the cron closes every account's", async () => {
+    const v = (await startVoiceTestConversation(db, acc, me.id, {}))!;
+    const now = new Date();
+    const old = (ms: number) => new Date(now.getTime() - ms);
+    const base = { accountId: acc, conversationId: v.conversationId, isTest: true, ticketHash: "x", model: "google/gemini-3.8-live", mode: "live" as const };
+    const beat = { audioInTokens: 900, audioOutTokens: 700, textInTokens: 300, textOutTokens: 50, cachedInTokens: 0, usageCostMicros: 1200, durationCostMicros: 1500, basis: "duration", usageEvents: 4, firstSnapshot: null, lastSnapshot: null, activeSec: 45, standbySec: 0 };
+    // The relay died 10 minutes ago, 45 s into the call; a second call's last heartbeat is 60 s old (still running).
+    const [dead, alive] = await db.insert(voiceSessions).values([
+      { ...base, status: "live", createdAt: old(11 * 60_000), connectedAt: old(11 * 60_000), durationSec: 45, usage: beat as never, costMicros: 1500 },
+      { ...base, status: "live", createdAt: old(3 * 60_000), connectedAt: old(3 * 60_000), durationSec: 120, usage: beat as never, costMicros: 1500 },
+    ]).returning();
+    await db.insert(messages).values({ accountId: acc, conversationId: v.conversationId, actor: "agent", body: "Last line before the relay died.", language: "en", voiceSessionId: dead.id, createdAt: old(10 * 60_000) });
+    // The cron: every account (null).
+    expect(await closeStaleVoiceSessions(db, null, now)).toBe(1);
+    const d = await sessionRow(dead.id);
+    expect(d).toMatchObject({ status: "ended", endReason: "connection_lost", durationSec: 45, costMicros: 1500 });
+    expect(d.endedAt!.getTime()).toBe(dead.connectedAt!.getTime() + 45_000);
+    expect(d.usage).toMatchObject({ audioInTokens: 900, basis: "duration", endDetail: { by: "relay_gone" } });
+    expect(d.usage?.estimated).toBeUndefined();
+    // The line a normal end stores, after the call's last line.
+    const lines = await db.select().from(messages).where(eq(messages.conversationId, v.conversationId)).orderBy(asc(messages.createdAt));
+    expect(lines.at(-1)).toMatchObject({ actor: "system", body: "Voice call ended · 0:45" });
+    expect((await sessionRow(alive.id)).status).toBe("live");
+    // Closing again changes nothing (no second end line).
+    expect(await closeStaleVoiceSessions(db, acc, now)).toBe(0);
+    expect((await db.select().from(messages).where(eq(messages.conversationId, v.conversationId))).filter((m) => m.actor === "system")).toHaveLength(1);
+    // 90 s after its last heartbeat, the other one is stale too.
+    expect(await closeStaleVoiceSessions(db, acc, new Date(alive.connectedAt!.getTime() + 120_000 + 91_000))).toBe(1);
+    await db.delete(voiceSessions).where(inArray(voiceSessions.id, [dead.id, alive.id]));
   });
 
   it("AI spend counts live voice sessions only (scripted calls cost nothing)", async () => {
