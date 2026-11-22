@@ -16,14 +16,23 @@ const he = translator("he");
 const text = (html: string) => html.replace(/<[^>]+>/g, "|").split("|").map((x) => x.trim()).filter(Boolean);
 
 describe("the Back sheets", () => {
-  it("End the call?: an alertdialog, modal, named and described; End call (red, phone-off) then Keep talking (the safe choice)", () => {
+  it("buyers during a call: Switch to text? (an alertdialog, modal, named and described); Switch to text (primary, keyboard) then Stay in voice (the safe choice)", () => {
     const html = renderToStaticMarkup(<LeaveSheet ask="end_call" tr={en} dir="ltr" onChoose={() => {}} />);
+    expect(html).toMatch(/role="alertdialog" aria-modal="true" aria-labelledby="([^"]+)-t" aria-describedby="\1-d"/);
+    expect(text(html)).toEqual(["Switch to text?", "The conversation continues here in writing. You can switch back to voice any time.", "Switch to text", "Stay in voice"]);
+    expect(html).toMatch(/class="ls-btn ls-btn--primary" data-sheet-end=""><svg[^>]*class="lucide lucide-keyboard sas-ico"/);
+    expect(html).toMatch(/class="ls-btn ls-btn--secondary"[^>]*data-sheet-safe="">Stay in voice/);
+    expect(html).not.toMatch(/phone-off|danger/);
+    // The scrim is decoration for assistive technology.
+    expect(html).toContain('<div class="ls-scrim" aria-hidden="true"></div>');
+  });
+
+  it("the test lab during a call: End the call?; End call (red, phone-off) then Keep talking (the safe choice)", () => {
+    const html = renderToStaticMarkup(<LeaveSheet ask="end_call" tr={en} dir="ltr" onChoose={() => {}} callWords="end" />);
     expect(html).toMatch(/role="alertdialog" aria-modal="true" aria-labelledby="([^"]+)-t" aria-describedby="\1-d"/);
     expect(text(html)).toEqual(["End the call?", "You&#x27;ll stay in the chat and can switch to voice again any time.", "End call", "Keep talking"]);
     expect(html).toMatch(/class="ls-btn ls-btn--danger" data-sheet-end=""><svg[^>]*class="lucide lucide-phone-off sas-ico"/);
     expect(html).toMatch(/class="ls-btn ls-btn--secondary"[^>]*data-sheet-safe="">Keep talking/);
-    // The scrim is decoration for assistive technology.
-    expect(html).toContain('<div class="ls-scrim" aria-hidden="true"></div>');
   });
 
   it("Leave the chat?: Stay in the chat (primary, the safe choice) then Leave", () => {
@@ -36,7 +45,7 @@ describe("the Back sheets", () => {
   it("Hebrew: the owner's wording, right to left", () => {
     const end = renderToStaticMarkup(<LeaveSheet ask="end_call" tr={he} dir="rtl" onChoose={() => {}} />);
     expect(end).toContain('dir="rtl"');
-    expect(text(end)).toEqual(["לסיים את השיחה?", "תישארו בצ&#x27;אט ותוכלו לחזור לשיחה קולית בכל רגע.", "סיום שיחה", "להמשיך לדבר"]);
+    expect(text(end)).toEqual(["לעבור לכתיבה?", "השיחה ממשיכה כאן בכתב. אפשר לחזור לקול בכל רגע.", "מעבר לכתיבה", "להישאר בקול"]);
     const leave = renderToStaticMarkup(<LeaveSheet ask="leave_chat" tr={he} dir="rtl" onChoose={() => {}} />);
     expect(text(leave)).toEqual(["לצאת מהצ&#x27;אט?", "הצ&#x27;אט נשמר. אפשר לחזור בכל רגע עם אותו קישור.", "להישאר בצ&#x27;אט", "יציאה"]);
   });
@@ -49,19 +58,19 @@ describe("the bubble menu", () => {
     return [...html.matchAll(/data-bubble-(?!menu)(\w+)=""|role="separator"|class="vb-menu__state"/g)].map((m) => m[1] ?? (m[0].startsWith("role") ? "divider" : "state"));
   };
 
-  it("state and time left, Mute, Speaker, a divider, End call (last, red, phone-off)", () => {
+  it("state and time left, Mute, Speaker, a divider, Switch to text (last, keyboard, normal colour)", () => {
     const two = { ...base, outputs: [{ id: "a", label: "Default" }, { id: "b", label: "Headphones" }] } as MirrorState;
     expect(items(two)).toEqual(["state", "mute", "speaker", "divider", "end"]);
     const html = renderToStaticMarkup(<BubbleMenu id="m" state={two} view={bubbleView(two, en, "Maya")} tr={en} act={() => {}} />);
-    expect(html).toMatch(/class="vb-item vb-item--end" data-bubble-end=""><svg[^>]*>.*<\/svg>End call<\/button><\/div>$/);
+    expect(html).toMatch(/class="vb-item vb-item--end" data-bubble-end=""><svg[^>]*lucide-keyboard[^>]*>.*<\/svg>Switch to text<\/button><\/div>$/);
     expect(html).toContain("4:28 left");
     expect(items(base)).toEqual(["state", "mute", "divider", "end"]);
   });
 
-  it("on standby, Talk to the agent stays first; Hebrew End call", () => {
+  it("on standby, Talk to the agent stays first; Hebrew Switch to text", () => {
     const standby = { ...base, live: "standby" } as MirrorState;
     expect(items(standby)).toEqual(["state", "wake", "mute", "divider", "end"]);
     const html = renderToStaticMarkup(<BubbleMenu id="m" state={base} view={bubbleView(base, he, "Maya")} tr={he} act={() => {}} />);
-    expect(html).toContain("סיום שיחה</button>");
+    expect(html).toContain("מעבר לכתיבה</button>");
   });
 });
