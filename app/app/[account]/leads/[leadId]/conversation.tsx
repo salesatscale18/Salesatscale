@@ -1,7 +1,7 @@
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon, type IconName } from "@/components/sas/icon";
 import type { ReactNode } from "react";
-import { AgentStepsSwitch, ChatMessage, ChatThread, ThreadMarkerLine, type TraceItem } from "@/components/sas/chat";
+import { AgentStepsSwitch, ChatMessage, ChatThread, ThreadMarkerLine, TraceChips, type TraceItem } from "@/components/sas/chat";
 import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import type { SmsEntry } from "@/lib/sms/thread";
 import { MessageBody } from "@/components/sas/message-body";
@@ -24,7 +24,7 @@ import { isolate } from "@/lib/leads/bidi";
 import { TOOL_ICON } from "@/components/sas/tool-chip";
 import { callLength } from "@/lib/voice/client/buyer-ui";
 import { callClock } from "@/lib/voice/lab";
-import { CallBlockEntry, isCallBlock, type CallLineSource } from "./call-block-entry";
+import { CallBlockEntry, isCallBlock, type CallCardSource, type CallLineSource } from "./call-block-entry";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -400,8 +400,10 @@ export function ConversationControls({
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
   slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead", timezone, takeOverInHeader = false,
-  leadStatus = null, notes = [], rawToolNames = false, steps, viewerZone = null,
+  leadStatus = null, notes = [], rawToolNames = false, steps, viewerZone = null, canDeleteRecordings = false,
 }: {
+  /** Account admins: "Delete recording…" on a recorded call's player (lib/voice/recording-playback.ts mayDeleteRecordings). */
+  canDeleteRecordings?: boolean;
   /**
    * The viewer's own zone (the sas_tz cookie): message times, day dividers and scheduled moments in
    * markers (team calls) all use it, so one screen never mixes two zones; null: `timezone`.
@@ -451,11 +453,16 @@ export function ConversationPanel({
   const showSteps = steps?.show ?? true;
   const { timed, after } = splitMarkers(view.markers);
   // Calls shown as a block: their lines go inside it (board RecThread), not in the thread.
-  const blockCalls = new Set(timed.filter(isCallBlock).map((mk) => mk.call.sessionId));
+  const blocks = timed.filter(isCallBlock);
+  const blockCalls = new Set(blocks.map((mk) => mk.call.sessionId));
+  // Filled while the thread renders, read when the block renders at the call's summary row (after its messages).
   const callLines = new Map<string, CallLineSource[]>();
-  for (const { message: m } of thread) {
-    if (m.voiceSessionId && blockCalls.has(m.voiceSessionId)) callLines.set(m.voiceSessionId, [...(callLines.get(m.voiceSessionId) ?? []), m]);
-  }
+  const callCards = new Map<string, CallCardSource[]>();
+  /** Lines and cards keep the thread's own order inside the block. */
+  let blockSeq = 0;
+  /** The block call a chat message posted during it belongs to (a card: quote, order form, booking), if any. */
+  const callAt = (at: Date, actor: string) => actor === "system" ? null
+    : blocks.find((mk) => at.getTime() >= mk.call.connectedAt.getTime() && at.getTime() <= mk.at.getTime())?.call.sessionId ?? null;
   // A form note whose form is a card in this thread follows that card (the form is posted after the chat's intro,
   // but the form row is created first): never above the intro.
   const formCards = view.formCards ?? {};
@@ -474,31 +481,15 @@ export function ConversationPanel({
       at: mk.at,
       node: () => isCallBlock(mk)
         // A call since recordings exist: one block with its header, player and lines (board RecThread).
-        ? <CallBlockEntry key={`call-${mk.call.sessionId}`} marker={mk} lines={callLines.get(mk.call.sessionId) ?? []} slug={slug} back={`/app/${slug}/${from === "inbox" ? `conversations?c=${c.id}` : `leads/${c.leadId}`}`} buyer={buyerName} zone={zone ?? null} />
+        ? <CallBlockEntry key={`call-${mk.call.sessionId}`} marker={mk} lines={callLines.get(mk.call.sessionId) ?? []} cards={callCards.get(mk.call.sessionId) ?? []} canDelete={canDeleteRecordings} slug={slug} back={`/app/${slug}/${from === "inbox" ? `conversations?c=${c.id}` : `leads/${c.leadId}`}`} buyer={buyerName} zone={zone ?? null} />
         : <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} viewerZone={viewerZone} />,
     })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
   // The agent's hand-off: right after the reply that made it.
   const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} viewerZone={viewerZone} />);
-  return (
-    <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
-      <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
-        <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
-        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : c.channel === "testlab" ? <TestLabChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
-        {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
-        {steps ? <span className="sas-steps-switch__slot"><AgentStepsSwitch slug={slug} scope="workspace" show={steps.show} back={steps.back} /></span> : null}
-      </div>
-      <ChatThread label={t("conv.label")}>
-        {thread.length === 0 && notes.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
-        {thread.flatMap(({ message: m, calls }) => {
-          // Notes (forms a person sent) that happened before this message come first.
-          const before = pending.filter((n) => n.at.getTime() <= m.createdAt.getTime());
-          pending = pending.slice(before.length);
-          const noteNodes = before.flatMap(noteNode);
-          // A line of a call shown as a block: it is in the block.
-          if (m.voiceSessionId && blockCalls.has(m.voiceSessionId)) return [...noteNodes, ...afterNodes(m.id)];
-          const day = divider(m.createdAt);
+  /** One thread message as the thread shows it (also used for cards inside a call block). */
+  const messageNodes = (m: ConversationView["thread"][number]["message"], calls: ConversationView["thread"][number]["calls"], noteNodes: ReactNode[], day: ReactNode): ReactNode[] => {
           // The quote message the app wrote shows as the card the buyer saw (the stored text is the fallback).
           const card = view.quoteCards?.[m.id];
           if (card) {
@@ -545,6 +536,34 @@ export function ConversationPanel({
               </div>
             </ChatMessage>
           ), ...afterNodes(m.id)];
+  };
+  return (
+    <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
+      <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
+        <h2 id="conv-h" className="sas-label" style={{ margin: 0 }}>{t("conv.label")}</h2>
+        {c.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : c.channel === "testlab" ? <TestLabChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${c.channel}`) ?? c.channel}</span>}
+        {chatWindow ? <WindowTimer {...windowTimerProps(chatWindow, new Date())} /> : null}
+        {steps ? <span className="sas-steps-switch__slot"><AgentStepsSwitch slug={slug} scope="workspace" show={steps.show} back={steps.back} /></span> : null}
+      </div>
+      <ChatThread label={t("conv.label")}>
+        {thread.length === 0 && notes.length === 0 ? <p className="sas-small" style={{ margin: 0 }}>{t("conv.empty")}</p> : null}
+        {thread.flatMap(({ message: m, calls }) => {
+          // Notes (forms a person sent) that happened before this message come first.
+          const before = pending.filter((n) => n.at.getTime() <= m.createdAt.getTime());
+          pending = pending.slice(before.length);
+          const noteNodes = before.flatMap(noteNode);
+          // A call shown as a block: its lines (with their steps) and the cards posted during it go inside it.
+          const blockSid = m.voiceSessionId && blockCalls.has(m.voiceSessionId) ? m.voiceSessionId : callAt(m.createdAt, m.actor);
+          if (blockSid) {
+            if (m.voiceSessionId) {
+              const stepsNode = m.actor === "agent" && showSteps ? <TraceChips trace={traceChips(calls, rawToolNames)} /> : undefined;
+              callLines.set(blockSid, [...(callLines.get(blockSid) ?? []), { ...m, steps: stepsNode, seq: blockSeq++ }]);
+            } else {
+              callCards.set(blockSid, [...(callCards.get(blockSid) ?? []), { id: m.id, at: m.createdAt, node: <>{messageNodes(m, calls, [], null)}</>, seq: blockSeq++ }]);
+            }
+            return [...noteNodes, ...afterNodes(m.id)];
+          }
+          return messageNodes(m, calls, noteNodes, divider(m.createdAt));
         })}
         {pending.flatMap(noteNode)}
       </ChatThread>

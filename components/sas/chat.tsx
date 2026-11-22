@@ -44,17 +44,23 @@ export function ChatMessage({
       <div className="sas-msg__bubble" lang={locale} dir={dir(locale)}>
         {children}
       </div>
-      {trace && trace.length > 0 ? (
-        <div className="sas-msg__trace">
-          {trace.map((item, i) => (
-            <span key={i} style={{ display: "inline-flex", gap: 4, alignItems: "center" }} title={item.title}>
-              {/* Words, not codes: the plain (text font) chip (round-4 review C1, D11). */}
-              <span className="sas-chip sas-chip--plain"><Icon name={item.icon ?? ((item.kind === "tool" ? "wrench" : "book-open") satisfies IconName)} />{item.label}</span>
-              {item.outcome ? <StatusPill object="tool_call" state={item.outcome} /> : null}
-            </span>
-          ))}
-        </div>
-      ) : null}
+      <TraceChips trace={trace} />
+    </div>
+  );
+}
+
+/** An agent message's steps (tools and knowledge it used), seller-only: under a chat message, or a call line in its block. */
+export function TraceChips({ trace }: { trace?: TraceItem[] }) {
+  if (!trace || trace.length === 0) return null;
+  return (
+    <div className="sas-msg__trace">
+      {trace.map((item, i) => (
+        <span key={i} style={{ display: "inline-flex", gap: 4, alignItems: "center" }} title={item.title}>
+          {/* Words, not codes: the plain (text font) chip (round-4 review C1, D11). */}
+          <span className="sas-chip sas-chip--plain"><Icon name={item.icon ?? ((item.kind === "tool" ? "wrench" : "book-open") satisfies IconName)} />{item.label}</span>
+          {item.outcome ? <StatusPill object="tool_call" state={item.outcome} /> : null}
+        </span>
+      ))}
     </div>
   );
 }

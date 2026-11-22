@@ -8,6 +8,7 @@ import { currentPlaybook, getDealState } from "@/lib/agent/service";
 import { setLeadMarketAction, takeOverAction, verifyFieldAction } from "../actions";
 import { listMarkets } from "@/lib/markets/service";
 import { appDb, requireAccount } from "@/lib/auth/account";
+import { mayDeleteRecordings } from "@/lib/voice/recording-playback";
 import { nameInitials, personName } from "@/lib/auth/display";
 import { getLead, latestConsent, listLeadEvents } from "@/lib/leads/service";
 import { maskPhone } from "@/lib/leads/rules";
@@ -328,6 +329,7 @@ export default async function LeadCardPage({
             ) : null}
             {conversation ? (
               <ConversationPanel
+                canDeleteRecordings={mayDeleteRecordings(access)}
                 chatWindow={waWindow}
                 slug={account.slug} view={conversation} me={me} buyerName={lead.fullName} timezone={tz} viewerZone={viewerZone} takeOverInHeader={takeOverHere}
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}

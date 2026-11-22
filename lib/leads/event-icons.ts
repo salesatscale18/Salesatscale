@@ -52,6 +52,8 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "callback.after_seller": "user",
   // Reach part B: the agent's booking link in the chat, and the team's log of the call.
   "team_call.offered": "calendar",
+  // A call recording deleted by someone on the team ("Recording deleted by {name}").
+  "voice.recording_deleted": "trash",
   "team_call.logged": "phone-call",
   "team_question.asked": "book-open",
   "team_question.answered": "check-circle",
@@ -109,6 +111,10 @@ export function leadEventTitle(
   if (type === "callback.requested") {
     const booked = bookedCallTime(data, viewerZone);
     return booked ? tr("lead.event.callback.booked", { time: booked }) : tr(key);
+  }
+  if (type === "voice.recording_deleted") {
+    const by = (data as { by?: unknown } | null | undefined)?.by;
+    return typeof by === "string" && by.trim() ? tr("lead.event.voice.recording_deleted_by", { name: by }) : tr(key);
   }
   if (!SMS_WITH_KIND.has(type)) return tr(key);
   const kind = (data as { kind?: unknown } | null | undefined)?.kind;

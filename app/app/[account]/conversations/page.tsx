@@ -2,6 +2,7 @@ import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { Banner, WindowTimer } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
+import { mayDeleteRecordings } from "@/lib/voice/recording-playback";
 import { nameInitials } from "@/lib/auth/display";
 import { conversationView } from "@/lib/agent/conversation";
 import { approvedTemplates, conversationWindow } from "@/lib/channels/whatsapp";
@@ -297,6 +298,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <div className="sas-inbox__chat">
                     <ScrollThreadToEnd />
                     <ConversationPanel
+                canDeleteRecordings={mayDeleteRecordings(access)}
                       from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone} viewerZone={viewerZone}
                       leadOptedOut={selected.lead.status === "opted_out"} notice={notice === "template_sent" ? undefined : notice}
                       leadStatus={selected.lead.status} notes={thread.notes} rawToolNames={seesPlatformDetails(access)}

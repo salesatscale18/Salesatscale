@@ -1702,13 +1702,21 @@ label.st-voice__row { cursor: pointer; }
 /* ===== Call recordings (board RecThread / RecSettings) ===== */
 /* A voice call in a seller's thread: header, state, player, lines. */
 .sas-callblock { align-self: stretch; display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); min-width: 0; overflow: hidden; }
-.sas-callblock__head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.sas-callblock__head { display: flex; flex-direction: column; gap: 4px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.sas-callblock__row { display: flex; flex-wrap: nowrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.sas-callblock__row > b { flex: none; }
+.sas-callblock__state, .sas-callblock__pill { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-callblock__row--meta { flex-wrap: nowrap; padding-inline-start: 38px; }
+.sas-callblock__row--meta .sas-callblock__meta { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-callblock__text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.sas-callblock__steps .sas-msg__trace { margin: 0; }
+.sas-callblock__card { display: flex; flex-direction: column; padding: 6px 14px; background: none; border: 0; }
 .sas-callblock--not_recorded .sas-callblock__head, .sas-callblock--deleted .sas-callblock__head { background: var(--surface-sunken, #eceef2); }
 .sas-callblock__ico { display: inline-grid; place-items: center; width: 28px; height: 28px; border-radius: var(--radius-md); background: #efeafc; color: #6a43c7; flex: none; }
 .sas-callblock__pill { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; font-weight: 600; color: #a8327a; background: #fbe9f3; border-radius: 999px; padding: 1px 8px; }
 .sas-callblock__pill .sas-ico { width: 12px; height: 12px; }
 .sas-callblock__meta { min-width: 0; }
-.sas-callblock__hide { margin-inline-start: auto; }
+.sas-callblock__hide { margin-inline-start: auto; flex: none; }
 .sas-callblock__note { padding: 10px 14px; }
 .sas-callblock__player { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
 .sas-callblock__player audio { display: none; }
@@ -1728,7 +1736,7 @@ label.st-voice__row { cursor: pointer; }
 .sas-callblock__menu-list a, .sas-callblock__menu-list button { display: flex; align-items: center; gap: 8px; padding: 7px 10px; border: 0; border-radius: 6px; background: none; color: var(--ink); font: inherit; font-size: 14px; text-align: start; cursor: pointer; }
 .sas-callblock__menu-list .sas-callblock__danger { color: var(--danger); }
 .sas-callblock__confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); background: var(--warning-soft); }
-.sas-callblock__lines { display: flex; flex-direction: column; max-height: 360px; overflow-y: auto; padding: 4px 0; }
+.sas-callblock__lines { display: flex; flex-direction: column; max-height: 480px; overflow-y: auto; padding: 4px 0; }
 .sas-callblock__line { display: grid; grid-template-columns: 44px 72px minmax(0, 1fr) 28px; gap: 8px; padding: 6px 14px; font-size: 13px; line-height: 19px; align-items: start; }
 .sas-callblock__line.is-now { background: #efeafc; }
 .sas-callblock__who { display: inline-flex; align-items: center; gap: 4px; min-width: 0; overflow-wrap: anywhere; }
@@ -1738,6 +1746,7 @@ label.st-voice__row { cursor: pointer; }
 @media (max-width: 560px) {
   .sas-callblock__line { grid-template-columns: 40px minmax(0, 1fr) 28px; }
   .sas-callblock__line > span:nth-child(3) { grid-column: 1 / 3; }
+  .sas-callblock__row--meta { padding-inline-start: 0; }
 }
 /* Settings › Voice › Call recordings */
 .st-voice__warn { display: inline-flex; align-items: flex-start; gap: 6px; padding: 6px 10px; font-size: 13px; line-height: 18px; }

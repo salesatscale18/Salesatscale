@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { and, asc, eq } from "drizzle-orm";
 import { messages, rateLimits, sellerAccounts, users, voiceSessions, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { seedCatalog, seedPricing } from "../helpers/pricing";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as null | ((slug: string) => unknown) }));
 vi.mock("@/lib/auth/account", () => ({
@@ -48,6 +49,10 @@ beforeAll(async () => {
     return (await createAccount(db, { userId: me.id, actingAs: false }, p.value)).account.id;
   };
   acc = await mk("Acme", "rec-acme@x.test");
+  await seedCatalog(db, acc, [{ sku: "SEAT-M", name: "User seat", unit: "seat", plainName: "user seat" }]);
+  await seedPricing(db, acc, [{ sku: "SEAT-M", oneTime: 10_000 }], { userId: me.id });
+  const { saveLegalSection } = await import("@/lib/orders/settings");
+  await saveLegalSection(db, acc, me.id, { sectionKey: "sales_terms", title: "Sales terms", language: "en", body: "Terms" });
   other = await mk("Other", "rec-other@x.test");
 });
 afterAll(async () => t.close());
@@ -352,8 +357,12 @@ describe("once per conversation, keep period, delete, download, expiry", () => {
     await end(c);
     const dl = await recordingResponse(db, acc, c.sessionId, null, { store: c.store, download: true });
     expect(dl.headers.get("content-disposition")).toMatch(/^attachment; filename="call-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.wav"$/);
-    expect(await deleteRecording(db, { userId: me.id, actingAs: false }, other, c.sessionId, { store: c.store })).toBe(false);
-    expect(await deleteRecording(db, { userId: me.id, actingAs: false }, acc, c.sessionId, { store: c.store })).toBe(true);
+    const admin = { role: "seller_admin", actor: { userId: me.id, actingAs: false } };
+    // A role that is not an account admin: forbidden, nothing deleted.
+    expect(await deleteRecording(db, { role: "seller_member", actor: { userId: me.id, actingAs: false } }, acc, c.sessionId, { store: c.store })).toBe("forbidden");
+    expect(c.store!.files.size).toBeGreaterThan(0);
+    expect(await deleteRecording(db, admin, other, c.sessionId, { store: c.store })).toBe("not_found");
+    expect(await deleteRecording(db, admin, acc, c.sessionId, { store: c.store })).toBe("deleted");
     expect(c.store!.files.size).toBe(0);
     // Deleted by someone (not the keep period): no "kept N days".
     expect(await row(c.sessionId)).toMatchObject({ recordingState: "deleted", recordingChunks: 0, recordingKeepDays: null });
@@ -361,6 +370,15 @@ describe("once per conversation, keep period, delete, download, expiry", () => {
     expect((await recordingResponse(db, acc, c.sessionId, null, { store: c.store })).status).toBe(404);
     const { auditLog } = await import("@/db/schema");
     expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, acc), eq(auditLog.action, "voice.recording_deleted")))).toHaveLength(1);
+    // The lead's timeline: "Recording deleted by Rae".
+    const { leadEvents, conversations } = await import("@/db/schema");
+    const [cv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
+    const [ev] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, cv.leadId), eq(leadEvents.type, "voice.recording_deleted")));
+    expect(ev).toMatchObject({ actor: "human", actorUserId: me.id, data: { voiceSessionId: c.sessionId, by: "Rae" } });
+    const { leadEventIcon, leadEventTitle } = await import("@/lib/leads/event-icons");
+    const { t: tr } = await import("@/lib/i18n");
+    expect(leadEventTitle(ev.type, ev.data, tr)).toBe("Recording deleted by Rae");
+    expect(leadEventIcon(ev.type, { data: ev.data })).toBe("trash");
     // The store's keep period ran out before the cron saw it: playback finds no chunks and marks the row.
     const d = await newCall();
     await d.run(15_000);
@@ -385,12 +403,13 @@ describe("the call block in the seller's thread (board RecThread)", () => {
       { id: "l2", actor: "buyer", body: "Yes. Does the price include installation?", spokenAtMs: 9_000, typedInCall: false },
       { id: "l3", actor: "buyer", body: "Send me the order form", spokenAtMs: 111_000, typedInCall: true },
     ];
-    const render = (state: string | null, keepDays: number | null = 90) => {
+    const render = (state: string | null, keepDays: number | null = 90, canDelete = true) => {
       const markers = voiceMarkers([{ ...base, id: sid, recordingState: state, recordingSec: 228, recordingKeepDays: keepDays }]);
       const mk = markers.find((m) => m.kind === "voice_ended")!;
       expect(markers).toHaveLength(isCallBlock(mk) ? 1 : 2);
       if (!isCallBlock(mk)) return null;
-      return renderToStaticMarkup(createElement(CallBlockEntry, { marker: mk, lines, slug: "acme", back: "/app/acme/leads/x", buyer: "Dana Demo", zone: "Asia/Jerusalem" }));
+      const cards = [{ id: "card-q", at: new Date(at.getTime() + 12_000), node: createElement("div", { className: "qcard" }, "Quote Q-1003") }];
+      return renderToStaticMarkup(createElement(CallBlockEntry, { marker: mk, lines, cards, slug: "acme", back: "/app/acme/leads/x", buyer: "Dana Demo", zone: "Asia/Jerusalem", canDelete }));
     };
     const saved = render("saved")!;
     expect(saved).toContain("Voice call · 3 min 48 s");
@@ -403,6 +422,13 @@ describe("the call block in the seller's thread (board RecThread)", () => {
     expect(saved).toContain('aria-label="Play"');
     expect(saved).toContain("Copy transcript");
     expect(saved).toContain("Delete recording…");
+    // A card posted during the call sits at its time: after the 0:09 line, before the 1:51 one.
+    expect(saved.indexOf("Does the price include installation?")).toBeLessThan(saved.indexOf("Quote Q-1003"));
+    expect(saved.indexOf("Quote Q-1003")).toBeLessThan(saved.indexOf("Send me the order form"));
+    // Not an account admin: no delete item (the action refuses it too).
+    const member = render("saved", 90, false)!;
+    expect(member).not.toContain("Delete recording…");
+    expect(member).toContain("Copy transcript");
     // Play from here on spoken lines only; the typed line keeps its keyboard mark.
     expect(saved.match(/aria-label="Play from here [0-9:]+"/g)).toEqual(['aria-label="Play from here 0:02"', 'aria-label="Play from here 0:09"']);
     expect(saved).toContain('aria-label="Typed during the call"');
@@ -422,10 +448,83 @@ describe("the call block in the seller's thread (board RecThread)", () => {
     if (dir) {
       const fs = await import("node:fs");
       const path = await import("node:path");
-      const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
+      const css = ["components/sas/sas.css", "components/sas/quote-card.css"].map((f) => fs.readFileSync(path.join(process.cwd(), f), "utf8")).join("\n");
       fs.mkdirSync(dir, { recursive: true });
       const page = (body: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css} body{margin:0}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:flex;flex-direction:column;gap:16px;padding:24px;max-width:760px">${body}</div></div></body></html>`;
       fs.writeFileSync(path.join(dir, "thread-call-block.html"), page([saved, off, gone].join("")));
+    }
+  });
+});
+
+describe("the call block keeps what the thread showed (lead page and Conversations)", () => {
+  it("each agent line keeps its step chips, and a card posted during the call sits at its place in the block", async () => {
+    const { conversationView } = await import("@/lib/agent/conversation");
+    const { ConversationPanel } = await import("@/app/app/[account]/leads/[leadId]/conversation");
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const { tool } = await import("@/lib/voice/scripted-realtime");
+    const c = await newCall({ script: [
+      expectBuyer("Can someone from your team call me about pricing?"),
+      say("One moment."),
+      tool("update_deal_state", { updates: [], next_step: "call", objection: null, recommendation_confirmed: null, price_asked: true, asked: null }),
+      tool("request_callback", { brief: "Pricing for the buyer's sites" }),
+      say((ctx) => (ctx.last("request_callback")?.ok === true ? "Done: I've put a link in the chat where you can pick a time." : "Sorry.")),
+    ] });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(20_000);
+    await end(c);
+    const { conversations, users: usersT } = await import("@/db/schema");
+    const [cv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
+    const view = await conversationView(db, acc, cv);
+    const [u] = await db.select().from(usersT).where(eq(usersT.id, me.id));
+    const html = renderToStaticMarkup(createElement(ConversationPanel, {
+      slug: "acme", view, me: u, buyerName: "Test buyer", leadOptedOut: false, canDeleteRecordings: true, timezone: "Asia/Jerusalem",
+    }));
+    const block = html.slice(html.indexOf('data-call-block="saved"'));
+    // The agent's steps under its line, inside the block (the same chips as the thread).
+    expect(block).toContain("sas-callblock__steps");
+    expect(block.match(/class="sas-msg__trace"/g)?.length).toBeGreaterThan(0);
+    // The booking card posted during the call is in the block (placed by its time in the call: the test's call clock is
+    // a hand-moved one, so its order against the lines is checked with explicit times in the block test above).
+    expect(block.indexOf("data-call-card=")).toBeGreaterThan(0);
+    expect(block).toContain("One moment.");
+    // Nothing of the call is left outside the block (no lines, no card twice).
+    const outside = html.slice(0, html.indexOf('data-call-block="saved"'));
+    expect(outside).not.toContain("One moment.");
+    expect(block).toContain("Delete recording…");
+    const member = renderToStaticMarkup(createElement(ConversationPanel, { slug: "acme", view, me: u, buyerName: "Test buyer", leadOptedOut: false, timezone: "Asia/Jerusalem" }));
+    expect(member).not.toContain("Delete recording…");
+  });
+
+  it("a ready buyer's call on the lead page: the quote card, the order form and the steps all inside the block", async () => {
+    const { conversationView } = await import("@/lib/agent/conversation");
+    const { ConversationPanel } = await import("@/app/app/[account]/leads/[leadId]/conversation");
+    const { createElement } = await import("react");
+    const { renderToStaticMarkup } = await import("react-dom/server");
+    const c = await newCall({ scenario: "ready_buyer" });
+    await c.run(15_000);
+    await c.speak();
+    await c.run(30_000);
+    await c.speak();
+    await c.run(30_000);
+    await end(c);
+    const { conversations, users: usersT } = await import("@/db/schema");
+    const [cv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
+    const view = await conversationView(db, acc, cv);
+    const [u] = await db.select().from(usersT).where(eq(usersT.id, me.id));
+    const html = renderToStaticMarkup(createElement(ConversationPanel, { slug: "acme", view, me: u, buyerName: "Test buyer", leadOptedOut: false, canDeleteRecordings: true, timezone: "Asia/Jerusalem" }));
+    const block = html.slice(html.indexOf('data-call-block="saved"'));
+    expect(block).toMatch(/Quote Q-\d+/);
+    expect(block).toContain("sas-callblock__steps");
+    expect(html.slice(0, html.indexOf('data-call-block="saved"'))).not.toMatch(/Quote Q-\d+/);
+    const dir = process.env.VOICE_RENDER_DIR;
+    if (dir) {
+      const fs = await import("node:fs");
+      const path = await import("node:path");
+      const css = ["components/sas/sas.css", "components/sas/quote-card.css"].map((f) => fs.readFileSync(path.join(process.cwd(), f), "utf8")).join("\n");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(dir, "lead-call-block.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css} body{margin:0}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:block;max-width:760px">${html}</div></div></body></html>`);
     }
   });
 });

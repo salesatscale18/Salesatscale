@@ -12,6 +12,7 @@ import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
+import { mayDeleteRecordings } from "@/lib/voice/recording-playback";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
@@ -141,7 +142,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   let pendingMarkers = timedMarkers;
   // A call since recordings exist: its block (header and player); its lines stay in the thread with their steps.
   const markerNode = (mk: ThreadMarker, key: string) => isCallBlock(mk)
-    ? <CallBlockEntry key={key} marker={mk} lines={thread.filter(({ message: m }) => m.voiceSessionId === mk.call.sessionId).map(({ message: m }) => m)} slug={slug} back={conv ? `${lab}?c=${conv.id}` : lab} buyer={t("lab.who.buyer")} zone={viewerZone ?? tz} linesInBlock={false} />
+    ? <CallBlockEntry key={key} marker={mk} lines={thread.filter(({ message: m }) => m.voiceSessionId === mk.call.sessionId).map(({ message: m }) => m)} slug={slug} back={conv ? `${lab}?c=${conv.id}` : lab} buyer={t("lab.who.buyer")} zone={viewerZone ?? tz} linesInBlock={false} canDelete={mayDeleteRecordings(access)} />
     : <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} />;
   // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();

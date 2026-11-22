@@ -6,7 +6,8 @@
  */
 import { and, eq, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { voiceSessions } from "@/db/schema";
+import { conversations, leadEvents, users, voiceSessions } from "@/db/schema";
+import { displayName } from "@/lib/auth/display";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { playbackStoreFor, wavHeader, type RecordingChunkInfo, type RecordingStore } from "./recording";
 
@@ -106,25 +107,46 @@ async function markDeleted(db: Db, accountId: string, sessionId: string) {
     .where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.accountId, accountId)));
 }
 
+/** The lead-timeline event of a deleted recording: "Recording deleted by {name}" (data.by). */
+export const RECORDING_DELETED_EVENT = "voice.recording_deleted";
+
 /**
- * "Delete recording…" (seller side): removes the call's audio from the store and marks it deleted; the call's
- * written lines stay. Audited. False when this account has no such recording. The caller checks access.
+ * Who may delete a recording (recordings are kept as evidence): account admins and a super admin acting in the
+ * account, by the access row's role, as the other admin-only account actions check it (lib/callbacks/service.ts
+ * mayManageCallbacks). Today every member's role is seller_admin (the member_role enum has only that value), so
+ * the check bites once a non-admin role exists.
+ */
+export const mayDeleteRecordings = (access: { role: string }) => access.role === "seller_admin" || access.role === "platform_admin";
+
+/**
+ * "Delete recording…" (seller side, account admins): removes the call's audio from the store and marks it deleted;
+ * the call's written lines stay. Writes an audit entry and a lead-timeline entry ("Recording deleted by {name}").
+ * "forbidden" for a role that may not delete; "not_found" when this account has no such recording.
  */
 export async function deleteRecording(
-  db: Db, actor: Actor, accountId: string, sessionId: string,
+  db: Db, access: { role: string; actor: Actor }, accountId: string, sessionId: string,
   opts: { store?: RecordingStore | null; env?: Record<string, string | undefined> } = {},
-): Promise<boolean> {
-  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return false;
-  const [s] = await db.select({ mode: voiceSessions.mode, state: voiceSessions.recordingState, prefix: voiceSessions.recordingRef })
+): Promise<"deleted" | "forbidden" | "not_found"> {
+  if (!mayDeleteRecordings(access)) return "forbidden";
+  if (!/^[0-9a-f-]{36}$/i.test(sessionId)) return "not_found";
+  const [s] = await db.select({ mode: voiceSessions.mode, state: voiceSessions.recordingState, prefix: voiceSessions.recordingRef, conversationId: voiceSessions.conversationId })
     .from(voiceSessions).where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.accountId, accountId)));
-  if (!s?.prefix || (s.state !== "saved" && s.state !== "failed")) return false;
+  if (!s?.prefix || (s.state !== "saved" && s.state !== "failed")) return "not_found";
   const store = opts.store !== undefined ? opts.store : await playbackStoreFor(s.mode, opts.env);
   if (store) await store.deleteAll(s.prefix);
   await markDeleted(db, accountId, sessionId);
   // Deleted by someone, not by the keep period: the call reads "Recording deleted" (no "kept N days").
   await db.update(voiceSessions).set({ recordingKeepDays: null }).where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.accountId, accountId)));
-  await writeAudit(db, actor, { accountId, action: "voice.recording_deleted", targetType: "voice_session", targetId: sessionId, details: {} });
-  return true;
+  const [who] = access.actor.userId ? await db.select().from(users).where(eq(users.id, access.actor.userId)) : [];
+  const [conv] = await db.select({ leadId: conversations.leadId }).from(conversations).where(and(eq(conversations.id, s.conversationId), eq(conversations.accountId, accountId)));
+  if (conv) {
+    await db.insert(leadEvents).values({
+      accountId, leadId: conv.leadId, type: RECORDING_DELETED_EVENT, actor: "human", actorUserId: access.actor.userId,
+      data: { voiceSessionId: sessionId, conversationId: s.conversationId, by: who ? displayName(who) : null },
+    });
+  }
+  await writeAudit(db, access.actor, { accountId, action: "voice.recording_deleted", targetType: "voice_session", targetId: sessionId, details: {} });
+  return "deleted";
 }
 
 /**

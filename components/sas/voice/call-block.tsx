@@ -9,10 +9,13 @@
  * keep the keyboard mark and have no play button. The audio comes from the seller-only route (no public URL).
  * Every text arrives translated from the server (`strings`).
  */
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 
-export type CallBlockLine = { id: string; atMs: number; actor: "agent" | "buyer"; who: string; text: string; typed: boolean };
+/** A call line; `steps`: the agent's steps for it, rendered on the server exactly as the thread shows them. */
+export type CallBlockLine = { id: string; atMs: number; actor: "agent" | "buyer"; who: string; text: string; typed: boolean; steps?: ReactNode; seq?: number };
+/** Something posted in the chat during the call (a quote card, the order form, a booking card), at its place. */
+export type CallBlockCard = { id: string; atMs: number; node: ReactNode; seq?: number };
 
 export type CallBlockStrings = {
   hideLines: string; showLines: string; play: string; pause: string; position: string; speed: string; download: string;
@@ -31,6 +34,8 @@ type Props = {
   /** Under the header when there is no audio ("The lines stay; only the audio is gone."). */
   note?: string;
   lines: CallBlockLine[];
+  /** Cards posted during the call, shown among the lines at their time (only with linesInBlock). */
+  cards?: CallBlockCard[];
   /** The call's lines are inside the block (false: they stay in the thread above, e.g. the test lab with its steps). */
   linesInBlock: boolean;
   durationSec: number;
@@ -58,6 +63,11 @@ export function CallBlock(p: Props) {
   const [copied, setCopied] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const hasAudio = p.state === "saved" && !!p.audioSrc;
+  // The call's lines and the cards posted during it: in the thread's own order when given (`seq`), else by time.
+  const items = useMemo(() => [
+    ...p.lines.map((line) => ({ kind: "line" as const, at: line.atMs, seq: line.seq, line })),
+    ...(p.cards ?? []).map((card) => ({ kind: "card" as const, at: card.atMs + 0.5, seq: card.seq, card })),
+  ].sort((a, b) => (a.seq !== undefined && b.seq !== undefined ? a.seq - b.seq : a.at - b.at)), [p.lines, p.cards]);
   const spoken = p.lines.filter((l) => !l.typed);
   // The line playing: the last spoken line that started at or before the current time (only once something played).
   const current = useMemo(() => {
@@ -110,15 +120,19 @@ export function CallBlock(p: Props) {
   return (
     <section className={`sas-callblock sas-callblock--${p.state}`} aria-label={p.title} data-call-block={p.state}>
       <div className="sas-callblock__head">
-        <span className="sas-callblock__ico" aria-hidden="true"><Icon name="phone-call" /></span>
-        <b>{p.title}</b>
-        {p.state === "saved" ? <span className="sas-callblock__pill" data-call-recorded=""><Icon name="circle-dot" />{p.stateText}</span> : <span className="sas-small">{p.stateText}</span>}
-        <span className="sas-small sas-callblock__meta">{p.meta}</span>
-        {p.linesInBlock && p.lines.length ? (
-          <button type="button" className="sas-btn sas-btn--ghost sas-btn--sm sas-callblock__hide" aria-expanded={showLines} onClick={() => setShowLines((v) => !v)}>
-            {showLines ? p.strings.hideLines : p.strings.showLines}
-          </button>
-        ) : null}
+        <div className="sas-callblock__row">
+          <span className="sas-callblock__ico" aria-hidden="true"><Icon name="phone-call" /></span>
+          <b>{p.title}</b>
+          {p.state === "saved" ? <span className="sas-callblock__pill" data-call-recorded=""><Icon name="circle-dot" />{p.stateText}</span> : <span className="sas-small sas-callblock__state">{p.stateText}</span>}
+        </div>
+        <div className="sas-callblock__row sas-callblock__row--meta">
+          <span className="sas-small sas-callblock__meta">{p.meta}</span>
+          {p.linesInBlock && p.lines.length ? (
+            <button type="button" className="sas-btn sas-btn--ghost sas-btn--sm sas-callblock__hide" aria-expanded={showLines} onClick={() => setShowLines((v) => !v)}>
+              {showLines ? p.strings.hideLines : p.strings.showLines}
+            </button>
+          ) : null}
+        </div>
       </div>
       {p.note ? <div className="sas-small sas-callblock__note">{p.note}</div> : null}
       {hasAudio ? (
@@ -171,15 +185,21 @@ export function CallBlock(p: Props) {
       ) : null}
       {p.linesInBlock && showLines && p.lines.length ? (
         <div className="sas-callblock__lines" ref={list}>
-          {p.lines.map((l) => (
-            <div key={l.id} className={`sas-callblock__line${current === l.id ? " is-now" : ""}`} data-line={l.id} aria-current={current === l.id ? "true" : undefined}>
-              <span className="sas-num sas-small">{clock(l.atMs / 1000)}</span>
-              <b className={`sas-callblock__who sas-callblock__who--${l.actor}`}>
-                {l.who}{l.typed ? <span title={p.strings.typed} aria-label={p.strings.typed}><Icon name="keyboard" /></span> : null}
+          {items.map((it) => it.kind === "card" ? (
+            // The thread's own container class, so a card looks as it does in the thread.
+            <div key={it.card.id} className="sas-chat sas-callblock__card" data-call-card={it.card.id}>{it.card.node}</div>
+          ) : (
+            <div key={it.line.id} className={`sas-callblock__line${current === it.line.id ? " is-now" : ""}`} data-line={it.line.id} aria-current={current === it.line.id ? "true" : undefined}>
+              <span className="sas-num sas-small">{clock(it.line.atMs / 1000)}</span>
+              <b className={`sas-callblock__who sas-callblock__who--${it.line.actor}`}>
+                {it.line.who}{it.line.typed ? <span title={p.strings.typed} aria-label={p.strings.typed}><Icon name="keyboard" /></span> : null}
               </b>
-              <span dir="auto">{l.text}</span>
-              {hasAudio && !l.typed ? (
-                <button type="button" className="sas-callblock__pf" aria-label={`${p.strings.playFrom} ${clock(l.atMs / 1000)}`} title={p.strings.playFrom} onClick={() => seek(l.atMs / 1000, true)}>
+              <span className="sas-callblock__text">
+                <span dir="auto">{it.line.text}</span>
+                {it.line.steps ? <span className="sas-callblock__steps">{it.line.steps}</span> : null}
+              </span>
+              {hasAudio && !it.line.typed ? (
+                <button type="button" className="sas-callblock__pf" aria-label={`${p.strings.playFrom} ${clock(it.line.atMs / 1000)}`} title={p.strings.playFrom} onClick={() => seek(it.line.atMs / 1000, true)}>
                   <Icon name="play" />
                 </button>
               ) : <span />}
