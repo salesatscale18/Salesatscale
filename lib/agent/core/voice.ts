@@ -188,7 +188,7 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
     optional: true,
   },
   {
-    from: "Keep answering until the call. If the buyer wants another time, they can rebook with the same link; call request_callback again only to send it again.",
+    from: "Keep answering until the call. If the buyer wants another time, they can rebook with the same link, or name a time: call request_callback again with that time, or without one to send the link again.",
     to: "Keep the conversation going: this call does not end because of the booking. If the buyer names another time, call request_callback again with that time; otherwise they can rebook with the same link in the chat.",
     optional: true,
   },
