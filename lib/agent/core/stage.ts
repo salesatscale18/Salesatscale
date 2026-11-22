@@ -64,9 +64,20 @@ export type StageInput = StageFacts & {
   fields: Record<string, DealFieldValue> | null | undefined;
   /** The deal's objections, either stored shape (lib/agent/core/objections.ts). */
   objections?: readonly StoredObjection[] | null;
-  /** Agent messages already in the conversation (the fixed opener counts). */
+  /**
+   * Agent messages already in the conversation (the fixed opener counts): only what the agent wrote
+   * (`writtenByAgent`), not the app's messages (quote and booking cards, follow-ups, continuation lines).
+   */
   agentMessages: number;
 };
+
+/**
+ * A message the agent itself wrote, for StageInput.agentMessages: its turn replies (chat and voice), its fixed
+ * replies and the conversation's fixed opener all carry the agent version that wrote them. Messages the app writes
+ * (quote, booking and continuation cards, follow-ups, a seller-approved quote's next step, the team's callback and
+ * answer lines, a call's app lines) are stored as agent messages without one, so they do not move the stage.
+ */
+export const writtenByAgent = (m: { actor: string; agentVersionId: string | null }): boolean => m.actor === "agent" && m.agentVersionId !== null;
 
 export type StageResult = {
   stage: Stage;

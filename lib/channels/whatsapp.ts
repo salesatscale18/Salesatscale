@@ -479,14 +479,16 @@ async function turnAppMessages(db: Db, accountId: string, conversationId: string
 
 /**
  * Runs the agent on the stored buyer message and sends its reply. A taken-over
- * or paused conversation gets no automated reply (runBuyerTurn decides).
+ * or paused conversation gets no automated reply (runBuyerTurn decides), nor
+ * one with a call on it (in_call: the message stays stored, nothing is sent).
+ * `trigger`: the log name of what asked for the reply, when a call blocks it.
  */
 export async function replyToBuyer(
   db: Db, llm: LlmClient, transport: TwilioTransport | null,
   m: { accountId: string; conversationId: string; leadId: string; text: string },
-  opts: { statusCallback?: string | null } = {},
+  opts: { statusCallback?: string | null; trigger?: string } = {},
 ) {
-  const turn = await runBuyerTurn(db, llm, { accountId: m.accountId, conversationId: m.conversationId, text: m.text, buyerMessageStored: true });
+  const turn = await runBuyerTurn(db, llm, { accountId: m.accountId, conversationId: m.conversationId, text: m.text, buyerMessageStored: true, trigger: opts.trigger ?? "chat reply" });
   if (turn.status !== "replied") return { turn, delivery: null };
   // The lead was not opted out when the message arrived (receiveInbound), so an
   // opted-out lead now means this reply is the opt-out confirmation.

@@ -17,7 +17,7 @@
  * Time comes from an injectable clock, so tests run instantly.
  */
 import type { VoiceUsage } from "@/db/schema";
-import { OPT_OUT_REPLY } from "@/lib/agent/safety";
+import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { scenarioById } from "@/lib/agent/scenarios";
 import { pcmDurationMs, VOICE_SAMPLE_RATE } from "./protocol";
 import { EnergyVad } from "./vad";
@@ -474,12 +474,15 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     say("Thanks for your time. Talk soon, goodbye."),
   ],
   says_stop: [
-    // The engine hears the opt-out in code and asks for the fixed reply.
+    // The engine records the opt-out in code; the spoken turn is answered by the model itself (no injected second
+    // answer), with the reply its rules give.
     expectBuyer("Stop calling me."),
+    say(OPT_OUT_REPLY.en),
   ],
   card_in_chat: [
-    // The engine masks the card number and asks for the fixed security reply.
+    // The engine masks the card number; the spoken turn is answered by the model itself, by its card rule.
     expectBuyer("Just charge my card: 4111 1111 1111 1111, exp 12/28."),
+    say(CARD_REPLY.en),
   ],
   hebrew_buyer: [
     expectBuyer("שלום, יש לנו עסק עם סניף אחד. כמה זה עולה?"),

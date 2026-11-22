@@ -254,10 +254,12 @@ describe("the tab link's key (server-made, never a raw token)", () => {
 
 describe("the bubble", () => {
   const live = { phase: "live" as const, live: "listening" as const, muted: false, endReason: null, mic: 0.3, out: 0, caption: { id: "a", text: "Hi" }, secondsLeft: 120, outputs: [], output: null };
-  it("a round button named by the state word, bottom-end in the page's direction; no tool names", () => {
-    const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="dock" />);
+  it("a round button named by the state word; no pop-up in the chat's bar, a tray on the form; no tool names", () => {
+    const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="bar" />);
     expect(html).toContain('aria-label="Voice call, listening, 2:00 left"');
-    expect(html).toContain('aria-haspopup="menu"');
+    expect(html).not.toMatch(/aria-haspopup|aria-expanded/);
+    const form = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="fixed" />);
+    expect(form).toContain('aria-expanded="false"');
     expect(html).toContain('data-bubble-live="listening"');
     expect(html).not.toContain("data-bubble-menu");
     const he = renderToStaticMarkup(<VoiceBubble state={{ ...live, muted: true }} agentName="Maya" tr={translator("he")} dir="rtl" onCommand={() => {}} placement="fixed" caption />);
@@ -268,10 +270,10 @@ describe("the bubble", () => {
   });
 
   it("accessible name: the state and the time left (en, he); the live region changes with the state only", () => {
-    const render = (st: import("@/lib/voice/client/tab-link").MirrorState, lang: "en" | "he" = "en", placement: "dock" | "fixed" = "fixed") =>
+    const render = (st: import("@/lib/voice/client/tab-link").MirrorState, lang: "en" | "he" = "en", placement: "bar" | "fixed" = "fixed") =>
       renderToStaticMarkup(<VoiceBubble state={st} agentName="Maya" tr={translator(lang)} dir={lang === "he" ? "rtl" : "ltr"} onCommand={() => {}} placement={placement} caption />);
     const region = (html: string) => /data-bubble-live-region="">([^<]*)</.exec(html)?.[1];
-    const label = (html: string) => /<button[^>]*aria-label="([^"]*)"[^>]*aria-haspopup/.exec(html)?.[1];
+    const label = (html: string) => /<button[^>]*aria-label="([^"]*)"[^>]*data-bubble-button/.exec(html)?.[1];
     expect(label(render({ ...live, secondsLeft: 268 }))).toBe("Voice call, listening, 4:28 left");
     expect(label(render({ ...live, live: "speaking", secondsLeft: 61 }))).toBe("Voice call, agent speaking, 1:01 left");
     expect(label(render({ ...live, live: "standby" }))).toBe("Voice call, standing by, 2:00 left");
@@ -289,13 +291,16 @@ describe("the bubble", () => {
     expect(region(render({ ...live, live: "speaking" }))).toBe("Maya is speaking");
     expect(region(render({ ...live, phase: "ended", live: null, endReason: "idle" }))).toBe("Call ended · it was quiet");
     // In the chat, while the bar above says it (connecting), the bubble's region stays quiet: one announcement.
-    expect(region(render({ ...live, phase: "connecting", live: null }, "en", "dock"))).toBe("");
+    expect(region(render({ ...live, phase: "connecting", live: null }, "en", "bar"))).toBe("");
   });
 
-  it("a note next to the bubble (the first switch), in the page's language; markers never as a caption", () => {
-    const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("he")} dir="rtl" onCommand={() => {}} placement="dock" note={translator("he")("buyer.voice.first_note")} />);
+  it("a note above the bubble (the first switch), in the page's language; markers never as a caption", () => {
+    const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("he")} dir="rtl" onCommand={() => {}} placement="bar" note={translator("he")("buyer.voice.first_note")} />);
     expect(html).toContain('data-bubble-note="first"');
-    expect(html).toContain("מה שנאמר מופיע כטקסט בצ&#x27;אט הזה");
+    expect(html).toContain("מה שנאמר מופיע כטקסט בצ&#x27;אט הזה.</button>");
+    // Calls may be recorded: the note never says otherwise (EN and HE).
+    expect(translator("en")("buyer.voice.first_note")).toBe("What you say appears as text in this chat.");
+    expect(html).not.toContain("הקלטה");
     const marker = renderToStaticMarkup(<VoiceBubble state={{ ...live, caption: { id: "a", text: "<no speech detected>" } }} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="fixed" caption />);
     expect(marker).not.toContain("no speech");
   });

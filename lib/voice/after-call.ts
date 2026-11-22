@@ -25,6 +25,8 @@ import type { Db } from "@/db/types";
 import { conversations, messages, voiceSessions, type VoiceEndReason, type VoiceSession } from "@/db/schema";
 import type { LlmClient } from "@/lib/agent/llm";
 import { replyToBuyer } from "@/lib/channels/whatsapp";
+import { activeCallOn } from "./one-agent";
+import { voiceLine } from "./log";
 
 /**
  * Endings that leave the conversation open and with the agent. Not: opt_out, handoff, take_over, budget, agent_closed.
@@ -91,6 +93,12 @@ export async function replyAfterCall(db: Db, llm: LlmClient, sessionId: string):
     if (!s) return { status: "skipped", reason: "not_found" };
     const turn = await unansweredCallTurn(db, s);
     if (!turn) return { status: "skipped", reason: "answered_or_not_eligible" };
+    // One agent at a time: a new call on this conversation (pending or live) takes the turn; its agent hears the buyer.
+    const active = await activeCallOn(db, s.accountId, s.conversationId);
+    if (active) {
+      console.info(voiceLine(active, `text agent blocked: after-call reply of ${s.id.slice(0, 8)} (this call is pending or live)`));
+      return { status: "skipped", reason: "call_active" };
+    }
     if (turn.claimed || !(await claim(db, s.id))) return { status: "skipped", reason: "claimed" };
     const out = await replyToBuyer(db, llm, null, { accountId: s.accountId, conversationId: s.conversationId, leadId: turn.leadId, text: turn.body });
     if (out.delivery && !out.delivery.delivered) console.warn(`[voice] after-call reply not delivered: ${out.delivery.reason}`);

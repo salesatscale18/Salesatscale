@@ -8,7 +8,7 @@
  * scoped by that row's own account.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, gt, gte, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, gte, isNull, lte, or, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -25,6 +25,7 @@ import { decideDue, followUpText, MAX_ATTEMPTS, type FollowUpReason } from "./ru
 import { followUpBuyerNamed } from "./schedule";
 import { nudgeFollowUp } from "@/lib/sms/outbound";
 import type { NudgeDeps } from "@/lib/sms/service";
+import { activeCallOn } from "@/lib/voice/one-agent";
 
 // ---------------------------------------------------------------------------
 // The platform scheduler
@@ -44,8 +45,8 @@ const MAX_BATCHES = 5;
  * is still scheduled), so two runs never send the same follow-up twice. Then:
  * cancel when the lead opted out, the account is paused (or, for real
  * WhatsApp chats, not live), the chat is closed or a person holds it, the
- * order is paid or the buyer wrote after it was scheduled; leave it scheduled
- * outside contact hours (the next run inside hours sends it), unless the buyer
+ * order is paid or the buyer wrote in the chat after it was scheduled; leave it
+ * scheduled while a call holds the conversation, and outside contact hours (the next run inside hours sends it), unless the buyer
  * asked for that time (sent at the time they named); else write the
  * fixed message into the conversation and deliver it through the channel's
  * send path. A failed send is retried by the next runs, up to MAX_ATTEMPTS.
@@ -113,11 +114,18 @@ async function processOne(
   const { lead, conv } = row;
   // Sent within the contact hours of the lead's market (its own, else the account's).
   const contact = await leadContactSettings(db, account, lead.marketId);
-  const [[paid], [wrote]] = await Promise.all([
+  const [[paid], [wrote], call] = await Promise.all([
     db.select({ id: orders.id }).from(orders)
       .where(and(eq(orders.accountId, f.accountId), eq(orders.leadId, f.leadId), eq(orders.paymentStatus, "paid"))).limit(1),
+    // What the buyer wrote in the chat. Lines on a call (spoken, or typed into the call) do not cancel it: a follow-up
+    // agreed on a call would otherwise be cancelled by the buyer's next line on that same call.
     db.select({ id: messages.id }).from(messages)
-      .where(and(eq(messages.accountId, f.accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"), gt(messages.createdAt, f.createdAt))).limit(1),
+      .where(and(
+        eq(messages.accountId, f.accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"), gt(messages.createdAt, f.createdAt),
+        isNull(messages.voiceSessionId),
+      )).limit(1),
+    // One agent at a time: nothing is posted into the chat while a call holds it.
+    activeCallOn(db, f.accountId, conv.id, now),
   ]);
   const within = isWithinContactHours(contact.contactHours, contact.timezone, now);
   // Whether the buyer named this time: it goes out at any hour, and its SMS is "It's the time you asked for".
@@ -132,6 +140,7 @@ async function processOne(
     withinContactHours: within,
     // A time the buyer asked for is kept even outside contact hours; only agent-chosen times wait for them.
     buyerNamedTime: buyerNamed,
+    callActive: !!call,
   });
   if (decision.action === "cancel") {
     await atomic(db, (q) => [
@@ -141,7 +150,8 @@ async function processOne(
     return { kind: "cancelled", reason: decision.reason };
   }
   if (decision.action === "defer") {
-    // Back to scheduled: the next run inside contact hours sends it.
+    // Back to scheduled: the next run inside contact hours (and after the call) sends it.
+    if (call) console.info(`[follow-ups] deferred: a call is on the conversation (${call.slice(0, 8)})`);
     await db.update(followUps).set({ status: "scheduled", reason: null }).where(own());
     return { kind: "deferred" };
   }

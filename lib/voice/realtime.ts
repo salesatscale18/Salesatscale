@@ -41,11 +41,17 @@ export type RealtimeEvent =
   | { type: "session"; providerSessionId: string }
   /** Agent audio: PCM16 mono 24 kHz little-endian. */
   | { type: "audio"; pcm: Uint8Array }
-  | { type: "agent-transcript"; text: string; final: boolean }
+  /**
+   * `late`: transcription of the response that already ended (Gemini delivers output transcription with no
+   * guaranteed order relative to the end of the turn): the whole late text of that response, final.
+   */
+  | { type: "agent-transcript"; text: string; final: boolean; late?: boolean }
   | { type: "buyer-transcript"; text: string; final: boolean }
   /** The buyer started talking (barge-in when the agent is speaking). */
   | { type: "speech-started" }
   | { type: "tool-call"; callId: string; name: string; args: unknown }
+  /** The model dropped these tool calls (Gemini toolCallCancellation, after a barge-in): their results are not sent. */
+  | { type: "tool-cancelled"; callIds: string[] }
   /** The model finished its response (possibly cut short by the buyer). */
   | { type: "turn-done"; interrupted?: boolean }
   /** A usage snapshot (replaces the previous one; never summed). */

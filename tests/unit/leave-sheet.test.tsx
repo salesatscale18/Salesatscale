@@ -1,12 +1,13 @@
 /**
- * The Back sheets (components/sas/voice/leave-sheet.tsx) and the bubble menu's order (components/sas/voice/voice-bubble.tsx
- * BubbleMenu), rendered on the server. Focus, the trap, Escape and the scrim are driven in Chromium by
+ * The Back sheets (components/sas/voice/leave-sheet.tsx), the order form's tray (components/sas/voice/voice-bubble.tsx
+ * BubbleTray), the voice bar (voice-bar.tsx), rendered on the server. Focus, the trap, Escape and the scrim are driven in Chromium by
  * tests/e2e/voice/back-sheet-shots.ts.
  */
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { LeaveSheet } from "@/components/sas/voice/leave-sheet";
-import { BubbleMenu } from "@/components/sas/voice/voice-bubble";
+import { BubbleTray } from "@/components/sas/voice/voice-bubble";
+import { VoiceBar } from "@/components/sas/voice/voice-bar";
 import { translator } from "@/lib/i18n";
 import { bubbleView } from "@/lib/voice/client/bubble";
 import type { MirrorState } from "@/lib/voice/client/tab-link";
@@ -51,26 +52,53 @@ describe("the Back sheets", () => {
   });
 });
 
-describe("the bubble menu", () => {
+describe("the voice bar and the form's tray", () => {
   const base: MirrorState = { phase: "live", live: "speaking", muted: false, endReason: null, mic: 0, out: 0, caption: null, secondsLeft: 268, outputs: [], output: null };
-  const items = (s: MirrorState, tr = en) => {
-    const html = renderToStaticMarkup(<BubbleMenu id="m" state={s} view={bubbleView(s, tr, "Maya")} tr={tr} act={() => {}} />);
-    return [...html.matchAll(/data-bubble-(?!menu)(\w+)=""|role="separator"|class="vb-menu__state"/g)].map((m) => m[1] ?? (m[0].startsWith("role") ? "divider" : "state"));
-  };
+  const bar = (s: MirrorState, tr = en, dir: "ltr" | "rtl" = "ltr") => renderToStaticMarkup(<VoiceBar state={s} agentName="Maya" tr={tr} dir={dir} onCommand={() => {}} />);
+  const order = (html: string) => [...html.matchAll(/data-bar-(\w+)=""|data-bubble-button=""/g)].map((m) => m[1] ?? "bubble");
 
-  it("state and time left, Mute, Speaker, a divider, Switch to text (last, keyboard, normal colour)", () => {
-    const two = { ...base, outputs: [{ id: "a", label: "Default" }, { id: "b", label: "Headphones" }] } as MirrorState;
-    expect(items(two)).toEqual(["state", "mute", "speaker", "divider", "end"]);
-    const html = renderToStaticMarkup(<BubbleMenu id="m" state={two} view={bubbleView(two, en, "Maya")} tr={en} act={() => {}} />);
-    expect(html).toMatch(/class="vb-item vb-item--end" data-bubble-end=""><svg[^>]*lucide-keyboard[^>]*>.*<\/svg>Switch to text<\/button><\/div>$/);
-    expect(html).toContain("4:28 left");
-    expect(items(base)).toEqual(["state", "mute", "divider", "end"]);
+  it("a toolbar: Mute · bubble · Text; Speaker (the same size) between Mute and the bubble only where the browser offers a choice", () => {
+    const html = bar(base);
+    expect(html).toMatch(/<div class="vb-bar" role="toolbar" aria-label="Call controls" dir="ltr"/);
+    expect(order(html)).toEqual(["mute", "bubble", "text"]);
+    const two = { ...base, outputs: [{ id: "a", label: "Default" }, { id: "b", label: "Headphones" }], output: "b" };
+    const withSpeaker = bar(two);
+    expect(order(withSpeaker)).toEqual(["mute", "speaker", "bubble", "text"]);
+    expect(withSpeaker).toMatch(/class="vb-ctl" aria-label="Speaker: Headphones" data-bar-speaker=""/);
+    // No pop-up menu, and no time left on screen (the bubble's accessible name keeps it, as built).
+    expect(html).not.toMatch(/role="menu"|aria-haspopup/);
+    expect(text(html).join(" ")).not.toContain("left");
   });
 
-  it("on standby, Talk to the agent stays first; Hebrew Switch to text", () => {
-    const standby = { ...base, live: "standby" } as MirrorState;
-    expect(items(standby)).toEqual(["state", "wake", "mute", "divider", "end"]);
-    const html = renderToStaticMarkup(<BubbleMenu id="m" state={base} view={bubbleView(base, he, "Maya")} tr={he} act={() => {}} />);
-    expect(html).toContain("מעבר לכתיבה</button>");
+  it("Mute: one word under a round button, named by it; dark and Unmute while muted; Text is named Switch to text", () => {
+    const html = bar(base);
+    expect(html).toMatch(/<button type="button" class="vb-ctl" aria-pressed="false" data-bar-mute=""><span class="vb-ctl__circle" aria-hidden="true"><svg[^>]*lucide-mic-off[^>]*>.*?<\/svg><\/span><span class="vb-ctl__label">Mute<\/span><\/button>/);
+    expect(html).toMatch(/class="vb-ctl" aria-label="Switch to text" data-bar-text=""><span class="vb-ctl__circle" aria-hidden="true"><svg[^>]*lucide-keyboard/);
+    expect(html).toContain('<span class="vb-ctl__label" aria-hidden="true">Text</span>');
+    const muted = bar({ ...base, muted: true });
+    expect(muted).toMatch(/class="vb-ctl vb-ctl--on" aria-pressed="true" data-bar-mute="">.*?Unmute<\/span>/);
+    expect(muted).toContain('data-bubble-look="muted"');
+  });
+
+  it("Hebrew: השתקה, ביטול השתקה, כתיבה; the bar follows the page's direction", () => {
+    const html = bar(base, he, "rtl");
+    expect(html).toContain('dir="rtl"');
+    expect(html).toContain(">השתקה</span>");
+    expect(html).toContain(">כתיבה</span>");
+    expect(html).toContain('aria-label="מעבר לכתיבה"');
+    expect(bar({ ...base, muted: true }, he, "rtl")).toContain(">ביטול השתקה</span>");
+  });
+
+  it("the order form's tray: Mute and Text, round, labels under, no headline", () => {
+    const html = renderToStaticMarkup(<BubbleTray id="t" state={base} view={bubbleView(base, en, "Maya")} tr={en} act={() => {}} />);
+    expect(html).toMatch(/^<div class="vb-tray" id="t" role="group" aria-label="Call controls" data-bubble-tray="">/);
+    expect(order(html)).toEqual(["mute", "text"]);
+    expect(html).not.toMatch(/<b>|<h\d|left/);
+  });
+
+  it("the last minute: 1 min left above the bubble (the time left shows nowhere else)", () => {
+    expect(bar({ ...base, secondsLeft: 45 })).toMatch(/class="vb-flash" dir="auto" data-bubble-note="last_minute">1 min left</);
+    expect(bar({ ...base, secondsLeft: 61 })).not.toContain("data-bubble-note");
+    expect(bar({ ...base, secondsLeft: 45 }, he, "rtl")).toContain(">נותרה דקה<");
   });
 });

@@ -1,5 +1,5 @@
 /**
- * The Back sheets and the bubble's Switch to text in Chromium (board VoiceBubbleBack), on the no-cost voice harness: the
+ * The Back sheets in Chromium (board VoiceBubbleBack), on the no-cost voice harness: the
  * REAL buyer chat client with the free scripted model (no paid call). Not part of `npm test` or CI.
  *
  *   npx tsx tests/e2e/voice/back-sheet-shots.ts
@@ -8,9 +8,9 @@
  * The harness page is not a Next page: an init script gives its first entry the state Next's router writes
  * (`__NA`), as on the real chat page. Checks, in English and Hebrew on a phone: one guard on the same URL with the
  * query string; Back opens "Leave the chat?" with focus on Stay in the chat, Tab stays inside, Escape is Stay and
- * re-arms; Leave goes back to the page before; during a call Back opens "End the call?", Escape keeps talking, End
- * call ends the call and the chat is guarded again; reload during a call gets the browser's leave prompt and not
- * after; the bubble menu ends with a divider and Switch to text. Screenshots back-*.png and bubble-menu-*.png.
+ * re-arms; Leave goes back to the page before; during a call Back opens "Switch to text?", Escape stays in voice, Switch to text
+ * ends voice mode and the chat is guarded again; reload during a call gets the browser's leave prompt and not
+ * after; the voice bar takes the composer's place. Screenshots back-*.png and voice-bar-*.png.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -32,6 +32,19 @@ const shot = async (page: Page, name: string) => {
 };
 const guarded = (page: Page) => page.evaluate(() => !!(history.state as Record<string, unknown> | null)?.__sasBackGuard);
 const focusIn = (page: Page, sel: string) => page.evaluate((s) => !!document.activeElement?.matches(s), sel);
+/** The voice bar's symmetry: the bubble's centre against the bar's, the gap (edge to edge) to the nearest control on each side, and the circles' sizes. */
+// (A string, not a function: tsx would add a helper the page does not have.)
+const barSymmetry = (page: Page) => page.evaluate(`(() => {
+  const mid = (r) => r.left + r.width / 2;
+  const bar = document.querySelector("[data-voice-bar]").getBoundingClientRect();
+  const b = document.querySelector("[data-voice-bar] [data-bubble-button]").getBoundingClientRect();
+  const circles = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect());
+  // Edge to edge (every circle is the same size, so centre to centre is equal too).
+  const left = Math.max(...circles.filter((r) => mid(r) < mid(b)).map((r) => r.right));
+  const right = Math.min(...circles.filter((r) => mid(r) > mid(b)).map((r) => r.left));
+  const sizes = [...new Set(circles.map((r) => Math.round(r.width) + "x" + Math.round(r.height)))];
+  return { off: Math.abs(mid(b) - mid(bar)), leftGap: b.left - left, rightGap: right - b.right, sizes };
+})()`) as Promise<{ off: number; leftGap: number; rightGap: number; sizes: string[] }>;
 const sheet = (page: Page, kind: string) => page.waitForSelector(`[data-leave-sheet="${kind}"]`, { timeout: 5000 }).then(() => true, () => false);
 const gone = (page: Page) => page.waitForSelector("[data-leave-sheet]", { state: "detached", timeout: 5000 }).then(() => true, () => false);
 
@@ -81,16 +94,15 @@ async function main() {
       // During a call: End the call?
       await page.click("[data-voice-talk]");
       check(await page.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 }).then(() => true, () => false), `${lang}: the call is live`);
-      await page.click("[data-bubble-button]");
-      const order = await page.evaluate(() => [...document.querySelectorAll("[data-bubble-menu] > *")].map((e) => (e as HTMLElement).dataset.bubbleMute !== undefined ? "mute"
-        : (e as HTMLElement).dataset.bubbleEnd !== undefined ? "end" : (e as HTMLElement).dataset.bubbleSpeaker !== undefined ? "speaker"
-          : e.getAttribute("role") === "separator" ? "divider" : e.classList.contains("vb-menu__state") ? "state" : e.tagName));
-      // Headless Chromium lists two speakers here, so the Speaker group shows.
-      check(JSON.stringify(order.filter((x) => x !== "speaker")) === JSON.stringify(["state", "mute", "divider", "end"]) && order.indexOf("speaker") < order.indexOf("divider"), `${lang}: bubble menu: state, Mute, Speaker, divider, Switch to text (${order.join(", ")})`);
-      check((await page.textContent("[data-bubble-end]")) === (lang === "he" ? "מעבר לכתיבה" : "Switch to text"), `${lang}: Switch to text in the menu`);
-      check((await page.evaluate(() => getComputedStyle(document.querySelector("[data-bubble-end]")!).color)) === "rgb(15, 20, 32)", `${lang}: in the normal colour`);
-      await shot(page, `bubble-menu-${lang}`);
-      await page.keyboard.press("Escape");
+      check((await page.locator("[data-voice-bar]").count()) === 1 && (await page.locator("#c-input").count()) === 0, `${lang}: the voice bar in the composer's place`);
+      // The speakers are listed once the call is live (a moment later).
+      check(await page.waitForSelector("[data-voice-bar] [data-bar-speaker]", { timeout: 5000 }).then(() => true, () => false), `${lang}: Speaker shows (two outputs)`);
+      const sym = await barSymmetry(page);
+      const inside = await page.evaluate(`(() => { const r = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect()); return Math.min(...r.map((x) => x.left)) >= 12 && Math.max(...r.map((x) => x.right)) <= innerWidth - 12; })()`);
+      check(inside, `${lang}: all four controls fit inside the 12 px gutters at 390 px`);
+      check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${lang}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps to Speaker and Text (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
+      check(JSON.stringify(sym.sizes) === JSON.stringify(["44x44"]), `${lang}: Mute, Speaker and Text are the same 44 px circle (${sym.sizes.join(", ")})`);
+      await shot(page, `voice-bar-${lang}`);
       await page.evaluate(() => history.back());
       check(await sheet(page, "end_call"), `${lang}: Back during the call opens Switch to text?`);
       check(await focusIn(page, "[data-sheet-safe]"), `${lang}: focus on Stay in voice`);
@@ -107,6 +119,7 @@ async function main() {
       await page.evaluate(() => history.back());
       check(await sheet(page, "end_call"), `${lang}: Back asks again`);
       await page.click("[data-sheet-end]");
+      check(await page.waitForSelector("#c-input", { timeout: 15_000 }).then(() => true, () => false), `${lang}: the composer comes back`);
       check(await page.waitForSelector('[data-buyer-call][data-voice-phase="ended"]', { timeout: 15_000 }).then(() => true, () => false), `${lang}: Switch to text stops the voice; the chat stays`);
       check(await guarded(page), `${lang}: the chat is guarded again`);
       await page.evaluate(() => history.back());
