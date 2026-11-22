@@ -1807,7 +1807,7 @@
   "pipeline.no_sources": "Add a source that is ready to analyze first.",
   "pipeline.estimate.line": "{what} · estimated cost {cost}",
   "pipeline.estimate.none": "Nothing changed since the last analysis. Running it again reuses the results at no cost.",
-  "pipeline.estimate.large": "Your sources are large: facts are found one source at a time with a cheaper model.",
+  "pipeline.estimate.large": "Your sources are large: facts are found one source at a time.",
   "pipeline.confirm.spend": "Start the analysis? It makes {calls} AI requests and costs about {cost}.",
   "pipeline.confirm.reuse": "Nothing changed. Mark your sources as analyzed without new AI requests?",
   "pipeline.confirm.start": "Start analysis",

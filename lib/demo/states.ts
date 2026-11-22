@@ -1098,7 +1098,7 @@ async function recordAnalysis(db: Db, accountId: string, now: Date): Promise<num
   await db.update(sources).set({ createdAt: min(now, 250), updatedAt: min(now, 245) }).where(eq(sources.accountId, accountId));
   await db.insert(pipelineRuns).values([
     {
-      id: randomUUID(), accountId, kind: "facts", status: "done", model: plan.large ? plan.lightModel : plan.model, sourceIds: ids, inputHash: plan.facts.hash,
+      id: randomUUID(), accountId, kind: "facts", status: "done", model: plan.model, sourceIds: ids, inputHash: plan.facts.hash,
       startedAt: started, finishedAt: min(now, 239), createdAt: started,
     },
     {

@@ -11,6 +11,11 @@
  *   are about one customer: in the facts run's `usage` jsonb, under `result`
  *   (the token counts stay at the top level, where the usage roll-up reads them).
  *
+ * Stage 1 reads only the sources new or changed since the last finished
+ * analysis (planAnalysis explains when it reads them all); stage 2 always
+ * reads the whole corpus. Both stages run on the "pipeline" model, also for
+ * large corpora ("pipeline_light" is for other jobs).
+ *
  * Model calls go through a PipelineLlm wrapped in budgetGuarded. Tests pass
  * ScriptedPipelineLlm; nothing here calls the real API by itself.
  */
@@ -39,7 +44,8 @@ import {
 } from "./corpus";
 import type { PipelineLlm, PipelineRequest, PipelineUsage } from "./llm";
 import { mergeSuggestions } from "./merge";
-import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, PROMPT_VERSION as FACTS_VERSION } from "./prompts/facts";
+import { nearDuplicate, wordsKey } from "./dedup";
+import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, factsInstruction, KNOWN_FACTS_MAX, PROMPT_VERSION as FACTS_VERSION } from "./prompts/facts";
 import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_VERSION, type PlaybookStageData } from "./prompts/playbook";
 import { FACTS_TOOL, PLAYBOOK_TOOL, PROMPT_VERSION as SYSTEM_VERSION } from "./prompts/system";
 import {
@@ -55,7 +61,6 @@ export const STALE_RUN_MS = 15 * 60 * 1000;
 /** Max output per call: streamed, so large is fine. */
 const MAX_TOKENS = 32_000;
 const EFFORT = "medium" as const;
-const LIGHT_EFFORT = "low" as const;
 
 // ---------------------------------------------------------------------------
 // Run data stored in pipeline_runs.usage
@@ -64,12 +69,17 @@ const LIGHT_EFFORT = "low" as const;
 export type ContradictionRecord = { topic: string; summary: string; factIds: string[] };
 export type FactsRunResult = {
   factsAdded: number;
+  /** Which sources stage 1 read: all, or only the new and changed ones. Missing on older runs: all. */
+  scope?: FactsScope;
+  /** Prompt versions and model of the run (factsRules): a later run reads only changed sources when they match. */
+  rules?: string;
   contradictions: ContradictionRecord[];
   gaps: Gap[];
   sourceAbout: SourceAbout[];
   customerSpecific: CustomerNote[];
   dropped: FactsResult["dropped"];
 };
+export type FactsScope = "all" | "changed";
 export type PlaybookRunResult = { suggestions: number; dropped: number; callsInCorpus: number };
 
 /** pipeline_runs.usage: token counts at the top level (the usage roll-up reads them), results under `result`. */
@@ -174,11 +184,18 @@ export type AnalysisPlan = {
   sources: (CorpusSource & { changed: boolean })[];
   /** Sources new or changed since their last analysis. */
   changed: number;
+  /** The whole corpus (stage 2). */
   corpus: string;
   corpusTokens: number;
+  /** The whole corpus is large: stage 2 reads a trimmed corpus. */
   large: boolean;
+  /** What stage 1 reads: all sources, or only the new and changed ones. */
+  factsScope: FactsScope;
+  factsSources: (CorpusSource & { changed: boolean })[];
+  factsCorpus: string;
+  /** The facts corpus is large: stage 1 runs per source chunk (same model). */
+  factsLarge: boolean;
   model: string;
-  lightModel: string;
   facts: { hash: string; reuse: boolean };
   /** The stage 2 hash with today's facts; recomputed after stage 1 when it runs. */
   playbook: { hash: string; reuse: boolean };
@@ -224,34 +241,83 @@ export function analysisSummary(plan: Pick<AnalysisPlan, "changed" | "sources" |
   };
 }
 
-/** Stage 0: corpus, hashes, reuse and the estimate. Null when there is nothing to analyse. */
-export async function planAnalysis(db: Db, accountId: string, env: Record<string, string | undefined> = process.env): Promise<AnalysisPlan | null> {
+/** The prompt versions and model a facts run used. Runs with the same rules can build on each other. */
+export const factsRules = (model: string) => `${SYSTEM_VERSION}|${FACTS_VERSION}|${model}`;
+
+/** The rules of the newest finished facts run, or null (none, or an older run that did not record them). */
+async function lastFactsRules(db: Db, accountId: string): Promise<string | null> {
+  const [r] = await db.select({ usage: pipelineRuns.usage }).from(pipelineRuns)
+    .where(and(eq(pipelineRuns.accountId, accountId), eq(pipelineRuns.kind, "facts"), eq(pipelineRuns.status, "done")))
+    .orderBy(desc(pipelineRuns.createdAt), desc(pipelineRuns.id))
+    .limit(1);
+  return (runData(r ?? { usage: null })?.result as FactsRunResult | undefined)?.rules ?? null;
+}
+
+/**
+ * The seller's approved facts that stage 1 gets after its instruction (so it
+ * does not restate them): the newest KNOWN_FACTS_MAX, sorted by topic and
+ * statement so the same facts give the same bytes.
+ */
+export async function knownFacts(db: Db, accountId: string): Promise<{ topic: string; statement: string }[]> {
+  const rows = await db.select({ topic: knowledgeFacts.topic, statement: knowledgeFacts.statement }).from(knowledgeFacts)
+    .where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "approved")))
+    .orderBy(desc(knowledgeFacts.createdAt), desc(knowledgeFacts.id))
+    .limit(KNOWN_FACTS_MAX);
+  const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+  return rows.sort((a, b) => cmp(a.topic, b.topic) || cmp(a.statement, b.statement));
+}
+
+/**
+ * Stage 0: corpus, hashes, reuse and the estimate. Null when there is nothing to analyse.
+ *
+ * What stage 1 reads (the safest rule): only the sources new or changed since
+ * the last finished analysis (text_hash null: added, re-read or edited, or
+ * part of an analysis that did not finish), when the newest finished facts run
+ * used the same prompt versions and model. Otherwise every source: on the first
+ * analysis, after the analysis rules changed (a new prompt version or model,
+ * which also re-reads unchanged sources) and when `full` is set (re-read
+ * everything). Nothing new or changed under the same rules: stage 1 is reused.
+ * The approved facts are not part of the stage 1 hash: they only keep the
+ * model from restating them.
+ */
+export async function planAnalysis(
+  db: Db, accountId: string, env: Record<string, string | undefined> = process.env, opts: { full?: boolean } = {},
+): Promise<AnalysisPlan | null> {
   const list = await loadCorpusSources(db, accountId);
   if (list.length === 0) return null;
   const model = modelFor("pipeline", env);
-  const lightModel = modelFor("pipeline_light", env);
   const corpus = assembleCorpus(list);
   const corpusTokens = tokensOf(corpus);
   const large = corpusTokens > LARGE_CORPUS_TOKENS;
-  const factsModel = large ? lightModel : model;
-  const factsHash = inputHash({ versions: [SYSTEM_VERSION, FACTS_VERSION], model: factsModel, corpus });
+  const factsScope: FactsScope = !opts.full && (await lastFactsRules(db, accountId)) === factsRules(model) ? "changed" : "all";
+  const factsSources = factsScope === "changed" ? list.filter((s) => s.changed) : list;
+  const factsCorpus = factsScope === "changed" ? assembleCorpus(factsSources) : corpus;
+  const factsCorpusTokens = tokensOf(factsCorpus);
+  const factsLarge = factsCorpusTokens > LARGE_CORPUS_TOKENS;
+  // The scope is part of the hash: a run over the changed sources never stands in for a full one.
+  const factsHash = inputHash({ versions: [SYSTEM_VERSION, FACTS_VERSION], model, corpus: factsCorpus, data: factsScope === "changed" ? { scope: "changed" } : undefined });
   const calls = list.filter((s) => s.kind === "call").length;
   const data = await playbookStageData(db, accountId, calls);
   const stage2Corpus = large ? assembleCorpus(trimCorpus(list)) : corpus;
   const pbHash = playbookHash(model, stage2Corpus, data);
-  const factsReuse = !!(await doneRunWithHash(db, accountId, "facts", factsHash));
+  const factsReuse = (factsScope === "changed" && factsSources.length === 0) || !!(await doneRunWithHash(db, accountId, "facts", factsHash));
   const pbReuse = factsReuse && !!(await doneRunWithHash(db, accountId, "playbook", pbHash));
+  const known = factsReuse ? [] : await knownFacts(db, accountId);
   const estimate = estimateAnalysis({
     corpusTokens,
-    chunkTokens: large ? list.flatMap((s) => sourceChunks(s).map(tokensOf)) : undefined,
+    factsCorpusTokens,
+    sharedCorpus: factsCorpus === corpus,
+    chunkTokens: factsLarge ? factsSources.flatMap((s) => sourceChunks(s).map(tokensOf)) : undefined,
     trimmedTokens: large ? tokensOf(stage2Corpus) : undefined,
     runFacts: !factsReuse,
     runPlaybook: !pbReuse,
     dataTokens: tokensOf(JSON.stringify(data)),
-    model, lightModel,
+    knownFactsTokens: known.length ? tokensOf(JSON.stringify(known)) : 0,
+    model,
   });
   return {
-    sources: list, changed: list.filter((s) => s.changed).length, corpus, corpusTokens, large, model, lightModel,
+    sources: list, changed: list.filter((s) => s.changed).length, corpus, corpusTokens, large,
+    factsScope, factsSources, factsCorpus, factsLarge, model,
     facts: { hash: factsHash, reuse: factsReuse }, playbook: { hash: pbHash, reuse: pbReuse }, estimate,
     token: `${factsHash.slice(0, 16)}${pbHash.slice(0, 16)}`,
     firstRun: factsReuse ? false : !(await anyDoneFactsRun(db, accountId)),
@@ -306,7 +372,8 @@ export async function startAnalysis(db: Db, accountId: string, plan: AnalysisPla
   const factsRunId = plan.facts.reuse ? null : randomUUID();
   const playbookRunId = plan.playbook.reuse ? null : randomUUID();
   const rows = [
-    ...(factsRunId ? [{ id: factsRunId, accountId, kind: "facts" as const, status: "queued" as const, model: plan.large ? plan.lightModel : plan.model, sourceIds, inputHash: plan.facts.hash }] : []),
+    // The facts run lists the sources it reads (customerNotes looks a source up by it).
+    ...(factsRunId ? [{ id: factsRunId, accountId, kind: "facts" as const, status: "queued" as const, model: plan.model, sourceIds: plan.factsSources.map((s) => s.id), inputHash: plan.facts.hash }] : []),
     // The stage 2 hash is known only after stage 1; set when the stage runs.
     ...(playbookRunId ? [{ id: playbookRunId, accountId, kind: "playbook" as const, status: "queued" as const, model: plan.model, sourceIds, inputHash: plan.facts.reuse ? plan.playbook.hash : null }] : []),
   ];
@@ -405,21 +472,42 @@ const factLabel = (index: CorpusIndex, f: CleanFact) => {
   return `${index.get(e.sourceId)?.title ?? "Source"} · ${e.locator}`.slice(0, 200);
 };
 
-/** Stores stage 1: new suggested facts (deduplicated against every fact of the account), contradiction sides as facts. */
-async function storeFacts(db: Db, accountId: string, index: CorpusIndex, parsed: FactsResult): Promise<FactsRunResult> {
-  const existing = await db.select({ id: knowledgeFacts.id, statement: knowledgeFacts.statement }).from(knowledgeFacts).where(eq(knowledgeFacts.accountId, accountId));
+/**
+ * Stores stage 1: new suggested facts, contradiction sides as facts. A new fact
+ * is skipped (counted as a duplicate) when it has the same words as any fact of
+ * the account, in any order, case or punctuation, or is a near-duplicate of a
+ * fact from the same source (lib/pipeline/dedup.ts; numbers must match).
+ */
+async function storeFacts(
+  db: Db, accountId: string, index: CorpusIndex, parsed: FactsResult, meta: { scope: FactsScope; rules: string },
+): Promise<FactsRunResult> {
+  const existing = await db.select({ id: knowledgeFacts.id, statement: knowledgeFacts.statement, sourceId: knowledgeFacts.sourceId })
+    .from(knowledgeFacts).where(eq(knowledgeFacts.accountId, accountId));
   const byStatement = new Map(existing.map((f) => [normalizeStatement(f.statement), f.id]));
+  const byWords = new Map(existing.map((f) => [wordsKey(f.statement), f.id]));
+  const bySource = new Map<string, { id: string; statement: string }[]>();
+  const ofSource = (sourceId: string) => {
+    let l = bySource.get(sourceId);
+    if (!l) bySource.set(sourceId, (l = []));
+    return l;
+  };
+  for (const f of existing) if (f.sourceId) ofSource(f.sourceId).push(f);
   const rows: (typeof knowledgeFacts.$inferInsert)[] = [];
   const dropped = { ...parsed.dropped };
   const add = (f: CleanFact): string => {
     const key = normalizeStatement(f.statement);
-    const have = byStatement.get(key);
+    const words = wordsKey(f.statement);
+    const sourceId = f.evidence[0].sourceId;
+    const have = byStatement.get(key) ?? (words ? byWords.get(words) : undefined)
+      ?? ofSource(sourceId).find((x) => nearDuplicate(f.statement, x.statement))?.id;
     if (have) return have;
     const id = randomUUID();
     byStatement.set(key, id);
+    if (words) byWords.set(words, id);
+    ofSource(sourceId).push({ id, statement: f.statement });
     rows.push({
       id, accountId, topic: f.topic.slice(0, 60), statement: f.statement.slice(0, 1000), sourceLabel: factLabel(index, f),
-      sourceId: f.evidence[0].sourceId, sourceLocator: f.evidence[0].locator.slice(0, 120), language: f.language, status: "suggested",
+      sourceId, sourceLocator: f.evidence[0].locator.slice(0, 120), language: f.language, status: "suggested",
     });
     return id;
   };
@@ -434,7 +522,10 @@ async function storeFacts(db: Db, accountId: string, index: CorpusIndex, parsed:
     topic: c.topic, summary: c.summary, factIds: [...new Set(c.options.map(add))],
   })).filter((c) => c.factIds.length >= 2);
   for (let i = 0; i < rows.length; i += 200) await db.insert(knowledgeFacts).values(rows.slice(i, i + 200));
-  return { factsAdded: added, contradictions, gaps: parsed.gaps, sourceAbout: parsed.sourceAbout, customerSpecific: parsed.customerSpecific, dropped };
+  return {
+    factsAdded: added, scope: meta.scope, rules: meta.rules,
+    contradictions, gaps: parsed.gaps, sourceAbout: parsed.sourceAbout, customerSpecific: parsed.customerSpecific, dropped,
+  };
 }
 
 /**
@@ -447,34 +538,41 @@ export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: st
   const index = corpusIndex(plan.sources);
   const result: AnalysisResult = { facts: null, playbook: null, failed: null };
   const bothRun = !!runs.factsRunId && !!runs.playbookRunId;
+  // The corpus is cached only when both stages run and read the same one (stage 1 read every source).
+  const sharedCache = bothRun && plan.factsCorpus === plan.corpus && !plan.large && !plan.factsLarge;
 
-  // Stage 1: facts
+  // Stage 1: facts over plan.factsSources, on the main model (also for large corpora).
   if (runs.factsRunId) {
     const id = runs.factsRunId;
-    const model = plan.large ? plan.lightModel : plan.model;
+    const model = plan.model;
+    const factsIndex = corpusIndex(plan.factsSources);
+    const known = await knownFacts(db, accountId);
     await db.update(pipelineRuns).set({ status: "running", startedAt: new Date() }).where(runWhere(accountId, id));
     let usage = noUsage();
     let calls = 0;
     try {
       const parts: FactsResult[] = [];
-      if (plan.large) {
-        for (const s of plan.sources) {
+      if (plan.factsLarge) {
+        const instruction = factsInstruction(FACTS_ONE_SOURCE_INSTRUCTION, known);
+        for (const s of plan.factsSources) {
           for (const chunk of sourceChunks(s)) {
-            const res = await callTool(llm, { model, effort: LIGHT_EFFORT, corpus: chunk, cacheCorpus: false, instruction: FACTS_ONE_SOURCE_INSTRUCTION, maxTokens: MAX_TOKENS, fallbacks: false }, FACTS_TOOL)
+            const res = await callTool(llm, { model, effort: EFFORT, corpus: chunk, cacheCorpus: false, instruction, maxTokens: MAX_TOKENS, fallbacks: true }, FACTS_TOOL)
               .catch((e) => { usage = addUsage(usage, usageOf(e)); calls++; throw e; });
             usage = addUsage(usage, res.usage);
             calls++;
-            parts.push(parseFactsOutput(res.tool!.input, index));
+            parts.push(parseFactsOutput(res.tool!.input, factsIndex));
           }
         }
       } else {
-        const res = await callTool(llm, { model, effort: EFFORT, corpus: plan.corpus, cacheCorpus: bothRun, instruction: FACTS_INSTRUCTION, maxTokens: MAX_TOKENS, fallbacks: true }, FACTS_TOOL)
+        const res = await callTool(llm, {
+          model, effort: EFFORT, corpus: plan.factsCorpus, cacheCorpus: sharedCache, instruction: factsInstruction(FACTS_INSTRUCTION, known), maxTokens: MAX_TOKENS, fallbacks: true,
+        }, FACTS_TOOL)
           .catch((e) => { usage = addUsage(usage, usageOf(e)); calls++; throw e; });
         usage = res.usage;
         calls = 1;
-        parts.push(parseFactsOutput(res.tool!.input, index));
+        parts.push(parseFactsOutput(res.tool!.input, factsIndex));
       }
-      const stored = await storeFacts(db, accountId, index, mergeFactsResults(parts));
+      const stored = await storeFacts(db, accountId, factsIndex, mergeFactsResults(parts), { scope: plan.factsScope, rules: factsRules(model) });
       await finishRun(db, accountId, id, model, usage, calls, stored, null);
       result.facts = { reused: false, added: stored.factsAdded, contradictions: stored.contradictions.length, gaps: stored.gaps.length };
     } catch (e) {
@@ -508,7 +606,7 @@ export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: st
       let usage = noUsage();
       try {
         const res = await callTool(llm, {
-          model: plan.model, effort: EFFORT, corpus, cacheCorpus: bothRun && !plan.large, instruction: playbookInstruction(data), maxTokens: MAX_TOKENS, fallbacks: true,
+          model: plan.model, effort: EFFORT, corpus, cacheCorpus: sharedCache, instruction: playbookInstruction(data), maxTokens: MAX_TOKENS, fallbacks: true,
         }, PLAYBOOK_TOOL).catch((e) => { usage = usageOf(e); throw e; });
         usage = res.usage;
         const parsed = parsePlaybookOutput(res.tool!.input, index, { skus: new Set(data.catalog.map((c) => c.sku)) });
@@ -550,8 +648,8 @@ async function markAnalysed(db: Db, accountId: string, plan: AnalysisPlan) {
 }
 
 /** Plan, start and execute in one go (tests, scripts). Throws PipelineRefused when refused. */
-export async function analyzeSources(db: Db, llm: PipelineLlm, accountId: string, opts: { token?: string; now?: Date } = {}): Promise<AnalysisResult> {
-  const plan = await planAnalysis(db, accountId);
+export async function analyzeSources(db: Db, llm: PipelineLlm, accountId: string, opts: { token?: string; now?: Date; full?: boolean } = {}): Promise<AnalysisResult> {
+  const plan = await planAnalysis(db, accountId, process.env, { full: opts.full });
   if (!plan) throw new PipelineRefused("nothing", "Add a source first.");
   const runs = await startAnalysis(db, accountId, plan, opts);
   return executeAnalysis(db, llm, accountId, plan, runs);
@@ -641,8 +739,17 @@ export async function approveAllSuggestedFacts(db: Db, accountId: string, topic?
 
 /** Questions the sources do not answer (latest analysis), minus the ones answered since. */
 export async function sourceGaps(db: Db, accountId: string): Promise<Gap[]> {
-  const [run] = await doneFactsRuns(db, accountId, 1);
-  const gaps = run ? factsResult(run)?.gaps ?? [] : [];
+  // A run that read only the changed sources adds to the gaps of the runs before it, back to the last one that read all.
+  const gaps: Gap[] = [];
+  const seen = new Set<string>();
+  for (const run of await doneFactsRuns(db, accountId)) {
+    const r = factsResult(run);
+    for (const g of r?.gaps ?? []) {
+      const k = normalizeQuestion(g.question);
+      if (!seen.has(k)) { seen.add(k); gaps.push(g); }
+    }
+    if (r?.scope !== "changed") break;
+  }
   if (gaps.length === 0) return [];
   const answered = new Set(
     (await db.select({ s: knowledgeFacts.sourceLabel }).from(knowledgeFacts)
