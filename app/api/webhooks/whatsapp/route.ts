@@ -29,7 +29,8 @@ export async function POST(req: Request) {
     const statusCallback = statusCallbackUrl(v.base);
     after(async () => {
       try {
-        const out = await replyToBuyer(appDb, new AnthropicLlm(), defaultTransport(), r, { statusCallback });
+        // A call on the conversation: no reply now (out.turn.status "in_call", logged); the message stays stored.
+        const out = await replyToBuyer(appDb, new AnthropicLlm(), defaultTransport(), r, { statusCallback, trigger: "whatsapp" });
         if (out.delivery && !out.delivery.delivered) console.warn(`[whatsapp] reply not sent: ${out.delivery.reason}`);
       } catch (e) {
         console.error("[whatsapp] reply failed", e);

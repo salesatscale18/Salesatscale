@@ -58,8 +58,9 @@ export async function sendTestMessageAction(form: FormData) {
   if (conv.status !== "human" && !llmConfigured()) redirect(`${back}&error=no_key`);
   // Each turn spends model tokens: 120 test messages per account per hour.
   if (!(await rateLimit(appDb, `testlab:${a.account.id}`, { limit: 120, windowSeconds: 3600 })).ok) redirect(`${back}&error=rate_limited`);
-  const r = await runBuyerTurn(appDb, new AnthropicLlm(), { accountId: a.account.id, conversationId, text });
+  const r = await runBuyerTurn(appDb, new AnthropicLlm(), { accountId: a.account.id, conversationId, text, trigger: "test lab" });
   // The redirect goes to the same URL (+ #end): without this the message and the reply only showed after a reload.
   revalidatePath(path(a.account.slug));
-  redirect(r.status === "error" ? `${back}&error=model` : r.status === "paused" ? `${back}&error=paused` : `${back}#end`);
+  // in_call: a call holds this chat (one agent at a time); the message was not sent.
+  redirect(r.status === "error" ? `${back}&error=model` : r.status === "paused" ? `${back}&error=paused` : r.status === "in_call" ? `${back}&error=in_call` : `${back}#end`);
 }

@@ -23,6 +23,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import { WEB_CHAT_CHANNELS } from "@/lib/simulator/rules";
 import { SMS_EVENTS, SMS_NUDGE_EVENTS } from "@/lib/sms/rules";
 import { nudgeBuyer, type NudgeDeps } from "@/lib/sms/service";
+import { activeCallOn } from "@/lib/voice/one-agent";
 import { scheduleFollowUp } from "./schedule";
 
 const MINUTE = 60_000;
@@ -54,6 +55,9 @@ export async function runNamedTimeRetries(db: Db, now = new Date(), deps: NudgeD
   for (const e of firsts) {
     summary.checked++;
     const messageId = str(e.data?.messageId);
+    // One agent at a time: no SMS while a call holds one of the lead's chats. Nothing is claimed, so the next
+    // run after the call decides (within NAMED_TIME_RETRY_LATEST_MS of the first SMS).
+    if (await leadCallActive(db, e.accountId, e.leadId, now)) { summary.skipped++; continue; }
     const scope = and(eq(leadEvents.accountId, e.accountId), eq(leadEvents.leadId, e.leadId), gt(leadEvents.createdAt, e.createdAt));
     // The open is stamped by the app server, the SMS by the database: a minute's margin for clock skew
     // (a buyer who opened the chat a moment before the time is in it anyway).
@@ -80,7 +84,21 @@ export async function runNamedTimeRetries(db: Db, now = new Date(), deps: NudgeD
   return summary;
 }
 
-export type TalkNow = { kind: "talk_now" | "new_time"; at: string };
+/** Whether a call holds any of the lead's conversations now (lib/voice/one-agent.ts activeCallOn), with one log line. */
+async function leadCallActive(db: Db, accountId: string, leadId: string, now: Date): Promise<boolean> {
+  const convs = await db.select({ id: conversations.id }).from(conversations)
+    .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId)));
+  for (const c of convs) {
+    const call = await activeCallOn(db, accountId, c.id, now);
+    if (call) {
+      console.info(`[named-time] retry SMS deferred: a call is on the conversation (${call.slice(0, 8)})`);
+      return true;
+    }
+  }
+  return false;
+}
+
+export type TalkNow ={ kind: "talk_now" | "new_time"; at: string };
 
 /**
  * The card the buyer page shows when the chat was opened from an SMS: the

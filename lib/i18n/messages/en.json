@@ -3843,5 +3843,6 @@
   "knowledge.conflict.hint": "The agent keeps using the approved fact until you choose.",
   "import.file_consent_hint": "Leads in your system asked to hear from you. Untick only if the people in this file must not be contacted by the agent.",
   "import.file_line_no_contact": "the agent won't contact these leads",
-  "settings.intake.field.consent_given": "true when the person accepted your form's consent line. false if the agent must not contact this person. Without it: true for a new lead."
+  "settings.intake.field.consent_given": "true when the person accepted your form's consent line. false if the agent must not contact this person. Without it: true for a new lead.",
+  "lab.in_call": "A call is on in this chat. Your message was not sent. End the call, then send it again."
 }
