@@ -1140,7 +1140,8 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       const quote = results.find((x) => x.name === "create_quote")!.result as Record<string, unknown>;
       expect(quote.quote_id).toBeUndefined();
       expect(quote.quote_message_id).toBeUndefined();
-      expect(quote.message).toMatch(/to send its order form, call send_order_form with quote "Q-\d+"\.$/);
+      // How to send the form for this quote, and only when the buyer agrees (never in the quote's own turn unasked).
+      expect(quote.message).toMatch(/Offer the order form and wait for the buyer's yes; when they agree \(or if they already asked for it\), call send_order_form with quote "Q-\d+"\. Never send it unasked\.$/);
       const sent = (await calls(c.conversationId)).find((x) => x.name === "send_order_form")!;
       expect(sent.outcome).toBe("ok");
       expect(sent.input).toEqual({ quote: String(quote.quote).split(" ")[0] });

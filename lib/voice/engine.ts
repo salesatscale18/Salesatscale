@@ -1522,7 +1522,7 @@ export class VoiceEngine {
         const { quote_id: _qid, quote_message_id: _mid, ...rest } = r.result;
         void _qid;
         void _mid;
-        forModel = { ...rest, ...(typeof r.result.quote === "string" ? { message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}: to send its order form, call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}".`.trim() } : {}) };
+        forModel = { ...rest, ...(typeof r.result.quote === "string" ? { message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}. Offer the order form and wait for the buyer's yes; when they agree (or if they already asked for it), call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}". Never send it unasked.`.trim() } : {}) };
       }
       if (name === "record_opt_out" && OPT_OUT_REPLY[this.spokenLanguage]) {
         // The reply in the language the call speaks now (the tool gives the conversation's).

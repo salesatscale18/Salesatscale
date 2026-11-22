@@ -279,6 +279,12 @@ export const TOOL_DESCRIPTION_VOICE: readonly VoiceReplacement[] = [
 
 /** Tool result messages for the model, as a call reads them (lib/voice/engine.ts). Optional, so other messages pass unchanged. */
 export const TOOL_RESULT_VOICE: readonly VoiceReplacement[] = [
+  // schedule_follow_up: the app texts the buyer a link back to the chat; the agent never "messages" or "calls" them.
+  {
+    from: "At that time they get a text message with a link back to this chat, where they can talk to you by voice or write.",
+    to: "Say that at that time they get a text with a link back to this chat, where they can talk to you by voice or write. Never say you will message or call them yourself.",
+    optional: true,
+  },
   // request_callback (reach part B): the booking card is in the chat, never read aloud.
   { from: "Link sent in the chat. Tell the buyer, in one short sentence in their wording,", to: "The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent). Tell the buyer, in one short spoken sentence in their language,", optional: true },
   {
