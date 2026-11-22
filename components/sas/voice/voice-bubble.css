@@ -65,11 +65,8 @@
 /* Muted: Mute turns dark (it now reads Unmute). */
 .vb-ctl--on .vb-ctl__circle, .vb-ctl--on:hover:not(:disabled) .vb-ctl__circle { background: var(--ink, #0f1420); border-color: var(--ink, #0f1420); color: #fff; }
 .vb-ctl:disabled { cursor: default; opacity: .5; }
-/* Speaker: a smaller fourth control, only where the browser offers a choice. */
-
-.vb-ctl--small .vb-ctl__circle { width: 36px; height: 36px; }
-.vb-ctl--small .vb-ctl__circle svg { width: 18px; height: 18px; }
-@media (max-width: 380px) { .vb-bar { gap: 16px; } }
+/* Phones: tighter, so Mute, Speaker, the bubble and Text fit inside the strip's 12 px gutters at 390 px. */
+@media (max-width: 420px) { .vb-bar { gap: 16px; } .vb-bar__side { gap: 8px; } }
 
 /* The order form's tray (a tap on the bubble): Mute and Text, round, labels under; no headline. */
 .vb-tray { display: flex; gap: 12px; padding: 12px 14px 10px; background: #fff; border: 1px solid var(--vb-line); border-radius: 18px;

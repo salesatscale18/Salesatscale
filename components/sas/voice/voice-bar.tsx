@@ -2,7 +2,8 @@
 
 /**
  * The voice bar (board VoiceBubbleBack 1 and 1b): in voice mode on the buyer chat it takes the composer's place,
- * centred on its white strip: [Mute] · [Speaker, only where the browser offers a choice] · the bubble · [Text].
+ * centred on its white strip: [Mute] · [Speaker, only where the browser offers a choice] · the bubble · [Text], one
+ * button size (44 px circles).
  * A toolbar (arrow keys move between its controls). Mute turns dark while muted; Text switches the chat back to
  * text. The bubble has no pop-up here: a tap only wakes the agent from standby.
  */
@@ -49,7 +50,7 @@ export function VoiceBar({ state, agentName, tr, dir, levels, onCommand, note = 
       {outputs.length >= 2 ? (
         // The speaker in use; a tap moves to the next one the browser offers.
         <RoundControl
-          data="speaker" small icon={<Icon name="volume" />} label={tr("buyer.voice.bubble.speaker")}
+          data="speaker" icon={<Icon name="volume" />} label={tr("buyer.voice.bubble.speaker")}
           name={`${tr("buyer.voice.bubble.speaker")}: ${speakerName(at)}`} onClick={() => onCommand({ cmd: "output", deviceId: outputs[(at + 1) % outputs.length].id })}
         />
       ) : null}

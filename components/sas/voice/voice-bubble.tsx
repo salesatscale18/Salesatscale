@@ -68,12 +68,12 @@ const STANDBY_NOTE_MS = 5000;
 const MUTED_NOTE_MS = 3000;
 
 /** A round control with its one-word label under it (the voice bar and the order form's tray). */
-export function RoundControl({ icon, label, name, onClick, on = false, disabled = false, small = false, data }: {
-  icon: ReactNode; label: string; name?: string; onClick: () => void; on?: boolean; disabled?: boolean; small?: boolean; data: string;
+export function RoundControl({ icon, label, name, onClick, on = false, disabled = false, data }: {
+  icon: ReactNode; label: string; name?: string; onClick: () => void; on?: boolean; disabled?: boolean; data: string;
 }) {
   return (
     <button
-      type="button" className={`vb-ctl${on ? " vb-ctl--on" : ""}${small ? " vb-ctl--small" : ""}`} onClick={onClick} disabled={disabled}
+      type="button" className={`vb-ctl${on ? " vb-ctl--on" : ""}`} onClick={onClick} disabled={disabled}
       aria-label={name} aria-pressed={data === "mute" ? on : undefined} {...{ [`data-bar-${data}`]: "" }}
     >
       <span className="vb-ctl__circle" aria-hidden="true">{icon}</span>

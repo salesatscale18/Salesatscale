@@ -57,14 +57,14 @@ describe("the voice bar and the form's tray", () => {
   const bar = (s: MirrorState, tr = en, dir: "ltr" | "rtl" = "ltr") => renderToStaticMarkup(<VoiceBar state={s} agentName="Maya" tr={tr} dir={dir} onCommand={() => {}} />);
   const order = (html: string) => [...html.matchAll(/data-bar-(\w+)=""|data-bubble-button=""/g)].map((m) => m[1] ?? "bubble");
 
-  it("a toolbar: Mute · bubble · Text; Speaker (smaller) between Mute and the bubble only where the browser offers a choice", () => {
+  it("a toolbar: Mute · bubble · Text; Speaker (the same size) between Mute and the bubble only where the browser offers a choice", () => {
     const html = bar(base);
     expect(html).toMatch(/<div class="vb-bar" role="toolbar" aria-label="Call controls" dir="ltr"/);
     expect(order(html)).toEqual(["mute", "bubble", "text"]);
     const two = { ...base, outputs: [{ id: "a", label: "Default" }, { id: "b", label: "Headphones" }], output: "b" };
     const withSpeaker = bar(two);
     expect(order(withSpeaker)).toEqual(["mute", "speaker", "bubble", "text"]);
-    expect(withSpeaker).toMatch(/class="vb-ctl vb-ctl--small" aria-label="Speaker: Headphones" data-bar-speaker=""/);
+    expect(withSpeaker).toMatch(/class="vb-ctl" aria-label="Speaker: Headphones" data-bar-speaker=""/);
     // No pop-up menu, and no time left on screen (the bubble's accessible name keeps it, as built).
     expect(html).not.toMatch(/role="menu"|aria-haspopup/);
     expect(text(html).join(" ")).not.toContain("left");
