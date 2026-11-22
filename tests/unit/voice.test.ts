@@ -259,7 +259,13 @@ describe("voice instructions", () => {
       'I\'ve put a link in the chat where you can pick a time that suits you."',
       "- If the buyer asks you to call them or get back to them at a time, call schedule_follow_up with that time; say they will get a text with a link back to the chat, where they can talk by voice or type.",
       '- Send the one approved item ("Send me information"): you cannot attach files or read links aloud. Give the summary in a few spoken sentences, and offer to continue in the chat for anything they want to read later.',
-      "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
+      "Call hand_off_to_human only when the buyer agrees or demands a person themselves.",
+      "I'll ask someone from the team to get back to you. Would that be OK?",
+      "אבקש שמישהו מהצוות יחזור אליך. זה בסדר מבחינתך?",
+      "That is not a reason to pass them to a person.",
+      "The call goes on until the buyer says goodbye.",
+      "Do: 1) Stop selling. 2) Offer that someone from the team gets back to them, and ask if that is OK.",
+      'Example: "I\'ll ask someone from the team to get back to you. Would that be OK?"',
       '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
       '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
       "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",
@@ -267,9 +273,10 @@ describe("voice instructions", () => {
       "When the buyer names a time for the call, pass it as time; otherwise pass time null. When its result says Booked, confirm the booked day and time aloud, as a person would say it (\"tomorrow at ten\"), instead of pointing to the chat. When that time was not free, offer the nearest free times the result gives, aloud and naturally (at most three, never read as a list), and say the booking card is in the chat too. When it only put the booking card in the chat (no time), say the free times are in the chat and they can pick one there (never read the link aloud). If it was refused, never say anything was booked or that there is a link. The call goes on after it: keep helping, and never use hand_off_to_human for a call.",
       "- Find the real objection. One question, in the same turn as the acknowledgement.",
     ]) expect(block, line).toContain(line);
-    // hand_off_to_human is never the way to a call: only the upset line keeps it.
+    // hand_off_to_human is never the way to a call: only the upset line (offered first, owner 22 Nov 2026) keeps it.
     expect(block).not.toContain('reason "call requested"');
     expect(block.match(/call hand_off_to_human/g)).toEqual(["call hand_off_to_human"]);
+    expect(block).not.toMatch(/hand_off_to_human at once|the call ends there|Hand over at once|I am passing you to a member of the team now/);
     // The old first-request hand-off line is gone.
     expect(block).not.toContain("If the buyer asks for a person: say someone from the team will get back to them, then call hand_off_to_human.");
   });

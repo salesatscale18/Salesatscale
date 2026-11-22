@@ -217,6 +217,8 @@ export class VoiceEngine {
   private endedAtMs: number | null = null;
   /** This call is recorded: its instructions carry the one recording rule (lib/voice/instructions.ts RECORDED_CALL_RULE). */
   private recorded = false;
+  /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
+  private handedOffHere = false;
   /** Counts of the relay's diagnostics (RealtimeEvent "diagnostic"), logged when the call ends. */
   private readonly diagnostics = new Map<string, number>();
   private endBy: VoiceEndBy | null = null;
@@ -961,7 +963,12 @@ export class VoiceEngine {
         // anomalies once, with their totals at the end of the call.
         if (e.kind === "cleaned-transcript") this.log.warn(voiceLine(this.sessionId, `cleaned agent transcript: ${e.detail ?? "marker"}`));
         else if (e.kind === "tool-continuation") this.log.info(voiceLine(this.sessionId, `tools: ${e.detail ?? "response requested"}`));
-        else if (n === 1) this.log.warn(voiceLine(this.sessionId, `agent audio: ${e.kind === "audio-odd-bytes" ? "a piece with an odd byte count (carried to the next piece)" : "audio of an earlier response after a newer one"}`));
+        else if (n === 1) {
+          const what = e.kind === "audio-odd-bytes" ? "a piece with an odd byte count (carried to the next piece)"
+            : e.kind === "audio-after-cut" ? "audio of a cut response arrived after the cut (dropped)"
+            : "audio of an earlier response after a newer one";
+          this.log.warn(voiceLine(this.sessionId, `agent audio: ${what}`));
+        }
         return;
       }
       case "provider-event": {
@@ -1204,6 +1211,7 @@ export class VoiceEngine {
     // Typed while the agent speaks: like a barge-in, the browser drops the queued agent audio.
     if (typed && this.agentSpeaking) {
       if (this.agentTurn) this.agentTurn.interrupted = true;
+      this.conn?.cancelResponse?.();
       this.send({ t: "flush" });
       this.recorder?.cut(this.offsetMs());
       this.agentSpeaking = false;
@@ -1232,7 +1240,8 @@ export class VoiceEngine {
     // A person took the conversation over during the call: the agent stops (the buyer's words are kept).
     const [now] = await this.db.select({ status: conversations.status, takenOverByUserId: conversations.takenOverByUserId }).from(conversations)
       .where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id)));
-    if (now?.status === "human" && !this.pendingEnd) {
+    // A hand-off made on this call keeps the call going (the agent no longer sells); a person who takes it over ends it.
+    if (now?.status === "human" && !this.pendingEnd && (now.takenOverByUserId || !this.handedOffHere)) {
       void this.stop(now.takenOverByUserId ? "take_over" : "handoff", undefined, "take_over");
       return;
     }
@@ -1432,15 +1441,16 @@ export class VoiceEngine {
         };
       }
       if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
-      // A call request does not end this call (only a hand-off or an opt-out does).
+      // A call request or a hand-off does not end this call (only an opt-out, end_call, or the buyer does).
       if (name === "record_opt_out") this.afterOptOut();
       if (name === "hand_off_to_human") {
-        // The conversation is now held by the team and this call ends after the agent's last sentence.
+        // Owner decision (22 Nov 2026): the team gets back to the buyer, and the call goes on until the buyer ends
+        // it (or says goodbye and the agent calls end_call). The conversation is held by the team from now on.
+        this.handedOffHere = true;
         forModel = {
           ...r.result,
-          message: "Done: the team takes over and this call ends now. Say in one short sentence that someone from the team will get back to them (to confirm the time, if a call was requested), then say goodbye. Do not say the call continues or that someone will join it, and do not continue selling.",
+          message: "Done: the team will get back to the buyer. Say so in one short sentence (to confirm the time, if a call was requested), then ask if there is anything else you can help with. Do not continue selling. The call goes on until the buyer says goodbye: then say a short goodbye and call end_call.",
         };
-        this.endSoon("handoff");
       }
       if (name === "end_call") {
         // The buyer asked to end the call: the goodbye is spoken (or finished), then the call ends.

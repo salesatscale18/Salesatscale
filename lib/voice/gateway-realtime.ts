@@ -265,8 +265,24 @@ export class ServerEventMapper {
     if (said) this.cutSaid = this.agentText.trim();
     this.agentText = "";
     // The browser drops the audio still queued: a half sample carried from the cut response belongs to nothing.
-    this.audioCarry = null;
+    this.cutCurrentResponse();
     return [...cleaned, ...(said ? [{ type: "agent-transcript" as const, text: said, final: true }, { type: "turn-done" as const, interrupted: true }] : []), { type: "speech-started" }];
+  }
+
+  /**
+   * `dropCutAudio` (OpenAI): audio of a response the buyer cut that still arrives after the cut (deltas in flight
+   * before the provider's cancel) is dropped: the browser was told to flush it, and playing it after the flush puts a
+   * fragment of the old answer before the new one. Gemini keeps its 5d1f427 behaviour (its response ids through the
+   * Gateway are not known to change per response).
+   */
+  constructor(private readonly o: { dropCutAudio?: boolean } = {}) {}
+  /** The response the buyer cut (its audio is dropped until another response speaks). */
+  private cutResponse: string | null = null;
+
+  /** The engine cut the current response (typed text): its remaining audio is dropped like a barge-in's. */
+  cutCurrentResponse(): void {
+    if (this.o.dropCutAudio && this.audioResponse) this.cutResponse = this.audioResponse;
+    this.audioCarry = null;
   }
 
   /** The last byte of an odd-length audio piece: the first byte of a sample whose second byte comes in the next piece. */
@@ -282,6 +298,7 @@ export class ServerEventMapper {
    */
   private audio(delta: string, responseId: string | undefined): RealtimeEvent[] {
     const out: RealtimeEvent[] = [];
+    if (responseId && responseId === this.cutResponse) return [{ type: "diagnostic", kind: "audio-after-cut" }];
     if (responseId && responseId !== this.audioResponse) {
       if (this.audioResponsesBefore.has(responseId)) out.push({ type: "diagnostic", kind: "audio-interleaved" });
       if (this.audioResponse) this.audioResponsesBefore.add(this.audioResponse);
@@ -438,7 +455,7 @@ export class GatewayRealtime implements RealtimeModel {
     if (!model.getServerWebSocketConfig) throw new Error("This realtime model has no server-owned connection");
     const { url, headers, protocols } = await model.getServerWebSocketConfig({ intent: "conversation" });
     const parse = model.createServerEventParser?.() ?? ((raw: unknown) => model.parseServerEvent(raw));
-    const mapper = new ServerEventMapper();
+    const mapper = new ServerEventMapper({ dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini" });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;
     let open = false;
@@ -501,6 +518,12 @@ export class GatewayRealtime implements RealtimeModel {
         sendAll([clientEvents.toolResult(callId, name, result), ...maybeRequestToolResponse("result", callId)]);
       },
       requestResponse: (instructions) => sendAll(clientEvents.respond(instructions)),
+      cancelResponse: () => {
+        // OpenAI: the response the buyer cut by typing stops (a spoken barge-in is cancelled by the provider's own
+        // turn detection); its audio still in flight is dropped. Gemini: a new text turn interrupts it on its own.
+        mapper.cutCurrentResponse();
+        if (schemaFamilyOf(this.modelId) !== "gemini") sendAll([{ type: "response-cancel" }]);
+      },
       sendNote: (note) => sendAll([clientEvents.note(note)]),
       close: () => {
         if (closedByUs) return;

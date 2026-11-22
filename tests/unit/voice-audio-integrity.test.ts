@@ -105,6 +105,21 @@ describe("live path, agent audio: provider pieces → mapper → what the browse
     expect(kinds(ev("r1", [5, 6]))).toEqual(["audio-interleaved", "audio"]);
   });
 
+  it("OpenAI: audio of a response the buyer cut that arrives after the cut is dropped (reported); the next response plays", () => {
+    const m = new ServerEventMapper({ dropCutAudio: true });
+    const ev = (e: Record<string, unknown>) => m.map({ raw: null, ...e } as never);
+    const audio = (responseId: string) => ev({ type: "audio-delta", responseId, itemId: "i", delta: b64(Uint8Array.from([1, 2])) });
+    expect(audio("r1").map((e) => e.type)).toEqual(["audio"]);
+    ev({ type: "speech-started" });
+    expect(audio("r1")).toEqual([{ type: "diagnostic", kind: "audio-after-cut" }]);
+    expect(audio("r2").map((e) => e.type)).toEqual(["audio"]);
+    // Gemini (default): unchanged, nothing dropped.
+    const g = new ServerEventMapper();
+    g.map({ type: "audio-delta", responseId: "r1", itemId: "i", delta: b64(Uint8Array.from([1, 2])), raw: null } as never);
+    g.map({ type: "speech-started", raw: null } as never);
+    expect(g.map({ type: "audio-delta", responseId: "r1", itemId: "i", delta: b64(Uint8Array.from([1, 2])), raw: null } as never).map((e) => e.type)).toEqual(["audio"]);
+  });
+
   it("an odd byte offset (a view into Node's Buffer pool) decodes the same as a fresh copy", () => {
     const p = pieces(tonePcm(0.05), [2400])[0];
     expect(p.byteOffset % 2).toBe(1);

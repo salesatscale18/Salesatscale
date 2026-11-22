@@ -627,4 +627,37 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     expect(text()).toMatch(/ended reason=user_hangup .* diagnostics=audio-odd-bytes:1,cleaned-transcript:1/);
     expect(text()).not.toMatch(/Two sites|Maya|sensor"/);
   });
+
+  it("a hand-off on a call (owner, 22 Nov 2026): the call goes on, the next buyer line is answered, and end_call ends it", async () => {
+    const model = new FakeModel();
+    const c = await engineCall(model);
+    const emit = (e: RealtimeEvent) => model.conns.at(-1)!.emit(e);
+    emit({ type: "audio", pcm: new Uint8Array(480) });
+    emit({ type: "agent-transcript", text: "I'll ask someone from the team to get back to you. Would that be OK?", final: true });
+    emit({ type: "turn-done" });
+    await c.run(500);
+    c.engine.onClientMessage({ t: "text", text: "Yes please." });
+    await c.run(300);
+    emit({ type: "tool-call", callId: "h1", name: "hand_off_to_human", args: { reason: "Buyer asked for a person", summary: "s", suggested_reply: "r" } });
+    await c.run(500);
+    const r = model.conns[0].toolResults.find((x) => x.name === "hand_off_to_human")!.result;
+    expect(r.message).toContain("ask if there is anything else you can help with");
+    expect(r.message).not.toMatch(/call ends now|say goodbye\./);
+    emit({ type: "audio", pcm: new Uint8Array(480) });
+    emit({ type: "agent-transcript", text: "Someone from the team will get back to you. Anything else I can help with?", final: true });
+    emit({ type: "turn-done" });
+    await c.run(10_000);
+    expect((await row(c.sessionId)).status).toBe("live");
+    // The conversation is the team's now, but a line from the buyer on this call does not end it.
+    c.engine.onClientMessage({ t: "text", text: "No, that's all. Bye." });
+    await c.run(300);
+    expect((await row(c.sessionId)).status).toBe("live");
+    emit({ type: "audio", pcm: new Uint8Array(480) });
+    emit({ type: "agent-transcript", text: "Goodbye!", final: true });
+    emit({ type: "tool-call", callId: "e1", name: "end_call", args: {} });
+    await c.run(300);
+    emit({ type: "turn-done" });
+    await c.run(10_000);
+    expect(await row(c.sessionId)).toMatchObject({ status: "ended", endReason: "agent_closed" });
+  });
 });

@@ -64,7 +64,7 @@ export type RealtimeEvent =
    * out ("cleaned-transcript"), an audio piece had an odd byte count and its last byte was carried to the next
    * piece ("audio-odd-bytes"), audio of an earlier response came again after a newer one ("audio-interleaved").
    */
-  | { type: "diagnostic"; kind: "cleaned-transcript" | "audio-odd-bytes" | "audio-interleaved" | "tool-continuation"; detail?: string };
+  | { type: "diagnostic"; kind: "cleaned-transcript" | "audio-odd-bytes" | "audio-interleaved" | "audio-after-cut" | "tool-continuation"; detail?: string };
 
 export interface RealtimeConnection {
   /** Mic audio, PCM16 mono 24 kHz little-endian. */
@@ -76,6 +76,8 @@ export interface RealtimeConnection {
   requestResponse(instructions?: string): void;
   /** A note from the app the model reads but does not answer (no response is requested): the order form's step. */
   sendNote?(note: string): void;
+  /** The buyer cut the current response by typing: stop it (where the provider takes that) and drop its remaining audio. */
+  cancelResponse?(): void;
   /** The session config fields this connection sent (names only), for the log when the provider rejects them. */
   readonly sessionFields?: readonly string[];
   /** Closes the provider socket. Safe to call more than once. */
