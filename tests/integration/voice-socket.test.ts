@@ -268,7 +268,7 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     expect(await row(s.sessionId)).toMatchObject({ status: "ended", endReason: "connection_lost" });
   });
 
-  it("a browser that vanished without a close (process killed) is noticed within 30 s: model closed, real end time and duration stored", async () => {
+  it("a browser that vanished without a close (process killed) is noticed within 45-60 s: model closed, real end time and duration stored", async () => {
     const s = await newSession();
     const c = open();
     c.ws.text({ t: "auth", sessionId: s.sessionId, ticket: s.ticket });
@@ -280,9 +280,9 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     }
     const goneAt = c.clock.now();
     expect(c.ws.closed).toBeNull();
-    await c.run(24_000);
+    await c.run(44_000);
     expect(c.ws.closed).toBeNull();
-    await c.run(6_000);
+    await c.run(16_000);
     expect(c.ws.closed?.code).toBe(VOICE_CLOSE.goingAway);
     await c.settle();
     await c.done;
@@ -290,10 +290,10 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     const r = await row(s.sessionId);
     expect(r).toMatchObject({ status: "ended", endReason: "connection_lost" });
     expect(r.usage?.endDetail).toMatchObject({ by: "client_idle" });
-    // The end time is when the silence was noticed (within 30 s of the last frame), not a later cleanup.
+    // The end time is when the silence was noticed (45-60 s after the last frame), not a later cleanup.
     const endedMs = r.endedAt!.getTime() - r.connectedAt!.getTime();
-    expect(endedMs).toBeGreaterThanOrEqual((goneAt - r.connectedAt!.getTime()) + 25_000);
-    expect(endedMs).toBeLessThanOrEqual((goneAt - r.connectedAt!.getTime()) + 30_000);
+    expect(endedMs).toBeGreaterThanOrEqual((goneAt - r.connectedAt!.getTime()) + 45_000);
+    expect(endedMs).toBeLessThanOrEqual((goneAt - r.connectedAt!.getTime()) + 60_000);
     expect(r.durationSec).toBe(Math.round(endedMs / 1000));
   });
 

@@ -166,11 +166,8 @@ describe("the order form and standby (step 3)", () => {
     await clock.advance(1_000, settle);
     expect(model.connections).toHaveLength(1);
     expect(model.connections[0].notes.some((n) => n.includes("Company details"))).toBe(false);
-    // Well past the idle end: the call stays on while the form is open (the browser pings every 10 s, as the real one does).
-    for (let i = 0; i < 3; i++) {
-      await clock.advance(10_000, settle);
-      send({ t: "ping" });
-    }
+    // Well past the idle end: the call stays on while the form is open.
+    await clock.advance(30_000, settle);
     expect(json().some((m) => m.t === "ended")).toBe(false);
     // A tap wakes it: the new connection reads the held note (with its fresh instructions and recap).
     send({ t: "wake" });
