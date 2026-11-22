@@ -80,6 +80,12 @@ async function claim(db: Db, sessionId: string): Promise<boolean> {
   return rows.length > 0;
 }
 
+/** Gives a claim back (a call took the conversation first): a later poll or the cron may answer the line. */
+async function release(db: Db, sessionId: string): Promise<void> {
+  await db.update(voiceSessions).set({ settings: sql`coalesce(${voiceSessions.settings}, '{}'::jsonb) - ${CLAIM_KEY}::text` })
+    .where(eq(voiceSessions.id, sessionId));
+}
+
 export type AfterCallResult = { status: "replied" | "no_reply" | "skipped"; reason?: string };
 
 /**
@@ -93,14 +99,23 @@ export async function replyAfterCall(db: Db, llm: LlmClient, sessionId: string):
     if (!s) return { status: "skipped", reason: "not_found" };
     const turn = await unansweredCallTurn(db, s);
     if (!turn) return { status: "skipped", reason: "answered_or_not_eligible" };
-    // One agent at a time: a new call on this conversation (pending or live) takes the turn; its agent hears the buyer.
+    // One agent at a time. Claim first, then check for a call: a call created between a check and the claim would
+    // otherwise leave the claim used and the line unanswered. A call holding the conversation (pending or live)
+    // gives the claim back: its first line answers the buyer's line (lib/voice/instructions.ts answerLastInstruction);
+    // if it does not, the line is still the last one and a later poll or the cron answers it.
+    if (turn.claimed || !(await claim(db, s.id))) return { status: "skipped", reason: "claimed" };
     const active = await activeCallOn(db, s.accountId, s.conversationId);
     if (active) {
+      await release(db, s.id);
       console.info(voiceLine(active, `text agent blocked: after-call reply of ${s.id.slice(0, 8)} (this call is pending or live)`));
       return { status: "skipped", reason: "call_active" };
     }
-    if (turn.claimed || !(await claim(db, s.id))) return { status: "skipped", reason: "claimed" };
     const out = await replyToBuyer(db, llm, null, { accountId: s.accountId, conversationId: s.conversationId, leadId: turn.leadId, text: turn.body });
+    // A call that started after the check: the chat turn stood down (in_call) and sent nothing; the claim goes back.
+    if (out.turn.status === "in_call") {
+      await release(db, s.id);
+      return { status: "skipped", reason: "call_active" };
+    }
     if (out.delivery && !out.delivery.delivered) console.warn(`[voice] after-call reply not delivered: ${out.delivery.reason}`);
     return out.turn.status === "replied" ? { status: "replied" } : { status: "no_reply", reason: out.turn.status };
   } catch (e) {

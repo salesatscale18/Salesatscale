@@ -18,7 +18,7 @@ import { applyVoiceReplacements, voiceStageText } from "@/lib/agent/core/voice";
 import { recordedCallRule } from "./recording-settings";
 import { buyerNames } from "@/lib/agent/core/names";
 import { loadStageFacts } from "@/lib/agent/core/stage-facts";
-import type { StageFacts } from "@/lib/agent/core/stage";
+import { writtenByAgent, type StageFacts } from "@/lib/agent/core/stage";
 import type { ExampleCatalogItem } from "@/lib/agent/core/examples";
 import type { PlainItem } from "@/lib/agent/prompt";
 import { publishedCatalog } from "@/lib/catalog/service";
@@ -130,7 +130,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
       : i.resumed
       ? "The call dropped for a moment and is connected again. Do not introduce yourself again and do not repeat the opening. Wait for the buyer, or carry on where you were."
       : i.continuing
-        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Open with one short line that picks up from where the chat stopped: if your own last chat message asked the buyer something they have not answered yet, ask it again briefly, in spoken form${i.opener && i.opener !== fallback ? ` (here: "${i.opener}")` : ""}; if the buyer wrote last, or nothing is open, ${fallback ? `say "${fallback}"` : `say briefly, in ${languageNameEn(language)}, that you are here and they can go ahead.`} Then listen. Never ask again for anything the buyer already answered in the chat.`
+        ? `The buyer switched this chat from text to voice: the same conversation goes on by voice, and what was said so far is listed here. You introduced yourself in the chat already. When the call connects, do not greet the buyer as if new, do not introduce yourself and do not say again that you are an automated assistant (say so only if the buyer asks). Open with one short line that picks up from where the chat stopped: if your own last chat message asked the buyer something they have not answered yet, ask it again briefly, in spoken form${i.opener && i.opener !== fallback ? ` (here: "${i.opener}")` : ""}; if the buyer wrote last, answer their last message briefly, in spoken form; if nothing is open, ${fallback ? `say "${fallback}"` : `say briefly, in ${languageNameEn(language)}, that you are here and they can go ahead.`} Then listen. Never ask again for anything the buyer already answered in the chat.`
         : "When the call connects, say your opening line, then listen.",
     `Language: start in ${languageNameEn(language)} (if you cannot speak it, in English). The buyer most likely speaks ${expected.map(languageNameEn).join(" or ")}; if they speak or ask for another language, continue in that one.`,
     paceInstruction(settings.pace),
@@ -263,6 +263,17 @@ export function continuingInstruction(line: string | null = CONTINUE_FALLBACK, l
     : `${start} Your last chat message asked something still unanswered: ask it again briefly, in spoken form: "${line}"`;
 }
 
+/**
+ * The first line of a call that continues a chat whose last message is the buyer's, with no answer (a typed message
+ * the chat agent did not answer because the call took the conversation, or a line from an earlier call): the
+ * agent answers it, once, as its first spoken line. No re-ask of an older question, no "go ahead".
+ */
+export function answerLastInstruction(buyerLine: string, language = "en"): string {
+  // Typographic quotes, and none inside: an ASCII-quoted part is where the recording notice goes (withRecordingNotice).
+  const said = buyerLine.replace(/\s+/g, " ").replace(/"/g, "'").trim().slice(0, 300);
+  return `The call has just connected; the buyer switched the chat to voice. Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant. The buyer's last message has no answer yet: \u201c${said}\u201d. Answer it now, briefly, in spoken form, in ${languageNameEn(language)}.`;
+}
+
 export type VoiceCallContext = {
   instructions: string;
   opener: string;
@@ -288,7 +299,7 @@ export async function loadVoiceInstructions(
     leadContactSettings(db, account, lead.marketId),
     db.select({ actor: messages.actor, body: messages.body, voiceSessionId: messages.voiceSessionId }).from(messages)
       .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id))).orderBy(desc(messages.createdAt)).limit(CHAT_RECAP_LINES),
-    db.select({ id: messages.id }).from(messages).where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))),
+    db.select({ actor: messages.actor, agentVersionId: messages.agentVersionId }).from(messages).where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))),
     // The open call request (requested or confirmed), as in a chat turn (lib/agent/turn.ts).
     leadCallback(db, account.id, lead.id, a.now),
     // The team's log of its call with the buyer (as in a chat turn).
@@ -316,6 +327,9 @@ export async function loadVoiceInstructions(
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
   // The pick-up line: the agent's own unanswered question re-asked once (pickUpReAsk); else the fallback.
   const reAsk = continuing ? pickUpReAsk(earlier) : null;
+  // The buyer wrote (or said, on an earlier call) last and nothing answered it: the call's first line answers it.
+  const lastTalk = earlier.find((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human");
+  const unanswered = continuing && lastTalk?.actor === "buyer" ? lastTalk.body : null;
   const fallback = continueFallback(language);
   const opener = continuing
     ? reAsk ?? fallback ?? ""
@@ -327,7 +341,8 @@ export async function loadVoiceInstructions(
   const instructions = buildVoiceInstructions({
     playbook: version.playbook, voiceSettings: version.voiceSettings,
     seller: { tradeName: account.tradeName, currency: account.currency, languages: contact.languages },
-    catalog: activeItems, deal: a.deal, stage, agentMessages: opts.agentMessages ?? agentCount.length, names, opener,
+    // The stage counts what the agent wrote or said (writtenByAgent), as a chat turn does; app messages do not count.
+    catalog: activeItems, deal: a.deal, stage, agentMessages: opts.agentMessages ?? agentCount.filter(writtenByAgent).length, names, opener,
     // "Local time now" in the buyer's zone: request_callback reads a local time in it (N1), so the agent works dates out from it.
     localNow: localNowLine(a.now, zone),
     // Times as the buyer should hear them ("Friday 20 November at 12:30"), as in a chat turn.
@@ -341,6 +356,6 @@ export async function loadVoiceInstructions(
   });
   return {
     instructions, opener, language, expectedLanguages: expectedCallLanguages(language, contact.languages),
-    openerPrompt: continuing ? continuingInstruction(reAsk ?? fallback, language) : openerInstruction(opener, language), continuing,
+    openerPrompt: continuing ? (unanswered !== null ? answerLastInstruction(unanswered, language) : continuingInstruction(reAsk ?? fallback, language)) : openerInstruction(opener, language), continuing,
   };
 }

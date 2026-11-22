@@ -7,13 +7,13 @@
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { eq } from "drizzle-orm";
-import { messages, rateLimits, users, voiceSessions, type User } from "@/db/schema";
+import { conversations, messages, rateLimits, users, voiceSessions, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
 import { VoiceEngine, inheritedSummary } from "@/lib/voice/engine";
 import { activeCallOn, textTurnBlocked } from "@/lib/voice/one-agent";
-import { replyAfterCall } from "@/lib/voice/after-call";
+import { replyAfterCall, unansweredCallTurn } from "@/lib/voice/after-call";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -50,10 +50,15 @@ describe("one agent at a time", () => {
   afterAll(async () => t.close());
   beforeEach(async () => void (await db.delete(rateLimits)));
 
-  async function conversation(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = []) {
+  /** `app`: an agent-actor message the app wrote (no agent version), e.g. a follow-up or a card. */
+  async function conversation(lines: { actor: "agent" | "buyer"; body: string; ageMs: number; app?: boolean }[] = []) {
     const c = (await startVoiceTestConversation(db, acc, me.id, { scenario: null }))!;
+    const [cv] = await db.select({ v: conversations.agentVersionId }).from(conversations).where(eq(conversations.id, c.conversationId));
     for (const l of lines) {
-      await db.insert(messages).values({ accountId: acc, conversationId: c.conversationId, actor: l.actor, body: l.body, language: "en", createdAt: new Date(Date.now() - l.ageMs) });
+      await db.insert(messages).values({
+        accountId: acc, conversationId: c.conversationId, actor: l.actor, body: l.body, language: "en", createdAt: new Date(Date.now() - l.ageMs),
+        ...(l.actor === "agent" && !l.app ? { agentVersionId: cv.v } : {}),
+      });
     }
     return c.conversationId;
   }
@@ -103,11 +108,14 @@ describe("one agent at a time", () => {
     vi.spyOn(console, "info").mockImplementation(() => undefined);
     expect(await replyAfterCall(db, llm as never, first.sessionId)).toEqual({ status: "skipped", reason: "call_active" });
     expect(llm.create).not.toHaveBeenCalled();
+    // Check and claim are one step: the claim was taken, then given back, so a later path can still answer.
+    const [row] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, first.sessionId));
+    expect((await unansweredCallTurn(db, row))?.claimed).toBe(false);
     vi.restoreAllMocks();
   });
 
   it("a call's start waits for a chat turn still answering the buyer's typed message, then starts from its reply", async () => {
-    const conv = await conversation([{ actor: "agent", body: "Hi, this is Ava. How many sites do you have?", ageMs: 30_000 }, { actor: "buyer", body: "Two sites.", ageMs: 2_000 }]);
+    const conv = await conversation([{ actor: "agent", body: "Hi, this is Ava. How many sites do you have?", ageMs: 30_000 }, { actor: "buyer", body: "Two sites.", ageMs: 10_000 }]);
     const logs: string[] = [];
     const c = await engineFor(conv, logs);
     // While the start waits, only the clock moves (the engine's queue is busy with the start).
@@ -129,7 +137,11 @@ describe("one agent at a time", () => {
   });
 
   it("a call that continues a chat: the pick-up line is not a new agent message for the stage (as in chat)", async () => {
-    const conv = await conversation([{ actor: "agent", body: "Hi, this is Ava. What kind of business is it, and how many sites?", ageMs: 120_000 }]);
+    // The chat's intro (the agent's), and an app message after it (a follow-up template): only the intro counts, as in chat.
+    const conv = await conversation([
+      { actor: "agent", body: "Hi, this is Ava. What kind of business is it, and how many sites?", ageMs: 120_000 },
+      { actor: "agent", body: "Just checking in: did you get a chance to look?", ageMs: 60_000, app: true },
+    ]);
     const logs: string[] = [];
     const c = await engineFor(conv, logs);
     await c.engine.start();
@@ -148,6 +160,53 @@ describe("one agent at a time", () => {
     // One agent message (the chat's) and no recorded ask: still Understand, as a chat turn would be. Counting the
     // pick-up line made it Recommend one exchange early.
     expect(stage).toMatch(/^## Stage now: 2 Understand/);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("race A: a typed message stored as the call is created gets no chat reply (in_call): no wait, and the call's first line answers it", async () => {
+    const conv = await conversation([
+      { actor: "agent", body: "Hi, this is Ava. How do you check the fridges today?", ageMs: 60_000 },
+      { actor: "buyer", body: "Do the sensors need wifi?", ageMs: 300 },
+    ]);
+    const logs: string[] = [];
+    const c = await engineFor(conv, logs);
+    await c.engine.start();
+    await c.settle();
+    // Started at once, no wait.
+    expect(c.model.conns).toHaveLength(1);
+    expect(logs.some((l) => l.includes("voice start waited"))).toBe(false);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+    // The buyer's message is stored once.
+    const buyerRows = await db.select().from(messages).where(eq(messages.conversationId, conv));
+    expect(buyerRows.filter((m) => m.actor === "buyer" && m.body === "Do the sensors need wifi?")).toHaveLength(1);
+  });
+
+  it("the call's first line answers an unanswered last buyer message (no re-ask of an older question, no \"go ahead\")", async () => {
+    const { answerLastInstruction } = await import("@/lib/voice/instructions");
+    const conv = await conversation([
+      { actor: "agent", body: "Hi, this is Ava. How do you check the fridges today?", ageMs: 60_000 },
+      // Old enough that no chat turn is still working on it (it failed, or was refused earlier).
+      { actor: "buyer", body: "Do the sensors need wifi?", ageMs: 50_000 },
+    ]);
+    const prompts: string[] = [];
+    const logs: string[] = [];
+    const c = await engineFor(conv, logs);
+    const model = c.model as FakeModel & { prompts?: string[] };
+    const connect = model.connect.bind(model);
+    model.connect = async (cfg, onEvent) => {
+      const conn = await connect(cfg, onEvent);
+      return { ...conn, requestResponse: (t?: string) => void prompts.push(t ?? "") };
+    };
+    await c.engine.start();
+    await c.settle();
+    // The answer instruction, with the recording notice as its own first sentence (never inside the buyer's words).
+    expect(prompts).toHaveLength(1);
+    expect(prompts[0].startsWith(answerLastInstruction("Do the sensors need wifi?", "en"))).toBe(true);
+    expect(prompts[0]).toContain("“Do the sensors need wifi?”");
+    expect(prompts[0]).toMatch(/Start with: "Some calls may be recorded for quality review\."$/);
+    expect(prompts[0]).not.toMatch(/How do you check|go ahead/);
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });

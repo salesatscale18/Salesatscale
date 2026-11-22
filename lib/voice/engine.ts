@@ -19,6 +19,7 @@ import {
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
+import { writtenByAgent } from "@/lib/agent/core/stage";
 import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
 import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
@@ -161,6 +162,11 @@ type StoredLine = { messageId: string; turnId: string; raw: string; cut: boolean
 
 /** A typed buyer message younger than this with no reply is a chat turn in flight (voice start waits for it). */
 export const TEXT_TURN_FRESH_MS = 45_000;
+/**
+ * A typed message stored at least this long before the call was created had its chat turn start (and pass the
+ * one-agent guard) before the call existed: the call waits for its reply. A later one is refused by the guard.
+ */
+export const TEXT_TURN_GUARD_MS = 3_000;
 /** The longest a call's start waits for a chat turn in flight. */
 export const TEXT_TURN_WAIT_MS = 20_000;
 
@@ -710,18 +716,21 @@ export class VoiceEngine {
     this.maxSec = maxCallSeconds({ settings: version.voiceSettings, deadlineSec: this.limits.deadlineSec, env: this.limits.env });
     // One agent at a time: a chat turn still answering the buyer's typed message finishes first (its reply and its
     // deal-state writes are then part of what this call starts from).
-    const waited = await this.waitForTextTurn(accountId, conv.id);
+    const waited = await this.waitForTextTurn(accountId, conv.id, session.createdAt);
     if (this.ended) return;
     const dealNow = waited ? await readDealState(this.db, accountId, conv.leadId) : deal;
-    this.agentMessages = (await this.db.select({ id: messages.id }).from(messages)
-      .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent")))).length;
+    // What the stage counts, as a chat turn does (writtenByAgent): the agent's own messages and spoken lines (both carry
+    // the version id), not the app's (cards, follow-ups, the order-form link this engine stores).
+    this.agentMessages = (await this.db.select({ actor: messages.actor, agentVersionId: messages.agentVersionId }).from(messages)
+      .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent")))).filter(writtenByAgent).length;
 
     // Recording is decided before the instructions are built: a recorded call's voice block has one rule about it.
     const recording = await this.startRecording(account);
     this.recorded = recording.on;
     const ctx = await loadVoiceInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded });
     this.continuingCall = ctx.continuing;
-    this.log.info(voiceLine(this.sessionId, inheritedSummary(this.agentMessages, ctx.continuing, dealNow?.fields ?? null, ctx.instructions)));
+    // The count the stage uses for this call's tools (effectiveAgentMessages; nothing of this call is stored yet).
+    this.log.info(voiceLine(this.sessionId, inheritedSummary(this.effectiveAgentMessages(), ctx.continuing, dealNow?.fields ?? null, ctx.instructions)));
     this.spokenLanguage = ctx.language || "en";
     this.latinLanguage = NON_LATIN.test(this.spokenLanguage) ? "en" : this.spokenLanguage;
     const gen = ++this.gen;
@@ -785,14 +794,18 @@ export class VoiceEngine {
    * stored less than TEXT_TURN_FRESH_MS ago, with no reply yet. The call waits for that reply (at most
    * TEXT_TURN_WAIT_MS), so the two agents never answer the same message. Returns whether it waited.
    */
-  private async waitForTextTurn(accountId: string, conversationId: string): Promise<boolean> {
+  private async waitForTextTurn(accountId: string, conversationId: string, sessionCreatedAt: Date): Promise<boolean> {
     const t0 = this.clock.now();
     let waited = false;
     for (;;) {
       const [last] = await this.db.select({ actor: messages.actor, voiceSessionId: messages.voiceSessionId, createdAt: messages.createdAt }).from(messages)
         .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conversationId), inArray(messages.actor, ["buyer", "agent", "human"])))
         .orderBy(desc(messages.createdAt), desc(messages.id)).limit(1);
-      const inFlight = !!last && last.actor === "buyer" && !last.voiceSessionId && Date.now() - last.createdAt.getTime() < TEXT_TURN_FRESH_MS;
+      const inFlight = !!last && last.actor === "buyer" && !last.voiceSessionId && Date.now() - last.createdAt.getTime() < TEXT_TURN_FRESH_MS
+        // A message stored less than TEXT_TURN_GUARD_MS before this call was created (or after): its chat turn checks
+        // the one-agent guard after this session exists and stands down (in_call). Nobody else will answer it: no
+        // wait; the call's first line answers it (lib/voice/instructions.ts answerLastInstruction).
+        && last.createdAt.getTime() < sessionCreatedAt.getTime() - TEXT_TURN_GUARD_MS;
       if (!inFlight || this.ended) break;
       if (this.clock.now() - t0 >= TEXT_TURN_WAIT_MS) {
         this.log.warn(voiceLine(this.sessionId, `voice start waited ${Math.round(this.clock.now() - t0)}ms for a text turn; it has not answered: starting anyway`));

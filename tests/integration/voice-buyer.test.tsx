@@ -369,8 +369,8 @@ describe("the call continues the chat", () => {
     const en = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
     expect(en.continuing).toBe(true);
     expect(en.language).toBe("en");
-    expect(en.opener).toBe(CONTINUE_FALLBACK);
-    expect(en.openerPrompt).toContain(`"${CONTINUE_FALLBACK}"`);
+    // The buyer wrote last with no answer: the first line answers it (23 Nov 2026), in English.
+    expect(en.openerPrompt).toContain("The buyer's last message has no answer yet: \u201cWe run four cold rooms.\u201d. Answer it now, briefly, in spoken form, in English.");
     expect(en.openerPrompt).not.toContain(CONTINUE_FALLBACK_HE);
     expect(en.instructions).toContain("Language: start in English");
     // The conversation went on in Hebrew: the pick-up line is the Hebrew one.
@@ -380,7 +380,7 @@ describe("the call continues the chat", () => {
     ]);
     const he = await loadVoiceInstructions(db, { account, version, conv: { ...stored, language: "en" }, lead, deal: null, now: new Date() });
     expect(he.language).toBe("he");
-    expect(he.opener).toBe(CONTINUE_FALLBACK_HE);
+    expect(he.openerPrompt).toContain("in Hebrew.");
   });
 
   it("a call on a chat with agent messages opens with no greeting, no introduction and no bot notice, with the chat in its instructions", async () => {
@@ -392,11 +392,10 @@ describe("the call continues the chat", () => {
     const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, conv.agentVersionId));
     const ctx = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
     expect(ctx.continuing).toBe(true);
-    // The buyer wrote last: nothing of the agent's is open, so the fallback line.
-    expect(ctx.opener).toBe(CONTINUE_FALLBACK);
-    expect(ctx.openerPrompt).toContain(`"${CONTINUE_FALLBACK}"`);
+    // The buyer wrote last and nothing answered it: the first line answers it (no "go ahead").
+    expect(ctx.openerPrompt).toContain("\u201cWe have three shops in Haifa.\u201d");
     expect(ctx.openerPrompt).toMatch(/Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant/);
-    expect(ctx.openerPrompt).toMatch(/The buyer spoke last or nothing is open/);
+    expect(ctx.openerPrompt).not.toContain(CONTINUE_FALLBACK);
     expect(ctx.openerPrompt).not.toMatch(/Hi Rina|on the call now/);
     expect(ctx.instructions).toContain("The buyer switched this chat from text to voice");
     expect(ctx.instructions).toContain("say so only if the buyer asks");
