@@ -84,7 +84,7 @@ export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker
 /** Lead event: a new conversation started with a person because the AI spend cap was reached. data: { conversationId, reason: "spend_cap" }. */
 export const SPEND_CAP_HANDOFF_EVENT = "handoff.spend_cap";
 
-/** Lead event: the buyer opened the chat from an SMS link (/c/<code>). data: { via: "sms", conversationId }. */
+/** Lead event: the buyer opened the chat, from an SMS link (/c/<code>, via "sms") or the chat link itself (/chat/<token>, via "link"). data: { via, conversationId }. */
 export const CHAT_OPENED_EVENT = "chat.opened";
 
 /** Lead events of team calls shown in the thread (lib/callbacks/rules CALLBACK_EVENTS). */

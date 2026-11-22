@@ -27,7 +27,7 @@ import { smsLink, smsText } from "@/lib/sms/texts";
 export const DEMO_SMS_SID = "SM0000000000000000000000000000de00";
 
 /** The SMS text with the lead's short chat link, as nudgeBuyer writes it (null without a chat link). */
-async function textFor(db: Db, accountId: string, leadId: string, kind: SmsKind): Promise<string | null> {
+export async function demoSmsText(db: Db, accountId: string, leadId: string, kind: SmsKind): Promise<string | null> {
   const [[account], token] = await Promise.all([
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
     activeChatToken(db, accountId, leadId),
@@ -50,7 +50,7 @@ export async function seedDemoSms(
   const [chat] = await db.select({ createdAt: conversations.createdAt }).from(conversations)
     .where(and(eq(conversations.accountId, accountId), eq(conversations.id, opts.chatLinkConversationId), eq(conversations.leadId, opts.chatLinkLeadId)));
   if (!chat) throw new Error("Demo seed: chat link conversation not found");
-  const linkText = await textFor(db, accountId, opts.chatLinkLeadId, "chat_link");
+  const linkText = await demoSmsText(db, accountId, opts.chatLinkLeadId, "chat_link");
   if (!linkText) throw new Error("Demo seed: chat link lead has no chat link");
   await record(opts.chatLinkLeadId, SMS_EVENTS.mocked, new Date(chat.createdAt.getTime() + 30_000), {
     kind: "chat_link", messageId: null, mode: "mock", notSent: "mock", segments: smsSegments(linkText), text: linkText,
@@ -64,7 +64,7 @@ export async function seedDemoSms(
   if (!offer.posted) throw new Error(`Demo seed: order form not posted in the chat: ${offer.reason}`);
   // A demo number never gets a real SMS: the quiet refusal is replaced by the recorded delivered SMS.
   await db.delete(leadEvents).where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, opts.orderFormLeadId), eq(leadEvents.type, SMS_EVENTS.refused)));
-  const formText = await textFor(db, accountId, opts.orderFormLeadId, "order_form");
+  const formText = await demoSmsText(db, accountId, opts.orderFormLeadId, "order_form");
   if (!formText) throw new Error("Demo seed: the pay-step lead has no chat link");
   await record(opts.orderFormLeadId, SMS_EVENTS.sent, new Date(now.getTime() + 1), {
     kind: "order_form", messageId: offer.messageId, conversationId: offer.conversationId,

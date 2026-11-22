@@ -32,7 +32,7 @@ export function SimulatorPanel({
   url: string | null;
   /** The link went 14 days without messages (lib/simulator/rules chatLinkExpiresAt). */
   expired?: boolean;
-  /** When a live link expires, formatted in the account's timezone. */
+  /** When a live link expires, formatted in the viewer's zone (else the account's). */
   expiresAt?: string | null;
   refusal: SimOpenerRefusal | null;
   rules: boolean;

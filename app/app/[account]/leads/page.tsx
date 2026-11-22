@@ -27,7 +27,11 @@ import {
   type LeadNeeds, type NeedsGroup,
 } from "@/lib/overview/needs-groups";
 import { leadListFacts, NO_FACTS, type LeadListFacts } from "@/lib/leads/list-facts";
-import { dealValue, needsCell, nextStepCell, rowHref, whoOnIt, type StepCell } from "@/lib/leads/list-row";
+import { dealSortValue, dealValue, estimateValue, needsCell, nextStepCell, rowHref, sortByDealValue, whoOnIt, type StepCell } from "@/lib/leads/list-row";
+import { dealEstimates, type DealEstimate } from "@/lib/leads/deal-estimate";
+import { readViewerZone } from "@/lib/viewer-zone-server";
+import { viewerDiffers } from "@/lib/viewer-zone";
+import { zonePlainName } from "@/lib/format";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -144,11 +148,22 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   let data: Awaited<ReturnType<typeof listLeads>> | null = null;
   let stages = new Map<string, LeadStageView>();
   let facts = new Map<string, LeadListFacts>();
+  let estimates = new Map<string, DealEstimate>();
+  let factsRead = false;
+  /** Facts for the rows, then deal size estimates for those without a quote (display only). */
+  const readFacts = async (rows: { lead: { id: string; marketId: string | null } }[]) => {
+    facts = await leadListFacts(appDb, account.id, rows.map((r) => r.lead.id), now);
+    // An estimate that cannot be worked out never breaks the list: those rows show "—".
+    estimates = await dealEstimates(appDb, account.id, rows.filter((r) => !facts.get(r.lead.id)?.quote).map((r) => ({ id: r.lead.id, marketId: r.lead.marketId })))
+      .catch((e) => { console.error("[leads] estimates failed", e); return new Map<string, DealEstimate>(); });
+    factsRead = true;
+  };
   try {
     if (counts) {
-      // Needs you sorts by waiting time or group in memory; a stage filter is worked out per lead. Both read up to SCAN leads first.
-      const scan = isNeeds || stageFilter;
-      const sqlSort = sort.key === "waiting" || sort.key === "need" ? LEAD_SORT_DEFAULT : sort;
+      // Needs you sorts by waiting time or group in memory; a stage filter is worked out per lead; Deal value sorts quotes
+      // and estimates together in memory. All read up to SCAN leads first.
+      const scan = isNeeds || stageFilter || sort.key === "value";
+      const sqlSort = sort.key === "waiting" || sort.key === "need" || sort.key === "value" ? LEAD_SORT_DEFAULT : sort;
       data = await listLeads(appDb, account.id, scan ? { ...filters, sort: sqlSort, limit: SCAN } : filters);
       stages = await leadStages(appDb, account.id, data.rows.map((r) => r.lead.id));
       if (scan) {
@@ -166,9 +181,13 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
             return sign * (since(a.lead.id) - since(b.lead.id)) || a.lead.id.localeCompare(b.lead.id);
           });
         }
+        if (sort.key === "value") {
+          await readFacts(rows);
+          rows = sortByDealValue(rows, (r) => dealSortValue(facts.get(r.lead.id) ?? NO_FACTS, estimates.get(r.lead.id)), sort.dir);
+        }
         data = { rows: rows.slice(0, limit), total: stageFilter ? rows.length : data.total };
       }
-      facts = await leadListFacts(appDb, account.id, data.rows.map((r) => r.lead.id), now);
+      if (!factsRead) await readFacts(data.rows);
     }
   } catch (e) {
     console.error("[leads] list failed", e);
@@ -176,7 +195,10 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   }
   // Leads without a market belong to the home market (listMarkets puts it first).
   const homeName = (marketList.find((m) => m.isHome) ?? marketList[0])?.name ?? "";
-  const ctx = { tradeName: account.tradeName, timezone: account.timezone, now };
+  // Calls and follow-ups in the viewer's own zone (the sas_tz cookie), else the account's; named once in the foot when it differs.
+  const viewerZone = await readViewerZone();
+  const ctx = { tradeName: account.tradeName, timezone: account.timezone, now, viewerZone };
+  const zoneNote = viewerZone && viewerDiffers(now, viewerZone, account.timezone) ? t("leads.times_yours", { zone: zonePlainName(viewerZone, now) ?? viewerZone }) : null;
   const sortOptions = isNeeds ? NEEDS_SORTS : VIEW_SORTS;
   const sortLabel = sortOptions.find((o) => o.sort.key === sort.key && o.sort.dir === sort.dir)?.label ?? SORT_COLUMN[sort.key] ?? sortOptions[0].label;
   const clearHref = qs({ q: undefined, source: undefined, language: undefined, days: undefined, stage: undefined, need: undefined });
@@ -394,6 +416,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                         const personStep = !isNeeds && lead.status === "human_handling";
                         const cell = personStep || !shown ? nextStepCell(lead, f, ctx, ownerName) : needsCell(shown, ctx);
                         const value = dealValue(f);
+                        const estimate = value ? null : estimateValue(estimates.get(lead.id));
                         const who = whoOnIt(lead, ownerName);
                         const stage = stages.get(lead.id);
                         const href = rowHref(`/app/${account.slug}`, lead.id, personStep ? null : shown);
@@ -429,6 +452,13 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                                   <span className="sas-num">{value.oneTime}</span>
                                   {value.recurring ? <span className="sas-num sas-small">{value.recurring}</span> : null}
                                 </span>
+                              ) : estimate ? (
+                                // An estimate, not a quote (display only): muted, never in a total.
+                                <span className="sas-lvalue sas-lvalue--est" title={t("leads.value.estimate_title")} data-estimate="">
+                                  <span className="sas-num">{estimate.oneTime}</span>
+                                  {estimate.recurring ? <span className="sas-num sas-small">{estimate.recurring}</span> : null}
+                                  <span className="sas-sr">{t("leads.value.estimate_title")}</span>
+                                </span>
                               ) : <span className="sas-small">—</span>}
                             </td>
                             <td className="sas-lrow__who" data-label={t("leads.col.who")}>
@@ -453,6 +483,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                   <span>
                     {isNeeds ? <>{t("leads.needs_foot")} </> : null}
                     {!isNeeds || data.rows.length < data.total ? t("leads.showing", { shown: data.rows.length, total: data.total }) : null}
+                    {zoneNote ? <span data-testid="leads-zone-note">{" · "}{zoneNote}</span> : null}
                   </span>
                   {data.rows.length < data.total ? <a href={qs({ limit: String(limit + 50) })}>{t("leads.load_more")}</a> : null}
                 </div>

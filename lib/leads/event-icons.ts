@@ -11,6 +11,8 @@ import type { MessageKey } from "@/lib/i18n";
 import { SIMULATOR_CHANNEL, WEB_CHAT_CHANNEL } from "@/lib/simulator/rules";
 import { CHAT_OPENED_EVENT } from "@/lib/agent/thread-markers";
 import { SMS_EVENTS, isSmsKind } from "@/lib/sms/rules";
+import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
 
 export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "lead.created": "user-plus",
@@ -77,6 +79,21 @@ export const isTimelineEvent = (type: string) => !HIDDEN_LEAD_EVENTS.includes(ty
 /** SMS events whose title names what the text was about ("SMS sent: order form ready"). */
 const SMS_WITH_KIND: ReadonlySet<string> = new Set([SMS_EVENTS.sent, SMS_EVENTS.mocked, SMS_EVENTS.refused, SMS_EVENTS.failed]);
 
+/** The call time of a booked "callback.requested" (data.booked true) in its zone, or null (an older, unbooked request). */
+function bookedCallTime(data: unknown, viewerZone: string | null = null): string | null {
+  const d = (data ?? {}) as { booked?: unknown; at?: unknown; timezone?: unknown };
+  if (d.booked !== true || typeof d.at !== "string") return null;
+  const at = new Date(d.at);
+  if (Number.isNaN(at.getTime())) return null;
+  const zone = typeof d.timezone === "string" && d.timezone ? d.timezone : "UTC";
+  try {
+    // In the viewer's own zone when given (lead timeline), "· your time" when it differs from the booked zone.
+    return `${viewerTime(at, viewerZone, zone)}${yourTimeSuffix(at, viewerZone, zone)}`;
+  } catch {
+    return formatDueLocal(at, "UTC");
+  }
+}
+
 /**
  * One event's timeline title, through the given translator. Most types are one
  * key (`lead.event.<leadEventKey>`); an SMS names its kind ("SMS sent: order
@@ -84,8 +101,15 @@ const SMS_WITH_KIND: ReadonlySet<string> = new Set([SMS_EVENTS.sent, SMS_EVENTS.
  */
 export function leadEventTitle(
   type: string, data: unknown, tr: (key: MessageKey, vars?: Record<string, string | number>) => string,
+  /** The viewer's own zone (the sas_tz cookie) for a booked call's time; null: the zone it was booked in. */
+  viewerZone: string | null = null,
 ): string {
   const key = `lead.event.${leadEventKey(type, data)}` as MessageKey;
+  // The buyer's booking on the booking card (booked: true) is a booked call, not a request: "Call booked · Mon 23 Nov 15:30".
+  if (type === "callback.requested") {
+    const booked = bookedCallTime(data, viewerZone);
+    return booked ? tr("lead.event.callback.booked", { time: booked }) : tr(key);
+  }
   if (!SMS_WITH_KIND.has(type)) return tr(key);
   const kind = (data as { kind?: unknown } | null | undefined)?.kind;
   return tr(key, { what: tr((isSmsKind(kind) ? `lead.event.sms_kind.${kind}` : "lead.event.sms_kind.other") as MessageKey) });

@@ -10,6 +10,7 @@ import { Icon } from "@/components/sas/icon";
 import { initials, personName } from "@/lib/auth/display";
 import { t } from "@/lib/i18n";
 import { resumeAccountAction } from "@/app/sadmin/accounts/actions";
+import { ViewerZoneCookie } from "@/components/sas/viewer-zone-cookie";
 
 export const dynamic = "force-dynamic";
 export const metadata: Metadata = { robots: { index: false, follow: false } };
@@ -27,6 +28,8 @@ export default async function AccountLayout({ children, params }: { children: Re
 
   return (
     <SasRoot>
+      {/* The viewer's own time zone, for scheduled moments on seller pages (lib/viewer-zone.ts). */}
+      <ViewerZoneCookie />
       <div className="sas-shell">
         <SideNavForPath
           mode="seller"

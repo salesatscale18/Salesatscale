@@ -3,10 +3,11 @@ import { Icon, type IconName } from "@/components/sas/icon";
 import { CopyButton } from "@/components/sas/copy-button";
 import { DateField } from "@/components/sas/date-field";
 import { CALL_NOTE_MAX, callNeedsLog, callUpcoming, TEAM_CALL_MINUTES, type CallbackRequest, type CallOutcome } from "@/lib/callbacks/rules";
-import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { shownZone, viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
 import { zonePlainName } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { isolate } from "@/lib/leads/bidi";
+import { formatPhone } from "@/lib/leads/rules";
 import { MAX_CALL_MINUTES } from "@/lib/team-calls/service";
 import { cancelCallbackAction, changeCallbackAction } from "./callback-actions";
 import { logTeamCallAction } from "./team-call-actions";
@@ -47,17 +48,24 @@ export type TeamCallMessages = { notice?: string; error?: string; cbNotice?: str
 
 /**
  * Deal tab › Team call (board ReachSeller). Before the call: the time, "Booked
- * by {buyer} in the chat", the buyer's zone when it differs, who calls, the
- * phone in full with Copy (the only place it is not masked), Change time,
+ * by {buyer} in the chat", the buyer's time only when their zone differs
+ * from the market's, who calls, the phone in full with Copy (the only place
+ * it is not masked; shown "+972 50-555-0111", copied as E.164), Change time,
  * "Cancel and tell the buyer", and the hint. After the slot the card becomes
- * the log form ("Log the call"): how it went, when it started, the length and
- * a note the agent reads, then the four next steps, each saving the log first.
+ * the log form ("Log the call"): how it went, when it started (24-hour
+ * HH:MM), the length and a note the agent reads, then the four next steps,
+ * each saving the log first, and "Save log" (no next step). "Booked …" only
+ * for the buyer's booking, else "Call · …". Change time and Cancel are not
+ * offered on the log form ("Moved" covers both); once the call is logged as
+ * Moved, Change time and Cancel show to set the new time.
  * "No answer" texts the buyer the chat link with "pick a new time"; "Moved"
  * reopens the time. `edit`: the thread's Edit on a logged call. Admins only
  * act; everything is re-checked on the server.
  */
-export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canManage, edit = false, msg = {}, now = new Date() }: {
+export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canManage, edit = false, msg = {}, now = new Date(), viewerZone = null }: {
   slug: string; leadId: string; call: CallbackRequest | null; buyerName: string;
+  /** The viewer's own zone (the sas_tz cookie): the call time and "Started" read in it, " · your time" when it differs. Null: the call's zone. */
+  viewerZone?: string | null;
   /** The lead's own number (E.164), or null for a simulated buyer. */
   leadPhone: string | null;
   canManage: boolean; edit?: boolean; msg?: TeamCallMessages; now?: Date;
@@ -84,7 +92,10 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
       <input type="hidden" name="callbackId" value={call.id} />
     </>
   );
-  const when = formatDueLocal(call.at, call.timezone);
+  // The time in the viewer's own zone (else the call's), "· your time" when that differs from the call's zone.
+  const seen = shownZone(viewerZone, call.timezone);
+  const when = `${viewerTime(call.at, viewerZone, call.timezone)}${yourTimeSuffix(call.at, viewerZone, call.timezone)}`;
+  // Change time stays in the call's own zone (its hint names it).
   const start = localParts(call.at, call.timezone);
   const changeCancel = canManage ? (
     <div className="sas-teamcall__actions">
@@ -121,17 +132,18 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
     // Before the call.
     const phone = call.phone ?? leadPhone;
     const first = buyerName.trim().split(/\s+/)[0] || buyerName;
-    const zone = call.buyerTimezone && differs(call.at, call.buyerTimezone, call.timezone)
+    // The buyer's time only when it reads differently from the market's (UX, MVP): no "same" line.
+    const zone = call.buyerTimezone && (differs(call.at, call.buyerTimezone, call.timezone) || differs(call.at, call.buyerTimezone, seen))
       ? t("team_call.zone_differs", { time: isolate(localParts(call.at, call.buyerTimezone).time), zone: zonePlainName(call.buyerTimezone, call.at) ?? call.buyerTimezone })
-      : t("team_call.zone_same", { zone: zonePlainName(call.timezone, call.at) ?? call.timezone });
+      : null;
     return (
       <section id="callback" aria-labelledby="tc-h" className="sas-teamcall" data-testid="team-call" data-state="upcoming">
         <h2 id="tc-h" className="sas-group-label sas-teamcall__label">{t("team_call.title")}</h2>
         {notices}
         <span className="sas-teamcall__when" data-testid="team-call-time"><Icon name="calendar" /><span className="sas-num">{t("team_call.when", { when, minutes: TEAM_CALL_MINUTES })}</span></span>
         <span className="sas-small">
-          {call.setBy === "buyer" ? t("team_call.booked_by", { name: isolate(first) }) : t("team_call.set_by_team")}{" "}
-          {zone}
+          {call.setBy === "buyer" ? t("team_call.booked_by", { name: isolate(first) }) : t("team_call.set_by_team")}
+          {zone ? <>{" "}<span data-testid="team-call-zone">{zone}</span></> : null}
         </span>
         {call.brief ? <span className="sas-small" style={{ overflowWrap: "anywhere" }} data-testid="team-call-brief">{t("callback.brief", { brief: call.brief })}</span> : null}
         <dl className="sas-teamcall__facts">
@@ -140,7 +152,7 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
             <>
               <dt>{t("team_call.phone")}</dt>
               {/* The full number, here only (everywhere else it is masked). */}
-              <dd><span className="sas-num" dir="ltr" data-testid="team-call-phone">{phone}</span> <CopyButton value={phone} label={t("team_call.copy")} variant="ghost" /></dd>
+              <dd className="sas-teamcall__phone"><span className="sas-num" dir="ltr" data-testid="team-call-phone">{formatPhone(phone)}</span> <CopyButton value={phone} label={t("team_call.copy")} variant="ghost" /></dd>
             </>
           ) : null}
         </dl>
@@ -153,13 +165,14 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
   // After the slot: the log form (or Edit of a logged call).
   const log = call.log;
   const outcome: CallOutcome = log?.outcome ?? "spoke";
-  const started = localParts(log?.startedAt ?? call.at, call.timezone).time;
+  // In the zone the viewer sees (the action reads the same cookie to save it).
+  const started = localParts(log?.startedAt ?? call.at, seen).time;
   const editing = !!log;
   return (
     <section id="callback" aria-labelledby="tc-h" className="sas-teamcall sas-teamcall--log" data-testid="team-call" data-state="log">
       <div className="sas-teamcall__head">
         <h2 id="tc-h" className="sas-group-label sas-teamcall__label sas-teamcall__label--log">{editing && edit ? t("team_call.edit_title") : t("team_call.log_title")}</h2>
-        <span className="sas-small sas-num">{t("team_call.log_booked", { when })}</span>
+        <span className="sas-small sas-num" data-testid="team-call-log-when">{t(call.booked ? "team_call.log_booked" : "team_call.log_call", { when })}</span>
       </div>
       <span id="after-call" />
       {notices}
@@ -180,7 +193,11 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
           <div className="sas-calllog__row">
             <div className="sas-input-group">
               <label className="sas-input-label" htmlFor="tc-started">{t("team_call.started")}</label>
-              <input className="sas-input sas-num" id="tc-started" name="started" type="time" defaultValue={started} />
+              {/* 24-hour HH:MM whatever the browser's locale (a native time input shows "12:29 PM" in an en-US browser). */}
+              <input
+                className="sas-input sas-num" id="tc-started" name="started" type="text" inputMode="numeric" autoComplete="off" dir="ltr"
+                pattern="([01][0-9]|2[0-3]):[0-5][0-9]" maxLength={5} placeholder="HH:MM" title="HH:MM" defaultValue={started}
+              />
             </div>
             <div className="sas-input-group">
               <label className="sas-input-label" htmlFor="tc-length">{t("team_call.length")}</label>
@@ -200,7 +217,8 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
                 <Icon name={n.icon} />{t(n.key)}
               </button>
             ))}
-            {editing ? <button type="submit" name="next" value="save" className={buttonClass("ghost", "sm")} data-next="save">{t("team_call.save")}</button> : null}
+            {/* Logs the call without a next step (same checks). */}
+            <button type="submit" name="next" value="save" className={buttonClass("ghost", "sm")} data-next="save">{t("team_call.save_log")}</button>
           </div>
           <div className="sas-calllog__group sas-calllog__group--no_answer">
             <button type="submit" name="next" value="save" className={buttonClass("primary", "sm")} data-next="no_answer">{t("team_call.no_answer_submit")}</button>
@@ -213,7 +231,8 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
           <p className="sas-small sas-calllog__foot">{t("team_call.next_hint")}</p>
         </form>
       ) : null}
-      {changeCancel}
+      {/* On the log form "Moved" covers a new time and a cancel: Change time and Cancel show once the call is logged as Moved. */}
+      {log?.outcome === "moved" ? changeCancel : null}
     </section>
   );
 }

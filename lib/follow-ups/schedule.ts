@@ -14,6 +14,7 @@ import type { AccountAccess } from "@/lib/accounts/service";
 import { isWithinContactHours, summarizeContactHours } from "@/lib/accounts/contact-hours";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { parseCallTime } from "@/lib/callbacks/rules";
+import { storedBuyerZone } from "@/lib/team-calls/zone";
 import { cleanTopic, dueWindow, formatBuyerLocal, formatDueLocal, isoInZone, nearestAllowedTime, type FollowUpReason } from "./rules";
 
 // ---------------------------------------------------------------------------
@@ -25,7 +26,7 @@ export type ScheduleInput = { due_at: unknown; topic: unknown; buyer_named_time?
 export type ScheduleContext = { accountId: string; leadId: string; conversationId: string; language: string };
 
 export type ScheduleResult =
-  /** dueLocal: the short form for seller views; dueForBuyer: the long form the agent tells the buyer ("Friday 20 November at 12:30"). */
+  /** dueLocal: the short form for seller views; dueForBuyer: the long form the agent tells the buyer ("Friday 20 November at 12:30"), in the buyer's stored zone, else the market's. */
   | { ok: true; followUp: FollowUp; dueLocal: string; dueForBuyer: string; replaced: boolean; buyerNamedTime: boolean; outsideContactHours: boolean }
   | { ok: false; rule: string; extra: Record<string, unknown> };
 
@@ -52,6 +53,8 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
   // The lead's market decides the time zone and contact hours (its own, else the account's).
   const contact = await leadContactSettings(db, account, lead.marketId);
   const tz = contact.timezone;
+  // RB4: times the agent tells the buyer ("your time") are in the buyer's own zone when it is stored, else the market's.
+  const buyerTz = (await storedBuyerZone(db, ctx.accountId, ctx.leadId)) ?? tz;
   if (lead.status === "opted_out") return { ok: false, rule: "Lead opted out", extra: { message: "Do not schedule anything. The buyer does not want to be contacted." } };
   if (account.status === "paused") return { ok: false, rule: "The seller's account is paused", extra: { message: "Do not promise to come back. Say the team will be in touch." } };
   if (conv.status !== "open") return { ok: false, rule: "The agent is paused for this chat", extra: { message: "A person handles this chat now. Do not promise to come back yourself." } };
@@ -76,8 +79,8 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
       ok: false, rule: "Outside contact hours",
       extra: nearest
         ? {
-            suggested_due_at: isoInZone(nearest, tz), suggested_local: formatBuyerLocal(nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
-            message: `Not scheduled: you only write to buyers within contact hours. Offer the buyer ${formatBuyerLocal(nearest, tz)} instead (in their own wording); when they agree, call schedule_follow_up with suggested_due_at.`,
+            suggested_due_at: isoInZone(nearest, tz), suggested_local: formatBuyerLocal(nearest, buyerTz), contact_hours: summarizeContactHours(contact.contactHours),
+            message: `Not scheduled: you only write to buyers within contact hours. Offer the buyer ${formatBuyerLocal(nearest, buyerTz)} instead (in their own wording); when they agree, call schedule_follow_up with suggested_due_at.`,
           }
         : { contact_hours: summarizeContactHours(contact.contactHours), message: "Not scheduled: ask the buyer for another time within contact hours." },
     };
@@ -107,7 +110,7 @@ export async function scheduleFollowUp(db: Db, ctx: ScheduleContext, input: Sche
     }),
   ]);
   const [followUp] = await db.select().from(followUps).where(and(eq(followUps.id, id), eq(followUps.accountId, ctx.accountId)));
-  return { ok: true, followUp, dueLocal, dueForBuyer: formatBuyerLocal(due, tz), replaced: !!existing, buyerNamedTime: buyerNamed, outsideContactHours };
+  return { ok: true, followUp, dueLocal, dueForBuyer: formatBuyerLocal(due, buyerTz), replaced: !!existing, buyerNamedTime: buyerNamed, outsideContactHours };
 }
 
 /**

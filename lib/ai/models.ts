@@ -14,7 +14,7 @@ export const ROLE_DEFAULTS: Record<ModelRole, { model: string; env: string }> = 
   agent: { model: "claude-sonnet-5-5", env: "AGENT_MODEL" },
   /** Turning knowledge sources into a playbook draft. */
   pipeline: { model: "claude-sonnet-5-5", env: "PIPELINE_MODEL" },
-  /** Cheap bulk steps of the pipeline (extraction, classification). */
+  /** Cheap side jobs, such as name transliteration. Never the facts stage of the knowledge pipeline (KQ: big sources stay on "pipeline"). */
   pipeline_light: { model: "claude-haiku-5-5", env: "PIPELINE_LIGHT_MODEL" },
 };
 

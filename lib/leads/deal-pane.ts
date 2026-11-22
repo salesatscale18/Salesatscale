@@ -126,8 +126,11 @@ export function dealPaneView(i: {
   };
 }
 
-/** One lead's pane (Conversations). Lead ids of another account find nothing: an empty pane. */
-export async function loadDealPane(db: Db, accountId: string, lead: { id: string; fullName: string }, tradeName: string): Promise<DealPane> {
+/**
+ * One lead's pane (Conversations). Lead ids of another account find nothing: an empty pane.
+ * `viewerZone`: the viewer's own zone for the verified dates; null: the account's.
+ */
+export async function loadDealPane(db: Db, accountId: string, lead: { id: string; fullName: string }, tradeName: string, viewerZone: string | null = null): Promise<DealPane> {
   const [playbook, deal, orders, stage, [acc]] = await Promise.all([
     currentPlaybook(db, accountId),
     getDealState(db, accountId, lead.id),
@@ -135,5 +138,5 @@ export async function loadDealPane(db: Db, accountId: string, lead: { id: string
     leadStage(db, accountId, lead.id),
     db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId)),
   ]);
-  return dealPaneView({ playbook, deal: deal ?? null, latestOrder: orders[0] ?? null, stage, tradeName, buyerName: lead.fullName, timezone: acc?.timezone });
+  return dealPaneView({ playbook, deal: deal ?? null, latestOrder: orders[0] ?? null, stage, tradeName, buyerName: lead.fullName, timezone: viewerZone ?? acc?.timezone });
 }

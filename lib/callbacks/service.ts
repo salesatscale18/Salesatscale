@@ -26,6 +26,7 @@ import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { isLocale, t } from "@/lib/i18n";
 import { handBack, takeOver } from "@/lib/agent/conversation";
 import { nudgeBuyer } from "@/lib/sms/service";
+import { storedBuyerZone } from "@/lib/team-calls/zone";
 import {
   buyerCallTime, CALLBACK_EVENT_TYPES, CALLBACK_EVENTS, callNeedsLog, checkCallTime, cleanBrief, currentCallbackOf, currentCallbacks, isCallNextStep, parseCallTime,
   teamCallNextStep, type CallbackRequest,
@@ -78,6 +79,8 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
   // The lead's market decides the time zone and contact hours (its own, else the account's).
   const contact = await leadContactSettings(db, account, lead.marketId);
   const tz = contact.timezone;
+  // RB4: times the agent tells the buyer are in the buyer's own zone when it is stored, else the market's.
+  const buyerTz = (await storedBuyerZone(db, ctx.accountId, ctx.leadId)) ?? tz;
   const brief = cleanBrief(input.brief);
   if (!brief) return { ok: false, rule: "No brief", extra: { message: "Give a short brief: what the buyer wants to cover and what the person should have ready." } };
   const at = parseCallTime(input.time, tz);
@@ -92,8 +95,8 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
       ok: false, rule,
       extra: check.nearest
         ? {
-            suggested_time: isoInZone(check.nearest, tz), suggested_local: formatBuyerLocal(check.nearest, tz), contact_hours: summarizeContactHours(contact.contactHours),
-            message: `Not requested. Offer the buyer ${formatBuyerLocal(check.nearest, tz)} instead (in their own wording); when they agree, call request_callback with suggested_time.`,
+            suggested_time: isoInZone(check.nearest, tz), suggested_local: formatBuyerLocal(check.nearest, buyerTz), contact_hours: summarizeContactHours(contact.contactHours),
+            message: `Not requested. Offer the buyer ${formatBuyerLocal(check.nearest, buyerTz)} instead (in their own wording); when they agree, call request_callback with suggested_time.`,
           }
         : {
             contact_hours: summarizeContactHours(contact.contactHours),
@@ -118,7 +121,7 @@ export async function requestCallback(db: Db, ctx: CallbackContext, input: Callb
     }),
   ]);
   const request = (await leadCallback(db, ctx.accountId, ctx.leadId, now))!;
-  return { ok: true, request, timeLocal: formatDueLocal(at, tz), timeForBuyer: formatBuyerLocal(at, tz), replaced: !!before };
+  return { ok: true, request, timeLocal: formatDueLocal(at, tz), timeForBuyer: formatBuyerLocal(at, buyerTz), replaced: !!before };
 }
 
 // ---------------------------------------------------------------------------
@@ -263,8 +266,9 @@ async function tellBuyer(
   if (conv.status === "closed") return { told: false, reason: "closed" };
   if (conv.channel === "whatsapp" && !(await conversationWindow(db, accountId, conv.id, now)).open) return { told: false, reason: "window_closed" };
   const language = isLocale(conv.language) ? conv.language : "en";
-  // Every time shown to the buyer is in the buyer's own zone (spec 8): their browser's when they booked, else the market's.
-  const buyerZone = c.buyerTimezone ?? timezone;
+  // Every time shown to the buyer is in the buyer's own zone (spec 8): their browser's when they booked, else the one
+  // stored when they opened the chat (RB4), else the market's.
+  const buyerZone = c.buyerTimezone ?? (await storedBuyerZone(db, accountId, c.leadId)) ?? timezone;
   const body = how === "cancelled"
     ? t("buyer.app.callback_cancelled", undefined, language)
     : t(how === "confirmed" ? "buyer.app.callback_confirmed" : "buyer.app.callback_changed", { time: buyerCallTime(at, buyerZone, language) }, language);

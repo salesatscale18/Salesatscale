@@ -1353,6 +1353,10 @@ label.st-voice__row { cursor: pointer; }
 .sas-lstep[data-needs] .sas-lstep__icon { color: var(--human); }
 .sas-lstep__detail { font-size: 13px; line-height: 18px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sas-lvalue { display: inline-flex; flex-direction: column; align-items: flex-end; }
+/* LD: a deal size estimate (no quote yet): muted, regular weight, never green; display only (never in a total). */
+.sas-lvalue--est, .sas-lvalue--est .sas-num, .sas-estimate { color: var(--ink-muted); font-weight: 400; font-variant-numeric: tabular-nums; }
+/* "≈ ₪4,295.20 est." wraps before "est." in the narrow Deal value column instead of running into Who's on it. */
+.sas-lvalue--est > .sas-num:first-child { white-space: normal; text-align: end; }
 .sas-who { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; white-space: nowrap; }
 .sas-who::before { content: ""; flex: none; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
 .sas-who--agent { color: var(--agent); }
@@ -1582,9 +1586,14 @@ label.st-voice__row { cursor: pointer; }
 .sas-teamcall--log { margin: 12px 16px 16px; padding: 0 14px 14px; border: 1px solid var(--human); border-radius: var(--radius-lg); }
 .sas-teamcall__label--log { color: var(--human); padding-block-start: 14px; }
 .sas-teamcall__when { display: inline-flex; gap: 8px; align-items: center; font-weight: 600; font-size: 15px; line-height: 22px; color: var(--ink); }
-.sas-teamcall__facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; align-items: center; font-size: 14px; line-height: 20px; }
+.sas-teamcall__facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 12px; margin: 0; align-items: baseline; font-size: 14px; line-height: 20px; }
 .sas-teamcall__facts dt { color: var(--ink-muted); }
 .sas-teamcall__facts dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+/* RB3: the phone and a compact Copy fit one line in the lead page's side column (top-aligned with "Phone" by the
+   grid's baseline); they wrap only when the column is narrower still (a long number on a small phone). */
+.sas-teamcall__facts dd.sas-teamcall__phone { gap: 4px; }
+.sas-teamcall__phone > .sas-num { white-space: nowrap; }
+.sas-teamcall__phone > .sas-btn { flex: none; padding-inline: 6px; }
 .sas-teamcall__actions { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: flex-start; }
 .sas-teamcall__actions > details { min-width: 0; }
 .sas-teamcall__actions > details > summary { list-style: none; cursor: pointer; }
@@ -1660,6 +1669,14 @@ label.st-voice__row { cursor: pointer; }
 .c-root .rb-day { flex: 0 0 auto; min-width: 56px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
   background: var(--raised); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
 .c-root .rb-day b { font-size: 17px; line-height: 22px; color: var(--ink); }
+/* RB3: in a narrow card (a phone, the desktop chat column) the day chips scroll sideways and read so: 4.5 chips fit (the last one cut in half at the edge), and a
+   fade on the end side (the left in Hebrew) while more days are hidden there (data-more-end, set by the card). */
+.c-root .rb-days { container-type: inline-size; }
+@container (max-width: 520px) {
+  .c-root .rb-day { flex: 0 0 calc((100cqi - 32px) / 4.5); min-width: 52px; padding-inline: 4px; }
+}
+.c-root .rb-days[data-more-end] { -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 32px), transparent); }
+.c-root .rb-days[data-more-end]:dir(rtl) { -webkit-mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); mask-image: linear-gradient(to left, #000 calc(100% - 32px), transparent); }
 .c-root .rb-day--on { border: 1.5px solid var(--brand); background: var(--bubble); color: var(--brand-text, var(--brand)); }
 .c-root .rb-day--on b { color: var(--brand-text, var(--brand)); }
 .c-root .rb-slots { display: flex; flex-wrap: wrap; gap: 8px; }

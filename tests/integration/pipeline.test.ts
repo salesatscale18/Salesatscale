@@ -359,7 +359,7 @@ describe("knowledge -> playbook pipeline", () => {
     expect((only.bodies[0].messages[0].content as { cache_control?: unknown }[])[0].cache_control).toBeUndefined();
   });
 
-  it("large corpus: stage 1 per source on the light model without a corpus cache, stage 2 on a trimmed corpus", async () => {
+  it("large corpus: stage 1 per source on the main model (never the light one) without a corpus cache, stage 2 on a trimmed corpus", async () => {
     const mkSource = async (kind: "file" | "call", title: string, sections: number, chars: number) => {
       const id = crypto.randomUUID();
       await db.insert(sources).values({ id, accountId: big, kind, title, status: "ready", extractedText: "x" });
@@ -375,22 +375,24 @@ describe("knowledge -> playbook pipeline", () => {
     const plan = (await planAnalysis(db, big))!;
     expect(plan.corpusTokens).toBeGreaterThan(LARGE_CORPUS_TOKENS);
     expect(plan.large).toBe(true);
-    expect(plan.estimate.stages[0]).toMatchObject({ stage: "facts", model: HAIKU, calls: 4 });
+    expect(plan.factsLarge).toBe(true);
+    expect(plan.estimate.stages[0]).toMatchObject({ stage: "facts", model: SONNET, calls: 4 });
     expect(plan.estimate.stages[1]).toMatchObject({ stage: "playbook", model: SONNET });
     const empty = { facts: [], contradictions: [], gaps: [], source_about: [], customer_specific: [] };
     const factFor = (id: string, loc: string) => ({ ...empty, facts: [{ topic: "Product", statement: `Fact from ${loc}.`, language: "en", customer_specific: false, evidence: [ev(id, loc, "part")] }] });
     const llm = new ScriptedPipelineLlm([
-      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.1") : r.corpus.includes(call) ? factFor(call, "00:00") : factFor(doc2, "p.1") }, model: HAIKU }),
-      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.1") : r.corpus.includes(call) ? factFor(call, "00:00") : factFor(doc2, "p.2") }, model: HAIKU }),
-      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.3") : r.corpus.includes(call) ? factFor(call, "01:00") : factFor(doc2, "p.3") }, model: HAIKU }),
-      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.4") : r.corpus.includes(call) ? factFor(call, "02:00") : factFor(doc2, "p.4") }, model: HAIKU }),
+      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.1") : r.corpus.includes(call) ? factFor(call, "00:00") : factFor(doc2, "p.1") }, model: SONNET }),
+      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.1") : r.corpus.includes(call) ? factFor(call, "00:00") : factFor(doc2, "p.2") }, model: SONNET }),
+      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.3") : r.corpus.includes(call) ? factFor(call, "01:00") : factFor(doc2, "p.3") }, model: SONNET }),
+      (r) => ({ tool: { name: FACTS_TOOL, input: r.corpus.includes(doc) ? factFor(doc, "p.4") : r.corpus.includes(call) ? factFor(call, "02:00") : factFor(doc2, "p.4") }, model: SONNET }),
       () => ({ tool: { name: PLAYBOOK_TOOL, input: { goal: { text: "Sell.", text_he: "", evidence: [ev(call, "00:00", "Call")] }, fields: [], objections: [], limits: [], tone: { text: "", text_he: "", evidence: [] }, never: [], discovery_questions: [] } } }),
     ]);
     const res = await analyzeSources(db, llm, big);
     expect(res.failed).toBeNull();
     const reqs = llm.requests;
-    expect(reqs.map((r) => r.model)).toEqual([HAIKU, HAIKU, HAIKU, HAIKU, SONNET]);
-    expect(reqs.slice(0, 4).every((r) => !r.cacheCorpus && r.effort === "low" && !r.fallbacks)).toBe(true);
+    expect(reqs.map((r) => r.model)).toEqual([SONNET, SONNET, SONNET, SONNET, SONNET]);
+    expect(reqs.some((r) => r.model === HAIKU)).toBe(false);
+    expect(reqs.slice(0, 4).every((r) => !r.cacheCorpus && r.effort === "medium" && r.fallbacks)).toBe(true);
     expect(reqs.slice(0, 4).every((r) => tokensOf(r.corpus) < 100_000)).toBe(true);
     const stage2 = reqs[4];
     expect(stage2.cacheCorpus).toBe(false);
@@ -399,7 +401,7 @@ describe("knowledge -> playbook pipeline", () => {
     expect(stage2.corpus).toContain(`locator="19:00"`);
     expect(stage2.instruction).toMatch(/"Fact from (p\.\d|\d\d:00)\."/);
     const runs = await listRuns(db, big);
-    expect(runs.find((r) => r.kind === "facts")).toMatchObject({ model: HAIKU, status: "done", usage: expect.objectContaining({ calls: 4 }) });
+    expect(runs.find((r) => r.kind === "facts")).toMatchObject({ model: SONNET, status: "done", usage: expect.objectContaining({ calls: 4 }) });
     expect((await db.select().from(knowledgeFacts).where(eq(knowledgeFacts.accountId, big))).length).toBeGreaterThanOrEqual(3);
   });
 

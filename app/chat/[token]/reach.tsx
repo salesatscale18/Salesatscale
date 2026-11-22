@@ -15,9 +15,10 @@
  * Every time is in the buyer's own zone: the browser's, else the market's
  * (spec 8). The server re-checks every action (reach-actions.ts).
  */
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Icon } from "@/components/sas/icon";
 import { translator, type Locale } from "@/lib/i18n";
+import { safeTimezone, zonePlainName } from "@/lib/format";
 import type { ChatReach, ChatSmsChip } from "@/lib/chat/reach";
 import type { BookingView } from "@/lib/team-calls/service";
 import type { TalkNow } from "@/lib/follow-ups/named-time";
@@ -58,15 +59,24 @@ const hhmm = (at: Date, tz: string) => {
   return `${g("hour")}:${g("minute")}`;
 };
 const dateKey = (at: Date, tz: string) => new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(at);
-/** "Israel" from "Israel Time" (the zone's plain name), else the city of the IANA id. */
-export function zoneName(tz: string, locale: string): string {
-  try {
-    const v = new Intl.DateTimeFormat(locale, { timeZone: tz, timeZoneName: "longGeneric" }).formatToParts(new Date()).find((p) => p.type === "timeZoneName")?.value;
-    if (v && !/^GMT|^UTC/.test(v)) return v.replace(/\s+(Standard\s+)?Time$/i, "");
-  } catch {
-    // fall through
+/**
+ * The buyer's zone in plain words (RB3), for "Times are Israel time.": the zone's plain name ("Israel time",
+ * Hebrew "שעון ישראל"), "UTC" for UTC, else the city of the IANA id ("Lisbon time").
+ */
+export function zoneName(tz: string, lang: string, at = new Date()): string {
+  const zone = safeTimezone(tz);
+  if (/^(Etc\/)?(UTC|GMT|Universal|Zulu)$/.test(zone)) return "UTC";
+  const city = zone.split("/").pop()?.replace(/_/g, " ") ?? zone;
+  if (lang === "he") {
+    try {
+      const v = new Intl.DateTimeFormat("he-IL", { timeZone: zone, timeZoneName: "longGeneric" }).formatToParts(at).find((p) => p.type === "timeZoneName")?.value;
+      if (v && !/GMT|UTC/.test(v)) return v.replace(/[\u200e\u200f]/g, "").trim();
+    } catch {
+      // fall through
+    }
+    return `שעון ${city}`;
   }
-  return tz.split("/").pop()?.replace(/_/g, " ") ?? tz;
+  return zonePlainName(zone, at) ?? `${city} time`;
 }
 
 /** The instant of a wall-clock time ("2026-11-22", "09:00") in `tz`. */
@@ -253,6 +263,16 @@ export function BookingCard({ token, booking, tz, lang, seller, onReach }: {
     return [...m.values()].slice(0, 7);
   }, [booking.slots, tz]);
   const shownDay = days.find((d) => d.key === day) ?? days.find((d) => d.slots.some((s) => !s.taken)) ?? days[0];
+  const dayRow = useRef<HTMLDivElement>(null);
+  // The day row shows only while the card offers slots (not on "Call booked" until Change time).
+  const rowShown = days.length > 0 && !(booking.booked && !reopen);
+  const moreEnd = useMoreAtEnd(dayRow, rowShown ? days.length : 0);
+  // RB3: the selected day in view, on load and on select (the row only: the chat log does not move).
+  useEffect(() => {
+    const row = dayRow.current;
+    const chip = row?.querySelector<HTMLElement>('[aria-pressed="true"]');
+    if (row && chip) scrollChipIntoView(row, chip);
+  }, [shownDay?.key, rowShown]);
 
   const book = async () => {
     if (!slot) return;
@@ -333,7 +353,7 @@ export function BookingCard({ token, booking, tz, lang, seller, onReach }: {
       ) : null}
       {days.length === 0 ? <p className="rb-card__text">{t("buyer.book.none")}</p> : (
         <>
-          <div className="rb-days" role="group" aria-label={t("buyer.book.days")}>
+          <div className="rb-days" role="group" aria-label={t("buyer.book.days")} ref={dayRow} data-more-end={moreEnd ? "" : undefined}>
             {days.map((d) => {
               const g = parts(d.first, tz, locale, { weekday: "short", day: "numeric" });
               const on = d.key === shownDay?.key;
@@ -354,7 +374,7 @@ export function BookingCard({ token, booking, tz, lang, seller, onReach }: {
               );
             })}
           </div>
-          <p className="rb-card__hint" suppressHydrationWarning>{t("buyer.book.zone", { zone: zoneName(tz, locale) })}</p>
+          <p className="rb-card__hint" suppressHydrationWarning>{t("buyer.book.zone", { zone: zoneName(tz, lang) })}</p>
         </>
       )}
       {error ? <p className="rb-card__error" role="alert">{error}</p> : null}
@@ -363,6 +383,30 @@ export function BookingCard({ token, booking, tz, lang, seller, onReach }: {
       </button>
     </section>
   );
+}
+
+/** Scrolls a day chip into its row's view (sideways only), with a little room; physical sides, so LTR and RTL alike. */
+function scrollChipIntoView(row: HTMLElement, chip: HTMLElement) {
+  const r = row.getBoundingClientRect();
+  const c = chip.getBoundingClientRect();
+  const room = 16;
+  if (c.left < r.left + room) row.scrollLeft += c.left - r.left - room;
+  else if (c.right > r.right - room) row.scrollLeft += c.right - r.right + room;
+}
+
+/** Whether a sideways row has more to scroll on its end side (right in LTR, left in RTL): the fade shows then. */
+function useMoreAtEnd(ref: React.RefObject<HTMLElement | null>, count: number): boolean {
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setMore(Math.ceil(Math.abs(el.scrollLeft) + el.clientWidth) < el.scrollWidth - 1);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    return () => { el.removeEventListener("scroll", check); window.removeEventListener("resize", check); };
+  }, [ref, count]);
+  return more;
 }
 
 const PHONE = "\u0000";

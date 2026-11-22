@@ -429,7 +429,7 @@
   "buyer.book.change": "שינוי",
   "buyer.book.phone_label": "מספר לשיחה",
   "buyer.book.phone_save": "להשתמש במספר הזה",
-  "buyer.book.zone": "השעות לפי השעון שלכם ({zone}). מקווקו: תפוס.",
+  "buyer.book.zone": "השעות לפי {zone}. מקווקו: תפוס.",
   "buyer.book.days": "ימים",
   "buyer.book.slots": "שעות",
   "buyer.book.taken": "{time}, תפוס",

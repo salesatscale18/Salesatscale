@@ -14,6 +14,7 @@
  */
 import { isQuoteMessageText } from "@/lib/agent/quote-message";
 import { QUOTE_CARD_WAIT_MS } from "./rules";
+import { placeBookingCards } from "@/lib/chat/booking-order";
 import { marketOfLead } from "@/lib/markets/lead-settings";
 import { marketContactSettings } from "@/lib/markets/settings";
 import { randomUUID } from "node:crypto";
@@ -265,15 +266,18 @@ export async function resolveShortCode(db: Db, code: string): Promise<{ token: s
 }
 
 export { CHAT_OPENED_EVENT };
-/** Opens of the short link closer together than this count once (a reload, a link preview). */
+/** Opens of the chat closer together than this count once (a reload, a link preview, /c/ then its redirect). */
 export const CHAT_OPEN_DEDUPE_MS = 10 * 60_000;
 
 /**
- * Records that the buyer opened the chat from an SMS: the seller's thread
- * shows "{buyer} opened the chat · {time}" (board ReachSeller), and any open
- * counts for the named-time retry. Once per CHAT_OPEN_DEDUPE_MS.
+ * Records that the buyer opened the chat: from an SMS (/c/<code>, via "sms")
+ * or straight from the chat link (/chat/<token>, via "link", RB2). The
+ * seller's thread shows "{buyer} opened the chat · {time}" (board
+ * ReachSeller), and any open counts for the named-time retry. Once per
+ * CHAT_OPEN_DEDUPE_MS, whichever way. The callers never record the seller's
+ * own staff or a platform admin (chatViewerIsStaff).
  */
-export async function recordChatOpen(db: Db, accountId: string, leadId: string, now = new Date()): Promise<boolean> {
+export async function recordChatOpen(db: Db, accountId: string, leadId: string, now = new Date(), via: "sms" | "link" = "sms"): Promise<boolean> {
   const [recent] = await db.select({ id: leadEvents.id }).from(leadEvents)
     .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), eq(leadEvents.type, CHAT_OPENED_EVENT),
       gt(leadEvents.createdAt, new Date(now.getTime() - CHAT_OPEN_DEDUPE_MS))))
@@ -283,7 +287,7 @@ export async function recordChatOpen(db: Db, accountId: string, leadId: string, 
     .where(and(eq(conversations.accountId, accountId), eq(conversations.leadId, leadId), inArray(conversations.channel, [...WEB_CHAT_CHANNELS]), eq(conversations.isTest, false)))
     .orderBy(desc(conversations.createdAt)).limit(1);
   await db.insert(leadEvents).values({
-    accountId, leadId, type: CHAT_OPENED_EVENT, actor: "buyer", data: { via: "sms", ...(conv ? { conversationId: conv.id } : {}) }, createdAt: now,
+    accountId, leadId, type: CHAT_OPENED_EVENT, actor: "buyer", data: { via, ...(conv ? { conversationId: conv.id } : {}) }, createdAt: now,
   });
   return true;
 }
@@ -490,6 +494,8 @@ export type BuyerMessage = {
   kind?: AppMessageKind;
   /** Said (or typed) in a voice call: the time in the call, in ms. Absent for chat messages. */
   call?: { atMs: number; typed: boolean };
+  /** RB3: the agent's line that offered the booking card (its turn's request_callback): the card shows right under it. */
+  offersBooking?: true;
 };
 
 export type BuyerChat = {
@@ -588,8 +594,8 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
   const [previews, calls, cards, callRows] = await Promise.all([
     linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
-    db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result }).from(toolCalls)
-      .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL]))),
+    db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result, messageId: toolCalls.messageId }).from(toolCalls)
+      .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL, "request_callback"]))),
     loadQuoteCards(db, accountId, ids, { audience: "buyer", now }),
     buyerCallRows(db, accountId, ids),
   ]);
@@ -601,13 +607,16 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const waiting = rows.findIndex(({ m }) => m.actor === "agent" && !m.voiceSessionId && !cards[m.id]
     && now.getTime() - m.createdAt.getTime() < QUOTE_CARD_WAIT_MS && isQuoteMessageText(m.body));
   if (waiting >= 0) rows.splice(waiting);
+  // RB3: the booking card right under the agent's line that offered it (lib/chat/booking-order.ts).
+  const offers = new Set(calls.flatMap((c) => (c.name === "request_callback" && c.outcome === "ok" && c.messageId ? [c.messageId] : [])));
+  const placed = placeBookingCards(rows, ({ m }) => ({ id: m.id, actor: m.actor, isCard: kinds.get(m.id) === "booking", offersCard: offers.has(m.id) }));
   return {
     typing: !ended && agentTyping(latest, last ?? null, ctx.account.status, now),
     closedAt,
     ended,
     cards,
     calls: callRows,
-    messages: rows.map(({ m, firstName }) => ({
+    messages: placed.map(({ m, firstName }) => ({
       id: m.id,
       from: m.actor as BuyerMessage["from"],
       body: m.body,
@@ -616,6 +625,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
       name: m.actor === "human" ? (firstName || t("buyer.sim.team", undefined, lang)) : null,
       previews: m.actor === "buyer" ? [] : orderFormLinks(m.body).map((l) => previews.get(l.url)).filter((p): p is LinkPreview => !!p),
       ...(kinds.has(m.id) ? { kind: kinds.get(m.id) } : {}),
+      ...(offers.has(m.id) ? { offersBooking: true as const } : {}),
       ...(m.voiceSessionId && m.spokenAtMs !== null ? { call: { atMs: m.spokenAtMs, typed: m.typedInCall } } : {}),
     })),
   };

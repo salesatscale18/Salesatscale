@@ -30,7 +30,8 @@ export async function analyzeAction(form: FormData) {
   const a = await requireAccount(str(form, "slug"));
   const to = str(form, "back");
   if (!llmConfigured()) back(a.account.slug, to, { analyze_error: "no_key" });
-  const plan = await planAnalysis(appDb, a.account.id);
+  // full=1: stage 1 reads every source again, not only the new and changed ones.
+  const plan = await planAnalysis(appDb, a.account.id, process.env, { full: str(form, "full") === "1" });
   if (!plan) back(a.account.slug, to, { analyze_error: "nothing" });
   let runs: Awaited<ReturnType<typeof startAnalysis>>;
   try {

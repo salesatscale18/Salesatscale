@@ -8,11 +8,12 @@ import { approvedTemplates, conversationWindow } from "@/lib/channels/whatsapp";
 import { renderTemplate } from "@/lib/channels/rules";
 import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { INBOX_FILTERS, inboxConversation, latestHandoff, listInbox, parseInboxFilter, type InboxGroup, type InboxList, type InboxRow } from "@/lib/conversations/inbox";
-import { relativeTime } from "@/lib/format";
+import { formatDateTimeIn, relativeTime } from "@/lib/format";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
 import { ConversationPanel, formNotes, windowTimerProps } from "../leads/[leadId]/conversation";
+import { readViewerZone } from "@/lib/viewer-zone-server";
 import { linkFor, personSentForms } from "@/lib/orders/service";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { sendTemplateAction } from "./actions";
@@ -63,6 +64,9 @@ export default async function ConversationsPage({ params, searchParams }: { para
   const page = Math.max(1, Math.floor(Number(one(sp.page)) || 1));
   const selectedId = UUID.test(one(sp.c)) ? one(sp.c) : null;
   const now = new Date();
+  // Times on this page (the list and the thread) in the viewer's own zone (the sas_tz cookie), else the account's.
+  const viewerZone = await readViewerZone();
+  const zone = viewerZone ?? account.timezone;
   // The market switcher's choice (URL, then the stored preference; null = all markets): it filters
   // the list, its groups and the filter counts by the lead's market. An open thread stays open.
   const selection = await marketSelection(appDb, account.id, sp);
@@ -111,7 +115,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
       const [view, pane, chatWindow, templates, handoff, chatToken, sentForms] = await Promise.all([
         conversationView(appDb, account.id, conv),
         // The lead page's deal pane (lib/leads/deal-pane.ts): verified order details, grouped unknowns, the stage-aware next step.
-        loadDealPane(appDb, account.id, lead, account.tradeName),
+        loadDealPane(appDb, account.id, lead, account.tradeName, viewerZone),
         whatsapp && conv.status !== "closed" ? conversationWindow(appDb, account.id, conv.id, now) : Promise.resolve(null),
         whatsapp ? approvedTemplates(appDb, account.id) : Promise.resolve([]),
         conv.status === "human" ? latestHandoff(appDb, account.id, lead.id) : Promise.resolve(null),
@@ -209,7 +213,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                             <span className="sas-inbox__row-main">
                               <span className="sas-inbox__row-top">
                                 <span className="sas-inbox__name"><bdi>{r.lead.fullName}</bdi>{r.lead.company ? <span className="sas-small"> · <bdi>{r.lead.company}</bdi></span> : null}</span>
-                                <span className="sas-small sas-when" title={r.lastAt.toISOString()}>{relativeTime(r.lastAt, now)}</span>
+                                <span className="sas-small sas-when" title={formatDateTimeIn(r.lastAt, zone)}>{relativeTime(r.lastAt, now, zone)}</span>
                               </span>
                               {(() => {
                                 const p = preview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
@@ -293,7 +297,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <div className="sas-inbox__chat">
                     <ScrollThreadToEnd />
                     <ConversationPanel
-                      from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone}
+                      from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone} viewerZone={viewerZone}
                       leadOptedOut={selected.lead.status === "opted_out"} notice={notice === "template_sent" ? undefined : notice}
                       leadStatus={selected.lead.status} notes={thread.notes} rawToolNames={seesPlatformDetails(access)}
                       steps={{ show: showSteps, back: `${qs({})}#thread` }}

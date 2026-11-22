@@ -378,6 +378,78 @@ describe("demo account review states", () => {
     expect(await leadCallback(db, accountId, rotem.id, NOW)).toBeNull();
   });
 
+  it("RB2: the booking flow is in the web chat the buyer page lists: the bistro's booked call, and an open booking card with slots", async () => {
+    const { chatReach } = await import("@/lib/chat/reach");
+    const { activeChatToken, buyerChat } = await import("@/lib/simulator/service");
+    const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+    const shira = await leadBy(STATE_LEADS.callRequested.n);
+    const yael = await leadBy(STATE_LEADS.bookingOpen.n);
+    expect(yael).toMatchObject({ fullName: "Yael Demo", status: "agent_handling" });
+    const after = new Date(NOW.getTime() + 60_000);
+    for (const l of [shira, yael]) {
+      const conv = await convOf(l.id);
+      expect(conv).toMatchObject({ channel: "chat", status: "open", isTest: false });
+      expect(await activeChatToken(db, accountId, l.id)).not.toBeNull();
+      // The buyer page's chat: the booking card message is in it.
+      const chat = await buyerChat(db, { lead: l, account: acc, brandColor: "#0f6b5a" }, { now: after });
+      expect(chat.messages.map((m) => m.body)).toContain("Pick a time for a 15-minute call with our team.");
+    }
+    // Shira: booked ("Call booked" card), the Team call card and the Next step stay.
+    const booked = await chatReach(db, { lead: shira, account: acc }, after);
+    expect(booked.booking?.booked?.at).toBe((await leadCallback(db, accountId, shira.id, after))!.at.toISOString());
+    expect((await leadListFacts(db, accountId, [shira.id], after)).get(shira.id)?.call).toMatchObject({ booked: true });
+    // Yael: the card nobody booked yet: day chips and free slots, the bistro's slot taken.
+    const open = await chatReach(db, { lead: yael, account: acc }, after);
+    expect(open.booking).toMatchObject({ booked: null, offerMessageId: expect.any(String) });
+    expect(open.booking!.slots.filter((s) => !s.taken).length).toBeGreaterThan(3);
+    expect(open.booking!.slots.find((s) => s.at === booked.booking!.booked!.at)?.taken).toBe(true);
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, (await convOf(yael.id)).id));
+    expect(calls.find((c) => c.name === "app_message" && (c.result as { kind?: string }).kind === "booking")?.result).toMatchObject({ brief: CALL_BRIEFS.bookingOpen });
+    // No call yet, nothing to confirm: not in Needs you; never an SMS to a demo number.
+    expect(await leadCallback(db, accountId, yael.id, after)).toBeNull();
+    expect((await needsYou(db, accountId, NOW)).some((i) => i.leadId === yael.id)).toBe(false);
+    expect((await db.select().from(leadEvents).where(eq(leadEvents.leadId, yael.id))).filter((e) => e.type.startsWith("sms."))).toEqual([]);
+  });
+
+  it("RB2: a buyer-named time 20 minutes ago, fired as the scheduler fires it, so ?via=sms shows the talk-now card; Rotem's Saturday follow-up stays", async () => {
+    const { talkNowFor, runNamedTimeRetries } = await import("@/lib/follow-ups/named-time");
+    const { TALK_NOW_AGO_MIN, TALK_NOW_TOPIC } = await import("@/lib/demo/states");
+    const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+    const ido = await leadBy(STATE_LEADS.talkNow.n);
+    expect(ido).toMatchObject({ fullName: "Ido Demo", status: "agent_handling" });
+    const conv = await convOf(ido.id);
+    expect(conv).toMatchObject({ channel: "chat", status: "open" });
+    // The follow-up as processOne leaves it: sent, with the message it wrote into the chat, and follow_up.sent.
+    const [f] = await db.select().from(followUps).where(eq(followUps.leadId, ido.id));
+    expect(f).toMatchObject({ status: "sent", reason: null, topic: TALK_NOW_TOPIC, conversationId: conv.id });
+    expect(f.dueAt.toISOString()).toBe(new Date(NOW.getTime() - TALK_NOW_AGO_MIN * 60_000).toISOString());
+    expect(await followUpBuyerNamed(db, f)).toMatchObject({ buyerNamedTime: true });
+    const [m] = await db.select().from(messages).where(eq(messages.id, f.sentMessageId!));
+    expect(m).toMatchObject({ conversationId: conv.id, actor: "agent", deliveryStatus: "delivered" });
+    const [call] = await db.select().from(toolCalls).where(eq(toolCalls.messageId, m.id));
+    expect(call).toMatchObject({ name: "app_message", result: { kind: "follow_up", follow_up_id: f.id } });
+    const events = await db.select().from(leadEvents).where(eq(leadEvents.leadId, ido.id));
+    expect(events.find((e) => e.type === "follow_up.sent")?.data).toEqual({ followUpId: f.id });
+    // The named_time SMS as mock mode records it, pointing at that message; the buyer opened the chat from it.
+    const sms = events.filter((e) => e.type.startsWith("sms."));
+    expect(sms).toHaveLength(1);
+    expect(sms[0]).toMatchObject({ type: "sms.mocked", actor: "system", data: { kind: "named_time", messageId: m.id, conversationId: conv.id, mode: "mock", notSent: "mock" } });
+    expect(String(sms[0].data?.text)).toMatch(/^It's the time you asked for\. Talk or write: \S+\/c\/\S+$/);
+    expect(events.filter((e) => e.type === "chat.opened")).toHaveLength(1);
+    // The talk-now card for 2 hours after the time; nothing outside it.
+    expect(await talkNowFor(db, { lead: ido, account: acc }, NOW)).toEqual({ kind: "talk_now", at: f.dueAt.toISOString() });
+    expect(await talkNowFor(db, { lead: ido, account: acc }, new Date(f.dueAt.getTime() + 2 * 3_600_000 + 60_000))).toBeNull();
+    // The open stops the retry: no second SMS to the demo lead.
+    await runNamedTimeRetries(db, new Date(NOW.getTime() + 60_000));
+    expect((await db.select().from(leadEvents).where(eq(leadEvents.leadId, ido.id))).filter((e) => e.type.startsWith("sms."))).toHaveLength(1);
+    // Not in Needs you; Rotem keeps her Saturday 21:00 follow-up.
+    expect((await needsYou(db, accountId, NOW)).some((i) => i.leadId === ido.id)).toBe(false);
+    const rotem = await leadBy(STATE_LEADS.buyerNamedCall.n);
+    expect(await db.select().from(followUps).where(and(eq(followUps.leadId, rotem.id), eq(followUps.status, "scheduled")))).toHaveLength(1);
+    // Account-scoped.
+    expect(await talkNowFor(db, { lead: ido, account: { id: otherId } }, NOW)).toBeNull();
+  });
+
   it("LQ: a call confirmed for tomorrow 11:00 (the Next step), a sent quote valid until tomorrow, a declined held quote; Needs you unchanged", async () => {
     const [acc] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
     const tz = acc.timezone;

@@ -26,6 +26,8 @@ import { sendChatLink } from "@/lib/sms/outbound";
 import { cancelOnTakeOver } from "@/lib/follow-ups/schedule";
 import { MARKER_EVENT_TYPES, smsMarkers, threadMarkers, VOICE_CALL_ENDED_LINE, voiceMarkers, type ThreadMarker } from "./thread-markers";
 import { loadSmsEntries } from "@/lib/sms/thread";
+import { placeBookingCards } from "@/lib/chat/booking-order";
+import { appMessageKinds } from "./app-message";
 
 /** The system line capped conversations stored before W5; hidden where the spend-cap marker shows. */
 const SPEND_CAP_SYSTEM_LINE = "This month's AI spend cap is reached, so the agent did not start this conversation.";
@@ -255,9 +257,15 @@ export async function conversationView(db: Db, accountId: string, conv: Conversa
   const capped = markers.some((m) => m.kind === "spend_cap");
   // A call's summary marker replaces the "Voice call ended · 0:38" line the engine stores.
   const called = markers.some((m) => m.kind === "voice_ended");
-  const shown = capped || called
+  const kept = capped || called
     ? thread.filter(({ message: m }) => !(m.actor === "system" && ((capped && m.body.startsWith(SPEND_CAP_SYSTEM_LINE)) || (called && VOICE_CALL_ENDED_LINE.test(m.body)))))
     : thread;
+  // RB4: the booking card right under the agent's line that offered it, as on the buyer page (lib/chat/booking-order.ts).
+  const kinds = appMessageKinds(kept.flatMap((x) => x.calls));
+  const shown = placeBookingCards(kept, ({ message: m, calls: cs }) => ({
+    id: m.id, actor: m.actor, isCard: kinds.get(m.id) === "booking",
+    offersCard: cs.some((c) => c.name === "request_callback" && c.outcome === "ok"),
+  }));
   return {
     conversation: conv,
     takenOverBy: conv.takenOverByUserId ? (authors[conv.takenOverByUserId] ?? null) : null,

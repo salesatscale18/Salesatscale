@@ -42,7 +42,7 @@ describe("stage 0: corpus", () => {
   it("hashes prompt versions, model, corpus and data; key order does not matter", () => {
     const base = { versions: [SYSTEM_V, FACTS_V], model: "m", corpus: "c", data: { a: 1, b: [1, 2] } };
     expect(inputHash(base)).toBe(inputHash({ ...base, data: { b: [1, 2], a: 1 } }));
-    expect(inputHash(base)).not.toBe(inputHash({ ...base, versions: [SYSTEM_V, "facts-v2"] }));
+    expect(inputHash(base)).not.toBe(inputHash({ ...base, versions: [SYSTEM_V, "facts-v99"] }));
     expect(inputHash(base)).not.toBe(inputHash({ ...base, model: "n" }));
     expect(inputHash(base)).not.toBe(inputHash({ ...base, corpus: "d" }));
   });
@@ -60,7 +60,7 @@ describe("stage 0: corpus", () => {
   });
 
   it("estimates the cost: one cache write, a cache read in stage 2, output with thinking", () => {
-    const e = estimateAnalysis({ corpusTokens: 50_000, runFacts: true, runPlaybook: true, dataTokens: 1_500, model: "claude-sonnet-5-5", lightModel: "claude-haiku-5-5", prices: DEFAULT_PRICES });
+    const e = estimateAnalysis({ corpusTokens: 50_000, runFacts: true, runPlaybook: true, dataTokens: 1_500, model: "claude-sonnet-5-5", prices: DEFAULT_PRICES });
     const [f, p] = e.stages;
     expect(f.usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS + 50_000, inputTokens: INSTRUCTION_TOKENS, outputTokens: factsOutputTokens(50_000), cacheReadTokens: 0 });
     expect(factsOutputTokens(50_000)).toBe(THINKING_TOKENS + 1_000 + 4_000);
@@ -77,16 +77,29 @@ describe("stage 0: corpus", () => {
     expect(e.costMicros).toBeLessThan(uncached);
 
     // One stage alone: no corpus cache, only the small system prefix is written.
-    const only = estimateAnalysis({ corpusTokens: 50_000, runFacts: false, runPlaybook: true, dataTokens: 1_500, model: "claude-sonnet-5-5", lightModel: "claude-haiku-5-5", prices: DEFAULT_PRICES });
+    const only = estimateAnalysis({ corpusTokens: 50_000, runFacts: false, runPlaybook: true, dataTokens: 1_500, model: "claude-sonnet-5-5", prices: DEFAULT_PRICES });
     expect(only.stages.map((s) => s.stage)).toEqual(["playbook"]);
     expect(only.stages[0].usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS, cacheReadTokens: 0, inputTokens: 50_000 + PLAYBOOK_INSTRUCTION_TOKENS + 1_500 });
-    expect(estimateAnalysis({ corpusTokens: 50_000, runFacts: false, runPlaybook: false, dataTokens: 0, model: "x", lightModel: "y" })).toEqual({ stages: [], tokens: 0, costMicros: 0 });
+    expect(estimateAnalysis({ corpusTokens: 50_000, runFacts: false, runPlaybook: false, dataTokens: 0, model: "x" })).toEqual({ stages: [], tokens: 0, costMicros: 0 });
 
-    // Large corpus: light model per chunk, system prefix read after the first call.
-    const large = estimateAnalysis({ corpusTokens: 200_000, chunkTokens: [90_000, 90_000, 20_000], trimmedTokens: 100_000, runFacts: true, runPlaybook: true, dataTokens: 0, model: "claude-sonnet-5-5", lightModel: "claude-haiku-5-5", prices: DEFAULT_PRICES });
-    expect(large.stages[0]).toMatchObject({ model: "claude-haiku-5-5", calls: 3 });
+    // Large corpus: the main model per chunk (never the light model), system prefix read after the first call and in stage 2.
+    const large = estimateAnalysis({ corpusTokens: 200_000, chunkTokens: [90_000, 90_000, 20_000], trimmedTokens: 100_000, runFacts: true, runPlaybook: true, dataTokens: 0, model: "claude-sonnet-5-5", prices: DEFAULT_PRICES });
+    expect(large.stages[0]).toMatchObject({ model: "claude-sonnet-5-5", calls: 3 });
     expect(large.stages[0].usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS, cacheReadTokens: 2 * PREFIX_TOKENS, inputTokens: 200_000 + 3 * INSTRUCTION_TOKENS });
-    expect(large.stages[1].usage.cacheReadTokens).toBe(0);
+    expect(large.stages[1]).toMatchObject({ model: "claude-sonnet-5-5" });
+    expect(large.stages[1].usage).toMatchObject({ cacheReadTokens: PREFIX_TOKENS, inputTokens: 100_000 + PLAYBOOK_INSTRUCTION_TOKENS + Math.ceil((3 * 1_000 + Math.ceil(200_000 * 0.08)) * 0.6) });
+  });
+
+  it("estimates a run over the changed sources only: stage 1 reads its own corpus, stage 2 the whole one, no corpus cache", () => {
+    const e = estimateAnalysis({ corpusTokens: 50_000, factsCorpusTokens: 3_000, sharedCorpus: false, runFacts: true, runPlaybook: true, dataTokens: 1_500, knownFactsTokens: 800, model: "claude-sonnet-5-5", prices: DEFAULT_PRICES });
+    const [f, p] = e.stages;
+    expect(f).toMatchObject({ model: "claude-sonnet-5-5", calls: 1 });
+    expect(f.usage).toMatchObject({ cacheWriteTokens: PREFIX_TOKENS, inputTokens: INSTRUCTION_TOKENS + 800 + 3_000, outputTokens: factsOutputTokens(3_000) });
+    expect(p.usage).toMatchObject({ cacheReadTokens: PREFIX_TOKENS, cacheWriteTokens: 0 });
+    expect(p.usage.inputTokens).toBe(50_000 + PLAYBOOK_INSTRUCTION_TOKENS + 1_500 + Math.ceil((factsOutputTokens(3_000) - THINKING_TOKENS) * 0.6));
+    // Reading one changed source costs less in stage 1 than reading all of them.
+    const all = estimateAnalysis({ corpusTokens: 50_000, runFacts: true, runPlaybook: true, dataTokens: 1_500, model: "claude-sonnet-5-5", prices: DEFAULT_PRICES });
+    expect(f.costMicros).toBeLessThan(all.stages[0].costMicros);
   });
 });
 

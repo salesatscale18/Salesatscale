@@ -9,6 +9,9 @@
  */
 import { appDb } from "@/lib/auth/account";
 import { chatReach, NO_REACH, type ChatReach } from "@/lib/chat/reach";
+import { rememberBuyerZone } from "@/lib/team-calls/zone";
+import { isSimulatedLead } from "@/lib/simulator/rules";
+import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { rescheduleFromChat, type RescheduleResult } from "@/lib/follow-ups/named-time";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { resolveChatLink } from "@/lib/simulator/service";
@@ -43,4 +46,15 @@ export async function rescheduleAction(token: string, at: string): Promise<Resch
   const ctx = await context(token);
   if (!ctx) return { ok: false, reason: "not_found" };
   return rescheduleFromChat(appDb, ctx, at);
+}
+
+/**
+ * RB3: the buyer's browser zone, stored per buyer (on the chat open) so the
+ * page's first render and the server's texts can use it. Never a simulated
+ * buyer's, and never from the seller's staff previewing the chat.
+ */
+export async function rememberZoneAction(token: string, zone: string): Promise<{ ok: boolean }> {
+  const ctx = await context(token);
+  if (!ctx || isSimulatedLead(ctx.lead) || (await chatViewerIsStaff(ctx.account.id))) return { ok: false };
+  return { ok: await rememberBuyerZone(appDb, ctx.account.id, ctx.lead.id, zone) };
 }

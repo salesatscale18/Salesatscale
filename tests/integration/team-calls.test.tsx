@@ -18,14 +18,14 @@ import { createAccount } from "@/lib/accounts/service";
 import { ScriptedLlm, type Block } from "@/lib/agent/llm";
 import { createTestDb, type TestDb } from "../helpers/db";
 
-const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
+const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown, staff: false }));
 vi.mock("@/lib/auth/account", () => ({
   get appDb() { return holder.db; },
   requireAccount: async () => holder.access,
   actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
 }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn() }));
-vi.mock("@/lib/voice/chat-viewer", () => ({ chatViewerIsStaff: async () => false }));
+vi.mock("@/lib/voice/chat-viewer", () => ({ chatViewerIsStaff: async () => holder.staff }));
 vi.mock("next/cache", () => ({ revalidatePath: () => undefined }));
 vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "app.example.com" }), cookies: async () => ({ get: () => undefined }) }));
 vi.mock("next/navigation", () => ({
@@ -224,6 +224,10 @@ describe("Reach RB: buyer-named time, booking card, team call log", () => {
       // Not opened from an SMS: no card.
       expect(await render(ChatPage, { token })).not.toContain("data-talk-now=\"\"");
 
+      // RB2: those page loads were the buyer's opens (recorded once: 10-minute throttle), so no retry would go.
+      // For the second SMS this buyer is one who never opened the chat.
+      expect((await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, l.lead.id), eq(leadEvents.type, "chat.opened")))).map((e) => e.data?.via)).toEqual(["sms"]);
+      await db.delete(leadEvents).where(and(eq(leadEvents.leadId, l.lead.id), eq(leadEvents.type, "chat.opened")));
       await runNamedTimeRetries(db, new Date(Date.now() + 11 * MIN));
       expect((await talkNowFor(db, ctx))?.kind).toBe("new_time");
       html = await render(ChatPage, { token }, { via: "sms" });
@@ -311,12 +315,14 @@ describe("Reach RB: buyer-named time, booking card, team call log", () => {
       expect(strip(html)).toContain("Booked by Dana in the chat.");
       expect(html).toContain(`Buyer&#x27;s time: ${"⁨"}${london}${"⁩"}`);
       expect(html).toContain("Anyone on your team");
-      expect(html).toContain('data-testid="team-call-phone">+972525551234<');
+      // RB2: shown for reading; Copy keeps E.164 (in the client).
+      expect(html).toContain('data-testid="team-call-phone">+972 52-555-1234<');
       expect(html).toContain("Cancel and tell the buyer");
       expect(html).toContain("Calling is on your own phone for now. After the call, log it here.");
       expect(html).toMatch(/Team call booked · ⁨?\w{3} \d{1,2} \w{3} \d{2}:\d{2}⁩? · 15 min/);
       // The thread elsewhere masks the phone: the full number shows once, on the card (Copy holds it in the client).
-      expect(html.split("+972525551234").length - 1).toBe(1);
+      expect(html.split("+972 52-555-1234").length - 1).toBe(1);
+      expect(html).not.toContain("+972525551234");
 
       // The buyer page: the "Call booked" card with Add to calendar, Change time and Cancel.
       const token = (await activeChatToken(db, acc, lead.id))!;
@@ -460,6 +466,133 @@ describe("Reach RB: buyer-named time, booking card, team call log", () => {
       // Two logs of one call: the latest wins in the thread.
       const [conv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
       expect((await conversationView(db, acc, conv)).markers?.filter((m) => m.kind === "team_call_logged")).toHaveLength(1);
+    });
+  });
+
+  describe("RB2: the card's wording, the log form, and the buyer's open of the chat link", () => {
+    const tag = (html: string, id: string) => html.match(new RegExp(`<input[^>]*id="${id}"[^>]*>`))?.[0] ?? "";
+
+    it("the log card says \"Booked …\" only for the buyer's booking; an older seller-confirmed call says \"Call · …\"", async () => {
+      const slug = (await accountRow()).slug;
+      holder.access = await access();
+      // The buyer's booking, after the slot.
+      const b = await addLead();
+      await book(b.lead.id, b.conversationId);
+      await callPassed(b.lead.id);
+      const booked = await render(LeadCardPage, { account: slug, leadId: b.lead.id }, { tab: "deal" });
+      expect(booked).toMatch(/data-testid="team-call-log-when">Booked \w{3} \d{1,2} \w{3} \d{2}:\d{2}</);
+      // The older flow: the agent's request with a time, the seller's Confirm; the call was an hour ago.
+      const o = await addLead();
+      const callbackId = crypto.randomUUID();
+      const callAt = new Date(Date.now() - HOUR);
+      await db.insert(leadEvents).values({
+        accountId: acc, leadId: o.lead.id, type: "callback.requested", actor: "agent", createdAt: new Date(Date.now() - 3 * HOUR),
+        data: { callbackId, at: callAt.toISOString(), timezone: "Asia/Jerusalem", brief: "Installation", conversationId: o.conversationId },
+      });
+      const { confirmCallback } = await import("@/lib/callbacks/service");
+      expect((await confirmCallback(db, await access(), o.lead.id, callbackId, null, new Date(Date.now() - 2 * HOUR))).ok).toBe(true);
+      const older = await render(LeadCardPage, { account: slug, leadId: o.lead.id }, { tab: "deal" });
+      expect(older).toContain('data-state="log"');
+      expect(older).toMatch(/data-testid="team-call-log-when">Call · \w{3} \d{1,2} \w{3} \d{2}:\d{2}</);
+      expect(older).not.toMatch(/data-testid="team-call-log-when">Booked/);
+      // The timeline: the booking is "Call booked · {time}", the older request "Call requested".
+      const tlBooked = await render(LeadCardPage, { account: slug, leadId: b.lead.id }, { tab: "timeline", timeline: "open" });
+      expect(tlBooked).toMatch(/sas-tl__title">Call booked · \w{3} \d{1,2} \w{3} \d{2}:\d{2}</);
+      expect(tlBooked).not.toContain("Call requested");
+      const tlOlder = await render(LeadCardPage, { account: slug, leadId: o.lead.id }, { tab: "timeline", timeline: "open" });
+      expect(tlOlder).toContain('sas-tl__title">Call requested<');
+      expect(tlOlder).not.toContain("Call booked");
+    });
+
+    it("the Team call card: the phone for reading (Copy keeps E.164), no buyer's-time line when the zones match", async () => {
+      const slug = (await accountRow()).slug;
+      holder.access = await access();
+      const { lead, conversationId } = await addLead();
+      await book(lead.id, conversationId, { timezone: "Asia/Jerusalem" });
+      const html = await render(LeadCardPage, { account: slug, leadId: lead.id }, { tab: "deal" });
+      expect(html).toContain('data-state="upcoming"');
+      expect(html).toMatch(/data-testid="team-call-phone">\+972 50-720-\d{4}</);
+      expect(html).not.toContain("team-call-zone");
+      expect(html).not.toContain("Buyer&#x27;s time");
+      expect(strip(html)).toContain("Booked by Dana in the chat.");
+    });
+
+    it("after the slot the log form has no Change time or Cancel until the call is logged as Moved, a quiet \"Save log\", and a 24-hour Started field", async () => {
+      const slug = (await accountRow()).slug;
+      holder.access = await access();
+      const { lead, conversationId } = await addLead();
+      const { callback } = await book(lead.id, conversationId);
+      await callPassed(lead.id);
+      const html = await render(LeadCardPage, { account: slug, leadId: lead.id }, { tab: "deal" });
+      expect(html).toContain('data-state="log"');
+      expect(html).not.toContain('data-testid="team-call-change"');
+      expect(html).not.toContain('data-testid="team-call-cancel"');
+      // "Save log" after the four next steps, a ghost button with no next step.
+      const saveLog = html.match(/<button[^>]*data-next="save"[^>]*>Save log<\/button>/)?.[0] ?? "";
+      expect(saveLog).toContain("sas-btn--ghost");
+      expect(html.indexOf(saveLog)).toBeGreaterThan(html.indexOf('data-next="chat_link"'));
+      // Started: HH:MM text (a native time input follows the browser's locale: "12:29 PM").
+      const started = tag(html, "tc-started");
+      expect(started).toContain('type="text"');
+      expect(started).toContain('pattern="([01][0-9]|2[0-3]):[0-5][0-9]"');
+      expect(started).toMatch(/value="([01]\d|2[0-3]):[0-5]\d"/);
+      expect(started).not.toContain('type="time"');
+      // Save log: the same checks (We spoke needs a length), then it logs with no next step.
+      expect(await logTeamCall(db, await access(), lead.id, callback.id, { outcome: "spoke", started: "13:05", lengthMin: "", note: "", next: "save" })).toEqual({ ok: false, reason: "invalid_length" });
+      expect(await logTeamCall(db, await access(), lead.id, callback.id, { outcome: "spoke", started: "1:05 PM", lengthMin: "4", note: "", next: "save" })).toEqual({ ok: false, reason: "invalid_started" });
+      const url = await redirectOf(logTeamCallAction(form({ slug, leadId: lead.id, callbackId: callback.id, outcome: "spoke", started: "13:05", lengthMin: "4", note: "Short call", next: "save" })));
+      expect(url).toBe(`/app/${slug}/leads/${lead.id}?tab=deal&team_call_notice=save#callback`);
+      const [logged] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, lead.id), eq(leadEvents.type, "team_call.logged")));
+      expect(logged.data).toMatchObject({ outcome: "spoke", next: "save", lengthMin: 4, note: "Short call" });
+      // The chat stays as it was: no SMS, no take-over.
+      expect((await smsEvents(lead.id)).filter((e) => e.data?.kind === "chat_link")).toHaveLength(0);
+      expect((await db.select().from(conversations).where(eq(conversations.id, conversationId)))[0].status).toBe("open");
+
+      // Logged as Moved: Change time and Cancel show, to set the new time.
+      const m = await addLead();
+      const mc = (await book(m.lead.id, m.conversationId)).callback;
+      await callPassed(m.lead.id);
+      expect(await logTeamCall(db, await access(), m.lead.id, mc.id, { outcome: "moved", started: "", lengthMin: "", note: "", next: "save" })).toMatchObject({ ok: true });
+      const moved = await render(LeadCardPage, { account: slug, leadId: m.lead.id }, { tab: "deal" });
+      expect(moved).toMatch(/data-testid="team-call-change" open=""/);
+      expect(moved).toContain('data-testid="team-call-cancel"');
+    });
+
+    it("the buyer opening /chat/<token> straight from the link records \"opened the chat\" (once per 10 minutes); never the seller's staff or a simulated buyer", async () => {
+      const { lead, conversationId } = await addLead();
+      const token = (await activeChatToken(db, acc, lead.id))!;
+      const opened = async (leadId: string) =>
+        db.select().from(leadEvents).where(and(eq(leadEvents.leadId, leadId), eq(leadEvents.type, "chat.opened")));
+      // Signed in as the seller's staff (the lead card's "Open buyer chat"): nothing.
+      holder.staff = true;
+      try {
+        await render(ChatPage, { token });
+        await render(ChatPage, { token }, { via: "sms" });
+      } finally {
+        holder.staff = false;
+      }
+      expect(await opened(lead.id)).toHaveLength(0);
+      // The buyer, signed out, from the link (not /c/): recorded, with the chat; a reload within 10 minutes is the same open.
+      await render(ChatPage, { token });
+      await render(ChatPage, { token });
+      const rows = await opened(lead.id);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({ actor: "buyer", data: { via: "link", conversationId } });
+      // The seller's thread shows "{buyer} opened the chat".
+      const [conv] = await db.select().from(conversations).where(eq(conversations.id, conversationId));
+      expect((await conversationView(db, acc, conv)).markers?.filter((x) => x.kind === "chat_opened")).toHaveLength(1);
+      // 10 minutes later it counts again.
+      await db.update(leadEvents).set({ createdAt: new Date(Date.now() - 11 * MIN) }).where(eq(leadEvents.id, rows[0].id));
+      await render(ChatPage, { token }, { via: "sms" });
+      expect((await opened(lead.id)).map((e) => e.data?.via).sort()).toEqual(["link", "sms"]);
+      // A simulated buyer's chat (the seller's rehearsal): never recorded.
+      const [sim] = await db.insert(leads).values({ accountId: acc, fullName: "Sim Buyer", phone: "", buyerRef: "SIM-RB2", language: "en", origin: "manual" }).returning();
+      const s = await startSimulatorConversation(db, actor(), acc, sim.id);
+      if (s.ok) {
+        const simToken = await activeChatToken(db, acc, sim.id);
+        if (simToken) await render(ChatPage, { token: simToken });
+      }
+      expect(await opened(sim.id)).toHaveLength(0);
     });
   });
 
