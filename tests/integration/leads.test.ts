@@ -194,10 +194,17 @@ describe("leads", () => {
     expect(await latestConsent(db, accA, l.id)).toBeNull();
   });
 
-  it("rejects a CSV without the required columns before touching anything; consent columns are not required", async () => {
-    const r = await importLeadsCsv(db, account(accA), human(), "full_name,phone\nA,0520000000", { now, fileConsent: { source: "x" } });
-    expect(r.missingColumns).toEqual(["language"]);
+  it("rejects a CSV without the required columns before touching anything; consent and language columns are not required", async () => {
+    const r = await importLeadsCsv(db, account(accA), human(), "full_name,language\nA,he", { now, fileConsent: { source: "x" } });
+    expect(r.missingColumns).toEqual(["phone"]);
     expect(r.created + r.updated).toBe(0);
+  });
+
+  it("a CSV without a language column uses the market's language, as Lead intake does", async () => {
+    const r = await importLeadsCsv(db, account(accA), human(), "full_name,phone\nNo Lang,0527773333", { now, fileConsent: { source: "x" } });
+    expect(r).toMatchObject({ created: 1, rejected: [], missingColumns: [] });
+    const [l] = await db.select().from(leads).where(and(eq(leads.accountId, accA), eq(leads.phone, "+972527773333")));
+    expect(l.language).toBe("he");
   });
 
   it("intake keys resolve to their own account until revoked", async () => {

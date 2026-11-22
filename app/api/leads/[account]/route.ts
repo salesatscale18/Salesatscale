@@ -69,6 +69,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
     await log("rejected", Object.values(lead.errors)[0] ?? "Invalid lead", name);
     return NextResponse.json({ error: "invalid_lead", fields: lead.errors }, { status: 422 });
   }
+  // A delivery here is the buyer sending the seller's form themselves: their own request to be
+  // contacted, so it counts as an explicit yes, also for a lead saved earlier without consent
+  // (UX, 22 Nov). CSV re-imports and a seller's re-add never add consent to such a lead.
+  if (lead.value.consent) lead.value.consentDefaulted = false;
 
   // The lead's market: the key's market first, then the optional "country" field, then the phone prefix.
   const result = await upsertLead(appDb, account.id, { userId: null, actingAs: false }, lead.value, "webhook", {

@@ -206,6 +206,15 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
       const html = await render(SettingsPage, {}, { section: "intake" });
       save("settings-intake", html);
       expect(html).toMatch(/<pre class="sas-code" style="white-space:pre-wrap;overflow-wrap:anywhere" data-intake-sample/);
+      // R5: the minimal body first (full_name and phone only), then "With optional fields" with the consent block.
+      const minimal = html.split('data-intake-sample="">')[1].split("</pre>")[0].replace(/&quot;/g, '"');
+      expect(JSON.parse(minimal)).toEqual({ full_name: "Rina Cohen", phone: "+972545551842" });
+      const second = html.indexOf('id="intake-sample-optional"');
+      expect(second).toBeGreaterThan(html.indexOf("data-intake-sample=\"\""));
+      expect(html.slice(second)).toMatch(/^id="intake-sample-optional">With optional fields<\/strong>/);
+      const optional = html.split('data-intake-sample-optional="" aria-labelledby="intake-sample-optional">')[1].split("</pre>")[0].replace(/&quot;/g, '"');
+      expect(JSON.parse(optional)).toMatchObject({ full_name: "Rina Cohen", phone: "+972545551842", consent: { source: "yoursite.example/contact" } });
+      expect(html).toContain("Mobile number, with the country code if it is not local. Used for SMS, and for WhatsApp when it&#x27;s on.");
       expect(html).toContain("yoursite.example/contact");
       expect(html).toMatch(/<code id="endpoint" class="sas-num" aria-labelledby="endpoint-label" style="overflow-wrap:anywhere;min-width:0">http:\/\/localhost:3000\/api\/leads\//);
       expect(html).not.toContain("docs/lead-intake.md");
