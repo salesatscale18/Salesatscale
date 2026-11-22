@@ -43,7 +43,7 @@ const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { createSimulatedBuyer, startSimulatorConversation, buyerChat, resolveChatLink } = await import("@/lib/simulator/service");
-const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
+const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, recordVoiceConsent, VOICE_CONSENT_WORDING, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
 const { buildVoiceInstructions, loadVoiceInstructions, reAskLine, CHAT_RECAP_LINES, CONTINUE_FALLBACK, CONTINUE_FALLBACK_HE } = await import("@/lib/voice/instructions");
 const { VoiceEngine } = await import("@/lib/voice/engine");
 const { ManualClock, flushAsync } = await import("@/lib/voice/realtime");
@@ -284,6 +284,18 @@ describe("starting a call", () => {
     expect(s.every((x) => x.isTest === false && x.startedByUserId === null)).toBe(true);
     // No new conversation: the call joins the chat's own.
     expect((await db.select().from(conversations).where(eq(conversations.leadId, b.leadId))).map((c) => c.channel)).toEqual(["simulator"]);
+  });
+
+  it("a lead with no consent record gets one on the first switch, with the current wording (calls may be recorded); a second switch adds none", async () => {
+    const b = await newBuyer("Nora Vale");
+    await db.delete(consentRecords).where(eq(consentRecords.leadId, b.leadId));
+    expect(await recordVoiceConsent(db, account.id, b.leadId, IN_HOURS)).toBe(true);
+    expect(await recordVoiceConsent(db, account.id, b.leadId, IN_HOURS)).toBe(false);
+    const recs = await db.select().from(consentRecords).where(eq(consentRecords.leadId, b.leadId));
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({ channel: "voice", source: "Buyer chat page, first switch to voice", voiceConsentAt: IN_HOURS });
+    expect(recs[0].wording).toBe("Switched the chat to voice. The call is written down as text in this conversation, and some calls may be recorded for quality review.");
+    expect(VOICE_CONSENT_WORDING).not.toMatch(/no audio/i);
   });
 
   it("the route: the chat token is the only credential (wrong → 404, expired → 410), rate-limited per token", async () => {
