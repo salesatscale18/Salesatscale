@@ -20,7 +20,11 @@ import { aiUsageThisMonth, platformUsageThisMonth } from "@/lib/ai/usage";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
 import type { ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
-import { BOOKING_NOT_SENT_LINE, expectBuyer, FORM_NOT_SENT_LINE, micPcm, ORDER_FORM_REFUSED_SCRIPT, say, ScriptedRealtime, tool, VOICE_SCRIPTS, type Script, type ScriptedConnection } from "@/lib/voice/scripted-realtime";
+import {
+  BOOKING_NOT_SENT_LINE, expectBuyer, FORM_NOT_SENT_LINE, localNowFromInstructions, micPcm, NAMED_TIME_BOOKED_SCRIPT, NAMED_TIME_NOT_FREE_SCRIPT, ORDER_FORM_REFUSED_SCRIPT, say, ScriptedRealtime, tomorrowAtTen, tool, VOICE_SCRIPTS,
+  type Script, type ScriptedConnection,
+} from "@/lib/voice/scripted-realtime";
+import { bookingView, latestBookingOffer } from "@/lib/team-calls/service";
 import type { VoiceCallUsageRecord } from "@/lib/ai/models";
 import {
   closeStaleVoiceSessions, conversationVoiceMode, createVoiceSession, redeemVoiceTicket, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary,
@@ -232,7 +236,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
   });
 
-  it("asks for a person twice: a booking link in the chat (request_callback { brief }), the call stays live and agent-held, and goes on", async () => {
+  it("asks for a person twice: a booking card in the chat (request_callback { brief, time: null }), the call stays live and agent-held, and goes on", async () => {
     const c = await newCall("asks_for_person_twice");
     await c.run(15_000);
     await c.speak(); // first request
@@ -242,7 +246,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     const tc = await calls(c.conversationId);
     const ok = tc.filter((x) => x.name === "request_callback" && x.outcome === "ok");
     expect(ok).toHaveLength(1);
-    expect(ok[0].input).toEqual({ brief: expect.stringContaining("prefers to talk to a person") });
+    expect(ok[0].input).toEqual({ brief: expect.stringContaining("prefers to talk to a person"), time: null });
     // The booking card is in the chat, and the browser was told to show it during the call.
     const card = (await thread(c.conversationId)).find((m) => tc.some((x) => x.name === "app_message" && x.messageId === m.id && (x.result as { kind?: string }).kind === "booking"))!;
     expect(card).toBeDefined();
@@ -256,16 +260,16 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(tc.some((x) => x.name === "hand_off_to_human")).toBe(false);
     // The model heard the result in call wording: the link is in the chat, never read aloud; the call goes on.
     const sent = c.conn().sent.toolResults.filter((r) => r.name === "request_callback").at(-1)!.result as { message: string };
-    expect(sent.message).toMatch(/^The booking link is in the chat\. Tell the buyer, in one short spoken sentence in their language,/);
-    expect(sent.message).toContain("with the link in the chat (never read the link aloud).");
-    expect(sent.message).toContain("this call goes on.");
+    expect(sent.message).toMatch(/^The booking card is in the chat\. Tell the buyer, in one short spoken sentence in their language,/);
+    expect(sent.message).toContain("from the free times on the booking card in the chat (never read the link or the times aloud).");
+    expect(sent.message).toContain("this call goes on, and you stay on the line.");
     // The live transcript's chip while it ran.
     expect(c.json()).toContainEqual({ t: "tool", id: expect.any(String), name: "request_callback", label: "Requesting a call", status: "running" });
     // A later turn works: the buyer answers "anything else?" and the agent closes politely.
     await c.speak();
     await c.run(20_000);
     const agent = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).map((m) => m.body);
-    expect(agent.at(-2)).toMatch(/I've put a link in the chat where you can pick a time for a call with a member of our team\. Is there anything else I can help with\?$/);
+    expect(agent.at(-2)).toMatch(/the free times for a call with a member of our team are in the chat; pick the one that suits you\. Is there anything else I can help with\?$/);
     expect(agent.at(-1)).toBe("Thanks for your time. Talk soon, goodbye.");
     expect(c.engine.isEnded).toBe(false);
     await hangUp(c);
@@ -286,10 +290,117 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await hangUp(c);
     const r = c.conn().sent.toolResults.find((x) => x.name === "request_callback")!.result as Record<string, unknown>;
     expect(r).toMatchObject({ ok: false, refused: true });
-    expect(r.message).toMatch(/^The booking link was NOT sent \(No brief\)\. Do not say there is a link in the chat or that a call is set up\./);
+    expect(r.message).toMatch(/^The booking link was NOT sent and nothing was booked \(No brief\)\. Do not say there is a link in the chat or that a call is booked or set up\./);
     const said = (await thread(c.conversationId)).filter((m) => m.actor === "agent").map((m) => m.body);
     expect(said.at(-1)).toBe(BOOKING_NOT_SENT_LINE);
     expect(c.json().filter((m) => m.t === "message")).toEqual([]);
+  });
+
+  describe("N1 on a call: request_callback with the time the buyer names", () => {
+    // Every half hour is a slot, so "tomorrow at ten" is free whatever the day; restored afterwards.
+    const ALL_DAY = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
+    let savedHours: unknown;
+    beforeAll(async () => {
+      savedHours = (await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc)))[0].contactHours;
+      await db.update(sellerAccounts).set({ contactHours: ALL_DAY }).where(eq(sellerAccounts.id, acc));
+    });
+    afterAll(async () => {
+      await db.update(sellerAccounts).set({ contactHours: savedHours as typeof ALL_DAY | null }).where(eq(sellerAccounts.id, acc));
+    });
+    const scripted = (script: Script) => {
+      const clock = new ManualClock();
+      return newCall(null, { clock, model: new ScriptedRealtime({ clock, defaultScript: script }) });
+    };
+    const buyerCtx = async (leadId: string) => ({
+      lead: (await db.select().from(leads).where(eq(leads.id, leadId)))[0], account: (await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, acc)))[0],
+    });
+    const agentSaid = async (conversationId: string) => (await thread(conversationId)).filter((m) => m.actor === "agent" && m.voiceSessionId).map((m) => m.body);
+
+    it("a free time: booked through the card's path (actor agent), the Call booked card shown during the call, confirmed aloud; the call goes on", async () => {
+      const c = await scripted(NAMED_TIME_BOOKED_SCRIPT);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(30_000);
+      const rc = (await calls(c.conversationId)).filter((x) => x.name === "request_callback");
+      expect(rc).toHaveLength(1);
+      expect(rc[0].outcome).toBe("ok");
+      expect(rc[0].input).toMatchObject({ time: expect.stringMatching(/T10:00:00[+-]\d{2}:\d{2}$/) });
+      // Booked through bookCall: one booking event by the agent, the same data as the card's booking.
+      const booked = (await db.select().from(leadEvents).where(eq(leadEvents.leadId, c.leadId))).filter((e) => e.type === "callback.requested");
+      expect(booked).toHaveLength(1);
+      expect(booked[0]).toMatchObject({ actor: "agent", data: { booked: true, brief: expect.any(String) } });
+      expect(new Date(String(booked[0].data?.at)).toISOString()).toBe(new Date(String((rc[0].input as { time: string }).time)).toISOString());
+      // The card is "Call booked" and the browser was told to refetch the thread during the call.
+      const view = await bookingView(db, await buyerCtx(c.leadId));
+      expect(view?.booked?.at).toBe(booked[0].data?.at);
+      expect(c.json()).toContainEqual({ t: "message", messageId: view!.offerMessageId });
+      // The model heard the booked result in call wording: confirm aloud, never point to the chat for it; the call goes on.
+      const sent = c.conn().sent.toolResults.filter((r) => r.name === "request_callback").at(-1)!.result as { message: string; booked: boolean };
+      expect(sent.booked).toBe(true);
+      expect(sent.message).toMatch(/^Booked: /);
+      expect(sent.message).toContain("Confirm the day and time aloud in one short spoken sentence in their language, as a person would say it");
+      expect(sent.message).toContain("this call goes on.");
+      expect(sent.message).not.toContain("in their wording");
+      // Said as a person would, never a link or a list; the call goes on.
+      expect((await agentSaid(c.conversationId)).at(-1)).toMatch(/Done: a member of our team will call you tomorrow at ten\. Is there anything else I can help with\?$/);
+      expect(c.engine.isEnded).toBe(false);
+      expect((await conv(c.conversationId)).status).toBe("open");
+      await c.speak();
+      await c.run(20_000);
+      expect((await agentSaid(c.conversationId)).at(-1)).toBe("Thanks for your time. Talk soon, goodbye.");
+      await hangUp(c);
+    });
+
+    it("a taken time: nothing booked, the nearest free times offered aloud (at most three), the card in the chat; the buyer picks one and it is booked", async () => {
+      // Another buyer of the account takes tomorrow at ten.
+      const other = (await startVoiceTestConversation(db, acc, me.id, {}))!;
+      const c = await scripted(NAMED_TIME_NOT_FREE_SCRIPT);
+      const tomorrowTen = tomorrowAtTen({ results: {}, last: () => undefined, fields: [], localNow: localNowFromInstructions(c.conn().cfg.instructions) });
+      const { runTool } = await import("@/lib/agent/tools");
+      const { playbook } = await ensureDraftVersion(db, acc);
+      const pre = await runTool("request_callback", { brief: "Pricing", time: tomorrowTen }, { db, accountId: acc, leadId: other.leadId, conversationId: other.conversationId, playbook, currency: "ILS", callId: randomUUID(), language: "en" });
+      // Booked now, or already taken by another buyer's call earlier in this file: either way not free for this one.
+      expect(pre.outcome).toBe("ok");
+      await c.run(15_000);
+      await c.speak();
+      await c.run(30_000);
+      const first = c.conn().sent.toolResults.filter((r) => r.name === "request_callback")[0].result as { message: string; booked: boolean; alternatives: { time: string }[] };
+      expect(first.booked).toBe(false);
+      expect(first.alternatives.length).toBeGreaterThan(0);
+      expect(first.alternatives.length).toBeLessThanOrEqual(3);
+      expect(first.message).toContain("Offer the buyer these nearest free times aloud, at most three, said naturally as a person would");
+      expect(first.message).toContain("Say the booking card is in the chat too");
+      // The card is in the chat during the call; the agent says the times as a person would and points to the card.
+      const card = await latestBookingOffer(db, acc, c.leadId);
+      expect(c.json()).toContainEqual({ t: "message", messageId: card!.messageId });
+      const offerLine = (await agentSaid(c.conversationId)).at(-1)!;
+      expect(offerLine).toMatch(/Tomorrow at ten is taken, I'm afraid\. I can do .+, and the free times are in the chat too\. Which suits you\?$/);
+      expect(offerLine).not.toMatch(/\d{2}:\d{2}|https?:/);
+      expect((await db.select().from(leadEvents).where(eq(leadEvents.leadId, c.leadId))).filter((e) => e.type === "callback.requested")).toHaveLength(0);
+      // The buyer picks the first: booked at that time, confirmed aloud.
+      await c.speak();
+      await c.run(30_000);
+      const rc = (await calls(c.conversationId)).filter((x) => x.name === "request_callback");
+      expect(rc.map((x) => (x.input as { time: string }).time)).toEqual([tomorrowTen, first.alternatives[0].time]);
+      const booked = (await db.select().from(leadEvents).where(eq(leadEvents.leadId, c.leadId))).filter((e) => e.type === "callback.requested");
+      expect(booked).toHaveLength(1);
+      expect(Date.parse(String(booked[0].data?.at))).toBe(Date.parse(first.alternatives[0].time));
+      expect((await agentSaid(c.conversationId)).at(-1)).toMatch(/Done: a member of our team will call you (?:today|tomorrow|on \w+) at [a-z ]+\. Is there anything else I can help with\?$/);
+      expect(c.engine.isEnded).toBe(false);
+      await hangUp(c);
+    });
+
+    it("the time as \"null\" text from a realtime model is no time: only the card", async () => {
+      const c = await scripted([expectBuyer("Can someone call me?"), tool("request_callback", { brief: "Pricing", time: "null" }), say("Done.")]);
+      await c.run(15_000);
+      await c.speak();
+      await c.run(20_000);
+      const rc = (await calls(c.conversationId)).filter((x) => x.name === "request_callback");
+      expect(rc[0]).toMatchObject({ outcome: "ok", input: { brief: "Pricing", time: null } });
+      const sent = c.conn().sent.toolResults.find((r) => r.name === "request_callback")!.result as { message: string };
+      expect(sent.message).toMatch(/^The booking card is in the chat\./);
+      await hangUp(c);
+    });
   });
 
   it("a call that starts with an open call request has it in its first instructions", async () => {

@@ -23,6 +23,8 @@ import type { PlainItem } from "@/lib/agent/prompt";
 import { publishedCatalog } from "@/lib/catalog/service";
 import { scheduledFollowUp } from "@/lib/follow-ups/schedule";
 import { leadCallback } from "@/lib/callbacks/service";
+import { leadCallForContext, teamCallLogLine } from "@/lib/team-calls/service";
+import { storedBuyerZone } from "@/lib/team-calls/zone";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
 import { priceApprovalContext } from "@/lib/agent/price-approval";
 import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
@@ -53,6 +55,8 @@ export type VoiceInstructionInput = {
   followUp: { dueLocal: string; topic: string | null } | null;
   /** The buyer's open call request (lib/callbacks), as turnContext shows it. Missing = none. */
   callback?: { timeLocal: string; confirmed: boolean } | null;
+  /** The team's log of its call with the buyer (lib/team-calls teamCallLogLine), as a chat turn shows it. */
+  teamCall?: string | null;
   /** "## Questions sent to the team" (lib/team-questions teamQuestionsContext): open questions and the team's answers. */
   teamQuestions?: string | null;
   /** "## Price approval" (lib/agent/price-approval.ts priceApprovalContext): the team's latest decline of a held price. */
@@ -107,7 +111,7 @@ export function buildVoiceInstructions(i: VoiceInstructionInput): string {
   // "Open objection" block (which quotes a card's steps) goes through the same replacements here.
   const context = voiceStageText(turnContext(i.playbook, i.deal, {
     stage: i.stage, agentMessages: i.agentMessages + 1, opener: i.resumed || i.continuing ? null : i.opener, catalog: i.catalog, names: i.names,
-    followUp: i.followUp, callback: i.callback ?? null, teamQuestions: i.teamQuestions ?? null, priceApproval: i.priceApproval ?? null, localNow: i.localNow, channel: "voice",
+    followUp: i.followUp, callback: i.callback ?? null, teamCall: i.teamCall ?? null, teamQuestions: i.teamQuestions ?? null, priceApproval: i.priceApproval ?? null, localNow: i.localNow, channel: "voice",
   }));
   const recap = i.recap.slice(-(i.continuing ? CHAT_RECAP_LINES : RECAP_LINES)).map((l) => `- ${ROLE[l.role]}: ${maskCardNumbers(l.text.replace(/\s+/g, " ").trim()).text.slice(0, 400)}`);
   const call = [
@@ -268,7 +272,7 @@ export async function loadVoiceInstructions(
   opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; language?: string } = {},
 ): Promise<VoiceCallContext> {
   const { account, version, conv, lead } = a;
-  const [stage, catalog, followUp, contact, earlier, agentCount, callback, teamQuestions, priceApproval] = await Promise.all([
+  const [stage, catalog, followUp, contact, earlier, agentCount, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
     loadStageFacts(db, account.id, lead.id),
     publishedCatalog(db, account.id).catch(() => null),
     scheduledFollowUp(db, account.id, lead.id),
@@ -278,11 +282,17 @@ export async function loadVoiceInstructions(
     db.select({ id: messages.id }).from(messages).where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))),
     // The open call request (requested or confirmed), as in a chat turn (lib/agent/turn.ts).
     leadCallback(db, account.id, lead.id, a.now),
+    // The team's log of its call with the buyer (as in a chat turn).
+    leadCallForContext(db, account.id, lead.id),
     // Questions this conversation sent to the team, and the team's answers (as in a chat turn).
     teamQuestionsContext(db, account.id, lead.id, conv.id, a.now),
     // The team's latest decline of a special price (as in a chat turn).
     priceApprovalContext(db, account.id, lead.id),
+    // The buyer's own zone as stored (RB4), as in a chat turn: the tools give the buyer times in it.
+    storedBuyerZone(db, account.id, lead.id),
   ]);
+  // Times in the buyer's stored zone when known, else the market's (the call's for a call request), as in a chat turn.
+  const zone = buyerZone ?? contact.timezone;
   // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
   const continuing = !opts.resumed && agentCount.length > 0;
   // A new call starts in the conversation's language (the opener is written in English or Hebrew; another language
@@ -309,10 +319,12 @@ export async function loadVoiceInstructions(
     playbook: version.playbook, voiceSettings: version.voiceSettings,
     seller: { tradeName: account.tradeName, currency: account.currency, languages: contact.languages },
     catalog: activeItems, deal: a.deal, stage, agentMessages: agentCount.length, names, opener,
-    localNow: localNowLine(a.now, contact.timezone),
+    // "Local time now" in the buyer's zone: request_callback reads a local time in it (N1), so the agent works dates out from it.
+    localNow: localNowLine(a.now, zone),
     // Times as the buyer should hear them ("Friday 20 November at 12:30"), as in a chat turn.
-    followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
-    callback: callback ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
+    followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, zone), topic: followUp.topic } : null,
+    callback: callback ? { timeLocal: formatBuyerLocal(callback.at, buyerZone ?? callback.timezone), confirmed: callback.status === "confirmed" } : null,
+    teamCall: teamCallLogLine(loggedCall, (at) => formatBuyerLocal(at, zone)),
     teamQuestions: teamQuestions || null,
     priceApproval: priceApproval || null,
     recap, resumed: opts.resumed, woke: opts.woke, continuing,

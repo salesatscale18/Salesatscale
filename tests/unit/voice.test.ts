@@ -36,7 +36,7 @@ import {
 } from "@/lib/voice/settings";
 import { ManualClock, flushAsync, type RealtimeEvent } from "@/lib/voice/realtime";
 import {
-  BOOKING_NOT_SENT_LINE, DEFAULT_SCRIPT, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
+  BOOKING_NOT_SENT_LINE, DEFAULT_SCRIPT, NAMED_TIME_BOOKED_SCRIPT, NAMED_TIME_NOT_FREE_SCRIPT, spokenClock, spokenTimes, tomorrowAtTen, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
 } from "@/lib/voice/scripted-realtime";
 import { assertLiveAllowed, clientEvents, GatewayRealtime, PROVEN_SESSION_FIELDS, ServerEventMapper, SETUP_RETRY_FIELDS, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 
@@ -221,10 +221,10 @@ describe("voice instructions", () => {
         create_quote: { ok: true, quote: "Q-1001 v1", totals: { total_today_including_vat: "₪100.00" } },
         search_catalog: { ok: true, items: [{ sku: "S", plain_name: "user seat", sold_here: true }] },
         schedule_follow_up: { ok: true, due_local: "Friday 27 November at 10:00", suggested_local: "Sunday 22 November at 09:00" },
-        request_callback: { ok: true, time_local: "Saturday 21 November at 10:00", suggested_local: "Sunday 22 November at 09:00" },
+        request_callback: { ok: true, booked: false, time_local: "Saturday 21 November at 10:00", suggested_local: "Sunday 22 November at 09:00", alternatives: [{ time: "2026-11-21T09:30:00+02:00", local: "Saturday 21 November at 09:30" }] },
       } as Record<string, Record<string, unknown>>)[name],
     };
-    const lines = [...Object.values(VOICE_SCRIPTS), DEFAULT_SCRIPT].flat()
+    const lines = [...Object.values(VOICE_SCRIPTS), DEFAULT_SCRIPT, NAMED_TIME_BOOKED_SCRIPT, NAMED_TIME_NOT_FREE_SCRIPT].flat()
       .flatMap((step) => (step.kind === "say" ? [typeof step.text === "function" ? step.text(fake) : step.text] : []));
     expect(lines.length).toBeGreaterThan(40);
     for (const line of lines) expect(chatOnly(line), line).toEqual([]);
@@ -252,9 +252,9 @@ describe("voice instructions", () => {
   it("the voice block follows the plays: a request for a person, an upset buyer, objections, unanswered questions", () => {
     const block = voiceStageText(stableSystemPrompt(pb, seller, null, { channel: "voice" }));
     for (const line of [
-      '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: call request_callback with a brief; it puts a booking link in the chat where they pick a time. Never use hand_off_to_human for a call request.',
-      "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is booked by the buyer: call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat, where the buyer picks a time. When its result says the link was sent, say in one short sentence, in the buyer's language, that they can pick a time with the link in the chat (never read it aloud), then ask if there is anything else you can help with: this call goes on. If it was not sent, never say there is a link.",
-      '- Times: say them naturally, as a person would ("tomorrow at ten", "Friday 20 November at half past twelve"); the tools and your context give them in full ("Friday 20 November at 12:30"). Work out the date from "Local time now" in your context. Pass the time to schedule_follow_up as a local date and time, for example "2026-11-18T10:00".',
+      '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: call request_callback with a brief, and with the time they name, if they name one. Never use hand_off_to_human for a call request.',
+      "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) goes through request_callback with a brief (what the buyer wants to cover and what the person should have ready). When the buyer names a time for it by voice, call request_callback with that time; otherwise with time null, and the buyer picks a time on the booking card in the chat. After a Booked result, confirm the day and time aloud in one short sentence, as a person would (\"tomorrow at ten\"). When that time was not free, offer the nearest free times from the result aloud (at most three, said naturally) and say the booking card is in the chat. When only the card was posted, say in one short sentence, in the buyer's language, that the free times are in the chat and they can pick one (never read the link or the times aloud). Then ask if there is anything else you can help with: this call goes on. If the tool refused, never say a call is booked or that there is a link.",
+      '- Times: say them naturally, as a person would ("tomorrow at ten", "Friday 20 November at half past twelve"); the tools and your context give them in full ("Friday 20 November at 12:30"). Work out the date from "Local time now" in your context. Pass the time to schedule_follow_up and request_callback as a date and time with the offset shown in "Local time now", for example "2026-11-18T10:00:00+02:00".',
       "- Call with a person. Framed as a help, with a booking link in the chat where the buyer picks the time. Never read the link aloud.",
       'I\'ve put a link in the chat where you can pick a time that suits you."',
       "- If the buyer asks you to call them or get back to them at a time, call schedule_follow_up with that time; say they will get a text with a link back to the chat, where they can talk by voice or type.",
@@ -264,7 +264,7 @@ describe("voice instructions", () => {
       '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
       "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",
       '- An answer under "Questions sent to the team": give it when it is relevant, in one short sentence in your own words, once. Do not say the team replied or that you were waiting for it.',
-      "It puts a booking link in the chat; when its result says the link was sent, tell the buyer they can pick a time there (never read the link aloud; if it was not sent, never say there is a link). The call goes on after it: keep helping, and never use hand_off_to_human for a call.",
+      "When the buyer names a time for the call, pass it as time; otherwise pass time null. When its result says Booked, confirm the booked day and time aloud, as a person would say it (\"tomorrow at ten\"), instead of pointing to the chat. When that time was not free, offer the nearest free times the result gives, aloud and naturally (at most three, never read as a list), and say the booking card is in the chat too. When it only put the booking card in the chat (no time), say the free times are in the chat and they can pick one there (never read the link aloud). If it was refused, never say anything was booked or that there is a link. The call goes on after it: keep helping, and never use hand_off_to_human for a call.",
       "- Find the real objection. One question, in the same turn as the acknowledgement.",
     ]) expect(block, line).toContain(line);
     // hand_off_to_human is never the way to a call: only the upset line keeps it.
@@ -783,7 +783,36 @@ describe("security headers", () => {
 describe("call requests on a call (request_callback)", () => {
   it("the booking result reads in call wording: the link is in the chat, never read aloud; the call goes on", () => {
     const msg = "Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with a member of our team with the link. Keep answering their questions until the call.";
-    expect(voiceToolResultMessage(msg)).toBe("The booking link is in the chat. Tell the buyer, in one short spoken sentence in their language, that they can pick a time for a call with a member of our team with the link in the chat (never read the link aloud). Then ask if there is anything else you can help with: this call goes on.");
+    expect(voiceToolResultMessage(msg)).toBe("The booking card is in the chat. Tell the buyer, in one short spoken sentence in their language, that they can pick a time for a call with a member of our team from the free times on the booking card in the chat (never read the link or the times aloud). Then ask if there is anything else you can help with: this call goes on, and you stay on the line.");
+  });
+
+  it("N1 results in call wording: booked is confirmed aloud; not free offers the nearest times aloud and the card", () => {
+    // The texts lib/agent/tools.ts gives (request_callback with a time).
+    const booked = "Booked: the call with a member of our team is set for Tuesday 24 November at 10:00, the buyer's time. The chat shows the booking and the buyer gets a text message with the details. Confirm the day and time back to the buyer in one short sentence in their wording. Keep answering their questions until the call.";
+    expect(voiceToolResultMessage(booked)).toBe("Booked: the call with a member of our team is set for Tuesday 24 November at 10:00, the buyer's time. The booking shows in the chat and the buyer gets a text with the details. Confirm the day and time aloud in one short spoken sentence in their language, as a person would say it (\"tomorrow at ten\"); do not point them to the chat for it. Then ask if there is anything else you can help with: this call goes on.");
+    const notFree = "Not booked: that time is already taken. Offer the buyer the nearest free times, in their wording: Tuesday 24 November at 09:30; Tuesday 24 November at 10:30; Tuesday 24 November at 11:00. The booking link is in the chat too, where they can pick another free time. When they choose one of these, call request_callback again with its time. Keep answering their questions until the call.";
+    expect(voiceToolResultMessage(notFree)).toBe("Not booked: that time is already taken. Offer the buyer these nearest free times aloud, at most three, said naturally as a person would (\"tomorrow at ten or at eleven\"), never read as a list: Tuesday 24 November at 09:30; Tuesday 24 November at 10:30; Tuesday 24 November at 11:00. Say the booking card is in the chat too, where they can pick another free time (never read the link aloud). When they choose one of these, call request_callback again with its time. Then ask if there is anything else you can help with: this call goes on.");
+    const none = "Not booked: that time is more than 7 days ahead, and the team has no free time in the next 7 days. Tell the buyer, in one short sentence in their wording, that they can check the booking link in the chat for a time. Keep answering their questions until the call.";
+    expect(voiceToolResultMessage(none)).toBe("Not booked: that time is more than 7 days ahead, and the team has no free time in the next 7 days. Tell the buyer, in one short spoken sentence in their language, that they can check the booking card in the chat for a time (never read the link aloud). Then ask if there is anything else you can help with: this call goes on.");
+    // Every request_callback result in call wording passes the chat-only scan of the prompt (by message / in the chat allowed).
+    for (const m of [booked, notFree, none]) expect(voiceToolResultMessage(m)).not.toMatch(/in their wording|text message|\bwrite\b|\bclick\b/);
+  });
+
+  it("N1 tool description in call wording: time is passed; the card goes in the chat either way, never read aloud", () => {
+    const cb = voiceToolDescription(TOOL_DEFS.find((d) => d.name === "request_callback")!.description!);
+    expect(cb).toContain("When the buyer named a time for the call, pass it as time");
+    expect(cb).toContain("The booking card goes into the chat either way (never read the link aloud).");
+    expect(cb).not.toContain("The link is sent either way.");
+  });
+
+  it("scripted times said as a person would, never as a list", () => {
+    const ctx: ScriptCtx = { results: {}, last: () => undefined, fields: [], localNow: { date: "2026-11-23", time: "14:05", weekday: "Mon", offset: "+02:00" } };
+    expect(spokenClock("10:00")).toBe("ten");
+    expect(spokenClock("09:30")).toBe("half past nine");
+    expect(spokenClock("13:45")).toBe("quarter to two");
+    expect(tomorrowAtTen(ctx)).toBe("2026-11-24T10:00:00+02:00");
+    expect(spokenTimes(ctx, ["2026-11-24T09:30:00+02:00", "2026-11-24T10:30:00+02:00", "2026-11-24T11:00:00+02:00"])).toBe("tomorrow at half past nine, half past ten or eleven");
+    expect(spokenTimes(ctx, ["2026-11-23T16:00:00+02:00", "2026-11-26T10:00:00+02:00"])).toBe("today at four or on Thursday at ten");
   });
 
   it("the tool result reads in call wording; other results pass unchanged", () => {
@@ -799,7 +828,7 @@ describe("call requests on a call (request_callback)", () => {
 
   it("the callback line of the per-turn context in call wording", () => {
     const booked = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: true } }));
-    expect(booked).toContain("Call with a member of our team booked: Sat 21 Nov 10:00. Keep the conversation going: this call does not end because of the booking. If the buyer wants another time, they can rebook with the same link in the chat; call request_callback again only to send it again.");
+    expect(booked).toContain("Call with a member of our team booked: Sat 21 Nov 10:00. Keep the conversation going: this call does not end because of the booking. If the buyer names another time, call request_callback again with that time; otherwise they can rebook with the same link in the chat.");
     const requested = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: false } }));
     expect(requested).toContain("Call with a member of our team requested, waiting for the team to confirm: Sat 21 Nov 10:00. Keep the conversation going: this call does not end because of the request. If the buyer wants another time, call request_callback again.");
   });
@@ -840,10 +869,10 @@ describe("call requests on a call (request_callback)", () => {
   /** The agent's spoken lines of the run (its final transcripts). */
   const agentLines = (events: RealtimeEvent[]) => events.filter((x): x is Extract<RealtimeEvent, { type: "agent-transcript" }> => x.type === "agent-transcript" && x.final).map((x) => x.text);
 
-  it("scripted twice: one request_callback with a brief only (the buyer books from the link); the link is said to be in the chat", async () => {
+  it("scripted twice: one request_callback with a brief and time null (the buyer books from the card); the free times are said to be in the chat", async () => {
     const { calls, events } = await runTwice({ ok: true, message: "Link sent in the chat." });
-    expect(calls.map((c) => c.args)).toEqual([{ brief: expect.stringContaining("prefers to talk to a person") }]);
-    expect(agentLines(events).some((l) => l.includes("I've put a link in the chat where you can pick a time for a call with a member of our team."))).toBe(true);
+    expect(calls.map((c) => c.args)).toEqual([{ brief: expect.stringContaining("prefers to talk to a person"), time: null }]);
+    expect(agentLines(events).some((l) => l.includes("the free times for a call with a member of our team are in the chat; pick the one that suits you."))).toBe(true);
   });
 
   it("scripted twice: a refused booking link is never said to be in the chat", async () => {

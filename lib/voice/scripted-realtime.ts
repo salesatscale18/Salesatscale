@@ -133,13 +133,92 @@ const askedForPerson = (status: "open" | "settled", step: number) => ({
 const CALL_BRIEF = "The buyer prefers to talk to a person; topic not given. Have the offer and prices for their business ready.";
 /** request_callback put the booking card in the chat (reach part B: the buyer picks the time there). */
 const linkSent = (ctx: ScriptCtx) => ctx.last("request_callback")?.ok === true;
-/** What the agent says after request_callback, by its result: the link in the chat (never read aloud), or no link at all. */
+/** What the agent says after request_callback with no time, by its result: the free times in the chat (never read aloud), or no link at all. */
 const bookingLine = (who: string) => [
-  onlyIf(linkSent, say(`Done: I've put a link in the chat where you can pick a time for a call with a member of our team${who}. Is there anything else I can help with?`)),
+  onlyIf(linkSent, say(`Done: the free times for a call with a member of our team${who} are in the chat; pick the one that suits you. Is there anything else I can help with?`)),
   onlyIf((ctx) => !linkSent(ctx), say(BOOKING_NOT_SENT_LINE)),
 ];
 /** After a refused request_callback: never a link that was not sent. */
 export const BOOKING_NOT_SENT_LINE = "I couldn't set up the call link just now; the team will get back to you about a time. Is there anything else I can help with?";
+
+// N1 (22 Nov): the buyer names a time for the call; the agent passes it to request_callback.
+const HOUR_WORDS = ["twelve", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** "10:00" → "ten", "09:30" → "half past nine": a clock time as a person says it. */
+export function spokenClock(hhmm: string): string {
+  const [h, m] = hhmm.split(":").map(Number);
+  const word = HOUR_WORDS[h % 12];
+  if (m === 0) return word;
+  if (m === 30) return `half past ${word}`;
+  if (m === 15) return `quarter past ${word}`;
+  if (m === 45) return `quarter to ${HOUR_WORDS[(h + 1) % 12]}`;
+  return `${word} ${String(m).padStart(2, "0")}`;
+}
+
+/** "today", "tomorrow" or the weekday of a local date ("2026-11-24"), from "Local time now". */
+function spokenDay(ctx: ScriptCtx, date: string): string {
+  const base = ctx.localNow?.date;
+  const days = base ? Math.round((Date.parse(`${date}T00:00:00Z`) - Date.parse(`${base}T00:00:00Z`)) / 86_400_000) : NaN;
+  return days === 0 ? "today" : days === 1 ? "tomorrow" : `on ${DAY_NAMES[new Date(`${date}T00:00:00Z`).getUTCDay()]}`;
+}
+
+/**
+ * Times in the buyer's zone ("2026-11-24T10:30:00+02:00") as a person says them, never as a list:
+ * "tomorrow at half past nine, half past ten or eleven".
+ */
+export function spokenTimes(ctx: ScriptCtx, times: readonly string[]): string {
+  const parts = times.map((t) => ({ day: spokenDay(ctx, t.slice(0, 10)), clock: spokenClock(t.slice(11, 16)) }));
+  const oneDay = parts.every((p) => p.day === parts[0]?.day);
+  const said = parts.map((p, i) => (oneDay && i > 0 ? p.clock : `${p.day} at ${p.clock}`));
+  return said.length > 1 ? `${said.slice(0, -1).join(", ")} or ${said.at(-1)}` : said[0] ?? "";
+}
+
+/** Tomorrow at 10:00 in the buyer's zone, with the offset from "Local time now": the time the scripted buyer names. */
+export const tomorrowAtTen = (ctx: ScriptCtx) => `${localDayAt(ctx, 1, "10:00")}:00${ctx.localNow?.offset ?? "+00:00"}`;
+const NAMED_BRIEF = "The buyer wants a call with a person about prices for their business. Have the offer and prices ready.";
+const callBooked = (ctx: ScriptCtx) => ctx.last("request_callback")?.booked === true;
+const callNotFree = (ctx: ScriptCtx) => ctx.last("request_callback")?.booked === false;
+/** The free times a not-free result offers, in the buyer's zone. */
+const freeTimes = (ctx: ScriptCtx) => ((ctx.last("request_callback")?.alternatives ?? []) as { time?: string }[]).map((a) => String(a.time ?? "")).filter(Boolean);
+/** The time the latest booked request_callback booked: the first free time of the result before it, else the time the buyer named. */
+const bookedTime = (ctx: ScriptCtx) => {
+  const before = (ctx.results.request_callback ?? []).at(-2);
+  const first = ((before?.alternatives ?? []) as { time?: string }[])[0]?.time;
+  return before?.booked === false && first ? first : tomorrowAtTen(ctx);
+};
+/** After request_callback with a time: the booked time confirmed aloud, or the nearest free times offered, or never a booking that was not made. */
+const namedTimeLines = [
+  onlyIf(callBooked, say((ctx) => `Done: a member of our team will call you ${spokenTimes(ctx, [bookedTime(ctx)])}. Is there anything else I can help with?`)),
+  onlyIf((ctx) => ctx.last("request_callback")?.ok !== true, say(BOOKING_NOT_SENT_LINE)),
+];
+
+/** N1: the buyer names a free time; the agent books it and confirms it aloud, and the call goes on. */
+export const NAMED_TIME_BOOKED_SCRIPT: Script = [
+  expectBuyer("Can someone from your team call me tomorrow at ten?"),
+  say("Sure, one moment, I'm booking that."),
+  tool("request_callback", (ctx: ScriptCtx) => ({ brief: NAMED_BRIEF, time: tomorrowAtTen(ctx) })),
+  ...namedTimeLines,
+  onlyIf(callNotFree, say((ctx) => `That time is taken, I'm afraid. I can do ${spokenTimes(ctx, freeTimes(ctx))}, and the free times are in the chat too. Which suits you?`)),
+  expectBuyer("No, that's all, thanks."),
+  say("Thanks for your time. Talk soon, goodbye."),
+];
+
+/**
+ * N1: the time the buyer names is not free. The agent offers the nearest free times aloud (said naturally, at most three),
+ * the buyer picks the first and the agent books it.
+ */
+export const NAMED_TIME_NOT_FREE_SCRIPT: Script = [
+  expectBuyer("Can someone from your team call me tomorrow at ten?"),
+  say("Sure, one moment, I'm checking that time."),
+  tool("request_callback", (ctx: ScriptCtx) => ({ brief: NAMED_BRIEF, time: tomorrowAtTen(ctx) })),
+  onlyIf(callNotFree, say((ctx) => `${spokenTimes(ctx, [tomorrowAtTen(ctx)]).replace(/^./, (c) => c.toUpperCase())} is taken, I'm afraid. I can do ${spokenTimes(ctx, freeTimes(ctx))}, and the free times are in the chat too. Which suits you?`)),
+  onlyIf(callNotFree, expectBuyer("The first one works.")),
+  onlyIf(callNotFree, tool("request_callback", (ctx: ScriptCtx) => ({ brief: NAMED_BRIEF, time: freeTimes(ctx)[0] ?? null }))),
+  ...namedTimeLines,
+  expectBuyer("No, that's all, thanks."),
+  say("Thanks for your time. Talk soon, goodbye."),
+];
 
 
 // ---------------------------------------------------------------------------
@@ -288,8 +367,8 @@ function objectionScripts(): Record<string, Script> {
       say("Understood, that matters for your decision. How many locations do you have?"),
       expectBuyer(mhTime),
       tool("update_deal_state", (ctx: ScriptCtx) => ({ updates: quoteFieldUpdates(ctx, 2), next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null })),
-      // Reach part B: the call is booked by the buyer from a link in the chat (request_callback { brief }).
-      tool("request_callback", { brief }),
+      // Reach part B: no time named: the buyer books from the card in the chat (request_callback { brief, time: null }).
+      tool("request_callback", { brief, time: null }),
       onlyIf(linkSent, recordObjection("no_answer", mhTime, 4, false)),
       ...bookingLine(", who will have the exact answer"),
     ],
@@ -376,7 +455,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     expectBuyer("Mostly the price, to be honest."),
     say("Got it. The price depends mostly on how many locations you have. How many are there?"),
   ],
-  // "Asks for a person twice": asked again, the call is booked (request_callback { brief }): a booking link goes in
+  // "Asks for a person twice": asked again with no time named, the call is booked (request_callback { brief, time: null }): a booking card goes in
   // the chat, where the buyer picks a time; the agent says so (never reading it aloud) and the call goes on.
   asks_for_person_twice: [
     expectBuyer("I'd rather talk to a person from your team, please."),
@@ -384,7 +463,7 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     say("Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price or fit I can usually answer right now."),
     expectBuyer("No thanks, I'd really prefer to speak with someone. Tomorrow morning works for me."),
     say("No problem. One moment, I'm setting that up."),
-    tool("request_callback", { brief: CALL_BRIEF }),
+    tool("request_callback", { brief: CALL_BRIEF, time: null }),
     tool("update_deal_state", askedForPerson("settled", 3)),
     ...bookingLine(""),
     expectBuyer("No, that's all, thanks."),
