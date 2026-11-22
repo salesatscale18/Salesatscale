@@ -481,7 +481,8 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     // The instructions start the call in Hebrew and name the likely languages.
     const instr = c.model.connections[0].cfg.instructions;
     expect(instr).toContain("Language: start in Hebrew (if you cannot speak it, in English). The buyer most likely speaks Hebrew or English;");
-    expect(instr.endsWith("Conversation language: he.")).toBe(true);
+    // The call's instructions end with the conversation language; a recorded call (on by default) adds its recording block after.
+    expect(instr).toMatch(/Conversation language: he\.\n\n### This call is recorded\n[^#]+$/);
     expect(c.model.connections[0].cfg.language).toBe("he");
     expect(await check(c.conversationId)).toMatchObject({ result: "passed" });
   });

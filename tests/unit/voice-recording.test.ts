@@ -143,8 +143,10 @@ describe("where a call records", () => {
     expect(await recordingStoreFor("live", {})).toEqual({ store: null, reason: "no BLOB_READ_WRITE_TOKEN" });
     expect(await recordingStoreFor("live", { VERCEL_ENV: "preview", BLOB_READ_WRITE_TOKEN: "t" })).toEqual({ store: null, reason: "preview deployment (never records)" });
     expect(await recordingStoreFor("scripted", { VERCEL_ENV: "preview" })).toMatchObject({ store: null });
-    // @vercel/blob is not a dependency yet: the token alone records nothing.
-    expect(await recordingStoreFor("live", { BLOB_READ_WRITE_TOKEN: "t" })).toEqual({ store: null, reason: "@vercel/blob is not installed" });
+    // With the token: the Vercel Blob store (nothing is written here).
+    const blob = await recordingStoreFor("live", { BLOB_READ_WRITE_TOKEN: "t" });
+    expect(blob.reason).toBe("Vercel Blob");
+    expect(blob.store?.kind).toBe("blob");
     expect(recordingPrefix("acc", "sid", { VERCEL_ENV: "production" })).toBe("voice/production/acc/sid/");
     expect(recordingPrefix("acc", "sid", {})).toBe("voice/development/acc/sid/");
     expect(chunkPath("voice/production/acc/sid/", 1)).toBe("voice/production/acc/sid/00001.pcm");

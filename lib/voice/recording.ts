@@ -7,11 +7,13 @@
  *   fills every gap (a muted buyer, a pause, the agent not speaking), so both channels stay aligned.
  * - Chunks: `voice/<production|development>/<accountId>/<sessionId>/00001.pcm` (raw PCM, no header), private,
  *   kept 90 days by the store (RecordingStore). Playback builds a WAV on the fly (lib/voice/recording-playback.ts).
- * - Stores: in memory (tests and scripted calls) and Vercel Blob (lib/voice/recording-blob.ts). Without a token,
- *   or on a Preview deployment, recording is off and the session row says so.
+ * - Stores: in memory (tests and scripted calls) and Vercel Blob (lib/voice/recording-blob.ts, the conventions of
+ *   lib/sources/blob.ts). Without a token, or on a Preview deployment, recording is off and the row says so.
+ * - Keep period: @vercel/blob has no per-blob expiry; the cron deletes chunks past the account's period.
  * Server-only.
  */
 import { VOICE_SAMPLE_RATE } from "./protocol";
+import { blobRecordingStore } from "./recording-blob";
 
 /** The recording's sample rate (both channels). */
 export const RECORDING_RATE = 16_000;
@@ -36,7 +38,7 @@ export type RecordingChunkInfo = { path: string; size: number };
 /** Where recordings go. Paths are relative (`voice/...`); never a token or a signed URL in them. */
 export interface RecordingStore {
   readonly kind: "memory" | "blob";
-  /** Writes one chunk (private, kept `ttlDays`, then deleted by the store). */
+  /** Writes one chunk (private). `ttlDays`: the period it is kept (deleted by our cron; Blob has no expiry of its own). */
   put(path: string, bytes: Uint8Array, opts?: { ttlDays?: number }): Promise<void>;
   /** The chunks under a folder, in path order, with their sizes. */
   list(prefix: string): Promise<RecordingChunkInfo[]>;
@@ -96,28 +98,14 @@ export const chunkPath = (prefix: string, n: number) => `${prefix}${String(n).pa
 export async function recordingStoreFor(mode: "live" | "scripted", env: Record<string, string | undefined> = process.env): Promise<{ store: RecordingStore | null; reason: string }> {
   if (env.VERCEL_ENV === "preview") return { store: null, reason: "preview deployment (never records)" };
   if (mode === "scripted") return { store: memoryRecordingStore(), reason: "in memory (scripted call)" };
-  const token = env.BLOB_READ_WRITE_TOKEN?.trim();
-  if (!token) return { store: null, reason: "no BLOB_READ_WRITE_TOKEN" };
-  try {
-    const { blobRecordingStore } = await import("./recording-blob");
-    const store = await blobRecordingStore(token);
-    return store ? { store, reason: "Vercel Blob" } : { store: null, reason: "@vercel/blob is not installed" };
-  } catch {
-    return { store: null, reason: "Vercel Blob unavailable" };
-  }
+  const store = blobRecordingStore(env);
+  return store ? { store, reason: "Vercel Blob" } : { store: null, reason: "no BLOB_READ_WRITE_TOKEN" };
 }
 
-/** The store a recording is read back from (playback), by the session's mode; null when there is none here. */
+/** The store a recording is read back from (playback, delete, expiry), by the session's mode; null when there is none here. */
 export async function playbackStoreFor(mode: string, env: Record<string, string | undefined> = process.env): Promise<RecordingStore | null> {
   if (mode === "scripted") return memoryRecordingStore();
-  const token = env.BLOB_READ_WRITE_TOKEN?.trim();
-  if (!token) return null;
-  try {
-    const { blobRecordingStore } = await import("./recording-blob");
-    return await blobRecordingStore(token);
-  } catch {
-    return null;
-  }
+  return blobRecordingStore(env);
 }
 
 // ---------------------------------------------------------------------------

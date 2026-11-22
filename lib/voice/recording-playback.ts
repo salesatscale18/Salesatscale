@@ -128,17 +128,31 @@ export async function deleteRecording(
 }
 
 /**
- * The keep period ran out (the account's setting when the call was recorded): the store deletes the audio by
- * itself (its ttl); this marks the rows (the cron, once a minute: one update). Returns how many.
+ * The keep period ran out (the account's setting when the call was recorded; 0 = until deleted): the cron deletes
+ * the audio (Blob has no expiry of its own) and marks the row; the lines stay. At most `limit` calls a run; a call
+ * whose audio could not be deleted is tried again next run. One query when nothing is due. Returns how many.
  */
-export async function expireRecordings(db: Db, now = new Date()): Promise<number> {
-  const rows = await db.update(voiceSessions).set({ recordingState: "deleted", recordingChunks: 0, recordingBytes: 0 })
+export async function expireRecordings(
+  db: Db, now = new Date(), opts: { limit?: number; env?: Record<string, string | undefined>; store?: RecordingStore | null } = {},
+): Promise<number> {
+  const due = await db.select({ id: voiceSessions.id, accountId: voiceSessions.accountId, mode: voiceSessions.mode, prefix: voiceSessions.recordingRef })
+    .from(voiceSessions)
     .where(and(
       eq(voiceSessions.recordingState, "saved"),
-      // 0: kept until someone deletes it.
       sql`coalesce(${voiceSessions.recordingKeepDays}, 180) > 0`,
       sql`${voiceSessions.endedAt} + make_interval(days => coalesce(${voiceSessions.recordingKeepDays}, 180)) < ${now.toISOString()}::timestamptz`,
     ))
-    .returning({ id: voiceSessions.id });
-  return rows.length;
+    .limit(opts.limit ?? 20);
+  let done = 0;
+  for (const r of due) {
+    try {
+      const store = opts.store !== undefined ? opts.store : await playbackStoreFor(r.mode, opts.env);
+      if (store && r.prefix) await store.deleteAll(r.prefix);
+    } catch {
+      continue;
+    }
+    await markDeleted(db, r.accountId, r.id);
+    done++;
+  }
+  return done;
 }

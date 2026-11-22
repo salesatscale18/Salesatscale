@@ -338,7 +338,10 @@ describe("once per conversation, keep period, delete, download, expiry", () => {
     expect(r).toMatchObject({ recordingState: "saved", recordingKeepDays: 30 });
     const { expireRecordings } = await import("@/lib/voice/recording-playback");
     expect(await expireRecordings(db, new Date(r.endedAt!.getTime() + 29 * 86_400_000))).toBe(0);
-    expect(await expireRecordings(db, new Date(r.endedAt!.getTime() + 31 * 86_400_000))).toBeGreaterThanOrEqual(1);
+    expect(store.files.size).toBeGreaterThan(0);
+    expect(await expireRecordings(db, new Date(r.endedAt!.getTime() + 31 * 86_400_000), { store })).toBeGreaterThanOrEqual(1);
+    // Blob has no expiry of its own: the cron deleted the audio.
+    expect(store.files.size).toBe(0);
     expect(await row(c.sessionId)).toMatchObject({ recordingState: "deleted", recordingKeepDays: 30 });
   });
 
