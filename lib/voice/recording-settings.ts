@@ -8,16 +8,23 @@ import type { Db } from "@/db/types";
 import { sellerAccounts, type AccountVoiceSettings } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 
-/** How long recordings are kept (Settings › Voice › Call recordings); then only the audio is deleted. */
-export const RECORDING_KEEP_DAYS = [30, 90, 365] as const;
+/**
+ * How long recordings are kept (Settings › Voice › Call recordings); then only the audio is deleted. 0: until
+ * someone deletes it from the call (no expiry). The period is fixed when a call is recorded: a change applies to
+ * new calls only.
+ */
+export const RECORDING_KEEP_DAYS = [30, 90, 180, 365, 0] as const;
 export type RecordingKeepDays = (typeof RECORDING_KEEP_DAYS)[number];
-export const DEFAULT_RECORDING_KEEP_DAYS: RecordingKeepDays = 90;
+/** Recordings are kept until deleted when the period is this. */
+export const KEEP_UNTIL_DELETED = 0;
+export const DEFAULT_RECORDING_KEEP_DAYS: RecordingKeepDays = 180;
 
 export type ResolvedRecordingSettings = { recordCalls: boolean; recordingNotice: boolean; keepDays: RecordingKeepDays };
 
-const keepDaysOf = (v: unknown): RecordingKeepDays | null => (RECORDING_KEEP_DAYS as readonly number[]).includes(Number(v)) ? (Number(v) as RecordingKeepDays) : null;
+const keepDaysOf = (v: unknown): RecordingKeepDays | null =>
+  v !== null && v !== undefined && v !== "" && (RECORDING_KEEP_DAYS as readonly number[]).includes(Number(v)) ? (Number(v) as RecordingKeepDays) : null;
 
-/** The company's recording settings with the defaults filled in (both switches on, 90 days, when unset). */
+/** The company's recording settings with the defaults filled in (both switches on, 180 days, when unset). */
 export function resolveRecordingSettings(s: AccountVoiceSettings | null | undefined): ResolvedRecordingSettings {
   return { recordCalls: s?.recordCalls !== false, recordingNotice: s?.recordingNotice !== false, keepDays: keepDaysOf(s?.recordingKeepDays) ?? DEFAULT_RECORDING_KEEP_DAYS };
 }
@@ -89,23 +96,30 @@ export function withRecordingNotice(prompt: string, notice: string, o: { positio
 }
 
 /**
- * If the buyer raises the recording (owner decision, 22 Nov 2026: recording never stops on request), the agent's
- * answer, one constant per language; another language says the same meaning in that language.
+ * If the buyer raises the recording (owner decisions, 22 Nov 2026: recording never stops on request), the agent's
+ * answer, and, only if the buyer then objects to being recorded, one offer to continue in writing. One constant
+ * per language each; another language says the same meaning in that language.
  */
 export const RECORDING_ASKED_REPLY: Record<"en" | "he", string> = {
   en: "Some calls may be recorded for quality review; I don't control the recording myself.",
   he: "חלק מהשיחות עשויות להיות מוקלטות לבקרת איכות; ההקלטה לא בשליטתי.",
 };
+export const RECORDING_WRITING_OFFER: Record<"en" | "he", string> = {
+  en: "If you prefer, we can continue here in writing.",
+  he: "אם נוח יותר, אפשר להמשיך כאן בכתב.",
+};
 
 /**
  * The voice-only instruction a recorded call carries (and only a recorded one: without it the agent never says
- * calls are recorded). It answers only when the buyer raises the recording, never offers to stop it, never says
- * the call is not recorded, never explains why recordings are kept and never brings the topic up itself.
+ * calls are recorded). It answers only when the buyer raises the recording; if the buyer then objects, it offers
+ * once to continue in writing. It never offers to stop the recording, never says the call is not recorded, never
+ * explains why recordings are kept, never discusses it further and never brings the topic up itself.
  */
 export function recordingInstruction(): string {
   return [
     "### This call is recorded",
     `- Only if the buyer asks about or raises the recording: answer briefly and calmly with this sentence, in the language of the call: "${RECORDING_ASKED_REPLY.en}" (in Hebrew: "${RECORDING_ASKED_REPLY.he}"; in another language, the same meaning in that language). Then go back to the conversation.`,
-    "- The recording does not stop on request. Never say the call is not recorded or that the recording stopped, never explain why recordings are kept, and never bring up the recording yourself, apart from the recording line when you are told to say it.",
+    `- Only if the buyer then objects to being recorded, add once: "${RECORDING_WRITING_OFFER.en}" (in Hebrew: "${RECORDING_WRITING_OFFER.he}"; in another language, the same meaning). Then go back to the conversation.`,
+    "- The recording does not stop on request. Never say the call is not recorded or that the recording stopped, never explain why recordings are kept, do not discuss it further, and never bring up the recording yourself, apart from the recording line when you are told to say it.",
   ].join("\n");
 }

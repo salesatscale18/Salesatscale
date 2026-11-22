@@ -43,6 +43,8 @@ export type ScriptCtx = {
   localNow: { date: string; time: string; weekday?: string; offset?: string } | null;
   /** A recorded call's answer when the buyer raises the recording (from its instructions); null when not recorded. */
   recordingReply?: string | null;
+  /** A recorded call's one offer to continue in writing when the buyer then objects; null when not recorded. */
+  recordingWritingOffer?: string | null;
 };
 
 export type ScriptStep = (
@@ -576,6 +578,7 @@ export class ScriptedConnection implements RealtimeConnection {
     this.ctx = {
       results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions), localNow: localNowFromInstructions(cfg.instructions),
       recordingReply: /### This call is recorded\n- [^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
+      recordingWritingOffer: /### This call is recorded\n-[^\n]*\n- [^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
     };
     this.usage.textInTokens = Math.ceil(cfg.instructions.length / 4);
   }

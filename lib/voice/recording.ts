@@ -21,7 +21,7 @@ export const RECORDING_FRAME_BYTES = 4;
 export const RECORDING_CHUNK_SEC = 30;
 const CHUNK_FRAMES = RECORDING_RATE * RECORDING_CHUNK_SEC;
 /** How long the store keeps a recording when nothing else says (the account's setting sets it per call). */
-export const RECORDING_TTL_DAYS = 90;
+export const RECORDING_TTL_DAYS = 180;
 /** Frames per millisecond of call. */
 const FRAMES_PER_MS = RECORDING_RATE / 1000;
 /** The browser starts agent audio this long after it arrives when nothing is queued (PlaybackSchedule leadSec, 50 ms). */
@@ -220,6 +220,7 @@ export class CallRecorder {
   private progress: RecordingProgress = { chunks: 0, bytes: 0, sec: 0, failed: 0 };
   private done = false;
 
+  /** `ttlDays`: the store deletes each chunk after this many days; 0: kept until someone deletes it. */
   constructor(private readonly o: { store: RecordingStore; prefix: string; ttlDays?: number; onError?: (e: unknown) => void }) {}
 
   /** The buyer's microphone audio (24 kHz PCM16) that arrived at `atMs`. */
@@ -319,7 +320,8 @@ export class CallRecorder {
     const secEnd = (k * CHUNK_FRAMES + frames) / RECORDING_RATE;
     this.writes = this.writes.then(async () => {
       try {
-        await this.o.store.put(path, bytes, { ttlDays: this.o.ttlDays ?? RECORDING_TTL_DAYS });
+        const ttl = this.o.ttlDays ?? RECORDING_TTL_DAYS;
+        await this.o.store.put(path, bytes, ttl > 0 ? { ttlDays: ttl } : {});
         this.progress = { ...this.progress, chunks: this.progress.chunks + 1, bytes: this.progress.bytes + bytes.byteLength, sec: Math.round(secEnd) };
       } catch (e) {
         this.progress = { ...this.progress, failed: this.progress.failed + 1 };

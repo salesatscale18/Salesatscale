@@ -153,11 +153,12 @@ describe("where a call records", () => {
 
 describe("settings and the notice", () => {
   it("both switches default on; only an explicit false turns one off", () => {
-    expect(resolveRecordingSettings(null)).toEqual({ recordCalls: true, recordingNotice: true, keepDays: 90 });
-    expect(resolveRecordingSettings({ recordCalls: false })).toEqual({ recordCalls: false, recordingNotice: true, keepDays: 90 });
+    expect(resolveRecordingSettings(null)).toEqual({ recordCalls: true, recordingNotice: true, keepDays: 180 });
+    expect(resolveRecordingSettings({ recordCalls: false })).toEqual({ recordCalls: false, recordingNotice: true, keepDays: 180 });
     expect(resolveRecordingSettings({ recordingNotice: false, recordingKeepDays: 365 })).toEqual({ recordCalls: true, recordingNotice: false, keepDays: 365 });
-    // Only 30, 90 or 365 days.
-    expect(resolveRecordingSettings({ recordingKeepDays: 7 }).keepDays).toBe(90);
+    // 0 = until deleted; only 30, 90, 180, 365 or 0.
+    expect(resolveRecordingSettings({ recordingKeepDays: 0 }).keepDays).toBe(0);
+    expect(resolveRecordingSettings({ recordingKeepDays: 7 }).keepDays).toBe(180);
   });
 
   it("the notice: owner wording; after the greeting and introduction on a new call, first on a pick-up; named language otherwise", () => {

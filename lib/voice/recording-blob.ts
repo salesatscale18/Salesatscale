@@ -9,7 +9,7 @@
  * `access: "private"` option, the 90-day expiry option name, and reading a private blob with the token.
  * Server-only. Never logs or stores a URL with a token.
  */
-import { RECORDING_TTL_DAYS, type RecordingChunkInfo, type RecordingStore } from "./recording";
+import type { RecordingChunkInfo, RecordingStore } from "./recording";
 
 type BlobItem = { pathname: string; size: number; url: string; downloadUrl?: string };
 type BlobModule = {
@@ -47,8 +47,8 @@ export async function blobRecordingStore(token: string): Promise<RecordingStore 
     async put(path, bytes, opts) {
       await blob.put(path, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
         access: "private", token, addRandomSuffix: false, allowOverwrite: true, contentType: "application/octet-stream",
-        // Kept 90 days, then deleted by the store (option name to verify on the installed version).
-        ttlDays: opts?.ttlDays ?? RECORDING_TTL_DAYS,
+        // The account's keep period, then deleted by the store; none: kept until deleted (option name to verify).
+        ...(opts?.ttlDays ? { ttlDays: opts.ttlDays } : {}),
       });
     },
     async list(prefix): Promise<RecordingChunkInfo[]> {

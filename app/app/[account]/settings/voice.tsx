@@ -108,7 +108,7 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
               <span className="sas-small" id="voice-keep-hint">{t("settings.voice.rec.keep_hint")}</span>
             </span>
             <select className="sas-select" name="recordingKeepDays" defaultValue={String(recording.keepDays)} aria-describedby="voice-keep-hint" data-voice-keep-days="" style={{ width: "auto" }}>
-              {RECORDING_KEEP_DAYS.map((d) => <option key={d} value={d}>{t("settings.voice.rec.days", { n: d })}</option>)}
+              {RECORDING_KEEP_DAYS.map((d) => <option key={d} value={d}>{d ? t("settings.voice.rec.days", { n: d }) : t("settings.voice.rec.until_deleted")}</option>)}
             </select>
           </label>
           <Row id="voice-rec-hears" title={t("settings.voice.rec.hears")} hint={t("settings.voice.rec.hears_hint", { line: RECORDING_NOTICE.en })} />

@@ -24,7 +24,7 @@ const { micPcm, ScriptedRealtime } = await import("@/lib/voice/scripted-realtime
 const { closeStaleVoiceSessions, createVoiceSession, startVoiceTestConversation } = await import("@/lib/voice/service");
 const { MemoryRecordingStore, RECORDING_CHUNK_SEC, RECORDING_RATE } = await import("@/lib/voice/recording");
 const { recordingResponse } = await import("@/lib/voice/recording-playback");
-const { RECORDING_ASKED_REPLY, RECORDING_NOTICE, saveRecordingSettings } = await import("@/lib/voice/recording-settings");
+const { RECORDING_ASKED_REPLY, RECORDING_NOTICE, RECORDING_WRITING_OFFER, saveRecordingSettings } = await import("@/lib/voice/recording-settings");
 const { expectBuyer, say } = await import("@/lib/voice/scripted-realtime");
 const route = await import("@/app/app/[account]/calls/[sessionId]/recording/route");
 
@@ -109,7 +109,7 @@ describe("recording a call", () => {
     expect(r.recordingChunks).toBe(2);
     expect(r.recordingSec).toBe(r.durationSec);
     expect(c.lines.filter((l) => /recording (on|off|saved|failed)/.test(l))).toEqual([
-      expect.stringMatching(/recording on: test store, kept 90 days, line said$/), expect.stringMatching(/recording saved: chunks=2 bytes=\d+ sec=\d+$/),
+      expect.stringMatching(/recording on: test store, kept 180 days, line said$/), expect.stringMatching(/recording saved: chunks=2 bytes=\d+ sec=\d+$/),
     ]);
     expect(c.lines.join("\n")).not.toContain("voice/");
   });
@@ -140,7 +140,7 @@ describe("recording a call", () => {
   });
 
   it("switches: recording off (no notice, nothing stored); notice off (recorded, no notice); no store (off)", async () => {
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 90 });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 180 });
     const off = await newCall();
     await off.run(15_000);
     await end(off);
@@ -149,14 +149,14 @@ describe("recording a call", () => {
     expect((await agentLines(off.conversationId, off.sessionId))[0]).not.toContain(RECORDING_NOTICE.en);
     expect(off.lines.some((l) => l.endsWith("recording off: turned off in Settings › Voice"))).toBe(true);
 
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: false, keepDays: 90 });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: false, keepDays: 180 });
     const quiet = await newCall();
     await quiet.run(15_000);
     await end(quiet);
     expect(await row(quiet.sessionId)).toMatchObject({ recordingState: "saved", recordingNoticeSaid: false });
     expect((await agentLines(quiet.conversationId, quiet.sessionId))[0]).not.toContain(RECORDING_NOTICE.en);
 
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true, keepDays: 90 });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true, keepDays: 180 });
     const none = await newCall({ store: null });
     await none.run(15_000);
     await end(none);
@@ -225,20 +225,33 @@ describe("playing a recording back (seller side)", () => {
 
 describe("the buyer raises the recording", () => {
   /** The buyer asks; the scripted agent answers with what its instructions give for it (or asks again when nothing). */
-  const ASKS = [expectBuyer("Are you recording this?"), say((ctx) => ctx.recordingReply ?? "Sorry, could you say that again?")];
+  const ASKS = [
+    expectBuyer("Are you recording this?"), say((ctx) => ctx.recordingReply ?? "Sorry, could you say that again?"),
+    expectBuyer("I don't want to be recorded."), say((ctx) => ctx.recordingWritingOffer ?? "Sorry, could you say that again?"),
+    expectBuyer("Okay, go on."), say("Great. How many sites do you have?"),
+  ];
 
-  it("a recorded call: the instruction is there; the agent answers with the line and the recording goes on", async () => {
+  it("a recorded call: the instruction is there; asked → the line; objects → the writing offer once; the recording goes on", async () => {
     const c = await newCall({ script: ASKS });
     const instructions = c.model.connections[0].cfg.instructions;
     expect(instructions).toContain("### This call is recorded");
     expect(instructions).toContain(`"${RECORDING_ASKED_REPLY.en}"`);
     expect(instructions).toContain(RECORDING_ASKED_REPLY.he);
     expect(instructions).toContain("Never say the call is not recorded or that the recording stopped");
+    expect(instructions).toContain(`add once: "${RECORDING_WRITING_OFFER.en}"`);
+    expect(instructions).toContain(RECORDING_WRITING_OFFER.he);
     await c.run(15_000);
     await c.speak();
     await c.run(10_000);
+    expect((await agentLines(c.conversationId, c.sessionId)).at(-1)).toBe(RECORDING_ASKED_REPLY.en);
+    await c.speak();
+    await c.run(10_000);
+    expect((await agentLines(c.conversationId, c.sessionId)).at(-1)).toBe(RECORDING_WRITING_OFFER.en);
+    await c.speak();
+    await c.run(10_000);
     const said = await agentLines(c.conversationId, c.sessionId);
-    expect(said.at(-1)).toBe(RECORDING_ASKED_REPLY.en);
+    expect(said.filter((l) => l === RECORDING_WRITING_OFFER.en)).toHaveLength(1);
+    expect(said.at(-1)).toBe("Great. How many sites do you have?");
     // Recording never stops on request: still recording, then saved with the whole call.
     expect(await row(c.sessionId)).toMatchObject({ status: "live", recordingState: "recording" });
     await c.run(10_000);
@@ -252,12 +265,13 @@ describe("the buyer raises the recording", () => {
     const none = await newCall({ script: ASKS, store: null });
     expect(none.model.connections[0].cfg.instructions).not.toContain("This call is recorded");
     expect(none.model.connections[0].cfg.instructions).not.toContain(RECORDING_ASKED_REPLY.en);
+    expect(none.model.connections[0].cfg.instructions).not.toContain(RECORDING_WRITING_OFFER.en);
     await none.run(15_000);
     await none.speak();
     await none.run(10_000);
     await end(none);
     expect((await agentLines(none.conversationId, none.sessionId)).join(" ")).not.toContain("recorded");
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 90 });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 180 });
     const off = await newCall({ script: ASKS });
     expect(off.model.connections[0].cfg.instructions).not.toContain("This call is recorded");
     await end(off);
@@ -293,6 +307,23 @@ describe("once per conversation, keep period, delete, download, expiry", () => {
     expect(await row(fresh.sessionId)).toMatchObject({ recordingNoticeSaid: true });
   });
 
+  it("until deleted: no expiry on upload, never expired by the cron", async () => {
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true, keepDays: 0 });
+    const store = new MemoryRecordingStore();
+    const opts: unknown[] = [];
+    const put = store.put.bind(store);
+    store.put = async (p: string, b: Uint8Array, o?: { ttlDays?: number }) => { opts.push(o); await put(p, b, o); };
+    const c = await newCall({ store });
+    await c.run(15_000);
+    await end(c);
+    expect(opts).toEqual([{}]);
+    const r = await row(c.sessionId);
+    expect(r).toMatchObject({ recordingState: "saved", recordingKeepDays: 0 });
+    const { expireRecordings } = await import("@/lib/voice/recording-playback");
+    await expireRecordings(db, new Date(r.endedAt!.getTime() + 5 * 365 * 86_400_000));
+    expect((await row(c.sessionId)).recordingState).toBe("saved");
+  });
+
   it("the account's keep period goes to the store and the row; the cron marks expired recordings deleted", async () => {
     await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true, keepDays: 30 });
     const store = new MemoryRecordingStore();
@@ -321,7 +352,8 @@ describe("once per conversation, keep period, delete, download, expiry", () => {
     expect(await deleteRecording(db, { userId: me.id, actingAs: false }, other, c.sessionId, { store: c.store })).toBe(false);
     expect(await deleteRecording(db, { userId: me.id, actingAs: false }, acc, c.sessionId, { store: c.store })).toBe(true);
     expect(c.store!.files.size).toBe(0);
-    expect(await row(c.sessionId)).toMatchObject({ recordingState: "deleted", recordingChunks: 0 });
+    // Deleted by someone (not the keep period): no "kept N days".
+    expect(await row(c.sessionId)).toMatchObject({ recordingState: "deleted", recordingChunks: 0, recordingKeepDays: null });
     expect((await agentLines(c.conversationId, c.sessionId)).length).toBeGreaterThan(0);
     expect((await recordingResponse(db, acc, c.sessionId, null, { store: c.store })).status).toBe(404);
     const { auditLog } = await import("@/db/schema");

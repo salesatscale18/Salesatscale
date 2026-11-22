@@ -121,6 +121,8 @@ export async function deleteRecording(
   const store = opts.store !== undefined ? opts.store : await playbackStoreFor(s.mode, opts.env);
   if (store) await store.deleteAll(s.prefix);
   await markDeleted(db, accountId, sessionId);
+  // Deleted by someone, not by the keep period: the call reads "Recording deleted" (no "kept N days").
+  await db.update(voiceSessions).set({ recordingKeepDays: null }).where(and(eq(voiceSessions.id, sessionId), eq(voiceSessions.accountId, accountId)));
   await writeAudit(db, actor, { accountId, action: "voice.recording_deleted", targetType: "voice_session", targetId: sessionId, details: {} });
   return true;
 }
@@ -133,7 +135,9 @@ export async function expireRecordings(db: Db, now = new Date()): Promise<number
   const rows = await db.update(voiceSessions).set({ recordingState: "deleted", recordingChunks: 0, recordingBytes: 0 })
     .where(and(
       eq(voiceSessions.recordingState, "saved"),
-      sql`${voiceSessions.endedAt} + make_interval(days => coalesce(${voiceSessions.recordingKeepDays}, 90)) < ${now.toISOString()}::timestamptz`,
+      // 0: kept until someone deletes it.
+      sql`coalesce(${voiceSessions.recordingKeepDays}, 180) > 0`,
+      sql`${voiceSessions.endedAt} + make_interval(days => coalesce(${voiceSessions.recordingKeepDays}, 180)) < ${now.toISOString()}::timestamptz`,
     ))
     .returning({ id: voiceSessions.id });
   return rows.length;

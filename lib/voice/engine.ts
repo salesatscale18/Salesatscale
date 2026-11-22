@@ -766,7 +766,7 @@ export class VoiceEngine {
       store: choice.store, prefix, ttlDays: settings.keepDays,
       onError: (e) => (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `recording chunk write failed: ${errorSummary(e)}`)),
     });
-    this.log.info(voiceLine(this.sessionId, `recording on: ${choice.reason}, kept ${settings.keepDays} days${notice ? ", line said" : saidBefore ? ", line said on an earlier call" : ", no line (switched off)"}`));
+    this.log.info(voiceLine(this.sessionId, `recording on: ${choice.reason}, ${settings.keepDays ? `kept ${settings.keepDays} days` : "kept until deleted"}${notice ? ", line said" : saidBefore ? ", line said on an earlier call" : ", no line (switched off)"}`));
     return { on: true, notice, prefix, keepDays: settings.keepDays };
   }
 
