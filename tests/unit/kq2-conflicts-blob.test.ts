@@ -12,7 +12,7 @@ const blob = vi.hoisted(() => ({
 }));
 vi.mock("@vercel/blob", () => blob);
 
-import { CONFLICT_THRESHOLD, differs, subjectSimilarity } from "@/lib/pipeline/dedup";
+import { CONFLICT_THRESHOLD, differingNumber, differs, subjectSimilarity } from "@/lib/pipeline/dedup";
 import { DOCUMENTS_NOTE, FACTS_INSTRUCTION, factsInstruction, knownFactIndex, knownFactRef } from "@/lib/pipeline/prompts/facts";
 import { PIPELINE_TOOLS } from "@/lib/pipeline/prompts/system";
 import { parseFactsOutput, type CorpusIndex } from "@/lib/pipeline/validate";
@@ -37,6 +37,19 @@ describe("differs from an approved fact (code backstop)", () => {
     expect(differs("Delivery to Eilat takes 5 days.", "Delivery takes 3 days.")).toBe(false);
     expect(differs("GW-20 handles 60 units.", "GW-10 handles 30 units.")).toBe(false);
     expect(subjectSimilarity("Warranty is 24 months.", "Warranty is 12 months.")).toBeGreaterThanOrEqual(CONFLICT_THRESHOLD);
+  });
+
+  it("finds the first number of the new text the approved one does not have (for bolding)", () => {
+    const at = (a: string, b: string) => {
+      const r = differingNumber(a, b);
+      return r ? a.slice(r.start, r.end) : null;
+    };
+    expect(at("Installation is free from 5 sites.", "Installation is free from 3 sites.")).toBe("5");
+    expect(at("GW-10 covers 50 m, up to 1,500 units.", "GW-10 covers 50 m, up to 1000 units.")).toBe("1,500");
+    expect(at("Ships in 2 to 4 days.", "Ships in 2 to 3 days.")).toBe("4");
+    expect(at("Operates at -40°C.", "Operates at -30°C.")).toBe("-40");
+    expect(at("Installation is not included.", "Installation is included.")).toBeNull();
+    expect(at("Warranty is 24 months.", "Warranty: 24 months.")).toBeNull();
   });
 });
 

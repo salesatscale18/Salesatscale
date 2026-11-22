@@ -24,7 +24,7 @@ import { and, asc, desc, eq, inArray, isNotNull, like, lt, sql } from "drizzle-o
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, catalogVersions, knowledgeFacts, markets, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources,
+  agentVersions, auditLog, catalogVersions, knowledgeFacts, markets, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources, users,
   type PipelineRun, type PlayKey, type Playbook, type PlaybookSuggestion,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -809,6 +809,42 @@ export async function openFactConflicts(db: Db, accountId: string): Promise<Map<
     const suggested = byId.get(c.factId);
     const approved = byId.get(c.approvedFactId);
     if (suggested?.status === "suggested" && approved?.status === "approved") out.set(c.factId, approved);
+  }
+  return out;
+}
+
+/**
+ * When and by whom an approved fact was approved, for the conflict card:
+ * - recorded: the newest audit row that approved this fact on its own
+ *   (Approve, Replace the approved fact), with the user who clicked;
+ * - else a fact added by hand (approved on add): when and by whom it was added;
+ * - else (Approve all, a contradiction choice: no per-fact record) only when it was added.
+ * Only the first name is returned, never an email.
+ */
+export type ApprovalInfo = { kind: "approved" | "added"; at: Date; userId: string | null; firstName: string | null };
+export async function approvalInfo(
+  db: Db, accountId: string, facts: Pick<typeof knowledgeFacts.$inferSelect, "id" | "createdAt" | "createdByUserId">[],
+): Promise<Map<string, ApprovalInfo>> {
+  const out = new Map<string, ApprovalInfo>();
+  if (facts.length === 0) return out;
+  const rows = await db.select({ targetId: auditLog.targetId, at: auditLog.createdAt, userId: auditLog.actorUserId, firstName: users.firstName })
+    .from(auditLog).leftJoin(users, eq(users.id, auditLog.actorUserId))
+    .where(and(
+      eq(auditLog.accountId, accountId),
+      inArray(auditLog.action, ["knowledge.fact_approved", "knowledge.fact_replaced"]),
+      inArray(auditLog.targetId, facts.map((f) => f.id)),
+    ))
+    .orderBy(desc(auditLog.createdAt));
+  for (const r of rows) if (r.targetId && !out.has(r.targetId)) out.set(r.targetId, { kind: "approved", at: r.at, userId: r.userId, firstName: r.firstName });
+  const adders = [...new Set(facts.filter((f) => !out.has(f.id) && f.createdByUserId).map((f) => f.createdByUserId!))];
+  const names = new Map(adders.length
+    ? (await db.select({ id: users.id, firstName: users.firstName }).from(users).where(inArray(users.id, adders))).map((u) => [u.id, u.firstName])
+    : []);
+  for (const f of facts) {
+    if (out.has(f.id)) continue;
+    out.set(f.id, f.createdByUserId
+      ? { kind: "approved", at: f.createdAt, userId: f.createdByUserId, firstName: names.get(f.createdByUserId) ?? null }
+      : { kind: "added", at: f.createdAt, userId: null, firstName: null });
   }
   return out;
 }

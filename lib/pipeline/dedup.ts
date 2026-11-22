@@ -101,6 +101,22 @@ export function subjectSimilarity(a: string, b: string): number {
 }
 
 /**
+ * Where the first number of `text` that `other` does not have is (start and
+ * end in `text`), for bolding it; null when there is none. Same number rules
+ * as numberKey (thousands separators ignored, a sign only at a word's start).
+ */
+export function differingNumber(text: string, other: string): { start: number; end: number } | null {
+  const theirs = new Set(numberKey(other).split(",").filter(Boolean));
+  const re = /(?:(?<=^|[\s(])[-+±])?\d{1,3}(?:,\d{3})+(?!\d)(?:\.\d+)?|(?:(?<=^|[\s(])[-+±])?\d+(?:\.\d+)?/gu;
+  // Positions must be the shown text's: no bolding when normalising would move them.
+  if (text.normalize("NFKC") !== text) return null;
+  for (const m of text.matchAll(re)) {
+    if (!theirs.has(m[0].replace(/,/g, ""))) return { start: m.index!, end: m.index! + m[0].length };
+  }
+  return null;
+}
+
+/**
  * Whether a new statement says something different from an approved one
  * about the same thing (callers also check the topic): nearly the same
  * subject words, and either both give numbers and the numbers differ

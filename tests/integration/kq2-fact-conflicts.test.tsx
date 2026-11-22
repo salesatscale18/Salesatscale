@@ -24,7 +24,12 @@ vi.mock("@/lib/auth/account", () => ({
   actorOf: (a: { user: { id: string }; actingAs: boolean }) => ({ userId: a.user.id, actingAs: a.actingAs }),
 }));
 vi.mock("next/cache", () => ({ revalidatePath: () => {} }));
-vi.mock("next/headers", () => ({ headers: async () => new Headers({ host: "localhost:3000" }) }));
+/** The viewer's own zone (sas_tz cookie): the conflict card's dates follow it. */
+const ZONE = "America/New_York";
+vi.mock("next/headers", () => ({
+  headers: async () => new Headers({ host: "localhost:3000" }),
+  cookies: async () => ({ get: (n: string) => (n === "sas_tz" ? { value: "America/New_York" } : undefined) }),
+}));
 vi.mock("next/navigation", () => ({
   redirect: (url: string) => { throw Object.assign(new Error("NEXT_REDIRECT"), { url }); },
   notFound: () => { throw new Error("NEXT_NOT_FOUND"); },
@@ -123,18 +128,47 @@ describe("a new fact that differs from an approved fact", () => {
     expect((await svc.openFactConflicts(db, other)).size).toBe(0);
   });
 
-  it("shows the warning label, the approved fact and the two actions on the Knowledge list", async () => {
+  it("shows the conflict card (board KnowConflict): approved and new side by side, who approved it, dates in the viewer's zone, the two actions", async () => {
+    // The installation fact was approved on its own by a teammate (audit row), with only a first name shown.
+    const [dana] = await db.insert(users).values({ clerkId: "u-kq2-dana", email: "dana.private@p.test", firstName: "Dana", role: "user" }).returning();
+    const approvedAt = new Date("2026-11-20T23:30:00Z");
+    await db.insert(auditLog).values({ accountId: account.id, actorUserId: dana.id, action: "knowledge.fact_approved", targetType: "knowledge_fact", targetId: ids.install, createdAt: approvedAt });
     const html = renderToStaticMarkup(await (KnowledgePage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({}) }));
     save("kq2-knowledge", html);
-    const rows = html.split("<tr").filter((r) => r.includes("data-conflict="));
-    expect(rows).toHaveLength(2);
-    const warranty = rows.find((r) => r.includes("The warranty is 12 months from delivery."))!;
+    const cards = html.split("<section").filter((s) => s.includes("data-conflict="));
+    expect(cards).toHaveLength(2);
+    const warranty = cards.find((r) => r.includes("The warranty is"))!;
+    expect(warranty).toContain('border-color:#e9c98a');
+    expect(warranty).toContain("background:#fdf1dc");
     expect(warranty).toContain("sas-pill sas-pill--warning");
     expect(warranty).toContain("Differs from an approved fact");
+    expect(warranty).toContain("From &quot;New terms&quot;");
+    expect(warranty).toContain("Approved · used by the agent now");
     expect(warranty).toContain("Warranty is 24 months.");
-    expect(warranty).toContain("Replace the approved fact");
-    expect(warranty).toContain("Keep the approved fact");
-    expect(warranty).not.toContain("data-approve");
+    // Added by the viewer: "by you".
+    const today = (z: string, d: Date) => new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", timeZone: z }).format(d);
+    const added = (await factByText("Warranty is 24 months."))!.createdAt;
+    expect(warranty).toContain(`Approved ${today(ZONE, added)} by you`);
+    // The new text, with the differing number in bold.
+    expect(warranty).toContain("The warranty is <b>12</b> months from delivery.");
+    expect(warranty).toContain("color:#a15c07");
+    expect(warranty).toContain("background:#fffbf3");
+    expect(warranty).toContain(`Found ${today(ZONE, (await factByText("The warranty is 12 months from delivery."))!.createdAt)}`);
+    expect(warranty).toContain("sas-btn sas-btn--primary sas-btn--sm");
+    expect(warranty).toMatch(/sas-btn--primary sas-btn--sm"[^>]*>Replace the approved fact/);
+    expect(warranty).toMatch(/sas-btn--secondary sas-btn--sm"[^>]*>Keep the approved fact/);
+    expect(warranty).toContain("The agent keeps using the approved fact until you choose.");
+    // Approved by a teammate: first name only, never the email; the date in the viewer's zone (21 Nov in UTC, 20 Nov in New York).
+    const install = cards.find((r) => r.includes("Installation is not included"))!;
+    expect(install).toContain("Approved 20 Nov by Dana");
+    expect(html).not.toContain("dana.private@p.test");
+    // No number differs: plain text.
+    expect(install).not.toContain("<b>");
+    // In the table, the row only points at its card: no Approve, no Replace.
+    const row = html.split("<tr").find((r) => r.includes("The warranty is 12 months from delivery."))!;
+    expect(row).toContain(`href="#kx-${ids.newWarranty}"`);
+    expect(row).not.toContain("data-approve");
+    expect(row).not.toContain("data-replace");
     // A plain suggestion keeps its Approve button.
     const screen = html.split("<tr").find((r) => r.includes("The panel has a 7-inch screen."))!;
     expect(screen).toContain("data-approve");

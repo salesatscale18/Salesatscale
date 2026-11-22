@@ -9,8 +9,10 @@ import { ConfirmDelete, ListTable, ListToolbar, RowMenu, SidePanel, SortableTh, 
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { listFacts, listTopics, unansweredQuestions, type QuestionAsk } from "@/lib/agent/service";
-import { locateEvidence, openContradictions, openFactConflicts, sourceGaps, type EvidenceLink } from "@/lib/pipeline/service";
-import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
+import { approvalInfo, locateEvidence, openContradictions, openFactConflicts, sourceGaps, type EvidenceLink } from "@/lib/pipeline/service";
+import { differingNumber } from "@/lib/pipeline/dedup";
+import { formatDayMonthIn, formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
+import { readViewerZone } from "@/lib/viewer-zone-server";
 import { t, type MessageKey } from "@/lib/i18n";
 import { firstParam, hrefWith, sortParams, TRANSIENT_PARAMS } from "@/lib/list-kit";
 import {
@@ -47,8 +49,8 @@ const DROP = [...TRANSIENT_PARAMS, "question", "done", "error", "n", "edit"] as 
 export default async function KnowledgePage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
-  const { account } = await requireAccount(slug);
-  const [topics, allFacts, asked, gaps, contradictions, conflicts, progress] = await Promise.all([
+  const { account, user } = await requireAccount(slug);
+  const [topics, allFacts, asked, gaps, contradictions, conflicts, progress, viewerZone] = await Promise.all([
     listTopics(appDb, account.id),
     listFacts(appDb, account.id),
     unansweredQuestions(appDb, account.id, 10),
@@ -56,8 +58,12 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
     openContradictions(appDb, account.id),
     openFactConflicts(appDb, account.id),
     setupProgress(appDb, account),
+    readViewerZone(),
   ]);
   const tz = account.timezone;
+  // Conflict cards: dates in the viewer's own zone (the sas_tz cookie), else the account's.
+  const cardZone = viewerZone ?? account.timezone;
+  const approvals = await approvalInfo(appDb, account.id, [...conflicts.values()]);
   const now = new Date();
   // Buyers' questions first, then questions the sources do not answer (same text once).
   const askedKeys = new Set(asked.map((q) => q.question.toLowerCase()));
@@ -224,6 +230,63 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
             </section>
           ))}
 
+          {/* A new fact that differs from an approved one (board KnowConflict): replace the approved fact or keep it. */}
+          {allFacts.filter((f) => f.status === "suggested" && conflicts.has(f.id)).filter((f) => !current || f.topic === current.topic || conflicts.get(f.id)!.topic === current.topic).map((f) => {
+            const old = conflicts.get(f.id)!;
+            const who = approvals.get(old.id);
+            const name = who?.userId && who.userId === user.id ? t("knowledge.conflict.you") : who?.firstName?.trim() || null;
+            const date = who ? formatDayMonthIn(who.at, cardZone) : "";
+            const approvedLine = !who ? null
+              : who.kind === "added" ? t("knowledge.conflict.added_on", { date })
+                : name ? t("knowledge.conflict.approved_by", { date, name }) : t("knowledge.conflict.approved_on", { date });
+            const l = linkOf(f);
+            const sourceTitle = l?.title ?? f.sourceLabel ?? null;
+            const pageNo = /^p\.(\d+)$/i.exec(f.sourceLocator ?? "")?.[1];
+            const where = pageNo ? t("knowledge.conflict.page", { n: pageNo }) : (f.sourceLocator && f.sourceLocator.toLowerCase() !== "note" ? f.sourceLocator : "");
+            const bold = differingNumber(f.statement, old.statement);
+            return (
+              <section key={`kx-${f.id}`} className="sas-panel" aria-labelledby={`kx-${f.id}`} data-conflict={old.id} style={{ overflow: "hidden", borderColor: "#e9c98a" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: 8, padding: "12px 16px", background: "#fdf1dc" }}>
+                  <span id={`kx-${f.id}`} className="sas-pill sas-pill--warning"><Icon name="alert-triangle" />{t("knowledge.conflict.label")}</span>
+                  {sourceTitle ? (
+                    <span className="sas-small" style={{ marginInlineStart: "auto", minWidth: 0, overflowWrap: "anywhere" }} dir="auto">
+                      {l ? <a href={l.href} style={{ color: "inherit", textDecoration: "none" }}>{where ? t("knowledge.conflict.from_at", { source: sourceTitle, where }) : t("knowledge.conflict.from", { source: sourceTitle })}</a>
+                        : (where ? t("knowledge.conflict.from_at", { source: sourceTitle, where }) : t("knowledge.conflict.from", { source: sourceTitle }))}
+                    </span>
+                  ) : null}
+                </div>
+                {/* Two columns, one under the other on a phone; the 1px gap is the divider line. */}
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))", gap: 1, background: "var(--line)", borderBlock: "1px solid var(--line)" }}>
+                  <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6, background: "var(--surface-raised)", minWidth: 0 }} data-approved="">
+                    <span className="sas-label">{t("knowledge.conflict.approved_label")}</span>
+                    <span style={{ overflowWrap: "anywhere" }} dir="auto">{old.statement}</span>
+                    {approvedLine ? <span className="sas-small">{approvedLine}</span> : null}
+                  </div>
+                  <div style={{ padding: "14px 16px", display: "flex", flexDirection: "column", gap: 6, background: "#fffbf3", minWidth: 0 }} data-new="">
+                    <span className="sas-label" style={{ color: "#a15c07" }}>{t("knowledge.conflict.new_label")}</span>
+                    <span style={{ overflowWrap: "anywhere" }} dir="auto">
+                      {bold ? <>{f.statement.slice(0, bold.start)}<b>{f.statement.slice(bold.start, bold.end)}</b>{f.statement.slice(bold.end)}</> : f.statement}
+                    </span>
+                    <span className="sas-small">{t("knowledge.conflict.found", { date: formatDayMonthIn(f.createdAt, cardZone) })}</span>
+                  </div>
+                </div>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 8, padding: "12px 16px", alignItems: "center" }}>
+                  <form action={resolveFactConflictAction}>
+                    {hidden(f)}
+                    <input type="hidden" name="choice" value="replace" />
+                    <button type="submit" className={buttonClass("primary", "sm")} data-replace="">{t("knowledge.conflict.replace")}</button>
+                  </form>
+                  <form action={resolveFactConflictAction}>
+                    {hidden(f)}
+                    <input type="hidden" name="choice" value="keep" />
+                    <button type="submit" className={buttonClass("secondary", "sm")} data-keep="">{t("knowledge.conflict.keep")}</button>
+                  </form>
+                  <span className="sas-small" style={{ marginInlineStart: "auto" }}>{t("knowledge.conflict.hint")}</span>
+                </div>
+              </section>
+            );
+          })}
+
           <section className="sas-stack-4" aria-labelledby="kf-h">
             <ListToolbar
               path={page}
@@ -315,7 +378,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                     </tr>
                   ) : null}
                   {facts.flatMap((f) => {
-                    // A suggestion that differs from an approved fact: the seller replaces that fact or keeps it.
+                    // A suggestion that differs from an approved fact: chosen on its card (Replace / Keep).
                     const differsFrom = f.status === "suggested" ? conflicts.get(f.id) ?? null : null;
                     const row = (
                       <tr key={f.id} data-current={panel === f.id ? "" : undefined} data-fact={f.status}>
@@ -323,12 +386,10 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                           <span style={{ display: "block", overflowWrap: "anywhere" }} dir="auto">{f.statement}</span>
                           <span className="sas-small" style={{ display: "block" }} dir="auto">{f.topic}</span>
                           {differsFrom ? (
-                            <span style={{ display: "flex", flexDirection: "column", alignItems: "flex-start", gap: 4, marginTop: 8 }} data-conflict={differsFrom.id}>
-                              <span className="sas-pill sas-pill--warning"><Icon name="alert-triangle" />{t("knowledge.conflict.label")}</span>
-                              <span className="sas-small" style={{ overflowWrap: "anywhere" }} dir="auto">
-                                <span className="sas-sr">{t("knowledge.conflict.approved")}: </span>{differsFrom.statement}
-                              </span>
-                            </span>
+                            // The choice is made on the card above the list.
+                            <a href={`#kx-${f.id}`} className="sas-pill sas-pill--warning" style={{ marginTop: 6 }} data-conflict-row="">
+                              <Icon name="alert-triangle" />{t("knowledge.conflict.label")}
+                            </a>
                           ) : null}
                         </td>
                         <td data-label={t("knowledge.col.source")} className="sas-td-under sas-td-kchip">{sourceChip(f)}</td>
@@ -336,20 +397,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
                           {/* Approve sits with the status (in the row on a desktop and in the card on a phone, where the ⋯ takes the corner). */}
                           <span style={{ display: "inline-flex", flexWrap: "wrap", gap: 8, alignItems: "center" }}>
                             {statusPill(f)}
-                            {differsFrom ? (
-                              <>
-                                <form action={resolveFactConflictAction}>
-                                  {hidden(f)}
-                                  <input type="hidden" name="choice" value="replace" />
-                                  <button type="submit" className={buttonClass("secondary", "sm")} aria-label={`${t("knowledge.conflict.replace")}: ${label(f)}`} data-replace="">{t("knowledge.conflict.replace")}</button>
-                                </form>
-                                <form action={resolveFactConflictAction}>
-                                  {hidden(f)}
-                                  <input type="hidden" name="choice" value="keep" />
-                                  <button type="submit" className={buttonClass("ghost", "sm")} aria-label={`${t("knowledge.conflict.keep")}: ${label(f)}`} data-keep="">{t("knowledge.conflict.keep")}</button>
-                                </form>
-                              </>
-                            ) : f.status === "suggested" ? (
+                            {/* A suggestion that differs from an approved fact has no Approve here: Replace or Keep on its card. */}
+                            {!differsFrom && f.status === "suggested" ? (
                               <form action={setFactStatusAction}>
                                 {hidden(f)}
                                 <input type="hidden" name="status" value="approved" />
