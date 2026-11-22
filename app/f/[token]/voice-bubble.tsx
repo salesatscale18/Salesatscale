@@ -3,7 +3,7 @@
 /**
  * The voice bubble on the order form (live voice): the buyer opened the form from the chat during a call, so
  * this tab shows the same bubble, mirroring the call the chat tab runs and controlling it (Mute, Speaker,
- * End call) over the tab link (lib/voice/client/tab-link.ts). It also tells the call which step of the
+ * Switch to text) over the tab link (lib/voice/client/tab-link.ts). It also tells the call which step of the
  * form the buyer is on (a step id and its name; never what they typed: "opened" on the first page in this tab,
  * "submitted" on the page after signing, else "step"), and shows the agent's line as a
  * caption, since the chat is not in view.

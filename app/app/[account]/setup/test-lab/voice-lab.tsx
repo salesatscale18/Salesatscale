@@ -89,7 +89,7 @@ export function VoiceLabBackGuard() {
   // Only once the call is connected: the URL has moved to the call's conversation by then (no guard under that step).
   const on = !!mine && !mine.handedOff && (s.phase === "live" || s.phase === "reconnecting");
   const g = useBackGuard({ ask: on ? "end_call" : null, liveCall: on, guardLinks: true, onEndCall: () => labClient().end() });
-  return g.sheet ? <LeaveSheet ask={g.sheet} tr={translator("en")} dir="ltr" onChoose={g.choose} /> : null;
+  return g.sheet ? <LeaveSheet ask={g.sheet} tr={translator("en")} dir="ltr" onChoose={g.choose} callWords="end" /> : null;
 }
 
 type StartInput = { slug: string; lab: string; versionId: string | null; scenario: string | null; language?: string | null; maxSec?: number | null };

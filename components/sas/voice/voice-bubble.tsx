@@ -4,7 +4,7 @@
  * The voice bubble (live voice, buyer pages): a small round button in the bottom corner (bottom-end, so it
  * mirrors in Hebrew) while a call is on, with a waveform that follows who is speaking. Tapping it opens the
  * call controls: Mute or Unmute, Speaker (only when the browser offers a choice of two or more) and, after a
- * divider, End call. The same component shows in the chat tab (which runs the call) and in an order form tab (which mirrors
+ * divider, Switch to text. The same component shows in the chat tab (which runs the call) and in an order form tab (which mirrors
  * it over the tab link); on the form it also shows the agent's line as a caption, since the chat is not in view.
  * State words and the waveform only: never tool chips.
  */
@@ -190,7 +190,7 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
 
 /**
  * The bubble's menu, in this order: the state and the time left, Talk to the agent (standby only, first), Mute,
- * Speaker (two or more speakers), a divider, End call.
+ * Speaker (two or more speakers), a divider, Switch to text.
  */
 export function BubbleMenu({ id, state, view, tr, act }: {
   id: string; state: MirrorState; view: ReturnType<typeof bubbleView>; tr: Tr; act: (c: TabCommand) => void;
@@ -224,10 +224,10 @@ export function BubbleMenu({ id, state, view, tr, act }: {
           ))}
         </div>
       ) : null}
-      {/* Last, after a divider (board VoiceBubbleBack 1): End call, in red. */}
+      {/* Last, after a divider: Switch to text (owner, 22 Nov: the voice stops, the chat goes on). */}
       <div className="vb-sep" role="separator" />
       <button type="button" role="menuitem" className="vb-item vb-item--end" disabled={state.phase === "ending"} onClick={() => act({ cmd: "end" })} data-bubble-end="">
-        <Icon name="phone-off" />{tr("buyer.voice.end_call")}
+        <Icon name="keyboard" />{tr("buyer.voice.to_text")}
       </button>
     </div>
   );

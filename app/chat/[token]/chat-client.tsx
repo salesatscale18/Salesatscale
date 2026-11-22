@@ -341,7 +341,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   // The bar above the chat shows only what the bubble cannot carry: connecting, the microphone, errors and refusals,
   // reconnecting, and the short ended note. While the call is live the bubble is the indicator (owner, 21 Nov).
   const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && callSnap.phase !== "live" && !barHidden;
-  // Back (board VoiceBubbleBack): "End the call?" during a call, else "Leave the chat?" (also for the seller's staff);
+  // Back (board VoiceBubbleBack): "Switch to text?" during a call (the voice stops, the chat stays), else "Leave the chat?" (also for the seller's staff);
   // nothing once the link expired. During a call, closing or reloading the tab gets the browser's leave prompt.
   const callOn = !!voice && inCall && callSnap.phase !== "ending";
   const backGuard = useBackGuard({ ask: expired ? null : callOn ? "end_call" : "leave_chat", liveCall: callOn, onEndCall: () => clientRef.current?.end() });
