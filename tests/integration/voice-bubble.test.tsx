@@ -297,7 +297,10 @@ describe("the bubble", () => {
   it("a note above the bubble (the first switch), in the page's language; markers never as a caption", () => {
     const html = renderToStaticMarkup(<VoiceBubble state={live} agentName="Maya" tr={translator("he")} dir="rtl" onCommand={() => {}} placement="bar" note={translator("he")("buyer.voice.first_note")} />);
     expect(html).toContain('data-bubble-note="first"');
-    expect(html).toContain("מה שנאמר מופיע כטקסט בצ&#x27;אט הזה");
+    expect(html).toContain("מה שנאמר מופיע כטקסט בצ&#x27;אט הזה.</button>");
+    // Calls may be recorded: the note never says otherwise (EN and HE).
+    expect(translator("en")("buyer.voice.first_note")).toBe("What you say appears as text in this chat.");
+    expect(html).not.toContain("הקלטה");
     const marker = renderToStaticMarkup(<VoiceBubble state={{ ...live, caption: { id: "a", text: "<no speech detected>" } }} agentName="Maya" tr={translator("en")} dir="ltr" onCommand={() => {}} placement="fixed" caption />);
     expect(marker).not.toContain("no speech");
   });
