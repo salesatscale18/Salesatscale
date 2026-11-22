@@ -11,7 +11,7 @@
  * All database work runs through one serial queue, so messages keep their order.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, eq, exists, ne } from "drizzle-orm";
+import { and, asc, eq, exists, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -36,7 +36,7 @@ import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
-import { clip, consoleVoiceLog, voiceLine, type VoiceLog } from "./log";
+import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
 export type VoiceLimits = {
@@ -104,9 +104,16 @@ export type VoiceEngineDeps = {
   limits?: VoiceLimits;
   /** One-line operational logs (default: console). */
   log?: VoiceLog;
+  /** Called once when the call starts ending, with the work that stores it: the host keeps running until it settles. */
+  onEnding?: (work: Promise<unknown>) => void;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
+
+/** The final row write: whether it ended the row, and the figures the browser is told. */
+type FinalRow = { connected: boolean; ended: boolean; durationSec: number; costMicros: number; answerMsAvg: number | null };
+/** A final row write that has not answered in this long is tried again (a hung query must not hold the end). */
+export const FINAL_WRITE_TIMEOUT_MS = 8_000;
 
 const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
   user_hangup: "client_end", agent_closed: "tool", limit: "limit", silence: "idle", idle: "idle", opt_out: "tool", handoff: "tool",
@@ -187,6 +194,7 @@ export class VoiceEngine {
   readonly sessionId: string;
 
   private readonly log: VoiceLog;
+  private readonly onEnding: VoiceEngineDeps["onEnding"];
   private endBy: VoiceEndBy | null = null;
   private clientClose: VoiceEndDetail["clientClose"];
   private modelClose: VoiceEndDetail["modelClose"];
@@ -285,6 +293,7 @@ export class VoiceEngine {
     this.sessionId = deps.sessionId;
     this.limits = { ...DEFAULTS, ...deps.limits };
     this.log = deps.log ?? consoleVoiceLog;
+    this.onEnding = deps.onEnding;
     this.vad = new EnergyVad(this.limits.vad);
     this.preRoll = new PcmRing(this.limits.preRollMs);
   }
@@ -399,7 +408,12 @@ export class VoiceEngine {
       this.timers[k] = null;
     }
     this.closeModel();
-    this.stopping = this.enqueue(() => this.finish(reason), true);
+    // A dropped browser: the row is written first, at once (not behind queued work), so the end survives the
+    // function being stopped right after; the slower steps follow.
+    const rowFirst = reason === "connection_lost" ? this.writeFinalRow(reason) : null;
+    this.stopping = this.enqueue(() => this.finish(reason, rowFirst), true);
+    // The host keeps the function alive until the end is stored (the route: waitUntil).
+    this.onEnding?.(this.stopping);
     return this.stopping;
   }
 
@@ -431,7 +445,8 @@ export class VoiceEngine {
       }
     };
     const p = this.queue.then(run).catch((e) => {
-      console.error("[voice] engine error", e);
+      // One short line: the error and its cause, never a query's parameters.
+      (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `engine error: ${errorSummary(e)}`));
       if (!this.ended) this.fail("error", "internal");
     });
     this.queue = p;
@@ -1144,7 +1159,7 @@ export class VoiceEngine {
       try {
         r = await runTool(name, args, this.toolCtx(callId, turn.memo));
       } catch (e) {
-        console.error(`[voice] tool ${name} failed`, e);
+        (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `tool ${name} failed: ${errorSummary(e)}`));
         r = { outcome: "failed", result: { ok: false, error: "The tool failed. Tell the buyer you will check and get back to them." } };
       }
     }
@@ -1391,17 +1406,14 @@ export class VoiceEngine {
   // End
   // -------------------------------------------------------------------------
 
-  private async finish(reason: VoiceEndReason) {
-    try {
-      await this.finalizeAgentTurn("stop");
-      // Tool calls still waiting for a line go with the call's last line.
-      if (this.carriedTools.length) {
-        this.ensureAgentTurn();
-        await this.finalizeAgentTurn("stop");
-      }
-    } catch (e) {
-      console.error("[voice] could not store the last turn", e);
-    }
+  /**
+   * The call's final row: status, end time, figures and endDetail, written as soon as the end starts for a dropped
+   * browser (lib/voice/socket.ts keeps the function alive for it). A write that fails, or hangs past
+   * FINAL_WRITE_TIMEOUT_MS, is tried once more; if that fails too the row stays live and the stale close ends it at
+   * its last heartbeat (lib/voice/service.ts). Status-guarded: never over a row already ended (by the stale close),
+   * except a row ended from elsewhere ("End that call"), which gets the call's real figures. Never throws.
+   */
+  private async writeFinalRow(reason: VoiceEndReason): Promise<FinalRow> {
     const figures = this.callFigures();
     const { connected, durationSec, activeSec, costMicros } = figures;
     let { usage } = figures;
@@ -1416,16 +1428,76 @@ export class VoiceEngine {
     this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${durationSec} activeSec=${activeSec} by=${endDetail.by}`
       + `${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""}${this.modelClose ? ` model=${this.modelClose.code ?? "-"}/"${this.modelClose.reason}"@${this.modelClose.msAfterConnect ?? "?"}ms` : ""}`));
     const answerMsAvg = this.answerMsAvg();
-    await this.db.update(voiceSessions).set({
-      status: "ended", endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,
+    const set = {
+      status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec,
       usage, costMicros, answerMsAvg, providerSessionId: this.providerSessionId,
-    }).where(this.endedExternally ? eq(voiceSessions.id, this.sessionId) : and(eq(voiceSessions.id, this.sessionId), ne(voiceSessions.status, "ended")));
-    if (connected && this.loaded) {
+    };
+    // Ended from elsewhere ("End that call", not a stale close): the call's real figures replace the estimate.
+    const where = this.endedExternally
+      ? and(eq(voiceSessions.id, this.sessionId), sql`coalesce(${voiceSessions.usage}->'endDetail'->>'by', '') <> 'relay_gone'`)
+      : and(eq(voiceSessions.id, this.sessionId), ne(voiceSessions.status, "ended"));
+    let ended = false;
+    for (let attempt = 1; attempt <= 2 && !ended; attempt++) {
+      try {
+        const rows = await this.withTimeout(this.db.update(voiceSessions).set(set).where(where).returning({ id: voiceSessions.id }), FINAL_WRITE_TIMEOUT_MS);
+        ended = rows.length > 0;
+        if (!ended) {
+          this.log.warn(voiceLine(this.sessionId, "final row write: the row was already ended (kept as it is)"));
+          break;
+        }
+      } catch (e) {
+        (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `final row write failed (attempt ${attempt} of 2): ${errorSummary(e)}${attempt === 2 ? "; left to the stale close" : ""}`));
+      }
+    }
+    return { connected, ended, durationSec, costMicros, answerMsAvg };
+  }
+
+  /** Rejects after `ms` (the call's clock) if `p` has not settled: a hung query does not hold the end. */
+  private withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const t = this.clock.setTimeout(() => reject(new Error(`timed out after ${ms} ms`)), ms);
+      p.then((v) => { this.clock.clearTimeout(t); resolve(v); }, (e) => { this.clock.clearTimeout(t); reject(e); });
+    });
+  }
+
+  /**
+   * The end of the call, after the row: the last turn (and tool calls still waiting for a line), the end line in
+   * the thread, and `ended` to the browser. `row`: the final row write when it started first (a dropped browser).
+   */
+  private async finish(reason: VoiceEndReason, rowFirst: Promise<FinalRow> | null) {
+    const storeLast = async () => {
+      try {
+        await this.finalizeAgentTurn("stop");
+        // Tool calls still waiting for a line go with the call's last line.
+        if (this.carriedTools.length) {
+          this.ensureAgentTurn();
+          await this.finalizeAgentTurn("stop");
+        }
+      } catch (e) {
+        (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `could not store the last turn: ${errorSummary(e)}`));
+      }
+    };
+    let row: FinalRow;
+    if (rowFirst) {
+      row = await rowFirst;
+      await storeLast();
+    } else {
+      await storeLast();
+      row = await this.writeFinalRow(reason);
+    }
+    const { durationSec, costMicros, answerMsAvg } = row;
+    // The end line only when this write ended the row: a row the stale close ended has its own line, and one it
+    // could not end is left to the stale close (which adds it).
+    if (row.connected && row.ended && this.loaded) {
       // Like the other operational notes in a thread (system messages): when and how long.
       const { conv, account } = this.loaded;
-      await this.db.insert(messages).values({
-        accountId: account.id, conversationId: conv.id, actor: "system", body: CALL_ENDED_TEXT(durationSec), language: "en", createdAt: await this.stamp(),
-      });
+      try {
+        await this.db.insert(messages).values({
+          accountId: account.id, conversationId: conv.id, actor: "system", body: CALL_ENDED_TEXT(durationSec), language: "en", createdAt: await this.stamp(),
+        });
+      } catch (e) {
+        (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `could not store the end line: ${errorSummary(e)}`));
+      }
     }
     this.send({ t: "ended", reason, durationSec, costMicros, answerMsAvg });
     this.state = null;

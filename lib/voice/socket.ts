@@ -25,7 +25,7 @@ import {
 import { systemClock, type Clock, type RealtimeModel, type TimerHandle } from "./realtime";
 import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from "./service";
 import { maxCallSeconds, voiceMode } from "./settings";
-import { clip, consoleVoiceLog, voiceLine, type VoiceLog } from "./log";
+import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 
 /** The part of a `ws` WebSocket the relay uses (a `ws` socket satisfies it). */
 export interface VoiceSocket {
@@ -71,6 +71,12 @@ export type VoiceSocketOptions = {
   afterCall?: (sessionId: string) => Promise<unknown>;
   /** One-line operational logs (default: console). */
   log?: VoiceLog;
+  /**
+   * Keeps the host running until `work` settles (the Vercel route: `waitUntil`): the call's end (its row, last
+   * turn, end line) and the after-call step are registered the moment the end starts, so they finish even when the
+   * platform would otherwise stop or freeze the function once the browser's socket is gone.
+   */
+  keepAlive?: (work: Promise<unknown>) => void;
 };
 
 /** Raw `ws` message data as bytes (Buffer is a Uint8Array; a fragmented frame is a Buffer[]). */
@@ -103,6 +109,14 @@ function toText(data: unknown, isBinary: boolean): string | null {
  */
 export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Promise<void> {
   const clock = opts.clock ?? systemClock;
+  /** Registers end-of-call work with the host; a host without the hook (local server, tests) runs it anyway. */
+  const keepAlive = (work: Promise<unknown>) => {
+    try {
+      opts.keepAlive?.(work);
+    } catch {
+      // The host cannot extend its lifetime here: the work still runs.
+    }
+  };
   const env = opts.env ?? process.env;
   const log = opts.log ?? consoleVoiceLog;
   /** The session this socket carries, once the ticket was accepted (logs). */
@@ -163,11 +177,12 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       return;
     }
     // The engine ends the call now ("connection_lost" unless it already ended for another reason).
-    e.onClientGone(clientClose ?? undefined).catch((err) => console.error("[voice] engine stop failed", err))
+    const work = e.onClientGone(clientClose ?? undefined).catch((err) => log.warn(voiceLine(sessionId, `engine stop failed: ${errorSummary(err)}`)))
       // The call is stored: an unanswered last buyer turn may be answered in the chat now.
       .then(() => opts.afterCall?.(e.sessionId))
-      .catch((err) => console.error("[voice] after-call hook failed", err))
+      .catch((err) => log.warn(voiceLine(sessionId, `after-call hook failed: ${errorSummary(err)}`)))
       .finally(resolveDone);
+    keepAlive(work);
   };
 
   const pingLoop = () => {
@@ -233,7 +248,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
     sendJson({ t: "call", maxSec, mode: model.mode });
     engine = new VoiceEngine({
-      db: opts.db, model, sessionId: session.id, clock, log,
+      db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
       limits: { ...opts.limits, deadlineSec: opts.deadlineSec, env },
       send: (msg) => {
         if (msg instanceof Uint8Array) {
@@ -272,7 +287,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         const text = binary ? null : toText(data, false);
         if (text === null) return refuse("ticket_invalid");
         authenticate(text).catch((e) => {
-          console.error("[voice] socket auth failed", e);
+          log.warn(voiceLine(sessionId, `socket auth failed: ${errorSummary(e)}`));
           refuse("internal");
         });
         return;

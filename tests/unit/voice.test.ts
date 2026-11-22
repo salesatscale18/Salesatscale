@@ -29,6 +29,7 @@ import { callVoice } from "@/lib/voice/settings";
 import { defaultVoiceOf } from "@/lib/voice/lab";
 import { buildVoiceInstructions, continueFallback, continuingInstruction, CONTINUE_FALLBACK_HE, conversationTalkLanguage, expectedCallLanguages, openerInstruction, reAskLine } from "@/lib/voice/instructions";
 import { continuesCutLine, lineLanguage } from "@/lib/voice/engine";
+import { errorSummary } from "@/lib/voice/log";
 import { isSpokenOptOut, safeTranscript } from "@/lib/voice/safety";
 import {
   maxCallSeconds, resolveVoiceSettings, turnTakingFor, validateVoiceSettings, voiceCapabilities, voiceMode, voiceModelId,
@@ -961,6 +962,14 @@ describe("call language (any chat language; the buyer can switch)", () => {
     expect(continuesCutLine("It starts at about 600 shekels", "It starts at about 590 shek")).toBe(false);
     expect(continuesCutLine("Shekels per sensor", "Shek")).toBe(false);
     expect(continuesCutLine("It costs 590", "It starts at about 590 shek")).toBe(false);
+  });
+
+  it("an error in a log line: the cause's message and code, never a failed query's text or parameters", () => {
+    const failed = Object.assign(new Error('Failed query: update "voice_sessions" set "usage" = $1\nparams: {"audioInTokens":5}'), { cause: Object.assign(new Error("Connection terminated\nunexpectedly"), { code: "57P01" }) });
+    expect(errorSummary(failed)).toBe("Connection terminated code=57P01");
+    expect(errorSummary(new Error('Failed query: select 1\nparams: x'))).toBe("query failed (no cause given)");
+    expect(errorSummary(new Error("timed out after 8000 ms"))).toBe("timed out after 8000 ms");
+    expect(errorSummary("boom")).toBe("boom");
   });
 
   it("each stored line carries its own language (the buyer may switch mid-call)", () => {

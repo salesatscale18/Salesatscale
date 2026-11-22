@@ -6,15 +6,17 @@
  */
 import { EventEmitter } from "node:events";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { users, voiceSessions, type User } from "@/db/schema";
+import { and, eq } from "drizzle-orm";
+import { messages, users, voiceSessions, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
 import { VOICE_CLOSE, type ServerMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock } from "@/lib/voice/realtime";
 import { micPcm, ScriptedRealtime } from "@/lib/voice/scripted-realtime";
-import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
+import { closeStaleVoiceSessions, createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
+import { FINAL_WRITE_TIMEOUT_MS } from "@/lib/voice/engine";
+import type { VoiceLog } from "@/lib/voice/log";
 import { handleVoiceSocket, IDLE_TIMEOUT_MS, MAX_BUFFERED_AUDIO_BYTES, type VoiceSocket } from "@/lib/voice/socket";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -315,5 +317,161 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     await c.run(100);
     await c.done;
     expect(await row(s.sessionId)).toMatchObject({ status: "ended", endReason: "user_hangup" });
+  });
+
+  describe("the call's final row write survives a dropped browser (call dd2d537c, 22 Nov 2026)", () => {
+    /** A Drizzle-like failure: the query text and its parameters in the message, the real reason on `cause`. */
+    const dbError = () => Object.assign(new Error(`Failed query: update "voice_sessions" set "status" = $1\nparams: ended,{"audioInTokens":12,"secret":"usage json"}`), { cause: Object.assign(new Error("fetch failed"), { code: "ECONNRESET" }) });
+    /**
+     * The test database, except the call's final row write ("status = ended" on voice_sessions): `plan` says what
+     * each attempt does (fail, hang, or pass through to the database).
+     */
+    function scriptedDb(plan: ("fail" | "hang" | "ok")[]) {
+      let n = 0;
+      const attempts: string[] = [];
+      const wrapped = new Proxy(db, {
+        get(target, prop, recv) {
+          // A stored agent line goes in one transaction (db/atomic.ts on PGlite).
+          if (prop === "transaction") return (fn: never) => { attempts.push("tx"); return target.transaction(fn); };
+          if (prop === "insert") return (table: unknown) => {
+            if (table === messages) attempts.push("insert:messages");
+            return target.insert(table as typeof messages);
+          };
+          if (prop !== "update") return Reflect.get(target, prop, recv);
+          return (table: unknown) => {
+            const real = target.update(table as typeof voiceSessions);
+            if (table !== voiceSessions) return real;
+            return new Proxy(real, {
+              get(t, p2, r2) {
+                if (p2 !== "set") return Reflect.get(t, p2, r2);
+                return (values: Record<string, unknown>) => {
+                  if (values.status !== "ended") return t.set(values as never);
+                  const step = plan[n++] ?? "ok";
+                  attempts.push(step);
+                  if (step === "ok") return t.set(values as never);
+                  const p = step === "fail" ? Promise.reject(dbError()) : new Promise(() => undefined);
+                  p.catch(() => undefined);
+                  const chain = { where: () => chain, returning: () => p, then: (a: never, b: never) => p.then(a, b) };
+                  return chain;
+                };
+              },
+            });
+          };
+        },
+      });
+      return { db: wrapped as TestDb, attempts };
+    }
+    function lines() {
+      const out: { level: string; line: string }[] = [];
+      const log: VoiceLog = { info: (l) => out.push({ level: "info", line: l }), warn: (l) => out.push({ level: "warn", line: l }), error: (l) => out.push({ level: "error", line: l }) };
+      return { out, log };
+    }
+    async function call(plan: ("fail" | "hang" | "ok")[], untilMs = 30_000) {
+      const s = await newSession();
+      const ws = new FakeSocket();
+      const clock = new ManualClock();
+      const model = new ScriptedRealtime({ clock });
+      const sdb = scriptedDb(plan);
+      const l = lines();
+      const kept: Promise<unknown>[] = [];
+      const done = handleVoiceSocket(ws, { db: sdb.db, deadlineSec: null, env: SCRIPTED, clock, model, limits: QUIET, log: l.log, keepAlive: (w) => void kept.push(w) });
+      const settle = async () => {
+        for (let i = 0; i < 6; i++) {
+          await flushAsync(4);
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      };
+      ws.text({ t: "auth", sessionId: s.sessionId, ticket: s.ticket });
+      await settle();
+      await clock.advance(untilMs, settle); // a heartbeat at 20 s
+      return { s, ws, clock, model, done, settle, kept, attempts: sdb.attempts, logs: l.out };
+    }
+    const endLines = async (conversationId: string) => (await db.select().from(messages)
+      .where(and(eq(messages.conversationId, conversationId), eq(messages.actor, "system")))).filter((m) => m.body.startsWith("Voice call ended"));
+
+    it("a browser that drops (1001): the end is handed to the host at once; a failed write is retried; the log has the cause, never the parameters", async () => {
+      const c = await call(["fail", "ok"]);
+      c.ws.emit("close", 1001, Buffer.from(""));
+      expect(c.kept.length).toBeGreaterThan(0); // registered the moment the end started
+      await c.settle();
+      await c.done;
+      await Promise.all(c.kept);
+      expect(c.attempts.filter((x) => x !== "insert:messages" && x !== "tx")).toEqual(["fail", "ok"]);
+      const r = await row(c.s.sessionId);
+      expect(r).toMatchObject({ status: "ended", endReason: "connection_lost", durationSec: 30 });
+      expect(r.usage?.endDetail).toMatchObject({ by: "client_closed", clientClose: { code: 1001 } });
+      const failed = c.logs.find((x) => x.line.includes("final row write failed"))!;
+      expect(failed.level).toBe("error");
+      expect(failed.line).toMatch(/final row write failed \(attempt 1 of 2\): fetch failed code=ECONNRESET$/);
+      expect(c.logs.map((x) => x.line).join("\n")).not.toMatch(/params|audioInTokens|usage json/);
+      expect(await endLines(c.s.conversationId)).toHaveLength(1);
+      expect(c.model.connections.every((x) => x.closed)).toBe(true);
+    });
+
+    it("a browser that drops while the agent speaks: the row is written first, then the cut line and the end line", async () => {
+      const c = await call([], 1_500);
+      const before = c.attempts.length;
+      c.ws.emit("close", 1001, Buffer.from(""));
+      await c.settle();
+      await c.done;
+      // The final row ("ok"), then the agent's cut line (its transaction) and the end line.
+      expect(c.attempts.slice(before)).toEqual(["ok", "tx", "insert:messages"]);
+      const said = await db.select().from(messages).where(and(eq(messages.conversationId, c.s.conversationId), eq(messages.actor, "agent")));
+      expect(said.at(-1)?.body.endsWith("…")).toBe(true);
+    });
+
+    it("a write that hangs is given up after the timeout and tried again", async () => {
+      const c = await call(["hang", "ok"]);
+      c.ws.emit("close", 1001, Buffer.from(""));
+      await c.settle();
+      expect((await row(c.s.sessionId)).status).toBe("live");
+      await c.clock.advance(FINAL_WRITE_TIMEOUT_MS, c.settle);
+      await c.done;
+      expect(c.attempts.filter((x) => x !== "insert:messages" && x !== "tx")).toEqual(["hang", "ok"]);
+      expect(await row(c.s.sessionId)).toMatchObject({ status: "ended", endReason: "connection_lost", durationSec: 30 });
+      expect(c.logs.some((x) => x.line.endsWith("final row write failed (attempt 1 of 2): timed out after 8000 ms"))).toBe(true);
+    });
+
+    it("both attempts fail: the row stays live for the stale close, which ends it at the last heartbeat with one end line", async () => {
+      const c = await call(["fail", "fail"]);
+      c.ws.emit("close", 1001, Buffer.from(""));
+      await c.settle();
+      await c.done;
+      const live = await row(c.s.sessionId);
+      expect(live).toMatchObject({ status: "live", durationSec: 20 });
+      expect(c.logs.some((x) => x.line.endsWith("final row write failed (attempt 2 of 2): fetch failed code=ECONNRESET; left to the stale close"))).toBe(true);
+      expect(await endLines(c.s.conversationId)).toHaveLength(0);
+      // (Every account's stale rows: other tests here may leave some.)
+      expect(await closeStaleVoiceSessions(db, null, new Date(live.connectedAt!.getTime() + 20_000 + 100_000))).toBeGreaterThanOrEqual(1);
+      const r = await row(c.s.sessionId);
+      expect(r).toMatchObject({ status: "ended", durationSec: 20 });
+      expect(r.usage?.endDetail).toEqual({ by: "relay_gone" });
+      expect(await endLines(c.s.conversationId)).toHaveLength(1);
+    });
+
+    it("the stale close got there first: the late final write leaves its row as it is (and the stale close never touches an ended row)", async () => {
+      const c = await call([]);
+      const live = await row(c.s.sessionId);
+      // The function was frozen: the cron closed the row at its last heartbeat.
+      expect(await closeStaleVoiceSessions(db, null, new Date(live.connectedAt!.getTime() + 20_000 + 100_000))).toBeGreaterThanOrEqual(1);
+      expect((await row(c.s.sessionId)).status).toBe("ended");
+      // The instance thaws and the browser's close arrives: the final write finds the row ended.
+      c.ws.emit("close", 1001, Buffer.from(""));
+      await c.settle();
+      await c.done;
+      const r = await row(c.s.sessionId);
+      expect(r).toMatchObject({ status: "ended", durationSec: 20 });
+      expect(r.usage?.endDetail).toEqual({ by: "relay_gone" });
+      expect(c.logs.some((x) => x.line.includes("final row write: the row was already ended"))).toBe(true);
+      expect(await endLines(c.s.conversationId)).toHaveLength(1);
+      // And the other way: a row the call ended itself is never closed again.
+      const d = await call([]);
+      d.ws.emit("close", 1001, Buffer.from(""));
+      await d.settle();
+      await d.done;
+      const ended = await row(d.s.sessionId);
+      await closeStaleVoiceSessions(db, null, new Date(Date.now() + 3_600_000));
+      expect(await row(d.s.sessionId)).toEqual(ended);
+    });
   });
 });
