@@ -32,6 +32,7 @@ import {
 import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
 import { deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { formatDueLocal, zonedInstant } from "@/lib/follow-ups/rules";
+import { parseViewerZone } from "@/lib/viewer-zone";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { normalizePhone } from "@/lib/leads/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
@@ -293,7 +294,8 @@ export const CALL_NEXT_STEPS = ["save", "agent", "seller", "order_form", "chat_l
 export type CallNextStep = (typeof CALL_NEXT_STEPS)[number];
 export const isCallNextStepChoice = (v: unknown): v is CallNextStep => typeof v === "string" && (CALL_NEXT_STEPS as readonly string[]).includes(v);
 
-export type LogInput = { outcome: unknown; started: unknown; lengthMin: unknown; note: unknown; next: unknown };
+/** `timezone`: the zone "started" is written in (the viewer's own, validated); missing or invalid: the call's zone. */
+export type LogInput = { outcome: unknown; started: unknown; lengthMin: unknown; note: unknown; next: unknown; timezone?: unknown };
 export type LogResult =
   | {
       ok: true; leadId: string; outcome: CallOutcome; next: CallNextStep;
@@ -305,11 +307,12 @@ export type LogResult =
 
 export const MAX_CALL_MINUTES = 240;
 
-/** "HH:MM" → that time on the call's own day in the call's zone; null when not a time. */
-function startedOn(c: CallbackRequest, hhmm: string): Date | null {
+/** "HH:MM" → that time on the call's own day in `zone` (the viewer's) or the call's zone; null when not a time. */
+function startedOn(c: CallbackRequest, hhmm: string, zone?: unknown): Date | null {
   if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(hhmm)) return null;
-  const day = new Intl.DateTimeFormat("en-CA", { timeZone: c.timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(c.at);
-  const at = zonedInstant(c.timezone, day, hhmm);
+  const tz = parseViewerZone(zone) ?? c.timezone;
+  const day = new Intl.DateTimeFormat("en-CA", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" }).format(c.at);
+  const at = zonedInstant(tz, day, hhmm);
   return Number.isNaN(at.getTime()) ? null : at;
 }
 
@@ -340,7 +343,7 @@ export async function logTeamCall(
   const outcome = input.outcome;
   const next: CallNextStep = outcome === "spoke" ? input.next : "save";
   const startedRaw = typeof input.started === "string" ? input.started.trim() : "";
-  const startedAt = startedRaw ? startedOn(c, startedRaw) : c.at;
+  const startedAt = startedRaw ? startedOn(c, startedRaw, input.timezone) : c.at;
   if (!startedAt) return { ok: false, reason: "invalid_started" };
   const lengthRaw = typeof input.lengthMin === "string" ? input.lengthMin.trim() : typeof input.lengthMin === "number" ? String(input.lengthMin) : "";
   let lengthMin: number | null = null;

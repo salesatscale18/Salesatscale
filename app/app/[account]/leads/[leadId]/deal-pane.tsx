@@ -103,11 +103,27 @@ export function ObjectionList({ objections }: { objections: PaneObjection[] }) {
  * known yet in one line that opens, objections, the next step, then whatever
  * the page adds right under it (`afterNextStep`: the consent line on the lead page).
  */
-export function DealStatePane({ pane, afterNextStep }: { pane: DealPane; afterNextStep?: ReactNode }) {
+export function DealStatePane({ pane, afterNextStep, estimate = null }: {
+  pane: DealPane; afterNextStep?: ReactNode;
+  /** The deal size estimate (lead page, no quote yet; lib/leads/deal-estimate.ts): one muted line, display only, never in a total. */
+  estimate?: { oneTime: string; recurring: string | null } | null;
+}) {
+  const estimateLine = estimate ? (
+    <dl className="sas-fields" data-testid="deal-estimate">
+      <div className="sas-field">
+        <dt className="sas-field__label">{t("lead.card.estimate")}</dt>
+        <dd className="sas-field__value sas-estimate" title={t("leads.value.estimate_title")}>
+          {estimate.recurring ? `${estimate.oneTime} · ${estimate.recurring}` : estimate.oneTime}
+          <span className="sas-sr"> {t("leads.value.estimate_title")}</span>
+        </dd>
+      </div>
+    </dl>
+  ) : null;
   if (pane.state !== "fields") {
     return (
       <>
         <p className="sas-small" style={{ margin: 0 }}>{t(pane.state === "none" ? "lead.card.learn_none" : "lead.card.learn_pending")}</p>
+        {estimateLine}
         {afterNextStep}
       </>
     );
@@ -116,6 +132,7 @@ export function DealStatePane({ pane, afterNextStep }: { pane: DealPane; afterNe
     <div className="sas-stack-4" data-testid="deal-pane">
       <div>
         <PaneFields fields={pane.shown} />
+        {estimateLine}
         {pane.formVerified ? (
           <p className="sas-small sas-verified-note" data-testid="verified-note">
             <span className="sas-verified" aria-hidden="true"><Icon name="check-circle" /></span>

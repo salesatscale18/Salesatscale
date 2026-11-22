@@ -3765,5 +3765,10 @@
   "lead.event.sms_kind.other": "text message",
   "lead.event.callback.booked": "Call booked · {time}",
   "team_call.log_call": "Call · {when}",
-  "team_call.save_log": "Save log"
+  "team_call.save_log": "Save log",
+  "leads.value.estimate": "≈ {amount} est.",
+  "leads.value.estimate_title": "Estimated from the deal details; no quote yet",
+  "lead.card.estimate": "Estimated deal size",
+  "time.your_time": "your time",
+  "leads.times_yours": "Times in your time zone ({zone})"
 }

@@ -8,7 +8,8 @@ import { quoteRef } from "@/components/sas/id-text";
 import type { LeadStatus } from "@/db/schema";
 import { approvalReasonText } from "@/lib/catalog/pricing";
 import { formatMoney } from "@/lib/domain/money";
-import { formatDueLocal, reasonText } from "@/lib/follow-ups/rules";
+import { reasonText } from "@/lib/follow-ups/rules";
+import { viewerTime } from "@/lib/viewer-zone";
 import { timeAgo } from "@/lib/format";
 import { t } from "@/lib/i18n";
 import { orderLabel } from "@/lib/orders/service";
@@ -16,8 +17,13 @@ import { needsYouHref, type NeedsYouItem } from "@/lib/overview/service";
 import { NEEDS_GROUP_ICON, NEEDS_GROUP_OF, type LeadNeeds } from "@/lib/overview/needs-groups";
 import { isolate } from "./bidi";
 import type { LeadListFacts } from "./list-facts";
+import type { DealEstimate } from "./deal-estimate";
 
-export type RowCtx = { tradeName: string; timezone: string; now: Date };
+/**
+ * `timezone`: the account's zone. `viewerZone`: the viewer's own zone (the `sas_tz` cookie, lib/viewer-zone.ts),
+ * used for scheduled moments (calls, follow-ups); null or missing = the account's (or the call's market) zone.
+ */
+export type RowCtx = { tradeName: string; timezone: string; now: Date; viewerZone?: string | null };
 
 /**
  * One cell: a title with an optional icon and one muted detail line. `titleId` /
@@ -28,7 +34,7 @@ export type StepCell = { title: string; detail: string | null; icon: IconName | 
 /** The What's needed cell for one item: group icon, a short title and one detail line (UX L-3 examples). */
 export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
   const icon = NEEDS_GROUP_ICON[NEEDS_GROUP_OF[it.kind]];
-  const when = (at: Date, tz: string) => isolate(formatDueLocal(at, tz));
+  const when = (at: Date, tz: string) => isolate(viewerTime(at, ctx.viewerZone, tz));
   switch (it.kind) {
     case "human_handling":
       return { icon, title: t("leads.need.human_handling"), detail: it.why ? isolate(it.why) : t("overview.needs.human_handling.detail", { when: timeAgo(it.at, ctx.now, ctx.timezone) }) };
@@ -59,7 +65,7 @@ export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
       return { icon, title: t("leads.need.form_expiring"), detail: `${ref} · ${t("overview.needs.form_expiring.detail", { hours })}`, detailId: ref };
     }
     case "follow_up_failed":
-      return { icon, title: t("leads.need.follow_up_failed"), detail: [isolate(formatDueLocal(it.dueAt, ctx.timezone)), reasonText(it.reason)].filter(Boolean).join(" · ") };
+      return { icon, title: t("leads.need.follow_up_failed"), detail: [isolate(viewerTime(it.dueAt, ctx.viewerZone, ctx.timezone)), reasonText(it.reason)].filter(Boolean).join(" · ") };
   }
 }
 
@@ -98,15 +104,15 @@ export function nextStepCell(lead: LeadLike, f: LeadListFacts, ctx: RowCtx, owne
       : { icon: null, title: t("leads.next.won"), detail: null };
   }
   if (lead.status === "lost") return { icon: null, title: t("leads.next.lost"), detail: t("leads.next.lost.detail") };
-  // A booked team call (or an older confirmed call) still ahead, in the account's time zone (the short seller form).
+  // A booked team call (or an older confirmed call) still ahead, in the viewer's zone (else the account's; the short seller form).
   if (f.call) {
     return {
-      icon: "phone-call", title: t(f.call.booked ? "leads.next.team_call" : "leads.next.call", { when: isolate(formatDueLocal(f.call.at, ctx.timezone)) }),
+      icon: "phone-call", title: t(f.call.booked ? "leads.next.team_call" : "leads.next.call", { when: isolate(viewerTime(f.call.at, ctx.viewerZone, ctx.timezone)) }),
       detail: f.call.brief ? isolate(f.call.brief) : null,
     };
   }
   if (f.followUp) {
-    return { icon: "clock", title: t("leads.next.follow_up", { when: isolate(formatDueLocal(f.followUp.dueAt, ctx.timezone)) }), detail: f.followUp.topic ? isolate(f.followUp.topic) : t("leads.next.follow_up.detail") };
+    return { icon: "clock", title: t("leads.next.follow_up", { when: isolate(viewerTime(f.followUp.dueAt, ctx.viewerZone, ctx.timezone)) }), detail: f.followUp.topic ? isolate(f.followUp.topic) : t("leads.next.follow_up.detail") };
   }
   if (f.order && (f.order.paymentStatus === "not_started" || f.order.paymentStatus === "pending")) {
     const label = orderLabel(ctx.tradeName, f.order.number);
@@ -132,6 +138,35 @@ export function dealValue(f: LeadListFacts): { oneTime: string; recurring: strin
     recurring: q.recurringMinor ? t("leads.value.recurring", { amount: formatMoney(q.recurringMinor, q.currency), per }) : null,
     toPrice: false,
   };
+}
+
+/**
+ * Deal value without a quote: the deal size estimate (lib/leads/deal-estimate.ts), "≈ ₪3,640 est." and
+ * "+ ₪360/mo". Display only: shown muted, never in green, never added into a total, sum or KPI.
+ */
+export function estimateValue(e: DealEstimate | null | undefined): { oneTime: string; recurring: string | null } | null {
+  if (!e) return null;
+  const per = e.recurringPeriod === "year" ? "yr" : "mo";
+  return {
+    oneTime: t("leads.value.estimate", { amount: formatMoney(e.oneTimeMinor, e.currency) }),
+    recurring: e.recurringMinor ? t("leads.value.recurring", { amount: formatMoney(e.recurringMinor, e.currency), per }) : null,
+  };
+}
+
+/** The amount the Deal value column sorts by: the latest live quote's one-time total, else the estimate's; null last. */
+export function dealSortValue(f: LeadListFacts, e: DealEstimate | null | undefined): number | null {
+  if (f.quote) return f.quote.oneTimeMinor;
+  return e ? e.oneTimeMinor : null;
+}
+
+/** Rows sorted by Deal value (quotes and estimates together), leads with neither last; ties keep their order (stable). */
+export function sortByDealValue<R>(rows: readonly R[], valueOf: (r: R) => number | null, dir: "asc" | "desc"): R[] {
+  return [...rows].sort((a, b) => {
+    const x = valueOf(a);
+    const y = valueOf(b);
+    if (x === null || y === null) return x === y ? 0 : x === null ? 1 : -1;
+    return dir === "asc" ? x - y : y - x;
+  });
 }
 
 /** Who's on it (merges Status and Owner): the agent, a person (You / a teammate), "Waiting for a person", or nobody (opted out). */

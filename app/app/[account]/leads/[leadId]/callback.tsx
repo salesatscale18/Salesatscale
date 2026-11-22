@@ -2,7 +2,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { DateField } from "@/components/sas/date-field";
 import type { CallbackRequest } from "@/lib/callbacks/rules";
-import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { shownZone, viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
 import { t, type MessageKey } from "@/lib/i18n";
 import { zonePlainName } from "@/lib/format";
 import { cancelCallbackAction, changeCallbackAction } from "./callback-actions";
@@ -37,8 +37,10 @@ const NOT_TOLD: Record<string, MessageKey> = {
  * the buyer in the chat. Booked and confirmed calls show on the Team call card
  * (team-call.tsx). The chat stays with the agent.
  */
-export function CallbackPanel({ slug, leadId, request, canManage, notice, error, notTold }: {
+export function CallbackPanel({ slug, leadId, request, canManage, notice, error, notTold, viewerZone = null }: {
   slug: string; leadId: string; request: CallbackRequest | null; canManage: boolean;
+  /** The viewer's own zone (the sas_tz cookie): the time reads in it, " · your time" when it differs. Null: the request's zone. */
+  viewerZone?: string | null;
   notice?: string; error?: string; notTold?: string;
 }) {
   if (!request && !notice && !error) return null;
@@ -61,10 +63,10 @@ export function CallbackPanel({ slug, leadId, request, canManage, notice, error,
         <>
           <span data-testid="callback-time" data-status={request.status} style={{ display: "inline-flex", gap: 6, alignItems: "center", fontWeight: 600, color: "var(--ink)" }}>
             <Icon name={confirmed ? "check-circle" : "phone-call"} />
-            <span>{t(confirmed ? "callback.confirmed" : "callback.requested", { time: formatDueLocal(request.at, request.timezone) })}</span>
+            <span>{t(confirmed ? "callback.confirmed" : "callback.requested", { time: `${viewerTime(request.at, viewerZone, request.timezone)}${yourTimeSuffix(request.at, viewerZone, request.timezone)}` })}</span>
           </span>
           {request.brief ? <span className="sas-small" style={{ overflowWrap: "anywhere" }} data-testid="callback-brief">{t("callback.brief", { brief: request.brief })}</span> : null}
-          <span className="sas-small">{t(confirmed ? "callback.hint_confirmed" : "callback.hint", { zone: callbackZoneLine(request.timezone, request.at) })}</span>
+          <span className="sas-small">{t(confirmed ? "callback.hint_confirmed" : "callback.hint", { zone: callbackZoneLine(shownZone(viewerZone, request.timezone), request.at) })}</span>
           {canManage ? (
             <div className="sas-stack-2">
               <details data-testid="callback-change" open={error === "past" || error === "invalid_time" || undefined}>

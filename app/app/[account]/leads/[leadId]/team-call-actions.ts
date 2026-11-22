@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { logTeamCall } from "@/lib/team-calls/service";
+import { readViewerZone } from "@/lib/viewer-zone-server";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -22,6 +23,8 @@ export async function logTeamCallAction(form: FormData) {
   const r = await logTeamCall(appDb, access, leadId, callbackId, {
     outcome: String(form.get("outcome") ?? ""), started: String(form.get("started") ?? ""), lengthMin: String(form.get("lengthMin") ?? ""),
     note: String(form.get("note") ?? ""), next: String(form.get("next") ?? "save"),
+    // "Started" was shown in the viewer's own zone (the form's default): read it in that zone.
+    timezone: await readViewerZone(),
   });
   revalidatePath(`/app/${slug}/leads/${leadId}`);
   if (!r.ok) redirect(`/app/${slug}/leads/${leadId}?tab=deal&team_call_error=${r.reason}#callback`);

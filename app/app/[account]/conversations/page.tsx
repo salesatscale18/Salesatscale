@@ -13,6 +13,7 @@ import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
 import { ConversationPanel, formNotes, windowTimerProps } from "../leads/[leadId]/conversation";
+import { readViewerZone } from "@/lib/viewer-zone-server";
 import { linkFor, personSentForms } from "@/lib/orders/service";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { sendTemplateAction } from "./actions";
@@ -293,7 +294,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <div className="sas-inbox__chat">
                     <ScrollThreadToEnd />
                     <ConversationPanel
-                      from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone}
+                      from="inbox" chatWindow={thread.chatWindow} slug={account.slug} view={thread.view} me={me} buyerName={selected.lead.fullName} timezone={account.timezone} viewerZone={await readViewerZone()}
                       leadOptedOut={selected.lead.status === "opted_out"} notice={notice === "template_sent" ? undefined : notice}
                       leadStatus={selected.lead.status} notes={thread.notes} rawToolNames={seesPlatformDetails(access)}
                       steps={{ show: showSteps, back: `${qs({})}#thread` }}

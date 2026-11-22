@@ -45,6 +45,10 @@ import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { followUpBuyerNamed, leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { readViewerZone } from "@/lib/viewer-zone-server";
+import { viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
+import { dealEstimates } from "@/lib/leads/deal-estimate";
+import { estimateValue } from "@/lib/leads/list-row";
 import { CallbackPanel } from "./callback";
 import { TeamCallPanel } from "./team-call";
 import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
@@ -111,6 +115,11 @@ export default async function LeadCardPage({
   // "Fix hours" on an outside-contact-hours refusal: the lead's own market's hours when it sets them (the gates use the account's for a lead with no market).
   const hoursHref = contactHoursFixHref(account.slug, row.market ? marketList.find((m) => m.id === row.market!.id) : null);
   const now = new Date();
+  // Scheduled moments (team calls, callbacks, follow-ups) in the viewer's own zone (the sas_tz cookie), else the account's or the call's.
+  const viewerZone = await readViewerZone();
+  // Deal size estimate (display only, never in a total): only while the lead has no live quote, as the Leads list shows it.
+  const hasQuote = leadQuotes.some((q) => q.quote.status !== "cancelled" && q.quote.status !== "replaced");
+  const estimate = hasQuote ? null : estimateValue((await dealEstimates(appDb, account.id, [{ id: lead.id, marketId: lead.marketId }]).catch(() => null))?.get(lead.id));
   // O35: why the lead needs a person, shown in the stage banner while a person handles it: the one line
   // (as in Needs you and the Conversations row) and the whole stored reason, shown only when the line is cut.
   const handoffWhyLine = stage?.human ? (await handoffReasonsByLead(appDb, account.id, [leadId])).get(leadId) ?? null : null;
@@ -143,7 +152,8 @@ export default async function LeadCardPage({
   /** The same inside a sentence ("added by you"). */
   const whoIn = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you_lower")));
   /** An event's title as text (the folded timeline's "last:" line). */
-  const eventTitle = (type: string, data: unknown) => leadEventTitle(type, data, t);
+  const eventTitle = (type: string, data: unknown) => leadEventTitle(type, data, t, viewerZone);
+  const callTime = (at: Date, zone: string) => `${viewerTime(at, viewerZone, zone)}${yourTimeSuffix(at, viewerZone, zone)}`;
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";
@@ -170,8 +180,8 @@ export default async function LeadCardPage({
         : event.type === "callback.requested" && (event.data as { booked?: unknown } | null)?.booked === true
         ? undefined
         : event.type.startsWith("callback.") || event.type === "team_call.logged"
-        // O6: the call time, in the zone it was set in, and who acted.
-        ? `${formatDueLocal(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
+        // O6: the call time, in the viewer's own zone (else the zone it was set in; "· your time" when they differ), and who acted.
+        ? `${callTime(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : event.type === "lead.market_changed"
@@ -316,7 +326,7 @@ export default async function LeadCardPage({
             {conversation ? (
               <ConversationPanel
                 chatWindow={waWindow}
-                slug={account.slug} view={conversation} me={me} buyerName={lead.fullName} timezone={tz} takeOverInHeader={takeOverHere}
+                slug={account.slug} view={conversation} me={me} buyerName={lead.fullName} timezone={tz} viewerZone={viewerZone} takeOverInHeader={takeOverHere}
                 leadOptedOut={lead.status === "opted_out"} notice={typeof sp.notice === "string" ? sp.notice : undefined}
                 leadStatus={lead.status} notes={notes} rawToolNames={seesPlatformDetails(access)}
                 steps={{ show: await agentStepsFor("workspace", me.id, sp.steps), back: `/app/${account.slug}/leads/${lead.id}#conversation` }}
@@ -431,13 +441,13 @@ export default async function LeadCardPage({
               <CallbackPanel
                 slug={account.slug} leadId={lead.id} request={callback} canManage={mayManageCallbacks(access)}
                 notice={typeof sp.callback === "string" ? sp.callback : undefined} error={typeof sp.callback_error === "string" ? sp.callback_error : undefined}
-                notTold={typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined}
+                notTold={typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined} viewerZone={viewerZone}
               />
             ) : (
               // Team call (reach boards): the booked call before it, then "Log the call" with the next steps.
               <TeamCallPanel
                 slug={account.slug} leadId={lead.id} call={teamCall} buyerName={lead.fullName} leadPhone={simulated ? null : lead.phone}
-                canManage={mayManageCallbacks(access)} edit={sp.team_call === "edit"} now={now}
+                canManage={mayManageCallbacks(access)} edit={sp.team_call === "edit"} now={now} viewerZone={viewerZone}
                 msg={{
                   notice: typeof sp.team_call_notice === "string" ? sp.team_call_notice : undefined,
                   error: typeof sp.team_call_error === "string" ? sp.team_call_error : undefined,
@@ -448,7 +458,7 @@ export default async function LeadCardPage({
               />
             )}
             <FollowUpPanel
-              slug={account.slug} followUp={followUp} timezone={account.timezone}
+              slug={account.slug} followUp={followUp} timezone={account.timezone} viewerZone={viewerZone}
               canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"} buyerNamed={followUpByBuyer}
             />
             <h2 className="sas-group-label">{t("lead.card.learn")}</h2>
@@ -456,7 +466,7 @@ export default async function LeadCardPage({
             <div className="sas-stack-4" style={{ padding: "0 16px 16px" }}>
               {/* The consent line sits right under Next step (round-3 review B3). */}
               <DealStatePane
-                pane={pane}
+                pane={pane} estimate={estimate}
                 afterNextStep={
                   <div className="sas-lead__consent sas-lead__consent--inline" data-testid="consent">
                     <Icon name="shield-check" />

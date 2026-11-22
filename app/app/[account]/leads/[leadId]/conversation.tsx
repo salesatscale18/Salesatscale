@@ -10,7 +10,7 @@ import type { ConversationView, SellerFormCard } from "@/lib/agent/conversation"
 import { describeCall } from "@/lib/agent/trace";
 import { displayName, personName } from "@/lib/auth/display";
 import { formatClockIn, formatDateTimeIn, formatDayIn, localDateIso } from "@/lib/format";
-import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
 import { isLocale, messages, t, type Locale, type MessageKey } from "@/lib/i18n";
 import { handBackAction, humanReplyAction, takeOverAction } from "../actions";
 import { WindowTimer } from "@/components/sas/record";
@@ -75,14 +75,14 @@ export function traceChips(calls: ConversationView["thread"][number]["calls"], r
 }
 
 /** A marker's words (board ConvSteps). The person is named as everywhere else: never a raw email, "you" for the viewer. */
-export function markerText(m: ThreadMarker, meId: string | null, buyer?: string): string {
+export function markerText(m: ThreadMarker, meId: string | null, buyer?: string, viewerZone: string | null = null): string {
   if (m.kind === "handoff") return t("conv.marker.handoff");
   // "Dana opened the chat · Sat 21:03" (board ReachSeller): the buyer's first name.
   if (m.kind === "chat_opened") return t("conv.marker.chat_opened", { name: isolate((buyer ?? "").trim().split(/\s+/)[0] || t("conv.who.buyer")) });
   if (m.kind === "sms") return smsStateText(m.sms);
-  // "Team call booked · Mon 23 Nov 15:30 · 15 min": the time in the zone it was booked in (the lead's market).
-  if (m.kind === "team_call_booked") return t("conv.marker.team_call_booked", { when: isolate(formatDueLocal(m.callAt, m.timezone)), minutes: m.minutes });
-  if (m.kind === "team_call_logged") return teamCallTitle(m);
+  // "Team call booked · Mon 23 Nov 15:30 · 15 min": in the viewer's own zone, else the zone it was booked in (the lead's market).
+  if (m.kind === "team_call_booked") return t("conv.marker.team_call_booked", { when: `${isolate(viewerTime(m.callAt, viewerZone, m.timezone))}${yourTimeSuffix(m.callAt, viewerZone, m.timezone)}`, minutes: m.minutes });
+  if (m.kind === "team_call_logged") return teamCallTitle(m, viewerZone);
   if (m.kind === "handed_back") return t("conv.marker.handed_back");
   if (m.kind === "spend_cap") return t("conv.marker.spend_cap");
   // A voice call's boundaries: "Voice call started · 15:44" and "Voice call · 30 s · 15:45" (the time is the marker's).
@@ -99,22 +99,24 @@ export function splitMarkers(markers: ThreadMarker[] | undefined) {
   return { timed, after };
 }
 
-export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref }: {
+export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, viewerZone = null }: {
   marker: ThreadMarker; meId: string | null; time: string; timeTitle: string; buyer?: string;
+  /** The viewer's own zone (the sas_tz cookie) for team call times; null: the call's zone. */
+  viewerZone?: string | null;
   /** A logged team call: its Edit link (the Deal tab's log form). */
   editHref?: string;
 }) {
   if (marker.kind === "sms") return <SmsThreadEntry sms={marker.sms} time={time} timeTitle={timeTitle} />;
-  if (marker.kind === "team_call_logged") return <TeamCallEntry call={marker} meId={meId} editHref={editHref} />;
+  if (marker.kind === "team_call_logged") return <TeamCallEntry call={marker} meId={meId} editHref={editHref} viewerZone={viewerZone} />;
   // The booked marker holds its own date and time.
-  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer)} time={marker.kind === "team_call_booked" ? "" : time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
+  return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer, viewerZone)} time={marker.kind === "team_call_booked" ? "" : time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
 }
 
 type LoggedCall = Extract<ThreadMarker, { kind: "team_call_logged" }>;
 
 /** "Team call · 12 min · Mon 23 Nov 15:32"; "No answer · Mon 23 Nov 15:30" for a call that did not happen. */
-export function teamCallTitle(m: LoggedCall): string {
-  const when = isolate(formatDueLocal(m.startedAt, m.timezone));
+export function teamCallTitle(m: LoggedCall, viewerZone: string | null = null): string {
+  const when = `${isolate(viewerTime(m.startedAt, viewerZone, m.timezone))}${yourTimeSuffix(m.startedAt, viewerZone, m.timezone)}`;
   if (m.outcome !== "spoke") return `${t("team_call.title")} · ${t("team_call.logged_outcome", { outcome: t(`team_call.outcome.${m.outcome}`), when })}`;
   return m.lengthMin ? t("team_call.logged_title", { length: m.lengthMin, when }) : t("team_call.logged_title_short", { when });
 }
@@ -124,7 +126,7 @@ export function teamCallTitle(m: LoggedCall): string {
  * Mon 23 Nov 15:32", "{who} called +972 50-•••-4567 · logged by {who}", the note, and Edit.
  * The phone is masked here (only the Deal tab card shows it in full).
  */
-export function TeamCallEntry({ call, meId, editHref }: { call: LoggedCall; meId: string | null; editHref?: string }) {
+export function TeamCallEntry({ call, meId, editHref, viewerZone = null }: { call: LoggedCall; meId: string | null; editHref?: string; viewerZone?: string | null }) {
   // Who calls is not recorded yet (anyone on the team): the person who logged it, "You" / "you" for the viewer.
   const who = call.by ? isolate(personName(call.by, meId, t("people.you"))) : t("conv.who.team");
   const by = call.by ? isolate(personName(call.by, meId, t("people.you_lower"))) : t("conv.who.team");
@@ -133,7 +135,7 @@ export function TeamCallEntry({ call, meId, editHref }: { call: LoggedCall; meId
       <span className="sas-teamcall-entry__icon" aria-hidden="true"><Icon name="phone-call" /></span>
       <div className="sas-teamcall-entry__body">
         <div className="sas-teamcall-entry__head">
-          <strong>{teamCallTitle(call)}</strong>
+          <strong>{teamCallTitle(call, viewerZone)}</strong>
           {editHref ? <a href={editHref} className="sas-teamcall-entry__edit" data-team-call-edit="">{t("team_call.edit")}</a> : null}
         </div>
         <span className="sas-small">{call.phone ? t("team_call.logged_by", { who, by, phone: call.phone }) : t("team_call.logged_by_nophone", { who, by })}</span>
@@ -397,8 +399,10 @@ export function ConversationControls({
 /** The lead's latest conversation as a chat thread with trace chips, a status line and the hand-off controls. */
 export function ConversationPanel({
   slug, view, me, buyerName, leadOptedOut, notice, chatWindow, from = "lead", timezone, takeOverInHeader = false,
-  leadStatus = null, notes = [], rawToolNames = false, steps,
+  leadStatus = null, notes = [], rawToolNames = false, steps, viewerZone = null,
 }: {
+  /** The viewer's own zone (the sas_tz cookie) for scheduled moments in markers (team calls); message times keep `timezone`. */
+  viewerZone?: string | null;
   /**
    * "Show agent steps" (board ConvSteps): off hides the tool chips under agent
    * replies; markers, quote cards, form notes and voice entries always show.
@@ -457,12 +461,12 @@ export function ConversationPanel({
     ...notes.filter((n) => !cardOfForm.has(n.id)).map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
     ...timed.map((mk, i) => ({
       at: mk.at,
-      node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} />,
+      node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} viewerZone={viewerZone} />,
     })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
   // The agent's hand-off: right after the reply that made it.
-  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} />);
+  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} viewerZone={viewerZone} />);
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>

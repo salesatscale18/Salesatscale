@@ -3,7 +3,7 @@ import { Icon, type IconName } from "@/components/sas/icon";
 import { CopyButton } from "@/components/sas/copy-button";
 import { DateField } from "@/components/sas/date-field";
 import { CALL_NOTE_MAX, callNeedsLog, callUpcoming, TEAM_CALL_MINUTES, type CallbackRequest, type CallOutcome } from "@/lib/callbacks/rules";
-import { formatDueLocal } from "@/lib/follow-ups/rules";
+import { shownZone, viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
 import { zonePlainName } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { isolate } from "@/lib/leads/bidi";
@@ -62,8 +62,10 @@ export type TeamCallMessages = { notice?: string; error?: string; cbNotice?: str
  * reopens the time. `edit`: the thread's Edit on a logged call. Admins only
  * act; everything is re-checked on the server.
  */
-export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canManage, edit = false, msg = {}, now = new Date() }: {
+export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canManage, edit = false, msg = {}, now = new Date(), viewerZone = null }: {
   slug: string; leadId: string; call: CallbackRequest | null; buyerName: string;
+  /** The viewer's own zone (the sas_tz cookie): the call time and "Started" read in it, " · your time" when it differs. Null: the call's zone. */
+  viewerZone?: string | null;
   /** The lead's own number (E.164), or null for a simulated buyer. */
   leadPhone: string | null;
   canManage: boolean; edit?: boolean; msg?: TeamCallMessages; now?: Date;
@@ -90,7 +92,10 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
       <input type="hidden" name="callbackId" value={call.id} />
     </>
   );
-  const when = formatDueLocal(call.at, call.timezone);
+  // The time in the viewer's own zone (else the call's), "· your time" when that differs from the call's zone.
+  const seen = shownZone(viewerZone, call.timezone);
+  const when = `${viewerTime(call.at, viewerZone, call.timezone)}${yourTimeSuffix(call.at, viewerZone, call.timezone)}`;
+  // Change time stays in the call's own zone (its hint names it).
   const start = localParts(call.at, call.timezone);
   const changeCancel = canManage ? (
     <div className="sas-teamcall__actions">
@@ -128,7 +133,7 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
     const phone = call.phone ?? leadPhone;
     const first = buyerName.trim().split(/\s+/)[0] || buyerName;
     // The buyer's time only when it reads differently from the market's (UX, MVP): no "same" line.
-    const zone = call.buyerTimezone && differs(call.at, call.buyerTimezone, call.timezone)
+    const zone = call.buyerTimezone && (differs(call.at, call.buyerTimezone, call.timezone) || differs(call.at, call.buyerTimezone, seen))
       ? t("team_call.zone_differs", { time: isolate(localParts(call.at, call.buyerTimezone).time), zone: zonePlainName(call.buyerTimezone, call.at) ?? call.buyerTimezone })
       : null;
     return (
@@ -160,7 +165,8 @@ export function TeamCallPanel({ slug, leadId, call, buyerName, leadPhone, canMan
   // After the slot: the log form (or Edit of a logged call).
   const log = call.log;
   const outcome: CallOutcome = log?.outcome ?? "spoke";
-  const started = localParts(log?.startedAt ?? call.at, call.timezone).time;
+  // In the zone the viewer sees (the action reads the same cookie to save it).
+  const started = localParts(log?.startedAt ?? call.at, seen).time;
   const editing = !!log;
   return (
     <section id="callback" aria-labelledby="tc-h" className="sas-teamcall sas-teamcall--log" data-testid="team-call" data-state="log">
