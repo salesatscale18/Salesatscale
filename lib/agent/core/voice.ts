@@ -83,13 +83,20 @@ export const CORE_DESIGN_VOICE: readonly VoiceReplacement[] = [
   // The shared objection method (lib/agent/core/design.ts objectionMethod).
   { from: "- Find the real objection. One question, in the same message as the acknowledgement.", to: "- Find the real objection. One question, in the same turn as the acknowledgement." },
   { from: "Every turn, read the buyer's last message before choosing a step.", to: "Every turn, listen to what the buyer just said before choosing a step." },
+  // Reach part B: a call with a person is a booking link in the chat (request_callback { brief }); the buyer picks the time.
   {
-    from: "- Call with a person. Framed as a help, with a proposed time the buyer can change; the team confirms it.",
-    to: "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it by message. Never read a link aloud.",
+    from: "- Call with a person. Framed as a help, with a link where the buyer picks the time.",
+    to: "- Call with a person. Framed as a help, with a booking link in the chat where the buyer picks the time. Never read the link aloud.",
   },
+  { from: ': here is a link to pick a time that suits you."', to: ': I\'ve put a link in the chat where you can pick a time that suits you."' },
   {
-    from: "Tell the buyer the team will confirm the time here. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call.",
-    to: "Tell the buyer the team will confirm the time by message. The call goes on after the request: keep helping, and never use hand_off_to_human for a call.",
+    from: "It puts a booking link in the chat; tell the buyer they can pick a time there. The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call.",
+    to: "It puts a booking link in the chat; when its result says the link was sent, tell the buyer they can pick a time there (never read the link aloud; if it was not sent, never say there is a link). The call goes on after it: keep helping, and never use hand_off_to_human for a call.",
+  },
+  { from: "- If the buyer asks you to call or write at a time,", to: "- If the buyer asks you to call them or get back to them at a time," },
+  {
+    from: "say they will get a text with a link back here, where they can talk by voice or write.",
+    to: "say they will get a text with a link back to the chat, where they can talk by voice or type.",
   },
   {
     from: '- Send the one approved item ("Send me information"): You cannot attach files. Give the summary in text; include a link only if it is listed in this play\'s facts.',
@@ -121,10 +128,11 @@ export const PLAYS_VOICE: readonly VoiceReplacement[] = [
     optional: true,
   },
   {
-    from: "If they ask again, or do not want to say: book the call. Propose a time, give the link to choose another, and say what the person will have ready.",
-    to: "If they ask again, or do not want to say: book the call. Propose a time, ask which time suits them if that one does not (never read a link aloud), and say what the person will have ready.",
+    from: "If they ask again, or do not want to say: book the call: send the booking link with request_callback, and say what the person will have ready.",
+    to: "If they ask again, or do not want to say: book the call: call request_callback, say the booking link is in the chat where they pick a time (never read it aloud), and say what the person will have ready.",
     optional: true,
   },
+  { from: 'Here is a link to pick a time."', to: 'I\'ve put a link in the chat where you can pick a time."', optional: true },
   {
     from: "Keep answering until the call. Do not pause the chat.",
     to: "Keep answering until the call. Requesting the call does not end this one: keep helping.",
@@ -178,6 +186,11 @@ export const STAGE_VOICE: readonly VoiceReplacement[] = [
     to: "Keep the conversation going: this call does not end because of the request. If the buyer wants another time, call request_callback again.",
     optional: true,
   },
+  {
+    from: "Keep answering until the call. If the buyer wants another time, they can rebook with the same link; call request_callback again only to send it again.",
+    to: "Keep the conversation going: this call does not end because of the booking. If the buyer wants another time, they can rebook with the same link in the chat; call request_callback again only to send it again.",
+    optional: true,
+  },
   // The "Open objection" block quotes the card's steps.
   ...PLAYS_VOICE,
 ];
@@ -212,9 +225,9 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that \"Open objection\" shows as used.",
     "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",
     "- An answer under \"Questions sent to the team\": give it when it is relevant, in one short sentence in your own words, once. Do not say the team replied or that you were waiting for it.",
-    "- If the buyer asks for a person, follow the card \"The buyer asks for a person\": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time and call request_callback. Never use hand_off_to_human for a call request.",
-    "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is a callback request: call request_callback with the time and a brief (what the buyer wants to cover and what the person should have ready). If it offers another time, offer that time instead and call it again when the buyer agrees. Then say the team will confirm the time by message, and ask if there is anything else you can help with: this call goes on.",
-    "- Times: say them naturally, as a person would (\"tomorrow at ten\", \"Friday 20 November at half past twelve\"); the tools and your context give them in full (\"Friday 20 November at 12:30\"). Work out the date from \"Local time now\" in your context. Pass the time to request_callback and schedule_follow_up as a local date and time, for example \"2026-11-18T10:00\".",
+    "- If the buyer asks for a person, follow the card \"The buyer asks for a person\": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: call request_callback with a brief; it puts a booking link in the chat where they pick a time. Never use hand_off_to_human for a call request.",
+    "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is booked by the buyer: call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat, where the buyer picks a time. When its result says the link was sent, say in one short sentence, in the buyer's language, that they can pick a time with the link in the chat (never read it aloud), then ask if there is anything else you can help with: this call goes on. If it was not sent, never say there is a link.",
+    "- Times: say them naturally, as a person would (\"tomorrow at ten\", \"Friday 20 November at half past twelve\"); the tools and your context give them in full (\"Friday 20 November at 12:30\"). Work out the date from \"Local time now\" in your context. Pass the time to schedule_follow_up as a local date and time, for example \"2026-11-18T10:00\".",
     "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
     "- If the buyer says stop or asks not to be contacted: confirm, call record_opt_out, and say only the reply it gives you.",
     "- If the buyer asks to end the call (or says goodbye): say a short goodbye in the language of the call, then call end_call. Never end the call otherwise; a request not to be contacted is record_opt_out.",
@@ -229,6 +242,11 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
 
 /** Tool descriptions (lib/agent/tools.ts TOOL_DEFS) as a call reads them. */
 export const TOOL_DESCRIPTION_VOICE: readonly VoiceReplacement[] = [
+  {
+    from: "Send the buyer a link to book a call with a person on the seller's team.",
+    to: "Put a booking link on the buyer's screen, where they book a call with a person on the seller's team (never read it aloud).",
+    optional: true,
+  },
   { from: "plain_name (what to call it in chat)", to: "plain_name (what to call it on the call)", optional: true },
   {
     from: "When the quote is ready, the app sends the buyer the quote message (lines, VAT and totals) itself: do not repeat it.",
@@ -245,6 +263,9 @@ export const TOOL_DESCRIPTION_VOICE: readonly VoiceReplacement[] = [
 
 /** Tool result messages for the model, as a call reads them (lib/voice/engine.ts). Optional, so other messages pass unchanged. */
 export const TOOL_RESULT_VOICE: readonly VoiceReplacement[] = [
+  // request_callback (reach part B): the booking link is in the chat, never read aloud.
+  { from: "Link sent in the chat. Tell the buyer, in one short sentence in their wording,", to: "The booking link is in the chat. Tell the buyer, in one short spoken sentence in their language,", optional: true },
+  { from: "with the link. Keep answering their questions until the call.", to: "with the link in the chat (never read the link aloud). Keep answering their questions until the call.", optional: true },
   { from: "the team will confirm it here.", to: "the team will confirm it by message.", optional: true },
   { from: "Keep answering their questions until the call.", to: "Then ask if there is anything else you can help with: this call goes on.", optional: true },
 ];

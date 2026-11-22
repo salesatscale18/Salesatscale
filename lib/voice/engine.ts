@@ -19,6 +19,7 @@ import {
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
+import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
 import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib/agent/tools";
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
@@ -1285,8 +1286,21 @@ export class VoiceEngine {
         message: `The order form was NOT sent (${why}). Do not say the order form or its link is in the chat. ${typeof r.result.message === "string" ? `${r.result.message} ` : ""}Tell the buyer in one short sentence what happens next.`,
       };
     }
+    if (name === "request_callback" && r.outcome !== "ok") {
+      // Never a booking link that was not sent.
+      const why = typeof r.result.rule === "string" ? r.result.rule : typeof r.result.error === "string" ? r.result.error : "it could not be sent";
+      forModel = {
+        ...r.result,
+        message: `The booking link was NOT sent (${why}). Do not say there is a link in the chat or that a call is set up. ${typeof r.result.message === "string" ? `${r.result.message} ` : ""}Tell the buyer in one short sentence what happens next.`,
+      };
+    }
     if (r.outcome === "ok") {
       if (name === "create_quote" && typeof r.result.quote_message_id === "string") this.send({ t: "message", messageId: r.result.quote_message_id });
+      if (name === "request_callback" && this.loaded) {
+        // The booking card is in the chat now: the browser shows it during the call.
+        const offer = await latestBookingOffer(this.db, this.loaded.account.id, this.loaded.conv.leadId).catch(() => null);
+        if (offer?.conversationId === this.loaded.conv.id) this.send({ t: "message", messageId: offer.messageId });
+      }
       if (name === "create_quote") {
         // The model names a quote by its number only: internal ids out, and how to send the form for this one.
         const { quote_id: _qid, quote_message_id: _mid, ...rest } = r.result;

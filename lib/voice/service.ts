@@ -5,7 +5,7 @@
  * scoped by account id everywhere.
  */
 import { createHash, randomBytes } from "node:crypto";
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { agentVersions, conversations, messages, sellerAccounts, voiceSessions, type VoiceSettings, type VoiceEndReason, type VoiceSession, type VoiceSessionMode, type VoiceUsage, type VoiceEndDetail } from "@/db/schema";
 import { ensureDraftVersion, startTestConversation } from "@/lib/agent/service";
@@ -130,19 +130,27 @@ const RELAY_GONE: VoiceEndDetail = { by: "relay_gone" };
  */
 export async function closeStaleVoiceSessions(db: Db, accountId: string | null, now = new Date()): Promise<number> {
   const scope = accountId ? eq(voiceSessions.accountId, accountId) : undefined;
-  const pending = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec: 0 })
-    .where(and(scope, eq(voiceSessions.status, "pending"), lt(voiceSessions.createdAt, new Date(now.getTime() - STALE_PENDING_SEC * 1000))))
-    .returning({ id: voiceSessions.id });
-  let closed = pending.length;
-  // With a heartbeat: ended at the last one.
-  const beating = await db.select().from(voiceSessions)
-    .where(and(scope, eq(voiceSessions.status, "live"), isNotNull(voiceSessions.durationSec), isNotNull(voiceSessions.connectedAt)));
-  for (const s of beating) {
-    const lastBeat = s.connectedAt!.getTime() + (s.durationSec ?? 0) * 1000;
-    if (lastBeat >= now.getTime() - STALE_HEARTBEAT_SEC * 1000) continue;
-    const endedAt = new Date(lastBeat);
+  // One small read of the open sessions (the cron runs this every minute: a quiet minute is this query only).
+  const open = await db.select({ id: voiceSessions.id, status: voiceSessions.status, createdAt: voiceSessions.createdAt, connectedAt: voiceSessions.connectedAt, durationSec: voiceSessions.durationSec })
+    .from(voiceSessions).where(and(scope, inArray(voiceSessions.status, ["pending", "live"])));
+  const t = now.getTime();
+  const liveCutoff = t - (PLATFORM_MAX_CALL_SEC + STALE_LIVE_GRACE_SEC) * 1000;
+  const stalePending = open.filter((s) => s.status === "pending" && s.createdAt.getTime() < t - STALE_PENDING_SEC * 1000).map((s) => s.id);
+  // With a heartbeat: stale once the last one is STALE_HEARTBEAT_SEC old. Without (older deployments): the old rule.
+  const staleBeating = open.filter((s) => s.status === "live" && s.durationSec !== null && s.connectedAt && s.connectedAt.getTime() + s.durationSec * 1000 < t - STALE_HEARTBEAT_SEC * 1000);
+  const staleOld = open.filter((s) => s.status === "live" && s.durationSec === null && (s.connectedAt ?? s.createdAt).getTime() < liveCutoff);
+  let closed = 0;
+  if (stalePending.length) {
+    const pending = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec: 0 })
+      .where(and(inArray(voiceSessions.id, stalePending), eq(voiceSessions.status, "pending"))).returning({ id: voiceSessions.id });
+    closed += pending.length;
+  }
+  for (const { id } of staleBeating) {
+    const [s] = await db.select().from(voiceSessions).where(and(eq(voiceSessions.id, id), eq(voiceSessions.status, "live")));
+    if (!s || !s.connectedAt || s.durationSec === null) continue;
+    const lastBeat = s.connectedAt.getTime() + s.durationSec * 1000;
     const usage = { ...(s.usage ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
-    const done = await db.update(voiceSessions).set({ status: "ended", endedAt, endReason: "connection_lost", usage })
+    const done = await db.update(voiceSessions).set({ status: "ended", endedAt: new Date(lastBeat), endReason: "connection_lost", usage })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
     if (!done.length) continue;
     closed++;
@@ -151,22 +159,21 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
       .where(and(eq(messages.accountId, s.accountId), eq(messages.conversationId, s.conversationId), eq(messages.voiceSessionId, s.id)))
       .orderBy(desc(messages.createdAt)).limit(1);
     const at = new Date(Math.max(lastBeat, (last?.at.getTime() ?? 0) + 1));
-    await db.insert(messages).values({ accountId: s.accountId, conversationId: s.conversationId, actor: "system", body: CALL_ENDED_TEXT(s.durationSec ?? 0), language: "en", createdAt: at });
+    await db.insert(messages).values({ accountId: s.accountId, conversationId: s.conversationId, actor: "system", body: CALL_ENDED_TEXT(s.durationSec), language: "en", createdAt: at });
   }
-  // No heartbeat (older deployments): the old rule.
-  const cutoff = new Date(now.getTime() - (PLATFORM_MAX_CALL_SEC + STALE_LIVE_GRACE_SEC) * 1000);
-  const live = await db.select().from(voiceSessions)
-    .where(and(scope, eq(voiceSessions.status, "live"), isNull(voiceSessions.durationSec), lt(sql`coalesce(${voiceSessions.connectedAt}, ${voiceSessions.createdAt})`, cutoff)));
-  for (const s of live) {
+  for (const { id } of staleOld) {
+    const [s] = await db.select().from(voiceSessions).where(and(eq(voiceSessions.id, id), eq(voiceSessions.status, "live")));
+    if (!s) continue;
     const started = (s.connectedAt ?? s.createdAt).getTime();
-    const durationSec = Math.min(PLATFORM_MAX_CALL_SEC, Math.max(0, Math.round((now.getTime() - started) / 1000)));
+    const durationSec = Math.min(PLATFORM_MAX_CALL_SEC, Math.max(0, Math.round((t - started) / 1000)));
     const base: VoiceUsage | null = s.mode === "live" ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
     const costMicros = s.mode === "live" && base ? estimateRealtimeCostMicros(s.model, base) ?? 0 : 0;
     const usage = { ...(base ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
-    await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros })
-      .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live")));
+    const done = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros })
+      .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
+    closed += done.length;
   }
-  return closed + live.length;
+  return closed;
 }
 
 /**

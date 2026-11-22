@@ -131,8 +131,15 @@ const askedForPerson = (status: "open" | "settled", step: number) => ({
   objection: { play: "asks_for_person", buyer_words: "I'd rather talk to a person", step, attempt: false, status },
 });
 const CALL_BRIEF = "The buyer prefers to talk to a person; topic not given. Have the offer and prices for their business ready.";
-/** The last request_callback was refused with another time to offer. */
-const callbackRefused = (ctx: ScriptCtx) => ctx.last("request_callback")?.ok === false && typeof ctx.last("request_callback")?.suggested_time === "string";
+/** request_callback put the booking card in the chat (reach part B: the buyer picks the time there). */
+const linkSent = (ctx: ScriptCtx) => ctx.last("request_callback")?.ok === true;
+/** What the agent says after request_callback, by its result: the link in the chat (never read aloud), or no link at all. */
+const bookingLine = (who: string) => [
+  onlyIf(linkSent, say(`Done: I've put a link in the chat where you can pick a time for a call with a member of our team${who}. Is there anything else I can help with?`)),
+  onlyIf((ctx) => !linkSent(ctx), say(BOOKING_NOT_SENT_LINE)),
+];
+/** After a refused request_callback: never a link that was not sent. */
+export const BOOKING_NOT_SENT_LINE = "I couldn't set up the call link just now; the team will get back to you about a time. Is there anything else I can help with?";
 
 
 // ---------------------------------------------------------------------------
@@ -184,7 +191,7 @@ const PROMISE = "I don't have that detail yet, and I'll make sure you get an exa
 const orderFormSay = say("The order form is in the chat: fill in your company details, sign and pay. Go ahead now, I'm staying on the line.");
 
 /** A time tool refused with another time to offer: offer it, hear the yes, use it. */
-const offerSuggested = (name: "request_callback" | "schedule_follow_up", key: "suggested_time" | "suggested_due_at", args: (time: string) => Record<string, unknown>): ScriptStep[] => {
+const offerSuggested = (name: "schedule_follow_up", key: "suggested_due_at", args: (time: string) => Record<string, unknown>): ScriptStep[] => {
   const refused = (ctx: ScriptCtx) => ctx.last(name)?.ok === false && typeof ctx.last(name)?.[key] === "string";
   return [
     onlyIf(refused, say((ctx) => `That time is not open. How about ${String(ctx.last(name)?.suggested_local ?? "the next open time")}?`)),
@@ -281,10 +288,10 @@ function objectionScripts(): Record<string, Script> {
       say("Understood, that matters for your decision. How many locations do you have?"),
       expectBuyer(mhTime),
       tool("update_deal_state", (ctx: ScriptCtx) => ({ updates: quoteFieldUpdates(ctx, 2), next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null })),
-      tool("request_callback", (ctx: ScriptCtx) => ({ time: localDayAt(ctx, 1, "10:00"), brief })),
-      ...offerSuggested("request_callback", "suggested_time", (time) => ({ time, brief })),
-      onlyIf((ctx) => ctx.last("request_callback")?.ok === true, recordObjection("no_answer", mhTime, 4, false)),
-      say((ctx) => `Done. ${String(ctx.last("request_callback")?.time_local ?? "The time")} is requested with a member of our team, who will have the exact answer, and the team will confirm it by message. Is there anything else I can help with?`),
+      // Reach part B: the call is booked by the buyer from a link in the chat (request_callback { brief }).
+      tool("request_callback", { brief }),
+      onlyIf(linkSent, recordObjection("no_answer", mhTime, 4, false)),
+      ...bookingLine(", who will have the exact answer"),
     ],
     // A buying signal mid-objection: stop handling it at once and send the order form.
     buying_signal: [
@@ -369,21 +376,17 @@ export const VOICE_SCRIPTS: Record<string, Script> = {
     expectBuyer("Mostly the price, to be honest."),
     say("Got it. The price depends mostly on how many locations you have. How many are there?"),
   ],
-  // "Asks for a person twice": asked again, the call is a callback request (request_callback) at a
-  // time inside contact hours; when the tool offers another time, that one is offered and requested.
-  // The call goes on afterwards.
+  // "Asks for a person twice": asked again, the call is booked (request_callback { brief }): a booking link goes in
+  // the chat, where the buyer picks a time; the agent says so (never reading it aloud) and the call goes on.
   asks_for_person_twice: [
     expectBuyer("I'd rather talk to a person from your team, please."),
     tool("update_deal_state", askedForPerson("open", 1)),
     say("Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price or fit I can usually answer right now."),
     expectBuyer("No thanks, I'd really prefer to speak with someone. Tomorrow morning works for me."),
     say("No problem. One moment, I'm setting that up."),
-    tool("request_callback", (ctx: ScriptCtx) => ({ time: localDayAt(ctx, 1, "10:00"), brief: CALL_BRIEF })),
-    onlyIf(callbackRefused, say((ctx) => `Tomorrow morning is not open for calls. How about ${String(ctx.last("request_callback")?.suggested_local ?? "the next open time")}?`)),
-    onlyIf(callbackRefused, expectBuyer("Yes, that works.")),
-    onlyIf(callbackRefused, tool("request_callback", (ctx: ScriptCtx) => ({ time: String(ctx.last("request_callback")?.suggested_time ?? ""), brief: CALL_BRIEF }))),
+    tool("request_callback", { brief: CALL_BRIEF }),
     tool("update_deal_state", askedForPerson("settled", 3)),
-    say((ctx) => `Done. ${String(ctx.last("request_callback")?.time_local ?? "The time")} is requested, and the team will confirm it by message. Is there anything else I can help with?`),
+    ...bookingLine(""),
     expectBuyer("No, that's all, thanks."),
     say("Thanks for your time. Talk soon, goodbye."),
   ],

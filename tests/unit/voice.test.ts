@@ -36,7 +36,7 @@ import {
 } from "@/lib/voice/settings";
 import { ManualClock, flushAsync, type RealtimeEvent } from "@/lib/voice/realtime";
 import {
-  DEFAULT_SCRIPT, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
+  BOOKING_NOT_SENT_LINE, DEFAULT_SCRIPT, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
 } from "@/lib/voice/scripted-realtime";
 import { assertLiveAllowed, clientEvents, GatewayRealtime, PROVEN_SESSION_FIELDS, ServerEventMapper, SETUP_RETRY_FIELDS, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 
@@ -130,7 +130,7 @@ describe("tool schemas", () => {
   it("descriptions use call wording", () => {
     for (const t of realtimeTools("gemini")) expect(t.description, t.name).not.toMatch(/\bin chat\b|\bin the chat:|\bchat (?:below|above)\b|\b(?:below|above) the call\b/);
     const cb = realtimeTools("gemini").find((t) => t.name === "request_callback")!.description;
-    expect(cb).toContain("the app tells the buyer by message.");
+    expect(cb).toContain("Put a booking link on the buyer's screen, where they book a call with a person on the seller's team (never read it aloud).");
     expect(cb).toContain("The conversation stays with you: keep the call going.");
     expect(voiceToolDescription(TOOL_DEFS.find((d) => d.name === "send_order_form")!.description!)).toContain("never read it aloud");
     expect(voiceToolDescription(TOOL_DEFS.find((d) => d.name === "record_opt_out")!.description!)).toContain("ends the call");
@@ -237,7 +237,7 @@ describe("voice instructions", () => {
       "keep the conversation going; do not end the call because of it.",
       "then sum it up for them in two or three short sentences",
       "Give the main points in a short spoken summary for that reader",
-      "Propose a time, ask which time suits them if that one does not (never read a link aloud)",
+      "book the call: call request_callback, say the booking link is in the chat where they pick a time (never read it aloud)",
       "Keep answering until the call. Requesting the call does not end this one: keep helping.",
       "In the same turn, promise the outcome",
       "never stop the conversation or end the call only because of one open question.",
@@ -252,17 +252,19 @@ describe("voice instructions", () => {
   it("the voice block follows the plays: a request for a person, an upset buyer, objections, unanswered questions", () => {
     const block = voiceStageText(stableSystemPrompt(pb, seller, null, { channel: "voice" }));
     for (const line of [
-      '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: propose a time and call request_callback. Never use hand_off_to_human for a call request.',
-      "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is a callback request: call request_callback with the time and a brief (what the buyer wants to cover and what the person should have ready). If it offers another time, offer that time instead and call it again when the buyer agrees. Then say the team will confirm the time by message, and ask if there is anything else you can help with: this call goes on.",
-      '- Times: say them naturally, as a person would ("tomorrow at ten", "Friday 20 November at half past twelve"); the tools and your context give them in full ("Friday 20 November at 12:30"). Work out the date from "Local time now" in your context. Pass the time to request_callback and schedule_follow_up as a local date and time, for example "2026-11-18T10:00".',
-      "- Call with a person. Framed as a help, with a proposed time; if it does not suit them, ask which time does. The team confirms it by message. Never read a link aloud.",
+      '- If the buyer asks for a person, follow the card "The buyer asks for a person": say yes, and once only offer to help now by asking what they want to cover. If they ask again or will not say, book the call: call request_callback with a brief; it puts a booking link in the chat where they pick a time. Never use hand_off_to_human for a call request.',
+      "- Every call with a person you set up (a request for a person, the last rung of an objection, a must-have question still open at the close, a call that includes the person who decides) is booked by the buyer: call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat, where the buyer picks a time. When its result says the link was sent, say in one short sentence, in the buyer's language, that they can pick a time with the link in the chat (never read it aloud), then ask if there is anything else you can help with: this call goes on. If it was not sent, never say there is a link.",
+      '- Times: say them naturally, as a person would ("tomorrow at ten", "Friday 20 November at half past twelve"); the tools and your context give them in full ("Friday 20 November at 12:30"). Work out the date from "Local time now" in your context. Pass the time to schedule_follow_up as a local date and time, for example "2026-11-18T10:00".',
+      "- Call with a person. Framed as a help, with a booking link in the chat where the buyer picks the time. Never read the link aloud.",
+      'I\'ve put a link in the chat where you can pick a time that suits you."',
+      "- If the buyer asks you to call them or get back to them at a time, call schedule_follow_up with that time; say they will get a text with a link back to the chat, where they can talk by voice or type.",
       '- Send the one approved item ("Send me information"): you cannot attach files or read links aloud. Give the summary in a few spoken sentences, and offer to continue in the chat for anything they want to read later.',
       "- If the buyer is upset, complains, raises a legal or existing-customer issue, or insists: stop selling, call hand_off_to_human at once, say someone from the team will get back to them, and say goodbye: the call ends there.",
       '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
       '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
       "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",
       '- An answer under "Questions sent to the team": give it when it is relevant, in one short sentence in your own words, once. Do not say the team replied or that you were waiting for it.',
-      "Tell the buyer the team will confirm the time by message. The call goes on after the request: keep helping, and never use hand_off_to_human for a call.",
+      "It puts a booking link in the chat; when its result says the link was sent, tell the buyer they can pick a time there (never read the link aloud; if it was not sent, never say there is a link). The call goes on after it: keep helping, and never use hand_off_to_human for a call.",
       "- Find the real objection. One question, in the same turn as the acknowledgement.",
     ]) expect(block, line).toContain(line);
     // hand_off_to_human is never the way to a call: only the upset line keeps it.
@@ -779,6 +781,11 @@ describe("security headers", () => {
 });
 
 describe("call requests on a call (request_callback)", () => {
+  it("the booking result reads in call wording: the link is in the chat, never read aloud; the call goes on", () => {
+    const msg = "Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with a member of our team with the link. Keep answering their questions until the call.";
+    expect(voiceToolResultMessage(msg)).toBe("The booking link is in the chat. Tell the buyer, in one short spoken sentence in their language, that they can pick a time for a call with a member of our team with the link in the chat (never read the link aloud). Then ask if there is anything else you can help with: this call goes on.");
+  });
+
   it("the tool result reads in call wording; other results pass unchanged", () => {
     const msg = "Requested. Tell the buyer, in one short sentence in their wording, that a member of our team will call at that time and the team will confirm it here. Keep answering their questions until the call.";
     expect(voiceToolResultMessage(msg)).toBe("Requested. Tell the buyer, in one short sentence in their wording, that a member of our team will call at that time and the team will confirm it by message. Then ask if there is anything else you can help with: this call goes on.");
@@ -791,8 +798,10 @@ describe("call requests on a call (request_callback)", () => {
   });
 
   it("the callback line of the per-turn context in call wording", () => {
-    const ctx = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: true } }));
-    expect(ctx).toContain("Call with a member of our team confirmed by the team: Sat 21 Nov 10:00. Keep the conversation going: this call does not end because of the request. If the buyer wants another time, call request_callback again.");
+    const booked = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: true } }));
+    expect(booked).toContain("Call with a member of our team booked: Sat 21 Nov 10:00. Keep the conversation going: this call does not end because of the booking. If the buyer wants another time, they can rebook with the same link in the chat; call request_callback again only to send it again.");
+    const requested = voiceStageText(turnContext(pb, null, { agentMessages: 2, channel: "voice", callback: { timeLocal: "Sat 21 Nov 10:00", confirmed: false } }));
+    expect(requested).toContain("Call with a member of our team requested, waiting for the team to confirm: Sat 21 Nov 10:00. Keep the conversation going: this call does not end because of the request. If the buyer wants another time, call request_callback again.");
   });
 
   it("scripted times come from \"Local time now\"", () => {
@@ -825,17 +834,23 @@ describe("call requests on a call (request_callback)", () => {
       conn.sendText(`turn ${i}`);
       for (let k = 0; k < 30; k++) { await run(500); await answer(); }
     }
-    return events.filter((x): x is Extract<RealtimeEvent, { type: "tool-call" }> => x.type === "tool-call").filter((x) => x.name === "request_callback");
+    return { events, calls: events.filter((x): x is Extract<RealtimeEvent, { type: "tool-call" }> => x.type === "tool-call").filter((x) => x.name === "request_callback") };
   }
 
-  it("scripted twice: an allowed time is requested once", async () => {
-    const calls = await runTwice({ ok: true, time_local: "Sat 21 Nov 10:00" });
-    expect(calls.map((c) => c.args)).toEqual([{ time: "2026-11-21T10:00", brief: expect.any(String) }]);
+  /** The agent's spoken lines of the run (its final transcripts). */
+  const agentLines = (events: RealtimeEvent[]) => events.filter((x): x is Extract<RealtimeEvent, { type: "agent-transcript" }> => x.type === "agent-transcript" && x.final).map((x) => x.text);
+
+  it("scripted twice: one request_callback with a brief only (the buyer books from the link); the link is said to be in the chat", async () => {
+    const { calls, events } = await runTwice({ ok: true, message: "Link sent in the chat." });
+    expect(calls.map((c) => c.args)).toEqual([{ brief: expect.stringContaining("prefers to talk to a person") }]);
+    expect(agentLines(events).some((l) => l.includes("I've put a link in the chat where you can pick a time for a call with a member of our team."))).toBe(true);
   });
 
-  it("scripted twice: a refused time with a suggestion is offered, then requested", async () => {
-    const calls = await runTwice({ ok: false, refused: true, suggested_time: "2026-11-22T09:00:00+00:00", suggested_local: "Sun 22 Nov 09:00" });
-    expect(calls.map((c) => (c.args as { time: string }).time)).toEqual(["2026-11-21T10:00", "2026-11-22T09:00:00+00:00"]);
+  it("scripted twice: a refused booking link is never said to be in the chat", async () => {
+    const { calls, events } = await runTwice({ ok: false, refused: true, rule: "No brief" });
+    expect(calls).toHaveLength(1);
+    expect(agentLines(events).some((l) => l.includes(BOOKING_NOT_SENT_LINE))).toBe(true);
+    expect(agentLines(events).some((l) => /link in the chat/.test(l))).toBe(false);
   });
 
   it("onlyIf skips a step when its condition does not hold", () => {

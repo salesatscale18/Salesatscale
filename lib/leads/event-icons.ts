@@ -48,6 +48,9 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "callback.cancelled": "phone-off",
   "callback.after_agent": "sparkles",
   "callback.after_seller": "user",
+  // Reach part B: the agent's booking link in the chat, and the team's log of the call.
+  "team_call.offered": "calendar",
+  "team_call.logged": "phone-call",
   "team_question.asked": "book-open",
   "team_question.answered": "check-circle",
   "team_question.delivered": "send",
