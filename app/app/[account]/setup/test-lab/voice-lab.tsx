@@ -17,7 +17,9 @@ import { buttonClass } from "@/components/sas/primitives";
 import { VoiceCall, useNow, useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
 import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
-import { t } from "@/lib/i18n";
+import { t, translator } from "@/lib/i18n";
+import { useBackGuard } from "@/lib/voice/client/back-guard";
+import { LeaveSheet } from "@/components/sas/voice/leave-sheet";
 import { VoiceClient } from "@/lib/voice/client/voice-client";
 import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/voice/client/view";
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
@@ -74,6 +76,20 @@ export function VoiceLabKeeper() {
     };
   }, []);
   return null;
+}
+
+/**
+ * Back during a test call (board VoiceBubbleBack 2): "End the call?" on Back or on a link that leaves the test lab;
+ * End call ends it and stays here. With no call, Back and links work as usual. During the call, closing or
+ * reloading the tab gets the browser's leave prompt.
+ */
+export function VoiceLabBackGuard() {
+  const s = useVoiceSnapshot(labClient());
+  const mine = useLabCall();
+  // Only once the call is connected: the URL has moved to the call's conversation by then (no guard under that step).
+  const on = !!mine && !mine.handedOff && (s.phase === "live" || s.phase === "reconnecting");
+  const g = useBackGuard({ ask: on ? "end_call" : null, liveCall: on, guardLinks: true, onEndCall: () => labClient().end() });
+  return g.sheet ? <LeaveSheet ask={g.sheet} tr={translator("en")} dir="ltr" onChoose={g.choose} /> : null;
 }
 
 type StartInput = { slug: string; lab: string; versionId: string | null; scenario: string | null; language?: string | null; maxSec?: number | null };

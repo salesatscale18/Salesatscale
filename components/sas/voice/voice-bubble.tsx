@@ -3,8 +3,8 @@
 /**
  * The voice bubble (live voice, buyer pages): a small round button in the bottom corner (bottom-end, so it
  * mirrors in Hebrew) while a call is on, with a waveform that follows who is speaking. Tapping it opens the
- * call controls: Mute or Unmute, Speaker (only when the browser offers a choice of two or more) and Back to
- * text. The same component shows in the chat tab (which runs the call) and in an order form tab (which mirrors
+ * call controls: Mute or Unmute, Speaker (only when the browser offers a choice of two or more) and, after a
+ * divider, End call. The same component shows in the chat tab (which runs the call) and in an order form tab (which mirrors
  * it over the tab link); on the form it also shows the agent's line as a caption, since the chat is not in view.
  * State words and the waveform only: never tool chips.
  */
@@ -153,40 +153,7 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
       ref={root} dir={dir} className={`vb vb--${placement}${view.speaking ? " vb--speaking" : ""}${view.ended ? " vb--ended" : ""}${state.muted ? " vb--muted" : ""}${view.standby ? " vb--standby" : ""}`}
       data-voice-bubble="" data-bubble-phase={state.phase} data-bubble-live={state.live ?? ""} data-bubble-muted={state.muted ? "" : undefined}
     >
-      {open ? (
-        <div className="vb-menu" id={menuId} role="menu" aria-label={tr("buyer.voice.bubble.menu")} data-bubble-menu="">
-          <p className="vb-menu__state" role="presentation">
-            <b>{view.word}</b>
-            {state.secondsLeft !== null ? <span className="vb-menu__left">{tr("buyer.voice.bubble.left", { time: leftClock(state.secondsLeft) })}</span> : null}
-          </p>
-          {view.standby ? (
-            // Standby: the first item brings the agent back (speaking or typing does too, without a tap).
-            <button type="button" role="menuitem" className="vb-item vb-item--wake" onClick={() => act({ cmd: "wake" })} data-bubble-wake="">
-              <Icon name="audio-lines" />{tr("buyer.voice.wake")}
-            </button>
-          ) : null}
-          <button type="button" role="menuitem" className="vb-item" disabled={!view.controls} onClick={() => act({ cmd: state.muted ? "unmute" : "mute" })} data-bubble-mute="">
-            <Icon name={state.muted ? "mic" : "mic-off"} />{tr(state.muted ? "buyer.voice.unmute" : "buyer.voice.mute")}
-          </button>
-          {view.controls && state.outputs.length >= 2 ? (
-            <div className="vb-group" role="group" aria-label={tr("buyer.voice.bubble.speaker")} data-bubble-speaker="">
-              <span className="vb-group__title" aria-hidden="true">{tr("buyer.voice.bubble.speaker")}</span>
-              {state.outputs.map((d, i) => (
-                <button
-                  key={d.id} type="button" role="menuitemradio" aria-checked={state.output === d.id || (!state.output && i === 0)} className="vb-item vb-item--radio"
-                  onClick={() => act({ cmd: "output", deviceId: d.id })}
-                >
-                  <span className="vb-radio" aria-hidden="true" />
-                  <bdi>{d.label || tr("buyer.voice.bubble.speaker_n", { n: i + 1 })}</bdi>
-                </button>
-              ))}
-            </div>
-          ) : null}
-          <button type="button" role="menuitem" className="vb-item vb-item--end" disabled={state.phase === "ending"} onClick={() => act({ cmd: "end" })} data-bubble-end="">
-            <Icon name="keyboard" />{tr("buyer.voice.back")}
-          </button>
-        </div>
-      ) : null}
+      {open ? <BubbleMenu id={menuId} state={state} view={view} tr={tr} act={act} /> : null}
       {flash ? (
         <button type="button" className="vb-caption vb-caption--note vb-caption--open" dir="auto" onClick={() => (note ? onNoteDone?.() : setStandbyNote(false))} data-bubble-note={note ? "first" : "standby"}>
           <span>{flash}</span>
@@ -212,6 +179,51 @@ export function VoiceBubble({ state, agentName, tr, dir, levels, onCommand, capt
       {/* The one live region: it changes only with the state (listening, agent speaking, standing by, muted, ended),
           never with the levels, the time or a caption, so a screen reader hears each state once. */}
       <span className="vb-sr" role="status" aria-live="polite" data-bubble-live-region="">{announced}</span>
+    </div>
+  );
+}
+
+/**
+ * The bubble's menu, in this order: the state and the time left, Talk to the agent (standby only, first), Mute,
+ * Speaker (two or more speakers), a divider, End call.
+ */
+export function BubbleMenu({ id, state, view, tr, act }: {
+  id: string; state: MirrorState; view: ReturnType<typeof bubbleView>; tr: Tr; act: (c: TabCommand) => void;
+}) {
+  return (
+    <div className="vb-menu" id={id} role="menu" aria-label={tr("buyer.voice.bubble.menu")} data-bubble-menu="">
+      <p className="vb-menu__state" role="presentation">
+        <b>{view.word}</b>
+        {state.secondsLeft !== null ? <span className="vb-menu__left">{tr("buyer.voice.bubble.left", { time: leftClock(state.secondsLeft) })}</span> : null}
+      </p>
+      {view.standby ? (
+        // Standby: the first item brings the agent back (speaking or typing does too, without a tap).
+        <button type="button" role="menuitem" className="vb-item vb-item--wake" onClick={() => act({ cmd: "wake" })} data-bubble-wake="">
+          <Icon name="audio-lines" />{tr("buyer.voice.wake")}
+        </button>
+      ) : null}
+      <button type="button" role="menuitem" className="vb-item" disabled={!view.controls} onClick={() => act({ cmd: state.muted ? "unmute" : "mute" })} data-bubble-mute="">
+        <Icon name={state.muted ? "mic" : "mic-off"} />{tr(state.muted ? "buyer.voice.unmute" : "buyer.voice.mute")}
+      </button>
+      {view.controls && state.outputs.length >= 2 ? (
+        <div className="vb-group" role="group" aria-label={tr("buyer.voice.bubble.speaker")} data-bubble-speaker="">
+          <span className="vb-group__title" aria-hidden="true">{tr("buyer.voice.bubble.speaker")}</span>
+          {state.outputs.map((d, i) => (
+            <button
+              key={d.id} type="button" role="menuitemradio" aria-checked={state.output === d.id || (!state.output && i === 0)} className="vb-item vb-item--radio"
+              onClick={() => act({ cmd: "output", deviceId: d.id })}
+            >
+              <span className="vb-radio" aria-hidden="true" />
+              <bdi>{d.label || tr("buyer.voice.bubble.speaker_n", { n: i + 1 })}</bdi>
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {/* Last, after a divider (board VoiceBubbleBack 1): End call, in red. */}
+      <div className="vb-sep" role="separator" />
+      <button type="button" role="menuitem" className="vb-item vb-item--end" disabled={state.phase === "ending"} onClick={() => act({ cmd: "end" })} data-bubble-end="">
+        <Icon name="phone-off" />{tr("buyer.voice.end_call")}
+      </button>
     </div>
   );
 }

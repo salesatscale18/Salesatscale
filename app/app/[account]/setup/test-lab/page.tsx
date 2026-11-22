@@ -52,7 +52,7 @@ import { voiceModelChoices } from "@/lib/voice/model-choices";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
-import { VoiceCallAgainBar, VoiceLabChoices, VoiceLabKeeper, VoiceLabLive, VoiceLabStats } from "./voice-lab";
+import { VoiceCallAgainBar, VoiceLabBackGuard, VoiceLabChoices, VoiceLabKeeper, VoiceLabLive, VoiceLabStats } from "./voice-lab";
 
 // A turn can take several model rounds.
 export const maxDuration = 300;
@@ -301,6 +301,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           {voice ? (
             <>
               <VoiceLabKeeper />
+              <VoiceLabBackGuard />
               <VoiceLabChoices
                 slug={account.slug} lab={lab} usageHref={usageHref} settingsLine={settingsLine} settingsHref={settingsHref}
                 scenarios={scenarios.map((x) => ({ value: x.id, label: scenarioLabel(x), language: x.language }))}

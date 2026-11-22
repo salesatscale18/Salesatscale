@@ -13,6 +13,8 @@ import { CALL_PHASES, callLength, flushQueued, routeBuyerText } from "@/lib/voic
 import { callClock } from "@/lib/voice/lab";
 import { useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { BuyerCallBar, ChatVoiceBubble } from "./voice";
+import { useBackGuard } from "@/lib/voice/client/back-guard";
+import { LeaveSheet } from "@/components/sas/voice/leave-sheet";
 import { Icon } from "@/components/sas/icon";
 import type { BuyerVoiceState } from "@/lib/voice/buyer";
 import { resumeSmsAction } from "./actions";
@@ -339,6 +341,10 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   // The bar above the chat shows only what the bubble cannot carry: connecting, the microphone, errors and refusals,
   // reconnecting, and the short ended note. While the call is live the bubble is the indicator (owner, 21 Nov).
   const showBar = !!voice && !!clientRef.current && callSnap.phase !== "idle" && callSnap.phase !== "live" && !barHidden;
+  // Back (board VoiceBubbleBack): "End the call?" during a call, else "Leave the chat?" (also for the seller's staff);
+  // nothing once the link expired. During a call, closing or reloading the tab gets the browser's leave prompt.
+  const callOn = !!voice && inCall && callSnap.phase !== "ending";
+  const backGuard = useBackGuard({ ask: expired ? null : callOn ? "end_call" : "leave_chat", liveCall: callOn, onEndCall: () => clientRef.current?.end() });
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
   // A gate off, and the server said why (a simulated chat, or the seller's signed-in staff): the button stays, disabled, with the reason under the composer.
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended
@@ -523,6 +529,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
         <ChatVoiceBubble client={clientRef.current} tabKey={voice.tabKey ?? null} tr={tr} agentName={voice.agentName} dir={dir} showBubble={inCall} firstNote={firstNote} />
       ) : null}
       {notice ? <div className="c-notice" role="status" dir={dir}>{notice}</div> : null}
+      {backGuard.sheet ? <LeaveSheet ask={backGuard.sheet} tr={tr} dir={dir} onChoose={backGuard.choose} /> : null}
       {ended ? (
         <div className="c-ended" role="status" aria-disabled="true" dir={dir}>{expired ? strings.expired : strings.ended}</div>
       ) : (
