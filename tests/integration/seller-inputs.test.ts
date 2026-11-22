@@ -189,9 +189,11 @@ describe("P11 seller inputs", () => {
       title: "Call", consent: true,
       text: ["[00:14] Rep: How do you check the fridges today?", "[01:12] Buyer: We already pay for an alarm company.", "[01:16] Rep: An alarm covers doors, not temperature."].join("\n"),
     })).id;
+    const secs = [...await listSections(db, acc, noteId), ...await listSections(db, acc, callId)];
     const [noteLoc] = (await listSections(db, acc, noteId)).map((s) => s.locator);
     const callLocs = (await listSections(db, acc, callId)).map((s) => s.locator);
-    const ev = (id: string, loc: string) => [{ source_id: id, locator: loc, quote: "quote" }];
+    // The quote is the section's own words (KQ3 quote check).
+    const ev = (id: string, loc: string) => [{ source_id: id, locator: loc, quote: secs.find((s) => s.sourceId === id && s.locator === loc)!.text }];
     const data = await playbookStageData(db, acc, 1);
     expect(data.catalog.map((c) => [c.sku, c.plainName])).toEqual([["SNS-200", "fridge sensor"], ["GW-10", "kitchen hub"]]);
 

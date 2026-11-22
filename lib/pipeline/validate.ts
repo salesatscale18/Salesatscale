@@ -2,6 +2,8 @@
  * Checks what the model returned, in code (pure; unit-tested):
  * - evidence must point at a real source and locator of the corpus; quotes are
  *   cut to 200 characters; an item with no valid evidence is dropped;
+ * - the quote must be in the cited source's text (KQ3): else it is credited to
+ *   the one other source that has it, or dropped (verifyQuote);
  * - facts about one customer are kept back (never offered as knowledge);
  * - prices or discounts heard only in calls are never facts;
  * - duplicates are dropped (normalised statement).
@@ -12,10 +14,20 @@ import { MAX_OPENER_TOPICS, writtenIn } from "@/lib/agent/core/opener";
 import { PLAIN_NAME_MAX, VALUE_LINE_INPUT_MAX } from "@/lib/catalog/rules";
 import { QUOTE_MAX } from "./prompts/system";
 
-export type Evidence = SuggestionEvidence;
+/** unverified: the quote is not in the source's text but may be on its PDF page (sent as a document). */
+export type Evidence = SuggestionEvidence & { unverified?: true };
 
-/** source id -> its kind and the locators of its sections. */
-export type CorpusIndex = Map<string, { kind: string; title: string; locators: Set<string> }>;
+/**
+ * source id -> its kind and the locators of its sections. `sections` (each
+ * section's text, normalised with normalizeQuote) turns on the quote check;
+ * corpusIndex always sets it. `document`: the source's PDF was sent as pages.
+ */
+export type CorpusIndex = Map<string, {
+  kind: string; title: string; locators: Set<string>;
+  /** heading: a call turn's speaker ("Rep" for the seller's rep: lib/sources/transcript.ts). */
+  sections?: { locator: string; text: string; heading?: string | null }[];
+  document?: boolean;
+}>;
 
 const s = (v: unknown, max = 2000) => (typeof v === "string" ? v.replace(/\s+/g, " ").trim().slice(0, max) : "");
 const list = (v: unknown): unknown[] => (Array.isArray(v) ? v : []);
@@ -26,21 +38,89 @@ export function normalizeStatement(text: string): string {
   return text.normalize("NFKC").toLowerCase().replace(/["'“”‘’`]/g, "").replace(/\s+/g, " ").trim().replace(/[\s.!?؟;:,]+$/u, "");
 }
 
-/** Valid evidence entries only (known source, known locator, non-empty quote), deduplicated. */
-export function cleanEvidence(raw: unknown, index: CorpusIndex): Evidence[] {
+// ---------------------------------------------------------------------------
+// Quotes must be in the cited source (KQ3)
+// ---------------------------------------------------------------------------
+
+/** A text for quote matching: NFKC, lower case, marks dropped, every run of non-letters and non-digits one space. */
+export function normalizeQuote(text: string): string {
+  return text.normalize("NFKC").toLowerCase().replace(/\p{M}+/gu, "").replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+}
+
+/** A quote's parts: the model may skip words with "…" or "..."; every part must be found. */
+const quoteParts = (quote: string) => quote.split(/…|\.{3,}/u).map(normalizeQuote).filter(Boolean);
+/** Whole words only: "18 months" is not in "118 months". */
+const contains = (text: string, part: string) => ` ${text} `.includes(` ${part} `);
+const sectionWith = (sections: { locator: string; text: string }[], parts: string[]) =>
+  sections.find((x) => parts.every((p) => contains(x.text, p)))?.locator ?? null;
+
+/** What the quote check did, per evidence item (counts in the run result). */
+export type EvidenceCheck = {
+  /** Found in the cited source, in another section: the locator was corrected. */
+  relocated: number;
+  /** Not in the cited source but in exactly one other source: credited to that one. */
+  reattributed: number;
+  /** A PDF page quote not in the extracted text: kept, marked unverified. */
+  unverified: number;
+  /** Found nowhere (or in several other sources): the evidence item was dropped. */
+  notFound: number;
+};
+export const noEvidenceCheck = (): EvidenceCheck => ({ relocated: 0, reattributed: 0, unverified: 0, notFound: 0 });
+
+/**
+ * Where a quote really is: the cited section; else another section of the cited
+ * source; else the one other source of the corpus that has it; else, for a
+ * source whose PDF was sent as pages and a page locator ("p.N"), the cited page
+ * (unverified); else null. Case, spacing and punctuation are ignored.
+ * A source without section texts in the index is not checked.
+ */
+export function verifyQuote(
+  ev: { sourceId: string; locator: string; quote: string }, index: CorpusIndex,
+): { sourceId: string; locator: string; how: "ok" | "unchecked" | "relocated" | "reattributed" | "unverified" } | null {
+  const src = index.get(ev.sourceId);
+  if (!src?.sections) return { sourceId: ev.sourceId, locator: ev.locator, how: "unchecked" };
+  const parts = quoteParts(ev.quote);
+  if (parts.length === 0) return null;
+  if (sectionWith(src.sections.filter((x) => x.locator === ev.locator), parts)) return { sourceId: ev.sourceId, locator: ev.locator, how: "ok" };
+  const elsewhere = sectionWith(src.sections, parts);
+  if (elsewhere) return { sourceId: ev.sourceId, locator: elsewhere, how: "relocated" };
+  const others: { sourceId: string; locator: string }[] = [];
+  for (const [id, o] of index) {
+    if (id === ev.sourceId || !o.sections) continue;
+    const at = sectionWith(o.sections, parts);
+    if (at) others.push({ sourceId: id, locator: at });
+  }
+  if (others.length === 1) return { ...others[0], how: "reattributed" };
+  if (src.document && /^p\.\d+$/i.test(ev.locator)) return { sourceId: ev.sourceId, locator: ev.locator, how: "unverified" };
+  return null;
+}
+
+/**
+ * Valid evidence entries only (known source, known locator, non-empty quote
+ * found where it is credited: verifyQuote), deduplicated. `check` counts what
+ * the quote check did.
+ */
+export function cleanEvidence(raw: unknown, index: CorpusIndex, check?: EvidenceCheck): Evidence[] {
   const out: Evidence[] = [];
   const seen = new Set<string>();
   for (const e of list(raw)) {
     const r = rec(e);
-    const sourceId = s(r.source_id, 64);
-    const locator = s(r.locator, 120);
+    const cited = s(r.source_id, 64);
+    const citedAt = s(r.locator, 120);
     const quote = s(r.quote, 5000);
-    const src = index.get(sourceId);
-    if (!src || !src.locators.has(locator) || !quote) continue;
+    const src = index.get(cited);
+    if (!src || !src.locators.has(citedAt) || !quote) continue;
+    const v = verifyQuote({ sourceId: cited, locator: citedAt, quote }, index);
+    if (!v) { if (check) check.notFound++; continue; }
+    if (check && v.how !== "ok" && v.how !== "unchecked") check[v.how]++;
+    const { sourceId, locator } = v;
     const key = `${sourceId}|${locator}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ sourceId, locator, quote: quote.length > QUOTE_MAX ? `${quote.slice(0, QUOTE_MAX - 1)}…` : quote });
+    out.push({
+      sourceId, locator, quote: quote.length > QUOTE_MAX ? `${quote.slice(0, QUOTE_MAX - 1)}…` : quote,
+      ...(v.how === "unverified" ? { unverified: true as const } : {}),
+    });
   }
   return out;
 }
@@ -58,7 +138,8 @@ export type CleanFact = { topic: string; statement: string; language: string | n
 export type CleanContradiction = { topic: string; summary: string; options: CleanFact[] };
 export type Gap = { topic: string; question: string };
 export type SourceAbout = { sourceId: string; about: string };
-export type CustomerNote = { sourceId: string; locator: string; note: string };
+/** quote: the evidence words, when the note was a fact marked customer_specific (missing otherwise). */
+export type CustomerNote = { sourceId: string; locator: string; note: string; quote?: string };
 
 export type FactsResult = {
   facts: CleanFact[];
@@ -67,6 +148,7 @@ export type FactsResult = {
   sourceAbout: SourceAbout[];
   customerSpecific: CustomerNote[];
   dropped: { noEvidence: number; customerSpecific: number; pricing: number; duplicates: number };
+  evidenceCheck: EvidenceCheck;
 };
 
 const topicOf = (v: unknown) => s(v, 60) || "General";
@@ -79,6 +161,7 @@ const lang = (v: unknown) => {
 export function parseFactsOutput(input: unknown, index: CorpusIndex): FactsResult {
   const r = rec(input);
   const dropped = { noEvidence: 0, customerSpecific: 0, pricing: 0, duplicates: 0 };
+  const check = noEvidenceCheck();
   const customerSpecific: CustomerNote[] = [];
   const seen = new Set<string>();
   const facts: CleanFact[] = [];
@@ -86,11 +169,11 @@ export function parseFactsOutput(input: unknown, index: CorpusIndex): FactsResul
     const x = rec(f);
     const statement = s(x.statement, 1000);
     if (!statement) continue;
-    const evidence = cleanEvidence(x.evidence, index);
+    const evidence = cleanEvidence(x.evidence, index, check);
     if (evidence.length === 0) { dropped.noEvidence++; continue; }
     if (x.customer_specific === true) {
       dropped.customerSpecific++;
-      customerSpecific.push({ sourceId: evidence[0].sourceId, locator: evidence[0].locator, note: statement.slice(0, 300) });
+      customerSpecific.push({ sourceId: evidence[0].sourceId, locator: evidence[0].locator, note: statement.slice(0, 300), quote: evidence[0].quote });
       continue;
     }
     if (isPricingHeardInCalls(statement, evidence, index)) { dropped.pricing++; continue; }
@@ -109,7 +192,7 @@ export function parseFactsOutput(input: unknown, index: CorpusIndex): FactsResul
     for (const o of list(x.options)) {
       const y = rec(o);
       const statement = s(y.statement, 1000);
-      const evidence = cleanEvidence(y.evidence, index);
+      const evidence = cleanEvidence(y.evidence, index, check);
       const key = normalizeStatement(statement);
       if (!statement || evidence.length === 0 || optSeen.has(key)) continue;
       optSeen.add(key);
@@ -150,7 +233,7 @@ export function parseFactsOutput(input: unknown, index: CorpusIndex): FactsResul
     if (index.get(sourceId)?.locators.has(locator) && note) customerSpecific.push({ sourceId, locator, note });
   }
 
-  return { facts, contradictions: contradictions.slice(0, 50), gaps: gaps.slice(0, 10), sourceAbout, customerSpecific: customerSpecific.slice(0, 100), dropped };
+  return { facts, contradictions: contradictions.slice(0, 50), gaps: gaps.slice(0, 10), sourceAbout, customerSpecific: customerSpecific.slice(0, 100), dropped, evidenceCheck: check };
 }
 
 // ---------------------------------------------------------------------------
@@ -265,13 +348,16 @@ const within = (v: unknown, max: number) => {
  * own cards with 2 to 5 moves, catalog SKUs from `known.skus` (none given: no
  * catalog suggestions), and no play facts that are prices heard only in calls.
  */
-export function parsePlaybookOutput(input: unknown, index: CorpusIndex, known: { skus?: ReadonlySet<string> } = {}): { suggestions: CleanSuggestion[]; dropped: number } {
+export function parsePlaybookOutput(
+  input: unknown, index: CorpusIndex, known: { skus?: ReadonlySet<string> } = {},
+): { suggestions: CleanSuggestion[]; dropped: number; evidenceCheck: EvidenceCheck } {
   const r = rec(input);
   const out: CleanSuggestion[] = [];
   let dropped = 0;
+  const check = noEvidenceCheck();
   const seen = new Set<string>();
   const push = (dedupe: string, payload: SuggestionPayload, rawEvidence: unknown) => {
-    const evidence = cleanEvidence(rawEvidence, index);
+    const evidence = cleanEvidence(rawEvidence, index, check);
     if (evidence.length === 0) { dropped++; return; }
     const key = `${payload.kind}|${dedupe}`;
     if (seen.has(key)) { dropped++; return; }
@@ -380,5 +466,89 @@ export function parsePlaybookOutput(input: unknown, index: CorpusIndex, known: {
     if (!known.skus?.has(sku) || (!plainName && !valueLine)) { dropped++; continue; }
     push(sku, { kind: "catalog_item", sku, plainName, valueLine }, x.evidence);
   }
-  return { suggestions: out, dropped };
+  return { suggestions: out, dropped, evidenceCheck: check };
+}
+
+// ---------------------------------------------------------------------------
+// One customer's material never reaches plays (KQ3)
+// ---------------------------------------------------------------------------
+
+/** Two quotes overlap: one holds the other, or they share a run of OVERLAP_WORDS words (case and punctuation ignored). */
+export const OVERLAP_WORDS = 5;
+export function quotesOverlap(a: string, b: string): boolean {
+  // A quote cut at QUOTE_MAX ends in a partial word: leave that word out.
+  const words = (q: string) => normalizeQuote(q.endsWith("…") ? q.slice(0, -1).replace(/\S*$/u, "") : q).split(" ").filter(Boolean);
+  const A = words(a);
+  const B = words(b);
+  if (A.length === 0 || B.length === 0) return false;
+  const ja = A.join(" ");
+  const jb = B.join(" ");
+  if (contains(ja, jb) || contains(jb, ja)) return true;
+  if (A.length < OVERLAP_WORDS || B.length < OVERLAP_WORDS) return false;
+  const runs = new Set<string>();
+  for (let i = 0; i + OVERLAP_WORDS <= A.length; i++) runs.add(A.slice(i, i + OVERLAP_WORDS).join(" "));
+  for (let i = 0; i + OVERLAP_WORDS <= B.length; i++) if (runs.has(B.slice(i, i + OVERLAP_WORDS).join(" "))) return true;
+  return false;
+}
+
+/**
+ * Whether a piece of evidence is material stage 1 kept back as one
+ * customer's: same source, and an overlapping quote, or (in a call, where a
+ * section is one turn) the same locator.
+ */
+export function touchesCustomerNote(e: Evidence, n: CustomerNote, index: CorpusIndex): boolean {
+  if (e.sourceId !== n.sourceId) return false;
+  if (n.quote && quotesOverlap(e.quote, n.quote)) return true;
+  return n.locator === e.locator && index.get(e.sourceId)?.kind === "call";
+}
+
+export type CustomerGuardDrop = {
+  kind: "play_content" | "objection";
+  text: string;
+  /** customer_specific: evidence overlaps what stage 1 kept back; buyer_words: a play fact backed only by calls, with a buyer's words among them. */
+  reason: "customer_specific" | "buyer_words";
+  sourceId: string;
+  locator: string;
+};
+
+/** A call turn not spoken by the seller's rep (the buyer, or a speaker the transcript did not mark as Rep). */
+function buyerTurn(e: Evidence, index: CorpusIndex): boolean {
+  const src = index.get(e.sourceId);
+  if (src?.kind !== "call" || !src.sections) return false;
+  const turn = src.sections.find((x) => x.locator === e.locator);
+  return !!turn && turn.heading !== "Rep";
+}
+
+/**
+ * Drops play facts and objections built on one customer's material, after
+ * stage 2 (deterministic):
+ * - any evidence item touches a stage-1 customer_specific note (touchesCustomerNote);
+ * - a play fact (play_content) whose only evidence is call transcripts, with
+ *   a buyer's turn among it: each call is one buyer's conversation, and what
+ *   the buyer says there is that customer's situation, never a general fact
+ *   about the seller. A play fact from the rep's own words in a call stays
+ *   (the seller's general argument, e.g. "an alarm covers doors, not
+ *   temperature"). Objections are exempt from this rule: they are the
+ *   buyer's words by nature (the first rule still removes one built on a
+ *   customer's story).
+ */
+export function guardCustomerSpecific(
+  suggestions: CleanSuggestion[], notes: CustomerNote[], index: CorpusIndex,
+): { suggestions: CleanSuggestion[]; dropped: CustomerGuardDrop[] } {
+  const kept: CleanSuggestion[] = [];
+  const dropped: CustomerGuardDrop[] = [];
+  for (const sg of suggestions) {
+    const p = sg.payload;
+    if (p.kind !== "play_content" && p.kind !== "objection") { kept.push(sg); continue; }
+    const text = (p.kind === "play_content" ? p.content : `${p.objection} ${p.answer}`).slice(0, 300);
+    const hit = sg.evidence.find((e) => notes.some((n) => touchesCustomerNote(e, n, index)));
+    if (hit) { dropped.push({ kind: p.kind, text, reason: "customer_specific", sourceId: hit.sourceId, locator: hit.locator }); continue; }
+    const buyer = sg.evidence.find((e) => buyerTurn(e, index));
+    if (p.kind === "play_content" && buyer && sg.evidence.every((e) => index.get(e.sourceId)?.kind === "call")) {
+      dropped.push({ kind: p.kind, text, reason: "buyer_words", sourceId: buyer.sourceId, locator: buyer.locator });
+      continue;
+    }
+    kept.push(sg);
+  }
+  return { suggestions: kept, dropped };
 }

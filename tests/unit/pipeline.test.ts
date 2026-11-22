@@ -159,7 +159,7 @@ describe("validation", () => {
     }, index);
     expect(r.facts.map((f) => f.statement)).toEqual(["Range is 50 m.", "Annual plans get 10% off.", "Lifetime support"]);
     expect(r.dropped).toEqual({ noEvidence: 1, customerSpecific: 1, pricing: 1, duplicates: 1 });
-    expect(r.customerSpecific).toEqual([{ sourceId: C, locator: "06:12", note: "They lost ₪8,000." }]);
+    expect(r.customerSpecific).toEqual([{ sourceId: C, locator: "06:12", note: "They lost ₪8,000.", quote: "q" }]);
     expect(r.contradictions).toHaveLength(1);
     expect(r.contradictions[0].options.map((o) => o.statement)).toEqual(["12 months", "24 months"]);
     expect(r.gaps).toHaveLength(1);

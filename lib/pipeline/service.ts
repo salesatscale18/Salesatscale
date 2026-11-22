@@ -52,8 +52,8 @@ import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, factsInstruction, KNOW
 import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_VERSION, type PlaybookStageData } from "./prompts/playbook";
 import { FACTS_TOOL, PLAYBOOK_TOOL, PROMPT_VERSION as SYSTEM_VERSION } from "./prompts/system";
 import {
-  limitSetting, normalizeStatement, openerPayloadTopics, parseFactsOutput, parsePlaybookOutput,
-  type CatalogItemPayload, type OpenerPayload, type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout,
+  guardCustomerSpecific, limitSetting, noEvidenceCheck, normalizeQuote, normalizeStatement, openerPayloadTopics, parseFactsOutput, parsePlaybookOutput,
+  type CustomerGuardDrop, type EvidenceCheck, type CatalogItemPayload, type OpenerPayload, type CleanFact, type CorpusIndex, type CustomerNote, type FactsResult, type Gap, type LimitPayload, type SourceAbout,
   type SuggestionKind, type SuggestionPayload,
 } from "./validate";
 
@@ -89,9 +89,17 @@ export type FactsRunResult = {
   sourceAbout: SourceAbout[];
   customerSpecific: CustomerNote[];
   dropped: FactsResult["dropped"];
+  /** What the quote check did to the evidence (validate.ts verifyQuote). Missing on older runs. */
+  evidenceCheck?: EvidenceCheck;
 };
 export type FactsScope = "all" | "changed";
-export type PlaybookRunResult = { suggestions: number; dropped: number; callsInCorpus: number };
+export type PlaybookRunResult = {
+  suggestions: number; dropped: number; callsInCorpus: number;
+  /** What the quote check did to the evidence. Missing on older runs. */
+  evidenceCheck?: EvidenceCheck;
+  /** Play facts and objections dropped as one customer's material (validate.ts guardCustomerSpecific); up to 50 listed. Missing on older runs. */
+  customerGuard?: { dropped: number; items: CustomerGuardDrop[] };
+};
 
 /** pipeline_runs.usage: token counts at the top level (the usage roll-up reads them), results under `result`. */
 export type RunData = { input: number; output: number; cacheRead: number; cacheWrite: number; calls: number; result?: FactsRunResult | PlaybookRunResult };
@@ -133,8 +141,17 @@ export async function loadCorpusSources(db: Db, accountId: string): Promise<(Cor
     .filter((s) => s.sections.length > 0);
 }
 
-export function corpusIndex(list: CorpusSource[]): CorpusIndex {
-  return new Map(list.map((s) => [s.id, { kind: s.kind, title: s.title, locators: new Set(s.sections.map((x) => x.locator)) }]));
+/**
+ * Each source's kind, title, locators and section texts (for the quote check).
+ * `documentIds`: sources whose PDF the model read as pages (a page quote may
+ * be missing from the extracted text).
+ */
+export function corpusIndex(list: CorpusSource[], documentIds: ReadonlySet<string> = new Set()): CorpusIndex {
+  return new Map(list.map((s) => [s.id, {
+    kind: s.kind, title: s.title, locators: new Set(s.sections.map((x) => x.locator)),
+    sections: s.sections.map((x) => ({ locator: x.locator, text: normalizeQuote(x.text), heading: x.heading })),
+    ...(documentIds.has(s.id) ? { document: true } : {}),
+  }]));
 }
 
 /** The playbook suggestions build on: the draft, else the live version, else none. */
@@ -267,21 +284,26 @@ async function lastFactsRules(db: Db, accountId: string): Promise<string | null>
 }
 
 /**
- * The seller's approved facts that stage 1 gets after its instruction (so it
- * does not restate them): the newest KNOWN_FACTS_MAX, sorted by topic and
- * statement so the same facts give the same bytes. Each goes to the model
- * with its place in this list as its id (K1, K2, ...: prompts/facts.ts), so
- * the model can name the one a new fact differs from.
+ * The seller's facts that stage 1 gets after its instruction (so it does not
+ * restate them): approved facts and suggested facts still waiting for review
+ * (KQ3: so a new run does not suggest again what is already waiting), one
+ * list with one set of ids. At most KNOWN_FACTS_MAX: approved facts first,
+ * then the newest; sorted by topic and statement so the same facts give the
+ * same bytes. Each goes to the model with its place in this list as its id
+ * (K1, K2, ...: prompts/facts.ts), so the model can name the one a new fact
+ * differs from; only an approved one makes a conflict (storeFacts).
  */
 export async function knownFacts(db: Db, accountId: string): Promise<KnownFact[]> {
-  const rows = await db.select({ id: knowledgeFacts.id, topic: knowledgeFacts.topic, statement: knowledgeFacts.statement }).from(knowledgeFacts)
-    .where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "approved")))
-    .orderBy(desc(knowledgeFacts.createdAt), desc(knowledgeFacts.id))
+  const rows = await db.select({ id: knowledgeFacts.id, topic: knowledgeFacts.topic, statement: knowledgeFacts.statement, status: knowledgeFacts.status }).from(knowledgeFacts)
+    .where(and(eq(knowledgeFacts.accountId, accountId), inArray(knowledgeFacts.status, ["approved", "suggested"])))
+    .orderBy(sql`case when ${knowledgeFacts.status} = 'approved' then 0 else 1 end`, desc(knowledgeFacts.createdAt), desc(knowledgeFacts.id))
     .limit(KNOWN_FACTS_MAX);
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  return rows.sort((a, b) => cmp(a.topic, b.topic) || cmp(a.statement, b.statement) || cmp(a.id, b.id));
+  return rows
+    .map((r) => ({ id: r.id, topic: r.topic, statement: r.statement, status: r.status === "approved" ? "approved" as const : "suggested" as const }))
+    .sort((a, b) => cmp(a.topic, b.topic) || cmp(a.statement, b.statement) || cmp(a.id, b.id));
 }
-export type KnownFact = { id: string; topic: string; statement: string };
+export type KnownFact = { id: string; topic: string; statement: string; status: "approved" | "suggested" };
 /** The known facts as the model sees them (no row ids), for the estimate. */
 const knownForModel = (known: KnownFact[]) => known.map((f) => ({ topic: f.topic, statement: f.statement }));
 
@@ -295,8 +317,8 @@ const knownForModel = (known: KnownFact[]) => known.map((f) => ({ topic: f.topic
  * analysis, after the analysis rules changed (a new prompt version or model,
  * which also re-reads unchanged sources) and when `full` is set (re-read
  * everything). Nothing new or changed under the same rules: stage 1 is reused.
- * The approved facts are not part of the stage 1 hash: they only keep the
- * model from restating them.
+ * The known facts (approved and suggested) are not part of the stage 1 hash:
+ * they only keep the model from restating them.
  */
 export async function planAnalysis(
   db: Db, accountId: string, env: Record<string, string | undefined> = process.env, opts: { full?: boolean; store?: FileStore | null } = {},
@@ -474,7 +496,10 @@ const usageOf = (e: unknown): PipelineUsage => ((e as { usage?: PipelineUsage })
 
 function mergeFactsResults(parts: FactsResult[]): FactsResult {
   const seen = new Set<string>();
-  const out: FactsResult = { facts: [], contradictions: [], gaps: [], sourceAbout: [], customerSpecific: [], dropped: { noEvidence: 0, customerSpecific: 0, pricing: 0, duplicates: 0 } };
+  const out: FactsResult = {
+    facts: [], contradictions: [], gaps: [], sourceAbout: [], customerSpecific: [],
+    dropped: { noEvidence: 0, customerSpecific: 0, pricing: 0, duplicates: 0 }, evidenceCheck: noEvidenceCheck(),
+  };
   const gapSeen = new Set<string>();
   for (const p of parts) {
     for (const f of p.facts) {
@@ -488,6 +513,7 @@ function mergeFactsResults(parts: FactsResult[]): FactsResult {
     for (const a of p.sourceAbout) if (!out.sourceAbout.some((x) => x.sourceId === a.sourceId)) out.sourceAbout.push(a);
     out.customerSpecific.push(...p.customerSpecific);
     for (const k of Object.keys(out.dropped) as (keyof FactsResult["dropped"])[]) out.dropped[k] += p.dropped[k];
+    for (const k of Object.keys(out.evidenceCheck) as (keyof EvidenceCheck)[]) out.evidenceCheck[k] += p.evidenceCheck[k];
   }
   out.gaps = out.gaps.slice(0, 10);
   return out;
@@ -577,6 +603,7 @@ async function storeFacts(
   return {
     factsAdded: added, scope: meta.scope, rules: meta.rules,
     contradictions, ...(conflicts.length ? { conflicts } : {}), gaps: parsed.gaps, sourceAbout: parsed.sourceAbout, customerSpecific: parsed.customerSpecific, dropped,
+    evidenceCheck: parsed.evidenceCheck,
   };
 }
 
@@ -599,7 +626,6 @@ export async function executeAnalysis(
   if (runs.factsRunId) {
     const id = runs.factsRunId;
     const model = plan.model;
-    const factsIndex = corpusIndex(plan.factsSources);
     const known = await knownFacts(db, accountId);
     await db.update(pipelineRuns).set({ status: "running", startedAt: new Date() }).where(runWhere(accountId, id));
     let usage = noUsage();
@@ -608,6 +634,8 @@ export async function executeAnalysis(
       // PDFs read as pages: sent after the corpus block (documents.ts, llm.ts).
       const store = plan.documents.length ? (deps.store === undefined ? fileStore() : deps.store) : null;
       const documents = store ? await loadDocuments(store, plan.documents) : [];
+      // A page quote of a PDF the model read may be missing from the extracted text (validate.ts verifyQuote).
+      const factsIndex = corpusIndex(plan.factsSources, new Set(documents.map((d) => d.sourceId)));
       const parts: FactsResult[] = [];
       if (plan.factsLarge) {
         // One source per call: a source's PDF goes with its first chunk.
@@ -671,7 +699,10 @@ export async function executeAnalysis(
           model: plan.model, effort: EFFORT, corpus, cacheCorpus: sharedCache, instruction: playbookInstruction(data), maxTokens: MAX_TOKENS, fallbacks: true,
         }, PLAYBOOK_TOOL).catch((e) => { usage = usageOf(e); throw e; });
         usage = res.usage;
-        const parsed = parsePlaybookOutput(res.tool!.input, index, { skus: new Set(data.catalog.map((c) => c.sku)) });
+        const raw = parsePlaybookOutput(res.tool!.input, index, { skus: new Set(data.catalog.map((c) => c.sku)) });
+        // One customer's material (stage 1's customer_specific) never reaches plays or objections.
+        const guard = guardCustomerSpecific(raw.suggestions, await customerNotesOf(db, accountId, plan.sources.map((s) => s.id)), index);
+        const parsed = { ...raw, suggestions: guard.suggestions, dropped: raw.dropped + guard.dropped.length };
         if (parsed.suggestions.length) {
           // created_at one millisecond apart keeps the model's order (lists sort by it).
           const at = Date.now();
@@ -680,7 +711,10 @@ export async function executeAnalysis(
             createdAt: new Date(at + i),
           })));
         }
-        await finishRun(db, accountId, id, plan.model, usage, 1, { suggestions: parsed.suggestions.length, dropped: parsed.dropped, callsInCorpus: calls }, null);
+        await finishRun(db, accountId, id, plan.model, usage, 1, {
+          suggestions: parsed.suggestions.length, dropped: parsed.dropped, callsInCorpus: calls, evidenceCheck: raw.evidenceCheck,
+          customerGuard: { dropped: guard.dropped.length, items: guard.dropped.slice(0, 50) },
+        }, null);
         result.playbook = { reused: false, suggestions: parsed.suggestions.length };
       } catch (e) {
         const msg = failureText(e);
@@ -921,6 +955,24 @@ export async function sourceAboutMap(db: Db, accountId: string): Promise<Map<str
   const out = new Map<string, string>();
   for (const r of await doneFactsRuns(db, accountId)) {
     for (const a of factsResult(r)?.sourceAbout ?? []) if (!out.has(a.sourceId)) out.set(a.sourceId, a.about);
+  }
+  return out;
+}
+
+/**
+ * Statements kept back as one customer's, for each of `sourceIds`: from the
+ * latest finished analysis that read that source (what stage 2 is checked against).
+ */
+export async function customerNotesOf(db: Db, accountId: string, sourceIds: string[]): Promise<CustomerNote[]> {
+  const want = new Set(sourceIds);
+  const out: CustomerNote[] = [];
+  for (const r of await doneFactsRuns(db, accountId, 100)) {
+    const read = r.sourceIds.filter((x) => want.has(x));
+    if (read.length === 0) continue;
+    const of = new Set(read);
+    out.push(...(factsResult(r)?.customerSpecific ?? []).filter((n) => of.has(n.sourceId)));
+    for (const x of read) want.delete(x);
+    if (want.size === 0) break;
   }
   return out;
 }

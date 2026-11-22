@@ -135,7 +135,8 @@ describe("pipeline screens and actions", () => {
         ] }],
         gaps: [{ topic: "Contract", question: "Is there a minimum contract?" }],
         source_about: [{ source_id: noteId, about: "Sensor spec" }, { source_id: callId, about: "Discovery call" }],
-        customer_specific: [{ source_id: callId, locator: call[1].locator, note: "Their alarm contract is about this customer." }],
+        // Kept back at the waiver turn (a note at the objection's turn would now drop the objection: KQ3 guard).
+        customer_specific: [{ source_id: callId, locator: call[2].locator, note: "Their alarm contract is about this customer." }],
       } }, usage: { inputTokens: 300, outputTokens: 2000, cacheReadTokens: 0, cacheWriteTokens: 5000 } }),
       () => ({ tool: { name: PLAYBOOK_TOOL, input: {
         goal: { text: "Sell monitoring to food businesses.", text_he: "", evidence: [ev(noteId, note.locator, "Warranty")] },
