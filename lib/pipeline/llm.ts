@@ -20,12 +20,32 @@ export type PipelineRequest = {
   corpus: string;
   /** Put a cache breakpoint on the corpus block (only when a later call reads it). */
   cacheCorpus: boolean;
+  /**
+   * Stage 1 only: original PDF files of sources (base64), sent as document
+   * blocks after the corpus block and before the instruction: after the
+   * corpus breakpoint, so stage 2 still reads the cached corpus (it does not
+   * get the PDFs) and stage 1 writes the same cache as without them.
+   */
+  documents?: PipelineDocument[];
   /** The stage instruction and data, after the breakpoint. */
   instruction: string;
   maxTokens: number;
   /** Server-side refusal fallback ("default" routing). Not offered on Haiku. */
   fallbacks: boolean;
 };
+
+/** One source's original PDF. */
+export type PipelineDocument = { sourceId: string; title: string; base64: string };
+
+/** The document block of a source's PDF (pure). */
+export function documentBlock(d: PipelineDocument): Anthropic.Beta.BetaRequestDocumentBlock {
+  return {
+    type: "document",
+    source: { type: "base64", media_type: "application/pdf", data: d.base64 },
+    title: d.title.slice(0, 200),
+    context: `The original file of source ${d.sourceId}. Its text is in the corpus under that source id.`,
+  };
+}
 
 export type PipelineUsage = { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens: number };
 
@@ -56,6 +76,7 @@ export function buildPipelineParams(req: PipelineRequest): Anthropic.Beta.Messag
       role: "user",
       content: [
         { type: "text", text: req.corpus, ...(req.cacheCorpus ? { cache_control: { type: "ephemeral" as const } } : {}) },
+        ...(req.documents ?? []).map(documentBlock),
         { type: "text", text: req.instruction },
       ],
     }],

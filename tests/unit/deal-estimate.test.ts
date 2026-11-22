@@ -72,6 +72,19 @@ describe("estimateDeal (demo catalog)", () => {
     expect(noSites.oneTimeMinor).toBe(Math.round((3 * 59_000 + 66_000 + 25_000) * 1.18));
   });
 
+  it("the demo's fridges field (owner, 22 Nov): one sensor per fridge, with the volume tier, plus a gateway and installation per site", () => {
+    const fields = [FIELDS[0], { key: "fridges", label: "Number of fridges and freezers", stage: "before_quote" as const }, ...FIELDS.slice(1)];
+    // Rotem: 5 fridges at 1 site. 5 × 590 + 660 + 250 = 3,860 ILS + VAT; 90/mo + VAT.
+    expect(estimateDeal(input({ sites: "1", fridges: "5" }, { fields }))).toEqual({ currency: "ILS", oneTimeMinor: Math.round(386_000 * 1.18), recurringMinor: Math.round(9_000 * 1.18), recurringPeriod: "month" });
+    // 12 fridges at 2 sites: the tier from 10 sensors. 12 × 550 + 2 × 660 + 2 × 250 = 8,420 ILS + VAT; 180/mo + VAT.
+    expect(estimateDeal(input({ sites: "2", fridges: "12 fridges" }, { fields }))).toEqual({ currency: "ILS", oneTimeMinor: Math.round(842_000 * 1.18), recurringMinor: Math.round(18_000 * 1.18), recurringPeriod: "month" });
+    // Found by the label's words too, under any key; the fridges field is not read as sites.
+    const byLabel = [FIELDS[0], { key: "units_x", label: "Number of fridges and freezers", stage: "before_quote" as const }];
+    expect(estimateDeal(input({ sites: "2", units_x: "5" }, { fields: byLabel }))!.oneTimeMinor).toBe(Math.round((5 * 59_000 + 2 * 66_000 + 2 * 25_000) * 1.18));
+    // A fridges value that is not a count: sites only.
+    expect(estimateDeal(input({ sites: "4", fridges: "a few, not sure" }, { fields }))!.oneTimeMinor).toBe(429_520);
+  });
+
   it("not enough data: nothing to estimate", () => {
     expect(estimateDeal(input({}))).toBeNull();
     expect(estimateDeal(input({ current_monitoring: "paper logs" }))).toBeNull();

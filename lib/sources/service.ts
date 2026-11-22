@@ -15,7 +15,8 @@ import {
 } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
 import { isUuid } from "@/lib/security/ids";
-import { docxToHtml, fileKind, parseFile, FileRejected } from "./files";
+import { docxToHtml, fileKind, parseFile, FileRejected, type FileKind } from "./files";
+import { deleteSourceFile, fileStore, storedFileOf, storeSourceFile, type FileStore, type OriginWithFile } from "./blob";
 import { htmlToText } from "./html";
 import { parseTranscript } from "./transcript";
 import { crawlWebsite, normalizePaths, type CrawlOptions } from "./website";
@@ -166,13 +167,32 @@ export async function updateNote(db: Db, accountId: string, id: string, input: {
 
 export type UploadedFile = { name: string; type: string; bytes: Uint8Array };
 
-/** Reads one uploaded file into a new source. The bytes are not kept: only name, type and size. */
-export async function addFile(db: Db, actor: Actor, accountId: string, file: UploadedFile): Promise<Source> {
+/** The content type a kept file is stored with (from the kind found in its bytes and name). */
+const FILE_CONTENT_TYPE: Record<FileKind, string> = {
+  pdf: "application/pdf",
+  docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+  txt: "text/plain",
+  md: "text/markdown",
+  csv: "text/csv",
+  xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+};
+
+/** Where the original files are kept (lib/sources/blob.ts); tests pass a fake, null keeps none. */
+export type FileDeps = { store?: FileStore | null; env?: Record<string, string | undefined> };
+const storeOf = (deps: FileDeps) => (deps.store === undefined ? fileStore(deps.env) : deps.store);
+
+/**
+ * Reads one uploaded file into a new source. With a file store
+ * (BLOB_READ_WRITE_TOKEN set, not on Preview) the original file is kept and
+ * referenced from `origin.file`; without one only name, type and size.
+ */
+export async function addFile(db: Db, actor: Actor, accountId: string, file: UploadedFile, deps: FileDeps = {}): Promise<Source> {
   const name = cleanTitle(file.name.split(/[\\/]/).pop() ?? "", "File");
   const kind = fileKind(name, file.bytes);
-  const id = await insertSource(db, actor, accountId, {
-    kind: "file", title: name, origin: { fileName: name, mime: file.type.slice(0, 100) || kind, size: file.bytes.byteLength },
-  });
+  const origin: OriginWithFile = { fileName: name, mime: file.type.slice(0, 100) || kind, size: file.bytes.byteLength };
+  const id = await insertSource(db, actor, accountId, { kind: "file", title: name, origin });
+  const stored = await storeSourceFile(storeOf(deps), accountId, id, { name, contentType: FILE_CONTENT_TYPE[kind], bytes: file.bytes }, deps.env);
+  if (stored) await db.update(sources).set({ origin: { ...origin, file: stored } as SourceOrigin }).where(where(accountId, id));
   try {
     const result = await parseFile(kind, file.bytes, name);
     return (await saveParse(db, accountId, id, result))!;
@@ -271,11 +291,17 @@ export async function markWebsiteForReread(db: Db, accountId: string, id: string
   return rows.length > 0;
 }
 
-/** Deletes a source and its sections; facts found in it keep their text but lose the link. */
-export async function deleteSource(db: Db, accountId: string, id: string): Promise<boolean> {
+/**
+ * Deletes a source and its sections, and its kept original file; facts found
+ * in it keep their text but lose the link.
+ */
+export async function deleteSource(db: Db, accountId: string, id: string, deps: FileDeps = {}): Promise<boolean> {
   if (!isUuid(id)) return false;
-  const rows = await db.delete(sources).where(where(accountId, id)).returning({ id: sources.id });
-  return rows.length > 0;
+  const rows = await db.delete(sources).where(where(accountId, id)).returning({ id: sources.id, origin: sources.origin });
+  if (rows.length === 0) return false;
+  const kept = storedFileOf(rows[0].origin);
+  if (kept) await deleteSourceFile(storeOf(deps), kept);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -323,11 +349,12 @@ export async function updateWebsite(db: Db, accountId: string, id: string, input
 
 /**
  * Renames a file source and, with `file`, replaces its text with the new
- * file's (the bytes are not kept, so a file cannot be read again without
- * uploading it). A name left as it was takes the new file's name. Null when
- * not this account's file.
+ * file's. The new file replaces the kept original (when there is a store);
+ * without a store the old kept file no longer matches the text and is
+ * dropped from `origin`. A name left as it was takes the new file's name.
+ * Null when not this account's file.
  */
-export async function updateFile(db: Db, accountId: string, id: string, input: { title: string; file?: UploadedFile | null }): Promise<Source | null> {
+export async function updateFile(db: Db, accountId: string, id: string, input: { title: string; file?: UploadedFile | null }, deps: FileDeps = {}): Promise<Source | null> {
   const current = await getSource(db, accountId, id);
   if (!current || current.kind !== "file") return null;
   const file = input.file && input.file.bytes.byteLength > 0 ? input.file : null;
@@ -339,10 +366,15 @@ export async function updateFile(db: Db, accountId: string, id: string, input: {
   const kind = fileKind(name, file.bytes);
   const typed = cleanTitle(input.title, current.title);
   const title = typed === current.title ? name : typed;
-  await db.update(sources).set({
-    title, textHash: null, status: "processing",
-    origin: { ...current.origin, fileName: name, mime: file.type.slice(0, 100) || kind, size: file.bytes.byteLength },
-  }).where(where(accountId, id));
+  const store = storeOf(deps);
+  const old = storedFileOf(current.origin);
+  const stored = await storeSourceFile(store, accountId, id, { name, contentType: FILE_CONTENT_TYPE[kind], bytes: file.bytes }, deps.env);
+  // The old file goes unless the new one was written over it (same path).
+  if (old && old.blobPath !== stored?.blobPath) await deleteSourceFile(store, old);
+  const { file: _old, ...rest } = current.origin as OriginWithFile;
+  void _old;
+  const origin: OriginWithFile = { ...rest, fileName: name, mime: file.type.slice(0, 100) || kind, size: file.bytes.byteLength, ...(stored ? { file: stored } : {}) };
+  await db.update(sources).set({ title, textHash: null, status: "processing", origin: origin as SourceOrigin }).where(where(accountId, id));
   try {
     return await saveParse(db, accountId, id, await parseFile(kind, file.bytes, name));
   } catch {

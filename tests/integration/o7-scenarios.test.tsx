@@ -105,7 +105,8 @@ describe("O7: objection scenarios end to end (ScriptedLlm)", () => {
     { key: "sites", value: "1", provenance: "buyer" },
   ];
   const quoteTurn = (sensors: number): Step[] => [
-    step(use("u", "update_deal_state", { ...deal(null, fields), recommendation_confirmed: true })),
+    // The demo playbook needs the number of fridges before the quote too (owner, 22 Nov): one sensor each.
+    step(use("u", "update_deal_state", { ...deal(null, [...fields, { key: "fridges", value: String(sensors), provenance: "buyer" }]), recommendation_confirmed: true })),
     step(use("q", "create_quote", { lines: [{ sku: "SNS-200", qty: sensors }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1, remove_auto_added: null, exception: null, headline: null, assumed: null })),
     step(say("Here is your quote.")),
   ];

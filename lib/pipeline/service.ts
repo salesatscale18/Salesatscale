@@ -22,8 +22,9 @@
 import { randomUUID } from "node:crypto";
 import { and, asc, desc, eq, inArray, isNotNull, like, lt, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
+import { atomic } from "@/db/atomic";
 import {
-  agentVersions, catalogVersions, knowledgeFacts, markets, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources,
+  agentVersions, auditLog, catalogVersions, knowledgeFacts, markets, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources, users,
   type PipelineRun, type PlayKey, type Playbook, type PlaybookSuggestion,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -44,8 +45,10 @@ import {
 } from "./corpus";
 import type { PipelineLlm, PipelineRequest, PipelineUsage } from "./llm";
 import { mergeSuggestions } from "./merge";
-import { nearDuplicate, wordsKey } from "./dedup";
-import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, factsInstruction, KNOWN_FACTS_MAX, PROMPT_VERSION as FACTS_VERSION } from "./prompts/facts";
+import { differs, nearDuplicate, subjectSimilarity, wordsKey } from "./dedup";
+import { DOCUMENT_PAGE_TOKENS, documentRefs, loadDocuments, type DocumentRef } from "./documents";
+import { fileStore, type FileStore } from "@/lib/sources/blob";
+import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, factsInstruction, KNOWN_FACTS_MAX, knownFactIndex, PROMPT_VERSION as FACTS_VERSION } from "./prompts/facts";
 import { playbookInstruction, PROMPT_VERSION as PLAYBOOK_VERSION, type PlaybookStageData } from "./prompts/playbook";
 import { FACTS_TOOL, PLAYBOOK_TOOL, PROMPT_VERSION as SYSTEM_VERSION } from "./prompts/system";
 import {
@@ -67,6 +70,12 @@ const EFFORT = "medium" as const;
 // ---------------------------------------------------------------------------
 
 export type ContradictionRecord = { topic: string; summary: string; factIds: string[] };
+/**
+ * A suggested fact that says something different from an approved fact.
+ * by: "model" when the model named the known fact, "check" when the code's
+ * backstop found it (dedup.ts `differs`).
+ */
+export type FactConflict = { factId: string; approvedFactId: string; by: "model" | "check" };
 export type FactsRunResult = {
   factsAdded: number;
   /** Which sources stage 1 read: all, or only the new and changed ones. Missing on older runs: all. */
@@ -74,6 +83,8 @@ export type FactsRunResult = {
   /** Prompt versions and model of the run (factsRules): a later run reads only changed sources when they match. */
   rules?: string;
   contradictions: ContradictionRecord[];
+  /** New suggested facts that differ from an approved fact (missing when none, and on older runs). */
+  conflicts?: FactConflict[];
   gaps: Gap[];
   sourceAbout: SourceAbout[];
   customerSpecific: CustomerNote[];
@@ -195,6 +206,8 @@ export type AnalysisPlan = {
   factsCorpus: string;
   /** The facts corpus is large: stage 1 runs per source chunk (same model). */
   factsLarge: boolean;
+  /** PDFs of factsSources that stage 1 also reads as pages (only with a file store; documents.ts). */
+  documents: DocumentRef[];
   model: string;
   facts: { hash: string; reuse: boolean };
   /** The stage 2 hash with today's facts; recomputed after stage 1 when it runs. */
@@ -256,16 +269,21 @@ async function lastFactsRules(db: Db, accountId: string): Promise<string | null>
 /**
  * The seller's approved facts that stage 1 gets after its instruction (so it
  * does not restate them): the newest KNOWN_FACTS_MAX, sorted by topic and
- * statement so the same facts give the same bytes.
+ * statement so the same facts give the same bytes. Each goes to the model
+ * with its place in this list as its id (K1, K2, ...: prompts/facts.ts), so
+ * the model can name the one a new fact differs from.
  */
-export async function knownFacts(db: Db, accountId: string): Promise<{ topic: string; statement: string }[]> {
-  const rows = await db.select({ topic: knowledgeFacts.topic, statement: knowledgeFacts.statement }).from(knowledgeFacts)
+export async function knownFacts(db: Db, accountId: string): Promise<KnownFact[]> {
+  const rows = await db.select({ id: knowledgeFacts.id, topic: knowledgeFacts.topic, statement: knowledgeFacts.statement }).from(knowledgeFacts)
     .where(and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "approved")))
     .orderBy(desc(knowledgeFacts.createdAt), desc(knowledgeFacts.id))
     .limit(KNOWN_FACTS_MAX);
   const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-  return rows.sort((a, b) => cmp(a.topic, b.topic) || cmp(a.statement, b.statement));
+  return rows.sort((a, b) => cmp(a.topic, b.topic) || cmp(a.statement, b.statement) || cmp(a.id, b.id));
 }
+export type KnownFact = { id: string; topic: string; statement: string };
+/** The known facts as the model sees them (no row ids), for the estimate. */
+const knownForModel = (known: KnownFact[]) => known.map((f) => ({ topic: f.topic, statement: f.statement }));
 
 /**
  * Stage 0: corpus, hashes, reuse and the estimate. Null when there is nothing to analyse.
@@ -281,7 +299,7 @@ export async function knownFacts(db: Db, accountId: string): Promise<{ topic: st
  * model from restating them.
  */
 export async function planAnalysis(
-  db: Db, accountId: string, env: Record<string, string | undefined> = process.env, opts: { full?: boolean } = {},
+  db: Db, accountId: string, env: Record<string, string | undefined> = process.env, opts: { full?: boolean; store?: FileStore | null } = {},
 ): Promise<AnalysisPlan | null> {
   const list = await loadCorpusSources(db, accountId);
   if (list.length === 0) return null;
@@ -294,8 +312,15 @@ export async function planAnalysis(
   const factsCorpus = factsScope === "changed" ? assembleCorpus(factsSources) : corpus;
   const factsCorpusTokens = tokensOf(factsCorpus);
   const factsLarge = factsCorpusTokens > LARGE_CORPUS_TOKENS;
+  // PDFs read as pages (only with a file store): their files are part of the hash.
+  const store = opts.store === undefined ? fileStore(env) : opts.store;
+  const documents = store ? await documentRefs(db, accountId, factsSources.map((s) => s.id)) : [];
   // The scope is part of the hash: a run over the changed sources never stands in for a full one.
-  const factsHash = inputHash({ versions: [SYSTEM_VERSION, FACTS_VERSION], model, corpus: factsCorpus, data: factsScope === "changed" ? { scope: "changed" } : undefined });
+  const factsData = {
+    ...(factsScope === "changed" ? { scope: "changed" } : {}),
+    ...(documents.length ? { documents: documents.map((d) => `${d.sourceId}|${d.file.blobPath}|${d.file.size}`) } : {}),
+  };
+  const factsHash = inputHash({ versions: [SYSTEM_VERSION, FACTS_VERSION], model, corpus: factsCorpus, data: Object.keys(factsData).length ? factsData : undefined });
   const calls = list.filter((s) => s.kind === "call").length;
   const data = await playbookStageData(db, accountId, calls);
   const stage2Corpus = large ? assembleCorpus(trimCorpus(list)) : corpus;
@@ -312,12 +337,13 @@ export async function planAnalysis(
     runFacts: !factsReuse,
     runPlaybook: !pbReuse,
     dataTokens: tokensOf(JSON.stringify(data)),
-    knownFactsTokens: known.length ? tokensOf(JSON.stringify(known)) : 0,
+    knownFactsTokens: known.length ? tokensOf(JSON.stringify(knownForModel(known))) : 0,
+    documentTokens: documents.reduce((n, d) => n + d.pages * DOCUMENT_PAGE_TOKENS, 0),
     model,
   });
   return {
     sources: list, changed: list.filter((s) => s.changed).length, corpus, corpusTokens, large,
-    factsScope, factsSources, factsCorpus, factsLarge, model,
+    factsScope, factsSources, factsCorpus, factsLarge, documents, model,
     facts: { hash: factsHash, reuse: factsReuse }, playbook: { hash: pbHash, reuse: pbReuse }, estimate,
     token: `${factsHash.slice(0, 16)}${pbHash.slice(0, 16)}`,
     firstRun: factsReuse ? false : !(await anyDoneFactsRun(db, accountId)),
@@ -477,12 +503,35 @@ const factLabel = (index: CorpusIndex, f: CleanFact) => {
  * is skipped (counted as a duplicate) when it has the same words as any fact of
  * the account, in any order, case or punctuation, or is a near-duplicate of a
  * fact from the same source (lib/pipeline/dedup.ts; numbers must match).
+ *
+ * A new fact that says something different from an approved fact is marked
+ * against it (FactConflict): when the model names that known fact
+ * (known_fact_id), or else when the code finds one of the same topic with
+ * nearly the same subject words but other numbers or the opposite negation
+ * (dedup.ts `differs`). The seller then replaces the approved fact or keeps it.
  */
 async function storeFacts(
-  db: Db, accountId: string, index: CorpusIndex, parsed: FactsResult, meta: { scope: FactsScope; rules: string },
+  db: Db, accountId: string, index: CorpusIndex, parsed: FactsResult, meta: { scope: FactsScope; rules: string; known: KnownFact[] },
 ): Promise<FactsRunResult> {
-  const existing = await db.select({ id: knowledgeFacts.id, statement: knowledgeFacts.statement, sourceId: knowledgeFacts.sourceId })
+  const existing = await db.select({ id: knowledgeFacts.id, topic: knowledgeFacts.topic, statement: knowledgeFacts.statement, sourceId: knowledgeFacts.sourceId, status: knowledgeFacts.status })
     .from(knowledgeFacts).where(eq(knowledgeFacts.accountId, accountId));
+  const approved = existing.filter((f) => f.status === "approved");
+  const approvedIds = new Set(approved.map((f) => f.id));
+  const topicKey = (t: string) => t.trim().toLowerCase();
+  const conflicts: FactConflict[] = [];
+  /** The approved fact a new fact differs from: the one the model named, else the code's closest match. */
+  const conflictOf = (f: CleanFact): Omit<FactConflict, "factId"> | null => {
+    const i = knownFactIndex(f.knownFactRef);
+    const named = i !== null ? meta.known[i] : undefined;
+    if (named && approvedIds.has(named.id)) return { approvedFactId: named.id, by: "model" };
+    let best: { id: string; score: number } | null = null;
+    for (const a of approved) {
+      if (topicKey(a.topic) !== topicKey(f.topic) || !differs(f.statement, a.statement)) continue;
+      const score = subjectSimilarity(f.statement, a.statement);
+      if (!best || score > best.score) best = { id: a.id, score };
+    }
+    return best ? { approvedFactId: best.id, by: "check" } : null;
+  };
   const byStatement = new Map(existing.map((f) => [normalizeStatement(f.statement), f.id]));
   const byWords = new Map(existing.map((f) => [wordsKey(f.statement), f.id]));
   const bySource = new Map<string, { id: string; statement: string }[]>();
@@ -514,9 +563,12 @@ async function storeFacts(
   let added = 0;
   for (const f of parsed.facts) {
     const before = rows.length;
-    add(f);
-    if (rows.length > before) added++;
-    else dropped.duplicates++;
+    const id = add(f);
+    if (rows.length > before) {
+      added++;
+      const c = conflictOf(f);
+      if (c) conflicts.push({ factId: id, ...c });
+    } else dropped.duplicates++;
   }
   const contradictions: ContradictionRecord[] = parsed.contradictions.map((c) => ({
     topic: c.topic, summary: c.summary, factIds: [...new Set(c.options.map(add))],
@@ -524,7 +576,7 @@ async function storeFacts(
   for (let i = 0; i < rows.length; i += 200) await db.insert(knowledgeFacts).values(rows.slice(i, i + 200));
   return {
     factsAdded: added, scope: meta.scope, rules: meta.rules,
-    contradictions, gaps: parsed.gaps, sourceAbout: parsed.sourceAbout, customerSpecific: parsed.customerSpecific, dropped,
+    contradictions, ...(conflicts.length ? { conflicts } : {}), gaps: parsed.gaps, sourceAbout: parsed.sourceAbout, customerSpecific: parsed.customerSpecific, dropped,
   };
 }
 
@@ -533,7 +585,9 @@ async function storeFacts(
  * queued -> running -> done (or failed, with the usage spent so far). The
  * model client is wrapped in the platform budget guard.
  */
-export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: string, plan: AnalysisPlan, runs: StartedRuns): Promise<AnalysisResult> {
+export async function executeAnalysis(
+  db: Db, rawLlm: PipelineLlm, accountId: string, plan: AnalysisPlan, runs: StartedRuns, deps: { store?: FileStore | null } = {},
+): Promise<AnalysisResult> {
   const llm = budgetGuarded(db, rawLlm);
   const index = corpusIndex(plan.sources);
   const result: AnalysisResult = { facts: null, playbook: null, failed: null };
@@ -551,12 +605,18 @@ export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: st
     let usage = noUsage();
     let calls = 0;
     try {
+      // PDFs read as pages: sent after the corpus block (documents.ts, llm.ts).
+      const store = plan.documents.length ? (deps.store === undefined ? fileStore() : deps.store) : null;
+      const documents = store ? await loadDocuments(store, plan.documents) : [];
       const parts: FactsResult[] = [];
       if (plan.factsLarge) {
-        const instruction = factsInstruction(FACTS_ONE_SOURCE_INSTRUCTION, known);
+        // One source per call: a source's PDF goes with its first chunk.
         for (const s of plan.factsSources) {
-          for (const chunk of sourceChunks(s)) {
-            const res = await callTool(llm, { model, effort: EFFORT, corpus: chunk, cacheCorpus: false, instruction, maxTokens: MAX_TOKENS, fallbacks: true }, FACTS_TOOL)
+          const doc = documents.filter((d) => d.sourceId === s.id);
+          for (const [i, chunk] of sourceChunks(s).entries()) {
+            const docs = i === 0 && doc.length ? doc : undefined;
+            const instruction = factsInstruction(FACTS_ONE_SOURCE_INSTRUCTION, known, { documents: !!docs });
+            const res = await callTool(llm, { model, effort: EFFORT, corpus: chunk, cacheCorpus: false, documents: docs, instruction, maxTokens: MAX_TOKENS, fallbacks: true }, FACTS_TOOL)
               .catch((e) => { usage = addUsage(usage, usageOf(e)); calls++; throw e; });
             usage = addUsage(usage, res.usage);
             calls++;
@@ -565,14 +625,16 @@ export async function executeAnalysis(db: Db, rawLlm: PipelineLlm, accountId: st
         }
       } else {
         const res = await callTool(llm, {
-          model, effort: EFFORT, corpus: plan.factsCorpus, cacheCorpus: sharedCache, instruction: factsInstruction(FACTS_INSTRUCTION, known), maxTokens: MAX_TOKENS, fallbacks: true,
+          model, effort: EFFORT, corpus: plan.factsCorpus, cacheCorpus: sharedCache,
+          documents: documents.length ? documents : undefined,
+          instruction: factsInstruction(FACTS_INSTRUCTION, known, { documents: documents.length > 0 }), maxTokens: MAX_TOKENS, fallbacks: true,
         }, FACTS_TOOL)
           .catch((e) => { usage = addUsage(usage, usageOf(e)); calls++; throw e; });
         usage = res.usage;
         calls = 1;
         parts.push(parseFactsOutput(res.tool!.input, factsIndex));
       }
-      const stored = await storeFacts(db, accountId, factsIndex, mergeFactsResults(parts), { scope: plan.factsScope, rules: factsRules(model) });
+      const stored = await storeFacts(db, accountId, factsIndex, mergeFactsResults(parts), { scope: plan.factsScope, rules: factsRules(model), known });
       await finishRun(db, accountId, id, model, usage, calls, stored, null);
       result.facts = { reused: false, added: stored.factsAdded, contradictions: stored.contradictions.length, gaps: stored.gaps.length };
     } catch (e) {
@@ -648,11 +710,13 @@ async function markAnalysed(db: Db, accountId: string, plan: AnalysisPlan) {
 }
 
 /** Plan, start and execute in one go (tests, scripts). Throws PipelineRefused when refused. */
-export async function analyzeSources(db: Db, llm: PipelineLlm, accountId: string, opts: { token?: string; now?: Date; full?: boolean } = {}): Promise<AnalysisResult> {
-  const plan = await planAnalysis(db, accountId, process.env, { full: opts.full });
+export async function analyzeSources(
+  db: Db, llm: PipelineLlm, accountId: string, opts: { token?: string; now?: Date; full?: boolean; store?: FileStore | null } = {},
+): Promise<AnalysisResult> {
+  const plan = await planAnalysis(db, accountId, process.env, { full: opts.full, store: opts.store });
   if (!plan) throw new PipelineRefused("nothing", "Add a source first.");
   const runs = await startAnalysis(db, accountId, plan, opts);
-  return executeAnalysis(db, llm, accountId, plan, runs);
+  return executeAnalysis(db, llm, accountId, plan, runs, { store: opts.store });
 }
 
 // ---------------------------------------------------------------------------
@@ -726,9 +790,102 @@ export async function resolveContradiction(
   return true;
 }
 
-/** Approves every suggested fact (of one topic, or all), except facts in an open contradiction. Returns how many. */
+/**
+ * Suggested facts that differ from an approved fact, waiting for the seller:
+ * suggested fact id -> the approved fact. Only while the suggestion is still
+ * suggested and the other fact still approved. Newest run first: the first
+ * record of a fact wins.
+ */
+export async function openFactConflicts(db: Db, accountId: string): Promise<Map<string, typeof knowledgeFacts.$inferSelect>> {
+  const runs = await doneFactsRuns(db, accountId);
+  const all = runs.flatMap((r) => factsResult(r)?.conflicts ?? []).filter((c) => isUuid(c.factId) && isUuid(c.approvedFactId));
+  const out = new Map<string, typeof knowledgeFacts.$inferSelect>();
+  if (all.length === 0) return out;
+  const ids = [...new Set(all.flatMap((c) => [c.factId, c.approvedFactId]))];
+  const facts = await db.select().from(knowledgeFacts).where(and(eq(knowledgeFacts.accountId, accountId), inArray(knowledgeFacts.id, ids)));
+  const byId = new Map(facts.map((f) => [f.id, f]));
+  for (const c of all) {
+    if (out.has(c.factId)) continue;
+    const suggested = byId.get(c.factId);
+    const approved = byId.get(c.approvedFactId);
+    if (suggested?.status === "suggested" && approved?.status === "approved") out.set(c.factId, approved);
+  }
+  return out;
+}
+
+/**
+ * When and by whom an approved fact was approved, for the conflict card:
+ * - recorded: the newest audit row that approved this fact on its own
+ *   (Approve, Replace the approved fact), with the user who clicked;
+ * - else a fact added by hand (approved on add): when and by whom it was added;
+ * - else (Approve all, a contradiction choice: no per-fact record) only when it was added.
+ * Only the first name is returned, never an email.
+ */
+export type ApprovalInfo = { kind: "approved" | "added"; at: Date; userId: string | null; firstName: string | null };
+export async function approvalInfo(
+  db: Db, accountId: string, facts: Pick<typeof knowledgeFacts.$inferSelect, "id" | "createdAt" | "createdByUserId">[],
+): Promise<Map<string, ApprovalInfo>> {
+  const out = new Map<string, ApprovalInfo>();
+  if (facts.length === 0) return out;
+  const rows = await db.select({ targetId: auditLog.targetId, at: auditLog.createdAt, userId: auditLog.actorUserId, firstName: users.firstName })
+    .from(auditLog).leftJoin(users, eq(users.id, auditLog.actorUserId))
+    .where(and(
+      eq(auditLog.accountId, accountId),
+      inArray(auditLog.action, ["knowledge.fact_approved", "knowledge.fact_replaced"]),
+      inArray(auditLog.targetId, facts.map((f) => f.id)),
+    ))
+    .orderBy(desc(auditLog.createdAt));
+  for (const r of rows) if (r.targetId && !out.has(r.targetId)) out.set(r.targetId, { kind: "approved", at: r.at, userId: r.userId, firstName: r.firstName });
+  const adders = [...new Set(facts.filter((f) => !out.has(f.id) && f.createdByUserId).map((f) => f.createdByUserId!))];
+  const names = new Map(adders.length
+    ? (await db.select({ id: users.id, firstName: users.firstName }).from(users).where(inArray(users.id, adders))).map((u) => [u.id, u.firstName])
+    : []);
+  for (const f of facts) {
+    if (out.has(f.id)) continue;
+    out.set(f.id, f.createdByUserId
+      ? { kind: "approved", at: f.createdAt, userId: f.createdByUserId, firstName: names.get(f.createdByUserId) ?? null }
+      : { kind: "added", at: f.createdAt, userId: null, firstName: null });
+  }
+  return out;
+}
+
+/**
+ * The seller's choice on a suggestion that differs from an approved fact.
+ * "replace": the suggestion is approved and the approved fact retired
+ * (status rejected: the row and its source link stay, so the history is
+ * kept), in one write. "keep": the suggestion is rejected. False when the
+ * suggestion is not (or no longer) open for this account.
+ */
+export async function resolveFactConflict(
+  db: Db, actor: Actor, accountId: string, input: { factId: string; choice: "replace" | "keep" },
+): Promise<boolean> {
+  if (!isUuid(input.factId)) return false;
+  const approved = (await openFactConflicts(db, accountId)).get(input.factId);
+  if (!approved) return false;
+  const one = (id: string) => and(eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.id, id));
+  if (input.choice === "replace") {
+    await atomic(db, (q) => [
+      q.update(knowledgeFacts).set({ status: "approved" }).where(and(one(input.factId), eq(knowledgeFacts.status, "suggested"))),
+      q.update(knowledgeFacts).set({ status: "rejected" }).where(and(one(approved.id), eq(knowledgeFacts.status, "approved"))),
+    ]);
+  } else {
+    await db.update(knowledgeFacts).set({ status: "rejected" }).where(and(one(input.factId), eq(knowledgeFacts.status, "suggested")));
+  }
+  await writeAudit(db, actor, {
+    accountId, action: input.choice === "replace" ? "knowledge.fact_replaced" : "knowledge.fact_kept",
+    targetType: "knowledge_fact", targetId: input.factId,
+    details: { approvedFactId: approved.id, approvedStatement: approved.statement.slice(0, 300) },
+  });
+  return true;
+}
+
+/**
+ * Approves every suggested fact (of one topic, or all), except facts in an
+ * open contradiction and facts that differ from an approved fact (both wait
+ * for the seller's choice). Returns how many.
+ */
 export async function approveAllSuggestedFacts(db: Db, accountId: string, topic?: string): Promise<number> {
-  const held = [...(await contradictedFactIds(db, accountId))];
+  const held = [...(await contradictedFactIds(db, accountId)), ...(await openFactConflicts(db, accountId)).keys()];
   const rows = await db.update(knowledgeFacts).set({ status: "approved" }).where(and(
     eq(knowledgeFacts.accountId, accountId), eq(knowledgeFacts.status, "suggested"),
     topic ? eq(knowledgeFacts.topic, topic) : undefined,

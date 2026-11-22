@@ -3810,5 +3810,21 @@
   "leads.value.estimate_title": "Estimated from the deal details; no quote yet",
   "lead.card.estimate": "Estimated deal size",
   "time.your_time": "your time",
-  "leads.times_yours": "Times in your time zone ({zone})"
+  "leads.times_yours": "Times in your time zone ({zone})",
+  "knowledge.conflict.label": "Differs from an approved fact",
+  "knowledge.conflict.replace": "Replace the approved fact",
+  "knowledge.conflict.keep": "Keep the approved fact",
+  "knowledge.done.replaced": "Approved fact replaced. The agent uses the new one now.",
+  "knowledge.done.kept": "Approved fact kept. The new one was rejected.",
+  "knowledge.conflict.approved_label": "Approved · used by the agent now",
+  "knowledge.conflict.new_label": "New",
+  "knowledge.conflict.approved_by": "Approved {date} by {name}",
+  "knowledge.conflict.approved_on": "Approved {date}",
+  "knowledge.conflict.added_on": "Added {date}",
+  "knowledge.conflict.found": "Found {date}",
+  "knowledge.conflict.from": "From \"{source}\"",
+  "knowledge.conflict.from_at": "From \"{source}\" · {where}",
+  "knowledge.conflict.page": "page {n}",
+  "knowledge.conflict.you": "you",
+  "knowledge.conflict.hint": "The agent keeps using the approved fact until you choose."
 }

@@ -19,6 +19,7 @@
     "@anthropic-ai/sdk": "^1.8.0",
     "@clerk/nextjs": "^7.9.25",
     "@neondatabase/serverless": "^1.2.0",
+    "@vercel/blob": "2.8.2",
     "@vercel/functions": "3.11.3",
     "ai": "7.0.177",
     "drizzle-orm": "^0.45.4",
