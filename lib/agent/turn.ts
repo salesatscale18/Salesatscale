@@ -29,6 +29,7 @@ import { teamQuestionsContext } from "@/lib/team-questions/service";
 import { priceApprovalContext } from "./price-approval";
 import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
+import { storedBuyerZone } from "@/lib/team-calls/zone";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
@@ -90,7 +91,7 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp, contact, callback, loggedCall, teamQuestions, priceApproval] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, contact, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
@@ -106,6 +107,8 @@ export async function runBuyerTurn(
     teamQuestionsContext(db, args.accountId, conv.leadId, conv.id),
     // The team's decline of a special price (O1 part 5): the agent continues the price ladder from it.
     priceApprovalContext(db, args.accountId, conv.leadId),
+    // The buyer's own zone as stored (RB4): the tools give the buyer times in it, so the context does too.
+    storedBuyerZone(db, args.accountId, conv.leadId),
   ]);
   const recent = recentDesc.reverse();
   const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
@@ -136,11 +139,12 @@ export async function runBuyerTurn(
     `${turnContext(version.playbook, deal, {
       stage: stageFacts, agentMessages, opener, catalog: activeItems, names: buyerNames(version.playbook, account, lang),
       // Agreed follow-ups (lib/follow-ups): the scheduled one, and the clock the agent schedules with.
-      // Times as the buyer should hear them ("Friday 20 November at 12:30", O7).
-      followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, contact.timezone), topic: followUp.topic } : null,
+      // Times as the buyer should hear them ("Friday 20 November at 12:30", O7), in the buyer's stored zone
+      // when known (as the tools give them), else the market's or the call's.
+      followUp: followUp ? { dueLocal: formatBuyerLocal(followUp.dueAt, buyerZone ?? contact.timezone), topic: followUp.topic } : null,
       // A call still ahead (or an older request still waiting); once its slot has passed, the team's log says what happened.
-      callback: callback && (callback.status === "requested" || callUpcoming(callback, new Date())) ? { timeLocal: formatBuyerLocal(callback.at, callback.timezone), confirmed: callback.status === "confirmed" } : null,
-      teamCall: teamCallLogLine(loggedCall, (at) => formatBuyerLocal(at, contact.timezone)),
+      callback: callback && (callback.status === "requested" || callUpcoming(callback, new Date())) ? { timeLocal: formatBuyerLocal(callback.at, buyerZone ?? callback.timezone), confirmed: callback.status === "confirmed" } : null,
+      teamCall: teamCallLogLine(loggedCall, (at) => formatBuyerLocal(at, buyerZone ?? contact.timezone)),
       teamQuestions,
       priceApproval,
       localNow: localNowLine(new Date(), contact.timezone),

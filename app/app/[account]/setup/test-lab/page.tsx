@@ -31,7 +31,7 @@ import { AutoSubmit } from "@/components/sas/list-kit-client";
 import { ListTable } from "@/components/sas/list-kit";
 import { ConversationControls, MarkerEntry, deliveryLabel, splitMarkers, windowTimerProps } from "../../leads/[leadId]/conversation";
 import { ObjectionList } from "../../leads/[leadId]/deal-pane";
-import { paneObjections } from "@/lib/leads/deal-pane";
+import { leadScheduledNextStep, paneObjections } from "@/lib/leads/deal-pane";
 import { WindowTimer } from "@/components/sas/record";
 import { conversationWindow } from "@/lib/channels/whatsapp";
 import { listConnections } from "@/lib/channels/connections";
@@ -121,13 +121,16 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const scenarios = SCENARIOS.filter((s) => account.languages.includes(s.language));
   // Scenario results for the version picked in the panel, else the open chat's, else the draft (or newest).
   const resultsVersion = versions.find((v) => v.id === one(sp.v)) ?? versions.find((v) => v.id === conv?.agentVersionId) ?? draft ?? versions[0];
-  const [view, convLead, scenarioCheck, results, deal] = await Promise.all([
+  const [view, convLead, scenarioCheck, results, deal, scheduledStep] = await Promise.all([
     conv?.isTest ? conversationView(appDb, account.id, conv) : null,
     conv?.isTest ? getLead(appDb, account.id, conv.leadId) : null,
     conv?.isTest ? conversationScenarioCheck(appDb, account.id, conv) : null,
     resultsVersion ? latestScenarioResults(appDb, account.id, resultsVersion.id) : [],
     conv ? getDealState(appDb, account.id, conv.leadId) : null,
+    // A live call or follow-up: the next step from its stored instant in the viewer's zone (not the stored text's baked time).
+    conv ? leadScheduledNextStep(appDb, account.id, conv.leadId, account.timezone, viewerZone) : null,
   ]);
+  const nextStep = scheduledStep || deal?.nextStep;
   const thread = view?.thread ?? [];
   // "Show agent steps" (board ConvSteps): the step list before agent replies. On by default here, remembered apart from the workspace.
   const showSteps = await agentStepsFor("lab", user.id, sp.steps);
@@ -184,7 +187,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                     <ObjectionList objections={paneObjections(deal.objections)} />
                   </div>
                 ) : null}
-                {deal?.nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{deal.nextStep}</span></div> : null}
+                {nextStep ? <div className="sas-stack-2"><span className="sas-group-label">{t("lead.card.next_step")}</span><span>{nextStep}</span></div> : null}
               </div>
             </section>
   ) : null);
