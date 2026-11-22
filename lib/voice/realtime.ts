@@ -58,7 +58,13 @@ export type RealtimeEvent =
    */
   | { type: "closed"; error?: string; code?: number; reason?: string }
   /** A provider event we do not use (`unknown`) or an error event: logged once per type per call. */
-  | { type: "provider-event"; kind: "unknown" | "error"; name: string; message?: string };
+  | { type: "provider-event"; kind: "unknown" | "error"; name: string; message?: string }
+  /**
+   * Something the relay fixed or hid, for the log only (never content): the agent's transcript had markers taken
+   * out ("cleaned-transcript"), an audio piece had an odd byte count and its last byte was carried to the next
+   * piece ("audio-odd-bytes"), audio of an earlier response came again after a newer one ("audio-interleaved").
+   */
+  | { type: "diagnostic"; kind: "cleaned-transcript" | "audio-odd-bytes" | "audio-interleaved" | "tool-continuation"; detail?: string };
 
 export interface RealtimeConnection {
   /** Mic audio, PCM16 mono 24 kHz little-endian. */

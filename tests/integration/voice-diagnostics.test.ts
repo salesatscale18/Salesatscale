@@ -364,7 +364,7 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       expect(finals.filter((m) => m.role === "agent").map((m) => m.text).some((t) => t.endsWith("…"))).toBe(false);
     });
 
-    it("the buyer's speech overlaps the start of the answer: ONE agent line (the cut one is completed), after the buyer's line", async () => {
+    it("the buyer's speech overlaps the start of the answer: ONE agent line, as far as it was said (cut), after the buyer's line", async () => {
       const model = new FakeModel("openai/gpt-realtime-mini");
       const c = await engineCall(model);
       const send = openai(model);
@@ -386,7 +386,7 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       c.engine.onClientMessage({ t: "end" });
       await c.settle();
       expect(await stored(c.sessionId)).toEqual([
-        ["agent", "Hi, this is Maya from Acme."], ["buyer", "How much is it per sensor?"], ["agent", "It starts at about 590 shekels per sensor, and the total depends…"],
+        ["agent", "Hi, this is Maya from Acme."], ["buyer", "How much is it per sensor?"], ["agent", "It starts at about 590 shek…"],
       ]);
     });
 
@@ -466,15 +466,16 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       return { c, model };
     }
 
-    it("a cut with no words, then the same answer again (in English): one line is kept, the one said last", async () => {
+    it("a cut with no words, then another answer: both lines stay in the record (every line the buyer heard)", async () => {
       const { c, model } = await hebrewThenFalseCut(1_500);
+      // A line that merely follows a cut one (different words) is never merged into it: a time-based merge hid
+      // whole spoken lines from the record (22 Nov 2026).
       expect(await spokenRows(c.sessionId)).toEqual([
-        ["agent", "Hi, this is Maya from Acme.", "en"], ["buyer", HE_Q, "he"], ["agent", EN_REDO, "en"],
+        ["agent", "Hi, this is Maya from Acme.", "en"], ["buyer", HE_Q, "he"], ["agent", `${HE_CUT}…`, "he"], ["agent", EN_REDO, "en"],
       ]);
-      // The live transcript shows it on one line too: the cut turn's id gets the new text.
       const finals = c.sent.filter((m): m is Extract<ServerMessage, { t: "transcript" }> => !(m instanceof Uint8Array) && m.t === "transcript" && m.final && m.role === "agent");
       const cutId = finals.find((m) => m.text.startsWith("בוודאי"))!.id;
-      expect(finals.filter((m) => m.id === cutId).at(-1)!.text).toBe(EN_REDO);
+      expect(finals.filter((m) => m.id === cutId).at(-1)!.text).toBe(`${HE_CUT}…`);
       // The model was told at once that the buyer now speaks Hebrew (OpenAI takes notes mid-call).
       expect(model.conns[0].notes).toEqual([expect.stringContaining("the buyer now speaks Hebrew. Speak Hebrew from now on, also after an interruption")]);
     });
@@ -547,7 +548,7 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     const rows = async (sessionId: string) => (await db.select({ actor: messages.actor, body: messages.body }).from(messages)
       .where(and(eq(messages.voiceSessionId, sessionId), eq(messages.accountId, acc))).orderBy(asc(messages.createdAt))).map((m) => [m.actor, m.body]);
 
-    it("a cut line re-said from its middle after an echo (\"Ja.\") is one stored line, not two", async () => {
+    it("a cut line re-said from its middle after an echo (\"Ja.\"): both lines stored, in order, with the buyer's line between", async () => {
       const model = new FakeModel();
       const c = await engineCall(model);
       const send = sdk(model);
@@ -566,8 +567,9 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       c.engine.onClientMessage({ t: "end" });
       await c.settle();
       expect(await rows(c.sessionId)).toEqual([
-        ["agent", "Some calls may be recorded for quality review; I don't control the recording myself. So, how many fridges do you need to cover?"],
+        ["agent", "Some calls may be recorded for quality review; I don't control the recording myself. So, how many fridges do you need…"],
         ["buyer", "Ja."],
+        ["agent", "for quality review; I don't control the recording myself. So, how many fridges do you need to cover?"],
       ]);
     });
 
@@ -591,5 +593,38 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       c.engine.onClientMessage({ t: "end" });
       await c.settle();
     });
+  });
+
+  it("control flow is visible: config at start, one line per note and per tool call, cleaned transcripts and audio anomalies (Gemini)", async () => {
+    const model = new FakeModel();
+    const c = await engineCall(model);
+    const mapper = new ServerEventMapper();
+    const send = (e: Record<string, unknown>) => {
+      for (const ev of mapper.map({ raw: null, ...e } as never)) model.conns.at(-1)!.emit(ev);
+    };
+    const id = short(c.sessionId);
+    const text = () => c.logs.text();
+    const cfg = model.conns[0].cfg;
+    expect(text()).toContain(`model connected in 0ms (google/gemini-3.8-live) config=full instructions=${cfg.instructions.length} tools=${cfg.tools.length}`);
+    expect(text()).toContain(`[voice] ${id} note sent: opener`);
+    // An odd audio piece, a transcript with a marker, a tool call.
+    send({ type: "response-created", responseId: "r0" });
+    send({ type: "audio-delta", responseId: "r0", itemId: "a", delta: Buffer.from([1, 2, 3]).toString("base64") });
+    send({ type: "audio-transcript-delta", delta: "<noise> Hi, this is Maya." });
+    send({ type: "response-done", responseId: "r0", status: "completed" });
+    await c.run(300);
+    send({ type: "function-call-arguments-done", responseId: "r1", itemId: "f", callId: "call-1", name: "search_catalog", arguments: JSON.stringify({ query: "sensor" }) });
+    await c.run(300);
+    expect(text()).toContain(`[voice] ${id} agent audio: a piece with an odd byte count (carried to the next piece)`);
+    expect(text()).toContain(`[voice] ${id} cleaned agent transcript: marker in a line`);
+    expect(text()).toMatch(new RegExp(`\\[voice\\] ${id} tool search_catalog (ok|refused|failed) \\d+ms`));
+    // A typed line is a note too; never its words.
+    c.engine.onClientMessage({ t: "text", text: "Two sites please" });
+    await c.run(300);
+    expect(text()).toContain(`[voice] ${id} note sent: typed line`);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+    expect(text()).toMatch(/ended reason=user_hangup .* diagnostics=audio-odd-bytes:1,cleaned-transcript:1/);
+    expect(text()).not.toMatch(/Two sites|Maya|sensor"/);
   });
 });

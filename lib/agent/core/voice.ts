@@ -220,7 +220,6 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
       ? '- Before a tool that takes time, say a short filler first, in the language you are speaking with the buyer, for example "One moment, I\'m checking that." said in that language'
       : "- Do not announce your checks; just answer when you have the result.",
     "- If the buyer interrupts you, stop and answer what they said.",
-    "- If you are cut off but hear no words, continue in the same language; do not start over.",
     "- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example \"Which is closest: the price, whether it fits, or the timing?\" One short sentence and one question per turn.",
     "- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that \"Open objection\" shows as used.",
     "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",

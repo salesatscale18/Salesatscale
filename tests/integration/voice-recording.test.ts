@@ -133,14 +133,18 @@ describe("recording a call", () => {
     expect(c.model.connections).toHaveLength(2);
   });
 
-  it("the opening instruction carries the exact recording line, never the answer for when the buyer asks (new call and pick-up)", async () => {
+  it("the opening instruction carries the exact recording line and nothing else about recording (new call and pick-up)", async () => {
     const c = await newCall();
     const opener = c.model.connections[0].sent.responses[0]!;
     expect(opener).toContain(RECORDING_NOTICE.en);
     expect(opener).not.toContain("I don't control");
-    expect(opener).toContain("never the answer for when the buyer asks about it");
-    // The session's rule for the on-request answer says it is never part of an opening.
-    expect(c.model.connections[0].cfg.instructions).toContain("The two answers below are not part of any opening and never start a turn on their own");
+    expect(opener).not.toMatch(/recording notice|answer for when/);
+    // The on-request answer is one rule inside the voice block, never a section at the end of the instructions.
+    const instructions = c.model.connections[0].cfg.instructions;
+    expect(instructions).not.toContain("### This call is recorded");
+    expect(instructions.endsWith("Conversation language: en.")).toBe(true);
+    expect(instructions.indexOf("If the buyer asks whether this call is recorded")).toBeLessThan(instructions.indexOf("### Deal-state fields"));
+    expect(instructions.indexOf("If the buyer asks whether this call is recorded")).toBeGreaterThan(instructions.indexOf("### On a voice call (always)"));
     await c.run(15_000);
     await end(c);
     // A call that picks up a chat (no greeting): the exact line comes first, then the pick-up line; nothing else about recording.
@@ -261,12 +265,13 @@ describe("the buyer raises the recording", () => {
   it("a recorded call: the instruction is there; asked → the line; objects → the writing offer once; the recording goes on", async () => {
     const c = await newCall({ script: ASKS });
     const instructions = c.model.connections[0].cfg.instructions;
-    expect(instructions).toContain("### This call is recorded");
-    expect(instructions).toContain(`"${RECORDING_ASKED_REPLY.en}"`);
+    expect(instructions).toContain(`- If the buyer asks whether this call is recorded, say: "${RECORDING_ASKED_REPLY.en}"`);
     expect(instructions).toContain(RECORDING_ASKED_REPLY.he);
-    expect(instructions).toContain("Never say the call is not recorded or that the recording stopped");
-    expect(instructions).toContain(`add once: "${RECORDING_WRITING_OFFER.en}"`);
+    expect(instructions).toContain(`If they object, offer once: "${RECORDING_WRITING_OFFER.en}"`);
     expect(instructions).toContain(RECORDING_WRITING_OFFER.he);
+    expect(instructions).toContain("Otherwise never mention recording.");
+    // One line, once.
+    expect(instructions.split(RECORDING_ASKED_REPLY.en)).toHaveLength(2);
     await c.run(15_000);
     await c.speak();
     await c.run(10_000);
@@ -290,7 +295,7 @@ describe("the buyer raises the recording", () => {
 
   it("a call that is not recorded (switched off, or no store): no instruction, and the agent never says it is recorded", async () => {
     const none = await newCall({ script: ASKS, store: null });
-    expect(none.model.connections[0].cfg.instructions).not.toContain("This call is recorded");
+    expect(none.model.connections[0].cfg.instructions).not.toContain("whether this call is recorded");
     expect(none.model.connections[0].cfg.instructions).not.toContain(RECORDING_ASKED_REPLY.en);
     expect(none.model.connections[0].cfg.instructions).not.toContain(RECORDING_WRITING_OFFER.en);
     await none.run(15_000);
@@ -300,7 +305,7 @@ describe("the buyer raises the recording", () => {
     expect((await agentLines(none.conversationId, none.sessionId)).join(" ")).not.toContain("recorded");
     await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 180 });
     const off = await newCall({ script: ASKS });
-    expect(off.model.connections[0].cfg.instructions).not.toContain("This call is recorded");
+    expect(off.model.connections[0].cfg.instructions).not.toContain("whether this call is recorded");
     await end(off);
   });
 
@@ -310,7 +315,7 @@ describe("the buyer raises the recording", () => {
     c.model.connections.at(-1)!.simulateGoAway();
     await c.run(5_000);
     expect(c.model.connections).toHaveLength(2);
-    expect(c.model.connections[1].cfg.instructions).toContain("### This call is recorded");
+    expect(c.model.connections[1].cfg.instructions).toContain("- If the buyer asks whether this call is recorded");
     await end(c);
   });
 });
