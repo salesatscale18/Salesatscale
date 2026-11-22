@@ -153,7 +153,7 @@ describe("Who takes calls (setting) in the prompt", () => {
     expect(def).toContain("I can set a short call with a member of our team: here is a link to pick a time that suits you.");
     expect(def).toContain("call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat");
     expect(def).not.toContain("Does tomorrow at 10:00 work");
-    expect(def).toContain("The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. Call the person \"a member of our team\".");
+    expect(def).toContain("The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. When the buyer named a time for the call, pass it as time: if it is free the call is booked, so confirm the time instead; if not, offer the nearest free times the result gives. Call the person \"a member of our team\".");
     // A time the buyer names for a call or a message is the follow-up and its text message.
     expect(def).toContain("If the buyer asks you to call or write at a time, call schedule_follow_up with that time; say they will get a text with a link back here, where they can talk by voice or write. You cannot phone them.");
     expect(def).toContain('- Send the one approved item ("Send me information"): You cannot attach files. Give the summary in text; include a link only if it is listed in this play\'s facts.');
@@ -186,22 +186,22 @@ describe("Who takes calls (setting) in the prompt", () => {
 describe("request_callback: definition, trace, voice", () => {
   const def = TOOL_DEFS.find((d) => d.name === "request_callback")!;
 
-  it("is a strict tool with a brief only (the buyer picks the time on the booking card), and says the chat stays with the agent", () => {
+  it("is a strict tool with a brief and the time the buyer named, or null (N1), and says the chat stays with the agent", () => {
     expect(def.strict).toBe(true);
     expect(def.input_schema).toEqual({
       type: "object",
-      properties: { brief: expect.objectContaining({ type: "string" }) },
-      required: ["brief"], additionalProperties: false,
+      properties: { brief: expect.objectContaining({ type: "string" }), time: expect.objectContaining({ type: ["string", "null"] }) },
+      required: ["brief", "time"], additionalProperties: false,
     });
-    expect(def.description).toBe("Send the buyer a link to book a call with a person on the seller's team. The buyer picks a time from the team's free slots; the team sees the booking with your brief. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier booking link.");
+    expect(def.description).toBe("Send the buyer a link to book a call with a person on the seller's team. The buyer picks a time from the team's free slots; the team sees the booking with your brief. When the buyer named a time for the call, pass it as time: if it is a free slot, the call is booked at that time; if not, nothing is booked and the result gives the nearest free times to offer. The link is sent either way. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier booking link.");
   });
 
   it("converts for both realtime dialects", () => {
     const gemini = realtimeTools("gemini").find((x) => x.name === "request_callback")!;
     expect(gemini.parameters).toEqual({
       type: "object",
-      properties: { brief: { type: "string", description: expect.any(String) } },
-      required: ["brief"],
+      properties: { brief: { type: "string", description: expect.any(String) }, time: { type: "string", nullable: true, description: expect.any(String) } },
+      required: ["brief", "time"],
     });
     expect(geminiSchema(def.input_schema)).toEqual(gemini.parameters);
     expect(realtimeTools("openai").find((x) => x.name === "request_callback")!.parameters).toEqual(def.input_schema);
@@ -214,6 +214,9 @@ describe("request_callback: definition, trace, voice", () => {
     // Now: the brief only, and the booking card in the chat.
     expect(describeCall("request_callback", { brief: "price for 3 sites" }, { ok: true }, "ok"))
       .toEqual({ label: "callback.request", sent: "price for 3 sites", got: "Booking link sent in the chat", missing: [] });
+    // N1: the time the buyer named, booked by the agent, or not free.
+    expect(describeCall("request_callback", { brief: "x", time: "2026-11-24T15:30" }, { ok: true, booked: true, call_short: "Tue 24 Nov 15:30" }, "ok").got).toBe("Call booked for Tue 24 Nov 15:30");
+    expect(describeCall("request_callback", { brief: "x", time: "2026-11-24T15:10" }, { ok: true, booked: false, asked_short: "Tue 24 Nov 15:10" }, "ok").got).toBe("Tue 24 Nov 15:10 not free; booking link sent in the chat");
     const kinds = appMessageKinds([{ name: APP_MESSAGE_CALL, outcome: "ok", result: { message_id: "m1", kind: "callback" } }]);
     expect(kinds.get("m1")).toBe("callback");
     expect(isAppText("callback")).toBe(true);

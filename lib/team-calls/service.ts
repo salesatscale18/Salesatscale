@@ -3,6 +3,9 @@
  *
  * - The agent's "a person" step (request_callback) posts the booking card in
  *   the chat (`offerBooking`): an app message of kind "booking" with the brief.
+ *   With the time the buyer named (`bookNamedTime`, owner 22 Nov), it also
+ *   books that slot through `bookCall` when it is free, else offers the
+ *   nearest free slots.
  * - The buyer books a slot on the card (`bookCall`), changes it or cancels it
  *   (`cancelCallByBuyer`). A booking is "callback.requested" with booked: true
  *   (lib/callbacks/rules), confirmed at once; a change is "callback.changed"
@@ -27,11 +30,11 @@ import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { handBack, takeOver } from "@/lib/agent/conversation";
 import {
   CALLBACK_EVENT_TYPES, CALLBACK_EVENTS, CALL_NOTE_MAX, TEAM_CALL_MINUTES, callNeedsLog, callUpcoming, cleanBrief, currentCallbackOf, currentCallbacks,
-  isCallNextStep, isCallOutcome, teamCallNextStep, type CallOutcome, type CallbackRequest,
+  isCallNextStep, isCallOutcome, parseCallTime, teamCallNextStep, type CallOutcome, type CallbackRequest,
 } from "@/lib/callbacks/rules";
 import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
 import { deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
-import { formatDueLocal, zonedInstant } from "@/lib/follow-ups/rules";
+import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
 import { isLocale, t, type Locale } from "@/lib/i18n";
 import { normalizePhone } from "@/lib/leads/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
@@ -42,7 +45,7 @@ import { nudgeBuyer, type NudgeDeps } from "@/lib/sms/service";
 import { maskSmsPhone } from "@/lib/sms/thread";
 import { isSimulatedLead } from "@/lib/simulator/rules";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
-import { bookingSlots, isFreeSlot, validTimezone, type BookingSlot } from "./slots";
+import { BOOKING_DAYS, BOOKING_MIN_AHEAD_MS, bookingSlots, isFreeSlot, validTimezone, type BookingSlot } from "./slots";
 import { storedBuyerZone } from "./zone";
 
 const DAY = 86_400_000;
@@ -189,9 +192,11 @@ export type BookResult =
  * The buyer books (or moves) the call on the booking card: `at` must be one of
  * the free slots, re-checked here. Writes the booking (confirmed at once), the
  * deal's next step, a line in the chat ("Booked…"), and the team_call SMS.
+ * `actor` "agent": the agent booked the time the buyer named (bookNamedTime);
+ * the event data is the same as the card's booking.
  */
 export async function bookCall(
-  db: Db, ctx: BuyerCtx, input: { at: unknown; phone?: unknown; timezone?: unknown }, deps: NudgeDeps = {}, now = new Date(),
+  db: Db, ctx: BuyerCtx, input: { at: unknown; phone?: unknown; timezone?: unknown }, deps: NudgeDeps = {}, now = new Date(), actor: "buyer" | "agent" = "buyer",
 ): Promise<BookResult> {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, ctx.lead.id), eq(leads.accountId, ctx.account.id)));
   if (!lead || lead.status === "opted_out") return { ok: false, reason: "opted_out" };
@@ -222,7 +227,7 @@ export async function bookCall(
     .where(and(eq(conversations.id, offer.conversationId), eq(conversations.accountId, account.id), eq(conversations.leadId, lead.id)));
   if (own) {
     await db.insert(leadEvents).values({
-      accountId: account.id, leadId: lead.id, type: CALLBACK_EVENTS.changed, actor: "buyer", createdAt: now,
+      accountId: account.id, leadId: lead.id, type: CALLBACK_EVENTS.changed, actor, createdAt: now,
       data: {
         callbackId: own.id, at: at.toISOString(), timezone: tz, previousAt: own.at.toISOString(), by: "buyer", conversationId: own.conversationId ?? offer.conversationId,
         ...(buyerTimezone ? { buyerTimezone } : {}), ...(phone ? { phone } : {}),
@@ -230,7 +235,7 @@ export async function bookCall(
     });
   } else {
     await db.insert(leadEvents).values({
-      accountId: account.id, leadId: lead.id, type: CALLBACK_EVENTS.requested, actor: "buyer", createdAt: now,
+      accountId: account.id, leadId: lead.id, type: CALLBACK_EVENTS.requested, actor, createdAt: now,
       data: {
         callbackId: randomUUID(), at: at.toISOString(), timezone: tz, brief: offer.brief, conversationId: offer.conversationId, booked: true,
         durationMin: TEAM_CALL_MINUTES, ...(buyerTimezone ? { buyerTimezone } : {}), ...(phone ? { phone } : {}),
@@ -435,4 +440,77 @@ export async function leadCallForContext(db: Db, accountId: string, leadId: stri
 export async function callToLog(db: Db, accountId: string, leadId: string, now = new Date()): Promise<CallbackRequest | null> {
   const c = await leadCallForContext(db, accountId, leadId);
   return callNeedsLog(c, now) ? c : null;
+}
+
+// ---------------------------------------------------------------------------
+// The agent books the time the buyer named (owner, 22 Nov: same in chat and voice)
+// ---------------------------------------------------------------------------
+
+/** Why a named time is not a free slot. */
+export type NamedTimeMiss = "taken" | "outside_hours" | "past" | "too_soon" | "too_far";
+/** A free slot to offer instead: `time` in the buyer's zone with its offset (to pass back), `local` as the buyer reads it. */
+export type SlotChoice = { time: string; local: string };
+
+export type BookNamedResult =
+  | { ok: true; booked: true; at: Date; local: string; short: string; buyerTimezone: string; messageId: string; replaced: boolean; sms: MaybeNudge | null }
+  | { ok: true; booked: false; miss: NamedTimeMiss; local: string; short: string; alternatives: SlotChoice[]; buyerTimezone: string; messageId: string; replaced: boolean }
+  | { ok: false; rule: string; extra: Record<string, unknown> };
+
+/** How many free slots a missed time offers instead. */
+export const NAMED_TIME_ALTERNATIVES = 3;
+
+/** The free slots nearest to `wanted`, oldest first. */
+export function nearestFreeSlots(slots: readonly BookingSlot[], wanted: Date, n = NAMED_TIME_ALTERNATIVES): Date[] {
+  return slots.filter((s) => !s.taken).map((s) => new Date(s.at))
+    .sort((a, b) => Math.abs(a.getTime() - wanted.getTime()) - Math.abs(b.getTime() - wanted.getTime()) || a.getTime() - b.getTime())
+    .slice(0, n)
+    .sort((a, b) => a.getTime() - b.getTime());
+}
+
+function missOf(slots: readonly BookingSlot[], at: Date, now: Date): NamedTimeMiss {
+  const t = at.getTime();
+  if (t <= now.getTime()) return "past";
+  if (t < now.getTime() + BOOKING_MIN_AHEAD_MS) return "too_soon";
+  if (t > now.getTime() + BOOKING_DAYS * DAY) return "too_far";
+  return slots.some((s) => s.taken && Date.parse(s.at) === t) ? "taken" : "outside_hours";
+}
+
+/**
+ * request_callback with the time the buyer named. The booking card is posted
+ * as without a time (offerBooking, with its refusals). When the time is one
+ * of the team's free slots, it is booked through bookCall, the card's own path:
+ * the same "Call booked" card, chat line, team_call SMS, seller card and the
+ * buyer's stored zone. Otherwise nothing is booked and the result gives the
+ * free slots nearest to it, in the buyer's zone; the card stays for the buyer
+ * to pick. `time` is an ISO date-time with an offset, or a local date and time
+ * read in the buyer's stored zone (else the market's).
+ */
+export async function bookNamedTime(
+  db: Db, ctx: OfferContext, input: { brief: unknown; time: unknown }, deps: NudgeDeps = {}, now = new Date(),
+): Promise<BookNamedResult> {
+  const [row] = await db.select({ lead: leads, account: sellerAccounts }).from(leads)
+    .innerJoin(sellerAccounts, eq(sellerAccounts.id, leads.accountId))
+    .where(and(eq(leads.id, ctx.leadId), eq(leads.accountId, ctx.accountId)));
+  if (!row) return { ok: false, rule: "Conversation not found", extra: {} };
+  const contact = await leadContactSettings(db, row.account, row.lead.marketId);
+  const buyerTz = (await storedBuyerZone(db, ctx.accountId, ctx.leadId)) ?? contact.timezone;
+  const at = parseCallTime(input.time, buyerTz);
+  if (!at) {
+    return { ok: false, rule: "Invalid time", extra: { message: `Give time as an ISO date-time with the offset of ${buyerTz}, e.g. ${isoInZone(now, buyerTz)}, or as a local date and time, e.g. ${isoInZone(now, buyerTz).slice(0, 16)}.` } };
+  }
+  const offer = await offerBooking(db, ctx, { brief: input.brief }, now);
+  if (!offer.ok) return offer;
+  // local: as the buyer reads it (their zone); short: the seller's trace (the market's zone).
+  const base = { buyerTimezone: buyerTz, messageId: offer.messageId, replaced: offer.replaced, local: formatBuyerLocal(at, buyerTz), short: formatDueLocal(at, contact.timezone) };
+  const slots = bookingSlots(contact.contactHours, contact.timezone, now, await takenSlotTimes(db, ctx.accountId, now, ctx.leadId));
+  if (isFreeSlot(slots, at)) {
+    // A millisecond after the card, so the chat shows the card and then "Booked…", as when the buyer books on it.
+    const r = await bookCall(db, row, { at: at.toISOString() }, deps, new Date(now.getTime() + 1), "agent");
+    if (r.ok) return { ok: true, booked: true, at, ...base, sms: r.sms };
+    if (r.reason !== "slot_taken") return { ok: false, rule: `Not booked: ${r.reason}`, extra: { message: "Tell the buyer they can pick a time with the booking link in the chat." } };
+  }
+  // Re-read: a slot taken in between shows as taken.
+  const fresh = bookingSlots(contact.contactHours, contact.timezone, now, await takenSlotTimes(db, ctx.accountId, now, ctx.leadId));
+  const alternatives = nearestFreeSlots(fresh, at).map((d) => ({ time: isoInZone(d, buyerTz), local: formatBuyerLocal(d, buyerTz) }));
+  return { ok: true, booked: false, miss: isFreeSlot(slots, at) ? "taken" : missOf(fresh, at, now), alternatives, ...base };
 }

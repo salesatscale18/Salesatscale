@@ -596,14 +596,14 @@ describe("Reach RB: buyer-named time, booking card, team call log", () => {
     });
   });
 
-  it("the agent's request_callback no longer takes a time; the scenario check still sees the call", async () => {
+  it("the agent's request_callback takes a brief and an optional time (N1); the scenario check still sees the call", async () => {
     const { lead, conversationId } = await addLead();
     const [call] = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, conversationId)).limit(1);
     expect(call).toBeUndefined();
     const { TOOL_DEFS } = await import("@/lib/agent/tools");
     const def = TOOL_DEFS.find((d) => d.name === "request_callback")!;
-    expect(def.input_schema).toMatchObject({ properties: { brief: { type: "string" } }, required: ["brief"] });
-    expect(Object.keys((def.input_schema as { properties: object }).properties)).toEqual(["brief"]);
+    expect(def.input_schema).toMatchObject({ properties: { brief: { type: "string" }, time: { type: ["string", "null"] } }, required: ["brief", "time"] });
+    expect(Object.keys((def.input_schema as { properties: object }).properties)).toEqual(["brief", "time"]);
     const fu = TOOL_DEFS.find((d) => d.name === "schedule_follow_up")!;
     expect(fu.description).toContain("At that time the app texts the buyer a link back to this chat, where they can write or talk to you.");
     expect(lead.id).toBeTruthy();
