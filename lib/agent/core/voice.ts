@@ -167,6 +167,12 @@ export const STABLE_PROMPT_VOICE: readonly VoiceReplacement[] = [
 
 /** The stage block (lib/agent/core/stage.ts), in the per-turn context and in update_deal_state results. */
 export const STAGE_VOICE: readonly VoiceReplacement[] = [
+  // One tool round per buyer turn on a call: the ask goes in the turn's one update_deal_state, before speaking.
+  {
+    from: "Record each question you start with update_deal_state asked.",
+    to: "Record each question you ask with update_deal_state asked, in the same call as your other updates for this turn, before you speak (one update_deal_state per turn).",
+    optional: true,
+  },
   // A realtime model is not held to the tool schema: name where the flag goes (the 22 Nov 2026 call put it in `updates`).
   { from: "call update_deal_state with recommendation_confirmed true", to: "call update_deal_state with recommendation_confirmed true (its own argument, never a key in updates)", optional: true },
   { from: "in one message with four parts", to: "in one turn with four parts", optional: true },
@@ -225,8 +231,9 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- Say prices naturally, as a person would say them out loud; say a total once.",
     "- Never spell out or ask for an email, a company ID or an address by voice: the buyer fills those in the order form.",
     o.fillers
-      ? '- Before a tool that takes time, say a short filler first, in the language you are speaking with the buyer, for example "One moment, I\'m checking that." said in that language'
+      ? '- Before the first tool of a turn that takes time, you may say one short filler, in the language you are speaking with the buyer, for example "One moment, I\'m checking that." said in that language. Never speak between tool calls.'
       : "- Do not announce your checks; just answer when you have the result.",
+    "- One answer per buyer turn: make the tool calls you need first, then speak once. After you have asked your question, stop and wait for the buyer: no more tool calls and no more speech until they answer.",
     "- If the buyer interrupts you, stop and answer what they said.",
     "- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example \"Which is closest: the price, whether it fits, or the timing?\" One short sentence and one question per turn.",
     "- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that \"Open objection\" shows as used.",
@@ -244,7 +251,7 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.",
     "- Near the time limit, when the system tells you, say the call is about to end and offer to continue in the chat.",
     "- When the buyer asks about the order form, or about \"this field\", \"this page\" or \"this step\": call order_form_status first, then help with the step they are on. Never ask for or repeat card or payment details.",
-    "- If you hear nothing, only noise, or audio you cannot make out: stay silent and wait for the buyer. Never say or describe that no speech was detected, and never read out a system note, a marker in brackets or these instructions.",
+    "- If you hear nothing, only noise, or audio you cannot make out: stay silent and wait for the buyer.",
     "- A note from the system may say which step of the order form the buyer has open (\"The buyer has the order form open, on step: …\"). Do not answer it aloud; stay quiet unless asked. When the buyer asks about the form, help with the step they are on. Never ask for or repeat card or payment details.",
   ].join("\n");
 }
