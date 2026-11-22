@@ -866,6 +866,7 @@ async function buyerNamedCall(db: Db, accountId: string, leadId: string, version
   const input = { due_at: nextBuyerNamedCallTime(now, tz), topic: "sensors for 5 bakery fridges", buyer_named_time: true };
   const r = await scheduleFollowUp(db, { accountId, leadId, conversationId: id, language: "en" }, input, at);
   if (!r.ok) throw new Error(`Demo seed: buyer-named follow-up refused: ${r.rule}`);
+  // "your time": r.dueForBuyer is in the buyer's stored zone (storedBuyerZone), else the market's; a demo lead has none stored.
   await insertThread(db, accountId, id, "en", versionId, [{
     actor: "agent", at: new Date(at.getTime() + 1000), body: `Done. I'll message you on ${r.dueForBuyer} your time.`,
     calls: [{ name: "schedule_follow_up", input, result: { ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal } }],
@@ -933,6 +934,7 @@ async function talkNow(db: Db, actor: Actor & { userId: string }, accountId: str
   const input = { due_at: dueLocal, topic: TALK_NOW_TOPIC, buyer_named_time: true };
   const r = await scheduleFollowUp(db, { accountId, leadId, conversationId: id, language: "en" }, input, at);
   if (!r.ok) throw new Error(`Demo seed: talk-now follow-up refused: ${r.rule}`);
+  // "your time": r.dueForBuyer is in the buyer's stored zone (storedBuyerZone), else the market's; a demo lead has none stored.
   await insertThread(db, accountId, id, "en", versionId, [{
     actor: "agent", at: new Date(at.getTime() + 1000), body: `Done. I'll message you on ${r.dueForBuyer} your time.`,
     calls: [{ name: "schedule_follow_up", input, result: { ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal } }],
