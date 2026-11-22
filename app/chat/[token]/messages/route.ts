@@ -22,7 +22,8 @@ import { replyToBuyer } from "@/lib/channels/whatsapp";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { CHAT_RATE_PER_DAY, CHAT_RATE_PER_MINUTE } from "@/lib/simulator/rules";
 import { buyerChat, receiveSimulatorInbound, resolveChatLink } from "@/lib/simulator/service";
-import { buyerConversation, buyerVoiceGate, buyerVoiceView, liveVoiceSessionOn } from "@/lib/voice/buyer";
+import { buyerConversation, buyerVoiceGate, buyerVoiceView } from "@/lib/voice/buyer";
+import { textTurnBlocked } from "@/lib/voice/one-agent";
 import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { pendingAfterCall, replyAfterCall } from "@/lib/voice/after-call";
 import { chatReach } from "@/lib/chat/reach";
@@ -68,15 +69,17 @@ export async function POST(req: Request, { params }: { params: Promise<{ token: 
   const text = typeof body?.text === "string" ? body.text : "";
   const clientId = typeof body?.clientId === "string" ? body.clientId : "";
   // During a call the page sends typed text into the call; a chat turn now would answer twice.
+  // Any call holds the chat, a test call on a simulated chat too; the skip is logged (lib/voice/one-agent.ts).
   const conv = await buyerConversation(appDb, ctx);
-  if (conv && (await liveVoiceSessionOn(appDb, ctx.account.id, conv.id))) return json({ ok: false, reason: "in_call" }, 409);
+  if (conv && (await textTurnBlocked(appDb, ctx.account.id, conv.id, "typed message"))) return json({ ok: false, reason: "in_call" }, 409);
   const r = await receiveSimulatorInbound(appDb, ctx, text, clientId);
   if (r.kind === "ignored") return json({ ok: false, reason: r.reason }, 409);
   if (r.kind === "stored") {
     after(async () => {
       try {
         // No transport: deliverText's simulator branch writes the reply to the conversation.
-        const out = await replyToBuyer(appDb, new AnthropicLlm(), null, r);
+        // A call that started meanwhile: no reply (in_call, logged); the message stays stored.
+        const out = await replyToBuyer(appDb, new AnthropicLlm(), null, r, { trigger: "typed message" });
         if (out.delivery && !out.delivery.delivered) console.warn(`[simulator] reply not delivered: ${out.delivery.reason}`);
       } catch (e) {
         console.error("[simulator] reply failed", e);

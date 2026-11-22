@@ -30,13 +30,16 @@ import { priceApprovalContext } from "./price-approval";
 import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { storedBuyerZone } from "@/lib/team-calls/zone";
+import { textTurnBlocked } from "@/lib/voice/one-agent";
+import { writtenByAgent } from "./core/stage";
 
 export const MAX_TOOL_ROUNDS = 8;
 const HISTORY = 40;
 
 export type TurnResult =
   | { status: "replied"; messageId: string; text: string; calls: number }
-  | { status: "opted_out" | "human" | "closed" | "not_found" | "paused" }
+  // in_call: a call holds the conversation (lib/voice/one-agent.ts); this turn stored and sent nothing.
+  | { status: "opted_out" | "human" | "closed" | "not_found" | "paused" | "in_call" }
   | { status: "error"; error: string };
 
 const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
@@ -44,12 +47,16 @@ const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
 /**
  * `buyerMessageStored`: a real channel (WhatsApp webhook) already stored the
  * buyer's message, card-masked and deduplicated, before this turn runs.
+ * One agent at a time: while a call on the conversation is pending or live, no chat turn runs (in_call): the
+ * model is not called, nothing is sent, and the buyer's text is not stored here (one already stored stays stored).
+ * `trigger`: a short name for that log line ("test lab", "whatsapp", …).
  */
 export async function runBuyerTurn(
-  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean },
+  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string },
 ): Promise<TurnResult> {
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
+  if (await textTurnBlocked(db, args.accountId, conv.id, args.trigger ?? "chat turn")) return { status: "in_call" };
   const lang = conv.language;
   const masked = maskCardNumbers(args.text.slice(0, 4000));
 
@@ -111,7 +118,8 @@ export async function runBuyerTurn(
     storedBuyerZone(db, args.accountId, conv.leadId),
   ]);
   const recent = recentDesc.reverse();
-  const agentMessages = recent.filter(({ m }) => m.actor === "agent").length;
+  // For the stage: only what the agent wrote (the fixed opener too), not the app's messages (lib/agent/core/stage.ts).
+  const agentMessages = recent.filter(({ m }) => writtenByAgent(m)).length;
   // Live voice: the buyer's last line was on a call that has ended (lib/voice/after-call.ts): answer it here, in writing.
   const lastSaid = [...recent].reverse().find(({ m }) => m.actor !== "system")?.m;
   const afterCall = lastSaid?.actor === "buyer" && lastSaid.voiceSessionId
