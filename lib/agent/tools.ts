@@ -464,6 +464,16 @@ async function sendHeldQuoteMessage(ctx: ToolContext, seller: string): Promise<s
   return id;
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** An update_deal_state update that is really the top-level recommendation_confirmed: true. */
+function isMisplacedConfirm(u: unknown): boolean {
+  if (!u || typeof u !== "object") return false;
+  const { key, value } = u as { key?: unknown; value?: unknown };
+  if (typeof key !== "string" || key.trim() !== "recommendation_confirmed") return false;
+  return value === true || (typeof value === "string" && /^(true|yes)$/i.test(value.trim()));
+}
+
 export async function runTool(name: string, input: unknown, ctx: ToolContext): Promise<ToolResult> {
   const args = (input && typeof input === "object" ? input : {}) as Record<string, unknown>;
   /** Money in a currency (the price list's), with the period for recurring amounts. */
@@ -590,7 +600,12 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
   }
 
   if (name === "update_deal_state") {
-    const updates = Array.isArray(args.updates) ? (args.updates as { key: string; value: string; provenance: "buyer" | "inferred" }[]) : [];
+    const given = Array.isArray(args.updates) ? (args.updates as { key: string; value: string; provenance: "buyer" | "inferred" }[]) : [];
+    // A confirmed recommendation sent as a deal-state field ({key: "recommendation_confirmed", value: true}) is the
+    // top-level recommendation_confirmed argument (an explicit top-level boolean wins). Other updates still apply.
+    const misplacedConfirm = given.some(isMisplacedConfirm);
+    const updates = misplacedConfirm ? given.filter((u) => !isMisplacedConfirm(u)) : given;
+    const recommendationConfirmed = typeof args.recommendation_confirmed === "boolean" ? args.recommendation_confirmed : misplacedConfirm ? true : undefined;
     // O1: the objection is validated before anything is written, so a bad one changes nothing and the agent can retry.
     let objection = null;
     if (args.objection !== null && args.objection !== undefined) {
@@ -600,7 +615,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     }
     // The two conversation facts (P11) are explicit inputs, stored under reserved keys as said by the buyer.
     const facts = {
-      ...(typeof args.recommendation_confirmed === "boolean" ? { recommendationConfirmed: args.recommendation_confirmed } : {}),
+      ...(typeof recommendationConfirmed === "boolean" ? { recommendationConfirmed } : {}),
       ...(typeof args.price_asked === "boolean" ? { priceAsked: args.price_asked } : {}),
     };
     const factsSet = Object.keys(facts).length > 0;
@@ -788,9 +803,15 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     const deal = await readDealState(ctx.db, ctx.accountId, ctx.leadId);
     const missing = missingFields(ctx.playbook, deal?.fields ?? {}, "before_quote");
     if (missing.length) return refuse("Before-quote fields missing", { missing: missing.map((f) => f.label), message: "Ask the buyer for these first." });
-    const number = Number(String(args.quote ?? "").replace(/^\s*Q-?/i, "").replace(/\s*v\d+$/i, ""));
-    const [q] = Number.isInteger(number)
-      ? await ctx.db.select().from(quotes).where(and(eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), eq(quotes.number, number)))
+    // The quote by its reference ("Q-1010") or by its id (a uuid, also in create_quote's result); either way only a
+    // quote of this account and this lead.
+    const ref = String(args.quote ?? "").trim();
+    const byId = UUID_RE.test(ref);
+    const number = byId ? NaN : Number(ref.replace(/^\s*Q-?/i, "").replace(/\s*v\d+$/i, ""));
+    const [q] = byId || Number.isInteger(number)
+      ? await ctx.db.select().from(quotes).where(and(
+        eq(quotes.accountId, ctx.accountId), eq(quotes.leadId, ctx.leadId), byId ? eq(quotes.id, ref.toLowerCase()) : eq(quotes.number, number),
+      ))
       : [];
     if (!q) return refuse("Quote not found for this buyer", { message: "Create a quote first with create_quote." });
     const [conv] = await ctx.db.select().from(conversations).where(eq(conversations.id, ctx.conversationId));
