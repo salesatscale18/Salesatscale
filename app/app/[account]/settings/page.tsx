@@ -35,6 +35,12 @@ async function baseUrl() {
   return `${h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https")}://${host}`;
 }
 
+/** The minimal body (R5: shown first), then one with the optional fields. */
+const EXAMPLE_MIN = `{
+  "full_name": "Rina Cohen",
+  "phone": "+972545551842"
+}`;
+
 const EXAMPLE = `{
   "full_name": "Rina Cohen",
   "phone": "+972545551842",
@@ -414,7 +420,9 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
           <h2 id="s-h" className="sas-heading">{t("settings.intake.sends")}</h2>
           <span className="sas-small">{t("settings.intake.sends_body")}</span>
           {/* Wraps long values instead of cutting them off. */}
-          <pre className="sas-code" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-intake-sample="">{EXAMPLE}</pre>
+          <pre className="sas-code" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-intake-sample="">{EXAMPLE_MIN}</pre>
+          <strong style={{ fontSize: 13 }} id="intake-sample-optional">{t("settings.intake.sample_optional")}</strong>
+          <pre className="sas-code" style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }} data-intake-sample-optional="" aria-labelledby="intake-sample-optional">{EXAMPLE}</pre>
           {/* Required and Optional together under the sample (R4 E6): every field the sample shows, the two "source" fields told apart. */}
           {([["required", INTAKE_REQUIRED], ["optional", INTAKE_OPTIONAL]] as const).map(([kind, fields]) => (
             <div key={kind} className="sas-stack-2" style={{ gap: 4 }} data-intake-fields={kind}>

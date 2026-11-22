@@ -181,7 +181,7 @@ export function parseLead(
   else if (fullName.length > 120) errors.fullName = "Use 120 characters or fewer.";
 
   const phone = normalizePhone(s(raw.phone), market);
-  if (!phone) errors.phone = "Enter a valid WhatsApp number, with the country code if it is not local.";
+  if (!phone) errors.phone = "Enter a valid mobile number, with the country code if it is not local.";
 
   const langRaw = s(raw.language).toLowerCase();
   const language = langRaw ? LANGUAGE_ALIASES[langRaw] : defaults.language;
@@ -300,13 +300,15 @@ export function csvTemplate(): string {
 export type FileConsent = { source: string };
 
 /**
- * Maps CSV rows to RawLead. Required columns: full_name, phone, language.
- * Consent columns (consent_source, consent_text, consent_at) are optional.
+ * Maps CSV rows to RawLead. Required columns: full_name, phone. language is
+ * optional, as in Lead intake: without it the lead's market language is used
+ * (parseLead's languageFromDefault, applied by applyLeadMarket). Consent
+ * columns (consent_source, consent_text, consent_at) are optional.
  */
 export function csvToRawLeads(
   rows: string[][],
 ): { rows: { line: number; raw: RawLead }[]; unknownColumns: string[]; missingColumns: string[] } {
-  const required: [keyof RawLead, string][] = [["fullName", "full_name"], ["phone", "phone"], ["language", "language"]];
+  const required: [keyof RawLead, string][] = [["fullName", "full_name"], ["phone", "phone"]];
   if (rows.length === 0) return { rows: [], unknownColumns: [], missingColumns: required.map(([, l]) => l) };
   const header = rows[0].map((h) => h.trim().toLowerCase());
   const keys = header.map((h) => CSV_COLUMNS[h]);

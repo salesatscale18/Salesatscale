@@ -91,6 +91,9 @@ describe("consent on by default", () => {
     expect(html).toContain("Leads in your system asked to hear from you. Untick only if this person must not be contacted by the agent.");
     expect(html).not.toContain("consentSource");
     expect(html).not.toContain("How they agreed");
+    // The phone is the mobile number (labels only: the field and API names stay "phone").
+    expect(html).toContain('for="phone">Mobile number<');
+    expect(html).toContain('id="phone-hint">Used for SMS, and for WhatsApp when it&#x27;s on.</span>');
     // With consent, "Let the agent start" is offered and chosen.
     expect(tag("after", "agent")).toContain('checked=""');
     expect(tag("after", "agent")).not.toContain("disabled");

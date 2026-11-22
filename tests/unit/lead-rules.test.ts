@@ -144,8 +144,10 @@ describe("CSV", () => {
     expect(r.unknownColumns).toEqual(["colour"]);
     expect(r.rows[0]).toEqual({ line: 2, raw: { fullName: "A", phone: "1", language: "he", consentSource: "form", consentWording: "I agree" } });
     // Consent columns are optional (owner, 22 Nov): no "how" column is required.
-    expect(csvToRawLeads(parseCsv("name,phone")).missingColumns).toEqual(["language"]);
-    expect(csvToRawLeads(parseCsv("full_name,phone,language\nA,1,he")).missingColumns).toEqual([]);
+    // language is optional too (the market's language is used), as in Lead intake.
+    expect(csvToRawLeads(parseCsv("name,phone")).missingColumns).toEqual([]);
+    expect(csvToRawLeads(parseCsv("name,language")).missingColumns).toEqual(["phone"]);
+    expect(csvToRawLeads(parseCsv("phone")).missingColumns).toEqual(["full_name"]);
   });
 });
 

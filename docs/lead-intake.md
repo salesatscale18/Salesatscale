@@ -15,7 +15,7 @@ Content-Type: application/json
 | Field | Required | Notes |
 |---|---|---|
 | `full_name` | yes | Full name (`name` also accepted) |
-| `phone` | yes | WhatsApp number. International format (`+972…`) or national for the account's market |
+| `phone` | yes | Mobile number, used for SMS, and for WhatsApp when it's on. International format (`+972…`) or national for the account's market |
 | `language` | no | `en` or `he` (also `English`, `Hebrew`). Defaults to the first selling language of the lead's market |
 | `country` | no | The form's country field, e.g. `GB` or `United Kingdom`. Chooses the lead's market when it matches a market's form country values |
 | `business` | no | Business name (`company` also accepted) |
@@ -38,6 +38,17 @@ unless `consent.given` is `false`, also to a lead the seller saved without
 consent. (A CSV re-import or a seller adding the lead again never does.)
 
 Every lead gets a market: the market linked to the intake key, else the market whose form country values match `country`, else the market with the longest matching phone prefix, else the home market. A lead that already exists keeps its market.
+
+The smallest body:
+
+```json
+{
+  "full_name": "Rina Cohen",
+  "phone": "+972545551842"
+}
+```
+
+With optional fields:
 
 ```json
 {

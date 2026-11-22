@@ -52,7 +52,8 @@ export function AddLeadForm({ slug, languages, markets = [], closeHref }: { slug
         </div>
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="phone">{t("lead.form.phone")}<span className="sas-req" aria-hidden="true">*</span></label>
-          <input className="sas-input sas-num" id="phone" name="phone" type="tel" inputMode="tel" dir="ltr" defaultValue={v("phone")} autoComplete="off" {...err("phone")} />
+          <input className="sas-input sas-num" id="phone" name="phone" type="tel" inputMode="tel" dir="ltr" defaultValue={v("phone")} autoComplete="off" aria-describedby={errors.phone ? "phone-hint phone-error" : "phone-hint"} aria-invalid={errors.phone ? true : undefined} />
+          <span className="sas-hint" id="phone-hint">{t("lead.form.phone_hint")}</span>
           {errors.phone ? <span className="sas-error" id="phone-error">{errors.phone}</span> : null}
         </div>
         <div className="sas-grid-2" style={{ gap: 12 }}>
