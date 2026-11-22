@@ -32,6 +32,18 @@ const shot = async (page: Page, name: string) => {
 };
 const guarded = (page: Page) => page.evaluate(() => !!(history.state as Record<string, unknown> | null)?.__sasBackGuard);
 const focusIn = (page: Page, sel: string) => page.evaluate((s) => !!document.activeElement?.matches(s), sel);
+/** The voice bar's symmetry: the bubble's centre against the bar's, and the distance (centre to centre) to the nearest control on each side. */
+// (A string, not a function: tsx would add a helper the page does not have.)
+const barSymmetry = (page: Page) => page.evaluate(`(() => {
+  const mid = (r) => r.left + r.width / 2;
+  const bar = document.querySelector("[data-voice-bar]").getBoundingClientRect();
+  const b = document.querySelector("[data-voice-bar] [data-bubble-button]").getBoundingClientRect();
+  const circles = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect());
+  // Centre to centre (Speaker's circle is smaller than Text's, so edge gaps differ by design).
+  const left = Math.max(...circles.filter((r) => mid(r) < mid(b)).map(mid));
+  const right = Math.min(...circles.filter((r) => mid(r) > mid(b)).map(mid));
+  return { off: Math.abs(mid(b) - mid(bar)), leftGap: mid(b) - left, rightGap: right - mid(b) };
+})()`) as Promise<{ off: number; leftGap: number; rightGap: number }>;
 const sheet = (page: Page, kind: string) => page.waitForSelector(`[data-leave-sheet="${kind}"]`, { timeout: 5000 }).then(() => true, () => false);
 const gone = (page: Page) => page.waitForSelector("[data-leave-sheet]", { state: "detached", timeout: 5000 }).then(() => true, () => false);
 
@@ -82,6 +94,9 @@ async function main() {
       await page.click("[data-voice-talk]");
       check(await page.waitForSelector('[data-voice-bubble][data-bubble-phase="live"]', { timeout: 20_000 }).then(() => true, () => false), `${lang}: the call is live`);
       check((await page.locator("[data-voice-bar]").count()) === 1 && (await page.locator("#c-input").count()) === 0, `${lang}: the voice bar in the composer's place`);
+      const sym = await barSymmetry(page);
+      check((await page.locator("[data-voice-bar] [data-bar-speaker]").count()) === 1, `${lang}: Speaker shows (two outputs)`);
+      check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${lang}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps to Speaker and Text (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
       await shot(page, `voice-bar-${lang}`);
       await page.evaluate(() => history.back());
       check(await sheet(page, "end_call"), `${lang}: Back during the call opens Switch to text?`);

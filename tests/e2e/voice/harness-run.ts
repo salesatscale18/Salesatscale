@@ -107,6 +107,19 @@ const NEVER_PAINT = `(() => {
   new MutationObserver(look).observe(document, { subtree: true, childList: true, characterData: true });
 })();`;
 
+/** The voice bar's symmetry: the bubble's centre against the bar's, and the distance (centre to centre) to the nearest control on each side. */
+// (A string, not a function: tsx would add a helper the page does not have.)
+const barSymmetry = (page: Page) => page.evaluate(`(() => {
+  const mid = (r) => r.left + r.width / 2;
+  const bar = document.querySelector("[data-voice-bar]").getBoundingClientRect();
+  const b = document.querySelector("[data-voice-bar] [data-bubble-button]").getBoundingClientRect();
+  const circles = [...document.querySelectorAll("[data-voice-bar] .vb-ctl__circle")].map((e) => e.getBoundingClientRect());
+  // Centre to centre (Speaker's circle is smaller than Text's, so edge gaps differ by design).
+  const left = Math.max(...circles.filter((r) => mid(r) < mid(b)).map(mid));
+  const right = Math.min(...circles.filter((r) => mid(r) > mid(b)).map(mid));
+  return { off: Math.abs(mid(b) - mid(bar)), leftGap: mid(b) - left, rightGap: right - mid(b) };
+})()`) as Promise<{ off: number; leftGap: number; rightGap: number }>;
+
 async function newPage(browser: Browser, url: string, width = 1440, height = 900, o: { speakers?: boolean } = {}) {
   // Phone widths are touch screens (a coarse pointer), as on a real phone.
   const ctx = await browser.newContext({ viewport: { width, height }, deviceScaleFactor: 2, hasTouch: width < 600 });
@@ -150,7 +163,9 @@ async function bubbleSection(browser: Browser, base: string) {
     const strip = await chat.locator(".c-voicebar").boundingBox();
     check((await chat.locator(".c-bar").count()) === 0, `${sh.name}: the composer is hidden in voice mode`);
     check(!!box && !!strip && box.y >= strip.y && box.y + box.height <= strip.y + strip.height, `${sh.name}: the bubble sits in the voice bar, in the composer's place`);
-    check(!!box && !!strip && Math.abs(box.x + box.width / 2 - (strip.x + strip.width / 2)) <= 2, `${sh.name}: the bubble is centred in the bar`);
+    check(!!box && !!strip && Math.abs(box.x + box.width / 2 - (strip.x + strip.width / 2)) <= 1, `${sh.name}: the bubble is centred in the bar`);
+    const sym = await barSymmetry(chat);
+    check(sym.off <= 1 && Math.abs(sym.leftGap - sym.rightGap) <= 1, `${sh.name}: bubble at the bar's centre (${sym.off.toFixed(1)} px off), equal gaps (${sym.leftGap.toFixed(1)} / ${sym.rightGap.toFixed(1)} px)`);
     const ctl = await chat.evaluate(() => [...document.querySelectorAll("[data-voice-bar] [data-bar-mute], [data-voice-bar] [data-bar-speaker], [data-voice-bar] [data-bubble-button], [data-voice-bar] [data-bar-text]")].map((e) => (e as HTMLElement).dataset.barMute !== undefined ? "mute" : (e as HTMLElement).dataset.barSpeaker !== undefined ? "speaker" : (e as HTMLElement).dataset.barText !== undefined ? "text" : "bubble"));
     check(JSON.stringify(ctl) === JSON.stringify(desk ? ["mute", "speaker", "bubble", "text"] : ["mute", "bubble", "text"]), `${sh.name}: the bar: ${ctl.join(" · ")}`);
     check((await chat.getAttribute("[data-voice-bar]", "role")) === "toolbar", `${sh.name}: the bar is a toolbar`);
