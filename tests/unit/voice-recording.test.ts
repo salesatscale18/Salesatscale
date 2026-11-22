@@ -153,13 +153,15 @@ describe("where a call records", () => {
 
 describe("settings and the notice", () => {
   it("both switches default on; only an explicit false turns one off", () => {
-    expect(resolveRecordingSettings(null)).toEqual({ recordCalls: true, recordingNotice: true });
-    expect(resolveRecordingSettings({ recordCalls: false })).toEqual({ recordCalls: false, recordingNotice: true });
-    expect(resolveRecordingSettings({ recordingNotice: false })).toEqual({ recordCalls: true, recordingNotice: false });
+    expect(resolveRecordingSettings(null)).toEqual({ recordCalls: true, recordingNotice: true, keepDays: 90 });
+    expect(resolveRecordingSettings({ recordCalls: false })).toEqual({ recordCalls: false, recordingNotice: true, keepDays: 90 });
+    expect(resolveRecordingSettings({ recordingNotice: false, recordingKeepDays: 365 })).toEqual({ recordCalls: true, recordingNotice: false, keepDays: 365 });
+    // Only 30, 90 or 365 days.
+    expect(resolveRecordingSettings({ recordingKeepDays: 7 }).keepDays).toBe(90);
   });
 
   it("the notice: owner wording; after the greeting and introduction on a new call, first on a pick-up; named language otherwise", () => {
-    expect(RECORDING_NOTICE).toEqual({ en: "This call may be recorded to improve our service.", he: "השיחה עשויה להיות מוקלטת לצורכי שיפור השירות." });
+    expect(RECORDING_NOTICE).toEqual({ en: "Some calls may be recorded for quality review.", he: "חלק מהשיחות עשויות להיות מוקלטות לבקרת איכות." });
     expect(recordingNoticeText("he")).toBe(RECORDING_NOTICE.he);
     expect(recordingNoticeText("fr")).toBe(RECORDING_NOTICE.en);
     const opener = withRecordingNotice('The call has just connected. Say your opening line now, in your own voice: "Hi Dana, this is Maya from Polar. You asked about sensors. How many sites do you have?"', RECORDING_NOTICE.en, { position: "opener" });

@@ -720,7 +720,7 @@ export class VoiceEngine {
       // A live call records the model it ran on; a scripted call keeps its version's model (the scripted model stands in).
       .set({
         status: "live", connectedAt: new Date(this.callStart), ...(this.model.mode === "live" ? { model: this.model.modelId } : {}), mode: this.model.mode, settings: this.settingsSnapshot(),
-        recordingState: recording.on ? "recording" : "off", recordingRef: recording.prefix, recordingNoticeSaid: noticeSaid,
+        recordingState: recording.on ? "recording" : "off", recordingRef: recording.prefix, recordingNoticeSaid: noticeSaid, recordingKeepDays: recording.keepDays,
         ...(recording.on ? { recordingChunks: 0, recordingBytes: 0, recordingSec: 0 } : {}),
       })
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "pending")));
@@ -739,24 +739,31 @@ export class VoiceEngine {
    * Whether this call is recorded (the company's switch, and a store: lib/voice/recording.ts recordingStoreFor),
    * logged in one line. The recorder runs on the call clock from now.
    */
-  private async startRecording(account: SellerAccount): Promise<{ on: boolean; notice: boolean; prefix: string | null }> {
+  private async startRecording(account: SellerAccount): Promise<{ on: boolean; notice: boolean; prefix: string | null; keepDays: number | null }> {
     const settings = resolveRecordingSettings(account.voiceSettings);
     if (!settings.recordCalls) {
       this.log.info(voiceLine(this.sessionId, "recording off: turned off in Settings › Voice"));
-      return { on: false, notice: false, prefix: null };
+      return { on: false, notice: false, prefix: null, keepDays: null };
     }
     const choice = this.recordingChoice ?? await recordingStoreFor(this.model.mode, this.limits.env ?? process.env).catch(() => ({ store: null, reason: "store unavailable" }));
     if (!choice.store) {
       this.log.info(voiceLine(this.sessionId, `recording off: ${choice.reason}`));
-      return { on: false, notice: false, prefix: null };
+      return { on: false, notice: false, prefix: null, keepDays: null };
     }
     const prefix = recordingPrefix(account.id, this.sessionId, this.limits.env ?? process.env);
+    // The recording line: once per conversation, on its first recorded call (owner decision, 22 Nov 2026).
+    const saidBefore = settings.recordingNotice && this.loaded
+      ? (await this.db.select({ id: voiceSessions.id }).from(voiceSessions)
+        .where(and(eq(voiceSessions.accountId, account.id), eq(voiceSessions.conversationId, this.loaded.conv.id), eq(voiceSessions.recordingNoticeSaid, true), ne(voiceSessions.id, this.sessionId)))
+        .limit(1)).length > 0
+      : false;
+    const notice = settings.recordingNotice && !saidBefore;
     this.recorder = new CallRecorder({
-      store: choice.store, prefix,
+      store: choice.store, prefix, ttlDays: settings.keepDays,
       onError: (e) => (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `recording chunk write failed: ${errorSummary(e)}`)),
     });
-    this.log.info(voiceLine(this.sessionId, `recording on: ${choice.reason}${settings.recordingNotice ? ", notice said" : ", no notice (switched off)"}`));
-    return { on: true, notice: settings.recordingNotice, prefix };
+    this.log.info(voiceLine(this.sessionId, `recording on: ${choice.reason}, kept ${settings.keepDays} days${notice ? ", line said" : saidBefore ? ", line said on an earlier call" : ", no line (switched off)"}`));
+    return { on: true, notice, prefix, keepDays: settings.keepDays };
   }
 
   /**

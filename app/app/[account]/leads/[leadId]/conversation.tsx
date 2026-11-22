@@ -24,6 +24,7 @@ import { isolate } from "@/lib/leads/bidi";
 import { TOOL_ICON } from "@/components/sas/tool-chip";
 import { callLength } from "@/lib/voice/client/buyer-ui";
 import { callClock } from "@/lib/voice/lab";
+import { CallBlockEntry, isCallBlock, type CallLineSource } from "./call-block-entry";
 
 /** "18h 20m" until the window closes. */
 export function remainingText(closesAt: Date, now: Date): string {
@@ -99,10 +100,8 @@ export function splitMarkers(markers: ThreadMarker[] | undefined) {
   return { timed, after };
 }
 
-export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, viewerZone = null, recordingBase }: {
+export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, viewerZone = null }: {
   marker: ThreadMarker; meId: string | null; time: string; timeTitle: string; buyer?: string;
-  /** Seller threads: `/app/<slug>/calls`, the base of a call's recording route (the player shows only with it). */
-  recordingBase?: string;
   /** The viewer's own zone (the sas_tz cookie) for team call times; null: the call's zone. */
   viewerZone?: string | null;
   /** A logged team call: its Edit link (the Deal tab's log form). */
@@ -110,18 +109,6 @@ export function MarkerEntry({ marker, meId, time, timeTitle, buyer, editHref, vi
 }) {
   if (marker.kind === "sms") return <SmsThreadEntry sms={marker.sms} time={time} timeTitle={timeTitle} />;
   if (marker.kind === "team_call_logged") return <TeamCallEntry call={marker} meId={meId} editHref={editHref} viewerZone={viewerZone} />;
-  if (marker.kind === "voice_ended" && marker.recording && recordingBase) {
-    // A plain player under the call's summary row (the UX session draws the final one).
-    return (
-      <>
-        <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer, viewerZone)} time={time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />
-        <div className="sas-call-recording" data-call-recording={marker.recording.sessionId}>
-          <span className="sas-small">{t("conv.marker.recording", { length: callClock(marker.recording.sec) })}</span>
-          <audio controls preload="none" src={`${recordingBase}/${marker.recording.sessionId}/recording`} aria-label={t("conv.marker.recording", { length: callClock(marker.recording.sec) })} />
-        </div>
-      </>
-    );
-  }
   // The booked marker holds its own date and time.
   return <ThreadMarkerLine kind={marker.kind} text={markerText(marker, meId, buyer, viewerZone)} time={marker.kind === "team_call_booked" ? "" : time} timeTitle={timeTitle} dateTime={marker.at.toISOString()} />;
 }
@@ -463,6 +450,12 @@ export function ConversationPanel({
   };
   const showSteps = steps?.show ?? true;
   const { timed, after } = splitMarkers(view.markers);
+  // Calls shown as a block: their lines go inside it (board RecThread), not in the thread.
+  const blockCalls = new Set(timed.filter(isCallBlock).map((mk) => mk.call.sessionId));
+  const callLines = new Map<string, CallLineSource[]>();
+  for (const { message: m } of thread) {
+    if (m.voiceSessionId && blockCalls.has(m.voiceSessionId)) callLines.set(m.voiceSessionId, [...(callLines.get(m.voiceSessionId) ?? []), m]);
+  }
   // A form note whose form is a card in this thread follows that card (the form is posted after the chat's intro,
   // but the form row is created first): never above the intro.
   const formCards = view.formCards ?? {};
@@ -479,12 +472,15 @@ export function ConversationPanel({
     ...notes.filter((n) => !cardOfForm.has(n.id)).map((n) => ({ at: n.at, node: () => <FormNoteEntry key={`note-${n.id}`} note={n} time={clock(n.at)} timeTitle={full(n.at)} /> })),
     ...timed.map((mk, i) => ({
       at: mk.at,
-      node: () => <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} viewerZone={viewerZone} recordingBase={`/app/${slug}/calls`} />,
+      node: () => isCallBlock(mk)
+        // A call since recordings exist: one block with its header, player and lines (board RecThread).
+        ? <CallBlockEntry key={`call-${mk.call.sessionId}`} marker={mk} lines={callLines.get(mk.call.sessionId) ?? []} slug={slug} back={`/app/${slug}/${from === "inbox" ? `conversations?c=${c.id}` : `leads/${c.leadId}`}`} buyer={buyerName} zone={zone ?? null} />
+        : <MarkerEntry key={`mk-${i}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} buyer={buyerName} editHref={`/app/${slug}/leads/${c.leadId}?tab=deal&team_call=edit#callback`} viewerZone={viewerZone} />,
     })),
   ].sort((a, b) => a.at.getTime() - b.at.getTime());
   const noteNode = (n: (typeof pending)[number]) => [divider(n.at), n.node()];
   // The agent's hand-off: right after the reply that made it.
-  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} viewerZone={viewerZone} recordingBase={`/app/${slug}/calls`} />);
+  const afterNodes = (id: string) => (after.get(id) ?? []).map((mk) => <MarkerEntry key={`mk-${id}`} marker={mk} meId={meId} time={clock(mk.at)} timeTitle={full(mk.at)} viewerZone={viewerZone} />);
   return (
     <section id="conversation" aria-labelledby="conv-h" style={{ borderBlockEnd: "1px solid var(--line)" }}>
       <div className="sas-page-head" style={{ padding: "16px 16px 8px", gap: 8 }}>
@@ -500,6 +496,8 @@ export function ConversationPanel({
           const before = pending.filter((n) => n.at.getTime() <= m.createdAt.getTime());
           pending = pending.slice(before.length);
           const noteNodes = before.flatMap(noteNode);
+          // A line of a call shown as a block: it is in the block.
+          if (m.voiceSessionId && blockCalls.has(m.voiceSessionId)) return [...noteNodes, ...afterNodes(m.id)];
           const day = divider(m.createdAt);
           // The quote message the app wrote shows as the card the buyer saw (the stored text is the fallback).
           const card = view.quoteCards?.[m.id];

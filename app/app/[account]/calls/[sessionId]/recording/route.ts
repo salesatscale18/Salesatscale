@@ -13,5 +13,6 @@ export const dynamic = "force-dynamic";
 export async function GET(req: NextRequest, { params }: { params: Promise<{ account: string; sessionId: string }> }) {
   const { account: slug, sessionId } = await params;
   const access = await requireAccount(slug);
-  return recordingResponse(appDb, access.account.id, sessionId, req.headers.get("range"));
+  // ?download=1: the same audio as an attachment (the player's Download).
+  return recordingResponse(appDb, access.account.id, sessionId, req.headers.get("range"), { download: new URL(req.url).searchParams.get("download") === "1" });
 }

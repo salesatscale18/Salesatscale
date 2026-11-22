@@ -55,9 +55,9 @@ beforeEach(async () => {
   await db.update(sellerAccounts).set({ voiceSettings: null }).where(eq(sellerAccounts.id, acc));
 });
 
-async function newCall(o: { scenario?: string | null; store?: InstanceType<typeof MemoryRecordingStore> | null } = {}) {
+async function newCall(o: { scenario?: string | null; store?: InstanceType<typeof MemoryRecordingStore> | null; conversationId?: string } = {}) {
   const scenario = o.scenario ?? null;
-  const c = (await startVoiceTestConversation(db, acc, me.id, { scenario, language: scenarioById(scenario)?.language ?? "en" }))!;
+  const c = o.conversationId ? { conversationId: o.conversationId } : (await startVoiceTestConversation(db, acc, me.id, { scenario, language: scenarioById(scenario)?.language ?? "en" }))!;
   const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED });
   if (!s.ok) throw new Error(s.reason);
   const clock = new ManualClock();
@@ -108,7 +108,7 @@ describe("recording a call", () => {
     expect(r.recordingChunks).toBe(2);
     expect(r.recordingSec).toBe(r.durationSec);
     expect(c.lines.filter((l) => /recording (on|off|saved|failed)/.test(l))).toEqual([
-      expect.stringMatching(/recording on: test store, notice said$/), expect.stringMatching(/recording saved: chunks=2 bytes=\d+ sec=\d+$/),
+      expect.stringMatching(/recording on: test store, kept 90 days, line said$/), expect.stringMatching(/recording saved: chunks=2 bytes=\d+ sec=\d+$/),
     ]);
     expect(c.lines.join("\n")).not.toContain("voice/");
   });
@@ -139,7 +139,7 @@ describe("recording a call", () => {
   });
 
   it("switches: recording off (no notice, nothing stored); notice off (recorded, no notice); no store (off)", async () => {
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: false, recordingNotice: true, keepDays: 90 });
     const off = await newCall();
     await off.run(15_000);
     await end(off);
@@ -148,14 +148,14 @@ describe("recording a call", () => {
     expect((await agentLines(off.conversationId, off.sessionId))[0]).not.toContain(RECORDING_NOTICE.en);
     expect(off.lines.some((l) => l.endsWith("recording off: turned off in Settings › Voice"))).toBe(true);
 
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: false });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: false, keepDays: 90 });
     const quiet = await newCall();
     await quiet.run(15_000);
     await end(quiet);
     expect(await row(quiet.sessionId)).toMatchObject({ recordingState: "saved", recordingNoticeSaid: false });
     expect((await agentLines(quiet.conversationId, quiet.sessionId))[0]).not.toContain(RECORDING_NOTICE.en);
 
-    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true });
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true, keepDays: 90 });
     const none = await newCall({ store: null });
     await none.run(15_000);
     await end(none);
@@ -222,32 +222,123 @@ describe("playing a recording back (seller side)", () => {
   });
 });
 
-describe("the player in the seller's thread", () => {
-  it("a saved recording plays under the call's summary row; none for a call without one, or on the buyer side", async () => {
+describe("once per conversation, keep period, delete, download, expiry", () => {
+  it("the line is said on a conversation's first recorded call only; a new conversation says it again", async () => {
+    const first = await newCall();
+    await first.run(15_000);
+    await end(first);
+    const second = await newCall({ conversationId: first.conversationId });
+    await second.run(15_000);
+    await end(second);
+    expect(await row(first.sessionId)).toMatchObject({ recordingNoticeSaid: true });
+    expect(await row(second.sessionId)).toMatchObject({ recordingState: "saved", recordingNoticeSaid: false });
+    const said = await agentLines(first.conversationId, second.sessionId);
+    expect(said.join(" ")).not.toContain(RECORDING_NOTICE.en);
+    expect(second.lines.some((l) => l.endsWith("line said on an earlier call"))).toBe(true);
+    const fresh = await newCall();
+    await fresh.run(15_000);
+    await end(fresh);
+    expect(await row(fresh.sessionId)).toMatchObject({ recordingNoticeSaid: true });
+  });
+
+  it("the account's keep period goes to the store and the row; the cron marks expired recordings deleted", async () => {
+    await saveRecordingSettings(db, { userId: me.id, actingAs: false }, acc, { recordCalls: true, recordingNotice: true, keepDays: 30 });
+    const store = new MemoryRecordingStore();
+    const ttls: (number | undefined)[] = [];
+    const put = store.put.bind(store);
+    store.put = async (p: string, b: Uint8Array, o?: { ttlDays?: number }) => { ttls.push(o?.ttlDays); await put(p, b, o); };
+    const c = await newCall({ store });
+    await c.run(15_000);
+    await end(c);
+    expect(ttls).toEqual([30]);
+    const r = await row(c.sessionId);
+    expect(r).toMatchObject({ recordingState: "saved", recordingKeepDays: 30 });
+    const { expireRecordings } = await import("@/lib/voice/recording-playback");
+    expect(await expireRecordings(db, new Date(r.endedAt!.getTime() + 29 * 86_400_000))).toBe(0);
+    expect(await expireRecordings(db, new Date(r.endedAt!.getTime() + 31 * 86_400_000))).toBeGreaterThanOrEqual(1);
+    expect(await row(c.sessionId)).toMatchObject({ recordingState: "deleted", recordingKeepDays: 30 });
+  });
+
+  it("delete: the audio goes, the row says deleted, the lines stay, audited; download is an attachment; a store that lost the chunks marks it deleted", async () => {
+    const { deleteRecording } = await import("@/lib/voice/recording-playback");
+    const c = await newCall();
+    await c.run(15_000);
+    await end(c);
+    const dl = await recordingResponse(db, acc, c.sessionId, null, { store: c.store, download: true });
+    expect(dl.headers.get("content-disposition")).toMatch(/^attachment; filename="call-\d{4}-\d{2}-\d{2}-[0-9a-f]{8}\.wav"$/);
+    expect(await deleteRecording(db, { userId: me.id, actingAs: false }, other, c.sessionId, { store: c.store })).toBe(false);
+    expect(await deleteRecording(db, { userId: me.id, actingAs: false }, acc, c.sessionId, { store: c.store })).toBe(true);
+    expect(c.store!.files.size).toBe(0);
+    expect(await row(c.sessionId)).toMatchObject({ recordingState: "deleted", recordingChunks: 0 });
+    expect((await agentLines(c.conversationId, c.sessionId)).length).toBeGreaterThan(0);
+    expect((await recordingResponse(db, acc, c.sessionId, null, { store: c.store })).status).toBe(404);
+    const { auditLog } = await import("@/db/schema");
+    expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, acc), eq(auditLog.action, "voice.recording_deleted")))).toHaveLength(1);
+    // The store's keep period ran out before the cron saw it: playback finds no chunks and marks the row.
+    const d = await newCall();
+    await d.run(15_000);
+    await end(d);
+    await d.store!.deleteAll(`voice/development/${acc}/${d.sessionId}/`);
+    expect((await recordingResponse(db, acc, d.sessionId, null, { store: d.store })).status).toBe(404);
+    expect(await row(d.sessionId)).toMatchObject({ recordingState: "deleted" });
+  });
+});
+
+describe("the call block in the seller's thread (board RecThread)", () => {
+  it("recorded: header, Recorded pill, player and lines with play-from-here; not recorded and deleted: header and lines, no player", async () => {
     const { voiceMarkers } = await import("@/lib/agent/thread-markers");
-    const { MarkerEntry } = await import("@/app/app/[account]/leads/[leadId]/conversation");
+    const { CallBlockEntry, isCallBlock } = await import("@/app/app/[account]/leads/[leadId]/call-block-entry");
     const { createElement } = await import("react");
     const { renderToStaticMarkup } = await import("react-dom/server");
-    const at = new Date("2026-11-22T10:00:00Z");
-    const base = { connectedAt: at, endedAt: new Date(at.getTime() + 95_000), status: "ended", durationSec: 95, buyerTurns: 2 };
-    const [, saved] = voiceMarkers([{ ...base, id: "11111111-1111-1111-1111-111111111111", recordingState: "saved", recordingSec: 95 }]);
-    expect(saved).toMatchObject({ kind: "voice_ended", recording: { sessionId: "11111111-1111-1111-1111-111111111111", sec: 95 } });
-    const html = renderToStaticMarkup(createElement(MarkerEntry, { marker: saved, meId: null, time: "10:01", timeTitle: "", recordingBase: "/app/acme/calls" }));
-    expect(html).toContain('<audio controls="" preload="none" src="/app/acme/calls/11111111-1111-1111-1111-111111111111/recording"');
-    expect(html).toContain("Recording · 1:35");
-    for (const state of ["off", "failed", "recording", null]) {
-      expect(voiceMarkers([{ ...base, id: "x", recordingState: state, recordingSec: 95 }])[1]).not.toHaveProperty("recording");
-    }
+    const at = new Date("2026-11-22T10:42:00Z");
+    const base = { connectedAt: at, endedAt: new Date(at.getTime() + 228_000), status: "ended", durationSec: 228, buyerTurns: 2, model: "openai/gpt-realtime-2.1" };
+    const sid = "11111111-1111-1111-1111-111111111111";
+    const lines = [
+      { id: "l1", actor: "agent", body: "Hi Dana, it's Maya again. Shall we go over the quote?", spokenAtMs: 2_000, typedInCall: false },
+      { id: "l2", actor: "buyer", body: "Yes. Does the price include installation?", spokenAtMs: 9_000, typedInCall: false },
+      { id: "l3", actor: "buyer", body: "Send me the order form", spokenAtMs: 111_000, typedInCall: true },
+    ];
+    const render = (state: string | null, keepDays: number | null = 90) => {
+      const markers = voiceMarkers([{ ...base, id: sid, recordingState: state, recordingSec: 228, recordingKeepDays: keepDays }]);
+      const mk = markers.find((m) => m.kind === "voice_ended")!;
+      expect(markers).toHaveLength(isCallBlock(mk) ? 1 : 2);
+      if (!isCallBlock(mk)) return null;
+      return renderToStaticMarkup(createElement(CallBlockEntry, { marker: mk, lines, slug: "acme", back: "/app/acme/leads/x", buyer: "Dana Demo", zone: "Asia/Jerusalem" }));
+    };
+    const saved = render("saved")!;
+    expect(saved).toContain("Voice call · 3 min 48 s");
+    expect(saved).toContain('data-call-recorded="">');
+    expect(saved).toContain(">Recorded<");
+    expect(saved).toContain("GPT-Realtime 2.1");
+    expect(saved).toContain(`src="/app/acme/calls/${sid}/recording"`);
+    expect(saved).toContain(`href="/app/acme/calls/${sid}/recording?download=1"`);
+    expect(saved).toMatch(/type="range"[^>]*aria-label="Position"[^>]*aria-valuetext="0 seconds of 3 minutes 48 seconds"/);
+    expect(saved).toContain('aria-label="Play"');
+    expect(saved).toContain("Copy transcript");
+    expect(saved).toContain("Delete recording…");
+    // Play from here on spoken lines only; the typed line keeps its keyboard mark.
+    expect(saved.match(/aria-label="Play from here [0-9:]+"/g)).toEqual(['aria-label="Play from here 0:02"', 'aria-label="Play from here 0:09"']);
+    expect(saved).toContain('aria-label="Typed during the call"');
+    // A tick per spoken turn: agent violet, buyer grey.
+    expect(saved.match(/sas-callblock__tick--(agent|buyer)/g)).toEqual(["sas-callblock__tick--agent", "sas-callblock__tick--buyer"]);
+    const off = render("off")!;
+    expect(off).toContain("Not recorded");
+    expect(off).not.toContain("<audio");
+    expect(off).toContain("Hi Dana, it&#x27;s Maya again");
+    const gone = render("deleted", 90)!;
+    expect(gone).toContain("Recording deleted · kept 90 days");
+    expect(gone).toContain("The lines stay; only the audio is gone.");
+    expect(gone).not.toContain("<audio");
+    // A call from before recordings: no block, the old start and summary rows.
+    expect(render(null)).toBeNull();
     const dir = process.env.VOICE_RENDER_DIR;
     if (dir) {
       const fs = await import("node:fs");
       const path = await import("node:path");
       const css = fs.readFileSync(path.join(process.cwd(), "components/sas/sas.css"), "utf8");
-      const started = renderToStaticMarkup(createElement(MarkerEntry, { marker: { kind: "voice_started", at }, meId: null, time: "10:00", timeTitle: "" }));
       fs.mkdirSync(dir, { recursive: true });
-      fs.writeFileSync(path.join(dir, "thread-call-recording.html"), `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css} body{margin:0}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:block;padding:24px;max-width:720px">${started}<div class="sas-small" style="margin:12px 0;text-align:center">(the call's lines)</div>${html}</div></div></body></html>`);
+      const page = (body: string) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><style>${css} body{margin:0}</style></head><body><div class="sas-app"><div class="sas-shell" style="display:flex;flex-direction:column;gap:16px;padding:24px;max-width:760px">${body}</div></div></body></html>`;
+      fs.writeFileSync(path.join(dir, "thread-call-block.html"), page([saved, off, gone].join("")));
     }
-    // Without the seller's route base (the buyer's thread) there is no player.
-    expect(renderToStaticMarkup(createElement(MarkerEntry, { marker: saved, meId: null, time: "10:01", timeTitle: "" }))).not.toContain("<audio");
   });
 });

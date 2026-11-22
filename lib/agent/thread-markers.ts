@@ -35,7 +35,7 @@ export type ThreadMarker =
   | { kind: "spend_cap"; at: Date }
   /** A voice call on this conversation: where it connected, and where it ended with its length (live voice). */
   | { kind: "voice_started"; at: Date }
-  | { kind: "voice_ended"; at: Date; durationSec: number; recording?: { sessionId: string; sec: number } }
+  | { kind: "voice_ended"; at: Date; durationSec: number; call?: CallBlockInfo }
   /** The buyer opened the chat from an SMS link. */
   | { kind: "chat_opened"; at: Date }
   /** An SMS to the buyer, with its state (Delivered, Not sent: test mode, Not delivered: reason). */
@@ -56,11 +56,21 @@ export const VOICE_CALL_ENDED_LINE = /^Voice call ended · \d+:\d{2}$/;
 /** The line itself, for a call of `sec` seconds (stored by the engine, and by the stale close: lib/voice/service.ts). */
 export const voiceCallEndedLine = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
 
+/**
+ * A call with a recording state (calls since recordings exist): seller threads show it as one block (header, the
+ * player when its audio is kept, its lines) at its summary row. `state`: saved (play it), deleted (kept `keepDays`),
+ * off or failed (not recorded).
+ */
+export type CallBlockInfo = {
+  sessionId: string; state: "saved" | "deleted" | "not_recorded"; connectedAt: Date; durationSec: number;
+  recordingSec: number | null; keepDays: number | null; model: string | null;
+};
+
 /** A conversation's voice calls, as stored on voice_sessions. `buyerTurns`: the buyer's lines in the call (spoken or typed). */
 export type VoiceSessionRow = {
   connectedAt: Date | null; endedAt: Date | null; status: string; durationSec: number | null; buyerTurns?: number;
-  /** Seller threads: the call's saved recording (lib/voice/recording.ts), played from the call's summary row. */
-  id?: string; recordingState?: string | null; recordingSec?: number | null;
+  /** Seller threads: the call's recording (lib/voice/recording.ts), shown as one block at the call's summary row. */
+  id?: string; recordingState?: string | null; recordingSec?: number | null; recordingKeepDays?: number | null; model?: string | null;
 };
 
 /** A finished call shorter than this with nothing from the buyer shows as one row (its summary), not a start and a summary. */
@@ -80,11 +90,15 @@ export function voiceMarkers(sessions: readonly VoiceSessionRow[]): ThreadMarker
     if (!v.connectedAt) return [];
     const start: ThreadMarker = { kind: "voice_started", at: v.connectedAt };
     if (!(v.status === "ended" && v.endedAt)) return [start];
+    const state = v.recordingState === "saved" ? "saved" : v.recordingState === "deleted" ? "deleted" : v.recordingState ? "not_recorded" : null;
     const end: ThreadMarker = {
       kind: "voice_ended", at: v.endedAt, durationSec: v.durationSec ?? 0,
-      ...(v.id && v.recordingState === "saved" ? { recording: { sessionId: v.id, sec: v.recordingSec ?? v.durationSec ?? 0 } } : {}),
+      ...(v.id && state ? {
+        call: { sessionId: v.id, state, connectedAt: v.connectedAt, durationSec: v.durationSec ?? 0, recordingSec: v.recordingSec ?? null, keepDays: v.recordingKeepDays ?? null, model: v.model ?? null },
+      } : {}),
     };
-    return isEmptyShortCall(v.durationSec, v.buyerTurns ?? 0) ? [end] : [start, end];
+    // A call shown as a block has its header there: no separate start row.
+    return isEmptyShortCall(v.durationSec, v.buyerTurns ?? 0) || end.call ? [end] : [start, end];
   });
 }
 

@@ -44,11 +44,11 @@ export async function blobRecordingStore(token: string): Promise<RecordingStore 
   };
   return {
     kind: "blob",
-    async put(path, bytes) {
+    async put(path, bytes, opts) {
       await blob.put(path, Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength), {
         access: "private", token, addRandomSuffix: false, allowOverwrite: true, contentType: "application/octet-stream",
         // Kept 90 days, then deleted by the store (option name to verify on the installed version).
-        ttlDays: RECORDING_TTL_DAYS,
+        ttlDays: opts?.ttlDays ?? RECORDING_TTL_DAYS,
       });
     },
     async list(prefix): Promise<RecordingChunkInfo[]> {

@@ -10,7 +10,7 @@ import { buyerVoiceMonth } from "@/lib/voice/buyer";
 import { callLimitShort, voiceSettingsSummary } from "@/lib/voice/lab";
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
-import { resolveRecordingSettings } from "@/lib/voice/recording-settings";
+import { RECORDING_KEEP_DAYS, RECORDING_NOTICE, resolveRecordingSettings } from "@/lib/voice/recording-settings";
 import { saveVoiceBuyerCallsAction } from "./voice-actions";
 
 const Row = ({ title, hint, children, id }: { title: string; hint: string; children?: React.ReactNode; id: string }) => (
@@ -86,21 +86,43 @@ export async function VoiceSection({ account, saved }: { account: SellerAccount;
         </div>
         <div className="st-voice">
           <Row id="voice-tr" title={t("settings.voice.transcript")} hint={t("settings.voice.transcript_hint")}><span className="sas-pill">{t("settings.voice.platform")}</span></Row>
-          {/* Company level (seller_accounts.voice_settings): on by default; saved with the page's one Save. */}
+        </div>
+      </section>
+      {/* Call recordings (company level: seller_accounts.voice_settings), saved with the page's one Save. */}
+      <section className="sas-panel" aria-labelledby="voice-rec-h" data-settings-recordings="">
+        <div className="sas-panel__body sas-stack-2">
+          <h2 id="voice-rec-h" className="sas-heading">{t("settings.voice.rec.title")}</h2>
+          <span className="sas-small">{t("settings.voice.rec.intro")}</span>
+        </div>
+        <div className="st-voice">
           <label className="st-voice__row">
             <span className="sas-stack-2" style={{ gap: 2 }}>
-              <b>{t("settings.voice.recordings")}</b>
-              <span className="sas-small" id="voice-rec-hint">{t("settings.voice.recordings_hint")}</span>
+              <b>{t("settings.voice.rec.record")}</b>
+              <span className="sas-small" id="voice-rec-hint">{t("settings.voice.rec.record_hint")}</span>
             </span>
             <input type="checkbox" role="switch" className="sas-switch" name="recordCalls" defaultChecked={recording.recordCalls} aria-describedby="voice-rec-hint" data-voice-record-calls="" />
           </label>
           <label className="st-voice__row">
             <span className="sas-stack-2" style={{ gap: 2 }}>
-              <b>{t("settings.voice.recording_notice")}</b>
-              <span className="sas-small" id="voice-notice-hint">{t("settings.voice.recording_notice_hint")}</span>
+              <b>{t("settings.voice.rec.keep")}</b>
+              <span className="sas-small" id="voice-keep-hint">{t("settings.voice.rec.keep_hint")}</span>
             </span>
-            <input type="checkbox" role="switch" className="sas-switch" name="recordingNotice" defaultChecked={recording.recordingNotice} aria-describedby="voice-notice-hint" data-voice-recording-notice="" />
+            <select className="sas-select" name="recordingKeepDays" defaultValue={String(recording.keepDays)} aria-describedby="voice-keep-hint" data-voice-keep-days="" style={{ width: "auto" }}>
+              {RECORDING_KEEP_DAYS.map((d) => <option key={d} value={d}>{t("settings.voice.rec.days", { n: d })}</option>)}
+            </select>
           </label>
+          <Row id="voice-rec-hears" title={t("settings.voice.rec.hears")} hint={t("settings.voice.rec.hears_hint", { line: RECORDING_NOTICE.en })} />
+          <div className="st-voice__row" style={{ alignItems: "flex-start" }}>
+            <span className="sas-stack-2" style={{ gap: 6 }}>
+              <label htmlFor="voice-rec-line"><b>{t("settings.voice.rec.line")}</b></label>
+              <span className="sas-small" id="voice-line-hint">{t("settings.voice.rec.line_hint")}</span>
+              <span className="sas-alert sas-alert--warning st-voice__warn" id="voice-line-warn" data-voice-line-warning=""><Icon name="alert-triangle" /><span>{t("settings.voice.rec.line_warning")}</span></span>
+            </span>
+            <input type="checkbox" role="switch" className="sas-switch" id="voice-rec-line" name="recordingNotice" defaultChecked={recording.recordingNotice} aria-describedby="voice-line-hint voice-line-warn" data-voice-recording-notice="" />
+          </div>
+          <div className="st-voice__row">
+            <span className="sas-small st-voice__law" data-voice-rec-law=""><Icon name="info" />{t("settings.voice.rec.law")}</span>
+          </div>
         </div>
       </section>
       <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="voice-month-h">

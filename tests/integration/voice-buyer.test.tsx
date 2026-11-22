@@ -436,7 +436,7 @@ describe("the call continues the chat", () => {
     const [opener] = await db.select().from(messages).where(and(eq(messages.conversationId, b.conversationId), eq(messages.voiceSessionId, r.sessionId)));
     // The agent wrote last (its chat opener, a question not yet answered): the call re-asks it, spoken.
     // The call is recorded (on by default): the notice is the first sentence of the pick-up line.
-    expect(opener.body).toBe("This call may be recorded to improve our service. So, what made you get in touch today?");
+    expect(opener.body).toBe("Some calls may be recorded for quality review. So, what made you get in touch today?");
     // The chat route refuses a separate chat turn while the call runs.
     const refused = await post("messages", b.token, { text: "hello?", clientId: crypto.randomUUID() }, messagesRoute);
     expect(refused.status).toBe(409);
@@ -682,8 +682,11 @@ describe("Settings › Voice", () => {
     // Call recording and its notice: company-level switches, both on by default.
     expect(html).toMatch(/data-voice-record-calls="" name="recordCalls" checked=""/);
     expect(html).toMatch(/data-voice-recording-notice="" name="recordingNotice" checked=""/);
-    expect(html).toContain("Record calls");
-    expect(html).toContain("kept for 90 days");
+    expect(html).toContain("Call recordings");
+    expect(html).toContain("Record voice calls");
+    expect(html).toMatch(/<option value="90" selected="">90 days<\/option>/);
+    expect(html).toContain("Spoken once, on the buyer&#x27;s first recorded call: &quot;Some calls may be recorded for quality review.&quot; Nothing on screen.");
+    expect(html).toContain("Turning this off records buyers without telling them, which many markets don&#x27;t allow.");
     // One Save for the page; read-only rows say where they are set.
     expect((html.match(/data-voice-save=""/g) ?? []).length).toBe(1);
     expect(html).toContain("Change it in Versions and test lab.");
@@ -722,10 +725,17 @@ describe("Settings › Voice", () => {
     // The recording switches: unchanged (both on) writes nothing; turning them off is stored and audited.
     expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, account.id), eq(auditLog.action, "voice.recording_changed")))).toHaveLength(0);
     await saveVoiceBuyerCallsAction(form(true, { recordCalls: false, recordingNotice: false })).catch(() => undefined);
-    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toEqual({ recordCalls: false, recordingNotice: false });
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toEqual({ recordCalls: false, recordingNotice: false, recordingKeepDays: 90 });
     const rec = await db.select().from(auditLog).where(and(eq(auditLog.accountId, account.id), eq(auditLog.action, "voice.recording_changed")));
-    expect(rec.map((a) => a.details)).toEqual([{ recordCalls: false, recordingNotice: false }]);
-    await saveVoiceBuyerCallsAction(form(true)).catch(() => undefined);
-    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toEqual({ recordCalls: true, recordingNotice: true });
+    expect(rec.map((a) => a.details)).toEqual([{ recordCalls: false, recordingNotice: false, keepDays: 90 }]);
+    // The keep period: one of 30, 90, 365 (anything else is the default).
+    const f365 = form(true);
+    f365.set("recordingKeepDays", "365");
+    await saveVoiceBuyerCallsAction(f365).catch(() => undefined);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toEqual({ recordCalls: true, recordingNotice: true, recordingKeepDays: 365 });
+    const bad = form(true);
+    bad.set("recordingKeepDays", "7");
+    await saveVoiceBuyerCallsAction(bad).catch(() => undefined);
+    expect((await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, account.id)))[0].voiceSettings).toMatchObject({ recordingKeepDays: 90 });
   });
 });

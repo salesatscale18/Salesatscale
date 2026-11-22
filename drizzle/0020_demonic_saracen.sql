@@ -1,0 +1,1 @@
+ALTER TABLE "voice_sessions" ADD COLUMN "recording_keep_days" integer;

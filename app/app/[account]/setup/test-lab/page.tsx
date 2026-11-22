@@ -30,6 +30,7 @@ import { Composer } from "./composer";
 import { AutoSubmit } from "@/components/sas/list-kit-client";
 import { ListTable } from "@/components/sas/list-kit";
 import { ConversationControls, MarkerEntry, deliveryLabel, splitMarkers, windowTimerProps } from "../../leads/[leadId]/conversation";
+import { CallBlockEntry, isCallBlock } from "../../leads/[leadId]/call-block-entry";
 import { ObjectionList } from "../../leads/[leadId]/deal-pane";
 import { leadScheduledNextStep, paneObjections } from "@/lib/leads/deal-pane";
 import { WindowTimer } from "@/components/sas/record";
@@ -138,7 +139,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // Hand-off, take-over and hand-back markers show either way.
   const { timed: timedMarkers, after: markersAfter } = splitMarkers(view?.markers);
   let pendingMarkers = timedMarkers;
-  const markerNode = (mk: ThreadMarker, key: string) => <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} recordingBase={`/app/${slug}/calls`} />;
+  // A call since recordings exist: its block (header and player); its lines stay in the thread with their steps.
+  const markerNode = (mk: ThreadMarker, key: string) => isCallBlock(mk)
+    ? <CallBlockEntry key={key} marker={mk} lines={thread.filter(({ message: m }) => m.voiceSessionId === mk.call.sessionId).map(({ message: m }) => m)} slug={slug} back={conv ? `${lab}?c=${conv.id}` : lab} buyer={t("lab.who.buyer")} zone={viewerZone ?? tz} linesInBlock={false} />
+    : <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} />;
   // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.

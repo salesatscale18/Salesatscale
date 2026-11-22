@@ -8,35 +8,49 @@ import type { Db } from "@/db/types";
 import { sellerAccounts, type AccountVoiceSettings } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 
-export type ResolvedRecordingSettings = { recordCalls: boolean; recordingNotice: boolean };
+/** How long recordings are kept (Settings › Voice › Call recordings); then only the audio is deleted. */
+export const RECORDING_KEEP_DAYS = [30, 90, 365] as const;
+export type RecordingKeepDays = (typeof RECORDING_KEEP_DAYS)[number];
+export const DEFAULT_RECORDING_KEEP_DAYS: RecordingKeepDays = 90;
 
-/** The company's recording settings with the defaults filled in (both on when unset). */
+export type ResolvedRecordingSettings = { recordCalls: boolean; recordingNotice: boolean; keepDays: RecordingKeepDays };
+
+const keepDaysOf = (v: unknown): RecordingKeepDays | null => (RECORDING_KEEP_DAYS as readonly number[]).includes(Number(v)) ? (Number(v) as RecordingKeepDays) : null;
+
+/** The company's recording settings with the defaults filled in (both switches on, 90 days, when unset). */
 export function resolveRecordingSettings(s: AccountVoiceSettings | null | undefined): ResolvedRecordingSettings {
-  return { recordCalls: s?.recordCalls !== false, recordingNotice: s?.recordingNotice !== false };
+  return { recordCalls: s?.recordCalls !== false, recordingNotice: s?.recordingNotice !== false, keepDays: keepDaysOf(s?.recordingKeepDays) ?? DEFAULT_RECORDING_KEEP_DAYS };
 }
 
-/** Settings › Voice form values: a switch is "on" when checked (an unchecked checkbox sends nothing). */
+/**
+ * Settings › Voice form values: a switch is "on" when checked (an unchecked checkbox sends nothing); the keep
+ * period is one of RECORDING_KEEP_DAYS (anything else: the default).
+ */
 export function parseRecordingSettings(form: { get(name: string): unknown }): ResolvedRecordingSettings {
-  return { recordCalls: form.get("recordCalls") === "on", recordingNotice: form.get("recordingNotice") === "on" };
+  return {
+    recordCalls: form.get("recordCalls") === "on", recordingNotice: form.get("recordingNotice") === "on",
+    keepDays: keepDaysOf(form.get("recordingKeepDays")) ?? DEFAULT_RECORDING_KEEP_DAYS,
+  };
 }
 
 /** Saves the company's recording settings. Audited. The caller checks access and the voice mode (as the other voice settings). */
 export async function saveRecordingSettings(db: Db, actor: Actor, accountId: string, next: ResolvedRecordingSettings): Promise<void> {
   const [row] = await db.select({ s: sellerAccounts.voiceSettings }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const before = resolveRecordingSettings(row?.s);
-  if (before.recordCalls === next.recordCalls && before.recordingNotice === next.recordingNotice) return;
-  await db.update(sellerAccounts).set({ voiceSettings: { ...(row?.s ?? {}), recordCalls: next.recordCalls, recordingNotice: next.recordingNotice } })
+  if (before.recordCalls === next.recordCalls && before.recordingNotice === next.recordingNotice && before.keepDays === next.keepDays) return;
+  await db.update(sellerAccounts).set({ voiceSettings: { ...(row?.s ?? {}), recordCalls: next.recordCalls, recordingNotice: next.recordingNotice, recordingKeepDays: next.keepDays } })
     .where(eq(sellerAccounts.id, accountId));
   await writeAudit(db, actor, { accountId, action: "voice.recording_changed", targetType: "account", targetId: accountId, details: { ...next } });
 }
 
 /**
- * The spoken recording notice, one constant per language (owner-approved wording, 22 Nov 2026). Change the text
- * here; nothing else holds it. A call in another language says the same sentence in that language.
+ * The spoken recording line, one constant per language (owner's final wording, 22 Nov 2026). Change the text
+ * here; nothing else holds it. A call in another language says the same sentence in that language. It is said once
+ * per conversation: on its first recorded call (lib/voice/engine.ts).
  */
 export const RECORDING_NOTICE: Record<"en" | "he", string> = {
-  en: "This call may be recorded to improve our service.",
-  he: "השיחה עשויה להיות מוקלטת לצורכי שיפור השירות.",
+  en: "Some calls may be recorded for quality review.",
+  he: "חלק מהשיחות עשויות להיות מוקלטות לבקרת איכות.",
 };
 
 /** The notice in the call's language: English or Hebrew; another language gets the English text, said in that language. */

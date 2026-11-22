@@ -761,8 +761,10 @@ export type VoiceSettings = {
 export type AccountVoiceSettings = {
   /** Record agent voice calls (both sides, kept 90 days, sellers only can play them). Default true. */
   recordCalls?: boolean;
-  /** The agent says a short recording notice at the start of a recorded call. Default true. */
+  /** The agent says the recording line on a conversation's first recorded call. Default true. */
   recordingNotice?: boolean;
+  /** Days a recording is kept (30, 90 or 365); then only the audio is deleted. Default 90. */
+  recordingKeepDays?: number;
 };
 
 /** A call's recording (lib/voice/recording.ts): off (not recorded), recording, saved, failed (nothing kept), deleted. */
@@ -1123,6 +1125,8 @@ export const voiceSessions = pgTable(
     recordingSec: integer("recording_sec"),
     /** The agent said the recording notice at the start of this call. */
     recordingNoticeSaid: boolean("recording_notice_said"),
+    /** Days this call's recording is kept (the account's setting when it was recorded); then only the audio is deleted. */
+    recordingKeepDays: integer("recording_keep_days"),
   },
   (t) => [
     index("voice_sessions_account_created_idx").on(t.accountId, t.createdAt),

@@ -20,7 +20,7 @@ export const RECORDING_FRAME_BYTES = 4;
 /** Seconds of call per chunk. */
 export const RECORDING_CHUNK_SEC = 30;
 const CHUNK_FRAMES = RECORDING_RATE * RECORDING_CHUNK_SEC;
-/** How long the store keeps a recording; then it is deleted automatically. */
+/** How long the store keeps a recording when nothing else says (the account's setting sets it per call). */
 export const RECORDING_TTL_DAYS = 90;
 /** Frames per millisecond of call. */
 const FRAMES_PER_MS = RECORDING_RATE / 1000;
@@ -36,8 +36,8 @@ export type RecordingChunkInfo = { path: string; size: number };
 /** Where recordings go. Paths are relative (`voice/...`); never a token or a signed URL in them. */
 export interface RecordingStore {
   readonly kind: "memory" | "blob";
-  /** Writes one chunk (private, kept RECORDING_TTL_DAYS). */
-  put(path: string, bytes: Uint8Array): Promise<void>;
+  /** Writes one chunk (private, kept `ttlDays`, then deleted by the store). */
+  put(path: string, bytes: Uint8Array, opts?: { ttlDays?: number }): Promise<void>;
   /** The chunks under a folder, in path order, with their sizes. */
   list(prefix: string): Promise<RecordingChunkInfo[]>;
   /** Bytes [start, end) of one chunk. */
@@ -50,7 +50,8 @@ export interface RecordingStore {
 export class MemoryRecordingStore implements RecordingStore {
   readonly kind = "memory" as const;
   readonly files = new Map<string, Uint8Array>();
-  async put(path: string, bytes: Uint8Array) {
+  async put(path: string, bytes: Uint8Array, _opts?: { ttlDays?: number }) {
+    void _opts; // no expiry in memory
     this.files.set(path, bytes.slice());
   }
   async list(prefix: string) {
@@ -219,7 +220,7 @@ export class CallRecorder {
   private progress: RecordingProgress = { chunks: 0, bytes: 0, sec: 0, failed: 0 };
   private done = false;
 
-  constructor(private readonly o: { store: RecordingStore; prefix: string; onError?: (e: unknown) => void }) {}
+  constructor(private readonly o: { store: RecordingStore; prefix: string; ttlDays?: number; onError?: (e: unknown) => void }) {}
 
   /** The buyer's microphone audio (24 kHz PCM16) that arrived at `atMs`. */
   buyer(pcm: Uint8Array, atMs: number) {
@@ -318,7 +319,7 @@ export class CallRecorder {
     const secEnd = (k * CHUNK_FRAMES + frames) / RECORDING_RATE;
     this.writes = this.writes.then(async () => {
       try {
-        await this.o.store.put(path, bytes);
+        await this.o.store.put(path, bytes, { ttlDays: this.o.ttlDays ?? RECORDING_TTL_DAYS });
         this.progress = { ...this.progress, chunks: this.progress.chunks + 1, bytes: this.progress.bytes + bytes.byteLength, sec: Math.round(secEnd) };
       } catch (e) {
         this.progress = { ...this.progress, failed: this.progress.failed + 1 };
