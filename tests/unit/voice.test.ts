@@ -27,8 +27,8 @@ import { geminiSchema, realtimeTools, schemaFamilyOf, toolLabel, VOICE_ONLY_TOOL
 import { voiceCallBlock } from "@/lib/agent/core/voice";
 import { callVoice } from "@/lib/voice/settings";
 import { defaultVoiceOf } from "@/lib/voice/lab";
-import { buildVoiceInstructions, continueFallback, continuingInstruction, CONTINUE_FALLBACK_HE, expectedCallLanguages, openerInstruction, reAskLine } from "@/lib/voice/instructions";
-import { lineLanguage } from "@/lib/voice/engine";
+import { buildVoiceInstructions, continueFallback, continuingInstruction, CONTINUE_FALLBACK_HE, conversationTalkLanguage, expectedCallLanguages, openerInstruction, reAskLine } from "@/lib/voice/instructions";
+import { continuesCutLine, lineLanguage } from "@/lib/voice/engine";
 import { isSpokenOptOut, safeTranscript } from "@/lib/voice/safety";
 import {
   maxCallSeconds, resolveVoiceSettings, turnTakingFor, validateVoiceSettings, voiceCapabilities, voiceMode, voiceModelId,
@@ -37,7 +37,7 @@ import { ManualClock, flushAsync, type RealtimeEvent } from "@/lib/voice/realtim
 import {
   DEFAULT_SCRIPT, fieldsFromInstructions, lineForInstruction, localDayAt, nextWeekdayAt, type ScriptCtx, localNowFromInstructions, micPcm, onlyIf, rms, ScriptedRealtime, speechPcm, expectBuyer, say, tool, VOICE_SCRIPTS,
 } from "@/lib/voice/scripted-realtime";
-import { assertLiveAllowed, clientEvents, GatewayRealtime, PROVEN_SESSION_FIELDS, ServerEventMapper, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
+import { assertLiveAllowed, clientEvents, GatewayRealtime, PROVEN_SESSION_FIELDS, ServerEventMapper, SETUP_RETRY_FIELDS, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 
 const seller = { tradeName: "Acme", currency: "ILS", languages: ["en", "he"] };
 const pb: Playbook = defaultPlaybook("Acme", 500);
@@ -666,7 +666,7 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(g).toMatchObject({ inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" }, providerOptions: { google: { defaultToolBehavior: "BLOCKING" } } });
     // OpenAI's retry: the smallest config that still carries the instructions and tools.
     const o = toSdkSessionConfig(risky, "openai/gpt-realtime-2");
-    expect(Object.keys(o).sort()).toEqual([...PROVEN_SESSION_FIELDS.openai].sort());
+    expect(Object.keys(o).sort()).toEqual([...SETUP_RETRY_FIELDS.openai].sort());
     expect(o.providerOptions).toBeUndefined();
     // Without `safe`, OpenAI keeps its turn-taking values.
     expect(toSdkSessionConfig({ ...risky, safe: false }, "openai/gpt-realtime-2").turnDetection).toMatchObject({ silenceDurationMs: 900 });
@@ -727,6 +727,9 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     // OpenAI's normal lifecycle events: ignored without a log line.
     for (const type of ["output-item-added", "output-item-done", "content-part-added", "content-part-done", "audio-committed", "speech-stopped", "conversation-item-added"]) expect(m.map({ type, raw: {} } as never)).toEqual([]);
     for (const rawType of ["conversation.item.done", "rate_limits.updated"]) expect(m.map({ type: "custom", rawType, raw: {} } as never)).toEqual([]);
+    // The live GPT calls of 22 Nov 2026: the setup's acknowledgement and the buyer's transcription pieces.
+    expect(m.map({ type: "session-updated", raw: {} } as never)).toEqual([]);
+    expect(m.map({ type: "custom", rawType: "conversation.item.input_audio_transcription.delta", raw: { delta: "Hel" } } as never)).toEqual([]);
     // Truly unknown types are still reported (the engine logs each type once per call).
     expect(m.map({ type: "session-usage", usage: { seconds: 3 }, raw: {} } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "session-usage" }]);
     expect(m.map({ type: "custom", rawType: "usageMetadata", usage: { inputTokens: 500, inputAudioTokens: 400, outputTokens: 90, outputAudioTokens: 80, cachedInputTokens: 20 }, raw: {} }))
@@ -932,6 +935,32 @@ describe("call language (any chat language; the buyer can switch)", () => {
     expect(continuingInstruction(null, "fr")).toContain("say briefly, in French, that you are here and they can go ahead.");
     expect(continuingInstruction(CONTINUE_FALLBACK_HE, "he")).toContain(`say: "${CONTINUE_FALLBACK_HE}"`);
     expect(reAskLine("מעולה. כמה סניפים יש לכם?")).toBe("אז, כמה סניפים יש לכם?");
+  });
+
+  it("the language a call goes on in: the conversation's latest messages, the agent's languages as fallback", () => {
+    const m = (actor: string, body: string) => ({ actor, body });
+    // English messages in a conversation created from a Hebrew page: English.
+    expect(conversationTalkLanguage([m("buyer", "Sounds good."), m("agent", "Great, how many sites?")], ["he", "en", "he"])).toBe("en");
+    // Hebrew messages: Hebrew, whatever the defaults.
+    expect(conversationTalkLanguage([m("buyer", "כמה זה עולה?"), m("agent", "Hi there!")], ["en"])).toBe("he");
+    // The newest three with letters vote; a tie goes to the newest.
+    expect(conversationTalkLanguage([m("buyer", "ok"), m("agent", "שלום"), m("buyer", "שלום"), m("agent", "Hello")], ["en"])).toBe("he");
+    expect(conversationTalkLanguage([m("buyer", "ok"), m("agent", "שלום")], ["en"])).toBe("en");
+    // A Latin-script default other than English is kept (a French seller); system lines and digits do not count.
+    expect(conversationTalkLanguage([m("system", "שיחה הסתיימה"), m("buyer", "Bonjour, combien ?"), m("buyer", "12")], ["fr"])).toBe("fr");
+    // Nothing with letters: the agent's first language.
+    expect(conversationTalkLanguage([m("buyer", "42")], ["he", "en"])).toBe("he");
+    expect(conversationTalkLanguage([], [null, ""])).toBe("en");
+  });
+
+  it("a cut line that stops mid-word is continued by the whole line (one stored line, not two)", () => {
+    expect(continuesCutLine("It starts at about 590 shekels per sensor, and the total depends", "It starts at about 590 shek")).toBe(true);
+    expect(continuesCutLine("It starts at about 590 shekels per sensor", "It starts at about 590")).toBe(true);
+    expect(continuesCutLine("It starts at about 590 shekels", "It starts at about 590 shekels")).toBe(true);
+    // A different word, a one-word cut, or a different line: not the same line.
+    expect(continuesCutLine("It starts at about 600 shekels", "It starts at about 590 shek")).toBe(false);
+    expect(continuesCutLine("Shekels per sensor", "Shek")).toBe(false);
+    expect(continuesCutLine("It costs 590", "It starts at about 590 shek")).toBe(false);
   });
 
   it("each stored line carries its own language (the buyer may switch mid-call)", () => {

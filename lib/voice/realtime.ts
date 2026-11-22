@@ -30,8 +30,8 @@ export type RealtimeSessionConfig = {
    */
   scenario?: string | null;
   /**
-   * Send only the session fields proven in working live calls for this model family (the retry after the
-   * model closed a session before it said anything): lib/voice/gateway-realtime.ts PROVEN_SESSION_FIELDS.
+   * Send only the retry fields for this model family (the retry after the provider refused the session setup or
+   * closed a session before it said anything): lib/voice/gateway-realtime.ts SETUP_RETRY_FIELDS.
    */
   safe?: boolean;
 };

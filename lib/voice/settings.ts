@@ -23,14 +23,14 @@ export const DEFAULT_VOICE_MODEL = "google/gemini-3.8-live";
 
 /**
  * The realtime models a version may pick (Versions and test lab › Voice settings). `proven`: it has run a real
- * live call on this platform (a constant until a live test proves the others); a model not proven yet gets the
- * smallest session config on its first connect (lib/voice/gateway-realtime.ts). One list: validation, the
- * picker and the price hint read it.
+ * live call on this platform (a constant: Gemini since 20 Nov 2026, both GPT-Realtime models since the live
+ * calls of 21-22 Nov 2026); a model added later starts unproven, and the picker and the logs say so. One list:
+ * validation, the picker and the price hint read it.
  */
 export const VOICE_MODELS = [
   { id: "google/gemini-3.8-live", label: "Gemini 3.8 Live", family: "gemini", proven: true, note: "Its own turn detection (not tunable); Gemini voices." },
-  { id: "openai/gpt-realtime-2.1", label: "GPT-Realtime 2.1", family: "openai", proven: false, note: "Tunable turn-taking (style, pause, interruptions); OpenAI voices." },
-  { id: "openai/gpt-realtime-mini", label: "GPT-Realtime mini", family: "openai", proven: false, note: "The smaller OpenAI model: cheaper, tunable turn-taking; OpenAI voices." },
+  { id: "openai/gpt-realtime-2.1", label: "GPT-Realtime 2.1", family: "openai", proven: true, note: "Tunable turn-taking (style, pause, interruptions); OpenAI voices." },
+  { id: "openai/gpt-realtime-mini", label: "GPT-Realtime mini", family: "openai", proven: true, note: "The smaller OpenAI model: cheaper, tunable turn-taking; OpenAI voices." },
 ] as const satisfies readonly { id: string; label: string; family: "gemini" | "openai"; proven: boolean; note: string }[];
 
 export type VoiceModelId = (typeof VOICE_MODELS)[number]["id"];

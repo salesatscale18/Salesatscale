@@ -117,13 +117,30 @@ function splitTurn(items: VoiceItem[], turnId: string, full: string): VoiceItem[
   return items.filter((i) => !(i.kind === "line" && drop.has(i.key))).map((i) => (i.kind === "line" && i.key === firstKey ? { ...i, text: full } : i));
 }
 
+/**
+ * Where a buyer line that arrives late goes: before the agent's answer to it. OpenAI's transcription of the buyer
+ * comes after the answer started; the answer's lines (and its tool chips) began after the buyer did (`atMs`), so the
+ * buyer's line goes before the first of them. Otherwise (Gemini, a typed line) at the end.
+ */
+function answerStart(items: readonly VoiceItem[], buyerAtMs: number): number {
+  let at = items.length;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const it = items[i];
+    if (it.kind === "line" && (it.role !== "agent" || it.atMs < buyerAtMs)) break;
+    if (it.kind === "line") at = i;
+  }
+  return at;
+}
+
 function onTranscript(s: VoiceSnapshot, m: Extract<ServerMessage, { t: "transcript" }>): VoiceSnapshot {
   const pieces = s.items.filter((i): i is VoiceLine => i.kind === "line" && i.turnId === m.id);
   const lastPiece = pieces[pieces.length - 1];
   const lastItem = s.items[s.items.length - 1];
   let items = s.items;
   if (!pieces.length) {
-    items = [...items, { kind: "line", key: m.id, turnId: m.id, role: m.role, text: m.text, final: m.final, atMs: m.atMs }];
+    const line: VoiceLine = { kind: "line", key: m.id, turnId: m.id, role: m.role, text: m.text, final: m.final, atMs: m.atMs };
+    const at = m.role === "buyer" && !m.typed ? answerStart(items, m.atMs) : items.length;
+    items = [...items.slice(0, at), line, ...items.slice(at)];
   } else if (m.role === "agent" && lastItem && lastItem.kind === "tool" && s.items.indexOf(lastPiece) < s.items.indexOf(lastItem) && m.text.length > pieces.map((p) => p.text).join(" ").length) {
     // The agent goes on after a tool chip: the rest of its turn shows under the chip.
     const prefix = pieces.map((p) => p.text).join(" ");

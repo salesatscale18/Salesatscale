@@ -44,7 +44,7 @@ const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { createSimulatedBuyer, startSimulatorConversation, buyerChat, resolveChatLink } = await import("@/lib/simulator/service");
 const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
-const { buildVoiceInstructions, loadVoiceInstructions, reAskLine, CHAT_RECAP_LINES, CONTINUE_FALLBACK } = await import("@/lib/voice/instructions");
+const { buildVoiceInstructions, loadVoiceInstructions, reAskLine, CHAT_RECAP_LINES, CONTINUE_FALLBACK, CONTINUE_FALLBACK_HE } = await import("@/lib/voice/instructions");
 const { VoiceEngine } = await import("@/lib/voice/engine");
 const { ManualClock, flushAsync } = await import("@/lib/voice/realtime");
 const { ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
@@ -343,6 +343,32 @@ describe("the call continues the chat", () => {
     expect(answered.opener).toBe(CONTINUE_FALLBACK);
     await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "agent", body: "Sorry to hear that. I'll check what fits.", language: "en", createdAt: new Date(Date.now() + 10) });
     expect((await load()).opener).toBe(CONTINUE_FALLBACK);
+  });
+
+  it("the pick-up line follows the conversation's language (its latest messages), never the conversation's UI language", async () => {
+    const b = await newBuyer("Lang Check");
+    const [stored] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
+    const [lead] = await db.select().from(leads).where(eq(leads.id, b.leadId));
+    const { agentVersions } = await import("@/db/schema");
+    const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, stored.agentVersionId));
+    // Created from a Hebrew page (the 22 Nov 2026 call): the conversation says "he", every message is English.
+    const conv = { ...stored, language: "he" };
+    await db.insert(messages).values({ accountId: account.id, conversationId: b.conversationId, actor: "buyer", body: "We run four cold rooms.", language: "he", createdAt: new Date(Date.now() + 5) });
+    const en = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
+    expect(en.continuing).toBe(true);
+    expect(en.language).toBe("en");
+    expect(en.opener).toBe(CONTINUE_FALLBACK);
+    expect(en.openerPrompt).toContain(`"${CONTINUE_FALLBACK}"`);
+    expect(en.openerPrompt).not.toContain(CONTINUE_FALLBACK_HE);
+    expect(en.instructions).toContain("Language: start in English");
+    // The conversation went on in Hebrew: the pick-up line is the Hebrew one.
+    await db.insert(messages).values([
+      { accountId: account.id, conversationId: b.conversationId, actor: "agent", body: "בשמחה. כמה חיישנים צריך?", language: "he", createdAt: new Date(Date.now() + 10) },
+      { accountId: account.id, conversationId: b.conversationId, actor: "buyer", body: "בערך עשרים.", language: "he", createdAt: new Date(Date.now() + 15) },
+    ]);
+    const he = await loadVoiceInstructions(db, { account, version, conv: { ...stored, language: "en" }, lead, deal: null, now: new Date() });
+    expect(he.language).toBe("he");
+    expect(he.opener).toBe(CONTINUE_FALLBACK_HE);
   });
 
   it("a call on a chat with agent messages opens with no greeting, no introduction and no bot notice, with the chat in its instructions", async () => {

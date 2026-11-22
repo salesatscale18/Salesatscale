@@ -34,20 +34,29 @@ export const CONNECT_TIMEOUT_MS = 10_000;
 // ---------------------------------------------------------------------------
 
 /**
- * Session fields (and values) proven in working live calls, per model family: what the retry after an early
- * close sends (`cfg.safe`). Gemini: exactly what 6e06fe8 sent in the owner's working calls (20 Nov 2026):
+ * Session fields (and values) proven in working live calls, per model family (what the first connect sends).
+ * Gemini, also its retry after an early close (`cfg.safe`): exactly what 6e06fe8 sent in the owner's working calls (20 Nov 2026):
  * instructions, tools, voice, audio out, PCM 24 kHz in and out, EMPTY input and output transcription,
  * plain server VAD and the Google BLOCKING tool option.
- * OpenAI (GPT-Realtime 2.1, GPT-Realtime mini) has no proven live call yet. Its first connect already sends only
- * the SDK's documented normalized fields (instructions, voice, output modalities, PCM 24 kHz in and out, input and
- * output transcription, server VAD with the version's tuning, tools; no providerOptions). The safe retry keeps
- * the same fields with the optional values dropped: no transcription hint, plain server VAD, and (in the engine)
- * no pinned default voice. Tools are plain JSON Schema; the normalized tool has no `strict` flag, so none is sent.
+ * OpenAI (GPT-Realtime 2.1, GPT-Realtime mini): the full first connect was accepted in the live calls of 21-22 Nov
+ * 2026 (session-updated, buyer lines transcribed, tools used): instructions, voice, output modalities, PCM 24 kHz in
+ * and out, EMPTY input transcription (no prompt, no language), output transcription, server VAD with the version's
+ * tuning, tools; no providerOptions. Tools are plain JSON Schema; the normalized tool has no `strict` flag.
+ * The retry after a refused or early-closed setup still sends only SETUP_RETRY_FIELDS (below).
  */
 export const PROVEN_SESSION_FIELDS: Record<"gemini" | "openai", readonly (keyof SdkSessionConfig)[]> = {
   gemini: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions"],
-  // OpenAI has no proven call: its retry is the smallest config that still carries the playbook and the tools
-  // (the audio formats keep our PCM 24 kHz); voice, transcription and turn detection take the provider's defaults.
+  openai: ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools"],
+};
+
+/**
+ * What the retry after a refused (or early-closed) session setup sends (`cfg.safe`), per family. Gemini: its proven
+ * fields with the proven plain values (below). OpenAI: the smallest config that still carries the playbook and the
+ * tools (the audio formats keep our PCM 24 kHz); voice, transcription and turn detection take the provider's
+ * defaults, so a setting the provider stops taking costs the call those, never its instructions.
+ */
+export const SETUP_RETRY_FIELDS: Record<"gemini" | "openai", readonly (keyof SdkSessionConfig)[]> = {
+  gemini: PROVEN_SESSION_FIELDS.gemini,
   openai: ["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat", "tools"],
 };
 
@@ -59,7 +68,7 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
   const full = fullSdkSessionConfig(cfg, modelId);
   if (!cfg.safe) return full;
   const family = schemaFamilyOf(modelId);
-  const keep = new Set<string>(PROVEN_SESSION_FIELDS[family]);
+  const keep = new Set<string>(SETUP_RETRY_FIELDS[family]);
   const safe = Object.fromEntries(Object.entries(full).filter(([k]) => keep.has(k))) as SdkSessionConfig;
   // Gemini's proven values: no transcription hints, plain server VAD. OpenAI: only the fields kept above.
   return family === "gemini" ? { ...safe, inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" } } : safe;
@@ -121,6 +130,9 @@ export const KNOWN_IGNORED_EVENTS: ReadonlySet<string> = new Set([
   // OpenAI realtime's normal lifecycle events (the first GPT-Realtime calls, 22 Nov 2026): nothing we read.
   "output-item-added", "output-item-done", "content-part-added", "content-part-done", "audio-committed", "speech-stopped",
   "conversation-item-added", "custom:conversation.item.done", "custom:rate_limits.updated",
+  // The live GPT-Realtime calls of 22 Nov 2026: the setup's acknowledgement, and the buyer's transcription in pieces
+  // (its completed event carries the whole line, which is what we store).
+  "session-updated", "custom:conversation.item.input_audio_transcription.delta",
   // A custom event that names nothing (no type, no raw message): seen once on Gemini; nothing to read.
   "custom:unnamed",
 ]);

@@ -5,7 +5,7 @@ import {
   DEFAULT_VOICE_SETTINGS, VOICE_MODELS, callVoice, isProvenVoiceModel, isVoiceModel, resolveVoiceSettings, turnTakingFor, validateVoiceSettings,
   versionModelId, voiceCapabilities, voiceModelLabel,
 } from "@/lib/voice/settings";
-import { PROVEN_SESSION_FIELDS, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
+import { PROVEN_SESSION_FIELDS, SETUP_RETRY_FIELDS, toSdkSessionConfig, toVoiceUsage } from "@/lib/voice/gateway-realtime";
 import { realtimeTools, schemaFamilyOf } from "@/lib/voice/tool-schema";
 import { RealtimeUsageAccumulator, audioTokensPerSecond, realtimeUsdPerMinute, voiceCallCost } from "@/lib/ai/models";
 import { modelCostHint, modelCostShort, voiceModelChoices } from "@/lib/voice/model-choices";
@@ -17,16 +17,19 @@ const GPT = "openai/gpt-realtime-2.1";
 const MINI = "openai/gpt-realtime-mini";
 
 describe("one list of voice models", () => {
-  it("three models with labels, families and the live-proven flag; Gemini is the default", () => {
+  it("three models with labels, families and the live-proven flag (all three proven live by 22 Nov 2026); Gemini is the default", () => {
     expect(VOICE_MODELS.map((m) => [m.id, m.label, m.family, m.proven])).toEqual([
       [GEMINI, "Gemini 3.8 Live", "gemini", true],
-      [GPT, "GPT-Realtime 2.1", "openai", false],
-      [MINI, "GPT-Realtime mini", "openai", false],
+      [GPT, "GPT-Realtime 2.1", "openai", true],
+      [MINI, "GPT-Realtime mini", "openai", true],
     ]);
     expect(isVoiceModel(GPT)).toBe(true);
     expect(isVoiceModel("openai/gpt-realtime-2")).toBe(false);
     expect(isProvenVoiceModel(GEMINI)).toBe(true);
-    expect(isProvenVoiceModel(MINI)).toBe(false);
+    expect(isProvenVoiceModel(MINI)).toBe(true);
+    expect(isProvenVoiceModel(GPT)).toBe(true);
+    // A model id not in the list (an env override) is not proven.
+    expect(isProvenVoiceModel("openai/gpt-realtime-2")).toBe(false);
     expect(voiceModelLabel(MINI)).toBe("GPT-Realtime mini");
     expect(voiceModelLabel("scripted")).toBe("scripted");
     // A version's model: its own when valid, else VOICE_MODEL, else Gemini.
@@ -114,6 +117,10 @@ describe("OpenAI session config (normalized SDK fields)", () => {
     expect(Object.keys(toSdkSessionConfig(cfg as never, GPT))).toEqual([
       "instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools",
     ]);
+    // The first connect sends exactly the fields accepted live on 21-22 Nov 2026, on both GPT models.
+    for (const m of [GPT, MINI]) expect(Object.keys(toSdkSessionConfig(cfg as never, m)).sort()).toEqual([...PROVEN_SESSION_FIELDS.openai].sort());
+    // The fallback after a refused setup stays the minimal one.
+    expect(Object.keys(toSdkSessionConfig({ ...cfg, safe: true } as never, GPT)).sort()).toEqual([...SETUP_RETRY_FIELDS.openai].sort());
   });
 });
 
@@ -192,10 +199,20 @@ describe("the settings panel per model", () => {
     expect(o).toContain('<select class="sas-select" id="vs-pause" name="pauseMs"');
     expect(o).toContain('<select class="sas-select" id="vs-interrupt" name="interrupt"');
     expect(o).toContain("From the style (0.6 s)");
-    expect(o).toContain("Not tried on a live call yet.");
+    // Both GPT models ran live calls (21-22 Nov 2026): no "not tried" note.
+    expect(o).not.toContain("data-voice-model-unproven");
     expect(o).toContain("About 7.1× the cost per minute of Gemini (estimate).");
     expect(o).toContain(">Alloy");
     expect(o).not.toContain(">Kore");
     expect(voiceSettingsSummary(resolveVoiceSettings({ model: MINI }), MINI)).toMatch(/^GPT-Realtime mini · Alloy/);
+  });
+
+  it("a model added later and not proven yet still gets the \"Not tried on a live call yet\" note", () => {
+    const models = voiceModelChoices().map((m) => (m.id === MINI ? { ...m, proven: false } : m));
+    const html = renderToStaticMarkup(
+      <VoiceSettingsForm action={async () => ({})} slug="acme" models={models} platformModel={GEMINI}
+        initial={{ ...DEFAULT_VOICE_SETTINGS, model: MINI as never }} version={3} closeHref="#" deploymentLimitSec={null} />,
+    );
+    expect(html).toContain("Not tried on a live call yet.");
   });
 });

@@ -11,7 +11,7 @@
  * All database work runs through one serial queue, so messages keep their order.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, exists, ne } from "drizzle-orm";
+import { and, asc, eq, exists, ne } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -148,6 +148,18 @@ export function startsWithLine(longer: string, shorter: string): boolean {
   const b = normLine(shorter);
   return b.split(" ").length >= 2 && (a === b || a.startsWith(`${b} `));
 }
+/**
+ * `longer` goes on from the cut line `cut`: like startsWithLine, and the cut line's last word may be the start of a
+ * word (the transcript stops mid-word: "It is about 40 doll" → "It is about 40 dollars per seat").
+ */
+export function continuesCutLine(longer: string, cut: string): boolean {
+  if (startsWithLine(longer, cut)) return true;
+  const a = normLine(longer).split(" ");
+  const b = normLine(cut).split(" ");
+  if (b.length < 2 || a.length < b.length) return false;
+  const last = b.length - 1;
+  return b.slice(0, last).every((w, i) => w === a[i]) && a[last].startsWith(b[last]) && a[last] !== b[last];
+}
 /** A line the buyer cut short, as stored: the words actually said, ending with "…". */
 export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
 
@@ -245,11 +257,19 @@ export class VoiceEngine {
   private queueDepth = 0;
   /** The agent finished its first turn in this call (the opening line): standby only after it. */
   private openerDone = false;
+  /**
+   * OpenAI realtime: the buyer's transcription completes AFTER the answer to it has started (the live calls of
+   * 22 Nov 2026: about 13 ms after the answer was stored). Their buyer line is put before the answer it got.
+   * Gemini closes the buyer's turn before the answer starts: never set, its order is as it was.
+   */
+  private readonly lateBuyerTranscript: boolean;
 
   constructor(deps: VoiceEngineDeps) {
     this.db = deps.db;
     this.model = deps.model;
-    this.usageAcc = new RealtimeUsageAccumulator(/^openai\/|gpt-realtime/i.test(this.model.modelId) ? "per_response" : "auto");
+    const openai = /^openai\/|gpt-realtime/i.test(this.model.modelId);
+    this.usageAcc = new RealtimeUsageAccumulator(openai ? "per_response" : "auto");
+    this.lateBuyerTranscript = openai;
     this.clock = deps.clock ?? systemClock;
     this.out = deps.send;
     this.sessionId = deps.sessionId;
@@ -674,7 +694,7 @@ export class VoiceEngine {
         if (e.final) turn.finalText = true;
         // The model resumes (or re-says) the line the buyer cut: the live transcript keeps it on one line.
         const last = this.lastLine;
-        if (fresh && last?.cut && (startsWithLine(turn.text, last.raw) || startsWithLine(last.raw, turn.text))) turn.id = last.turnId;
+        if (fresh && last?.cut && (continuesCutLine(turn.text, last.raw) || continuesCutLine(last.raw, turn.text))) turn.id = last.turnId;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
       }
@@ -976,17 +996,23 @@ export class VoiceEngine {
       this.send({ t: "flush" });
       this.agentSpeaking = false;
     }
-    // What the agent said before this buyer turn is stored first, so the thread keeps its order.
-    await this.finalizeAgentTurn("buyer");
     const turn = this.buyerTurn ?? { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
+    // OpenAI: the transcription came after the answer started. That answer (started once the buyer began) stays open,
+    // and agent lines already stored since the buyer began move after this one: the buyer's line comes first.
+    const late = this.lateBuyerTranscript && !typed;
+    const answering = late && !!this.agentTurn && this.agentTurn.startMs >= turn.startMs;
+    // What the agent said before this buyer turn is stored first, so the thread keeps its order.
+    if (!answering) await this.finalizeAgentTurn("buyer");
     this.buyerTurn = null;
     await this.db.insert(messages).values({
       accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: lineLanguage(masked.text, conv.language),
       voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, typedInCall: typed, createdAt: await this.stamp(),
     });
-    this.lines.push({ role: "buyer", text: masked.text });
+    const moved = late ? await this.moveAgentLinesAfterBuyer(turn.startMs) : 0;
+    this.lines.splice(this.lines.length - moved, 0, { role: "buyer", text: masked.text });
     this.send({ t: "transcript", id: turn.id, role: "buyer", text: masked.text, final: true, atMs: turn.startMs, ...(typed ? { typed: true as const } : {}) });
-    this.buyerEndedAt = this.clock.now();
+    // The answer already started: its answer time was taken (or is unknown); a later turn must not reuse this one.
+    if (!answering && !moved) this.buyerEndedAt = this.clock.now();
     this.buyerActivity();
     if (typed) this.markHeard();
     if (!this.conn && this.standbySince === null) return;
@@ -1012,6 +1038,21 @@ export class VoiceEngine {
     } else if (typed) {
       this.conn.sendText(masked.text);
     }
+  }
+
+  /**
+   * Agent lines of this call stored after the buyer began the turn just stored (OpenAI's late transcription):
+   * they get new times after it, in their order, so the thread reads buyer line, then the answer. Returns how many.
+   */
+  private async moveAgentLinesAfterBuyer(buyerStartMs: number): Promise<number> {
+    const { account, conv } = this.loaded!;
+    const rows = await this.db.select({ id: messages.id, spokenAtMs: messages.spokenAtMs }).from(messages)
+      .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.voiceSessionId, this.sessionId), eq(messages.actor, "agent")))
+      .orderBy(asc(messages.createdAt));
+    // Only the trailing run: agent lines stored after the buyer's turn began, with no buyer line between.
+    const after = rows.filter((r) => r.spokenAtMs !== null && r.spokenAtMs >= buyerStartMs);
+    for (const r of after) await this.db.update(messages).set({ createdAt: await this.stamp() }).where(and(eq(messages.id, r.id), eq(messages.accountId, account.id)));
+    return Math.min(after.length, this.lines.length);
   }
 
   /** The buyer opted out in words the code recognises: the same effect as the record_opt_out tool. */
@@ -1183,8 +1224,9 @@ export class VoiceEngine {
       input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
       result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
     }));
-    const resumes = !!last && last.cut && !!raw && startsWithLine(raw, last.raw);
-    const repeatsCut = !!last && cut && !resumes && startsWithLine(last.raw, raw);
+    // A cut transcript may stop mid-word ("40 doll"): the whole line still continues it.
+    const resumes = !!last && last.cut && !!raw && continuesCutLine(raw, last.raw);
+    const repeatsCut = !!last && cut && !resumes && continuesCutLine(last.raw, raw);
     if (last && (resumes || repeatsCut)) {
       // Resumed after the cut: the earlier row becomes the whole line. A cut copy of the line just said adds nothing.
       const now = await this.stamp();

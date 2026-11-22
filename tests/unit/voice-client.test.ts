@@ -107,6 +107,25 @@ describe("call state", () => {
     expect(run([srv({ t: "state", state: "listening" })], s)).toBe(s);
   });
 
+  it("a buyer line that arrives after the answer started (OpenAI) shows before that answer; Gemini's order and typed lines stay as they come", () => {
+    const s = run([
+      srv({ t: "state", state: "listening" }),
+      srv({ t: "transcript", id: "a1", role: "agent", text: "Hi, this is Maya.", final: true, atMs: 0 }),
+      // The buyer started at 3.0 s; the answer started at 4.5 s; the buyer's transcription came 13 ms after it.
+      srv({ t: "transcript", id: "a3", role: "agent", text: "It starts at about", final: false, atMs: 4500 }),
+      srv({ t: "transcript", id: "b2", role: "buyer", text: "How much is it?", final: true, atMs: 3000 }),
+      srv({ t: "transcript", id: "a3", role: "agent", text: "It starts at about 590 shekels.", final: true, atMs: 4500 }),
+    ]);
+    expect(s.items.map((i) => (i.kind === "line" ? `${i.role}:${i.text}` : "tool"))).toEqual(["agent:Hi, this is Maya.", "buyer:How much is it?", "agent:It starts at about 590 shekels."]);
+    // A barge-in (the buyer started after the agent's line began) and a typed line go at the end.
+    const t = run([
+      srv({ t: "transcript", id: "b4", role: "buyer", text: "Per month?", final: true, atMs: 6000 }),
+      srv({ t: "transcript", id: "a5", role: "agent", text: "No, once.", final: true, atMs: 7000 }),
+      srv({ t: "transcript", id: "b6", role: "buyer", text: "ok", final: true, atMs: 1, typed: true }),
+    ], s);
+    expect(t.items.slice(3).map((i) => (i.kind === "line" ? `${i.role}:${i.text}` : "tool"))).toEqual(["buyer:Per month?", "agent:No, once.", "buyer:ok"]);
+  });
+
   it("builds the transcript: lines grow by id, the spoken line is outlined, chips split the agent's turn", () => {
     let s = run([
       srv({ t: "state", state: "listening" }),

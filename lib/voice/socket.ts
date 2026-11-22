@@ -45,10 +45,15 @@ export interface VoiceSocket {
  * JSON frames are never dropped.
  */
 export const MAX_BUFFERED_AUDIO_BYTES = VOICE_SAMPLE_RATE * 2 * 3;
-/** A browser that sends nothing (audio, ping, pong) for this long is gone. */
-export const IDLE_TIMEOUT_MS = 45_000;
-/** Protocol pings, so proxies keep the socket open and a dead peer is noticed. */
-export const PING_EVERY_MS = 15_000;
+/**
+ * A browser that sends nothing (audio, ping, pong) for this long is gone: the call ends, the model connection is
+ * closed and the real end time and duration are stored. The browser sends mic audio all the time and a `ping`
+ * every 10 s (lib/voice/client/voice-client.ts), and answers protocol pings, so 25 s is two missed pings.
+ * With the check below every 5 s, a browser that vanished without a close is noticed within 25-30 s.
+ */
+export const IDLE_TIMEOUT_MS = 25_000;
+/** Protocol pings (and the idle check), so proxies keep the socket open and a dead peer is noticed. */
+export const PING_EVERY_MS = 5_000;
 /** Mic audio accepted per second of call, at most (twice real time): extra frames are dropped. */
 export const MAX_AUDIO_RATE = 2;
 /** Text frames buffered while the ticket is being checked. */

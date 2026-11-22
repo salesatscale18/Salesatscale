@@ -172,6 +172,38 @@ export function reAskLine(lastAgentMessage: string): string | null {
   return `So, ${q}`;
 }
 
+/** Languages written in a script other than Latin (a Latin-script conversation is never one of these). */
+const NON_LATIN_LANGUAGE = /^(?:he|ar|fa|ur|ru|uk|bg|el|yi)\b/i;
+
+/** The script a message is mostly written in, or null (no letters). */
+function scriptOf(text: string): "he" | "ar" | "latin" | null {
+  const counts: [("he" | "ar" | "latin"), number][] = [
+    ["he", (text.match(/[\u0590-\u05FF]/g) ?? []).length],
+    ["ar", (text.match(/[\u0600-\u06FF]/g) ?? []).length],
+    ["latin", (text.match(/[A-Za-z]/g) ?? []).length],
+  ];
+  const [best] = counts.sort((a, b) => b[1] - a[1]);
+  return best[1] > 0 ? best[0] : null;
+}
+
+/**
+ * The language a call that goes on from a conversation speaks in: the language of the conversation's latest
+ * messages (the newest three with letters; a tie goes to the newest), never the page's UI language. Hebrew or
+ * Arabic letters name the language; Latin text is the first Latin-script language among `defaults` (the agent's
+ * languages, then the conversation's), else English. No message with letters: the first of `defaults`.
+ * `newestFirst`: the conversation's latest messages, newest first.
+ */
+export function conversationTalkLanguage(newestFirst: readonly { actor: string; body: string }[], defaults: readonly (string | null | undefined)[]): string {
+  const known = defaults.map((d) => d?.trim()).filter((d): d is string => !!d);
+  const scripts = newestFirst.filter((m) => m.actor === "buyer" || m.actor === "agent" || m.actor === "human")
+    .map((m) => scriptOf(m.body)).filter((x): x is "he" | "ar" | "latin" => !!x).slice(0, 3);
+  if (!scripts.length) return known[0] ?? "en";
+  const votes = (x: string) => scripts.filter((y) => y === x).length;
+  const script = scripts.reduce((best, x) => (votes(x) > votes(best) ? x : best), scripts[0]);
+  if (script !== "latin") return script;
+  return known.find((d) => !NON_LATIN_LANGUAGE.test(d)) ?? "en";
+}
+
 /** A chat message as the pick-up line reads it (newest first): who wrote it, and whether it was said in a call. */
 export type PickUpMessage = { actor: string; body: string; voiceSessionId: string | null };
 
@@ -251,13 +283,18 @@ export async function loadVoiceInstructions(
     // The team's latest decline of a special price (as in a chat turn).
     priceApprovalContext(db, account.id, lead.id),
   ]);
-  // A call starts in the conversation's language (the opener is written in English or Hebrew; another language is spoken by the model).
-  const language = conv.language || "en";
+  // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
+  const continuing = !opts.resumed && agentCount.length > 0;
+  // A new call starts in the conversation's language (the opener is written in English or Hebrew; another language
+  // is spoken by the model). A call that goes on from a conversation (the pick-up line, a reconnect) speaks the
+  // language of its latest messages, with the agent's languages as fallback: never the page's UI language, which
+  // a test-lab conversation was created with (the 22 Nov 2026 call: a Hebrew pick-up line in an English chat).
+  const language = continuing || opts.resumed
+    ? conversationTalkLanguage(earlier, [...contact.languages, conv.language])
+    : conv.language || "en";
   const locale = isLocale(language) ? language : "en";
   const names = buyerNames(version.playbook, account, locale);
   const firstName = lead.fullName.trim().split(/\s+/)[0] || "there";
-  // A chat that already has agent messages continues by voice: no opener, a short pick-up line.
-  const continuing = !opts.resumed && agentCount.length > 0;
   // The pick-up line: the agent's own unanswered question re-asked once (pickUpReAsk); else the fallback.
   const reAsk = continuing ? pickUpReAsk(earlier) : null;
   const fallback = continueFallback(language);

@@ -385,7 +385,7 @@ async function standbySection(browser: Browser, base: string) {
 
 /**
  * The voice model picker (Versions and test lab › Voice settings): Gemini shows its voices and no turn-taking;
- * a GPT model shows style, pause and interruptions as controls, and is marked not tried live yet. Then one
+ * a GPT model shows style, pause and interruptions as controls (proven live: no "not tried" note). Then one
  * scripted call per model id (the scripted model stands in): the "This call" card names the model and the
  * session row stores it. Screenshots model-picker-gemini, model-picker-gpt, model-this-call.
  */
@@ -411,7 +411,7 @@ async function modelSection(browser: Browser, base: string) {
     check((await page.inputValue("#vs-voice")) === "", "the voice is now the model's default (Alloy)");
     check((await page.locator('[name="style"]').count()) > 0 && (await page.locator("#vs-pause").count()) === 1 && (await page.locator("#vs-interrupt").count()) === 1,
       "GPT-Realtime 2.1: style, pause and interruptions as real controls, before saving");
-    check(((await page.locator("[data-voice-model-unproven]").textContent()) ?? "").includes("Not tried on a live call yet"), "GPT-Realtime 2.1 is marked not tried live yet");
+    check((await page.locator("[data-voice-model-unproven]").count()) === 0, "GPT-Realtime 2.1 is proven live (21-22 Nov 2026): no \"not tried\" note");
     check(((await page.locator("[data-voice-model-cost]").textContent()) ?? "").includes("× the cost per minute of Gemini"), "a relative cost hint for GPT-Realtime 2.1");
     check((await page.locator('#vs-voice option[value="Kore"]').count()) === 0 && (await page.locator('#vs-voice option[value="coral"]').count()) === 1, "the voices are OpenAI's");
     await page.selectOption("#vs-pause", "1000");

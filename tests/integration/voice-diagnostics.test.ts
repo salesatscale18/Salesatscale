@@ -6,8 +6,9 @@
  */
 import { EventEmitter } from "node:events";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { eq } from "drizzle-orm";
-import { rateLimits, users, voiceSessions, type User } from "@/db/schema";
+import { and, asc, eq } from "drizzle-orm";
+import { messages, rateLimits, users, voiceSessions, type User } from "@/db/schema";
+import { ServerEventMapper } from "@/lib/voice/gateway-realtime";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
@@ -32,7 +33,7 @@ function fakeLog() {
 
 /** A model that says nothing on its own: the test drives its events. */
 class FakeModel implements RealtimeModel {
-  readonly modelId = "google/gemini-3.8-live";
+  constructor(readonly modelId = "google/gemini-3.8-live") {}
   readonly mode = "scripted" as const; // never priced
   readonly conns: { cfg: RealtimeSessionConfig; emit: (e: RealtimeEvent) => void; responses: (string | undefined)[]; closed: boolean }[] = [];
   failNext = 0;
@@ -292,5 +293,111 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     expect(r).toMatchObject({ endReason: "error", errorCode: "model_unavailable" });
     expect(r.usage?.endDetail).toEqual({ by: "error", lastError: "gateway said no" });
     expect(c.logs.text()).toMatch(/model connect failed after \d+ms: gateway said no/);
+  });
+
+  describe("OpenAI realtime: the buyer's transcription completes after the answer started (live calls of 22 Nov 2026)", () => {
+    type Sdk = Parameters<ServerEventMapper["map"]>[0];
+    /** Feeds normalized SDK events through the real adapter mapping, as the Gateway connection does. */
+    function openai(model: FakeModel) {
+      const mapper = new ServerEventMapper();
+      return (e: Record<string, unknown>) => { for (const x of mapper.map({ raw: {}, ...e } as Sdk)) model.conns[model.conns.length - 1].emit(x); };
+    }
+    const stored = async (sessionId: string) => (await db.select({ actor: messages.actor, body: messages.body, spokenAtMs: messages.spokenAtMs }).from(messages)
+      .where(and(eq(messages.voiceSessionId, sessionId), eq(messages.accountId, acc))).orderBy(asc(messages.createdAt))).map((m) => [m.actor, m.body]);
+    async function opener(c: Awaited<ReturnType<typeof engineCall>>, send: (e: Record<string, unknown>) => void) {
+      send({ type: "response-created", responseId: "r0" });
+      send({ type: "audio-delta", delta: "AAAA" });
+      send({ type: "audio-transcript-delta", delta: "Hi, this is Maya from Acme." });
+      send({ type: "audio-transcript-done", transcript: "Hi, this is Maya from Acme." });
+      send({ type: "response-done", responseId: "r0", status: "completed" });
+      await c.run(2_000);
+    }
+
+    it("the buyer's line is stored and shown before the answer that started before its transcription came", async () => {
+      const model = new FakeModel("openai/gpt-realtime-2.1");
+      const c = await engineCall(model);
+      const send = openai(model);
+      await opener(c, send);
+      send({ type: "speech-started" });
+      await c.run(1_500);
+      send({ type: "response-created", responseId: "r1" });
+      send({ type: "audio-delta", delta: "AAAA" });
+      send({ type: "audio-transcript-delta", delta: "It starts at about 590 shekels per sensor." });
+      await c.run(13);
+      // The transcription of what the buyer said, after the answer to it started.
+      send({ type: "input-transcription-completed", itemId: "i1", transcript: "How much is it?" });
+      await c.settle();
+      send({ type: "audio-transcript-done", transcript: "It starts at about 590 shekels per sensor." });
+      send({ type: "response-done", responseId: "r1", status: "completed" });
+      await c.run(1_000);
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+      expect(await stored(c.sessionId)).toEqual([
+        ["agent", "Hi, this is Maya from Acme."], ["buyer", "How much is it?"], ["agent", "It starts at about 590 shekels per sensor."],
+      ]);
+      // The live transcript: the buyer's line is timed from when they started speaking, before the answer.
+      const finals = c.sent.filter((m): m is Extract<ServerMessage, { t: "transcript" }> => !(m instanceof Uint8Array) && m.t === "transcript" && m.final);
+      const buyer = finals.find((m) => m.role === "buyer")!;
+      const answer = finals.filter((m) => m.role === "agent").at(-1)!;
+      expect(buyer.atMs).toBeLessThan(answer.atMs);
+      // The answer was never stored as cut ("…") by the late buyer line.
+      expect(finals.filter((m) => m.role === "agent").map((m) => m.text).some((t) => t.endsWith("…"))).toBe(false);
+    });
+
+    it("the buyer's speech overlaps the start of the answer: ONE agent line (the cut one is completed), after the buyer's line", async () => {
+      const model = new FakeModel("openai/gpt-realtime-mini");
+      const c = await engineCall(model);
+      const send = openai(model);
+      await opener(c, send);
+      send({ type: "speech-started" });
+      await c.run(1_500);
+      send({ type: "response-created", responseId: "r1" });
+      send({ type: "audio-delta", delta: "AAAA" });
+      send({ type: "audio-transcript-delta", delta: "It starts at about 590 shek" });
+      await c.run(300);
+      // The buyer is still talking: OpenAI reports speech again, then the whole cancelled response's transcript.
+      send({ type: "speech-started" });
+      await c.settle();
+      send({ type: "audio-transcript-done", transcript: "It starts at about 590 shekels per sensor, and the total depends" });
+      send({ type: "response-done", responseId: "r1", status: "cancelled" });
+      await c.run(1_000);
+      send({ type: "input-transcription-completed", itemId: "i1", transcript: "How much is it per sensor?" });
+      await c.run(1_000);
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+      expect(await stored(c.sessionId)).toEqual([
+        ["agent", "Hi, this is Maya from Acme."], ["buyer", "How much is it per sensor?"], ["agent", "It starts at about 590 shekels per sensor, and the total depends…"],
+      ]);
+    });
+
+    it("Gemini's order is unchanged: its buyer turn closes before the answer, and a barge-in keeps the cut line first", async () => {
+      const model = new FakeModel();
+      const c = await engineCall(model);
+      const send = openai(model);
+      await opener(c, send);
+      send({ type: "transcript-fragment", speaker: "user", delta: "How much " });
+      send({ type: "transcript-fragment", speaker: "user", delta: "is it?" });
+      await c.run(1_000);
+      // Each event arrives on its own (as over the socket): the engine's queue runs between them.
+      send({ type: "audio-delta", delta: "AAAA" });
+      await c.settle();
+      send({ type: "transcript-fragment", speaker: "assistant", delta: "It starts at about 590 shekels per sensor, and" });
+      await c.run(500);
+      // The buyer cuts in, then speaks a new line.
+      send({ type: "speech-started" });
+      send({ type: "transcript-fragment", speaker: "user", delta: "Per month?" });
+      await c.run(500);
+      send({ type: "audio-delta", delta: "AAAA" });
+      await c.settle();
+      send({ type: "transcript-fragment", speaker: "assistant", delta: "No, once." });
+      send({ type: "response-done", responseId: "r2", status: "completed" });
+      await c.run(500);
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+      expect(await stored(c.sessionId)).toEqual([
+        ["agent", "Hi, this is Maya from Acme."], ["buyer", "How much is it?"], ["agent", "It starts at about 590 shekels per sensor, and…"],
+        ["buyer", "Per month?"], ["agent", "No, once."],
+      ]);
+    });
   });
 });
