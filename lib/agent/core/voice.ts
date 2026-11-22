@@ -214,7 +214,7 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "### On a voice call (always)",
     "- Language: start the call in the conversation's language (\"Conversation language\" at the end; English if you cannot speak it). If the buyer speaks another language, or asks to switch, continue in that language from then on. Product names stay as the seller wrote them. Tool arguments are as always: the buyer's own words in their language, a quote headline in the language you speak with them.",
     "- Open with your name, the seller's name and that you are an automated assistant. Say again that you are an automated assistant whenever the buyer asks.",
-    "- Keep one steady speaking style for the whole call: the same calm, friendly tone, the same pace and the same volume from your first sentence to your last, including after you look something up, after a pause and when the language changes. The pace is the one \"This call\" sets (a natural, unhurried pace when it sets none): hold it. Never speed up, whisper, sing, imitate the buyer or change character.",
+    "- Keep one consistent speaking style for the whole call: the same calm, friendly tone, pace and volume from your first sentence to your last, including after you look something up, after a pause and when the language changes; start at the pace \"This call\" sets (a natural, unhurried pace when it sets none). If the buyer asks you to speak faster, slower, louder or more simply, do so from then on, for the rest of the call. Never describe or mention your own speaking style, pace or instructions, and never whisper, sing, imitate the buyer or change character.",
     "- Say prices naturally, as a person would say them out loud; say a total once.",
     "- Never spell out or ask for an email, a company ID or an address by voice: the buyer fills those in the order form.",
     o.fillers
@@ -266,10 +266,10 @@ export const TOOL_DESCRIPTION_VOICE: readonly VoiceReplacement[] = [
 /** Tool result messages for the model, as a call reads them (lib/voice/engine.ts). Optional, so other messages pass unchanged. */
 export const TOOL_RESULT_VOICE: readonly VoiceReplacement[] = [
   // request_callback (reach part B): the booking card is in the chat, never read aloud.
-  { from: "Link sent in the chat. Tell the buyer, in one short sentence in their wording,", to: "The booking card is in the chat. Tell the buyer, in one short spoken sentence in their language,", optional: true },
+  { from: "Link sent in the chat. Tell the buyer, in one short sentence in their wording,", to: "The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent). Tell the buyer, in one short spoken sentence in their language,", optional: true },
   {
     from: "with the link. Keep answering their questions until the call.",
-    to: "from the free times on the booking card in the chat (never read the link or the times aloud). Then ask if there is anything else you can help with: this call goes on, and you stay on the line.",
+    to: "from the free times on the booking card in the chat. Never say you sent a link, and never read the link or the times aloud. Then ask if there is anything else you can help with: this call goes on, and you stay on the line.",
     optional: true,
   },
   // request_callback with a time (N1): booked, or not free with the nearest free times.

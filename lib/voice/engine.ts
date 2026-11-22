@@ -117,6 +117,9 @@ export type { VoiceEndBy, VoiceEndDetail };
 
 /** The final row write: whether it ended the row, and the figures the browser is told. */
 type FinalRow = { connected: boolean; ended: boolean; durationSec: number; costMicros: number; answerMsAvg: number | null };
+/** What a Hebrew call says after request_callback put the booking card in the chat (the free times are there). */
+export const BOOKING_CARD_LINE_HE = "השעות הפנויות לשיחה מופיעות כאן בצ'אט, ואפשר לבחור שם שעה שנוחה לך.";
+
 /** A final row write that has not answered in this long is tried again (a hung query must not hold the end). */
 export const FINAL_WRITE_TIMEOUT_MS = 8_000;
 /** The recording's last chunk and its row update get at most this long after the call ended. */
@@ -206,6 +209,34 @@ export function continuesCutLine(longer: string, cut: string): boolean {
   const last = b.length - 1;
   return b.slice(0, last).every((w, i) => w === a[i]) && a[last].startsWith(b[last]) && a[last] !== b[last];
 }
+/**
+ * A cut line and the line said next overlap (cut "A B C…", next "B C D": the model said the end of its line again
+ * after a cut, e.g. after an echo of its own voice): the one line "A B C D", or null when they do not overlap. The
+ * overlap is at least three words (the cut's last word may be a word cut short); a next line wholly inside the cut
+ * one adds nothing (the cut line).
+ */
+export function mergeCutOverlap(cut: string, next: string): string | null {
+  const cw = cut.trim().replace(/…$/u, "").split(/\s+/).filter(Boolean);
+  const nw = next.trim().replace(/…$/u, "").split(/\s+/).filter(Boolean);
+  const n = (w: string) => normLine(w);
+  for (let i = 1; i < cw.length; i++) {
+    const k = cw.length - i;
+    if (k < 3 && nw.length >= k) continue;
+    const span = Math.min(k, nw.length);
+    if (span < 3) continue;
+    let ok = true;
+    for (let j = 0; j < span && ok; j++) {
+      const a = n(cw[i + j]);
+      const b = n(nw[j]);
+      // The cut's very last word may stop mid-word.
+      ok = i + j === cw.length - 1 ? b.startsWith(a) : a === b;
+    }
+    if (!ok) continue;
+    return nw.length > k ? [...cw.slice(0, i), ...nw].join(" ") : cw.join(" ");
+  }
+  return null;
+}
+
 /** A line the buyer cut short, as stored: the words actually said, ending with "…". */
 export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
 
@@ -414,8 +445,12 @@ export class VoiceEngine {
 
   onClientAudio(bytes: Uint8Array): void {
     if (this.ended || this.muted) return;
-    // The recording's left channel: the mic as received (a muted mic sends nothing here: silence).
+    // Forward first; the recording (left channel: the mic as received) only queues its work for after.
+    this.forwardClientAudio(bytes);
     if (this.callStart !== null) this.recorder?.buyer(bytes, this.offsetMs());
+  }
+
+  private forwardClientAudio(bytes: Uint8Array): void {
     if (this.standbySince !== null) return this.listenOnStandby(bytes);
     if (this.waking) return this.holdWakeAudio(bytes);
     if (!this.conn || this.reconnecting) return;
@@ -885,7 +920,7 @@ export class VoiceEngine {
         if (e.final) turn.finalText = true;
         // The model resumes (or re-says) the line the buyer cut: the live transcript keeps it on one line.
         const last = this.lastLine;
-        if (fresh && last?.cut && (continuesCutLine(turn.text, last.raw) || continuesCutLine(last.raw, turn.text) || this.redoesFalseCut(turn))) turn.id = last.turnId;
+        if (fresh && last?.cut && (continuesCutLine(turn.text, last.raw) || continuesCutLine(last.raw, turn.text) || mergeCutOverlap(last.raw, turn.text) !== null || this.redoesFalseCut(turn))) turn.id = last.turnId;
         if (!e.final) this.send({ t: "transcript", id: turn.id, role: "agent", text: maskPartialDigits(turn.text), final: false, atMs: turn.startMs });
         return;
       }
@@ -1429,6 +1464,10 @@ export class VoiceEngine {
     }
     // Every result message in call wording ("confirm it here" → "by message", …).
     if (typeof forModel.message === "string") forModel = { ...forModel, message: voiceToolResultMessage(forModel.message) };
+    // The booking card only (no time named): a fixed Hebrew example of what to say, for a Hebrew call.
+    if (name === "request_callback" && r.outcome === "ok" && this.spokenLanguage === "he" && /^Link sent in the chat\./.test(String(r.result.message ?? ""))) {
+      forModel = { ...forModel, message: `${String(forModel.message ?? "")} For example, in Hebrew: "${BOOKING_CARD_LINE_HE}"` };
+    }
     // A call in another language than English: the guidance (written in English) names the language to answer in.
     if (this.spokenLanguage !== "en" && name !== "record_opt_out") {
       forModel = { ...forModel, message: `${typeof forModel.message === "string" ? `${forModel.message} ` : ""}${this.sayIn()}` };
@@ -1518,19 +1557,21 @@ export class VoiceEngine {
       result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
     }));
     // A cut transcript may stop mid-word ("40 doll"): the whole line still continues it.
-    const resumes = !!last && last.cut && !!raw && (continuesCutLine(raw, last.raw) || this.redoesFalseCut(turn));
+    // The re-said line overlaps the cut one (cut "A B C…", then "B C D", e.g. after an echo): one line, "A B C D".
+    const overlap = last && last.cut && raw && !continuesCutLine(raw, last.raw) ? mergeCutOverlap(last.raw, raw) : null;
+    const resumes = !!last && last.cut && !!raw && (continuesCutLine(raw, last.raw) || !!overlap || this.redoesFalseCut(turn));
     const repeatsCut = !!last && cut && !resumes && continuesCutLine(last.raw, raw);
     if (last && (resumes || repeatsCut)) {
       // Resumed after the cut: the earlier row becomes the whole line. A cut copy of the line just said adds nothing.
       const now = await this.stamp();
-      const newBody = resumes ? body : (last.cut ? cutLine(last.raw) : last.raw);
+      const newBody = resumes ? (overlap ? (cut ? cutLine(overlap) : overlap) : body) : (last.cut ? cutLine(last.raw) : last.raw);
       await atomic(this.db, (q) => [
         ...(resumes ? [q.update(messages).set({ body: newBody, language: lineLanguage(newBody, conv.language) }).where(and(eq(messages.id, last.messageId), eq(messages.accountId, account.id)))] : []),
         ...(turn.tools.length ? [q.insert(toolCalls).values(toolRows(last.messageId, last.tools))] : []),
         q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, account.id))),
       ]);
       this.lastLine = resumes
-        ? { ...last, raw, cut, tools: last.tools + turn.tools.length, ...(cut ? { cutAtMs: this.offsetMs() } : { cutAtMs: undefined }) }
+        ? { ...last, raw: overlap ?? raw, cut, tools: last.tools + turn.tools.length, ...(cut ? { cutAtMs: this.offsetMs() } : { cutAtMs: undefined }) }
         : { ...last, tools: last.tools + turn.tools.length };
       if (resumes) {
         const i = this.lines.findLastIndex((l) => l.role === "agent");

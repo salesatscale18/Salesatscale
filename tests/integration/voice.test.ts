@@ -260,8 +260,8 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(tc.some((x) => x.name === "hand_off_to_human")).toBe(false);
     // The model heard the result in call wording: the link is in the chat, never read aloud; the call goes on.
     const sent = c.conn().sent.toolResults.filter((r) => r.name === "request_callback").at(-1)!.result as { message: string };
-    expect(sent.message).toMatch(/^The booking card is in the chat\. Tell the buyer, in one short spoken sentence in their language,/);
-    expect(sent.message).toContain("from the free times on the booking card in the chat (never read the link or the times aloud).");
+    expect(sent.message).toMatch(/^The booking card with the free times is now in this chat \(a card to pick a time on, not a link you sent\)\. Tell the buyer, in one short spoken sentence in their language,/);
+    expect(sent.message).toContain("from the free times on the booking card in the chat. Never say you sent a link, and never read the link or the times aloud.");
     expect(sent.message).toContain("this call goes on, and you stay on the line.");
     // The live transcript's chip while it ran.
     expect(c.json()).toContainEqual({ t: "tool", id: expect.any(String), name: "request_callback", label: "Requesting a call", status: "running" });
@@ -398,7 +398,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       const rc = (await calls(c.conversationId)).filter((x) => x.name === "request_callback");
       expect(rc[0]).toMatchObject({ outcome: "ok", input: { brief: "Pricing", time: null } });
       const sent = c.conn().sent.toolResults.find((r) => r.name === "request_callback")!.result as { message: string };
-      expect(sent.message).toMatch(/^The booking card is in the chat\./);
+      expect(sent.message).toMatch(/^The booking card with the free times is now in this chat/);
       await hangUp(c);
     });
   });

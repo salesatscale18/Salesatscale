@@ -133,6 +133,28 @@ describe("recording a call", () => {
     expect(c.model.connections).toHaveLength(2);
   });
 
+  it("the opening instruction carries the exact recording line, never the answer for when the buyer asks (new call and pick-up)", async () => {
+    const c = await newCall();
+    const opener = c.model.connections[0].sent.responses[0]!;
+    expect(opener).toContain(RECORDING_NOTICE.en);
+    expect(opener).not.toContain("I don't control");
+    expect(opener).toContain("never the answer for when the buyer asks about it");
+    // The session's rule for the on-request answer says it is never part of an opening.
+    expect(c.model.connections[0].cfg.instructions).toContain("The two answers below are not part of any opening and never start a turn on their own");
+    await c.run(15_000);
+    await end(c);
+    // A call that picks up a chat (no greeting): the exact line comes first, then the pick-up line; nothing else about recording.
+    const chat = (await startVoiceTestConversation(db, acc, me.id, { scenario: null, language: "en" }))!;
+    await db.insert(messages).values({ accountId: acc, conversationId: chat.conversationId, actor: "agent", body: "Thanks. How many fridges do you need to cover?", language: "en" });
+    const pick = await newCall({ conversationId: chat.conversationId });
+    const prompt = pick.model.connections[0].sent.responses[0]!;
+    expect(prompt).toContain(`"${RECORDING_NOTICE.en} So, how many fridges do you need to cover?"`);
+    expect(prompt).not.toContain("I don't control");
+    await pick.run(15_000);
+    await end(pick);
+    expect((await agentLines(chat.conversationId, pick.sessionId))[0]).toBe(`${RECORDING_NOTICE.en} So, how many fridges do you need to cover?`);
+  });
+
   it("a Hebrew call says the Hebrew notice", async () => {
     const c = await newCall({ scenario: "hebrew_buyer" });
     await c.run(15_000);

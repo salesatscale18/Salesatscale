@@ -656,8 +656,8 @@ export class ScriptedConnection implements RealtimeConnection {
     const results: Record<string, Record<string, unknown>[]> = o.results ? structuredClone(o.results) : {};
     this.ctx = {
       results, last: (name) => results[name]?.at(-1), fields: fieldsFromInstructions(cfg.instructions), localNow: localNowFromInstructions(cfg.instructions),
-      recordingReply: /### This call is recorded\n- [^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
-      recordingWritingOffer: /### This call is recorded\n-[^\n]*\n- [^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
+      recordingReply: /### This call is recorded\n[\s\S]*?raises the recording[^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
+      recordingWritingOffer: /### This call is recorded\n[\s\S]*?then objects to being recorded[^"]*"([^"]+)"/.exec(cfg.instructions)?.[1] ?? null,
     };
     this.usage.textInTokens = Math.ceil(cfg.instructions.length / 4);
   }

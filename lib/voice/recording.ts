@@ -207,13 +207,56 @@ export class CallRecorder {
   private writes: Promise<void> = Promise.resolve();
   private progress: RecordingProgress = { chunks: 0, bytes: 0, sec: 0, failed: 0 };
   private done = false;
+  /**
+   * Work waiting to run (the relay's hot path only queues it): resampling, writing and chunk assembly run in one
+   * deferred batch (setImmediate), after the audio was forwarded, never in the tick that forwards it.
+   */
+  private ops: (() => void)[] = [];
+  private scheduled = false;
 
   /** `ttlDays`: the store deletes each chunk after this many days; 0: kept until someone deletes it. */
   constructor(private readonly o: { store: RecordingStore; prefix: string; ttlDays?: number; onError?: (e: unknown) => void }) {}
 
-  /** The buyer's microphone audio (24 kHz PCM16) that arrived at `atMs`. */
+  /** The buyer's microphone audio (24 kHz PCM16) that arrived at `atMs`. Queued: it runs after the forward. */
   buyer(pcm: Uint8Array, atMs: number) {
     if (this.done) return;
+    this.later(() => this.buyerNow(pcm, atMs));
+  }
+
+  /** Agent audio (24 kHz PCM16) that arrived at `atMs`: it plays after what is already scheduled. Queued. */
+  agent(pcm: Uint8Array, atMs: number) {
+    if (this.done) return;
+    this.later(() => this.agentNow(pcm, atMs));
+  }
+
+  /** The browser dropped the agent audio still queued at `atMs` (a barge-in): it was never heard. Queued, in order. */
+  cut(atMs: number) {
+    if (this.done) return;
+    this.later(() => this.cutNow(atMs));
+  }
+
+  /** Writes every chunk the call clock has passed. Queued. */
+  tick(atMs: number) {
+    if (this.done) return;
+    this.later(() => this.tickNow(atMs));
+  }
+
+  /** Runs the queued work now (finish, and tests that read the store mid-call). */
+  drain() {
+    this.scheduled = false;
+    const ops = this.ops;
+    this.ops = [];
+    for (const op of ops) op();
+  }
+
+  private later(op: () => void) {
+    this.ops.push(op);
+    if (this.scheduled) return;
+    this.scheduled = true;
+    setImmediate(() => { if (this.scheduled) this.drain(); });
+  }
+
+  private buyerNow(pcm: Uint8Array, atMs: number) {
     const s = this.buyerIn.push(pcm);
     if (!s.length) return;
     const end = this.frameAt(atMs);
@@ -221,12 +264,10 @@ export class CallRecorder {
     const start = end - s.length > this.buyerCursor + 160 ? end - s.length : this.buyerCursor;
     this.write("left", start, s);
     this.buyerCursor = start + s.length;
-    this.tick(atMs);
+    this.tickNow(atMs);
   }
 
-  /** Agent audio (24 kHz PCM16) that arrived at `atMs`: it plays after what is already scheduled. */
-  agent(pcm: Uint8Array, atMs: number) {
-    if (this.done) return;
+  private agentNow(pcm: Uint8Array, atMs: number) {
     const s = this.agentIn.push(pcm);
     if (!s.length) return;
     // As the browser's schedule (PlaybackSchedule): right after the queued audio, or after a short lead when idle.
@@ -234,22 +275,23 @@ export class CallRecorder {
     const start = this.agentCursor > now ? this.agentCursor : now + PLAYBACK_LEAD_FRAMES;
     this.write("right", start, s);
     this.agentCursor = start + s.length;
-    this.tick(atMs);
+    this.tickNow(atMs);
   }
 
-  /** The browser dropped the agent audio still queued at `atMs` (a barge-in): it was never heard. */
-  cut(atMs: number) {
+  private cutNow(atMs: number) {
     const at = this.frameAt(atMs);
     if (this.agentCursor <= at) return;
-    for (let f = Math.max(at, this.committed * CHUNK_FRAMES); f < this.agentCursor; f++) {
-      const c = this.chunks.get(Math.floor(f / CHUNK_FRAMES));
-      if (c) c.right[f % CHUNK_FRAMES] = 0;
+    // Zero the scheduled agent audio after `at`, chunk by chunk (fill, not per-sample lookups).
+    for (let f = Math.max(at, this.committed * CHUNK_FRAMES); f < this.agentCursor;) {
+      const k = Math.floor(f / CHUNK_FRAMES);
+      const end = Math.min(this.agentCursor, (k + 1) * CHUNK_FRAMES);
+      this.chunks.get(k)?.right.fill(0, f - k * CHUNK_FRAMES, end - k * CHUNK_FRAMES);
+      f = end;
     }
     this.agentCursor = at;
   }
 
-  /** Writes every chunk the call clock has passed. */
-  tick(atMs: number) {
+  private tickNow(atMs: number) {
     if (this.done) return;
     const now = this.frameAt(atMs);
     while ((this.committed + 1) * CHUNK_FRAMES <= now) this.commit(this.committed, CHUNK_FRAMES);
@@ -266,7 +308,8 @@ export class CallRecorder {
    */
   async finish(atMs: number): Promise<RecordingProgress> {
     if (!this.done) {
-      this.tick(atMs);
+      this.drain();
+      this.tickNow(atMs);
       this.done = true;
       const end = this.frameAt(atMs);
       const rest = end - this.committed * CHUNK_FRAMES;
@@ -280,17 +323,23 @@ export class CallRecorder {
     return Math.max(0, Math.round(ms * FRAMES_PER_MS));
   }
 
+  /** Copies `s` in at frame `start`, one run per chunk (typed-array set, no per-sample lookups). */
   private write(side: "left" | "right", start: number, s: Int16Array) {
-    for (let i = 0; i < s.length; i++) {
+    let i = 0;
+    while (i < s.length) {
       const f = start + i;
       const k = Math.floor(f / CHUNK_FRAMES);
-      if (k < this.committed) continue; // already written: too late for this chunk
-      let c = this.chunks.get(k);
-      if (!c) {
-        c = { left: new Int16Array(CHUNK_FRAMES), right: new Int16Array(CHUNK_FRAMES) };
-        this.chunks.set(k, c);
-      }
-      c[side][f % CHUNK_FRAMES] = s[i];
+      const room = (k + 1) * CHUNK_FRAMES - f;
+      const n = Math.min(room, s.length - i);
+      if (k >= this.committed) {
+        let c = this.chunks.get(k);
+        if (!c) {
+          c = { left: new Int16Array(CHUNK_FRAMES), right: new Int16Array(CHUNK_FRAMES) };
+          this.chunks.set(k, c);
+        }
+        c[side].set(s.subarray(i, i + n), f - k * CHUNK_FRAMES);
+      } // else: already written, too late for that chunk
+      i += n;
     }
   }
 
@@ -298,11 +347,15 @@ export class CallRecorder {
     const c = this.chunks.get(k);
     this.chunks.delete(k);
     this.committed = k + 1;
+    // Interleave in one pass over typed arrays (little-endian PCM16; every host we run on is little-endian).
     const bytes = new Uint8Array(frames * RECORDING_FRAME_BYTES);
-    const view = new DataView(bytes.buffer);
-    for (let i = 0; i < frames; i++) {
-      view.setInt16(i * 4, c ? c.left[i] : 0, true);
-      view.setInt16(i * 4 + 2, c ? c.right[i] : 0, true);
+    if (c) {
+      const out = new Int16Array(bytes.buffer);
+      const { left, right } = c;
+      for (let i = 0, j = 0; i < frames; i++, j += 2) {
+        out[j] = left[i];
+        out[j + 1] = right[i];
+      }
     }
     const path = chunkPath(this.o.prefix, k + 1);
     const secEnd = (k * CHUNK_FRAMES + frames) / RECORDING_RATE;

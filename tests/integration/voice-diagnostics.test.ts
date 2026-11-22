@@ -522,4 +522,59 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       for (const x of [c, e]) { x.engine.onClientMessage({ t: "end" }); await x.settle(); }
     });
   });
+
+  describe("live call fixes of 22 Nov 2026 (evening)", () => {
+    type Sdk = Parameters<ServerEventMapper["map"]>[0];
+    function sdk(model: FakeModel) {
+      const mapper = new ServerEventMapper();
+      return (e: Record<string, unknown>) => { for (const x of mapper.map({ raw: {}, ...e } as Sdk)) model.conns[model.conns.length - 1].emit(x); };
+    }
+    const rows = async (sessionId: string) => (await db.select({ actor: messages.actor, body: messages.body }).from(messages)
+      .where(and(eq(messages.voiceSessionId, sessionId), eq(messages.accountId, acc))).orderBy(asc(messages.createdAt))).map((m) => [m.actor, m.body]);
+
+    it("a cut line re-said from its middle after an echo (\"Ja.\") is one stored line, not two", async () => {
+      const model = new FakeModel();
+      const c = await engineCall(model);
+      const send = sdk(model);
+      send({ type: "audio-delta", delta: "AAAA" });
+      await c.settle();
+      send({ type: "transcript-fragment", speaker: "assistant", delta: "Some calls may be recorded for quality review; I don't control the recording myself. So, how many fridges do you need" });
+      await c.run(800);
+      send({ type: "speech-started" });
+      send({ type: "transcript-fragment", speaker: "user", delta: "Ja." });
+      await c.run(300);
+      send({ type: "audio-delta", delta: "AAAA" });
+      await c.settle();
+      send({ type: "transcript-fragment", speaker: "assistant", delta: "for quality review; I don't control the recording myself. So, how many fridges do you need to cover?" });
+      send({ type: "response-done", responseId: "r2", status: "completed" });
+      await c.run(500);
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+      expect(await rows(c.sessionId)).toEqual([
+        ["agent", "Some calls may be recorded for quality review; I don't control the recording myself. So, how many fridges do you need to cover?"],
+        ["buyer", "Ja."],
+      ]);
+    });
+
+    it("a Hebrew call books by the card: the guidance says the free times are in this chat (not a link) with the Hebrew line", async () => {
+      const { BOOKING_CARD_LINE_HE } = await import("@/lib/voice/engine");
+      const model = new FakeModel("openai/gpt-realtime-mini");
+      const c = await engineCall(model);
+      const send = sdk(model);
+      send({ type: "speech-started" });
+      await c.run(500);
+      send({ type: "input-transcription-completed", itemId: "i1", transcript: "אני רוצה לקבוע שיחה עם נציג" });
+      await c.run(300);
+      send({ type: "function-call-arguments-done", responseId: "r1", itemId: "f1", callId: "call-1", name: "request_callback", arguments: JSON.stringify({ brief: "Wants to talk to a person", time: null }) });
+      await c.run(500);
+      const r = model.conns[0].toolResults.find((x) => x.name === "request_callback")!.result;
+      expect(r.ok).toBe(true);
+      expect(r.message).toContain("The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent).");
+      expect(r.message).toContain("Never say you sent a link");
+      expect(r.message).toContain(`For example, in Hebrew: "${BOOKING_CARD_LINE_HE}"`);
+      expect(r.message).toMatch(/Say it in Hebrew, the language you are speaking with the buyer\.$/);
+      c.engine.onClientMessage({ t: "end" });
+      await c.settle();
+    });
+  });
 });

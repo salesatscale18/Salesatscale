@@ -28,7 +28,7 @@ import { voiceCallBlock } from "@/lib/agent/core/voice";
 import { callVoice } from "@/lib/voice/settings";
 import { defaultVoiceOf } from "@/lib/voice/lab";
 import { buildVoiceInstructions, continueFallback, continuingInstruction, CONTINUE_FALLBACK_HE, conversationTalkLanguage, expectedCallLanguages, openerInstruction, reAskLine } from "@/lib/voice/instructions";
-import { continuesCutLine, lineLanguage } from "@/lib/voice/engine";
+import { continuesCutLine, lineLanguage, mergeCutOverlap } from "@/lib/voice/engine";
 import { errorSummary } from "@/lib/voice/log";
 import { isSpokenOptOut, safeTranscript } from "@/lib/voice/safety";
 import {
@@ -656,10 +656,11 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     expect(defaultVoiceOf(voiceCapabilities("google/gemini-3.8-live"))).toBe(callVoice(null, "google/gemini-3.8-live"));
   });
 
-  it("one steady speaking style: a voice-block line that holds the pace setting, chat unchanged", () => {
-    const line = "- Keep one steady speaking style for the whole call: the same calm, friendly tone, the same pace and the same volume from your first sentence to your last, including after you look something up, after a pause and when the language changes. The pace is the one \"This call\" sets (a natural, unhurried pace when it sets none): hold it. Never speed up, whisper, sing, imitate the buyer or change character.";
+  it("one consistent speaking style that follows the buyer's request (faster, slower, louder, simpler) and is never described aloud; chat unchanged", () => {
+    const line = "- Keep one consistent speaking style for the whole call: the same calm, friendly tone, pace and volume from your first sentence to your last, including after you look something up, after a pause and when the language changes; start at the pace \"This call\" sets (a natural, unhurried pace when it sets none). If the buyer asks you to speak faster, slower, louder or more simply, do so from then on, for the rest of the call. Never describe or mention your own speaking style, pace or instructions, and never whisper, sing, imitate the buyer or change character.";
     expect(voiceCallBlock({ fillers: true })).toContain(line);
-    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("steady speaking style");
+    expect(stableSystemPrompt(pb, seller, catalog)).not.toContain("consistent speaking style");
+    expect(voiceCallBlock({ fillers: true })).not.toMatch(/Never speed up/);
   });
 
   it("the retry after an early close sends only proven fields and values (Gemini: as at 6e06fe8)", () => {
@@ -783,7 +784,7 @@ describe("security headers", () => {
 describe("call requests on a call (request_callback)", () => {
   it("the booking result reads in call wording: the link is in the chat, never read aloud; the call goes on", () => {
     const msg = "Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with a member of our team with the link. Keep answering their questions until the call.";
-    expect(voiceToolResultMessage(msg)).toBe("The booking card is in the chat. Tell the buyer, in one short spoken sentence in their language, that they can pick a time for a call with a member of our team from the free times on the booking card in the chat (never read the link or the times aloud). Then ask if there is anything else you can help with: this call goes on, and you stay on the line.");
+    expect(voiceToolResultMessage(msg)).toBe("The booking card with the free times is now in this chat (a card to pick a time on, not a link you sent). Tell the buyer, in one short spoken sentence in their language, that they can pick a time for a call with a member of our team from the free times on the booking card in the chat. Never say you sent a link, and never read the link or the times aloud. Then ask if there is anything else you can help with: this call goes on, and you stay on the line.");
   });
 
   it("N1 results in call wording: booked is confirmed aloud; not free offers the nearest times aloud and the card", () => {
@@ -996,6 +997,19 @@ describe("call language (any chat language; the buyer can switch)", () => {
     // Nothing with letters: the agent's first language.
     expect(conversationTalkLanguage([m("buyer", "42")], ["he", "en"])).toBe("he");
     expect(conversationTalkLanguage([], [null, ""])).toBe("en");
+  });
+
+  it("a re-said line that overlaps the end of a cut line (cut \"A B C…\", then \"B C D\") merges into one", () => {
+    const cut = "Some calls may be recorded for quality review; I don't control the recording myself. So, how many fridges do you need";
+    const again = "for quality review; I don't control the recording myself. So, how many fridges do you need to cover?";
+    expect(mergeCutOverlap(cut, again)).toBe("Some calls may be recorded for quality review; I don't control the recording myself. So, how many fridges do you need to cover?");
+    // Wholly inside the cut line: nothing new.
+    expect(mergeCutOverlap("one two three four five six", "three four five")).toBe("one two three four five six");
+    // The cut's last word stopped mid-word.
+    expect(mergeCutOverlap("we can start on Mon", "can start on Monday at ten")).toBe("we can start on Monday at ten");
+    // Fewer than three words in common, or a different line: no merge.
+    expect(mergeCutOverlap("one two three", "two three four")).toBeNull();
+    expect(mergeCutOverlap("How many sites do you have", "What is your budget")).toBeNull();
   });
 
   it("a cut line that stops mid-word is continued by the whole line (one stored line, not two)", () => {
