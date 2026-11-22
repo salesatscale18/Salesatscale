@@ -659,7 +659,8 @@ async function handedBack(db: Db, actor: Actor & { userId: string }, accountId: 
     { actor: "buyer", at: min(now, 135), body: "Just one. Can I talk to someone about a visit first?" },
   ]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: min(now, 135) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 125)) } });
+  // "3 fridges and a cold room", then "4 sensors": four to monitor.
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 125)), fridges: fact("4", min(now, 125)) } });
   const taken = await takeOver(db, actor, accountId, id, min(now, 130));
   if (!taken.ok) throw new Error(`Demo seed: take over refused: ${taken.reason}`);
   await insertThread(db, accountId, id, "en", versionId, [
@@ -679,7 +680,7 @@ async function handedBack(db: Db, actor: Actor & { userId: string }, accountId: 
     { actor: "buyer", at: min(now, 126), body: "Sunday works. And what would 4 sensors cost?" },
     {
       actor: "agent", at: min(now, 125), body: "Great, Sunday at 10:00 it is. For one site with 4 sensors you need one gateway; I'll prepare the quote for you.",
-      calls: [{ name: "update_deal_state", input: { updates: [{ key: "sites", value: "1", provenance: "buyer" }] }, result: { ok: true, saved: ["sites"] } }],
+      calls: [{ name: "update_deal_state", input: { updates: [{ key: "sites", value: "1", provenance: "buyer" }, { key: "fridges", value: "4", provenance: "buyer" }] }, result: { ok: true, saved: ["sites", "fridges"] } }],
     },
   ]);
   await db.update(leads).set({ lastActivityAt: min(now, 125) }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
@@ -872,7 +873,7 @@ async function buyerNamedCall(db: Db, accountId: string, leadId: string, version
     calls: [{ name: "schedule_follow_up", input, result: { ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal } }],
   }]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 40)) }, nextStep: followUpNextStep(r.dueLocal, r.followUp.topic) });
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 40)), fridges: fact("5", min(now, 40)) }, nextStep: followUpNextStep(r.dueLocal, r.followUp.topic) });
   return id;
 }
 
@@ -939,7 +940,7 @@ async function talkNow(db: Db, actor: Actor & { userId: string }, accountId: str
     actor: "agent", at: new Date(at.getTime() + 1000), body: `Done. I'll message you on ${r.dueForBuyer} your time.`,
     calls: [{ name: "schedule_follow_up", input, result: { ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal } }],
   }]);
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 75)) } });
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 75)), fridges: fact("4", min(now, 75)) } });
   // The scheduler's lock: only one run moves a row out of "scheduled" (a cron run that took it first has fired it already).
   const [f] = await db.update(followUps).set({ status: "sent", reason: "sending" })
     .where(and(eq(followUps.id, r.followUp.id), eq(followUps.accountId, accountId), eq(followUps.status, "scheduled"))).returning();

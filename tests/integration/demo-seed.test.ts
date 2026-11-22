@@ -44,6 +44,7 @@ const { sha256 } = await import("@/lib/sources/text");
 const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { listMarkets } = await import("@/lib/markets/service");
+const { dealEstimates } = await import("@/lib/leads/deal-estimate");
 
 const OWNER = "owner@platform.test";
 const thrown = async (p: Promise<unknown>) => {
@@ -157,9 +158,12 @@ describe("one-click demo account", () => {
     expect(pb.agentName).toBe("Maya");
     expect(pb.maxDiscountBp).toBe(500);
     const keys = pb.fields.map((f) => f.key);
-    for (const k of ["company_name", "company_id", "billing_address", "invoice_email", "signatory_name", "signatory_role", "sites", "current_monitoring"]) {
+    for (const k of ["company_name", "company_id", "billing_address", "invoice_email", "signatory_name", "signatory_role", "sites", "fridges", "current_monitoring"]) {
       expect(keys).toContain(k);
     }
+    // Owner, 22 Nov: the number of fridges is a deal field like sites, asked right after it.
+    expect(pb.fields.find((f) => f.key === "fridges")).toMatchObject({ label: "Number of fridges and freezers", stage: "before_quote", hint: "Whole number" });
+    expect(keys.indexOf("fridges")).toBe(keys.indexOf("sites") + 1);
     // Every order-form prefill field the demo needs has a playbook key that fills it.
     for (const field of ["company_name", "company_id", "billing_address", "invoice_email", "signatory_name", "signatory_role"] as const) {
       expect(DEAL_KEYS_FOR_FIELD[field]).toContain(field);
@@ -209,6 +213,21 @@ describe("one-click demo account", () => {
     const r = await startWhatsAppConversation(db, { send, fetchContent: async () => null }, { userId: admin.id, actingAs: true }, accountId, rows.find((l) => l.sourceRef === "demo-seed:1")!.id);
     expect(r).toEqual({ ok: false, reason: "test_lead" });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it("leads whose chat names the fridges carry them in the deal state, and their estimates include the sensors", async () => {
+    const rows = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.isTest, false)));
+    const est = await dealEstimates(db, accountId, rows.map((l) => ({ id: l.id, marketId: l.marketId })));
+    const of = (name: string) => est.get(rows.find((l) => l.fullName === name)!.id);
+    // Prices without VAT, 18% on top. Rotem: 5 fridges, 1 site: 5 × 590 + 660 + 250 = 3,860; 90 a month.
+    expect(of("Rotem Demo")).toEqual({ currency: "ILS", oneTimeMinor: 455_480, recurringMinor: 10_620, recurringPeriod: "month" });
+    // Gal (voice call): five fridges at 2 sites: 5 × 590 + 2 × 660 + 2 × 250 = 4,770; 180 a month.
+    expect(of("Gal Demo")).toEqual({ currency: "ILS", oneTimeMinor: 562_860, recurringMinor: 21_240, recurringPeriod: "month" });
+    // Noam (3 fridges and a cold room: 4 sensors) and Ido (4 pastry fridges), 1 site each: 4 × 590 + 660 + 250 = 3,270.
+    expect(of("Noam Demo")?.oneTimeMinor).toBe(385_860);
+    expect(of("Ido Demo")?.oneTimeMinor).toBe(385_860);
+    // A lead with sites only: gateway and installation, no sensors (1 site: 910 + VAT).
+    expect(of("Yael Demo")?.oneTimeMinor).toBe(107_380);
   });
 
   it("quotes 6 sensors and 2 gateways at 2 sites with installation added automatically", async () => {

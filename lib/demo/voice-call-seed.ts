@@ -83,7 +83,7 @@ function callLines(): CallLine[] {
     { actor: "buyer", atMs: 9_400, lenMs: 5_000, body: L.fridges },
     {
       actor: "agent", atMs: 15_300, lenMs: 9_500, body: L.plan, answerMs: 850,
-      calls: [{ name: "update_deal_state", input: { updates: [{ key: "sites", value: "2", provenance: "buyer" }] }, result: { ok: true, saved: ["sites"] } }],
+      calls: [{ name: "update_deal_state", input: { updates: [{ key: "sites", value: "2", provenance: "buyer" }, { key: "fridges", value: "5", provenance: "buyer" }] }, result: { ok: true, saved: ["sites", "fridges"] } }],
     },
     { actor: "buyer", atMs: 31_000, lenMs: 0, body: L.typed, typed: true },
     { actor: "agent", atMs: 33_800, lenMs: 7_400, body: L.install, answerMs: 700 },
@@ -177,7 +177,8 @@ export async function seedVoiceCall(
   }
   // The engine's closing note, at the end of the call.
   await db.insert(messages).values({ accountId, conversationId, actor: "system", body: callEndedText(VOICE_CALL.durationSec), language: "en", createdAt: endedAt });
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: { value: "2", provenance: "buyer", updatedAt: new Date(connectedAt.getTime() + 24_800).toISOString() } } });
+  const savedAt = new Date(connectedAt.getTime() + 24_800).toISOString();
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: { value: "2", provenance: "buyer", updatedAt: savedAt }, fridges: { value: "5", provenance: "buyer", updatedAt: savedAt } } });
   await db.update(conversations).set({ updatedAt: endedAt }).where(and(eq(conversations.accountId, accountId), eq(conversations.id, conversationId)));
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: endedAt }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   return { leadId, conversationId, voiceSessionId };

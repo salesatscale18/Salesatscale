@@ -46,7 +46,7 @@ describe("demo seed: names in the buyer's language", () => {
     const [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, id), eq(agentVersions.status, "live")));
     expect(live.playbook).toMatchObject({ agentName: "Maya", agentNameLocal: { he: "מאיה" }, agentGender: "female" });
     const role = Object.fromEntries(live.playbook.fields.map((f) => [f.key, f.stage]));
-    expect(role).toMatchObject({ sites: "before_quote", current_monitoring: "optional", company_name: "before_order_form" });
+    expect(role).toMatchObject({ sites: "before_quote", fridges: "before_quote", current_monitoring: "optional", company_name: "before_order_form" });
 
     const actor = { userId: admin.id, actingAs: true };
     const opener = async (fullName: string) => {

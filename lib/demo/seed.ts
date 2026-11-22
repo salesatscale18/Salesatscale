@@ -194,6 +194,8 @@ export function demoPlaybook(transcriptId: string, at: Date, actorId: string) {
     outcomes: { orderForm: true, bankTransfer: true, meeting: true },
     fields: [
       { key: "sites", label: "Number of sites", stage: "before_quote", hint: "Whole number", example: "How many sites (kitchens or branches) would you like to monitor?" },
+      // Owner decision (22 Nov): the agent collects deal parameters such as the number of fridges (one sensor each).
+      { key: "fridges", label: "Number of fridges and freezers", stage: "before_quote", hint: "Whole number", example: "How many fridges and freezers do you have in total?" },
       // Helps the pitch (B2): asked once without insisting; may come back once later when it fits.
       { key: "current_monitoring", label: "How they check fridges today", stage: "optional", example: "How do you check your fridge temperatures today?" },
       { key: "company_name", label: "Company name", stage: "before_order_form" },
