@@ -22,7 +22,7 @@ Content-Type: application/json
 | `email` | no | Email address |
 | `source` | no | Label shown in the leads list. Default `Website form` |
 | `source_id` | no | Your ID for this lead; used to match updates |
-| `consent.given` | no | `false` if the agent must not contact this person. Default: `true` (the person asked to be called back) |
+| `consent.given` | no | `true` when the person accepted your form's consent line (send it from your form). `false` if the agent must not contact this person. Without it: `true` for a new lead |
 | `consent.source` | no | Where and how they agreed, e.g. the form's page. Default: the intake key's name |
 | `consent.text` | no | Exact wording they agreed to. Default: "This person asked to be contacted by SMS, WhatsApp or email" |
 | `consent.at` | no | ISO time they agreed. Default: now |
@@ -32,10 +32,15 @@ Content-Type: application/json
 Leads sent here asked to hear from the seller, so a new lead gets a consent
 record automatically (the time it arrived and the intake key), unless
 `consent.given` is `false`: then the lead is saved and the agent never
-contacts them. A consent note that is sent is kept. A delivery for a lead that
-already exists counts as the person's own request: it adds a consent record
-unless `consent.given` is `false`, also to a lead the seller saved without
-consent. (A CSV re-import or a seller adding the lead again never does.)
+contacts them. A consent note that is sent is kept.
+
+**A lead your team saved without consent gets it back only when a delivery sends `consent.given: true`.**
+A delivery without the field (for example a CRM re-push), or with only a
+consent note, leaves that lead as it is. A lead that already has consent gets
+a sent consent note recorded. (A CSV re-import or a seller adding the lead
+again never gives consent back.) The samples in Settings send
+`"consent": { "given": true }`: send it when the person accepted your form's
+consent line.
 
 Every lead gets a market: the market linked to the intake key, else the market whose form country values match `country`, else the market with the longest matching phone prefix, else the home market. A lead that already exists keeps its market.
 
@@ -44,7 +49,8 @@ The smallest body:
 ```json
 {
   "full_name": "Rina Cohen",
-  "phone": "+972545551842"
+  "phone": "+972545551842",
+  "consent": { "given": true }
 }
 ```
 
@@ -58,6 +64,7 @@ With optional fields:
   "business": "Rina's Kitchen",
   "source_id": "form-88213",
   "consent": {
+    "given": true,
     "source": "yoursite.example/contact",
     "text": "I agree to be contacted on WhatsApp about temperature monitoring",
     "at": "2026-11-09T09:12:00Z"

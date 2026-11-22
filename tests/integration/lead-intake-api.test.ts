@@ -88,9 +88,23 @@ describe("POST /api/leads/[account]", () => {
     // Sent again with given: false, still none.
     expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570", consent: { given: false } }, keyA)).status).toBe(200);
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(0);
-    // The buyer sends the form again without saying no: their own request, so consent is recorded (UX, 22 Nov).
+    // Without the field (a CRM re-push) or with only a note: still none.
     expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570" }, keyA)).status).toBe(200);
+    expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570", consent: { source: "crm" } }, keyA)).status).toBe(200);
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(0);
+    // given: true (the buyer accepted the form's consent line): consent is recorded.
+    expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570", consent: { given: true } }, keyA)).status).toBe(200);
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(1);
+  });
+
+  it("an existing lead that has consent: a sent note is recorded, a delivery without consent adds nothing", async () => {
+    const db = holder.db as TestDb;
+    const { id } = await (await call("alpha", { name: "Has Consent", phone: "0521234571" }, keyA)).json();
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(1);
+    expect((await call("alpha", { name: "Has Consent", phone: "0521234571" }, keyA)).status).toBe(200);
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(1);
+    expect((await call("alpha", { name: "Has Consent", phone: "0521234571", consent: { source: "Contact page" } }, keyA)).status).toBe(200);
+    expect((await latestConsent(db, accountA, id))?.consent.source).toBe("Contact page");
   });
 
   it("creates, then updates the same lead", async () => {

@@ -160,11 +160,23 @@ export async function upsertLead(
     .where(and(eq(leads.id, existing.id), eq(leads.accountId, accountId)))
     .returning();
   await addEvent(db, accountId, lead.id, "lead.updated", actor, updatedEventData(origin, proposed));
-  if (input.consent && !input.consentDefaulted) {
+  // An intake delivery gives consent back to a lead saved without it (seller unticked) only with an
+  // explicit consent.given: true (the buyer accepted the form's consent line). A note alone, or no
+  // consent field (a CRM re-push), never undoes the seller's choice. A lead that has consent gets
+  // the note recorded as before.
+  const addsConsent = input.consent && !input.consentDefaulted
+    && (origin !== "webhook" || input.consentExplicitYes || (await hasConsentRecord(db, accountId, lead.id)));
+  if (input.consent && addsConsent) {
     await db.insert(consentRecords).values({ accountId, leadId: lead.id, ...input.consent, recordedByUserId: actor.userId });
     await addEvent(db, accountId, lead.id, "consent.recorded", actor, { source: input.consent.source, wording: input.consent.wording });
   }
   return { ok: true, lead, created: false };
+}
+
+async function hasConsentRecord(db: Db, accountId: string, leadId: string): Promise<boolean> {
+  const [row] = await db.select({ id: consentRecords.id }).from(consentRecords)
+    .where(and(eq(consentRecords.accountId, accountId), eq(consentRecords.leadId, leadId))).limit(1);
+  return !!row;
 }
 
 export type PreviewResult =

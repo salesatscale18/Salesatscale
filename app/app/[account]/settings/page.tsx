@@ -38,7 +38,8 @@ async function baseUrl() {
 /** The minimal body (R5: shown first), then one with the optional fields. */
 const EXAMPLE_MIN = `{
   "full_name": "Rina Cohen",
-  "phone": "+972545551842"
+  "phone": "+972545551842",
+  "consent": { "given": true }
 }`;
 
 const EXAMPLE = `{
@@ -48,6 +49,7 @@ const EXAMPLE = `{
   "business": "Cohen Trading Ltd",
   "source_id": "form-88213",
   "consent": {
+    "given": true,
     "source": "yoursite.example/contact",
     "text": "I agree to be contacted by SMS, WhatsApp or email…",
     "at": "2026-11-09T09:12:00Z"
@@ -438,7 +440,8 @@ async function IntakeSection({ account, sp }: { account: SellerAccount; sp: Reco
             </div>
           ))}
           <span className="sas-small" id="intake-optional">{t("settings.intake.rules_note")}</span>
-          <SampleCheck slug={account.slug} example={EXAMPLE} />
+          <span className="sas-small" data-intake-consent-rule="">{t("settings.intake.consent_rule")}</span>
+          <SampleCheck slug={account.slug} example={EXAMPLE_MIN} />
         </aside>
     </>
   );
