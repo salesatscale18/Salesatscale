@@ -7,7 +7,7 @@ import { copyMetaFrom } from "@/app/app/[account]/setup/price-lists/rules";
 import { playbookFormValues } from "@/app/app/[account]/setup/playbook/form";
 import { legalTitle } from "@/app/f/[token]/lines";
 import { defaultPlaybook, playbookRowsFromForm } from "@/lib/agent/playbook";
-import { CSV_TEMPLATE_HEADER, csvTemplate, csvToRawLeads, normalizePhone, parseCsv, parseLead } from "@/lib/leads/rules";
+import { CSV_TEMPLATE_HEADER, csvTemplate, csvToRawLeads, normalizePhone, parseCsv, parseLead, CONSENT_WORDING_DEFAULT } from "@/lib/leads/rules";
 import { headingTitle } from "@/lib/markets/legal";
 import { countryTimezone, marketGoLiveChecks, newMarketTimezone } from "@/lib/markets/rules";
 
@@ -30,22 +30,21 @@ describe("phone numbers need a plausible national number", () => {
   });
 });
 
-describe("manual consent: the box must be ticked and a source given", () => {
+describe("manual consent: only the box counts, and the record is written automatically", () => {
   const now = new Date("2026-11-15T10:00:00Z");
-  const manual = (raw: Record<string, string>) => parseLead({ fullName: "Rina", phone: "0525550193", ...raw }, "IL", { language: "en", now, consentNeedsTick: true });
-  it("an unticked box with 'How they agreed' filled is no consent (was saved as consented)", () => {
+  const manual = (raw: Record<string, string>) => parseLead({ fullName: "Rina", phone: "0525550193", ...raw }, "IL", {
+    language: "en", now, consentNeedsTick: true, consentSource: "Added by Dana Levi in the app",
+  });
+  it("an unticked box is no consent, even with a source sent", () => {
     const r = manual({ consent: "", consentSource: "Expo sheet" });
     expect(r.ok && r.value.consent).toBeNull();
   });
-  it("a ticked box needs a source; ticked + source is consent", () => {
-    const missing = manual({ consent: "yes", consentSource: "" });
-    expect(missing.ok).toBe(false);
-    if (!missing.ok) expect(missing.errors.consentSource).toBeTruthy();
-    const ok = manual({ consent: "yes", consentSource: "Expo sheet" });
-    expect(ok.ok && ok.value.consent?.source).toBe("Expo sheet");
+  it("a ticked box needs no typing: the automatic source and the default wording", () => {
+    const ok = manual({ consent: "yes" });
+    expect(ok.ok && ok.value.consent).toMatchObject({ source: "Added by Dana Levi in the app", wording: CONSENT_WORDING_DEFAULT, capturedAt: now });
   });
-  it("CSV and the webhook keep their own rule: a consent source alone still counts", () => {
-    const csv = parseLead({ fullName: "Rina", phone: "0525550193", consentSource: "Expo sheet", consentWording: "I agree" }, "IL", { language: "en", now, requireConsentText: true });
+  it("CSV and the webhook: a consent source alone still counts", () => {
+    const csv = parseLead({ fullName: "Rina", phone: "0525550193", consentSource: "Expo sheet", consentWording: "I agree" }, "IL", { language: "en", now });
     expect(csv.ok && csv.value.consent?.source).toBe("Expo sheet");
   });
 });

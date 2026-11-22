@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { and, eq } from "drizzle-orm";
-import { leadEvents, leads, sellerAccounts, users } from "@/db/schema";
+import { consentRecords, leadEvents, leads, sellerAccounts, users } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
-import { createIntakeKey, listDeliveries, optOutLead } from "@/lib/leads/service";
+import { createIntakeKey, latestConsent, listDeliveries, optOutLead } from "@/lib/leads/service";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 // The route reads the app database from lib/auth/account; point it at PGlite.
@@ -49,18 +49,45 @@ describe("POST /api/leads/[account]", () => {
     expect((await call("nobody", good, keyA)).status).toBe(401);
   });
 
-  it("rejects bad JSON, oversized bodies and leads without consent", async () => {
+  it("rejects bad JSON, oversized bodies and invalid leads", async () => {
     expect((await call("alpha", "{nope", keyA)).status).toBe(400);
     expect((await call("alpha", "[1]", keyA)).status).toBe(400);
     expect((await call("alpha", "x".repeat(40_000), keyA)).status).toBe(413);
-    const noConsent = await call("alpha", { name: "A", phone: "0521234567" }, keyA);
-    expect(noConsent.status).toBe(422);
-    expect((await noConsent.json()).error).toBe("consent_required");
     const bad = await call("alpha", { name: "", phone: "1", consent: { given: true } }, keyA);
     expect(bad.status).toBe(422);
-    expect(Object.keys((await bad.json()).fields).sort()).toEqual(["consentSource", "consentText", "fullName", "phone"]);
-    const noText = await call("alpha", { ...good, consent: { source: "Contact form" } }, keyA);
-    expect(noText.status).toBe(422);
+    // A consent note is never required (owner, 22 Nov).
+    expect(Object.keys((await bad.json()).fields).sort()).toEqual(["fullName", "phone"]);
+  });
+
+  it("without a consent note: created, with a consent record naming the intake key", async () => {
+    const db = holder.db as TestDb;
+    const res = await call("alpha", { name: "No Note", phone: "0521234567" }, keyA);
+    expect(res.status).toBe(201);
+    const { id } = await res.json();
+    const c = await latestConsent(db, accountA, id);
+    expect(c?.consent).toMatchObject({ source: 'Sent with intake key "Website"', wording: "This person asked to be contacted by SMS, WhatsApp or email", recordedByUserId: null });
+    expect(c?.recordedBy).toBeNull();
+  });
+
+  it("with a consent note: its source, text and time are kept; a source without text is fine", async () => {
+    const db = holder.db as TestDb;
+    const res = await call("alpha", { ...good, phone: "0521234568" }, keyA);
+    expect(res.status).toBe(201);
+    const c = await latestConsent(db, accountA, (await res.json()).id);
+    expect(c?.consent).toMatchObject({ source: "Contact form", wording: "I agree to be contacted on WhatsApp", capturedAt: new Date("2026-11-09T09:12:00Z") });
+    const noText = await call("alpha", { ...good, phone: "0521234569", consent: { source: "Contact form" } }, keyA);
+    expect(noText.status).toBe(201);
+  });
+
+  it("consent.given false: the lead is saved without consent (the agent never contacts them)", async () => {
+    const db = holder.db as TestDb;
+    const res = await call("alpha", { name: "Do Not Contact", phone: "0521234570", consent: { given: false } }, keyA);
+    expect(res.status).toBe(201);
+    const { id } = await res.json();
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(0);
+    // A later delivery without a note does not add consent to that existing lead.
+    expect((await call("alpha", { name: "Do Not Contact", phone: "0521234570" }, keyA)).status).toBe(200);
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, id))).toHaveLength(0);
   });
 
   it("creates, then updates the same lead", async () => {

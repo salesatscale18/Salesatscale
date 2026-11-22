@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { createIntakeKey, previewLead, revokeIntakeKey, setIntakeKeyMarket } from "@/lib/leads/service";
-import { parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
+import { consentSourceIntake, parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
 import { t, type Locale } from "@/lib/i18n";
 import { inviteMember, parseNotifications, removeMember, saveContactHours, saveNotifications } from "@/lib/accounts/company";
 import { parseContactHours } from "@/lib/accounts/contact-hours";
@@ -123,7 +123,9 @@ export async function checkSampleAction(_prev: SampleState, form: FormData): Pro
   const lead = parseLead(rawFromIntakeBody(body), account.market, {
     language: (account.languages[0] ?? "en") as Locale,
     now: new Date(),
-    requireConsentText: true,
+    // As the intake endpoint: consent by default, a consent note is optional.
+    consentByDefault: true,
+    consentSource: consentSourceIntake("sample"),
   });
   if (!lead.ok) {
     return { status: "checked", result: "rejected", text: t("settings.sample.rejected", { reason: Object.values(lead.errors)[0] ?? "" }) };

@@ -46,9 +46,14 @@ describe("leads", () => {
 
   const human = () => ({ userId: admin.id, actingAs: false });
 
-  it("refuses a new lead without consent", async () => {
-    expect(await upsertLead(db, accA, human(), lead({ consent: "no" }), "manual")).toEqual({ ok: false, reason: "consent_required" });
-    expect(await db.select().from(leads)).toHaveLength(0);
+  it("saves a new lead without consent, with no consent record (owner, 22 Nov: the agent never contacts them)", async () => {
+    const acc = await mkAccount("NoConsent");
+    const r = await upsertLead(db, acc, human(), lead({ consent: "no" }), "manual", { now });
+    expect(r.ok && r.created).toBe(true);
+    if (!r.ok) return;
+    expect(await latestConsent(db, acc, r.lead.id)).toBeNull();
+    const types = (await db.select().from(leadEvents).where(eq(leadEvents.leadId, r.lead.id))).map((e) => e.type);
+    expect(types).toEqual(["lead.created"]);
   });
 
   it("creates a lead with its consent record and timeline events", async () => {
@@ -148,10 +153,12 @@ describe("leads", () => {
       "Shira Back,,052-555-0193,he,,Expo,I agree,",
     ].join("\n");
     const r = await importLeadsCsv(db, account(accA), human(), csv, { now });
-    expect(r).toMatchObject({ created: 1, updated: 0, totalRows: 6, missingColumns: [], tooManyRows: false });
+    // A row without consent is saved without a consent record.
+    expect(r).toMatchObject({ created: 2, updated: 0, totalRows: 6, missingColumns: [], tooManyRows: false });
     const byLine = Object.fromEntries(r.rejected.map((x) => [x.line, x]));
-    expect(Object.keys(byLine).map(Number)).toEqual([3, 4, 5, 6, 7]);
-    expect(byLine[3].problem).toMatch(/consent/i);
+    expect(Object.keys(byLine).map(Number)).toEqual([4, 5, 6, 7]);
+    const [none] = await db.select().from(leads).where(and(eq(leads.accountId, accA), eq(leads.phone, "+972523335555")));
+    expect(await latestConsent(db, accA, none.id)).toBeNull();
     expect(byLine[4]).toMatchObject({ name: "Bad Phone", fix: expect.stringMatching(/country code/) });
     expect(byLine[5].name).toBe("(empty)");
     expect(byLine[6].problem).toBe("Same phone as row 2 in this file");
@@ -160,20 +167,37 @@ describe("leads", () => {
     expect(omer.email).toBe("omer@katz.example");
   });
 
-  it("uses one consent statement for the whole file when rows have none", async () => {
-    const csv = "full_name,phone,language\nNoa Shalev,0527778888,he\nAvi Mizrahi,0527779999,he";
-    const r = await importLeadsCsv(db, account(accA), human(), csv, { now, fileConsent: { source: "HoReCa Expo sheet", wording: "Asked to be contacted" } });
-    expect(r).toMatchObject({ created: 2, rejected: [] });
-    const [noa] = await db.select().from(leads).where(and(eq(leads.accountId, accA), eq(leads.phone, "+972527778888")));
-    expect((await latestConsent(db, accA, noa.id))?.consent.source).toBe("HoReCa Expo sheet");
+  it("the whole-file box (ticked): rows without their own note get a consent record naming the file", async () => {
+    const csv = "full_name,phone,language,consent_source\nNoa Shalev,0527778888,he,\nAvi Mizrahi,0527779999,he,Signed sheet\nDov No,0527770000,he,";
+    const r = await importLeadsCsv(db, account(accA), human(), csv, { now, fileConsent: { source: "Imported from expo.csv" } });
+    expect(r).toMatchObject({ created: 3, rejected: [] });
+    const one = async (phone: string) => (await db.select().from(leads).where(and(eq(leads.accountId, accA), eq(leads.phone, phone))))[0];
+    const noa = await latestConsent(db, accA, (await one("+972527778888")).id);
+    expect(noa?.consent).toMatchObject({ source: "Imported from expo.csv", wording: "This person asked to be contacted by SMS, WhatsApp or email", capturedAt: now, recordedByUserId: admin.id });
+    expect((await latestConsent(db, accA, (await one("+972527779999")).id))?.consent.source).toBe("Signed sheet");
   });
 
-  it("rejects a CSV without the required columns before touching anything", async () => {
-    const r = await importLeadsCsv(db, account(accA), human(), "full_name,phone\nA,0520000000", { now });
-    expect(r.missingColumns).toEqual(["language", "consent_source", "consent_text"]);
+  it("the whole-file box unticked: every row is saved, nobody gets consent (even a row with its own note)", async () => {
+    const csv = "full_name,phone,language,consent_source\nUn Ticked,0527771111,he,\nOwn Note,0527772222,he,Signed sheet";
+    const r = await importLeadsCsv(db, account(accA), human(), csv, { now, fileConsent: null });
+    expect(r).toMatchObject({ created: 2, rejected: [] });
+    for (const phone of ["+972527771111", "+972527772222"]) {
+      const [l] = await db.select().from(leads).where(and(eq(leads.accountId, accA), eq(leads.phone, phone)));
+      expect(await latestConsent(db, accA, l.id)).toBeNull();
+    }
+  });
+
+  it("a defaulted consent is never added to an existing lead (one saved as do-not-contact stays so)", async () => {
+    const r = await importLeadsCsv(db, account(accA), human(), "full_name,phone,language\nUn Ticked,0527771111,he", { now, fileConsent: { source: "Imported from again.csv" } });
+    expect(r).toMatchObject({ created: 0, updated: 1 });
+    const [l] = await db.select().from(leads).where(and(eq(leads.accountId, accA), eq(leads.phone, "+972527771111")));
+    expect(await latestConsent(db, accA, l.id)).toBeNull();
+  });
+
+  it("rejects a CSV without the required columns before touching anything; consent columns are not required", async () => {
+    const r = await importLeadsCsv(db, account(accA), human(), "full_name,phone\nA,0520000000", { now, fileConsent: { source: "x" } });
+    expect(r.missingColumns).toEqual(["language"]);
     expect(r.created + r.updated).toBe(0);
-    const withFileConsent = await importLeadsCsv(db, account(accA), human(), "full_name,phone\nA,0520000000", { now, fileConsent: { source: "x", wording: "y" } });
-    expect(withFileConsent.missingColumns).toEqual(["language"]);
   });
 
   it("intake keys resolve to their own account until revoked", async () => {
@@ -190,7 +214,8 @@ describe("leads", () => {
     const before = (await db.select().from(leads)).length;
     const events = (await db.select().from(leadEvents)).length;
     expect(await previewLead(db, accA, lead({ phone: "0520001111" }))).toEqual({ result: "created" });
-    expect((await previewLead(db, accA, lead({ phone: "0520001111", consent: "no", consentSource: "" }))).result).toBe("rejected");
+    // Without consent the lead would still be saved (and never contacted).
+    expect((await previewLead(db, accA, lead({ phone: "0520001111", consent: "no", consentSource: "" }))).result).toBe("created");
     expect(await previewLead(db, accA, lead({ phone: "0523334444" }))).toMatchObject({ result: "updated", leadName: "Omer Katz" });
     expect(await previewLead(db, accA, lead())).toMatchObject({ result: "rejected", reason: expect.stringMatching(/^Opted out/) });
     expect((await db.select().from(leads)).length).toBe(before);
@@ -248,16 +273,15 @@ describe("leads", () => {
     expect(batches.mock.calls.length).toBe(4);
     queries.mockRestore();
     batches.mockRestore();
-    expect(r).toMatchObject({ totalRows: 500, created: 447, updated: 50, missingColumns: [], tooManyRows: false });
+    expect(r).toMatchObject({ totalRows: 500, created: 448, updated: 50, missingColumns: [], tooManyRows: false });
     expect(r.rejected.map((x) => [x.line, x.problem])).toEqual([
       [51, expect.stringMatching(/^Opted out/)],
       [54, "Same phone as row 3 in this file"],
-      [55, "No consent for this person"],
     ]);
-    expect(r.rejected.map((x) => x.fix)).toEqual([FIX_TEXT.opted_out, FIX_TEXT.duplicate_in_file, FIX_TEXT.consent_required]);
+    expect(r.rejected.map((x) => x.fix)).toEqual([FIX_TEXT.opted_out, FIX_TEXT.duplicate_in_file]);
 
     const all = await db.select().from(leads).where(eq(leads.accountId, acc));
-    expect(all).toHaveLength(50 + 1 + 447);
+    expect(all).toHaveLength(50 + 1 + 448);
     const byPhone = new Map(all.map((l) => [l.phone, l]));
     // Existing leads keep their identity; only empty fields are filled.
     expect(byPhone.get("+972527000003")).toMatchObject({ fullName: "Old 3", email: "old3@x.example", company: "Co 3", language: "he" });
@@ -266,20 +290,21 @@ describe("leads", () => {
     expect(byPhone.get("+972528888889")).toMatchObject({ fullName: "By Ref", sourceRef: "crm-77" });
     expect(byPhone.get("+972528888888")).toMatchObject({ fullName: "Takes Freed Phone", origin: "csv" });
     expect(byPhone.get("+972529000499")).toMatchObject({ fullName: "Lead 499", sourceRef: "src-499", origin: "csv", createdByUserId: admin.id });
-    // Every new lead has its consent and timeline; updates add a consent record and a lead.updated event.
+    // Every new lead has its timeline, and its consent unless the row had none ("No Consent");
+    // updates with their own consent add a consent record and a lead.updated event.
     const consents = await db.select().from(consentRecords).where(eq(consentRecords.accountId, acc));
     expect(consents).toHaveLength(51 + 447 + 50);
     const ev = await db.select().from(leadEvents).where(eq(leadEvents.accountId, acc));
     const countOf = (type: string) => ev.filter((e) => e.type === type).length;
-    expect([countOf("lead.created"), countOf("lead.updated"), countOf("consent.recorded")]).toEqual([51 + 447, 50, 51 + 447 + 50]);
+    expect([countOf("lead.created"), countOf("lead.updated"), countOf("consent.recorded")]).toEqual([51 + 448, 50, 51 + 447 + 50]);
     const old3 = ev.find((e) => e.type === "lead.updated" && e.leadId === byPhone.get("+972527000003")!.id)!;
     expect(old3.data).toEqual({ origin: "csv", proposed: { fullName: "New Name 3", email: "new3@x.example", language: "en" } });
 
     // Importing the same file again only updates (nothing new, no duplicates).
     const again = await importLeadsCsv(db, account(acc), human(), rows.join("\n"), { now });
-    expect(again).toMatchObject({ created: 0, updated: 497 });
-    expect(again.rejected.map((x) => x.line)).toEqual([51, 54, 55]);
-    expect(await db.select().from(leads).where(eq(leads.accountId, acc))).toHaveLength(498);
+    expect(again).toMatchObject({ created: 0, updated: 498 });
+    expect(again.rejected.map((x) => x.line)).toEqual([51, 54]);
+    expect(await db.select().from(leads).where(eq(leads.accountId, acc))).toHaveLength(499);
   });
 
   it("batched import gives the same leads as importing row by row", async () => {
@@ -308,7 +333,7 @@ describe("leads", () => {
     for (const row of csv.split("\n").slice(1)) {
       line++;
       const [fullName, phone, language, email, company, sourceRef, consentSource, consentWording] = row.split(",");
-      const p = parseLead({ fullName, phone, language, email, company, sourceRef, consentSource, consentWording }, "IL", { language: "he", now, requireConsentText: true });
+      const p = parseLead({ fullName, phone, language, email, company, sourceRef, consentSource, consentWording }, "IL", { language: "he", now });
       if (!p.ok) throw new Error(JSON.stringify(p.errors));
       const r = await upsertLead(db, single, human(), p.value, "csv", { now });
       if (!r.ok) r2.rejected.push({ line, problem: refusalText(r).problem });

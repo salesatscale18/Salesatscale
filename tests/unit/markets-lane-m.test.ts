@@ -68,7 +68,7 @@ describe("lead market at intake", () => {
 
   it("reads the country from the webhook body and the CSV, and never replaces a market", () => {
     expect(rawFromIntakeBody({ country: "GB" }).country).toBe("GB");
-    expect(csvToRawLeads(parseCsv("full_name,phone,language,country\nA,1,he,GB"), { source: "s", wording: "w" }).rows[0].raw.country).toBe("GB");
+    expect(csvToRawLeads(parseCsv("full_name,phone,language,country\nA,1,he,GB")).rows[0].raw.country).toBe("GB");
     expect(mergeMarketId("m1", "m2")).toBe("m1");
     expect(mergeMarketId(null, "m2")).toBe("m2");
     expect(mergeMarketId(null, undefined)).toBeNull();

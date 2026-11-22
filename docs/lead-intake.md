@@ -22,11 +22,19 @@ Content-Type: application/json
 | `email` | no | Email address |
 | `source` | no | Label shown in the leads list. Default `Website form` |
 | `source_id` | no | Your ID for this lead; used to match updates |
-| `consent.source` | yes for a new lead | Where and how they agreed, e.g. the form's page |
-| `consent.text` | yes for a new lead | Exact wording they agreed to |
+| `consent.given` | no | `false` if the agent must not contact this person. Default: `true` (the person asked to be called back) |
+| `consent.source` | no | Where and how they agreed, e.g. the form's page. Default: the intake key's name |
+| `consent.text` | no | Exact wording they agreed to. Default: "This person asked to be contacted by SMS, WhatsApp or email" |
 | `consent.at` | no | ISO time they agreed. Default: now |
 | `consent.page_url` | no | Page where they agreed |
 | `consent.ip` | no | Defaults to the caller's IP |
+
+Leads sent here asked to hear from the seller, so a new lead gets a consent
+record automatically (the time it arrived and the intake key), unless
+`consent.given` is `false`: then the lead is saved and the agent never
+contacts them. A consent note that is sent is kept. A delivery for a lead that
+already exists adds a consent record only when it carries its own note or
+`consent.given: true`.
 
 Every lead gets a market: the market linked to the intake key, else the market whose form country values match `country`, else the market with the longest matching phone prefix, else the home market. A lead that already exists keeps its market.
 
@@ -58,5 +66,5 @@ Every call (accepted or rejected) appears under **Recent deliveries** in the sam
 | `409` `opted_out` | This person opted out. They are never re-added without new consent |
 | `409` `phone_conflict` | The `source_id` matches one lead but the phone belongs to another |
 | `413` `payload_too_large` | Body over 32 KB |
-| `422` `invalid_lead` / `consent_required` | Fields failed validation (`fields` says which), or a new lead has no consent source and text |
+| `422` `invalid_lead` | Fields failed validation (`fields` says which) |
 

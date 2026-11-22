@@ -49,8 +49,8 @@ const EXAMPLE = `{
 }`;
 
 /** The intake fields, in the order the sample shows them (R4 E6). Descriptions: settings.intake.field.<name with _>. */
-const INTAKE_REQUIRED = ["full_name", "phone", "consent.source", "consent.text"] as const;
-const INTAKE_OPTIONAL = ["language", "business", "source_id", "consent.at", "email", "country", "source", "consent.page_url"] as const;
+const INTAKE_REQUIRED = ["full_name", "phone"] as const;
+const INTAKE_OPTIONAL = ["language", "business", "source_id", "email", "country", "source", "consent.given", "consent.source", "consent.text", "consent.at", "consent.page_url"] as const;
 
 const SECTIONS = ["channels", "whatsapp", "simulation", "voice", "payments", "users", "notifications", "hours", "intake"] as const;
 type Section = (typeof SECTIONS)[number];

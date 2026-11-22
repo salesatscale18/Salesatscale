@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   bearerKey, csvEscape, csvToRawLeads, formatPhone, generateIntakeKey, hashIntakeKey, maskPhone, mergeLeadFields, normalizePhone, parseCsv, parseLead,
+  CONSENT_WORDING_DEFAULT, consentSourceImport, consentSourceIntake, consentSourceManual,
 } from "@/lib/leads/rules";
+import { displayName } from "@/lib/auth/display";
 
 describe("normalizePhone", () => {
   it.each([
@@ -73,12 +75,38 @@ describe("parseLead", () => {
     expect(bySource.ok && bySource.value.consent?.source).toBe("Contact sheet at HoReCa Expo");
   });
 
-  it("requires consent text for CSV and API, and validates email", () => {
-    const r = parseLead(base, "IL", { language: "en", now, requireConsentText: true });
-    expect(!r.ok && r.errors.consentText).toMatch(/consent_text/);
-    const ok = parseLead({ ...base, consentWording: "I agree", email: "A@B.co" }, "IL", { language: "en", now, requireConsentText: true });
+  it("never requires consent text (default wording), keeps it when sent, and validates email", () => {
+    const r = parseLead(base, "IL", { language: "en", now });
+    expect(r.ok && r.value.consent?.wording).toBe(CONSENT_WORDING_DEFAULT);
+    const ok = parseLead({ ...base, consentWording: "I agree", email: "A@B.co" }, "IL", { language: "en", now });
     expect(ok.ok && ok.value).toMatchObject({ email: "a@b.co", consent: { wording: "I agree" } });
     expect(parseLead({ ...base, email: "nope" }, "IL", { language: "en", now }).ok).toBe(false);
+  });
+
+  it("consent by default (CSV box ticked, intake API): the automatic source, unless the input says no", () => {
+    const opts = { language: "en" as const, now, consentByDefault: true, consentSource: consentSourceIntake("Main site") };
+    const bare = parseLead({ fullName: "Rina", phone: "0525550193" }, "IL", opts);
+    expect(bare.ok && bare.value).toMatchObject({
+      consent: { source: 'Sent with intake key "Main site"', wording: CONSENT_WORDING_DEFAULT, capturedAt: now },
+      consentDefaulted: true,
+    });
+    // A note that is sent is kept, and counts as given by the input (not the default).
+    const noted = parseLead({ fullName: "Rina", phone: "0525550193", consentSource: "yoursite/contact" }, "IL", opts);
+    expect(noted.ok && noted.value).toMatchObject({ consent: { source: "yoursite/contact" }, consentDefaulted: false });
+    for (const no of ["no", "false", "0", false]) {
+      const r = parseLead({ fullName: "Rina", phone: "0525550193", consent: no, consentSource: "x" }, "IL", opts);
+      expect(r.ok && r.value.consent).toBeNull();
+    }
+    // Without consentByDefault nothing is assumed.
+    expect(parseLead({ fullName: "Rina", phone: "0525550193" }, "IL", { language: "en", now, consentSource: "x" }).ok
+      && parseLead({ fullName: "Rina", phone: "0525550193" }, "IL", { language: "en", now, consentSource: "x" })).toMatchObject({ value: { consent: null } });
+  });
+
+  it("names the three automatic sources, never a full email", () => {
+    expect(consentSourceManual("Dana Levi")).toBe("Added by Dana Levi in the app");
+    expect(consentSourceImport("expo-leads.csv")).toBe("Imported from expo-leads.csv");
+    expect(consentSourceIntake("Main site")).toBe('Sent with intake key "Main site"');
+    expect(consentSourceManual(displayName({ firstName: null, lastName: null, email: "dana+test@seller.example" }))).toBe("Added by dana in the app");
   });
 
   it("requires a description of how the person agreed", () => {
@@ -110,14 +138,9 @@ describe("CSV", () => {
     expect(r.missingColumns).toEqual([]);
     expect(r.unknownColumns).toEqual(["colour"]);
     expect(r.rows[0]).toEqual({ line: 2, raw: { fullName: "A", phone: "1", language: "he", consentSource: "form", consentWording: "I agree" } });
-    expect(csvToRawLeads(parseCsv("name,phone")).missingColumns).toEqual(["language", "consent_source", "consent_text"]);
-  });
-
-  it("fills whole-file consent only into rows without their own", () => {
-    const r = csvToRawLeads(parseCsv("full_name,phone,language,consent_source\nA,1,he,\nB,2,he,own"), { source: "Expo", wording: "W" });
-    expect(r.rows[0].raw).toMatchObject({ consentSource: "Expo", consentWording: "W" });
-    expect(r.rows[1].raw).toMatchObject({ consentSource: "own" });
-    expect(r.rows[1].raw.consentWording).toBeUndefined();
+    // Consent columns are optional (owner, 22 Nov): no "how" column is required.
+    expect(csvToRawLeads(parseCsv("name,phone")).missingColumns).toEqual(["language"]);
+    expect(csvToRawLeads(parseCsv("full_name,phone,language\nA,1,he")).missingColumns).toEqual([]);
   });
 });
 

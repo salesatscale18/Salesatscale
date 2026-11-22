@@ -608,7 +608,6 @@ step("G1 Add the demo lead", async () => {
   await page.locator("#phone").fill(LEAD_PHONE);
   await page.locator("#language").selectOption("en");
   await page.locator('input[name="consent"]').check();
-  await page.locator("#consentSource").fill("Demo, agreed in person");
   await page.getByRole("button", { name: "Save lead" }).click();
   const dup = page.getByRole("alert").filter({ hasText: "already exists" });
   await page.waitForURL(/\/leads\/[0-9a-f-]{36}/, { timeout: 30_000 }).catch(() => undefined);

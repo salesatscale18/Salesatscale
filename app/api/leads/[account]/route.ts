@@ -10,7 +10,7 @@ import { NextResponse } from "next/server";
 import { eq } from "drizzle-orm";
 import { sellerAccounts } from "@/db/schema";
 import { appDb } from "@/lib/auth/account";
-import { bearerKey, parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
+import { bearerKey, consentSourceIntake, parseJsonObject, parseLead, rawFromIntakeBody } from "@/lib/leads/rules";
 import { recordDelivery, refusalText, resolveIntakeKey, upsertLead } from "@/lib/leads/service";
 import type { Locale } from "@/lib/i18n";
 import { clientIp, declaredTooLarge, rateLimit } from "@/lib/security/rate-limit";
@@ -60,7 +60,10 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
   const lead = parseLead(rawFromIntakeBody(body, forwardedFor), account.market, {
     language: (account.languages[0] ?? "en") as Locale,
     now: new Date(),
-    requireConsentText: true,
+    // Leads from the form asked to be called back: consent unless consent.given is false. A consent
+    // note (consent.source, consent.text) is kept when sent, never required; else the key names the source.
+    consentByDefault: true,
+    consentSource: consentSourceIntake(keyRow.name),
   });
   if (!lead.ok) {
     await log("rejected", Object.values(lead.errors)[0] ?? "Invalid lead", name);
@@ -74,9 +77,6 @@ export async function POST(req: Request, { params }: { params: Promise<{ account
   });
   if (!result.ok) {
     await log("rejected", refusalText(result).problem, name);
-    if (result.reason === "consent_required") {
-      return NextResponse.json({ error: "consent_required", message: "A new lead needs consent.source and consent.text." }, { status: 422 });
-    }
     if (result.reason === "opted_out") return NextResponse.json({ error: "opted_out" }, { status: 409 });
     if (result.reason === "account_paused") return NextResponse.json({ error: "account_paused" }, { status: 403 });
     return NextResponse.json({ error: "phone_conflict" }, { status: 409 });
