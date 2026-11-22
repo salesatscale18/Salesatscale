@@ -211,6 +211,41 @@ describe("one agent at a time", () => {
     await c.settle();
   });
 
+  it("update_deal_state on a call: a bookkeeping-only result is short (no stage block); a real change still delivers the stage", async () => {
+    const conv = await conversation();
+    const logs: string[] = [];
+    const c = await engineFor(conv, logs);
+    await c.engine.start();
+    await c.settle();
+    const emit = c.model.conns[0].emit;
+    const results = () => c.model.conns[0].results.filter((r) => r.name === "update_deal_state").map((r) => r.result);
+    const upd = async (id: string, args: Record<string, unknown>) => {
+      emit({ type: "tool-call", callId: id, name: "update_deal_state", args: { updates: [], next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null, ...args } });
+      await c.run(300);
+    };
+    // The opener is said (the stage the instructions gave: Understand, both fields missing).
+    emit({ type: "audio", pcm: new Uint8Array(480) });
+    emit({ type: "agent-transcript", text: "Hi, this is Ava. What kind of business is it?", final: true });
+    emit({ type: "turn-done" });
+    await c.run(300);
+    // Only an ask recorded, the stage as the model saw it: the short form, logged.
+    await upd("u1", { asked: ["business_type"], next_step: "Wait for the answer." });
+    expect(results()[0]).toEqual({ ok: true, saved: [], recorded_as_asked: ["business_type"] });
+    expect(logs.filter((l) => l.endsWith("tools: bookkeeping result shortened"))).toHaveLength(1);
+    // A save that leaves a field missing: the full result with the stage block ("still missing" changed).
+    await upd("u2", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }] });
+    expect(String(results()[1].stage)).toMatch(/^## Stage now: .*\n[\s\S]*Still missing for a quote: Number of sites\./);
+    expect(results()[1].saved).toEqual(["business_type"]);
+    // Bookkeeping again, nothing changed since that block: short.
+    await upd("u3", { next_step: "Ask for the number of sites." });
+    expect(results()[2]).toEqual({ ok: true, saved: [] });
+    // The last field saved: the stage moves on, so the block comes again.
+    await upd("u4", { updates: [{ key: "sites", value: "2", provenance: "buyer" }] });
+    expect(String(results()[3].stage)).toContain("Still missing for a quote: nothing.");
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
   it("the inherited-state line names counts and the stage, never content", () => {
     const line = inheritedSummary(2, true, { _asked_sites: { value: "2" }, sites: { value: "secret" } }, "x\n## Stage now: 3 Recommend\ny");
     expect(line).toBe('inherited: agentMessages=2 continuing=yes stage="3 Recommend" asked=sites:2');

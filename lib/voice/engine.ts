@@ -182,6 +182,27 @@ export function inheritedSummary(agentMessages: number, continuing: boolean, fie
   return `inherited: agentMessages=${agentMessages} continuing=${continuing ? "yes" : "no"} stage="${stage}" asked=${asked.join(",") || "-"}`;
 }
 
+/**
+ * What makes a stage different for the voice model: the stage title and what is still missing for a quote (ask counts
+ * and "questions left" are not: they change with every recorded ask). From a "## Stage now" block, or instructions
+ * containing one; null when there is none.
+ */
+export function stageKey(text: string): string | null {
+  const title = /## Stage now: ([^\n]+)/.exec(text)?.[1]?.trim();
+  if (!title) return null;
+  const missing = /Still missing for a quote: ([^\n]*)/.exec(text)?.[1]?.trim() ?? "";
+  return `${title}|${missing}`;
+}
+
+/**
+ * An update_deal_state result with nothing new from the buyer: no field saved, no fact (recommendation_confirmed,
+ * price_asked), no objection, no placeholder refused: only `asked`, next_step or a summary were recorded.
+ */
+export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
+  const saved = Array.isArray(result.saved) ? result.saved : [];
+  return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder;
+}
+
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
 export function configSummary(cfg: RealtimeSessionConfig): string {
   return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
@@ -282,6 +303,8 @@ export class VoiceEngine {
   private lines: TranscriptLine[] = [];
   /** The last agent line stored in this call (see finalizeAgentTurn). */
   private lastLine: StoredLine | null = null;
+  /** The stage the voice model last saw (stageKey of its instructions or of the last full update_deal_state result). */
+  private stageDelivered: string | null = null;
   /** The call continues a chat (a pick-up line instead of an opener). */
   private continuingCall = false;
   /** This call stored its first agent line (the pick-up line, on a continuing call). */
@@ -737,6 +760,7 @@ export class VoiceEngine {
     let conn: RealtimeConnection;
     const t0 = this.clock.now();
     const cfg = this.sessionConfig(ctx.instructions, ctx);
+    this.stageDelivered = stageKey(ctx.instructions);
     try {
       conn = await this.model.connect(cfg, (e) => this.onModelEvent(e, gen));
     } catch (e) {
@@ -1258,6 +1282,7 @@ export class VoiceEngine {
       });
       openerPrompt = ctx.openerPrompt;
       const cfg = this.sessionConfig(ctx.instructions, ctx);
+      this.stageDelivered = stageKey(ctx.instructions);
       sent = configSummary(cfg);
       return this.model.connect(cfg, (e) => this.onModelEvent(e, gen));
     })().catch((e) => {
@@ -1540,7 +1565,19 @@ export class VoiceEngine {
           message: "The order form link is in the chat. Say so in one short sentence, with what the buyer does there (fill in their company details, sign and pay), and say they can fill it in now while you stay on the line. Never read the link aloud. Do not end the call, say goodbye or wind down: stay quiet while they fill it in, and answer only when they speak.",
         };
       }
-      if (name === "update_deal_state" && typeof r.result.stage === "string") forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
+      if (name === "update_deal_state" && typeof r.result.stage === "string") {
+        const key = stageKey(r.result.stage);
+        if (isBookkeepingOnly(r.result) && key === this.stageDelivered) {
+          // Nothing new from the buyer and the stage as the model last saw it: no "Do: …" to act on again. With
+          // BLOCKING tools the model continues after every result; a full stage block here made it speak again
+          // (a second question, or narration of the room: "no speech detected").
+          forModel = { ok: true, saved: [], ...(Array.isArray(r.result.recorded_as_asked) ? { recorded_as_asked: r.result.recorded_as_asked } : {}) };
+          this.log.info(voiceLine(this.sessionId, "tools: bookkeeping result shortened"));
+        } else {
+          forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
+          this.stageDelivered = key;
+        }
+      }
       // A call request or a hand-off does not end this call (only an opt-out, end_call, or the buyer does).
       if (name === "record_opt_out") this.afterOptOut();
       if (name === "hand_off_to_human") {
