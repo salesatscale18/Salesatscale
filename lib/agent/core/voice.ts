@@ -251,7 +251,6 @@ export function voiceCallBlock(o: { fillers: boolean }): string {
     "- If the buyer starts reading out a card number: stop them politely. Payment is only on the secure page from the order form.",
     "- Near the time limit, when the system tells you, say the call is about to end and offer to continue in the chat.",
     "- When the buyer asks about the order form, or about \"this field\", \"this page\" or \"this step\": call order_form_status first, then help with the step they are on. Never ask for or repeat card or payment details.",
-    "- If you hear nothing, only noise, or audio you cannot make out: stay silent and wait for the buyer.",
     "- A note from the system may say which step of the order form the buyer has open (\"The buyer has the order form open, on step: …\"). Do not answer it aloud; stay quiet unless asked. When the buyer asks about the form, help with the step they are on. Never ask for or repeat card or payment details.",
   ].join("\n");
 }

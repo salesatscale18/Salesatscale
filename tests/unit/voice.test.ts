@@ -667,8 +667,9 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     for (const fillers of [true, false]) {
       const block = voiceCallBlock({ fillers });
       expect(block).not.toMatch(/speaking style|Never speed up|whisper|pace|volume/i);
-      // A rule about being cut off with no words invites the model to narrate it aloud (22 Nov 2026 calls).
-      expect(block).not.toMatch(/cut off|hear no words|echo of your own voice|first language on your own/);
+      // A rule about being cut off with no words invites the model to narrate it aloud (22 Nov 2026 calls); so does a
+      // rule about hearing nothing or noise (owner, 23 Nov 2026: the model handles that itself).
+      expect(block).not.toMatch(/cut off|hear no words|echo of your own voice|first language on your own|hear nothing|only noise|cannot make out/);
     }
   });
 
