@@ -55,7 +55,9 @@ describe("the plays and the shared method in the prompt", () => {
     // Today's tools for the steps that are built later: never a pausing hand-off for an unknown question.
     expect(core).toContain("Send a question to the team: look it up with lookup_knowledge.");
     expect(core).toContain("Never use hand_off_to_human for it.");
-    expect(core).toContain('there is no booking link yet');
+    // A call with a person is the booking link in the chat (reach boards).
+    expect(core).toContain("It puts a booking link in the chat; tell the buyer they can pick a time there.");
+    expect(core).not.toContain("there is no booking link yet");
   });
 
   it("the playbook part no longer hands off on an unknown question or a first request for a person", () => {

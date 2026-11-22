@@ -16,6 +16,9 @@ import { buyerConversation, buyerVoiceGate, buyerVoiceView } from "@/lib/voice/b
 import { voiceTabKey } from "@/lib/voice/tab-key";
 import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
 import { voiceMode } from "@/lib/voice/settings";
+// Reach RB: the booking card and SMS chips, and the talk-now / new-time card after a named-time SMS.
+import { chatReach } from "@/lib/chat/reach";
+import { talkNowFor } from "@/lib/follow-ups/named-time";
 // The call bar is the design system's component (components/sas/voice): its styles and tokens.
 import "@/components/sas/sas.css";
 import "@/components/sas/voice/voice-bubble.css";
@@ -89,12 +92,14 @@ export default async function BuyerChatPage({ params, searchParams }: { params: 
     fromSms: sp.via === "sms",
     resumed: sp.sms === "on",
   };
+  const reach = await chatReach(appDb, ctx);
+  const talkNow = sms?.fromSms ? await talkNowFor(appDb, ctx) : null;
   return (
     // The page frame never flips; the chat parts take the lead's direction, and in Hebrew the whole chat mirrors (board SimMobileHe).
     <div className="c-root" lang={lang} dir="ltr" style={rootStyle}>
       <ChatClient
         token={token} lang={lang} seller={names.seller} initials={initials} strings={strings}
-        initial={chat} timeZone={timeZone} simulated={simulated} sms={sms}
+        initial={chat} timeZone={timeZone} simulated={simulated} sms={sms} reach={reach} talkNow={talkNow}
         // The call is English: the agent's English name, as it says it on the call.
         voice={voiceOn ? { agentName: (await chatNames(appDb, ctx.account, "en")).agent, gender: names.gender, tabKey } : null}
       />

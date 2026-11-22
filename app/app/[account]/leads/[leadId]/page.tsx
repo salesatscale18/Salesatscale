@@ -45,8 +45,10 @@ import { StageStepper, type PaidOrder } from "./stage";
 import { FollowUpPanel } from "./follow-up";
 import { followUpBuyerNamed, leadFollowUp, mayCancelFollowUps } from "@/lib/follow-ups/schedule";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
-import { AfterCallPrompt, CallbackPanel } from "./callback";
-import { callbackAfterCall, leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
+import { CallbackPanel } from "./callback";
+import { TeamCallPanel } from "./team-call";
+import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
+import { leadCallForContext } from "@/lib/team-calls/service";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -75,7 +77,7 @@ export default async function LeadCardPage({
   if (!UUID.test(leadId)) notFound();
   // One parallel batch: every loader is scoped by account, so a lead id from
   // another account just yields empty results before notFound() below.
-  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms, callback, afterCall] = await Promise.all([
+  const [row, events, consent, leadQuotes, playbook, deal, conversation, marketList, opener, chatLink, simFacts, stage, followUp, leadOrders, sentForms, callback, teamCall] = await Promise.all([
     getLead(appDb, account.id, leadId),
     listLeadEvents(appDb, account.id, leadId),
     latestConsent(appDb, account.id, leadId),
@@ -92,7 +94,7 @@ export default async function LeadCardPage({
     leadOrdersWithSignature(appDb, account.id, leadId),
     personSentForms(appDb, account.id, leadId),
     leadCallback(appDb, account.id, leadId),
-    callbackAfterCall(appDb, account.id, leadId),
+    leadCallForContext(appDb, account.id, leadId),
   ]);
   // UX: an agent-chosen follow-up goes inside contact hours; one the buyer named goes at that time.
   const followUpByBuyer = followUp && followUp.status === "scheduled" ? (await followUpBuyerNamed(appDb, followUp)).buyerNamedTime : false;
@@ -164,7 +166,7 @@ export default async function LeadCardPage({
         : event.type.startsWith("team_question.")
         // O4: the question as the team reads it (and how the answer reached the buyer).
         ? `${String((event.data as { question?: string } | null)?.question ?? "")}${user ? ` · ${who(user)}` : ""}`
-        : event.type.startsWith("callback.")
+        : event.type.startsWith("callback.") || event.type === "team_call.logged"
         // O6: the call time, in the zone it was set in, and who acted.
         ? `${formatDueLocal(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? tz))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
         : event.type === "consent.recorded"
@@ -421,17 +423,27 @@ export default async function LeadCardPage({
             </div>
           </div>
           <aside className="sas-lead__side">
-            {/* O6: the call the agent arranged; Confirm / Change time tell the buyer in the chat. */}
-            <CallbackPanel
-              slug={account.slug} leadId={lead.id} request={callback} canManage={mayManageCallbacks(access)}
-              notice={typeof sp.callback === "string" ? sp.callback : undefined} error={typeof sp.callback_error === "string" ? sp.callback_error : undefined}
-              notTold={typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined}
-            />
-            {/* After the call: hand back to the agent, or the seller handles the deal (Take over). */}
-            <AfterCallPrompt
-              slug={account.slug} leadId={lead.id} call={afterCall} canManage={mayManageCallbacks(access)}
-              notice={typeof sp.after_call === "string" ? sp.after_call : undefined} error={typeof sp.after_call_error === "string" ? sp.after_call_error : undefined}
-            />
+            {callback?.status === "requested" ? (
+              // An older request the agent recorded with a time: Change time (which confirms it) and Cancel tell the buyer in the chat.
+              <CallbackPanel
+                slug={account.slug} leadId={lead.id} request={callback} canManage={mayManageCallbacks(access)}
+                notice={typeof sp.callback === "string" ? sp.callback : undefined} error={typeof sp.callback_error === "string" ? sp.callback_error : undefined}
+                notTold={typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined}
+              />
+            ) : (
+              // Team call (reach boards): the booked call before it, then "Log the call" with the next steps.
+              <TeamCallPanel
+                slug={account.slug} leadId={lead.id} call={teamCall} buyerName={lead.fullName} leadPhone={simulated ? null : lead.phone}
+                canManage={mayManageCallbacks(access)} edit={sp.team_call === "edit"} now={now}
+                msg={{
+                  notice: typeof sp.team_call_notice === "string" ? sp.team_call_notice : undefined,
+                  error: typeof sp.team_call_error === "string" ? sp.team_call_error : undefined,
+                  cbNotice: typeof sp.callback === "string" ? sp.callback : undefined,
+                  cbError: typeof sp.callback_error === "string" ? sp.callback_error : undefined,
+                  notTold: typeof sp.callback_not_told === "string" ? sp.callback_not_told : undefined,
+                }}
+              />
+            )}
             <FollowUpPanel
               slug={account.slug} followUp={followUp} timezone={account.timezone}
               canCancel={mayCancelFollowUps(access)} cancelled={sp.follow_up === "cancelled"} buyerNamed={followUpByBuyer}

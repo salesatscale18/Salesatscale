@@ -13,14 +13,16 @@
  * as a real capped inbound message; the cap itself is not reached), and a saved
  * test-lab chat with recorded agent steps.
  *
- * Call states (O6): a lead with an open call request (the agent's
- * request_callback, waiting for the seller in Needs you) and a lead whose
- * confirmed call was 3 hours ago, so "How did the call go?" shows. Both go
- * through lib/callbacks/service.ts (requestCallback, confirmCallback). A third
- * lead has a call the seller confirmed for tomorrow at 11:00 (Leads: "Call ·
- * <time>" as the Next step; the lead page's call card). A fourth lead's buyer
- * named a call time outside contact hours (Saturday at 21:00, allowed since the
- * buyer asked for it): the request waits in Needs you like any other.
+ * Call states (O6; reach boards): a lead who booked a team call on the
+ * booking card the agent posted (lib/team-calls: Leads "Team call · <time>" as
+ * the Next step, the Team call card), and a lead whose confirmed call was 3
+ * hours ago, so "Log the call" shows (Needs you › Calls; lib/callbacks
+ * requestCallback and confirmCallback, the older flow still in the data). A
+ * third lead has a call the seller confirmed for tomorrow at 11:00 (Leads:
+ * "Call · <time>" as the Next step; the lead page's call card). A fourth
+ * lead's buyer asked to be contacted outside contact hours (Saturday at 21:00,
+ * allowed since the buyer asked for it): a buyer-named follow-up, which goes
+ * out as the "It's the time you asked for" SMS at that time.
  *
  * Quote states: an open quote (sent, no order) whose Valid until is tomorrow
  * in the account's time zone (amber on Quotes), and a held quote the seller
@@ -42,6 +44,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { consentRecords, conversations, dealStates, leadEvents, leads, messages, pipelineRuns, sellerAccounts, sources, toolCalls, users, type DealFieldValue, type DealObjection } from "@/db/schema";
 import { confirmCallback, leadCallback, requestCallback } from "@/lib/callbacks/service";
+import { bookCall, bookingView, offerBooking } from "@/lib/team-calls/service";
+import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
 import { declineHeldQuote } from "@/lib/agent/quote-approval";
 import { CALLBACK_EVENTS, parseCallTime } from "@/lib/callbacks/rules";
 import { askTeam } from "@/lib/team-questions/service";
@@ -651,36 +655,41 @@ async function handedBack(db: Db, actor: Actor & { userId: string }, accountId: 
 }
 
 /**
- * O6: the buyer asks for a person twice; the agent books a call request
- * (request_callback, the same service as the tool) for tomorrow within
- * contact hours. Needs you shows "Call requested" and the lead page its card.
+ * Reach boards: the buyer asks for a person twice; the agent's request_callback
+ * posts the booking card in the chat (offerBooking, as the tool), and the buyer
+ * books the first free slot from tomorrow 10:00 in the account's time zone
+ * (bookCall, as the card: confirmed at once, the chat line, the team_call SMS,
+ * which a fictional demo number never gets). Not in Needs you: Leads shows
+ * "Team call · <time>" as the Next step, and the lead page the Team call card.
  */
 async function callRequested(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
   const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 25), "open");
   await insertThread(db, accountId, id, "en", versionId, [
     { actor: "buyer", at: min(now, 25), body: "Hi, we have 3 bistros. Can I talk to someone about the price?" },
     { actor: "agent", at: min(now, 24), body: "Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price I can usually answer right now." },
-    { actor: "buyer", at: min(now, 22), body: "Thanks, but I'd rather talk to a person." },
+    { actor: "buyer", at: min(now, 22), body: "Thanks, but I'd rather talk to someone from your team." },
   ]);
-  const at = min(now, 21);
-  // Tomorrow at 10:00 in the account's time zone; when that is outside contact hours, the nearest time the tool offers.
-  const [account] = await db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
-  const tz = account?.timezone || "UTC";
-  const tomorrow = isoInZone(new Date(now.getTime() + 24 * 3_600_000), tz).slice(0, 10);
-  const ctx = { accountId, leadId, conversationId: id };
-  let input = { time: `${tomorrow}T10:00`, brief: CALL_BRIEFS.requested };
-  let r = await requestCallback(db, ctx, input, at);
-  if (!r.ok && typeof r.extra.suggested_time === "string") {
-    input = { ...input, time: r.extra.suggested_time };
-    r = await requestCallback(db, ctx, input, at);
-  }
-  if (!r.ok) throw new Error(`Demo seed: call request refused: ${r.rule}`);
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("3", min(now, 25)) } });
+  const input = { brief: CALL_BRIEFS.requested };
+  const offered = await offerBooking(db, { accountId, leadId, conversationId: id }, input, min(now, 21));
+  if (!offered.ok) throw new Error(`Demo seed: booking card refused: ${offered.rule}`);
   await insertThread(db, accountId, id, "en", versionId, [{
-    actor: "agent", at, body: `Of course. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here. Meanwhile, I'm here for any question.`,
-    calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
+    actor: "agent", at: new Date(min(now, 21).getTime() + 1000), body: "Of course. Pick a time that suits you and someone from our team will call you. Meanwhile I'm here for any question.",
+    calls: [{ name: "request_callback", input, result: { ok: true } }],
   }]);
-  await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("3", min(now, 25)) }, nextStep: `Call requested ${r.timeLocal}: ${CALL_BRIEFS.requested}` });
+  // The buyer books the first free slot from tomorrow 10:00 (the account's time zone).
+  const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
+  const [lead] = await db.select().from(leads).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
+  if (!account || !lead) throw new Error("Demo seed: account or lead not found");
+  const bookAt = min(now, 19);
+  const tz = account.timezone || "UTC";
+  const from = parseCallTime(`${isoInZone(new Date(now.getTime() + 24 * 3_600_000), tz).slice(0, 10)}T10:00`, tz)!;
+  const view = await bookingView(db, { lead, account }, bookAt);
+  const slot = view?.slots.find((x) => !x.taken && Date.parse(x.at) >= from.getTime()) ?? view?.slots.find((x) => !x.taken);
+  if (!slot) throw new Error("Demo seed: no free team call slot");
+  const booked = await bookCall(db, { lead, account }, { at: slot.at }, {}, bookAt);
+  if (!booked.ok) throw new Error(`Demo seed: booking refused: ${booked.reason}`);
+  await db.update(leads).set({ status: "agent_handling", lastActivityAt: bookAt }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
   return id;
 }
 
@@ -803,30 +812,32 @@ export function nextBuyerNamedCallTime(now: Date, timezone: string): string {
 }
 
 /**
- * The buyer names a call time outside contact hours (Saturday at 21:00); the
- * agent books it with request_callback and buyer_named_time (requestCallback,
- * as the tool). Left requested, not confirmed: Needs you shows "Call requested",
- * and the call card notes the time is outside contact hours at the buyer's ask.
+ * Reach boards: the buyer asks to be contacted at a time outside contact hours
+ * ("Can you come back to me on Saturday at 21:00?"); the agent schedules it with
+ * schedule_follow_up and buyer_named_time (scheduleFollowUp, as the tool):
+ * allowed at any hour since the buyer asked for it. At that time the buyer gets
+ * the "It's the time you asked for" SMS with the chat link (a fictional demo
+ * number never gets it). Not in Needs you: the lead page's Follow-up card.
  */
 async function buyerNamedCall(db: Db, accountId: string, leadId: string, versionId: string, now: Date) {
   const id = await newConversation(db, accountId, leadId, versionId, "en", min(now, 40), "open");
   await insertThread(db, accountId, id, "en", versionId, [
-    { actor: "buyer", at: min(now, 40), body: "Hi, we run a bakery with 5 fridges. I'd like to talk to someone about sensors." },
-    { actor: "agent", at: min(now, 39), body: "Of course, I can set that up. When suits you for a short call?" },
-    { actor: "buyer", at: min(now, 37), body: `I'm only free in the evening. Can someone call me on ${BUYER_NAMED_CALL.words}?` },
+    { actor: "buyer", at: min(now, 40), body: "Hi, we run a bakery with 5 fridges. I'd like to talk about sensors." },
+    { actor: "agent", at: min(now, 39), body: "Of course. When suits you to go over it?" },
+    { actor: "buyer", at: min(now, 37), body: `I'm only free in the evening. Can you come back to me on ${BUYER_NAMED_CALL.words}?` },
   ]);
   const at = min(now, 36);
   const [account] = await db.select({ timezone: sellerAccounts.timezone }).from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
   const tz = account?.timezone || "UTC";
-  const input = { time: nextBuyerNamedCallTime(now, tz), brief: CALL_BRIEFS.buyerNamed, buyer_named_time: true };
-  const r = await requestCallback(db, { accountId, leadId, conversationId: id }, input, at);
-  if (!r.ok) throw new Error(`Demo seed: buyer-named call request refused: ${r.rule}`);
+  const input = { due_at: nextBuyerNamedCallTime(now, tz), topic: "sensors for 5 bakery fridges", buyer_named_time: true };
+  const r = await scheduleFollowUp(db, { accountId, leadId, conversationId: id, language: "en" }, input, at);
+  if (!r.ok) throw new Error(`Demo seed: buyer-named follow-up refused: ${r.rule}`);
   await insertThread(db, accountId, id, "en", versionId, [{
-    actor: "agent", at, body: `Sure. I've asked for a call with a member of our team on ${r.timeForBuyer}; the team will confirm the time here. Meanwhile, I'm here for any question.`,
-    calls: [{ name: "request_callback", input, result: { ok: true, requested: true, time_local: r.timeLocal } }],
+    actor: "agent", at: new Date(at.getTime() + 1000), body: `Done. I'll message you on ${r.dueForBuyer} your time.`,
+    calls: [{ name: "schedule_follow_up", input, result: { ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal } }],
   }]);
   await db.update(leads).set({ status: "agent_handling", lastActivityAt: at }).where(and(eq(leads.accountId, accountId), eq(leads.id, leadId)));
-  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 40)) }, nextStep: `Call requested ${r.timeLocal}: ${CALL_BRIEFS.buyerNamed}` });
+  await db.insert(dealStates).values({ accountId, leadId, fields: { sites: fact("1", min(now, 40)) }, nextStep: followUpNextStep(r.dueLocal, r.followUp.topic) });
   return id;
 }
 

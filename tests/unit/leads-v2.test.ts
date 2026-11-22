@@ -33,10 +33,10 @@ describe("Needs you groups (L-2)", () => {
     const kinds = NEEDS_GROUPS.flatMap((g) => NEEDS_GROUP_KINDS[g]);
     expect(new Set(kinds).size).toBe(kinds.length);
     expect(kinds.sort()).toEqual([
-      "bank_transfer", "call_finished", "callback_requested", "follow_up_failed", "form_expiring", "form_unsigned",
+      "bank_transfer", "call_finished", "follow_up_failed", "form_expiring", "form_unsigned",
       "human_handling", "payment_failed", "quote_approval", "team_question",
     ]);
-    expect(NEEDS_GROUP_OF.callback_requested).toBe("calls");
+    expect(NEEDS_GROUP_OF.call_finished).toBe("calls");
     expect(NEEDS_GROUP_OF.payment_failed).toBe("payments");
     expect(NEEDS_GROUP_OF.follow_up_failed).toBe("follow_ups");
     expect(groupRank("person")).toBeLessThan(groupRank("follow_ups"));
@@ -104,9 +104,10 @@ describe("row cells (L-3, L-4)", () => {
     const q = needCell({ ...ref, leadId: "a", id: "tq", at: NOW, kind: "team_question", question: "Can it run on 110V?", buyerWords: "Can the sensors connect to our building", mustHave: true, conversationId: "c" }, ctx);
     expect(q.title).toBe("Question to answer");
     expect(stripIsolates(q.detail!)).toBe("Must-have · “Can the sensors connect to our building”");
-    const c = needCell({ ...ref, leadId: "a", id: "cb", at: NOW, kind: "callback_requested", callbackId: "x", callAt: new Date("2026-11-20T10:30:00Z"), timezone: "Asia/Jerusalem", brief: "Pricing for 3 sites" }, ctx);
-    expect(stripIsolates(c.title)).toMatch(/^Confirm call · Fri 20 Nov,? 12:30/);
-    expect(stripIsolates(c.detail!)).toBe("Pricing for 3 sites");
+    // Reach boards: "Log the call" replaces "How did the call go?"; "Calls to confirm" is gone.
+    const c = needCell({ ...ref, leadId: "a", id: "cb", at: NOW, kind: "call_finished", callbackId: "x", callAt: new Date("2026-11-20T10:30:00Z"), timezone: "Asia/Jerusalem" }, ctx);
+    expect(c).toMatchObject({ icon: "phone-call", title: "Log the call" });
+    expect(stripIsolates(c.detail!)).toMatch(/^Team call Fri 20 Nov,? 12:30 · Anyone on your team$/);
     expect(needCell(approval("a", 1), ctx)).toMatchObject({ icon: "tags", title: "Price to approve", detailId: "Q-1005 v2" });
   });
 
@@ -140,12 +141,14 @@ describe("row cells (L-3, L-4)", () => {
     expect(nextStepCell({ status: "human_handling" }, NO_FACTS, ctx)).toMatchObject({ icon: "user", title: "Waiting for a person" });
     const named = nextStepCell({ status: "human_handling" }, NO_FACTS, ctx, "Dana Cohen");
     expect(stripIsolates(named.title)).toBe("Dana Cohen is handling the chat");
-    const call = { at: new Date("2026-11-20T10:30:00Z"), brief: "Pricing for 3 sites" };
+    const call = { at: new Date("2026-11-20T10:30:00Z"), brief: "Pricing for 3 sites", booked: false };
     const followUp = { dueAt: new Date("2026-11-22T08:00:00Z"), topic: "Talking to a partner first" };
     const c = nextStepCell({ status: "agent_handling" }, { ...NO_FACTS, call, followUp }, ctx);
     expect(c.icon).toBe("phone-call");
     expect(stripIsolates(c.title)).toMatch(/^Call · Fri 20 Nov,? 12:30$/);
     expect(stripIsolates(c.detail!)).toBe("Pricing for 3 sites");
+    // A call the buyer booked in the chat: "Team call · Mon 23 Nov 15:30" (reach boards).
+    expect(stripIsolates(nextStepCell({ status: "agent_handling" }, { ...NO_FACTS, call: { ...call, booked: true } }, ctx).title)).toMatch(/^Team call · Fri 20 Nov,? 12:30$/);
     // A person handling the chat wins over a call.
     expect(nextStepCell({ status: "human_handling" }, { ...NO_FACTS, call }, ctx).title).toBe("Waiting for a person");
   });
@@ -171,8 +174,7 @@ describe("row cells (L-3, L-4)", () => {
     const at = { ...ref, leadId: "L1", at: NOW };
     expect(rowHref(base, "L1", undefined)).toBe("/app/polar/leads/L1");
     expect(open(human("L1", 1))).toBe("/app/polar/leads/L1");
-    expect(open({ ...at, id: "c", kind: "callback_requested", callbackId: "x", callAt: NOW, timezone: "UTC", brief: "" })).toBe("/app/polar/leads/L1?tab=deal#callback");
-    expect(open({ ...at, id: "c", kind: "call_finished", callbackId: "x", callAt: NOW, timezone: "UTC" })).toBe("/app/polar/leads/L1?tab=deal#after-call");
+    expect(open({ ...at, id: "c", kind: "call_finished", callbackId: "x", callAt: NOW, timezone: "UTC" })).toBe("/app/polar/leads/L1?tab=deal#callback");
     expect(open({ ...at, id: "f", kind: "follow_up_failed", followUpId: "f", dueAt: NOW, reason: null })).toBe("/app/polar/leads/L1?tab=deal#follow-up");
     expect(open(bank("L1", 1))).toBe("/app/polar/leads/L1?tab=deal#lead-orders");
     expect(open({ ...at, id: "u", kind: "form_unsigned", quoteId: "q", formId: "f", quoteNumber: 1, openedAt: NOW })).toBe("/app/polar/leads/L1?tab=deal#lead-quotes");

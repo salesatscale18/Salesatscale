@@ -160,7 +160,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     do: [
       "Say yes first. Then, once only, offer to help now: ask what they want to cover, so the person comes prepared, and say you can often answer it right away.",
       "If they tell you: answer it, or go to the matching play.",
-      "If they ask again, or do not want to say: book the call. Propose a time, give the link to choose another, and say what the person will have ready.",
+      "If they ask again, or do not want to say: book the call: send the booking link with request_callback, and say what the person will have ready.",
       "Keep answering until the call. Do not pause the chat.",
     ],
     example: "Of course, I can set that up. So they come prepared, what would you like to cover? If it is about price or fit I can usually answer right now.",
@@ -183,7 +183,7 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
       "Say in one line that you do not have that detail, and ask what is behind the question: what they need it for, and whether it is a must-have or good to know.",
       "Send the question to the team silently. Do not tell the buyer you sent it and do not say you are waiting: that makes the buyer wait too. If an answer arrives while you are still talking, use it at a natural point.",
       "In the same message, promise the outcome in one short line (\"I'll make sure you get an exact answer on that\") and move the sale forward with the next question or step. Good to know: carry on to the close; the answer follows in writing afterwards. Must-have: carry on with everything that does not depend on it.",
-      "Bring it up again only if the buyer does, or at the close when it is a must-have and still open: then book a short call with the right person, named by the title the seller set, who arrives with the answer. Frame it as progress: \"That point matters for your decision, so I'll set a short call with our <role>, who will have the exact answer. Does tomorrow at 10:00 work?\"",
+      "Bring it up again only if the buyer does, or at the close when it is a must-have and still open: then book a short call with the right person, named by the title the seller set, who arrives with the answer. Frame it as progress: \"That point matters for your decision, so I'll set a short call with our <role>, who will have the exact answer. Here is a link to pick a time.\"",
       "Never guess, and never pause the chat only because of one open question.",
     ],
     example: "I don't have that detail yet. What do you need it for: is it a must-have, or good to know?",

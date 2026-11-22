@@ -5,7 +5,7 @@ import type { CallbackRequest } from "@/lib/callbacks/rules";
 import { formatDueLocal } from "@/lib/follow-ups/rules";
 import { t, type MessageKey } from "@/lib/i18n";
 import { zonePlainName } from "@/lib/format";
-import { afterCallAction, cancelCallbackAction, changeCallbackAction, confirmCallbackAction } from "./callback-actions";
+import { cancelCallbackAction, changeCallbackAction } from "./callback-actions";
 
 /** "YYYY-MM-DD" and "HH:MM" of an instant in a time zone (the Change time fields' starting values). */
 function localParts(at: Date, timezone: string): { date: string; time: string } {
@@ -30,12 +30,12 @@ const NOT_TOLD: Record<string, MessageKey> = {
 };
 
 /**
- * Lead card (O6): the call the agent arranged with the buyer. "Call requested:
- * Wed 18 Nov 10:00" with the agent's brief, Confirm and Change time; once
- * confirmed, "Call confirmed" with Change time. Confirming or changing tells
- * the buyer in the chat. A time the buyer asked for outside contact hours
- * carries a small note until the seller sets another time. The chat stays with the agent. Shown only when there
- * is a request (or right after acting on one).
+ * Lead card (O6): an older call request the agent recorded with a time, from
+ * before the buyer booked calls in the chat (reach boards). "Call requested:
+ * Wed 18 Nov 10:00" with the agent's brief, Change time and Cancel; the seller
+ * confirmation step ("Confirm") is gone: setting the time confirms it and tells
+ * the buyer in the chat. Booked and confirmed calls show on the Team call card
+ * (team-call.tsx). The chat stays with the agent.
  */
 export function CallbackPanel({ slug, leadId, request, canManage, notice, error, notTold }: {
   slug: string; leadId: string; request: CallbackRequest | null; canManage: boolean;
@@ -67,12 +67,6 @@ export function CallbackPanel({ slug, leadId, request, canManage, notice, error,
           <span className="sas-small">{t(confirmed ? "callback.hint_confirmed" : "callback.hint", { zone: callbackZoneLine(request.timezone, request.at) })}</span>
           {canManage ? (
             <div className="sas-stack-2">
-              {!confirmed ? (
-                <form action={confirmCallbackAction}>
-                  {hidden}
-                  <button type="submit" className={buttonClass("primary", "sm")} data-testid="callback-confirm"><Icon name="check" />{t("callback.confirm")}</button>
-                </form>
-              ) : null}
               <details data-testid="callback-change" open={error === "past" || error === "invalid_time" || undefined}>
                 <summary className="sas-small">{t("callback.change")}</summary>
                 <form action={changeCallbackAction} className="sas-stack-2" style={{ paddingBlockStart: 8 }}>
@@ -102,50 +96,6 @@ export function CallbackPanel({ slug, leadId, request, canManage, notice, error,
               </details>
             </div>
           ) : null}
-        </>
-      ) : null}
-    </section>
-  );
-}
-
-const AFTER_NOTICE: Record<string, MessageKey> = { agent: "callback.after.notice_agent", seller: "callback.after.notice_seller" };
-const AFTER_ERROR: Record<string, MessageKey> = {
-  forbidden: "callback.error.forbidden", not_found: "callback.error.not_found", closed: "callback.after.error_closed", opted_out: "callback.after.error_opted_out",
-};
-
-/**
- * After the call (UX, O6 follow-up): once the call card has gone (two hours
- * after the call time), "How did the call go?" stays on the lead page until
- * answered: "Hand back to the agent" or "I'm handling this deal" (the seller
- * takes over the conversation, so the agent pauses). Admins only.
- */
-export function AfterCallPrompt({ slug, leadId, call, canManage, notice, error }: {
-  slug: string; leadId: string; call: CallbackRequest | null; canManage: boolean; notice?: string; error?: string;
-}) {
-  const shownNotice = notice && AFTER_NOTICE[notice] ? AFTER_NOTICE[notice] : null;
-  const shownError = error && AFTER_ERROR[error] ? AFTER_ERROR[error] : null;
-  if (!(call && canManage) && !shownNotice && !shownError) return null;
-  return (
-    <section id="after-call" aria-labelledby="ac-h" className="sas-stack-2" data-testid="after-call" style={{ padding: "0 16px 16px", borderBlockEnd: "1px solid var(--line)" }}>
-      <h2 id="ac-h" className="sas-group-label" style={{ padding: "16px 0 0" }}>{t("callback.after.title")}</h2>
-      {shownNotice ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t(shownNotice)}</span></div> : null}
-      {shownError ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(shownError)}</span></div> : null}
-      {call && canManage ? (
-        <>
-          <span className="sas-small">{t("callback.after.hint", { time: formatDueLocal(call.at, call.timezone) })}</span>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-            {(["agent", "seller"] as const).map((choice) => (
-              <form key={choice} action={afterCallAction}>
-                <input type="hidden" name="slug" value={slug} />
-                <input type="hidden" name="leadId" value={leadId} />
-                <input type="hidden" name="callbackId" value={call.id} />
-                <input type="hidden" name="choice" value={choice} />
-                <button type="submit" className={buttonClass(choice === "agent" ? "secondary" : "takeover", "sm")} data-testid={`after-call-${choice}`}>
-                  <Icon name={choice === "agent" ? "sparkles" : "user"} />{t(choice === "agent" ? "callback.after.agent" : "callback.after.seller")}
-                </button>
-              </form>
-            ))}
-          </div>
         </>
       ) : null}
     </section>

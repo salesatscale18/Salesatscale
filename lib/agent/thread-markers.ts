@@ -16,7 +16,12 @@
  *   inboundConversation, shared by WhatsApp and the buyer simulator).
  * - chat opened: the lead event chat.opened, when the buyer opens the chat from
  *   an SMS link (/c/<code>): "{buyer} opened the chat" (board ReachSeller);
- * - SMS: one dashed card per SMS to the buyer (lib/sms/thread.ts), placed by time.
+ * - SMS: one dashed card per SMS to the buyer (lib/sms/thread.ts), placed by time;
+ * - team call booked: the buyer's booking (callback.requested with booked:
+ *   true) or a new time for it (callback.changed): "Team call booked · {date
+ *   time} · 15 min" (board ReachSeller);
+ * - team call logged: the team's log of the call (team_call.logged; the latest
+ *   log of a call, placed where it was first logged), shown as a card.
  * Pure: the loader in lib/agent/conversation.ts passes the rows in.
  */
 import type { SmsEntry } from "@/lib/sms/thread";
@@ -34,7 +39,14 @@ export type ThreadMarker =
   /** The buyer opened the chat from an SMS link. */
   | { kind: "chat_opened"; at: Date }
   /** An SMS to the buyer, with its state (Delivered, Not sent: test mode, Not delivered: reason). */
-  | { kind: "sms"; at: Date; sms: SmsEntry };
+  | { kind: "sms"; at: Date; sms: SmsEntry }
+  /** The buyer booked the team call in the chat, or the call got a new time. */
+  | { kind: "team_call_booked"; at: Date; callAt: Date; timezone: string; minutes: number }
+  /** The team logged its call with the buyer (the latest log of that call). */
+  | {
+      kind: "team_call_logged"; at: Date; callbackId: string; outcome: "spoke" | "no_answer" | "moved"; startedAt: Date;
+      lengthMin: number | null; note: string; by: MarkerPerson | null; phone: string | null; timezone: string;
+    };
 
 /**
  * The line the voice engine stores when a call ends ("Voice call ended · 0:38", lib/voice/engine.ts):
@@ -75,7 +87,15 @@ export const SPEND_CAP_HANDOFF_EVENT = "handoff.spend_cap";
 /** Lead event: the buyer opened the chat from an SMS link (/c/<code>). data: { via: "sms", conversationId }. */
 export const CHAT_OPENED_EVENT = "chat.opened";
 
-export const MARKER_EVENT_TYPES = ["conversation.taken_over", "conversation.handed_back", SPEND_CAP_HANDOFF_EVENT, CHAT_OPENED_EVENT] as const;
+/** Lead events of team calls shown in the thread (lib/callbacks/rules CALLBACK_EVENTS). */
+export const TEAM_CALL_MARKER_EVENTS = ["callback.requested", "callback.changed", "team_call.logged"] as const;
+
+export const MARKER_EVENT_TYPES = ["conversation.taken_over", "conversation.handed_back", SPEND_CAP_HANDOFF_EVENT, CHAT_OPENED_EVENT, ...TEAM_CALL_MARKER_EVENTS] as const;
+
+const dateOf = (v: unknown) => {
+  const d = typeof v === "string" ? new Date(v) : null;
+  return d && !Number.isNaN(d.getTime()) ? d : null;
+};
 
 type ThreadRow = { message: { id: string; createdAt: Date; actor: string }; calls: { name: string; outcome: string }[] };
 type EventRow = { type: string; createdAt: Date; actorUserId: string | null; data: Record<string, unknown> | null };
@@ -87,6 +107,26 @@ export function threadMarkers(
   people: Record<string, MarkerPerson>,
 ): ThreadMarker[] {
   const out: ThreadMarker[] = [];
+  // Booked calls (the buyer's booking and its later times) and each call's latest log.
+  const bookedIds = new Set<string>();
+  const logs = new Map<string, { first: Date; last: EventRow }>();
+  for (const e of [...events].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())) {
+    const id = typeof e.data?.callbackId === "string" ? e.data.callbackId : null;
+    if (!id) continue;
+    if (e.type === "callback.requested" && e.data?.booked === true) bookedIds.add(id);
+    if (e.type === "team_call.logged") logs.set(id, { first: logs.get(id)?.first ?? e.createdAt, last: e });
+  }
+  for (const [id, { first, last }] of logs) {
+    const d = last.data ?? {};
+    if (d.conversationId !== conversationId) continue;
+    const outcome = d.outcome === "no_answer" || d.outcome === "moved" ? d.outcome : "spoke";
+    const by = typeof d.byUserId === "string" ? (people[d.byUserId] ?? null) : last.actorUserId ? (people[last.actorUserId] ?? null) : null;
+    out.push({
+      kind: "team_call_logged", at: first, callbackId: id, outcome, startedAt: dateOf(d.startedAt) ?? first,
+      lengthMin: typeof d.lengthMin === "number" ? d.lengthMin : null, note: typeof d.note === "string" ? d.note : "", by,
+      phone: typeof d.phoneMasked === "string" ? d.phoneMasked : null, timezone: typeof d.timezone === "string" ? d.timezone : "UTC",
+    });
+  }
   for (const { message: m, calls } of thread) {
     if (m.actor === "agent" && calls.some((c) => c.name === "hand_off_to_human" && c.outcome === "ok")) {
       out.push({ kind: "handoff", at: m.createdAt, afterMessageId: m.id });
@@ -101,6 +141,10 @@ export function threadMarkers(
     else if (e.type === "conversation.handed_back") out.push({ kind: "handed_back", at: e.createdAt, by });
     else if (e.type === SPEND_CAP_HANDOFF_EVENT) out.push({ kind: "spend_cap", at: e.createdAt });
     else if (e.type === CHAT_OPENED_EVENT) out.push({ kind: "chat_opened", at: e.createdAt });
+    else if ((e.type === "callback.requested" || e.type === "callback.changed") && bookedIds.has(String(e.data?.callbackId ?? ""))) {
+      const callAt = dateOf(e.data?.at);
+      if (callAt) out.push({ kind: "team_call_booked", at: e.createdAt, callAt, timezone: String(e.data?.timezone ?? "UTC"), minutes: Number(e.data?.durationMin ?? 15) || 15 });
+    }
   }
   return out.sort((a, b) => a.at.getTime() - b.at.getTime());
 }

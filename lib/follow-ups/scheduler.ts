@@ -1,6 +1,6 @@
 /**
  * The platform scheduler for agreed follow-ups (P11 follow-up, decision D6):
- * app/api/cron/follow-ups runs `runDueFollowUps` every 15 minutes (Vercel
+ * app/api/cron/follow-ups runs `runDueFollowUps` every minute (Vercel
  * Cron). It sends each due follow-up as a fixed template message, with no
  * model call; the model runs only if the buyer replies.
  *
@@ -23,6 +23,8 @@ import type { TwilioTransport } from "@/lib/channels/twilio";
 import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { decideDue, followUpText, MAX_ATTEMPTS, type FollowUpReason } from "./rules";
 import { followUpBuyerNamed } from "./schedule";
+import { nudgeFollowUp } from "@/lib/sms/outbound";
+import type { NudgeDeps } from "@/lib/sms/service";
 
 // ---------------------------------------------------------------------------
 // The platform scheduler
@@ -49,7 +51,7 @@ const MAX_BATCHES = 5;
  * send path. A failed send is retried by the next runs, up to MAX_ATTEMPTS.
  */
 export async function runDueFollowUps(
-  db: Db, transport: TwilioTransport | null, now = new Date(), opts: { batchSize?: number; maxBatches?: number } = {},
+  db: Db, transport: TwilioTransport | null, now = new Date(), opts: { batchSize?: number; maxBatches?: number; sms?: NudgeDeps } = {},
 ): Promise<RunSummary> {
   const summary: RunSummary = { due: 0, sent: 0, deferred: 0, cancelled: 0, failed: 0, retrying: 0, skipped: 0, cancelReasons: {} };
   const batchSize = opts.batchSize ?? BATCH_SIZE;
@@ -68,7 +70,7 @@ export async function runDueFollowUps(
     for (const r of rows) {
       summary.due++;
       try {
-        const outcome = await processOne(db, transport, r.id, now, accounts, playbooks);
+        const outcome = await processOne(db, transport, r.id, now, accounts, playbooks, opts.sms ?? {});
         if (outcome.kind === "cancelled") {
           summary.cancelled++;
           summary.cancelReasons[outcome.reason] = (summary.cancelReasons[outcome.reason] ?? 0) + 1;
@@ -89,7 +91,7 @@ type Outcome = { kind: "sent" | "deferred" | "failed" | "retrying" | "skipped" }
 
 async function processOne(
   db: Db, transport: TwilioTransport | null, id: string, now: Date,
-  accounts: Map<string, SellerAccount | null>, playbooks: Map<string, Playbook | null>,
+  accounts: Map<string, SellerAccount | null>, playbooks: Map<string, Playbook | null>, smsDeps: NudgeDeps,
 ): Promise<Outcome> {
   // The lock: only one run moves a row out of "scheduled".
   const [f] = await db.update(followUps).set({ status: "sent", reason: "sending" })
@@ -118,6 +120,8 @@ async function processOne(
       .where(and(eq(messages.accountId, f.accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"), gt(messages.createdAt, f.createdAt))).limit(1),
   ]);
   const within = isWithinContactHours(contact.contactHours, contact.timezone, now);
+  // Whether the buyer named this time: it goes out at any hour, and its SMS is "It's the time you asked for".
+  const buyerNamed = (await followUpBuyerNamed(db, f)).buyerNamedTime;
   const decision = decideDue({
     leadOptedOut: lead.status === "opted_out",
     accountStatus: account.status,
@@ -127,7 +131,7 @@ async function processOne(
     buyerWroteAfterScheduling: !!wrote,
     withinContactHours: within,
     // A time the buyer asked for is kept even outside contact hours; only agent-chosen times wait for them.
-    buyerNamedTime: !within && (await followUpBuyerNamed(db, f)).buyerNamedTime,
+    buyerNamedTime: buyerNamed,
   });
   if (decision.action === "cancel") {
     await atomic(db, (q) => [
@@ -204,6 +208,14 @@ async function processOne(
     q.insert(leadEvents).values({ id: randomUUID(), accountId: f.accountId, leadId: f.leadId, type: "follow_up.sent", actor: "agent", data: { followUpId: f.id } }),
     q.update(leads).set({ lastActivityAt: now }).where(and(eq(leads.id, f.leadId), eq(leads.accountId, f.accountId))),
   ]);
+  // A real buyer's web chat: the SMS with the chat link (reach boards). The buyer's own time: "It's the time you
+  // asked for", then one retry 10 minutes later if the chat is not opened (named-time.ts). The agent's own time:
+  // the commercial follow-up SMS, off until SMS_AGENT_NUDGES=1. The message stays in the chat either way.
+  if (isWebChat(conv.channel) && !conv.isTest) {
+    await nudgeFollowUp(db, f.accountId, f.leadId, messageId, buyerNamed, { ...smsDeps, now }).catch((e) => {
+      console.error("[follow-ups] SMS nudge failed", e instanceof Error ? e.name : "error");
+    });
+  }
   return { kind: "sent" };
 }
 

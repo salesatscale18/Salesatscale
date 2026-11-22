@@ -38,7 +38,7 @@ import { DEFAULT_PLAYS } from "./core/plays";
 import { OBJECTION_PLAYS, OBJECTION_STATUSES, parseObjectionInput, readObjections } from "./core/objections";
 import { localTradeName } from "./core/names";
 import { followUpNextStep, scheduleFollowUp } from "@/lib/follow-ups/schedule";
-import { callbackNextStep, requestCallback } from "@/lib/callbacks/service";
+import { offerBooking } from "@/lib/team-calls/service";
 import { callRoleOf } from "./core/call-role";
 import { askTeam } from "@/lib/team-questions/service";
 
@@ -205,7 +205,7 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "schedule_follow_up",
-    description: "Schedule the time you agreed with the buyer to come back to them yourself (when they need time to think or it is not a good moment). The app writes to the buyer at that time. One per buyer: a new call replaces the earlier time. Refused outside 15 minutes to 30 days ahead. A time the buyer asked for is allowed at any hour; a time you proposed yourself must be inside contact hours, otherwise it returns the nearest allowed time to offer the buyer instead.",
+    description: "Schedule the time you agreed with the buyer to come back to them yourself (when they need time to think or it is not a good moment). At that time the app texts the buyer a link back to this chat, where they can write or talk to you. Use it also when the buyer asks you to call or write at a time: you cannot phone, the text is how you reach them. One per buyer: a new call replaces the earlier time. Refused outside 15 minutes to 30 days ahead. A time the buyer asked for is allowed at any hour; a time you proposed yourself must be inside contact hours, otherwise it returns the nearest allowed time to offer the buyer instead.",
     strict: true,
     input_schema: {
       type: "object",
@@ -220,16 +220,14 @@ export const TOOL_DEFS: ToolDef[] = [
   },
   {
     name: "request_callback",
-    description: "Request a call between the buyer and a person on the seller's team, at the time you agreed with the buyer. There is no booking link yet: the team sees the request with your brief, confirms or changes the time, and the app tells the buyer. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier request. Refused for a time in the past, less than 15 minutes or more than 30 days ahead. A time the buyer named is accepted at any hour; a time you proposed yourself must be inside contact hours, otherwise it returns the nearest allowed time to offer the buyer instead.",
+    description: "Send the buyer a link to book a call with a person on the seller's team. The buyer picks a time from the team's free slots; the team sees the booking with your brief. The conversation stays with you: keep answering until the call. One per buyer: a new call replaces the earlier booking link.",
     strict: true,
     input_schema: {
       type: "object",
       properties: {
-        time: { type: "string", description: 'The agreed time: an ISO date-time with the offset of the buyer\'s time zone, e.g. "2026-11-18T10:00:00+02:00", or a local date and time, e.g. "2026-11-18T10:00", read in the buyer\'s time zone. Use "Local time now" from your context.' },
         brief: { type: "string", description: "What the buyer wants to cover and what the person should have ready, short." },
-        buyer_named_time: { type: "boolean", description: 'true when the buyer named this time themselves ("call me Saturday at 21:00"); false when you proposed it, even if the buyer then agreed.' },
       },
-      required: ["time", "brief", "buyer_named_time"],
+      required: ["brief"],
       additionalProperties: false,
     },
   },
@@ -863,21 +861,20 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       result: {
         // due_local is the form to tell the buyer ("Friday 20 November at 12:30"); due_short is for the seller's trace.
         ok: true, due_local: r.dueForBuyer, due_short: r.dueLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
-        message: "Scheduled. Confirm the time back to the buyer in their own wording and language (for example \"tomorrow at 10\"), in one short sentence. You will write to them yourself at that time.",
+        message: "Scheduled. Confirm the time back to the buyer in their own wording and language (for example \"tomorrow at 10\"), in one short sentence. At that time they get a text message with a link back to this chat, where they can talk to you by voice or write.",
       },
     };
   }
 
   if (name === "request_callback") {
-    const r = await requestCallback(ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, { time: args.time, brief: args.brief, buyer_named_time: args.buyer_named_time });
+    // The booking card in the chat (lib/team-calls): the buyer picks the time; the booking sets the deal's next step.
+    const r = await offerBooking(ctx.db, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, { brief: args.brief });
     if (!r.ok) return refuse(r.rule, r.extra);
-    await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, [], { nextStep: callbackNextStep(r.timeLocal, r.request.brief) });
     return {
       outcome: "ok",
       result: {
-        // time_local is the form to tell the buyer ("Friday 20 November at 12:30"); time_short is for the seller's trace.
-        ok: true, time_local: r.timeForBuyer, time_short: r.timeLocal, ...(r.replaced ? { replaced_earlier: true } : {}),
-        message: `Requested. Tell the buyer, in one short sentence in their wording, that ${callRoleOf(ctx.playbook)} will call at that time and the team will confirm it here. Keep answering their questions until the call.`,
+        ok: true, ...(r.replaced ? { replaced_earlier: true } : {}),
+        message: `Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with ${callRoleOf(ctx.playbook)} with the link. Keep answering their questions until the call.`,
       },
     };
   }

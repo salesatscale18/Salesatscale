@@ -1,10 +1,12 @@
 /**
- * O6, the last rung as a callback request: the request_callback tool (time
- * checks, one per lead, account scoping, the chat stays with the agent), the
- * agent's context, Needs you, the lead page card with Confirm and Change time
- * (the buyer told in the chat, account scoping), the "Who takes calls"
- * setting, and the two "asks for a person" scenarios with a scripted model.
- * Nothing here calls the real API.
+ * O6, calls with a person. Since the reach boards (21 Nov) the agent's
+ * request_callback posts the booking card (tests/integration/team-calls.test.tsx);
+ * this file keeps the older call requests already in the data: the service's
+ * time checks, one per lead, account scoping, the chat stays with the agent;
+ * no "Calls to confirm" in Needs you; the lead page card with Change time
+ * (which confirms the time; the Confirm step is gone) and Cancel, the buyer
+ * told in the chat; the "Who takes calls" setting; and the two "asks for a
+ * person" scenarios with a scripted model. Nothing here calls the real API.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -42,14 +44,15 @@ vi.mock("next/navigation", () => ({
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
 const { default: OverviewPage } = await import("@/app/app/[account]/page");
 const { default: LeadsPage } = await import("@/app/app/[account]/leads/page");
-const { confirmCallbackAction, changeCallbackAction } = await import("@/app/app/[account]/leads/[leadId]/callback-actions");
+const { changeCallbackAction } = await import("@/app/app/[account]/leads/[leadId]/callback-actions");
 const { runTool } = await import("@/lib/agent/tools");
 const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { ensureDraftVersion, publishDraftVersion, saveDraftPlaybook, startTestConversation, getConversation } = await import("@/lib/agent/service");
 const { savePlaybookForm } = await import("@/lib/agent/playbook-save");
 const { conversationScenarioCheck } = await import("@/lib/agent/scenario-results");
-const { changeCallback, confirmCallback, leadCallback, requestedCallbacks } = await import("@/lib/callbacks/service");
+const { changeCallback, confirmCallback, leadCallback, requestedCallbacks, requestCallback } = await import("@/lib/callbacks/service");
 const { needsYou, needsYouCount } = await import("@/lib/overview/service");
+const { leadListFacts } = await import("@/lib/leads/list-facts");
 const { createSimulatedBuyer, startSimulatorConversation } = await import("@/lib/simulator/service");
 
 type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
@@ -117,8 +120,18 @@ describe("Callback requests (O6)", () => {
     if (!call?.messageId) throw new Error("no app message");
     return (await db.select().from(messages).where(eq(messages.id, call.messageId)))[0];
   };
-  const request = async (a: SellerAccount, c: { leadId: string; conversationId: string }, time: unknown, brief = "Price for 3 sites; bring the install plan.") =>
-    runTool("request_callback", { time, brief }, await ctxFor(a, c));
+  /** An older call request with a time (the agent's request_callback before the booking card), in the tool's result shape. */
+  const request = async (a: SellerAccount, c: { leadId: string; conversationId: string }, time: unknown, brief = "Price for 3 sites; bring the install plan.") => {
+    const r = await requestCallback(db, { accountId: a.id, leadId: c.leadId, conversationId: c.conversationId }, { time, brief });
+    return r.ok
+      ? { outcome: "ok", result: { ok: true, time_local: r.timeForBuyer, time_short: r.timeLocal, ...(r.replaced ? { replaced_earlier: true } : {}) } as Record<string, unknown> }
+      : { outcome: "refused", rule: r.rule, result: r.extra as Record<string, unknown> };
+  };
+  /** Changes (and so confirms) an older request's time through the lead card's form. */
+  const setTime = (leadId: string, callbackId: string, at: Date, slug = acc.slug) => {
+    const [date, time] = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(at).split(" ");
+    return redirectOf(changeCallbackAction(form({ slug, leadId, callbackId, date, time })));
+  };
 
   beforeAll(async () => {
     t = await createTestDb();
@@ -131,15 +144,14 @@ describe("Callback requests (O6)", () => {
   }, 120_000);
   afterAll(async () => t.close());
 
-  describe("request_callback", () => {
-    it("records the request, keeps the chat with the agent and sets the next step", async () => {
+  describe("older call requests (requestCallback)", () => {
+    it("records the request and keeps the chat with the agent", async () => {
       const c = await mkChat(acc);
       const at = ahead(26);
       const r = await request(acc, c, at.toISOString().replace(".000Z", "Z"));
       expect(r.outcome).toBe("ok");
       // O7: the agent gets the long form to tell the buyer; the short one is for the seller's trace.
       expect(r.result).toMatchObject({ ok: true, time_local: expect.stringMatching(/^\w+day \d{1,2} \w+ at \d{2}:\d{2}$/), time_short: expect.stringMatching(/^\w{3} \d{1,2} \w{3} \d{2}:\d{2}$/) });
-      expect(String(r.result.message)).toContain("a member of our team will call at that time");
       // The chat does not pause.
       expect((await getConversation(db, acc.id, c.conversationId))!.status).toBe("open");
       const [lead] = await db.select().from(leads).where(eq(leads.id, c.leadId));
@@ -147,8 +159,6 @@ describe("Callback requests (O6)", () => {
       const cb = (await leadCallback(db, acc.id, c.leadId))!;
       expect(cb).toMatchObject({ status: "requested", brief: "Price for 3 sites; bring the install plan.", timezone: "Asia/Jerusalem", conversationId: c.conversationId });
       expect(cb.at.getTime()).toBe(at.getTime());
-      const [deal] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
-      expect(deal.nextStep).toBe(`Call requested ${r.result.time_short}: Price for 3 sites; bring the install plan.`);
       expect(await db.select().from(auditLog).where(and(eq(auditLog.accountId, acc.id), eq(auditLog.action, "callback.requested"), eq(auditLog.targetId, c.leadId)))).toHaveLength(1);
     });
 
@@ -164,7 +174,7 @@ describe("Callback requests (O6)", () => {
       const c = await mkChat(acc);
       const past = await request(acc, c, new Date(Date.now() - HOUR).toISOString());
       expect(past).toMatchObject({ outcome: "refused", rule: "Time is in the past", result: { suggested_time: expect.any(String), suggested_local: expect.any(String) } });
-      expect(new Date(String(past.result.suggested_time)).getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
+      expect(new Date(String((past.result as { suggested_time: string }).suggested_time)).getTime()).toBeGreaterThan(Date.now() + 14 * 60_000);
       expect(await request(acc, c, "tomorrow at ten")).toMatchObject({ outcome: "refused", rule: "Invalid time" });
       expect(await request(acc, c, ahead(24 * 40).toISOString())).toMatchObject({ outcome: "refused", rule: "Time is more than 30 days ahead" });
       expect(await request(acc, c, ahead(26).toISOString(), "  ")).toMatchObject({ outcome: "refused", rule: "No brief" });
@@ -179,7 +189,7 @@ describe("Callback requests (O6)", () => {
       const wanted = new Date(Date.now() + 3 * 24 * HOUR);
       const r = await request(a, c, wanted.toISOString());
       expect(r).toMatchObject({ outcome: "refused", rule: "Outside contact hours", result: { suggested_time: expect.stringMatching(/T09:(00|30):00\+02:00$/) } });
-      const ok = await request(a, c, r.result.suggested_time);
+      const ok = await request(a, c, (r.result as { suggested_time: string }).suggested_time);
       expect(ok.outcome).toBe("ok");
     });
 
@@ -195,45 +205,39 @@ describe("Callback requests (O6)", () => {
       const ev = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "callback.requested")));
       expect(ev).toHaveLength(2);
       expect(ev.find((e) => (e.data as { brief?: string }).brief === "second")!.data).toMatchObject({ replaces: first.id });
-      // Needs you shows one item for the lead, the newer one.
+      // One current request for the lead, the newer one.
       expect((await requestedCallbacks(db, acc.id, new Date())).filter((x) => x.leadId === c.leadId).map((x) => x.id)).toEqual([now.id]);
     });
 
     it("is account-scoped: another account's conversation is not found, and a held chat is refused", async () => {
       const c = await mkChat(acc);
       const ctx = await ctxFor(acc, c, other.id);
-      expect(await runTool("request_callback", { time: ahead(26).toISOString(), brief: "x" }, ctx)).toMatchObject({ outcome: "refused", rule: "Conversation not found" });
+      // The tool (now the booking card) and the older service refuse alike.
+      expect(await runTool("request_callback", { brief: "x" }, ctx)).toMatchObject({ outcome: "refused", rule: "Conversation not found" });
       await db.update(conversations).set({ status: "human" }).where(eq(conversations.id, c.conversationId));
       expect(await request(acc, c, ahead(26).toISOString())).toMatchObject({ outcome: "refused", rule: "The agent is paused for this chat" });
+      expect(await runTool("request_callback", { brief: "x" }, await ctxFor(acc, c))).toMatchObject({ outcome: "refused", rule: "The agent is paused for this chat" });
       expect(await leadCallback(db, acc.id, c.leadId)).toBeNull();
     });
   });
 
   describe("Needs you", () => {
-    it("lists the request until the seller acts; the count matches; other accounts and test leads see nothing", async () => {
+    it("no \"Calls to confirm\": a request or a call still ahead is not in Needs you; the count matches", async () => {
       const c = await mkChat(acc);
       await request(acc, c, ahead(28).toISOString(), "Wants to discuss the contract");
       const items = await needsYou(db, acc.id, new Date());
-      const item = items.find((i) => i.kind === "callback_requested" && i.leadId === c.leadId);
-      expect(item).toMatchObject({ kind: "callback_requested", brief: "Wants to discuss the contract", timezone: "Asia/Jerusalem" });
+      expect(items.some((i) => i.leadId === c.leadId)).toBe(false);
       expect(await needsYouCount(db, acc.id, new Date())).toBe(items.length);
-      expect((await needsYou(db, other.id, new Date())).some((i) => i.leadId === c.leadId)).toBe(false);
 
       as(acc);
-      const html = await page(OverviewPage, { account: acc.slug });
-      // L-6: the Overview counts it under Calls, opening Leads > Needs you filtered to calls.
-      expect(html).toMatch(/data-needs-group="calls"[\s\S]*?Calls[\s\S]*?class="sas-num sas-ovn__count">\d+</);
-      expect(html).toContain(`href="/app/${acc.slug}/leads?view=needs_you&amp;need=calls"`);
-      // Leads > Needs you: what's needed, the brief, and the row opens the Deal tab at the call card (O7).
       const list = await page(LeadsPage, { account: acc.slug }, { view: "needs_you", need: "calls" });
-      expect(list).toContain("Confirm call · ");
-      expect(list).toContain("Wants to discuss the contract");
-      expect(list).toContain(`<bdi>${item!.leadName}</bdi>`);
-      expect(list).toContain(`href="/app/${acc.slug}/leads/${c.leadId}?tab=deal#callback"`);
+      expect(list).not.toContain("Confirm call · ");
 
+      // Confirmed, the call shows as Next step on Leads, still not in Needs you.
       const cb = (await leadCallback(db, acc.id, c.leadId))!;
       expect((await confirmCallback(db, holder.access as never, c.leadId, cb.id)).ok).toBe(true);
-      expect((await needsYou(db, acc.id, new Date())).some((i) => i.kind === "callback_requested" && i.leadId === c.leadId)).toBe(false);
+      expect((await needsYou(db, acc.id, new Date())).some((i) => i.leadId === c.leadId)).toBe(false);
+      expect((await leadListFacts(db, acc.id, [c.leadId])).get(c.leadId)?.call).toMatchObject({ booked: false, brief: "Wants to discuss the contract" });
 
       // A test-lab request never reaches Needs you.
       const lab = (await startTestConversation(db, acc.id, me.id, { language: "en" }))!;
@@ -244,7 +248,7 @@ describe("Callback requests (O6)", () => {
   });
 
   describe("the lead page card", () => {
-    it("shows the time and brief with Confirm and Change time; Confirm tells the buyer in the chat", async () => {
+    it("shows the time and brief with Change time and Cancel, no Confirm; Change time confirms it and tells the buyer in the chat", async () => {
       as(acc);
       const c = await mkChat(acc);
       await request(acc, c, ahead(27).toISOString(), "Price for 3 sites");
@@ -253,32 +257,32 @@ describe("Callback requests (O6)", () => {
       expect(html).toContain('data-testid="callback"');
       expect(html).toMatch(/Call requested: \w{3} \d{1,2} \w{3} \d{2}:\d{2}/);
       expect(html).toContain("Brief: Price for 3 sites");
-      expect(html).toContain('data-testid="callback-confirm"');
+      expect(html).not.toContain('data-testid="callback-confirm"');
       expect(html).toContain("Change time");
       // The timeline event.
       expect(html).toContain("Call requested");
 
-      const url = await redirectOf(confirmCallbackAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id })));
-      expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?callback=confirmed#callback`);
+      const target = ahead(29);
+      const url = await setTime(c.leadId, cb.id, target);
+      expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?tab=deal&callback=changed#callback`);
       // The buyer is told, as an app message, and the chat stays with the agent.
       const msg = await appMessage(c.conversationId);
-      expect(msg.body).toMatch(/^Your call is confirmed for \w+ \d{1,2} \w+ at \d{2}:\d{2}\. Until then, I'm here for any question\.$/);
+      expect(msg.body).toMatch(/^The team moved your call to \w+ \d{1,2} \w+ at \d{2}:\d{2}\./);
       expect(msg.deliveryStatus).toBe("delivered");
       const [call] = await db.select().from(toolCalls).where(and(eq(toolCalls.messageId, msg.id), eq(toolCalls.name, "app_message")));
       expect(call.result).toMatchObject({ kind: "callback", callback_id: cb.id });
       expect((await getConversation(db, acc.id, c.conversationId))!.status).toBe("open");
-      const [deal] = await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId));
-      expect(deal.nextStep).toMatch(/^Call confirmed .+: Price for 3 sites$/);
 
-      html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { callback: "confirmed" });
-      expect(html).toMatch(/Call confirmed: \w{3} \d{1,2} \w{3} \d{2}:\d{2}/);
-      expect(html).toContain("Call confirmed. The buyer was told in the chat.");
-      expect(html).not.toContain('data-testid="callback-confirm"');
-      expect(html).toContain("Call time confirmed");
+      // Confirmed, it shows on the Team call card (team-call.tsx), with the brief, Change time and Cancel.
+      html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { callback: "changed" });
+      expect(html).toContain('data-testid="team-call"');
+      expect(html).toContain("Time set by the team.");
+      expect(html).toContain("Brief: Price for 3 sites");
+      expect(html).toContain("Call time changed. The buyer was told the new time in the chat.");
+      expect(html).toContain("Cancel and tell the buyer");
+      expect(html).toContain("Call time changed");
       // The buyer's message shows in the seller's thread as an app message.
-      expect(html).toContain('<span data-kind="callback">Your call is confirmed for');
-      // Confirming again is refused.
-      expect(await redirectOf(confirmCallbackAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id })))).toContain("callback_error=already_confirmed");
+      expect(html).toContain('<span data-kind="callback">The team moved your call to');
     });
 
     it("Change time sets another time in the lead's zone and tells the buyer in their language", async () => {
@@ -289,7 +293,7 @@ describe("Callback requests (O6)", () => {
       const target = ahead(75);
       const [date, time] = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Jerusalem", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).format(target).split(" ");
       const url = await redirectOf(changeCallbackAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id, date, time })));
-      expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?callback=changed#callback`);
+      expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?tab=deal&callback=changed#callback`);
       const after = (await leadCallback(db, acc.id, c.leadId))!;
       expect(after).toMatchObject({ id: cb.id, status: "confirmed", changed: true });
       expect(after.at.getTime()).toBe(target.getTime());
@@ -307,7 +311,7 @@ describe("Callback requests (O6)", () => {
       await request(acc, c, ahead(27).toISOString());
       const cb = (await leadCallback(db, acc.id, c.leadId))!;
       as(other);
-      expect(await redirectOf(confirmCallbackAction(form({ slug: other.slug, leadId: c.leadId, callbackId: cb.id })))).toContain("callback_error=not_found");
+      expect(await setTime(c.leadId, cb.id, ahead(30), other.slug)).toContain("callback_error=not_found");
       expect(await changeCallback(db, holder.access as never, c.leadId, cb.id, { date: "2030-01-01", time: "10:00" })).toEqual({ ok: false, reason: "not_found" });
       await expect(page(LeadCardPage, { account: other.slug, leadId: c.leadId })).rejects.toThrow("NEXT_NOT_FOUND");
       expect((await leadCallback(db, acc.id, c.leadId))!.status).toBe("requested");
@@ -323,9 +327,9 @@ describe("Callback requests (O6)", () => {
       const cb = (await leadCallback(db, acc.id, c.leadId))!;
       await db.update(conversations).set({ status: "closed" }).where(eq(conversations.id, c.conversationId));
       as(acc);
-      const url = await redirectOf(confirmCallbackAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id })));
-      expect(url).toContain("callback=confirmed&callback_not_told=closed");
-      const html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { callback: "confirmed", callback_not_told: "closed" });
+      const url = await setTime(c.leadId, cb.id, ahead(30));
+      expect(url).toContain("callback=changed&callback_not_told=closed");
+      const html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { callback: "changed", callback_not_told: "closed" });
       expect(html).toContain("the chat is closed, so the buyer was not told");
     });
   });
@@ -364,17 +368,16 @@ describe("Callback requests (O6)", () => {
       expect(await check(lab.conversationId)).toMatchObject({ result: "passed" });
       expect(await leadCallback(db, acc.id, lab.leadId)).toBeNull();
       // The method in the prompt names request_callback, never a pausing hand-off for a call.
-      expect(llm.requests[0].system[0]).toContain("Then call request_callback with the time and a brief");
+      expect(llm.requests[0].system[0]).toContain("call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat");
       expect(llm.requests[0].tools.map((x) => x.name)).toContain("request_callback");
     });
 
-    it("twice: the second ask books the call with request_callback; the chat stays with the agent and the next turn knows", async () => {
+    it("twice: the second ask sends the booking link with request_callback; the chat stays with the agent", async () => {
       const lab = await labChat("asks_for_person_twice", "our sales manager");
-      const at = ahead(26).toISOString();
       const llm = new ScriptedLlm([
         step(say("Of course. So they come prepared, what would you like to cover?")),
-        step(use("t1", "request_callback", { time: at, brief: "Wants to talk pricing with a person." })),
-        step(say("Done: our sales manager will call you tomorrow at 10:00, and the team will confirm it here.")),
+        step(use("t1", "request_callback", { brief: "Wants to talk pricing with a person." })),
+        step(say("Done: pick a time for a call with our sales manager with the link above.")),
         step(say("Yes, it covers 3 sites.")),
       ]);
       await runBuyerTurn(db, llm, { accountId: acc.id, conversationId: lab.conversationId, text: "I'd rather talk to a person from your team, please." });
@@ -384,10 +387,12 @@ describe("Callback requests (O6)", () => {
       expect(await check(lab.conversationId)).toMatchObject({ result: "passed", reason: expect.stringContaining("second ask") });
       expect((await getConversation(db, acc.id, lab.conversationId))!.status).toBe("open");
       expect(llm.requests[0].system[0]).toContain('Call the person "our sales manager".');
-      // The agent keeps answering, and its context shows the request.
+      // The booking card is in the chat; the tool's result tells the agent what to say.
+      const [card] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, lab.conversationId), eq(toolCalls.name, "app_message"))).orderBy(desc(toolCalls.createdAt)).limit(1);
+      expect(card.result).toMatchObject({ kind: "booking", brief: "Wants to talk pricing with a person." });
+      // The agent keeps answering.
       const r3 = await runBuyerTurn(db, llm, { accountId: acc.id, conversationId: lab.conversationId, text: "Does it cover 3 sites?" });
       expect(r3.status).toBe("replied");
-      expect(llm.requests.at(-1)!.system[1]).toContain("Call with our sales manager requested, waiting for the team to confirm:");
     });
 
     it("a hand-off on the first ask fails the once scenario", async () => {

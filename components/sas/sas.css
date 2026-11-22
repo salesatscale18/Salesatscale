@@ -1573,5 +1573,104 @@ label.st-voice__row { cursor: pointer; }
 .sas-token, .sas-thread-note, .sas-sim-line, #simulator, .sas-sms-entry__text, .sas-input[readonly] {
   font-variant-ligatures: none; font-feature-settings: "calt" 0, "liga" 0;
 }
+
+/* ===== RB: reach part B (team calls booked in the chat, call log, talk-now and new-time cards) ===== */
+/* Seller · Deal tab › Team call (board ReachSeller): the card before the call, then the log form. */
+.sas-teamcall { display: flex; flex-direction: column; gap: 8px; padding: 0 16px 16px; border-block-end: 1px solid var(--line); min-width: 0; }
+.sas-teamcall__label { padding: 16px 0 0; }
+.sas-teamcall__head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.sas-teamcall--log { margin: 12px 16px 16px; padding: 0 14px 14px; border: 1px solid var(--human); border-radius: var(--radius-lg); }
+.sas-teamcall__label--log { color: var(--human); padding-block-start: 14px; }
+.sas-teamcall__when { display: inline-flex; gap: 8px; align-items: center; font-weight: 600; font-size: 15px; line-height: 22px; color: var(--ink); }
+.sas-teamcall__facts { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; margin: 0; align-items: center; font-size: 14px; line-height: 20px; }
+.sas-teamcall__facts dt { color: var(--ink-muted); }
+.sas-teamcall__facts dd { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; min-width: 0; }
+.sas-teamcall__actions { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: flex-start; }
+.sas-teamcall__actions > details { min-width: 0; }
+.sas-teamcall__actions > details > summary { list-style: none; cursor: pointer; }
+.sas-teamcall__actions > details > summary::-webkit-details-marker { display: none; }
+.sas-teamcall__actions > details[open] { flex-basis: 100%; }
+.sas-teamcall__sub { padding-block-start: 8px; }
+.sas-teamcall__hint { margin: 0; }
+.sas-calllog { display: flex; flex-direction: column; gap: 12px; }
+.sas-calllog__outcome { border: 0; margin: 0; padding: 0; min-width: 0; }
+.sas-calllog__outcome legend { padding: 0; margin-block-end: 6px; font-weight: 600; color: var(--ink); }
+.sas-outcome { display: flex; flex-wrap: wrap; gap: 8px; }
+.sas-outcome__opt { position: relative; display: inline-flex; }
+.sas-outcome__opt input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.sas-outcome__opt span { padding: 7px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); font-weight: 600; font-size: 14px; line-height: 20px; color: var(--ink); background: var(--surface-raised); }
+.sas-outcome__opt input:checked + span { background: var(--primary-fill); border-color: var(--primary-fill); color: var(--on-primary); }
+.sas-outcome__opt input:focus-visible + span { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-calllog__row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.sas-calllog__group { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.sas-calllog__next-label { padding: 4px 0 0; }
+.sas-calllog__next { justify-content: flex-start; width: 100%; }
+.sas-calllog__foot { margin: 0; }
+/* One group of buttons per answer: CSS only, so the form works without a script. */
+.sas-calllog__group--no_answer, .sas-calllog__group--moved { display: none; }
+.sas-calllog:has(input[value="no_answer"]:checked) .sas-calllog__group--spoke,
+.sas-calllog:has(input[value="moved"]:checked) .sas-calllog__group--spoke { display: none; }
+.sas-calllog:has(input[value="no_answer"]:checked) .sas-calllog__group--no_answer,
+.sas-calllog:has(input[value="moved"]:checked) .sas-calllog__group--moved { display: flex; }
+.sas-calllog:has(input[value="no_answer"]:checked) .sas-calllog__foot,
+.sas-calllog:has(input[value="moved"]:checked) .sas-calllog__foot { display: none; }
+/* Seller thread: a logged team call. */
+.sas-teamcall-entry { align-self: stretch; display: flex; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); min-width: 0; }
+.sas-teamcall-entry__icon { flex: none; width: 32px; height: 32px; border-radius: var(--radius-md); display: grid; place-items: center; background: var(--human-soft); color: var(--human); }
+.sas-teamcall-entry__body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.sas-teamcall-entry__head { display: flex; gap: 8px; justify-content: space-between; align-items: baseline; flex-wrap: wrap; }
+.sas-teamcall-entry__edit { color: var(--ink-muted); font-size: 13px; }
+.sas-teamcall-entry__note { margin: 4px 0 0; overflow-wrap: anywhere; white-space: pre-wrap; color: var(--ink); }
+@media (max-width: 560px) {
+  .sas-teamcall--log { margin-inline: 12px; }
+  .sas-calllog__row { grid-template-columns: minmax(0, 1fr); }
+}
+
+/* Buyer chat (board ReachChat): cards in the chat's own tokens (app/chat/[token]/chat.css). */
+.c-root .rb-row-card { max-width: 100%; width: 100%; min-width: 0; align-self: stretch; align-items: stretch; }
+.c-root .rb-row-card > .rb-card { width: 100%; max-width: 100%; }
+.c-root .rb-card { display: flex; flex-direction: column; gap: 10px; padding: 14px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; min-width: 0; }
+.c-root .rb-card--accent { border: 1.5px solid var(--brand); }
+.c-root .rb-card__title { margin: 0; font-size: 15px; line-height: 20px; font-weight: 700; color: var(--ink); }
+.c-root .rb-card__title--icon { display: flex; gap: 8px; align-items: flex-start; }
+.c-root .rb-card__title--icon .sas-ico { color: var(--brand-text, var(--brand)); flex: none; margin-block-start: 2px; }
+.c-root .rb-card__text { margin: 0; color: var(--muted); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
+.c-root .rb-card__text--ok { display: flex; gap: 6px; align-items: flex-start; color: var(--ink); }
+.c-root .rb-card__when { margin: 0; font-size: 15px; line-height: 20px; color: var(--ink); }
+.c-root .rb-card__hint { margin: 0; color: var(--muted); font-size: 12px; line-height: 16px; }
+.c-root .rb-card__error { margin: 0; color: #c23a2b; font-size: 13px; line-height: 18px; }
+.c-root .rb-btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; padding: 10px 16px; border-radius: 999px;
+  border: 1px solid var(--line-strong); background: var(--raised); color: var(--ink); font: inherit; font-weight: 600; font-size: 15px; line-height: 20px; cursor: pointer; text-decoration: none; text-align: center; }
+.c-root .rb-btn--primary { background: var(--brand); border-color: var(--brand); color: var(--brand-on, #fff); }
+.c-root .rb-btn--danger { background: #c23a2b; border-color: #c23a2b; color: #fff; }
+.c-root .rb-btn--sm { min-height: 36px; padding: 6px 12px; font-size: 14px; border-radius: 8px; }
+.c-root .rb-btn:disabled { opacity: .5; cursor: default; }
+.c-root .rb-btn:focus-visible, .c-root .rb-link:focus-visible, .c-root .rb-opt:focus-visible, .c-root .rb-day:focus-visible, .c-root .rb-slot:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+.c-root .rb-link { background: none; border: 0; padding: 4px 2px; font: inherit; font-weight: 600; color: var(--brand-text, var(--brand)); cursor: pointer; }
+.c-root .rb-link--muted { color: var(--muted); }
+.c-root .rb-row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.c-root .rb-row--field { align-items: flex-end; }
+.c-root .rb-field { display: flex; flex-direction: column; gap: 4px; font-size: 12px; line-height: 16px; color: var(--muted); flex: 1 1 160px; min-width: 0; }
+.c-root .rb-input { height: 40px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; font: inherit; font-size: 15px; color: var(--ink); background: var(--raised); width: 100%; min-width: 0; }
+.c-root .rb-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 8px; }
+.c-root .rb-opt { min-height: 44px; padding: 8px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--raised); color: var(--ink); font: inherit; font-weight: 600; cursor: pointer; }
+.c-root .rb-opt--on { background: var(--brand); border-color: var(--brand); color: var(--brand-on, #fff); }
+.c-root .rb-opt:disabled { opacity: .45; cursor: default; }
+.c-root .rb-days { display: flex; gap: 8px; width: 100%; min-width: 0; max-width: 100%; overflow-x: auto; padding-block-end: 2px; scrollbar-width: thin; }
+.c-root .rb-day { flex: 0 0 auto; min-width: 56px; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--raised); color: var(--muted); font: inherit; font-size: 13px; cursor: pointer; }
+.c-root .rb-day b { font-size: 17px; line-height: 22px; color: var(--ink); }
+.c-root .rb-day--on { border: 1.5px solid var(--brand); background: var(--bubble); color: var(--brand-text, var(--brand)); }
+.c-root .rb-day--on b { color: var(--brand-text, var(--brand)); }
+.c-root .rb-slots { display: flex; flex-wrap: wrap; gap: 8px; }
+.c-root .rb-slot { min-width: 72px; padding: 8px 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--raised); color: var(--ink); font: inherit; font-weight: 600;
+  text-align: center; cursor: pointer; direction: ltr; }
+.c-root .rb-slot--on { background: var(--brand); border-color: var(--brand); color: var(--brand-on, #fff); }
+.c-root .rb-slot--taken { border-style: dashed; border-color: var(--line); color: var(--line-strong); font-weight: 400; cursor: not-allowed; }
+.c-root .rb-chip { align-self: center; display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--raised); color: var(--muted);
+  font-size: 12px; line-height: 16px; margin: 4px 0; }
+.c-root .rb-chip .sas-ico { width: 13px; height: 13px; }
+/* ===== end RB ===== */
+
 /* IDs keep normal digits wherever they sit, also inside a tabular .sas-num run (UX: IDs use normal digits). Keep last. */
 .sas-id, .sas-id--plain, .sas-num .sas-id, .sas-num .sas-id--plain { font-variant-numeric: normal; }

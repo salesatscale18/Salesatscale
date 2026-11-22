@@ -1,6 +1,7 @@
 /**
  * The platform scheduler for agreed follow-ups (decision D6): Vercel Cron
- * calls this every 15 minutes (vercel.json). Vercel sends
+ * calls this every minute (vercel.json), so a time the buyer asked for goes out
+ * on the minute (reach spec 3), and the second named-time SMS 10 minutes later. Vercel sends
  * `Authorization: Bearer ${CRON_SECRET}`; anything else gets 401, and with no
  * CRON_SECRET set the route refuses every call. The answer holds counts only.
  */
@@ -9,6 +10,7 @@ import { appDb } from "@/lib/auth/account";
 import { defaultTransport } from "@/lib/channels/twilio";
 import { cronAuthorized } from "@/lib/follow-ups/cron-auth";
 import { runDueFollowUps } from "@/lib/follow-ups/scheduler";
+import { runNamedTimeRetries } from "@/lib/follow-ups/named-time";
 import { runTeamAnswers } from "@/lib/team-questions/service";
 import { AnthropicLlm } from "@/lib/agent/llm";
 import { runAfterCallReplies } from "@/lib/voice/after-call";
@@ -22,6 +24,8 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "unauthorized" }, { status: 401 });
   }
   const summary = await runDueFollowUps(appDb, defaultTransport());
+  // The buyer's own time: one more SMS 10 minutes later when the chat was not opened (at most 2 per named time).
+  const namedTimeRetries = await runNamedTimeRetries(appDb);
   // O4: the team's answers to questions the agent sent them, to buyers who went quiet.
   const teamAnswers = await runTeamAnswers(appDb, defaultTransport());
   // Live voice: calls whose function went away without storing their end are ended at their last heartbeat
@@ -31,6 +35,6 @@ export async function GET(req: Request) {
   // The model client is made only when a reply is due (no API key needed otherwise).
   const afterCalls = await runAfterCallReplies(appDb, { create: (req) => new AnthropicLlm().create(req) });
   // Counts only: never names, numbers or message text in the log.
-  console.info("[follow-ups] run", JSON.stringify({ ...summary, teamAnswers, staleCalls, afterCalls }));
-  return NextResponse.json({ ok: true, ...summary, teamAnswers, staleCalls, afterCalls });
+  console.info("[follow-ups] run", JSON.stringify({ ...summary, namedTimeRetries, teamAnswers, staleCalls, afterCalls }));
+  return NextResponse.json({ ok: true, ...summary, namedTimeRetries, teamAnswers, staleCalls, afterCalls });
 }

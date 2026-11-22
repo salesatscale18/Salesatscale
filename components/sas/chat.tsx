@@ -85,10 +85,10 @@ export function AgentStepsSwitch({ slug, scope, show, back }: { slug: string; sc
   );
 }
 
-export type MarkerKind = "handoff" | "taken_over" | "handed_back" | "spend_cap" | "voice_started" | "voice_ended" | "chat_opened";
+export type MarkerKind = "handoff" | "taken_over" | "handed_back" | "spend_cap" | "voice_started" | "voice_ended" | "chat_opened" | "team_call_booked";
 const MARKER_ICON: Record<MarkerKind, IconName> = {
   handoff: "user-plus", taken_over: "user", handed_back: "sparkles", spend_cap: "user-plus", voice_started: "phone-call", voice_ended: "phone-call",
-  chat_opened: "eye",
+  chat_opened: "eye", team_call_booked: "calendar",
 };
 
 /** A centred dashed marker in the thread: "Chat taken over by Dana · 14:02". Shown whether or not the steps are. */
@@ -98,8 +98,8 @@ export function ThreadMarkerLine({ kind, text, time, timeTitle, dateTime }: { ki
       <span className="sas-thread-marker__body">
         <Icon name={MARKER_ICON[kind]} />
         <span>{text}</span>
-        <span aria-hidden="true">·</span>
-        <time className="sas-num" dateTime={dateTime} title={timeTitle}>{time}</time>
+        {/* A marker whose text holds its own time ("Team call booked · Mon 23 Nov 15:30 · 15 min") passes no time. */}
+        {time ? <><span aria-hidden="true">·</span><time className="sas-num" dateTime={dateTime} title={timeTitle}>{time}</time></> : null}
       </span>
     </div>
   );

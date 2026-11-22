@@ -2,9 +2,10 @@
  * Contact hours limit only what the agent starts on its own (owner, 20 Nov
  * 2026). A call or follow-up time the buyer named is accepted at any hour,
  * still in the future and within 30 days; a time the agent proposes must be
- * inside contact hours. The call card and the follow-up row note a buyer's
- * time outside contact hours; the seller still confirms or changes the call
- * as before. The scheduler sends a buyer's follow-up at the time they named.
+ * inside contact hours. "Call me / write to me at X" is a buyer-named
+ * follow-up (reach boards: the talk-now SMS at X); older call requests with a
+ * time (requestCallback) keep the same time rules. No page shows an
+ * outside-hours note. The scheduler sends a buyer's follow-up at the time they named.
  * Scripted model only: nothing here calls the real API.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -41,7 +42,7 @@ const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadI
 const { runTool } = await import("@/lib/agent/tools");
 const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { ensureDraftVersion, publishDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/service");
-const { changeCallback, confirmCallback, leadCallback } = await import("@/lib/callbacks/service");
+const { changeCallback, confirmCallback, leadCallback, requestCallback } = await import("@/lib/callbacks/service");
 const { runDueFollowUps } = await import("@/lib/follow-ups/scheduler");
 const { createSimulatedBuyer, startSimulatorConversation } = await import("@/lib/simulator/service");
 
@@ -58,6 +59,11 @@ const NOTE = "Outside your contact hours";
 const use = (id: string, name: string, input: unknown): Block => ({ type: "tool_use", id, name, input });
 const say = (text: string): Block => ({ type: "text", text });
 const step = (...content: Block[]) => () => ({ content });
+/** An older call request with a time (request_callback before the booking card), in the tool's result shape. */
+const legacyRequest = async (ctx: { db: unknown; accountId: string; leadId: string; conversationId: string }, input: { time: unknown; brief: unknown; buyer_named_time?: unknown }) => {
+  const r = await requestCallback(ctx.db as never, { accountId: ctx.accountId, leadId: ctx.leadId, conversationId: ctx.conversationId }, input);
+  return r.ok ? { outcome: "ok", result: { ok: true } as Record<string, unknown> } : { outcome: "refused", rule: r.rule, result: r.extra as Record<string, unknown> };
+};
 
 /** "YYYY-MM-DD" of the next Saturday in Jerusalem at least two days ahead. */
 function nextSaturday(): string {
@@ -109,58 +115,55 @@ describe("Contact hours: a time the buyer names is allowed at any hour", () => {
   }, 120_000);
   afterAll(async () => t.close());
 
-  it("\"call me Saturday at 21:00\": the agent requests it with buyer_named_time, it is accepted and the call card shows the note", async () => {
+  it("\"call me Saturday at 21:00\": the agent schedules it with schedule_follow_up and buyer_named_time, accepted at any hour, no note", async () => {
     const c = await mkChat(acc);
     const llm = new ScriptedLlm([
-      step(use("t1", "request_callback", { time: `${SAT}T21:00`, brief: "Wants to go over pricing for 3 sites.", buyer_named_time: true })),
-      step(say("Done: a member of our team will call you on Saturday at 21:00, and the team will confirm it here.")),
+      step(use("t1", "schedule_follow_up", { due_at: `${SAT}T21:00`, topic: "pricing for 3 sites", buyer_named_time: true })),
+      step(say("Done. I'll message you on Saturday at 21:00 your time.")),
     ]);
     const r = await runBuyerTurn(db, llm, { accountId: acc.id, conversationId: c.conversationId, text: "Call me Saturday at 21:00" });
     expect(r.status).toBe("replied");
-    // The prompt line and the tool's flag reach the model.
+    // The prompt lines and the tool's flag reach the model (reach boards: the text message is how the agent reaches them).
     expect(llm.requests[0].system[0]).toContain("If the buyer names a time, request that time; when you suggest a time yourself, suggest one inside contact hours.");
-    const tool = llm.requests[0].tools.find((x) => x.name === "request_callback") as { input_schema: { properties: Record<string, unknown>; required: string[] } };
+    expect(llm.requests[0].system[0]).toContain("If the buyer asks you to call or write at a time, call schedule_follow_up with that time;");
+    const tool = llm.requests[0].tools.find((x) => x.name === "schedule_follow_up") as { input_schema: { properties: Record<string, unknown>; required: string[] } };
     expect(tool.input_schema.required).toContain("buyer_named_time");
-    const [call] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, c.conversationId), eq(toolCalls.name, "request_callback")));
+    const [call] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, c.conversationId), eq(toolCalls.name, "schedule_follow_up")));
     expect(call).toMatchObject({ outcome: "ok", input: { buyer_named_time: true } });
-
-    const cb = (await leadCallback(db, acc.id, c.leadId))!;
-    expect(cb).toMatchObject({ status: "requested", buyerNamedTime: true, outsideHoursAsked: true });
-    const [ev] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "callback.requested")));
+    expect(String((call.result as { message?: string }).message)).toContain("At that time they get a text message with a link back to this chat");
+    const [ev] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "follow_up.scheduled")));
     expect(ev.data).toMatchObject({ buyerNamedTime: true, outsideContactHours: true });
+    expect(await leadCallback(db, acc.id, c.leadId)).toBeNull();
 
-    // The call card shows the buyer's time with no outside-hours note.
-    let html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
-    expect(html).not.toContain('data-testid="callback-outside-hours"');
+    // The lead page: the follow-up the buyer asked for, with no outside-hours note.
+    const html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
     expect(html).not.toContain(NOTE);
-    expect(html).toContain("Call requested: Sat ");
+    expect(html).toContain("The buyer asked for this time.");
 
-    // The seller confirms it as is: still no note.
-    expect((await confirmCallback(db, holder.access as never, c.leadId, cb.id, null)).ok).toBe(true);
-    html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
-    expect(html).toContain("Call confirmed: Sat ");
-    expect(html).not.toContain(NOTE);
-
-    // The seller may set any future time, also outside contact hours.
-    const changed = await changeCallback(db, holder.access as never, c.leadId, cb.id, { date: SAT, time: "22:00" }, null);
+    // An older call request with a buyer-named time: accepted, and the seller may set any future time.
+    const old = await mkChat(acc);
+    const ctx = await ctxFor(acc, old);
+    expect((await legacyRequest(ctx, { time: `${SAT}T21:00`, brief: "Pricing", buyer_named_time: true })).outcome).toBe("ok");
+    const cb = (await leadCallback(db, acc.id, old.leadId))!;
+    expect(cb).toMatchObject({ status: "requested", buyerNamedTime: true, outsideHoursAsked: true });
+    expect((await confirmCallback(db, holder.access as never, old.leadId, cb.id, null)).ok).toBe(true);
+    const changed = await changeCallback(db, holder.access as never, old.leadId, cb.id, { date: SAT, time: "22:00" }, null);
     expect(changed).toMatchObject({ ok: true, request: { status: "confirmed", changed: true } });
-    expect(await leadCallback(db, acc.id, c.leadId)).toMatchObject({ outsideHoursAsked: false, changed: true });
-    html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
-    expect(html).toContain("Call confirmed: Sat ");
-    expect(html).not.toContain(NOTE);
+    expect(await leadCallback(db, acc.id, old.leadId)).toMatchObject({ outsideHoursAsked: false, changed: true });
+    expect(await page(LeadCardPage, { account: acc.slug, leadId: old.leadId })).not.toContain(NOTE);
   });
 
   it("a time the agent proposed outside contact hours is refused with the nearest allowed time; inside hours there is no note", async () => {
     const c = await mkChat(acc);
     const ctx = await ctxFor(acc, c);
     for (const flag of [false, undefined]) {
-      const r = await runTool("request_callback", { time: `${SAT}T21:00`, brief: "Pricing", ...(flag === undefined ? {} : { buyer_named_time: flag }) }, ctx);
+      const r = await legacyRequest(ctx, { time: `${SAT}T21:00`, brief: "Pricing", ...(flag === undefined ? {} : { buyer_named_time: flag }) });
       expect(r).toMatchObject({ outcome: "refused", rule: "Outside contact hours", result: { suggested_time: expect.stringMatching(/\+02:00$/) } });
     }
     expect(await leadCallback(db, acc.id, c.leadId)).toBeNull();
     // The nearest allowed time, which the agent proposes, is accepted.
-    const r = await runTool("request_callback", { time: `${SAT}T21:00`, brief: "Pricing", buyer_named_time: false }, ctx);
-    const ok = await runTool("request_callback", { time: r.result.suggested_time, brief: "Pricing", buyer_named_time: false }, ctx);
+    const r = await legacyRequest(ctx, { time: `${SAT}T21:00`, brief: "Pricing", buyer_named_time: false });
+    const ok = await legacyRequest(ctx, { time: r.result.suggested_time, brief: "Pricing", buyer_named_time: false });
     expect(ok.outcome).toBe("ok");
     expect(await leadCallback(db, acc.id, c.leadId)).toMatchObject({ buyerNamedTime: false, outsideHoursAsked: false });
     const html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
@@ -171,9 +174,9 @@ describe("Contact hours: a time the buyer names is allowed at any hour", () => {
   it("a buyer's time must still be in the future and within 30 days", async () => {
     const c = await mkChat(acc);
     const ctx = await ctxFor(acc, c);
-    const past = await runTool("request_callback", { time: new Date(Date.now() - 3_600_000).toISOString(), brief: "x", buyer_named_time: true }, ctx);
+    const past = await legacyRequest(ctx, { time: new Date(Date.now() - 3_600_000).toISOString(), brief: "x", buyer_named_time: true });
     expect(past).toMatchObject({ outcome: "refused", rule: "Time is in the past" });
-    const far = await runTool("request_callback", { time: new Date(Date.now() + 40 * DAY).toISOString(), brief: "x", buyer_named_time: true }, ctx);
+    const far = await legacyRequest(ctx, { time: new Date(Date.now() + 40 * DAY).toISOString(), brief: "x", buyer_named_time: true });
     expect(far).toMatchObject({ outcome: "refused", rule: "Time is more than 30 days ahead", result: { message: "Not requested: ask the buyer for another time within the next 30 days." } });
     const farFu = await runTool("schedule_follow_up", { due_at: new Date(Date.now() + 40 * DAY).toISOString(), topic: "x", buyer_named_time: true }, ctx);
     expect(farFu).toMatchObject({ outcome: "refused", rule: "Time is more than 30 days ahead" });

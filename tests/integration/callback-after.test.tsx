@@ -1,9 +1,10 @@
 /**
  * O6 follow-ups (UX): "Cancel call" on the lead page (confirm step, the
  * request closes everywhere, the buyer is told, the agent's context and next
- * step drop the call), and "How did the call go?" after the call (back to the
- * agent, or the seller takes the deal over). Admin-only, account-scoped. No
- * model calls.
+ * step drop the call), and after the call: "Log the call" (reach boards; it
+ * replaced "How did the call go?") with its next steps, back to the agent or
+ * the seller takes the deal over. The older answer (answerAfterCall) still
+ * closes a call. Admin-only, account-scoped. No model calls.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -36,11 +37,12 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { default: LeadCardPage } = await import("@/app/app/[account]/leads/[leadId]/page");
-const { cancelCallbackAction, afterCallAction } = await import("@/app/app/[account]/leads/[leadId]/callback-actions");
-const { runTool } = await import("@/lib/agent/tools");
+const { cancelCallbackAction } = await import("@/app/app/[account]/leads/[leadId]/callback-actions");
+const { logTeamCallAction } = await import("@/app/app/[account]/leads/[leadId]/team-call-actions");
+const { applyAgentUpdates } = await import("@/lib/agent/service");
 const { runBuyerTurn } = await import("@/lib/agent/turn");
 const { ensureDraftVersion, publishDraftVersion, saveDraftPlaybook } = await import("@/lib/agent/service");
-const { answerAfterCall, callbackAfterCall, cancelCallback, confirmCallback, leadCallback, requestedCallbacks } = await import("@/lib/callbacks/service");
+const { answerAfterCall, callbackAfterCall, callbackNextStep, cancelCallback, confirmCallback, leadCallback, requestCallback, requestedCallbacks } = await import("@/lib/callbacks/service");
 const { createSimulatedBuyer, startSimulatorConversation } = await import("@/lib/simulator/service");
 
 type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
@@ -97,10 +99,10 @@ describe("Callback: cancel, and after the call", () => {
   };
   const requested = async (a: SellerAccount, c: { leadId: string; conversationId: string }, at = ahead(26)) => {
     const [v] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, a.id), eq(agentVersions.status, "live")));
-    const r = await runTool("request_callback", { time: at.toISOString(), brief: "Price for 3 sites." }, {
-      db, accountId: a.id, conversationId: c.conversationId, leadId: c.leadId, playbook: v.playbook, currency: "ILS", callId: `c${n++}`, language: "en",
-    });
-    if (r.outcome !== "ok") throw new Error(String(r.result.rule));
+    // An older call request with a time (the agent's request_callback before the booking card), with its next step.
+    const r = await requestCallback(db, { accountId: a.id, leadId: c.leadId, conversationId: c.conversationId }, { time: at.toISOString(), brief: "Price for 3 sites." });
+    if (!r.ok) throw new Error(r.rule);
+    await applyAgentUpdates(db, a.id, c.leadId, v.playbook, [], { nextStep: callbackNextStep(r.timeLocal, r.request.brief) });
     return (await leadCallback(db, a.id, c.leadId))!;
   };
   const lastApp = async (conversationId: string) => {
@@ -132,7 +134,7 @@ describe("Callback: cancel, and after the call", () => {
     expect(await cancelCallback(db, accessOf(acc, "seller_member"), c.leadId, cb.id, null)).toEqual({ ok: false, reason: "forbidden" });
 
     const url = await redirectOf(cancelCallbackAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id })));
-    expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?callback=cancelled#callback`);
+    expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?tab=deal&callback=cancelled#callback`);
     expect(await leadCallback(db, acc.id, c.leadId)).toBeNull();
     expect((await requestedCallbacks(db, acc.id, new Date())).some((x) => x.leadId === c.leadId)).toBe(false);
     expect(await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "callback.cancelled")))).toHaveLength(1);
@@ -164,13 +166,15 @@ describe("Callback: cancel, and after the call", () => {
     expect((await lastApp(c.conversationId))?.message.body).toBe("לא נוכל לקיים את השיחה במועד הזה. אני כאן לכל שאלה, ואפשר לבקש מועד חדש מתי שתרצו.");
   });
 
-  it("After the call: the prompt shows once the card is gone, until answered; hand back to the agent", async () => {
+  it("After the call: \"Log the call\" is due once the 15-minute slot has ended, until answered; the older answer still closes it", async () => {
     const c = await mkChat(acc);
     const cb = await requested(acc, c, ahead(2));
     expect(await confirmCallback(db, accessOf(acc), c.leadId, cb.id, null)).toMatchObject({ ok: true });
-    // Before the call and within 2 hours after it: the card, no prompt.
+    // Before the call and during its slot: the card, nothing to log.
     expect(await callbackAfterCall(db, acc.id, c.leadId)).toBeNull();
-    expect(await callbackAfterCall(db, acc.id, c.leadId, new Date(cb.at.getTime() + 1.5 * HOUR))).toBeNull();
+    expect(await callbackAfterCall(db, acc.id, c.leadId, new Date(cb.at.getTime() + 10 * 60_000))).toBeNull();
+    expect(await callbackAfterCall(db, acc.id, c.leadId, new Date(cb.at.getTime() + 16 * 60_000))).toMatchObject({ id: cb.id });
+    // It stays (the item stays in Needs you) until answered, also hours later.
     const later = new Date(cb.at.getTime() + 2 * HOUR + 60_000);
     expect(await callbackAfterCall(db, acc.id, c.leadId, later)).toMatchObject({ id: cb.id });
     expect(await callbackAfterCall(db, other.id, c.leadId, later)).toBeNull();
@@ -189,7 +193,7 @@ describe("Callback: cancel, and after the call", () => {
     expect((await db.select().from(dealStates).where(eq(dealStates.leadId, c.leadId)))[0].nextStep).toBeNull();
   });
 
-  it("After the call: \"I'm handling this deal\" takes the chat over (the agent pauses), from the lead page", async () => {
+  it("After the call: the log form's \"I'm handling this deal\" saves the log and takes the chat over (the agent pauses)", async () => {
     const c = await mkChat(acc);
     const at = ahead(2);
     const cb = await requested(acc, c, at);
@@ -200,29 +204,29 @@ describe("Callback: cancel, and after the call", () => {
       if (e.type.startsWith("callback.")) await db.update(leadEvents).set({ data: { ...(e.data ?? {}), at: past.toISOString() } }).where(eq(leadEvents.id, e.id));
     }
     let html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId });
-    expect(html).toContain('data-testid="after-call"');
-    expect(html).toContain("How did the call go?");
+    expect(html).toContain('data-state="log"');
+    expect(html).toContain("Log the call");
     expect(html).toContain("Hand back to the agent");
     expect(html).toContain("I&#x27;m handling this deal");
-    expect(html).not.toContain('data-testid="callback-time"');
-    // A member who is not an admin sees no prompt.
+    expect(html).not.toContain("How did the call go?");
+    // A member who is not an admin sees no form.
     as(acc, "seller_member");
-    expect(await page(LeadCardPage, { account: acc.slug, leadId: c.leadId })).not.toContain('data-testid="after-call"');
+    expect(await page(LeadCardPage, { account: acc.slug, leadId: c.leadId })).not.toContain('data-testid="team-call-log"');
     as(acc);
 
-    const url = await redirectOf(afterCallAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id, choice: "seller" })));
-    expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?after_call=seller#callback`);
+    const url = await redirectOf(logTeamCallAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id, outcome: "spoke", started: "10:00", lengthMin: "12", note: "Wants the Haifa site first.", next: "seller" })));
+    expect(url).toBe(`/app/${acc.slug}/leads/${c.leadId}?tab=deal&team_call_notice=seller#callback`);
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, c.conversationId));
     expect(conv).toMatchObject({ status: "human", takenOverByUserId: me.id });
     expect(await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "conversation.taken_over")))).toHaveLength(1);
-    expect(await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "callback.after_seller")))).toHaveLength(1);
+    expect(await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, c.leadId), eq(leadEvents.type, "team_call.logged")))).toHaveLength(1);
     // The agent pauses: a buyer message gets no model call.
     expect(await runBuyerTurn(db, new ScriptedLlm([]), { accountId: acc.id, conversationId: c.conversationId, text: "Hello?" })).toEqual({ status: "human" });
 
-    html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { after_call: "seller" });
-    expect(html).toContain("You handle this deal now.");
-    expect(html).not.toContain('data-testid="after-call-seller"');
-    // A second answer is refused.
-    expect(await redirectOf(afterCallAction(form({ slug: acc.slug, leadId: c.leadId, callbackId: cb.id, choice: "agent" })))).toContain("after_call_error=not_found");
+    html = await page(LeadCardPage, { account: acc.slug, leadId: c.leadId }, { team_call_notice: "seller" });
+    expect(html).toContain("You handle this deal now");
+    expect(html).not.toContain('data-testid="team-call-log"');
+    // Logged: nothing left to log.
+    expect(await callbackAfterCall(db, acc.id, c.leadId)).toBeNull();
   });
 });
