@@ -1331,6 +1331,8 @@ export class VoiceEngine {
       }
       a.updates = keep;
     }
+    // N1: a realtime model may send time as "null" or "" instead of null (no time named: only the booking card).
+    if (name === "request_callback" && typeof a.time === "string" && /^\s*(null|none|undefined)?\s*$/i.test(a.time)) a.time = null;
     if (name === "send_order_form" && this.loaded) {
       const { account, conv } = this.loaded;
       const given = String(a.quote ?? "").trim();
@@ -1360,21 +1362,29 @@ export class VoiceEngine {
         message: `The order form was NOT sent (${why}). Do not say the order form or its link is in the chat. ${typeof r.result.message === "string" ? `${r.result.message} ` : ""}Tell the buyer in one short sentence what happens next.`,
       };
     }
+    // A refusal after the card was posted (N1: the named time could not be booked): the card is in the chat, nothing is booked.
+    const cardPosted = name === "request_callback" && r.outcome !== "ok" && typeof r.result.rule === "string" && r.result.rule.startsWith("Not booked");
     if (name === "request_callback" && r.outcome !== "ok") {
-      // Never a booking link that was not sent.
       const why = typeof r.result.rule === "string" ? r.result.rule : typeof r.result.error === "string" ? r.result.error : "it could not be sent";
-      forModel = {
-        ...r.result,
-        message: `The booking link was NOT sent (${why}). Do not say there is a link in the chat or that a call is set up. ${typeof r.result.message === "string" ? `${r.result.message} ` : ""}Tell the buyer in one short sentence what happens next.`,
-      };
+      forModel = cardPosted
+        ? {
+          ...r.result,
+          message: `Nothing was booked (${why}). Do not say a call is booked. The booking card is in the chat: say in one short sentence that they can pick a time there (never read the link aloud). Then ask if there is anything else you can help with: this call goes on.`,
+        }
+        : {
+          // Never a booking link that was not sent, and never a booking that was not made.
+          ...r.result,
+          message: `The booking link was NOT sent and nothing was booked (${why}). Do not say there is a link in the chat or that a call is booked or set up. ${typeof r.result.message === "string" ? `${r.result.message} ` : ""}Tell the buyer in one short sentence what happens next.`,
+        };
+    }
+    if (name === "request_callback" && (r.outcome === "ok" || cardPosted) && this.loaded) {
+      // The booking card is in the chat now ("Call booked" when the agent booked the named time):
+      // the browser refetches the thread and shows it during the call.
+      const offer = await latestBookingOffer(this.db, this.loaded.account.id, this.loaded.conv.leadId).catch(() => null);
+      if (offer?.conversationId === this.loaded.conv.id) this.send({ t: "message", messageId: offer.messageId });
     }
     if (r.outcome === "ok") {
       if (name === "create_quote" && typeof r.result.quote_message_id === "string") this.send({ t: "message", messageId: r.result.quote_message_id });
-      if (name === "request_callback" && this.loaded) {
-        // The booking card is in the chat now: the browser shows it during the call.
-        const offer = await latestBookingOffer(this.db, this.loaded.account.id, this.loaded.conv.leadId).catch(() => null);
-        if (offer?.conversationId === this.loaded.conv.id) this.send({ t: "message", messageId: offer.messageId });
-      }
       if (name === "create_quote") {
         // The model names a quote by its number only: internal ids out, and how to send the form for this one.
         const { quote_id: _qid, quote_message_id: _mid, ...rest } = r.result;

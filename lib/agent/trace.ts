@@ -91,7 +91,10 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
     case "request_callback":
       // Older calls carry the time the agent recorded; now the buyer picks it on the booking card.
       sent = input.time ? `${str(input.time)}${input.brief ? `: ${str(input.brief)}` : ""}` : str(input.brief);
-      got = result.time_short || result.time_local ? `Call requested for ${str(result.time_short ?? result.time_local)}; the team confirms it` : result.ok === true ? "Booking link sent in the chat" : "";
+      // N1: the time the buyer named, booked by the agent, or not free (the booking card is posted either way).
+      got = result.booked === true ? `Call booked for ${str(result.call_short ?? result.call_local)}`
+        : result.booked === false ? `${str(result.asked_short ?? result.asked_local)} not free; booking link sent in the chat`
+        : result.time_short || result.time_local ? `Call requested for ${str(result.time_short ?? result.time_local)}; the team confirms it` : result.ok === true ? "Booking link sent in the chat" : "";
       break;
     case "ask_team":
       sent = `"${str(input.question)}"${input.must_have === true ? " (must-have)" : input.must_have === false ? " (good to know)" : ""}`;
