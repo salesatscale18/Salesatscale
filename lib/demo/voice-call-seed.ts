@@ -24,6 +24,7 @@
  *
  * Needs you is unchanged: the lead is agent-handled, nothing waits for a person.
  */
+import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -92,7 +93,8 @@ function callLines(): CallLine[] {
 }
 
 /** The engine's closing note (lib/voice/engine.ts CALL_ENDED_TEXT, not exported there). */
-export const callEndedText = (sec: number) => `Voice call ended · ${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+/** The line the voice engine writes when a call ends (shared with lib/agent/thread-markers.ts). */
+export const callEndedText = voiceCallEndedLine;
 
 const minAgo = (now: Date, m: number) => new Date(now.getTime() - m * 60_000);
 
