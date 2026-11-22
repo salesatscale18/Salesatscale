@@ -147,7 +147,8 @@ export async function runBuyerTurn(
       teamCall: teamCallLogLine(loggedCall, (at) => formatBuyerLocal(at, buyerZone ?? contact.timezone)),
       teamQuestions,
       priceApproval,
-      localNow: localNowLine(new Date(), contact.timezone),
+      // The clock the agent reads local times by: the tools read them in the buyer's stored zone, else the market's.
+      localNow: localNowLine(new Date(), buyerZone ?? contact.timezone),
     })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nConversation language: ${lang}.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };

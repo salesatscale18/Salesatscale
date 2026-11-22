@@ -26,7 +26,7 @@ const { conversationView } = await import("@/lib/agent/conversation");
 const { startSimulatorConversation } = await import("@/lib/simulator/service");
 const { confirmCallback, requestCallback } = await import("@/lib/callbacks/service");
 const { storedBuyerZone } = await import("@/lib/team-calls/zone");
-const { formatBuyerLocal, isoInZone } = await import("@/lib/follow-ups/rules");
+const { formatBuyerLocal, formatDueLocal, isoInZone } = await import("@/lib/follow-ups/rules");
 const { buyerCallTime } = await import("@/lib/callbacks/rules");
 
 const ALL_DAY = Array.from({ length: 7 }, () => ({ on: true, from: "00:00", to: "23:59" }));
@@ -87,8 +87,10 @@ describe("RB4: the buyer's zone in agent-facing times; the booking card under it
       expect(res.due_local).toBe(formatBuyerLocal(due, expected));
       // The zones' hours differ, so the choice is visible.
       expect(formatBuyerLocal(due, BUYER)).not.toBe(formatBuyerLocal(due, MARKET));
-      // Parsing stays in the market's zone: 12:00 there.
-      expect(res.due_short).toContain("12:00");
+      // A local due_at is read in the buyer's stored zone, else the market's (N1b): 12:00 there.
+      expect(res.due_local).toContain("at 12:00");
+      // due_short (the seller's trace) stays in the market's zone.
+      expect(res.due_short).toBe(formatDueLocal(due, MARKET));
     });
 
     it(`request_callback's time for the buyer and the team's confirmation in the chat: ${label} → ${expected}`, async () => {
