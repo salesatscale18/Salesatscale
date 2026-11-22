@@ -732,7 +732,8 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     for (const type of ["audio-done", "function-call-arguments-delta"]) expect(m.map({ type, raw: {} } as never)).toEqual([]);
     // A custom event without rawType is named from its provider message (it was "custom:undefined").
     expect(m.map({ type: "custom", raw: { voiceActivity: { speaking: true } } } as never)).toEqual([]);
-    expect(m.map({ type: "custom", raw: { toolCallCancellation: { ids: ["c"] } } } as never)).toEqual([{ type: "provider-event", kind: "unknown", name: "custom:toolCallCancellation" }]);
+    // Gemini cancelled tool calls after a barge-in: their results must not be sent.
+    expect(m.map({ type: "custom", raw: { toolCallCancellation: { ids: ["c"] } } } as never)).toEqual([{ type: "tool-cancelled", callIds: ["c"] }]);
     expect(m.map({ type: "custom", raw: { usageMetadata: { totalTokenCount: 1 } }, usage: { inputTokens: 5 } } as never)).toEqual([{ type: "usage", usage: { audioInTokens: 0, textInTokens: 5, audioOutTokens: 0, textOutTokens: 0, cachedInTokens: 0 } }]);
     // Nothing to name it by (also the Gateway's literal "undefined" type, Gemini's "custom:undefined"): ignored.
     expect(m.map({ type: "custom", raw: null } as never)).toEqual([]);

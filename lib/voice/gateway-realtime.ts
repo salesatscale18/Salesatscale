@@ -21,7 +21,7 @@ import type { VoiceUsage } from "@/db/schema";
 import { VOICE_SAMPLE_RATE } from "./protocol";
 import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionConfig } from "./realtime";
 import { schemaFamilyOf } from "./tool-schema";
-import { cleanTranscript, joinTranscript } from "./transcript-clean";
+import { cleanTranscript, joinTranscript, markerKinds } from "./transcript-clean";
 import { voiceModelId } from "./settings";
 
 type SdkTool = NonNullable<SdkSessionConfig["tools"]>[number];
@@ -159,6 +159,13 @@ export function customEventName(e: { rawType?: unknown; raw?: unknown }): string
   return "unnamed";
 }
 
+/** The call ids of a Gemini toolCallCancellation (`{ toolCallCancellation: { ids } }`, or the inner object). */
+export function cancelledCallIds(raw: unknown): string[] {
+  const r = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const inner = r.toolCallCancellation && typeof r.toolCallCancellation === "object" ? (r.toolCallCancellation as Record<string, unknown>) : r;
+  return Array.isArray(inner.ids) ? inner.ids.filter((x): x is string => typeof x === "string") : [];
+}
+
 /**
  * Maps normalized server events to ours. Stateful (one per connection): it
  * accumulates the turn's transcripts, so every transcript event we emit
@@ -166,6 +173,14 @@ export function customEventName(e: { rawType?: unknown; raw?: unknown }): string
  */
 export class ServerEventMapper {
   private agentText = "";
+  /**
+   * After a response ended (response-done), until the next response shows itself (audio, a tool call, a new
+   * response id): transcript that still arrives belongs to the response that ended. Gemini sends output
+   * transcription independently of the turn's end (AI SDK @ai-sdk/google realtime mapper: "Google delivers
+   * transcription independently with no guaranteed ordering relative to turnComplete"). Before 23 Nov 2026 such text
+   * opened a new agent turn and was glued to the next answer, or stored as a cut line, or not stored at all.
+   */
+  private late: { responseId: string | null; text: string } | null = null;
   /** The transcript of the response the buyer just cut (as sent), until the next response starts. */
   private cutSaid: string | null = null;
   private buyerText = "";
@@ -183,9 +198,10 @@ export class ServerEventMapper {
         return e.sessionId ? [{ type: "session", providerSessionId: e.sessionId }] : [];
       case "audio-delta":
       case "audio-chunk":
+        this.late = null;
         return [...this.closeBuyerTurn(), ...this.audio(e.delta, e.type === "audio-delta" ? e.responseId : undefined)];
       case "audio-transcript-delta":
-        return this.agentDelta(e.delta);
+        return this.lateDelta(e.delta, e.responseId) ?? this.agentDelta(e.delta);
       case "audio-transcript-done":
         // The whole transcript of a response the buyer cut: what it would have said, not what was heard (the cut
         // line was already sent). Only words after the cut count, from the deltas.
@@ -194,7 +210,7 @@ export class ServerEventMapper {
         this.agentBoundary = true;
         return [];
       case "transcript-fragment":
-        return e.speaker === "assistant" ? this.agentDelta(e.delta) : this.buyerDelta(e.delta);
+        return e.speaker === "assistant" ? (this.lateDelta(e.delta) ?? this.agentDelta(e.delta)) : this.buyerDelta(e.delta);
       case "input-transcription-completed": {
         const text = cleanTranscript((e.transcript || this.buyerText).trim());
         this.buyerText = "";
@@ -209,6 +225,7 @@ export class ServerEventMapper {
         this.responseDone = false;
         this.agentText = "";
         this.cutSaid = null;
+        this.late = null;
         return [];
       case "function-call-arguments-done": {
         let args: unknown = {};
@@ -219,6 +236,7 @@ export class ServerEventMapper {
         }
         this.openCalls.add(e.callId);
         this.agentBoundary = true;
+        this.late = null;
         return [...this.closeBuyerTurn(), { type: "tool-call", callId: e.callId, name: e.name, args }];
       }
       case "response-done": {
@@ -226,6 +244,7 @@ export class ServerEventMapper {
         const out: RealtimeEvent[] = [...this.closeBuyerTurn(), ...this.cleanedNote()];
         const said = cleanTranscript(this.agentText);
         if (said) out.push({ type: "agent-transcript", text: said, final: true });
+        this.late = { responseId: typeof e.responseId === "string" && e.responseId ? e.responseId : null, text: this.agentText };
         this.agentText = "";
         out.push({ type: "turn-done", ...(e.status === "cancelled" || e.status === "incomplete" ? { interrupted: true } : {}) });
         if (e.usage) out.push({ type: "usage", usage: toVoiceUsage(e.usage) });
@@ -235,6 +254,7 @@ export class ServerEventMapper {
         const rawType = customEventName(e);
         if (rawType === "usageMetadata" && e.usage) return [{ type: "usage", usage: toVoiceUsage(e.usage) }];
         if (rawType === "goAway") return [{ type: "going-away" }];
+        if (rawType === "toolCallCancellation") return [{ type: "tool-cancelled", callIds: cancelledCallIds(e.raw) }];
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
         if (/^interrupted$/i.test(rawType)) return this.interrupt();
         // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
@@ -329,7 +349,20 @@ export class ServerEventMapper {
     if (!raw) return [];
     const said = cleanTranscript(raw);
     if (said === raw) return [];
-    return [{ type: "diagnostic", kind: "cleaned-transcript", detail: said ? "marker in a line" : "marker only" }];
+    return [{ type: "diagnostic", kind: "cleaned-transcript", detail: `${said ? "marker in a line" : "marker only"} (${markerKinds(raw).join(",") || "other"})` }];
+  }
+
+  /** A transcript piece of the response that already ended (see `late`), or null when it belongs to a new one. */
+  private lateDelta(delta: string, responseId?: string): RealtimeEvent[] | null {
+    const late = this.late;
+    if (!late) return null;
+    if (responseId && late.responseId && responseId !== late.responseId) {
+      this.late = null;
+      return null;
+    }
+    late.text = joinTranscript(late.text, delta);
+    const text = cleanTranscript(late.text);
+    return text ? [{ type: "agent-transcript", text, final: true, late: true }] : [];
   }
 
   /** Transcription markers ("<no speech detected>", lib/voice/transcript-clean.ts) are no text: nothing goes out for them. */
@@ -360,22 +393,22 @@ export class ServerEventMapper {
 }
 
 /**
- * When to ask for the model's next response after tool calls. As the AI SDK's own session (maybeRequestToolResponse):
- * once BOTH the response that made the calls has ended AND every call has its result, whichever comes last.
- * Until 22 Nov 2026 it was asked for only when a result arrived, so results that came before the response's end
- * never got a response: the model then stayed silent until the buyer spoke. Each request is reported
- * (diagnostic "tool-continuation"), so the live logs show it once per tool round.
+ * When to ask for the model's next response after tool calls, per family.
+ * - OpenAI: as the AI SDK's own session (maybeRequestToolResponse): one response-create once BOTH the response that
+ *   made the calls has ended AND every call has its result, whichever comes last. A chain of calls is one call per
+ *   response, so one request per step; never more than one per batch.
+ * - Gemini: never. With the BLOCKING tool option the model continues by itself once it has the function responses,
+ *   and the AI SDK's Gemini Live mapping sends nothing for a response-create (@ai-sdk/google 4.0.124,
+ *   src/realtime/google-realtime-event-mapper.ts serializeClientEvent: `case 'response-create': … return null`).
+ *   Until 23 Nov 2026 a response-create still went out after a result on Gemini (three in 1.3 s on one buyer turn):
+ *   a no-op if the Gateway maps it as the SDK does, a second answer to the same turn if it does not.
+ * Each completed batch is reported (diagnostic "tool-continuation"), once.
  */
 export class ToolResponseGate {
   private readonly results = new Set<string>();
-  /**
-   * `atResponseEnd`: also request at the response's end (OpenAI). Gemini keeps its 5d1f427 behaviour (requested
-   * only with a result): with the BLOCKING tool option it continues on its own after the results, and a second
-   * request there could start a second response. Gemini's case is reported, so the live logs show which happens.
-   */
   constructor(
     private readonly mapper: Pick<ServerEventMapper, "openCalls" | "responseDone">, private readonly report: (e: RealtimeEvent) => void,
-    private readonly atResponseEnd = true,
+    private readonly family: "gemini" | "openai" = "openai",
   ) {}
 
   /** A result was sent (`callId`) or the response ended: the response-create to send now, if any. */
@@ -383,14 +416,12 @@ export class ToolResponseGate {
     if (callId) this.results.add(callId);
     const calls = this.mapper.openCalls;
     if (!this.mapper.responseDone || !calls.size || ![...calls].every((id) => this.results.has(id))) return [];
-    if (by === "response end" && !this.atResponseEnd) {
-      calls.clear();
-      this.results.clear();
-      this.report({ type: "diagnostic", kind: "tool-continuation", detail: "results came before the response end; no response requested (the model continues itself)" });
-      return [];
-    }
     calls.clear();
     this.results.clear();
+    if (this.family === "gemini") {
+      this.report({ type: "diagnostic", kind: "tool-continuation", detail: "all results in; the model continues by itself (no response requested)" });
+      return [];
+    }
     this.report({ type: "diagnostic", kind: "tool-continuation", detail: `response requested after the ${by}` });
     return [{ type: "response-create" }];
   }
@@ -399,9 +430,13 @@ export class ToolResponseGate {
 /** Our outgoing actions as normalized client events. */
 export const clientEvents = {
   audio: (pcm: Uint8Array): SdkClientEvent => ({ type: "input-audio-append", audio: Buffer.from(pcm.buffer, pcm.byteOffset, pcm.byteLength).toString("base64") }),
-  text: (text: string): SdkClientEvent[] => [
+  /**
+   * A typed buyer line. OpenAI: an item, then a response. Gemini: the text item only: the AI SDK's Gemini mapping
+   * sends it as `realtimeInput.text`, which Gemini answers by itself, and sends nothing for a response-create.
+   */
+  text: (text: string, family: "gemini" | "openai" = "openai"): SdkClientEvent[] => [
     { type: "conversation-item-create", item: { type: "text-message", role: "user", text } },
-    { type: "response-create" },
+    ...(family === "gemini" ? [] : [{ type: "response-create" as const }]),
   ],
   toolResult: (callId: string, name: string, result: unknown): SdkClientEvent => ({
     type: "conversation-item-create", item: { type: "function-call-output", callId, name, output: JSON.stringify(result) },
@@ -413,9 +448,10 @@ export const clientEvents = {
    */
   /** A note the model reads with the conversation but does not answer: an item, and no response-create. */
   note: (note: string): SdkClientEvent => ({ type: "conversation-item-create", item: { type: "text-message", role: "user", text: note } }),
-  respond: (instructions?: string): SdkClientEvent[] => [
+  respond: (instructions?: string, family: "gemini" | "openai" = "openai"): SdkClientEvent[] => [
     ...(instructions ? [{ type: "conversation-item-create" as const, item: { type: "text-message" as const, role: "user" as const, text: `(Note from the system, not from the buyer: ${instructions})` } }] : []),
-    { type: "response-create" },
+    // Gemini answers the text item by itself (see `text`); a response-create there is never needed.
+    ...(family === "gemini" && instructions ? [] : [{ type: "response-create" as const }]),
   ],
 };
 
@@ -459,7 +495,8 @@ export class GatewayRealtime implements RealtimeModel {
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;
     let open = false;
-    const gate = new ToolResponseGate(mapper, onEvent, schemaFamilyOf(this.modelId) !== "gemini");
+    const family = schemaFamilyOf(this.modelId);
+    const gate = new ToolResponseGate(mapper, onEvent, family);
     const maybeRequestToolResponse = (by: "result" | "response end", callId?: string) => gate.next(by, callId);
 
     const send = async (e: SdkClientEvent) => {
@@ -511,13 +548,13 @@ export class GatewayRealtime implements RealtimeModel {
     return {
       sessionFields: Object.keys(config),
       sendAudio: (pcm) => sendAll([clientEvents.audio(pcm)]),
-      sendText: (text) => sendAll(clientEvents.text(text)),
+      sendText: (text) => sendAll(clientEvents.text(text, family)),
       sendToolResult: (callId, name, result) => {
         // Like the SDK's own session: a response is requested once every call of the response has its result and
         // the response has ended (else at the response's end: the message handler above).
         sendAll([clientEvents.toolResult(callId, name, result), ...maybeRequestToolResponse("result", callId)]);
       },
-      requestResponse: (instructions) => sendAll(clientEvents.respond(instructions)),
+      requestResponse: (instructions) => sendAll(clientEvents.respond(instructions, family)),
       cancelResponse: () => {
         // OpenAI: the response the buyer cut by typing stops (a spoken barge-in is cancelled by the provider's own
         // turn detection); its audio still in flight is dropped. Gemini: a new text turn interrupts it on its own.

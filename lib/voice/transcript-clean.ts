@@ -35,6 +35,27 @@ export function cleanTranscript(text: string): string {
 }
 
 /**
+ * The kinds of markers in a transcript, for the log (a fixed list, never content): "no-speech", "noise", "silence",
+ * "pause", "unclear", "non-speech" (music, breathing, laughter…), "other".
+ */
+export function markerKinds(text: string): string[] {
+  const kinds = new Set<string>();
+  for (const m of text.matchAll(MARKER)) {
+    const w = m[0].replace(/[<>[\](){}.…_]/g, " ").replace(/\s+/g, " ").trim().toLowerCase();
+    kinds.add(
+      /^no (speech|voice|audio|input|response)|speech not detected|end of speech/.test(w) ? "no-speech"
+        : /noise|static|crosstalk|cross talk/.test(w) ? "noise"
+        : /silen|blank/.test(w) ? "silence"
+        : w === "pause" ? "pause"
+        : /inaudible|unintelligible|unclear|indistinct/.test(w) ? "unclear"
+        : /music|breathing|cough|laugh|sigh/.test(w) ? "non-speech"
+        : "other",
+    );
+  }
+  return [...kinds];
+}
+
+/**
  * Appends a streamed piece of the agent's transcript. Pieces of one turn can arrive as separate segments with
  * no space between them ("…checking that." + "Understood, …"): at a segment boundary — after sentence
  * punctuation, or after a tool call (`boundary`) — a single space goes in when the next piece starts with a

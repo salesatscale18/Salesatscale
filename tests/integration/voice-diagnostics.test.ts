@@ -501,10 +501,15 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
       send({ type: "function-call-arguments-done", responseId: "r1", itemId: "f1", callId: "call-1", name: "search_catalog", arguments: JSON.stringify({ query: "" }) });
       await c.run(500);
       expect(model.conns[0].toolResults[0].result.message).toMatch(/Say it in Hebrew, the language you are speaking with the buyer\.$/);
-      // A card number read out in Hebrew: the fixed reply in Hebrew.
+      // A card number read out: the model is already answering that spoken turn, so nothing is injected on top.
+      const before = model.conns[0].responses.length;
       send({ type: "speech-started" });
       await c.run(500);
       send({ type: "input-transcription-completed", itemId: "i2", transcript: "הכרטיס שלי 4111 1111 1111 1111" });
+      await c.run(300);
+      expect(model.conns[0].responses).toHaveLength(before);
+      // Typed (the model never hears it): the fixed reply, in Hebrew.
+      c.engine.onClientMessage({ t: "text", text: "הכרטיס שלי 4111 1111 1111 1111" });
       await c.run(300);
       expect(model.conns[0].responses.at(-1)).toContain("לביטחונך");
       // A reconnect starts in the language the call speaks now.
