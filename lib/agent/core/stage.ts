@@ -208,7 +208,7 @@ function stageLines(stage: Stage, d: Detail): string[] {
       const left = Math.max(1, d.budget - d.questionsAsked);
       return [
         `Do: react to the buyer's last answer, then ask one question that changes which products you recommend. You have ${left} question${left === 1 ? "" : "s"} left before you must recommend. Answering the buyer's own questions does not use them.`,
-        `Ask the questions needed for the quote first. ${HELPS_THE_PITCH_RULE} Drop it when the buyer shows a buying signal. After you ask a question, record it with update_deal_state asked.`,
+        `Ask the questions needed for the quote first. ${HELPS_THE_PITCH_RULE} Drop it when the buyer shows a buying signal. Record each question you start with update_deal_state asked.`,
         "Moves on when: you know enough to recommend one set. If you already do, recommend now (stage 3) and ask nothing more.",
       ];
     }
