@@ -267,6 +267,7 @@ export function OffersPanel({ rows, onChange, errors, quoteValidDays }: {
           <span className="pb-offer__end"><span className="sas-small pb-offer__always">{t("playbook.offers.always_last")}</span></span>
         </li>
       </ol>
+      <span className="pb-fixed pb-offers__rules" data-offers-rules=""><span className="pb-fixed__text"><Icon name="info" /> {t("playbook.offers.rules")}</span></span>
       <div id="pb-offers-live" className="sas-sr" aria-live="polite" role="status">{announce}</div>
       {err("offers")}
     </div>

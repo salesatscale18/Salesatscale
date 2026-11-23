@@ -12,6 +12,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { conversations, messages, quotes, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -116,13 +117,15 @@ describe("A turn that fails after its tools ran", () => {
     const started = await startSimulatorConversation(db, { userId: me.id, actingAs: false }, acc.id, made.lead.id);
     if (!started.ok) throw new Error(started.reason);
     const draft = await ensureDraftVersion(db, acc.id);
-    await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null },
-      { db, accountId: acc.id, conversationId: started.conversationId, leadId: made.lead.id, playbook: draft.playbook, currency: "ILS", callId: `u${++seq}`, language: "en" });
+    const ctx = (callId: string) => ({ db, accountId: acc.id, conversationId: started.conversationId, leadId: made.lead.id, playbook: draft.playbook, currency: "ILS", callId, language: "en" });
+    await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, ctx(`u${++seq}`));
+    // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn; the 10% quote is then held.
+    const primed = await primeOffers(db, ctx, { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], sites: 1 });
     const chatCtx = (await resolveChatToken(db, made.token))!;
     const turn = (llm: InstanceType<typeof AnthropicLlm>, text = "Can I get 10% off?") => runBuyerTurn(db, llm, { accountId: acc.id, conversationId: started.conversationId, text, trigger: "test" });
-    const calls = () => db.select().from(toolCalls).where(and(eq(toolCalls.accountId, acc.id), eq(toolCalls.conversationId, started.conversationId))).orderBy(asc(toolCalls.createdAt));
+    const calls = async () => (await db.select().from(toolCalls).where(and(eq(toolCalls.accountId, acc.id), eq(toolCalls.conversationId, started.conversationId))).orderBy(asc(toolCalls.createdAt))).filter((c) => c.sequence < 900);
     const thread = () => db.select().from(messages).where(eq(messages.conversationId, started.conversationId)).orderBy(asc(messages.createdAt), asc(messages.id));
-    const quoteCount = async () => (await db.select().from(quotes).where(and(eq(quotes.accountId, acc.id), eq(quotes.leadId, made.lead.id)))).length;
+    const quoteCount = async () => (await db.select().from(quotes).where(and(eq(quotes.accountId, acc.id), eq(quotes.leadId, made.lead.id)))).filter((q) => `Q-${q.number}` !== primed.quote).length;
     return { lead: made.lead, conversationId: started.conversationId, turn, calls, thread, quoteCount, chat: () => buyerChat(db, chatCtx, {}) };
   };
 

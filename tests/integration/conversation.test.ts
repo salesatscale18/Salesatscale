@@ -173,10 +173,14 @@ describe("take over, hand back and replies from a person", () => {
     const row = await convRow(c.conversationId);
     expect(row.scenario).toBe("discount_push");
     expect((await conversationScenarioCheck(db, acc, row))?.result).toBe("not_yet");
+    // Offers (part 2): the first quote has no discount; check_offer gives the offer; 15% above it goes to approval.
+    const quoteRef = (req: import("@/lib/agent/llm").LlmRequest) => String((JSON.parse(((req.messages.at(-1)!.content as { content: string }[])[0]).content) as { quote: string }).quote).split(" ")[0];
     const llm = new ScriptedLlm([
-      step(use("a", "update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null })),
-      step(use("b", "create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 15, sites: 1 })),
-      step(say("15% needs approval from our team. I'll come back to you today.")),
+      step(use("a", "update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: { play: "too_expensive", buyer_words: "only with 15% off", step: 1, attempt: false, status: "open" } })),
+      step(use("b", "create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, offer: null, sites: 1 })),
+      (req) => ({ content: [use("c", "check_offer", { quote: quoteRef(req), reason: "next", lines: null, sites: null })] }),
+      step(use("d", "create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 15, offer: null, sites: 1 })),
+      step(say("That price needs approval from our team. I'll come back to you today.")),
     ]);
     expect((await runBuyerTurn(db, llm, { accountId: acc, conversationId: c.conversationId, text: s.opening })).status).toBe("replied");
     const check = await conversationScenarioCheck(db, acc, await convRow(c.conversationId));
