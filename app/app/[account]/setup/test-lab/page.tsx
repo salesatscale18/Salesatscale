@@ -8,6 +8,7 @@ import { AgentStepsSwitch, ChatMessage, ChatThread, type TraceItem } from "@/com
 import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
 import { MessageBody } from "@/components/sas/message-body";
+import { messageTextDir } from "@/lib/conversations/text-dir";
 import { QuoteCardMessage } from "../../leads/[leadId]/quote-card-message";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import { DealStateFields } from "@/components/sas/record";
@@ -234,14 +235,14 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             <ChatMessage
               actor={actor} who={actor === "agent" && isAppText(kinds.get(m.id)) ? t("conv.qcard.sent_by_app") : t(`lab.who.${actor}` as MessageKey)}
               // Spoken and typed lines of a call show the time in the call only (the date is in the header); the full time on hover.
-              time={m.voiceSessionId && m.spokenAtMs !== null ? undefined : (actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace}
+              time={m.voiceSessionId && m.spokenAtMs !== null ? undefined : (actor === "agent" || actor === "human") && deliveryLabel(m) ? `${local(m.createdAt)} · ${deliveryLabel(m)}` : local(m.createdAt)} timeTitle={zoneTitle(m.createdAt, tz)} locale={m.language && isLocale(m.language) ? m.language : "en"} trace={trace} textDir={messageTextDir(m, kinds.get(m.id))}
               spoken={m.voiceSessionId && m.spokenAtMs !== null ? {
                 at: callClock(m.spokenAtMs / 1000), typed: m.typedInCall,
                 label: t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) }),
                 title: `${t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) })} · ${local(m.createdAt)}`,
               } : undefined}>
               {/* R5-2: each message finds its own direction (an English reply in a Hebrew chat reads left to right). */}
-              <div dir="auto" data-msg-dir="">
+              <div dir={messageTextDir(m, kinds.get(m.id))} data-msg-dir="">
                 <MessageBody body={m.body} kind={kinds.get(m.id)} />
               </div>
             </ChatMessage>

@@ -347,7 +347,10 @@ export async function createQuoteVersion(
   const p = await price(db, accountId, q.marketId ?? lead.marketId, { ...input, removedByBuyer }, customs);
   if (!p.ok) return refusalOf(p);
   if (!p.fit.ok) return { ok: false, reason: "fit", problems: p.fit.problems };
-  const decided = statusFor(p.priced.approvalReasons, p.priced.complete, actor);
+  const decided = exceptionUnpriced(p.priced, actor)
+    // A quote using an approved exception whose prices nobody changed still waits for the seller (the exception is not in the prices).
+    ? { status: "awaiting_approval" as const, approvedBy: null }
+    : statusFor(p.priced.approvalReasons, p.priced.complete, actor);
   const status = approvingUserId && p.priced.complete ? "draft" : decided.status;
   const approvedBy = approvingUserId && p.priced.complete ? approvingUserId : decided.approvedBy;
   const next = q.currentVersion + 1;
@@ -392,6 +395,15 @@ export async function createQuoteVersion(
     await writeAudit(db, { userId: actor.userId, actingAs: actor.actingAs }, { accountId, action: "quote.versioned", targetType: "quote", targetId: q.id, details: { version: next } });
   }
   return { ok: true, quote, version, reused: false };
+}
+
+/**
+ * A person's version of a quote that uses an approved exception, with no line
+ * at a person's price: the exception is still not in the prices, so the
+ * version keeps waiting for approval (with the seller's warning).
+ */
+function exceptionUnpriced(priced: PriceOk["priced"], actor: QuoteActor): boolean {
+  return actor.kind === "human" && priced.approvalReasons.some((r) => r.kind === "exception") && !priced.lines.some((l) => l.priceSource === "custom");
 }
 
 /** Two sets of a person's prices per charge are the same. */

@@ -7,7 +7,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
 import { unitLabel } from "@/lib/pricing/units";
-import { minorToField, priceField } from "@/lib/quotes/price-field";
+import { fieldToMinor, minorToField, priceField } from "@/lib/quotes/price-field";
 import { previewQuoteAction, saveQuoteAction, type SaveQuoteState } from "./actions";
 import { autoAddChange, discountLabel, editorActions, filterItems, noteWithChange, perUnit } from "./editor-logic";
 import type { PreviewLine, QuotePreview, RefusalLink } from "./preview";
@@ -199,8 +199,9 @@ export function QuoteEditor(props: {
   /** The unit price field of one charge: the list price by default; a person's price shows the list price struck through and Reset. */
   const priceInput = (c: NonNullable<Cell["price"]>, period: Period | null) => {
     const own = prices[c.key];
-    const changed = own !== undefined;
-    const value = changed ? own : c.list === null ? "" : minorToField(c.list, currency);
+    // A price typed equal to the list (or tier) price is not a person's price: no strike, no Reset, not sent (the server checks too).
+    const changed = own !== undefined && fieldToMinor(own, currency) !== c.list;
+    const value = own !== undefined ? own : c.list === null ? "" : minorToField(c.list, currency);
     const label = t("quote.editor.price_of", { name: c.name, charge: chargeLabel(period) });
     return (
       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }} data-price-edit={c.key} data-changed={changed ? "true" : undefined}>
@@ -226,8 +227,9 @@ export function QuoteEditor(props: {
       <div className="sas-stack-2" style={{ gap: 4, alignItems: "flex-end" }}>
         {lines.map((l, k) => (
           <div key={k}>
+            {/* The charge's label sits above its own field (label, then field), at every width. */}
+            {l.price && (l.period || lines.length > 1) ? <div className="sas-small" data-charge-label="">{chargeLabel(l.period)}</div> : null}
             {l.price ? priceInput(l.price, l.period) : l.unit}
-            {l.price && (l.period || lines.length > 1) ? <div className="sas-small">{chargeLabel(l.period)}</div> : null}
             {l.per ? <div className="sas-small">{l.per}</div> : null}
             {l.note && !l.price ? <div className="sas-small">{l.note}</div> : null}
           </div>

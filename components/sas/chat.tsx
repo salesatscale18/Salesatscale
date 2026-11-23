@@ -21,6 +21,7 @@ export function ChatMessage({
   locale = "en",
   trace,
   spoken,
+  textDir = "auto",
   children,
 }: {
   actor: Actor;
@@ -32,6 +33,8 @@ export function ChatMessage({
   trace?: TraceItem[];
   /** Spoken in a voice call: the time in the call ("0:11"), shown with a mic mark. */
   spoken?: { at: string; label: string; typed?: boolean; title?: string };
+  /** The text's direction: "auto" (free text) or the stored language's for a fixed text (lib/conversations/text-dir.ts). */
+  textDir?: "ltr" | "rtl" | "auto";
   children: ReactNode;
 }) {
   return (
@@ -42,7 +45,7 @@ export function ChatMessage({
         {time ? <span className="sas-msg__time" title={timeTitle}>{time}</span> : null}
       </div>
       {/* Each bubble finds its own direction from its text (Hebrew right to left, English left to right); the row keeps the speaker's side. */}
-      <div className="sas-msg__bubble" lang={locale} dir="auto">
+      <div className="sas-msg__bubble" lang={locale} dir={textDir}>
         {children}
       </div>
       <TraceChips trace={trace} />

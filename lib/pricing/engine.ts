@@ -183,10 +183,12 @@ export function priceWithList(input: EngineInput): EngineResult {
       let unitPriceMinor: number | null;
       let priceSource: EngineLine["priceSource"];
       let listUnitPriceMinor: number | null | undefined;
-      if (p.custom !== undefined) {
+      const listed = unitPriceFor({ priceMinor: p.price, volumeTiers: p.tiers }, l.qty).priceMinor;
+      // A price equal to the list (or tier) price for this quantity is not a person's price: the line stays a list line.
+      if (p.custom !== undefined && p.custom !== listed) {
         unitPriceMinor = p.custom;
         priceSource = "custom";
-        listUnitPriceMinor = unitPriceFor({ priceMinor: p.price, volumeTiers: p.tiers }, l.qty).priceMinor;
+        listUnitPriceMinor = listed;
       } else {
         const u = unitPriceFor({ priceMinor: p.price, volumeTiers: p.tiers }, l.qty);
         unitPriceMinor = u.priceMinor;

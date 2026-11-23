@@ -15,6 +15,8 @@ import { quoteMessageText } from "@/lib/agent/quote-message";
 import { buildQuoteCards, type CardData, type CardLine, type CardVersion } from "@/lib/agent/quote-card";
 import { QuoteCard } from "@/components/sas/quote-card";
 import { ChatMessage, ThreadMarkerLine } from "@/components/sas/chat";
+import { isFixedReply, messageTextDir } from "@/lib/conversations/text-dir";
+import { HANDOFF_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 
 const item = (sku: string, kind: "product" | "service" = "product") => ({ id: sku, sku, name: sku, unit: "item", unitCustom: null, kind, active: true });
 const entry = (sku: string, oneTime: number | null, recurring: number | null = null) => ({
@@ -40,6 +42,19 @@ describe("engine: a person's price", () => {
     if (!plain.ok) throw new Error();
     expect(plain.lines.find((l) => l.sku === "SVC-INST")).toMatchObject({ unitPriceMinor: 25_000, priceSource: "list" });
     expect(plain.lines.find((l) => l.sku === "SVC-INST")).not.toHaveProperty("listUnitPriceMinor");
+  });
+  it("a price equal to the list or tier price is not a person's price (request and auto-added lines)", () => {
+    const r = priceWithList({
+      ...base,
+      entries: [{ ...entry("GW-10", 66_000, 9_000), oneTimeTiers: [{ minQty: 2, priceMinor: 60_000 }] }, entry("SVC-INST", 25_000)],
+      lines: [{ sku: "GW-10", qty: 2, customOneTimeMinor: 60_000, customRecurringMinor: 8_000 }],
+      autoCustoms: { "SVC-INST": { customOneTimeMinor: 25_000 } },
+    });
+    if (!r.ok) throw new Error();
+    expect(r.lines.find((l) => l.sku === "GW-10" && l.charge === "one_time")).toMatchObject({ priceSource: "tier", unitPriceMinor: 60_000 });
+    expect(r.lines.find((l) => l.sku === "GW-10" && l.charge === "one_time")).not.toHaveProperty("listUnitPriceMinor");
+    expect(r.lines.find((l) => l.sku === "GW-10" && l.charge === "recurring")).toMatchObject({ priceSource: "custom", unitPriceMinor: 8_000, listUnitPriceMinor: 9_000 });
+    expect(r.lines.find((l) => l.sku === "SVC-INST")).toMatchObject({ priceSource: "list", unitPriceMinor: 25_000 });
   });
   it("refuses a negative price", () => {
     expect(priceWithList({ ...base, autoCustoms: { "SVC-INST": { customOneTimeMinor: -1 } } })).toMatchObject({ ok: false, errors: [{ kind: "bad_custom_price", sku: "SVC-INST" }] });
@@ -69,9 +84,9 @@ describe("parseCustomPrices", () => {
 
 describe("the warning after a person's price", () => {
   const reasons = [{ kind: "exception", id: "a", text: "Free install" }];
-  it("is gone once a person's version has a person's price; stays (no confirm) for a person's version without one", () => {
+  it("is gone once a person's version has a person's price; stays, with the confirm, for a person's version without one", () => {
     expect(exceptionNotice("awaiting_approval", { approvalReasons: reasons, createdByActor: "human" }, [{ priceSource: "custom" }, { priceSource: "list" }])).toBeNull();
-    expect(exceptionNotice("awaiting_approval", { approvalReasons: reasons, createdByActor: "human" }, [{ priceSource: "list" }])).toEqual({ texts: ["Free install"], confirmUnchanged: false });
+    expect(exceptionNotice("awaiting_approval", { approvalReasons: reasons, createdByActor: "human" }, [{ priceSource: "list" }])).toEqual({ texts: ["Free install"], confirmUnchanged: true });
     expect(exceptionNotice("awaiting_approval", { approvalReasons: reasons, createdByActor: "agent" }, [{ priceSource: "list" }])).toEqual({ texts: ["Free install"], confirmUnchanged: true });
   });
 });
@@ -142,5 +157,19 @@ describe("seller thread lines take their own direction", () => {
     const line = renderToStaticMarkup(createElement(ThreadMarkerLine, { kind: "handoff", text: "הועבר לצוות: הקונה ביקש אדם", time: "10:02" }));
     expect(line).toContain('<span dir="auto">הועבר לצוות: הקונה ביקש אדם</span>');
     expect(line).toMatch(/^<div class="sas-thread-marker" role="note" data-thread-marker="handoff">/);
+  });
+
+  it("a fixed text takes its stored language's direction; free text stays auto", () => {
+    // An app message (the held-quote line) in Hebrew that starts with a Latin seller name: right to left.
+    expect(messageTextDir({ body: "Polar Demo בודקת את ההצעה", language: "he" }, "quote_held")).toBe("rtl");
+    expect(messageTextDir({ body: OPT_OUT_REPLY.he, language: "he" })).toBe("rtl");
+    expect(messageTextDir({ body: HANDOFF_REPLY.en, language: "en" })).toBe("ltr");
+    expect(isFixedReply(` ${HANDOFF_REPLY.he} `)).toBe(true);
+    // Free text, or no known stored language: auto.
+    expect(messageTextDir({ body: "Polar Demo כאן", language: "he" })).toBe("auto");
+    expect(messageTextDir({ body: OPT_OUT_REPLY.he, language: null })).toBe("auto");
+    expect(messageTextDir({ body: "x", language: "fr" }, "quote")).toBe("auto");
+    const html = renderToStaticMarkup(createElement(ChatMessage, { actor: "agent", who: "Agent", locale: "he", textDir: "rtl", children: "Polar Demo בודקת" }));
+    expect(html).toContain('<div class="sas-msg__bubble" lang="he" dir="rtl">');
   });
 });
