@@ -11,7 +11,7 @@ import { atomic } from "@/db/atomic";
 import { agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
 import { AiBudgetError, budgetGuarded } from "@/lib/ai/usage";
-import { withHistoryCacheBreakpoint, type Block, type LlmClient } from "./llm";
+import { isRetryableModelError, withHistoryCacheBreakpoint, type Block, type LlmClient, type LlmRequest, type LlmResponse } from "./llm";
 import { stableSystemPrompt, turnContext } from "./prompt";
 import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } from "./safety";
 import { readDealState } from "./service";
@@ -34,6 +34,8 @@ import { textTurnBlocked } from "@/lib/voice/one-agent";
 import { writtenByAgent } from "./core/stage";
 
 export const MAX_TOOL_ROUNDS = 8;
+/** Wait before the one retry of a model call that failed after a tool round. */
+export const MODEL_RETRY_DELAY_MS = 500;
 const HISTORY = 40;
 
 export type TurnResult =
@@ -165,15 +167,39 @@ export async function runBuyerTurn(
     callId, language: lang, memo, agentMessages,
   });
   const pending: { name: string; input: unknown; r: ToolResult }[] = [];
+  const toolCallRows = (calls: typeof pending, messageId: string) => calls.map((p, i) => ({
+    accountId: args.accountId, conversationId: conv.id, messageId, sequence: i + 1, name: p.name,
+    input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
+    result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
+  }));
   const usage = { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, model: version.model };
   // Every model call checks the platform AI budget first (AI_PLATFORM_MONTHLY_BUDGET_USD; no check when unset).
   const model = budgetGuarded(db, llm);
   let text = "";
   let optedOut = false;
+  // The tools' strict mode of this turn's first call, sent again on every later round: the
+  // model's thinking blocks are bound to the exact tool list they were made with.
+  let strictTools: boolean | undefined;
+  // A call after a tool round is retried once on an error that can pass on a retry: the tools
+  // that already ran are not run again, and the buyer is not left with a tool's message and no reply.
+  const callModel = async (req: LlmRequest, afterTools: boolean): Promise<LlmResponse> => {
+    try {
+      return await model.create(req);
+    } catch (e) {
+      if (!afterTools || e instanceof AiBudgetError || !isRetryableModelError(e)) throw e;
+      console.warn("[agent] model call failed after a tool round; retrying once", e);
+      await new Promise((r) => setTimeout(r, MODEL_RETRY_DELAY_MS));
+      return model.create(req);
+    }
+  };
 
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
-      const res = await model.create({ model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: withHistoryCacheBreakpoint(history) });
+      const res = await callModel({
+        model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: withHistoryCacheBreakpoint(history),
+        ...(strictTools === undefined ? {} : { strictTools }),
+      }, round > 0);
+      strictTools ??= res.strictTools;
       usage.inputTokens += res.usage.inputTokens;
       usage.outputTokens += res.usage.outputTokens;
       usage.cacheReadTokens += res.usage.cacheReadTokens;
@@ -218,7 +244,14 @@ export async function runBuyerTurn(
     console.error("[agent] turn failed", e);
     // Usage of the rounds that did run is kept on the system message, so it still counts toward spend.
     const spent = usage.inputTokens || usage.outputTokens ? { usage } : {};
-    await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "system", body: "The agent could not reply (model error). Try again.", language: "en", ...spent });
+    // The tool calls that already ran are stored with the system message: the thread shows the steps, a quote
+    // message a tool posted keeps its card, and approval finds the conversation (its create_quote call).
+    // No model reply is made up, and nothing is run again: the buyer's next message starts a new turn.
+    const systemId = randomUUID();
+    await atomic(db, (q) => [
+      q.insert(messages).values({ id: systemId, accountId: args.accountId, conversationId: conv.id, actor: "system", body: "The agent could not reply (model error). Try again.", language: "en", ...spent }),
+      ...(pending.length ? [q.insert(toolCalls).values(toolCallRows(pending, systemId))] : []),
+    ]);
     return { status: "error", error: e instanceof Error ? e.name : "error" };
   }
 
@@ -236,13 +269,7 @@ export async function runBuyerTurn(
     q.insert(messages).values({
       id: messageId, accountId: args.accountId, conversationId: conv.id, actor: "agent", body: text, language: lang, agentVersionId: version.id, usage,
     }),
-    ...(pending.length
-      ? [q.insert(toolCalls).values(pending.map((p, i) => ({
-          accountId: args.accountId, conversationId: conv.id, messageId, sequence: i + 1, name: p.name,
-          input: (p.input && typeof p.input === "object" ? p.input : {}) as Record<string, unknown>,
-          result: p.r.result, outcome: p.r.outcome, rule: p.r.rule ?? null,
-        })))]
-      : []),
+    ...(pending.length ? [q.insert(toolCalls).values(toolCallRows(pending, messageId))] : []),
     q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, args.accountId))),
     // A new lead becomes agent-handled, only while the conversation is still open (not handed off or closed this turn).
     q.update(leads).set({ status: "agent_handling", lastActivityAt: now }).where(and(
