@@ -128,8 +128,9 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
       // R5 S7: a note chip has no "Note:" prefix; its sticky-note icon shows the type.
       expect(html).toMatch(/data-kind="text"><svg[^>]*lucide-sticky-note/);
       expect(text(html)).not.toMatch(/Note: /);
-      // Questions we couldn't answer sit under the table.
-      expect(html.indexOf("data-questions")).toBeGreaterThan(html.indexOf("sas-listtable"));
+      // KnowledgeV2: the questions have their own view; All topics shows only facts and one line pointing there.
+      expect(html).not.toContain("data-questions-view");
+      expect(html).not.toContain("data-question-group");
     });
 
     it("filters by status chip, search, source and topic; sorts by a heading", async () => {

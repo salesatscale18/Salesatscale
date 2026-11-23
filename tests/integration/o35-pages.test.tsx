@@ -235,13 +235,13 @@ describe("O35 pages on the demo account", () => {
     }
   });
 
-  it("Knowledge: \"1 unanswered question\" in the singular", async () => {
+  it("Knowledge: \"1 question to answer\" in the singular", async () => {
     const two = text(await render(KnowledgePage, { account: slug }));
-    expect(two).toContain("2 unanswered questions.");
+    expect(two).toContain("2 questions to answer.");
     await answerQuestion(db, { userId: admin.id, actingAs: true }, account.id, { question: OPEN_QUESTIONS[0], answer: "Yes, through the BMS gateway." }, { transport: null });
     const one = await render(KnowledgePage, { account: slug });
     save("knowledge", one);
-    expect(text(one)).toContain("1 unanswered question.");
-    expect(text(one)).not.toContain("1 unanswered questions");
+    expect(text(one)).toContain("1 question to answer.");
+    expect(text(one)).not.toContain("1 questions to answer");
   });
 });

@@ -182,6 +182,6 @@ describe("row cells (L-3, L-4)", () => {
     expect(open({ ...at, id: "u", kind: "form_unsigned", quoteId: "q", formId: "f", quoteNumber: 1, openedAt: NOW })).toBe("/app/polar/leads/L1?tab=deal#lead-quotes");
     expect(open({ ...at, id: "e", kind: "form_expiring", quoteId: "q", formId: "f", quoteNumber: 1, expiresAt: NOW })).toBe("/app/polar/leads/L1?tab=deal#lead-quotes");
     expect(open(approval("L1", 1))).toBe("/app/polar/orders?tab=approval&quote=q1");
-    expect(open({ ...at, id: "q", kind: "team_question", question: "Q?", buyerWords: "", mustHave: null, conversationId: "c" })).toBe("/app/polar/setup/knowledge?panel=answer&question=Q%3F");
+    expect(open({ ...at, id: "q", kind: "team_question", question: "Q?", buyerWords: "", mustHave: null, conversationId: "c" })).toBe("/app/polar/setup/knowledge?view=questions&panel=answer&question=Q%3F");
   });
 });

@@ -102,8 +102,8 @@ export function sortFacts<T extends ListFact>(facts: readonly T[], key: FactSort
   });
 }
 
-/** List params the knowledge actions keep when they send the seller back to the page. */
-export const LIST_KEYS = ["topic", "q", "status", "source", "sort", "dir"] as const;
+/** List params the knowledge actions keep when they send the seller back to the page ("view": the Questions to answer view). */
+export const LIST_KEYS = ["topic", "q", "status", "source", "sort", "dir", "view"] as const;
 
 /**
  * The list part of a query string posted by a knowledge form (hidden "list"

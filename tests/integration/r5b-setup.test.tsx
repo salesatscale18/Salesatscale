@@ -222,8 +222,9 @@ describe("pages (demo account)", () => {
   it("R5-11: Knowledge questions on a phone put Answer under the text; the Answer panel starts with an empty Topic and short footer labels", async () => {
     const html = await render(KnowledgePage, { account: slug }, { panel: "answer", question: OPEN_QUESTIONS[0] });
     save("r5b-knowledge-answer", html);
-    expect(html).toContain('class="sas-stack-2 r5b-questions"');
-    expect(css).toMatch(/\.r5b-questions \.sas-table--stack td\.sas-td-actions \{ position: static;/);
+    // KnowledgeV2: the panel opens over the Questions to answer view; each row wraps, so on a phone Answer sits under the text.
+    expect(html).toContain("data-questions-view");
+    expect(html).toMatch(/<li data-question=""[^>]*style="display:flex;flex-wrap:wrap/);
     const topic = html.match(/<input[^>]*id="kq-topic"[^>]*>/)?.[0] ?? "";
     expect(topic).toMatch(/value=""/);
     expect(topic).not.toContain('value="General"');

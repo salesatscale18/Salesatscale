@@ -160,8 +160,11 @@ describe("pipeline screens and actions", () => {
 
     const kPage = await html(KnowledgePage(params));
     expect(kPage).toContain("Contradiction: Warranty length");
-    expect(kPage).toContain("Is there a minimum contract?");
-    expect(kPage).toContain("Not answered in your sources");
+    // KnowledgeV2: the gap is in "Questions to answer" (its own view), under "Missing from your sources", not under the facts.
+    expect(kPage).not.toContain("Is there a minimum contract?");
+    const qPage = await html(KnowledgePage({ ...params, searchParams: Promise.resolve({ view: "questions" }) }));
+    expect(qPage).toContain("Is there a minimum contract?");
+    expect(qPage).toContain("Missing from your sources · 1");
     expect(kPage).toContain(`href="/app/${slug}/setup/sources/${noteId}#s-0"`);
     expect(kPage).toContain("Approve all suggested (1)");
 

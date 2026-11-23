@@ -278,8 +278,8 @@ export function needsYouHref(base: string, item: NeedsYouItem): string {
     case "call_finished":
       return `${base}/leads/${item.leadId}?tab=deal#callback`;
     case "team_question":
-      // Knowledge's answer panel for this question (O4).
-      return `${base}/setup/knowledge?${new URLSearchParams({ panel: "answer", question: item.question }).toString()}`;
+      // Knowledge's answer panel for this question (O4), over the Questions to answer view (KnowledgeV2).
+      return `${base}/setup/knowledge?${new URLSearchParams({ view: "questions", panel: "answer", question: item.question }).toString()}`;
     case "quote_approval":
       return `${base}/orders?tab=approval&quote=${item.quoteId}`;
     case "bank_transfer":
