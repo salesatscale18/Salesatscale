@@ -4,7 +4,8 @@
  * with exactly these changes, in the Classic voice block, and nothing else:
  * - Classic's hand-off line ("…say goodbye: the call ends there.") replaced by Current's two hand-off lines (K7);
  * - the read-as-given line right after Classic's price line (K6);
- * - the tools-before-words line right before Classic's line about checks (the filler line, or "Do not announce");
+ * - the tools-before-words line where Classic's line about checks is, followed by Classic's "Do not announce your
+ *   checks" line: Classic's filler line ("say a short filler first") is dropped whatever the fillers setting;
  * - Current's order_form_status line right before Classic's order-form note line (K12);
  * - a recorded call: Current's recording rule at the end of the voice block (K8).
  * The later Current texts left out (T2 "tools first, speak once", T3 language notes) are asserted absent. The tools
@@ -20,9 +21,11 @@ import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
 import { voiceCallBlock as currentBlock } from "@/lib/agent/core/voice";
 import { recordedCallRule } from "@/lib/voice/recording-settings";
 import {
-  CLASSIC_CHECKS_LINE_STARTS, CLASSIC_FORM_NOTE_LINE_START, CLASSIC_HANDOFF_LINE, CLASSIC_PRICES_LINE, currentHandoffLines,
-  currentOrderFormStatusLine, guardedAddedLines, guardedInstructions, READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE,
+  CLASSIC_FILLER_LINE, CLASSIC_FORM_NOTE_LINE_START, CLASSIC_HANDOFF_LINE, CLASSIC_NO_ANNOUNCE_LINE, CLASSIC_PRICES_LINE,
+  currentHandoffLines, currentOrderFormStatusLine, guardedAddedLines, guardedInstructions, guardedRemovedLines, READ_AS_GIVEN_LINE,
+  TOOLS_FIRST_LINE,
 } from "@/lib/voice-guarded/instructions";
+import { voiceCallBlock as classicBlock } from "@/lib/voice-classic/voice-block";
 import { guardedTools } from "@/lib/voice-guarded/profile";
 
 const input = JSON.parse(readFileSync(path.join(__dirname, "../fixtures/voice-classic/input.json"), "utf8"));
@@ -52,18 +55,25 @@ const LEFT_OUT = [
 
 describe("Classic + guards: instructions", () => {
   for (const c of input.cases) {
-    for (const recorded of [false, true]) {
-      it(`${c.id}${recorded ? " (recorded)" : ""}: Classic's instructions plus exactly the listed lines`, () => {
+    for (const [recorded, fillers] of [[false, true], [true, true], [false, false], [true, false]] as const) {
+      it(`${c.id}${recorded ? " (recorded)" : ""}${fillers ? "" : " (fillers off)"}: Classic's instructions plus exactly the listed lines`, () => {
         const expectedLanguages = expectedCallLanguages(c.language, c.seller.languages);
-        const classic = classicInstructions({ ...c, expectedLanguages });
+        const classic = classicInstructions({ ...c, voiceSettings: { ...c.voiceSettings, fillers }, expectedLanguages });
         const guarded = guardedInstructions(classic, { recorded });
         const d = lineDiff(classic, guarded);
-        // Removed: only Classic's hand-off line. Added: exactly the guarded lines.
-        expect(d.removed).toEqual([CLASSIC_HANDOFF_LINE]);
-        expect(d.added).toEqual(guardedAddedLines({ recorded }));
+        // Removed: Classic's filler line (fillers on) and hand-off line. Added: exactly the guarded lines.
+        expect(d.removed).toEqual(guardedRemovedLines({ fillers }));
+        expect(d.removed).toEqual([...(fillers ? [CLASSIC_FILLER_LINE] : []), CLASSIC_HANDOFF_LINE]);
+        expect(d.added).toEqual(guardedAddedLines({ recorded, fillers }));
         expect(d.added).toEqual([
-          READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...currentHandoffLines(), currentOrderFormStatusLine(), ...(recorded ? [recordedCallRule()] : []),
+          READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...(fillers ? [CLASSIC_NO_ANNOUNCE_LINE] : []), ...currentHandoffLines(), currentOrderFormStatusLine(),
+          ...(recorded ? [recordedCallRule()] : []),
         ]);
+        // The fillers setting makes no difference to guarded: never a filler before a tool.
+        expect(guarded).not.toContain(CLASSIC_FILLER_LINE);
+        expect(guarded).not.toMatch(/say a short filler/i);
+        const other = classicInstructions({ ...c, voiceSettings: { ...c.voiceSettings, fillers: !fillers }, expectedLanguages });
+        expect(guardedInstructions(other, { recorded })).toBe(guarded);
         // Everything else is Classic's, in Classic's order.
         expect(d.commonB).toEqual(d.commonA);
         // Placement: hand-off where Classic's was; read-as-given after the price line; order_form_status before the note
@@ -74,9 +84,9 @@ describe("Classic + guards: instructions", () => {
         // +2: the read-as-given and tools-before-words lines above it
         expect(at(currentHandoffLines()[0])).toBe(classicLines.indexOf(CLASSIC_HANDOFF_LINE) + 2);
         expect(at(READ_AS_GIVEN_LINE)).toBe(at(CLASSIC_PRICES_LINE) + 1);
-        // Tools before words: early in the voice block, right before Classic's line about checks.
-        const checksAt = at(TOOLS_FIRST_LINE) + 1;
-        expect(CLASSIC_CHECKS_LINE_STARTS.some((s) => lines[checksAt].startsWith(s))).toBe(true);
+        // Tools before words: early in the voice block, where Classic's line about checks is, then "Do not announce".
+        expect(lines[at(TOOLS_FIRST_LINE) + 1]).toBe(CLASSIC_NO_ANNOUNCE_LINE);
+        expect(at(TOOLS_FIRST_LINE)).toBe(classicLines.findIndex((l) => l === CLASSIC_FILLER_LINE || l === CLASSIC_NO_ANNOUNCE_LINE) + 1);
         expect(at(TOOLS_FIRST_LINE)).toBeLessThan(at(currentHandoffLines()[0]));
         expect(at(TOOLS_FIRST_LINE) - at("### On a voice call (always)")).toBeLessThanOrEqual(8);
         expect(lines[at(currentOrderFormStatusLine()) + 1].startsWith(CLASSIC_FORM_NOTE_LINE_START)).toBe(true);
@@ -106,10 +116,15 @@ describe("Classic + guards: instructions", () => {
     const classic = classicInstructions({ ...c, expectedLanguages }).length;
     const guarded = guardedInstructions(classicInstructions({ ...c, expectedLanguages }), { recorded: true }).length;
     // Each added line and its line break, less the replaced hand-off line and its line break.
-    const added = guardedAddedLines({ recorded: true }).join("\n").length - CLASSIC_HANDOFF_LINE.length;
+    const added = guardedAddedLines({ recorded: true, fillers: true }).join("\n").length - guardedRemovedLines({ fillers: true }).join("\n").length;
     expect(guarded - classic).toBe(added);
     expect(guarded).toBeLessThan(current);
     console.info(`instructions chars (new call, recorded): current=${current} classic=${classic} guarded=${guarded}`);
+  });
+
+  it("the filler and \"Do not announce\" lines are Classic's, verbatim", () => {
+    expect(classicBlock({ fillers: true }).split("\n")).toContain(CLASSIC_FILLER_LINE);
+    expect(classicBlock({ fillers: false }).split("\n")).toContain(CLASSIC_NO_ANNOUNCE_LINE);
   });
 
   it("tools: Classic's, plus order_form_status (Current's definition)", () => {

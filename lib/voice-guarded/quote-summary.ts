@@ -2,19 +2,24 @@
  * "Classic + guards" (lib/voice-guarded): the spoken summary of a quote created on a call (owner, 23 Nov 2026: the
  * price walkthrough, shortened). One sentence naming the main items with their quantities (no per-unit prices, no
  * subscription listed on its own), then the two totals (today and per month, VAT included), then the delivery
- * phrase: about 15 seconds of speech. Every amount and count is written out in words by the server, in the call's
+ * phrase: about 15 seconds of speech. Items are named by their catalog plain_name when they have one ("kitchen hubs"),
+ * else by their name. Every amount and count is written out in words by the server, in the call's
  * language, so the model reads it instead of converting digits.
  */
-import { and, asc, eq } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { quoteLines, quoteVersions, type SellerAccount } from "@/db/schema";
+import { catalogItems, quoteLines, quoteVersions, type SellerAccount } from "@/db/schema";
 import { estimateDelivery } from "@/lib/delivery/eta";
 import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { resolveMarket } from "@/lib/markets/service";
 import { deliveryByPhrase } from "@/lib/agent/quote-message";
 import { moneyWords, quantityWords, type WordsLanguage } from "./money-words";
 
-export type SummaryLine = { sku: string; name: string; qty: number; recurring: boolean };
+/** `plainName`: the catalog item's plain_name (what to call it on the call), spoken instead of `name` when set. */
+export type SummaryLine = { sku: string; name: string; plainName?: string | null; qty: number; recurring: boolean };
+
+/** What the summary calls an item: its plain_name, else its name. */
+const spokenName = (l: { name: string; plainName?: string | null }) => l.plainName?.trim() || l.name;
 
 export type SummaryInput = {
   lines: readonly SummaryLine[];
@@ -43,11 +48,12 @@ export function pluralName(name: string): string {
   return `${head}${w}s`;
 }
 
-/** One item with its quantity, in words: "six Temperature sensors" / "שש יחידות חיישן טמפרטורה". */
-function itemWords(l: { name: string; qty: number }, lang: WordsLanguage): string {
-  if (lang === "en") return `${quantityWords(l.qty, "en")} ${l.qty === 1 ? l.name : pluralName(l.name)}`;
-  if (l.qty === 1) return l.name;
-  return `${l.qty === 2 ? "שתי" : quantityWords(l.qty, "he")} יחידות ${l.name}`;
+/** One item with its quantity, in words: "six wireless fridge sensors" / "שש יחידות חיישן טמפרטורה". */
+function itemWords(l: { name: string; plainName?: string | null; qty: number }, lang: WordsLanguage): string {
+  const name = spokenName(l);
+  if (lang === "en") return `${quantityWords(l.qty, "en")} ${l.qty === 1 ? name : pluralName(name)}`;
+  if (l.qty === 1) return name;
+  return `${l.qty === 2 ? "שתי" : quantityWords(l.qty, "he")} יחידות ${name}`;
 }
 
 /** "a, b and c" / "א, ב וג". */
@@ -69,7 +75,7 @@ function merged(lines: readonly SummaryLine[]): SummaryLine[] {
 
 const capFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
-/** The spoken summary (pure): "Six Temperature sensors and two Gateways, with Installation. That's … today and … a month, including VAT. Delivery by about …". */
+/** The spoken summary (pure): "Six wireless fridge sensors and two kitchen hubs, with installation. That's … today and … a month, including VAT. Delivery by about …". */
 export function quoteSummaryText(q: SummaryInput): string {
   const lang = q.language;
   const requested = new Set(q.requested.map((s) => s.trim().toUpperCase()));
@@ -80,7 +86,7 @@ export function quoteSummaryText(q: SummaryInput): string {
   if (!main.length) main = all.filter((l) => requested.has(l.sku.toUpperCase()));
   if (!main.length) main = oneTime.length ? oneTime : all;
   const mainSkus = new Set(main.map((l) => l.sku));
-  const added = [...new Set(oneTime.filter((l) => !mainSkus.has(l.sku)).map((l) => l.name))];
+  const added = [...new Set(oneTime.filter((l) => !mainSkus.has(l.sku)).map(spokenName))];
   const items = list(main.map((l) => itemWords(l, lang)), lang);
   const vat = q.taxRateBp > 0;
   const today = moneyWords(q.oneTimeTotalMinor, q.currency, lang);
@@ -112,6 +118,12 @@ export async function loadQuoteSummary(
     .where(and(eq(quoteVersions.accountId, accountId), eq(quoteVersions.quoteId, a.quoteId), eq(quoteVersions.version, a.version)));
   if (!v) return null;
   const rows = await db.select().from(quoteLines).where(and(eq(quoteLines.accountId, accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(asc(quoteLines.sortOrder));
+  const ids = [...new Set(rows.map((l) => l.catalogItemId).filter((x): x is string => !!x))];
+  const items = ids.length
+    ? await db.select({ id: catalogItems.id, plainName: catalogItems.plainName }).from(catalogItems)
+      .where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, ids)))
+    : [];
+  const plainOf = new Map(items.map((i) => [i.id, i.plainName]));
   let deliveryBy: string | null = null;
   try {
     const market = await resolveMarket(db, accountId, v.marketId);
@@ -121,7 +133,9 @@ export async function loadQuoteSummary(
     deliveryBy = null;
   }
   return quoteSummaryText({
-    lines: rows.map((l) => ({ sku: l.sku, name: l.name, qty: l.qty, recurring: l.chargeType !== "one_time" })),
+    lines: rows.map((l) => ({
+      sku: l.sku, name: l.name, plainName: l.catalogItemId ? plainOf.get(l.catalogItemId) ?? null : null, qty: l.qty, recurring: l.chargeType !== "one_time",
+    })),
     requested: a.requested, currency: v.currency, oneTimeTotalMinor: v.oneTimeTotalMinor, recurringTotalMinor: v.recurringTotalMinor,
     period: v.recurringPeriod === "year" ? "year" : "month", taxRateBp: v.taxRateBp, deliveryBy, language: a.language,
   });

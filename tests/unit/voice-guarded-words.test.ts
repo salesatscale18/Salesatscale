@@ -107,4 +107,18 @@ describe("the quote's spoken summary", () => {
     });
     expect(s).toBe("Twelve User seats. That's seven thousand and eighty shekels a year, including VAT.");
   });
+
+  it("names items by their catalog plain_name when they have one (main items and the ones the app added)", () => {
+    const q = quote("en", "by about Thursday, 3 December");
+    const plain: Record<string, string> = { SENSOR: "wireless fridge sensor", GATEWAY: "kitchen hub", INSTALL: "installation visit" };
+    const s = quoteSummaryText({ ...q, lines: q.lines.map((l) => ({ ...l, plainName: plain[l.sku] })) });
+    expect(s).toBe("Six wireless fridge sensors and two kitchen hubs, with installation visit. That's five thousand six hundred and twenty-eight shekels and sixty agorot today and two hundred and twelve shekels and forty agorot a month, including VAT. Delivery by about Thursday, 3 December.");
+    // A blank plain_name falls back to the name.
+    const blank = quoteSummaryText({ ...q, lines: q.lines.map((l) => ({ ...l, plainName: l.sku === "GATEWAY" ? " " : null })) });
+    expect(blank).toBe(quoteSummaryText(q));
+    // Hebrew: the plain name as written.
+    const he = quote("he", null);
+    expect(quoteSummaryText({ ...he, lines: he.lines.map((l) => ({ ...l, plainName: l.sku === "GATEWAY" ? "רכזת מטבח" : null })) }))
+      .toMatch(/^שש יחידות Temperature sensor ושתי יחידות רכזת מטבח, כולל Installation\./);
+  });
 });

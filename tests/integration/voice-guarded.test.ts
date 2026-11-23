@@ -73,7 +73,7 @@ beforeAll(async () => {
   await seedCatalog(db, acc, [
     { sku: "SEAT-M", name: "User seat", unit: "seat", plainName: "user seat" },
     { sku: "SENSOR", name: "Temperature sensor", unit: "unit" },
-    { sku: "GATEWAY", name: "Gateway", unit: "unit" },
+    { sku: "GATEWAY", name: "Gateway", unit: "unit", plainName: "kitchen hub" },
   ]);
   // The sensor: ₪450 once and ₪17.70 a month each (VAT included): six of them are ₪106.20 a month.
   await seedPricing(db, acc, [{ sku: "SEAT-M", oneTime: 10_000 }, { sku: "SENSOR", oneTime: 45_000, recurring: 1_770 }, { sku: "GATEWAY", oneTime: 90_000 }], { userId: me.id });
@@ -176,7 +176,7 @@ describe("Classic + guards", () => {
     expect(String(g[0].toolResults[0].result.stage)).toMatch(/^## Stage now: /);
     expect(g[0].toolResults[3].result).toMatchObject({ ok: true, link: "shown in the chat" });
     expect(g[0].toolResults[0].result.kept_as_buyer_said).toBeUndefined();
-    expect(String(gq.say_this)).toMatch(/^One User seat\. That's one hundred shekels today, including VAT\./);
+    expect(String(gq.say_this)).toMatch(/^One user seat\. That's one hundred shekels today, including VAT\./);
     // The stored threads have the same shape.
     const shape = async (id: string) => (await thread(id)).map((m) => `${m.actor}${m.voiceSessionId ? ":call" : ""}`);
     expect(await shape(guarded.conversationId)).toEqual(await shape(classic.conversationId));
@@ -307,11 +307,12 @@ describe("Classic + guards", () => {
         expect(q.totals).toMatchObject({ total_today_including_vat: "₪4,500.00", recurring_total_including_vat: "₪106.20/month" });
         expect(q.lines_for_call).toBeUndefined();
         const say = String(q.say_this);
+        // Named by the catalog plain_name when there is one (the gateway), else by the name (the sensor).
         if (!he) {
-          expect(say).toMatch(/^Six Temperature sensors and two Gateways\. That's four thousand five hundred shekels today and one hundred and six shekels and twenty agorot a month, including VAT\./);
+          expect(say).toMatch(/^Six Temperature sensors and two kitchen hubs\. That's four thousand five hundred shekels today and one hundred and six shekels and twenty agorot a month, including VAT\./);
           expect(say).not.toContain("forty");
         } else {
-          expect(say).toMatch(/^שש יחידות Temperature sensor ושתי יחידות Gateway\. זה ארבעת אלפים וחמש מאות שקלים היום ומאה ושישה שקלים ועשרים אגורות לחודש, כולל מע״מ\./);
+          expect(say).toMatch(/^שש יחידות Temperature sensor ושתי יחידות kitchen hub\. זה ארבעת אלפים וחמש מאות שקלים היום ומאה ושישה שקלים ועשרים אגורות לחודש, כולל מע״מ\./);
         }
         expect(say.replace(/\d+ (December|January|בדצמבר|בינואר)/g, "")).not.toMatch(/\d/);
         await c.end();

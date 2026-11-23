@@ -4,7 +4,9 @@
  * - the hand-off: Current's two lines (offer first, the call goes on) instead of Classic's "the call ends there";
  * - one line to read a tool's prepared words (the quote summary, amounts in words) as written;
  * - one line: tools before words (call the tools first, say nothing before them, speak once after the results),
- *   early in the voice block: right before Classic's line about checks (the filler line, or "Do not announce");
+ *   early in the voice block, where Classic's line about checks is; Classic's filler line ("say a short filler
+ *   first"), which contradicts it, is always dropped: the line after it is Classic's "Do not announce your checks",
+ *   whatever the version's fillers setting;
  * - Current's order_form_status line, where Current places it (before the order-form note line);
  * - a recorded call: Current's one recording rule, at the end of the voice block (where Current places it).
  * tests/unit/voice-guarded-instructions.test.ts asserts the result is Classic's plus exactly these.
@@ -26,8 +28,12 @@ export const CLASSIC_FORM_NOTE_LINE_START = "- A note from the system may say wh
 /** The one line that makes the prepared words of a tool result (the quote summary) be read as written (K6). */
 export const READ_AS_GIVEN_LINE = "- When a tool result gives you words to say (say_this), say them as written: every amount exactly as given there, never worked out again from digits.";
 
-/** The start of Classic's line about tool checks (fillers on or off): the tools-before-words line goes right before it. */
+/** The start of Classic's line about tool checks (fillers on or off): the tools-before-words line goes there. */
 export const CLASSIC_CHECKS_LINE_STARTS = ["- Before a tool that takes time", "- Do not announce your checks"] as const;
+/** Classic's filler line (fillers on): it says to speak before a tool, against tools-before-words, so guarded drops it. */
+export const CLASSIC_FILLER_LINE = '- Before a tool that takes time, say a short filler first, for example "One moment, I\'m checking that."';
+/** Classic's fillers-off line: consistent with tools-before-words, so guarded uses it whatever the fillers setting. */
+export const CLASSIC_NO_ANNOUNCE_LINE = "- Do not announce your checks; just answer when you have the result.";
 
 /**
  * Tools before words (23 Nov 2026): on Gemini the model spoke its answer, called update_deal_state about a second
@@ -68,7 +74,8 @@ export function guardedInstructions(classic: string, o: { recorded?: boolean } =
   out = replaceLine(out, CLASSIC_PRICES_LINE, [CLASSIC_PRICES_LINE, READ_AS_GIVEN_LINE]);
   const checks = CLASSIC_CHECKS_LINE_STARTS.map((s) => (out.includes(`\n${s}`) ? lineStarting(out, s) : null)).find((l) => l !== null);
   if (!checks) throw new Error("guarded instructions: no line about tool checks");
-  out = replaceLine(out, checks, [TOOLS_FIRST_LINE, checks]);
+  if (checks !== CLASSIC_FILLER_LINE && checks !== CLASSIC_NO_ANNOUNCE_LINE) throw new Error(`guarded instructions: unexpected line about tool checks: ${checks.slice(0, 60)}`);
+  out = replaceLine(out, checks, [TOOLS_FIRST_LINE, CLASSIC_NO_ANNOUNCE_LINE]);
   const note = lineStarting(out, CLASSIC_FORM_NOTE_LINE_START);
   out = replaceLine(out, note, [currentOrderFormStatusLine(), note]);
   if (o.recorded) {
@@ -80,9 +87,20 @@ export function guardedInstructions(classic: string, o: { recorded?: boolean } =
   return out;
 }
 
-/** The lines guarded adds to Classic's instructions, in the order they appear (tests assert exactly these). */
-export function guardedAddedLines(o: { recorded?: boolean } = {}): string[] {
-  return [READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...currentHandoffLines(), currentOrderFormStatusLine(), ...(o.recorded ? [recordedCallRule()] : [])];
+/**
+ * The lines guarded adds to Classic's instructions, in the order they appear (tests assert exactly these). `fillers`:
+ * the version's setting; with fillers on, Classic's filler line is replaced, so its "Do not announce" line is added.
+ */
+export function guardedAddedLines(o: { recorded?: boolean; fillers?: boolean } = {}): string[] {
+  return [
+    READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...(o.fillers ? [CLASSIC_NO_ANNOUNCE_LINE] : []), ...currentHandoffLines(), currentOrderFormStatusLine(),
+    ...(o.recorded ? [recordedCallRule()] : []),
+  ];
+}
+
+/** The lines guarded removes from Classic's instructions, in Classic's order. */
+export function guardedRemovedLines(o: { fillers?: boolean } = {}): string[] {
+  return [...(o.fillers ? [CLASSIC_FILLER_LINE] : []), CLASSIC_HANDOFF_LINE];
 }
 
 /**
