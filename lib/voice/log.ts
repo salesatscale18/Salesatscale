@@ -1,7 +1,9 @@
 /**
  * One-line operational logs for voice calls (live voice): `[voice] <session 8> <what happened>`.
  * Never transcript text, personal data or tokens: ids are shortened, provider messages truncated.
- * Injectable, so tests read the lines (a fake logger).
+ * The model event trace (`trace t=<ms since go-live> …`, lib/voice/engine.ts) keeps to the same rule: a line's
+ * length and a short fingerprint of its text (`textPrint`), so a sentence said twice shows the same print, never
+ * the words. Injectable, so tests read the lines (a fake logger).
  */
 export type VoiceLog = { info(line: string): void; warn(line: string): void; error?(line: string): void };
 
@@ -16,6 +18,19 @@ export const shortId = (id: string | null | undefined) => (id ? id.slice(0, 8) :
 
 /** A provider or socket string for a log line or the session row: one line, at most 200 characters. */
 export const clip = (s: unknown, max = 200) => String(s ?? "").replace(/\s+/g, " ").trim().slice(0, max);
+
+/**
+ * A short fingerprint of a spoken text for the trace (FNV-1a, 8 hex characters, case and spacing ignored): equal
+ * texts get equal prints; the text cannot be read back from it.
+ */
+export function textPrint(text: string): string {
+  let h = 0x811c9dc5;
+  for (const ch of text.toLowerCase().replace(/\s+/g, " ").trim()) {
+    h ^= ch.codePointAt(0)!;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h.toString(16).padStart(8, "0");
+}
 
 export const voiceLine = (sessionId: string | null | undefined, what: string) => `[voice] ${shortId(sessionId)} ${what}`;
 

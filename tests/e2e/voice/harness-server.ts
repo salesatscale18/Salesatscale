@@ -17,7 +17,8 @@ import { conversations, rateLimits, sellerAccounts, users } from "@/db/schema";
 import { translator } from "@/lib/i18n";
 import { buyerChat, chatNames, createSimulatedBuyer, receiveSimulatorInbound, resolveChatLink, startSimulatorConversation } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
-import { buyerConversation, buyerVoiceGate, buyerVoiceState, liveVoiceSessionOn, startBuyerVoiceCall } from "@/lib/voice/buyer";
+import { buyerConversation, buyerVoiceGate, buyerVoiceState, startBuyerVoiceCall } from "@/lib/voice/buyer";
+import { textTurnBlocked } from "@/lib/voice/one-agent";
 import { chatStrings } from "../../../app/chat/[token]/strings";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
@@ -259,7 +260,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         if (req.method === "POST") {
           const b = JSON.parse((await body(req)) || "{}") as { text?: string; clientId?: string };
           const conv = await buyerConversation(db, ctx);
-          if (conv && (await liveVoiceSessionOn(db, ctx.account.id, conv.id))) return send(409, "application/json", JSON.stringify({ ok: false, reason: "in_call" }));
+          // As the route (app/chat/[token]/messages/route.ts): one agent at a time.
+          if (conv && (await textTurnBlocked(db, ctx.account.id, conv.id, "typed message"))) return send(409, "application/json", JSON.stringify({ ok: false, reason: "in_call" }));
           await receiveSimulatorInbound(db, ctx, b.text ?? "", b.clientId ?? "");
           return send(200, "application/json", JSON.stringify({ ok: true }));
         }

@@ -60,8 +60,12 @@ export async function hasVoiceConsent(db: Db, accountId: string, leadId: string)
   return !!r;
 }
 
-/** Stored with a consent record created here (the buyer's first switch to voice; there is no sheet). */
-export const VOICE_CONSENT_WORDING = "Switched the chat to voice. The call is written down as text in this conversation; no audio is recorded.";
+/**
+ * Stored with a consent record created here (the buyer's first switch to voice; there is no sheet). English only, no
+ * version column: a record keeps the wording it was created with (owner, 22 Nov: calls may be recorded; earlier
+ * records keep "no audio is recorded").
+ */
+export const VOICE_CONSENT_WORDING = "Switched the chat to voice. The call is written down as text in this conversation, and some calls may be recorded for quality review.";
 
 /**
  * Records the buyer's first switch to voice, silently (there is no sheet):

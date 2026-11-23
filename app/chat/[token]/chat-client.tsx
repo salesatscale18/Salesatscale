@@ -219,7 +219,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     const el = inputRef.current;
     if (!el) return;
     el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 120)}px`;
+    // border-box: scrollHeight leaves out the 1 px borders, so add them (else a few lines scroll by 2 px).
+    el.style.height = `${Math.min(el.scrollHeight + el.offsetHeight - el.clientHeight, 120)}px`;
   };
 
   /** A normal chat message (the agent answers in the chat). */

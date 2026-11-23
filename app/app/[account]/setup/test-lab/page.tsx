@@ -49,6 +49,7 @@ import { callClock, callLimitShort, voiceLabAccess, voiceSettingsSummary } from 
 import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceModelChoices } from "@/lib/voice/model-choices";
+import { classicModelId } from "@/lib/voice-classic/settings";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
@@ -170,6 +171,13 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const callMax = Object.fromEntries(callVersions.map((v) => [v.value, maxCallSeconds({ settings: v.settings, deadlineSec: callLimit })]));
   // One source for the limit: the same maxCallSeconds the relay reports in `{t:'call', maxSec}` (lib/voice/socket.ts).
   const limitLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.settings.limit_line", { limit: callLimitShort(callMax[v.value]) })]));
+  // Classic (20 Nov) runs on Gemini only: the versions whose own model it would not use, with that model's label.
+  const classicModelNotes = Object.fromEntries(callVersions.flatMap((v) => {
+    const id = versionModelId(v.settings);
+    return classicModelId(id) === id ? [] : [[v.value, voiceModelLabel(id)]];
+  }));
+  const engineText = (engine: string | null | undefined) =>
+    t(engine === "classic" ? "lab.voice.engine.classic" : engine === "guarded" ? "lab.voice.engine.guarded" : "lab.voice.engine.current");
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
@@ -266,7 +274,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const endedBar = endedView && conv ? (
     <div className="lab-vc-bar" data-voice-saved="">
       {voice ? (
-        <VoiceCallAgainBar view={endedView} slug={account.slug} lab={lab} versionId={conv.agentVersionId} scenario={conv.scenario} usageHref={usageHref} />
+        <VoiceCallAgainBar view={endedView} slug={account.slug} lab={lab} versionId={conv.agentVersionId} scenario={conv.scenario} usageHref={usageHref} engine={savedEnded?.engine ?? null} />
       ) : <VoiceCallBar view={{ ...endedView, action: null }} />}
     </div>
   ) : null;
@@ -309,6 +317,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 languages={account.languages.map((l) => ({ value: l, label: LANG_NAME[l] ?? l }))} defaultLanguage={account.languages[0]}
                 versions={callVersions.map((v) => ({ value: v.value, label: v.label }))} defaultVersionId={draft?.id ?? ""}
                 callMax={callMax} limitLines={limitLines}
+                // The engine select: platform admins only (this whole block is: voiceLabAccess above).
+                engines={voice} classicModelNotes={classicModelNotes}
               />
             </>
           ) : (
@@ -350,6 +360,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 {onVoice && voiceSummary?.mode === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
                 {/* The model this call ran on (its session row): calls on different models of one draft stay apart. */}
                 {onVoice && voiceSummary && voiceModelLabel(voiceSummary.model) !== voiceSummary.model ? <span className="sas-pill" data-voice-model-pill="">{voiceModelLabel(voiceSummary.model)}</span> : null}
+                {/* The voice engine of a Classic (20 Nov) or Classic + guards call: compared side by side with Current calls. */}
+                {voice && onVoice && voiceSummary && voiceSummary.engine !== "current" ? <span className="sas-pill" data-voice-engine-pill="">{t("voice.pill.engine", { engine: engineText(voiceSummary.engine) })}</span> : null}
                 {/* R5-14: when the chat started (its first message), not when the conversation row was made. */}
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}
@@ -496,7 +508,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <VoiceCallStats
                 durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
                 answerMsAvg={savedEnded.answerMsAvg} live={false} costEstimated={savedEnded.costEstimated} endReason={savedEnded.endReason} errorCode={savedEnded.errorCode}
-                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null} model={voiceModelLabel(savedEnded.model) || null}
+                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null} model={voiceModelLabel(savedEnded.model) || null} engine={voice ? engineText(savedEnded.engine) : null}
                 standby={savedEnded.standbySec !== null && savedEnded.activeSec !== null ? { activeSec: savedEnded.activeSec, standbySec: savedEnded.standbySec } : null}
               />
             ) : null;

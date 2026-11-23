@@ -287,6 +287,9 @@ describe("voice lab helpers", () => {
   it("the auth frame and the call message are validated", () => {
     expect(parseAuthMessage(JSON.stringify({ t: "auth", sessionId: "s", ticket: "x" }))).toEqual({ t: "auth", sessionId: "s", ticket: "x" });
     expect(parseAuthMessage(JSON.stringify({ t: "auth", sessionId: 1, ticket: "x" }))).toBeNull();
+    // A page that will say `ready` when it can play the agent.
+    expect(parseAuthMessage(JSON.stringify({ t: "auth", sessionId: "s", ticket: "x", waitAudio: true }))).toEqual({ t: "auth", sessionId: "s", ticket: "x", waitAudio: true });
+    expect(parseAuthMessage(JSON.stringify({ t: "auth", sessionId: "s", ticket: "x", waitAudio: "yes" }))).toEqual({ t: "auth", sessionId: "s", ticket: "x" });
     expect(parseAuthMessage("{")).toBeNull();
     expect(parseAuthMessage("x".repeat(500))).toBeNull();
     expect(parseAuthMessage(JSON.stringify({ t: "ping" }))).toBeNull();

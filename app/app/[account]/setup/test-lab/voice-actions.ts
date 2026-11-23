@@ -18,6 +18,8 @@ import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, 
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
+import { labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { classicModelId } from "@/lib/voice-classic/settings";
 import { minorPerUsd, voiceSocketUrl } from "./voice-server";
 import type { VoiceUnavailableReason } from "@/lib/voice/client/state";
 import type { VoiceSettingsFormState } from "@/components/sas/voice/voice-settings-form";
@@ -27,8 +29,12 @@ const path = (slug: string) => `/app/${slug}/setup/test-lab`;
 export type StartVoiceCallResult =
   | {
       ok: true; conversationId: string; sessionId: string; ticket: string; wsUrl: string; mode: "scripted" | "live"; maxSec: number;
-      /** The call's voice model, as its label ("GPT-Realtime mini"): its version's. */
+      /** The call's voice model, as its label ("GPT-Realtime mini"): its version's (a Classic call: Gemini). */
       model: string;
+      /** The voice engine the call runs on (platform admins pick it; anyone else gets Current). */
+      engine: VoiceEngineName;
+      /** A Classic call on a version set to a non-Gemini model: it runs on Gemini instead (the page says so). */
+      classicOnGemini?: boolean;
       fx: { currency: string; minorPerUsd: number | null };
     }
   /**
@@ -38,7 +44,7 @@ export type StartVoiceCallResult =
   | { ok: false; reason: VoiceUnavailableReason; retryAt?: string; ownCall?: boolean };
 
 /** Starts a test-lab call: a new voice test conversation on the chosen version and scenario, and its one-time socket ticket. */
-export async function startVoiceCallAction(input: { slug: string; versionId?: string | null; scenario?: string | null; language?: string | null }): Promise<StartVoiceCallResult> {
+export async function startVoiceCallAction(input: { slug: string; versionId?: string | null; scenario?: string | null; language?: string | null; engine?: string | null }): Promise<StartVoiceCallResult> {
   const a = await requireAccount(String(input?.slug ?? ""));
   const gate = voiceLabAccess(a.user);
   if (gate === "not_admin") return { ok: false, reason: "not_allowed" };
@@ -61,7 +67,9 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const versionId = isUuid(rawVersion) ? rawVersion : undefined;
   const conv = await startVoiceTestConversation(appDb, a.account.id, a.user.id, { scenario: scenario && scenario.language === language ? scenario.id : null, versionId, language });
   if (!conv) return { ok: false, reason: "error" };
-  const s = await createVoiceSession(appDb, { accountId: a.account.id, conversationId: conv.conversationId, userId: a.user.id, isTest: true });
+  // The voice engine: honoured from a platform admin only (checked here on the server); anyone else gets Current.
+  const engine = labEngineChoice(a.user, input?.engine);
+  const s = await createVoiceSession(appDb, { accountId: a.account.id, conversationId: conv.conversationId, userId: a.user.id, isTest: true }, { engine });
   if (!s.ok) {
     const reason: VoiceUnavailableReason =
       s.reason === "spend_cap" || s.reason === "platform_budget" || s.reason === "rate_limited" || s.reason === "voice_off" || s.reason === "account_paused" || s.reason === "already_in_call"
@@ -72,7 +80,8 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const maxSec = maxCallSeconds({ settings: conv.version.voiceSettings, deadlineSec: deploymentCallLimitSec() });
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
-    model: voiceModelLabel(versionModelId(conv.version.voiceSettings)),
+    model: voiceModelLabel(engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings)),
+    engine, ...(engine === "classic" && classicModelId(versionModelId(conv.version.voiceSettings)) !== versionModelId(conv.version.voiceSettings) ? { classicOnGemini: true } : {}),
     fx: { currency: a.account.currency, minorPerUsd: minorPerUsd(usdRate(a.account.currency)) },
   };
 }

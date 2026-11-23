@@ -43,7 +43,7 @@ const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
 const { ensureDraftVersion, publishDraftVersion } = await import("@/lib/agent/service");
 const { createSimulatedBuyer, startSimulatorConversation, buyerChat, resolveChatLink } = await import("@/lib/simulator/service");
-const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
+const { buyerVoiceGate, startBuyerVoiceCall, hasVoiceConsent, recordVoiceConsent, VOICE_CONSENT_WORDING, BUYER_CALLS_PER_HOUR } = await import("@/lib/voice/buyer");
 const { buildVoiceInstructions, loadVoiceInstructions, reAskLine, CHAT_RECAP_LINES, CONTINUE_FALLBACK, CONTINUE_FALLBACK_HE } = await import("@/lib/voice/instructions");
 const { VoiceEngine } = await import("@/lib/voice/engine");
 const { ManualClock, flushAsync } = await import("@/lib/voice/realtime");
@@ -286,6 +286,18 @@ describe("starting a call", () => {
     expect((await db.select().from(conversations).where(eq(conversations.leadId, b.leadId))).map((c) => c.channel)).toEqual(["simulator"]);
   });
 
+  it("a lead with no consent record gets one on the first switch, with the current wording (calls may be recorded); a second switch adds none", async () => {
+    const b = await newBuyer("Nora Vale");
+    await db.delete(consentRecords).where(eq(consentRecords.leadId, b.leadId));
+    expect(await recordVoiceConsent(db, account.id, b.leadId, IN_HOURS)).toBe(true);
+    expect(await recordVoiceConsent(db, account.id, b.leadId, IN_HOURS)).toBe(false);
+    const recs = await db.select().from(consentRecords).where(eq(consentRecords.leadId, b.leadId));
+    expect(recs).toHaveLength(1);
+    expect(recs[0]).toMatchObject({ channel: "voice", source: "Buyer chat page, first switch to voice", voiceConsentAt: IN_HOURS });
+    expect(recs[0].wording).toBe("Switched the chat to voice. The call is written down as text in this conversation, and some calls may be recorded for quality review.");
+    expect(VOICE_CONSENT_WORDING).not.toMatch(/no audio/i);
+  });
+
   it("the route: the chat token is the only credential (wrong → 404, expired → 410), rate-limited per token", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
@@ -357,8 +369,8 @@ describe("the call continues the chat", () => {
     const en = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
     expect(en.continuing).toBe(true);
     expect(en.language).toBe("en");
-    expect(en.opener).toBe(CONTINUE_FALLBACK);
-    expect(en.openerPrompt).toContain(`"${CONTINUE_FALLBACK}"`);
+    // The buyer wrote last with no answer: the first line answers it (23 Nov 2026), in English.
+    expect(en.openerPrompt).toContain("The buyer's last message has no answer yet: \u201cWe run four cold rooms.\u201d. Answer it now, briefly, in spoken form, in English.");
     expect(en.openerPrompt).not.toContain(CONTINUE_FALLBACK_HE);
     expect(en.instructions).toContain("Language: start in English");
     // The conversation went on in Hebrew: the pick-up line is the Hebrew one.
@@ -368,7 +380,7 @@ describe("the call continues the chat", () => {
     ]);
     const he = await loadVoiceInstructions(db, { account, version, conv: { ...stored, language: "en" }, lead, deal: null, now: new Date() });
     expect(he.language).toBe("he");
-    expect(he.opener).toBe(CONTINUE_FALLBACK_HE);
+    expect(he.openerPrompt).toContain("in Hebrew.");
   });
 
   it("a call on a chat with agent messages opens with no greeting, no introduction and no bot notice, with the chat in its instructions", async () => {
@@ -380,11 +392,10 @@ describe("the call continues the chat", () => {
     const [version] = await db.select().from(agentVersions).where(eq(agentVersions.id, conv.agentVersionId));
     const ctx = await loadVoiceInstructions(db, { account, version, conv, lead, deal: null, now: new Date() });
     expect(ctx.continuing).toBe(true);
-    // The buyer wrote last: nothing of the agent's is open, so the fallback line.
-    expect(ctx.opener).toBe(CONTINUE_FALLBACK);
-    expect(ctx.openerPrompt).toContain(`"${CONTINUE_FALLBACK}"`);
+    // The buyer wrote last and nothing answered it: the first line answers it (no "go ahead").
+    expect(ctx.openerPrompt).toContain("\u201cWe have three shops in Haifa.\u201d");
     expect(ctx.openerPrompt).toMatch(/Do not greet them as if new, do not introduce yourself and do not say you are an automated assistant/);
-    expect(ctx.openerPrompt).toMatch(/The buyer spoke last or nothing is open/);
+    expect(ctx.openerPrompt).not.toContain(CONTINUE_FALLBACK);
     expect(ctx.openerPrompt).not.toMatch(/Hi Rina|on the call now/);
     expect(ctx.instructions).toContain("The buyer switched this chat from text to voice");
     expect(ctx.instructions).toContain("say so only if the buyer asks");

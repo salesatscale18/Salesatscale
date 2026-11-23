@@ -98,6 +98,39 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     return { engine, clock, settle, rows, run: (ms: number) => clock.advance(ms, settle), sdk: (e: Record<string, unknown>) => { for (const x of model.conns.at(-1)!.mapper.map({ raw: null, ...e } as never)) model.conns.at(-1)!.emit(x); } };
   }
 
+  it("a browser that announced `ready`: the opening waits for it (buyer audio meanwhile does not reach the model), then once", async () => {
+    const model = new RecordingModel();
+    const c = await call(model, { waitForClientAudio: true, clientReadyMs: 3_000 });
+    const sent = () => model.conns[0].sent;
+    // Connected, but the phone's output is not up yet: nothing asked, and the buyer's "hello?" goes nowhere.
+    expect(sent().filter((x) => x.kind === "respond")).toHaveLength(0);
+    for (let i = 0; i < 5; i++) c.engine.onClientAudio(taggedFrame(900 + i));
+    await c.run(1_000);
+    expect(sent()).toHaveLength(0);
+    // The browser can play now: the opening, once, as the first input.
+    c.engine.onClientMessage({ t: "ready" });
+    await c.settle();
+    expect(sent()[0]).toMatchObject({ kind: "respond" });
+    c.engine.onClientMessage({ t: "ready" });
+    await c.run(5_000);
+    expect(sent().filter((x) => x.kind === "respond")).toHaveLength(1);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("a browser that never says `ready`: the opening goes at the timeout, once", async () => {
+    const model = new RecordingModel();
+    const c = await call(model, { waitForClientAudio: true, clientReadyMs: 3_000 });
+    await c.run(2_900);
+    expect(model.conns[0].sent.filter((x) => x.kind === "respond")).toHaveLength(0);
+    await c.run(200);
+    expect(model.conns[0].sent.filter((x) => x.kind === "respond")).toHaveLength(1);
+    await c.run(5_000);
+    expect(model.conns[0].sent.filter((x) => x.kind === "respond")).toHaveLength(1);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
   it("the opener is the model's first input, once, before any buyer audio", async () => {
     const model = new RecordingModel();
     const c = await call(model);

@@ -1,0 +1,35 @@
+/**
+ * Generates current-before.json: what TODAY's (Current) voice code produced for input.json before the Classic
+ * engine was added (origin/main at e20617c). Kept as .txt; run once in a temporary checkout of that commit:
+ *   git archive e20617c | tar -x -C <tmp>; ln -s <repo>/node_modules <tmp>/node_modules
+ *   cp tests/fixtures/voice-classic/input.json <tmp>/input.json; cp this file <tmp>/gen.ts
+ *   (cd <tmp> && npx tsx gen.ts) > tests/fixtures/voice-classic/current-before.json
+ * Stored as sha256 of each output (byte-identical check, small fixture).
+ * tests/unit/voice-current-unchanged.test.ts asserts today's Current code still gives exactly this.
+ */
+import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { buildVoiceInstructions, expectedCallLanguages } from "@/lib/voice/instructions";
+import { realtimeTools } from "@/lib/voice/tool-schema";
+import { toSdkSessionConfig } from "@/lib/voice/gateway-realtime";
+
+const input = JSON.parse(readFileSync("input.json", "utf8"));
+const cases = input.cases.map((c: any) => {
+  const expectedLanguages = expectedCallLanguages(c.language, c.seller.languages);
+  return {
+    id: c.id,
+    instructions: buildVoiceInstructions({ ...c, expectedLanguages }),
+    recorded: buildVoiceInstructions({ ...c, expectedLanguages, recorded: true }),
+  };
+});
+const cfg = { instructions: "x", tools: realtimeTools("gemini"), toolBehavior: "blocking", pace: "normal", language: "he", expectedLanguages: ["he", "en"], scenario: null };
+const sdk = {
+  gemini: toSdkSessionConfig(cfg as any, "google/gemini-3.8-live"),
+  openai: toSdkSessionConfig({ ...cfg, tools: realtimeTools("openai"), turnTaking: { silenceMs: 600, threshold: 0.5, prefixPaddingMs: 300 }, voice: "alloy" } as any, "openai/gpt-realtime-2.1"),
+};
+const hash = (v: unknown) => createHash("sha256").update(typeof v === "string" ? v : JSON.stringify(v)).digest("hex");
+const out = {
+  cases: cases.map((c: any) => ({ id: c.id, instructions: hash(c.instructions), recorded: hash(c.recorded) })),
+  sdk: { gemini: hash(sdk.gemini), openai: hash(sdk.openai) },
+};
+process.stdout.write(`${JSON.stringify({ note: "sha256 of the Current voice code's output before the Classic engine (e20617c), for input.json: generate-current.ts.txt.", ...out }, null, 2)}\n`);

@@ -1140,7 +1140,17 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
       const quote = results.find((x) => x.name === "create_quote")!.result as Record<string, unknown>;
       expect(quote.quote_id).toBeUndefined();
       expect(quote.quote_message_id).toBeUndefined();
-      expect(quote.message).toMatch(/to send its order form, call send_order_form with quote "Q-\d+"\.$/);
+      // On a call the agent walks through the quote from its own lines: item, quantity, unit price, line total.
+      const lines = quote.lines_for_call as { item: string; qty: number; unit: string; unit_price: string | null; line_total: string | null }[];
+      expect(lines.length).toBeGreaterThan(0);
+      for (const l of lines) {
+        expect(l.item.length).toBeGreaterThan(0);
+        expect(l.qty).toBeGreaterThan(0);
+        expect(l.unit_price).toMatch(/\d/);
+      }
+      expect(quote.message).toContain("Walk the buyer through it in three or four short spoken sentences: what they need and what each part costs, from lines_for_call");
+      // How to send the form for this quote, and only when the buyer agrees (never in the quote's own turn unasked).
+      expect(quote.message).toMatch(/Offer the order form and wait for the buyer's yes; when they agree \(or if they already asked for it\), call send_order_form with quote "Q-\d+"\. Never send it unasked\.$/);
       const sent = (await calls(c.conversationId)).find((x) => x.name === "send_order_form")!;
       expect(sent.outcome).toBe("ok");
       expect(sent.input).toEqual({ quote: String(quote.quote).split(" ")[0] });

@@ -51,6 +51,8 @@ describe("wire protocol", () => {
     expect(parseClientMessage({ t: "text", text: "  hello " })).toEqual({ t: "text", text: "hello" });
     expect(parseClientMessage({ t: "end", extra: 1 })).toEqual({ t: "end" });
     expect(parseClientMessage({ t: "ping" })).toEqual({ t: "ping" });
+    // The page can play the agent now: the opening line waits for this (23 Nov 2026).
+    expect(parseClientMessage('{"t":"ready"}')).toEqual({ t: "ready" });
     for (const bad of ["", "nope", "[]", "null", '{"t":"mute"}', '{"t":"mute","on":"yes"}', '{"t":"text","text":""}', '{"t":"text","text":5}', '{"t":"instructions"}', 42]) {
       expect(parseClientMessage(bad)).toBeNull();
     }
@@ -267,7 +269,8 @@ describe("voice instructions", () => {
       "Do: 1) Stop selling. 2) Offer that someone from the team gets back to them, and ask if that is OK.",
       'Example: "I\'ll ask someone from the team to get back to you. Would that be OK?"',
       '- An objection on a call: find it fast. Skip a longer acknowledgement: one short sentence, then the question that finds it straight away, for example "Which is closest: the price, whether it fits, or the timing?" One short sentence and one question per turn.',
-      '- Record each objection while the call is on: call update_deal_state with objection when the buyer raises it, and again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
+      '- When the buyer raises an objection (the price, the timing, a competitor or what they have now, needing to think or to ask someone): first call update_deal_state with objection (the card, the buyer\'s words, the step you take now), then answer; its result names the next step of the card. Record it again when it is settled or dropped. Never repeat a step that "Open objection" shows as used.',
+      "- Never change a quote on your own to answer an objection (removing a line, a cheaper set): offer it, and make the new quote only when the buyer agrees. The same for what the buyer told you (the number of sites, quantities): change it only when the buyer says the new number; an offer of a smaller start becomes the quote only after they accept it in so many words.",
       "- A question with no approved answer: look it up with lookup_knowledge. When nothing is found, call ask_team silently with the question, the buyer's own words and whether it is a must-have (null until the buyer says; call it again when they do). Never tell the buyer you sent it or that you are waiting for an answer. Promise the outcome in one line (\"I'll make sure you get an exact answer on that\") and move the sale on. Raise it again only if the buyer does, or at the close when it is a must-have and still open, and then request a call with request_callback.",
       '- An answer under "Questions sent to the team": give it when it is relevant, in one short sentence in your own words, once. Do not say the team replied or that you were waiting for it.',
       "When the buyer names a time for the call, pass it as time; otherwise pass time null. When its result says Booked, confirm the booked day and time aloud, as a person would say it (\"tomorrow at ten\"), instead of pointing to the chat. When that time was not free, offer the nearest free times the result gives, aloud and naturally (at most three, never read as a list), and say the booking card is in the chat too. When it only put the booking card in the chat (no time), say the free times are in the chat and they can pick one there (never read the link aloud). If it was refused, never say anything was booked or that there is a link. The call goes on after it: keep helping, and never use hand_off_to_human for a call.",
@@ -297,7 +300,7 @@ describe("voice instructions", () => {
     ]) expect(voiceStable, chatLine).not.toContain(chatLine);
     for (const voiceLine of [
       "on a live voice call", "One or two short spoken sentences per turn", "One question at a time", "Spoken language only",
-      "say the total once, say the quote is in the chat", "the order form link is in the chat", "never ask by voice",
+      "walk the buyer through it briefly as its result says", "the order form link is in the chat", "never ask by voice",
       "### On a voice call (always)", "automated assistant", "hand_off_to_human", "record_opt_out", "card number", "English",
     ]) expect(voiceStable, voiceLine).toContain(voiceLine);
     // Follow-ups are still messages.
@@ -667,8 +670,9 @@ describe("Gateway adapter (pure mapping; nothing connects)", () => {
     for (const fillers of [true, false]) {
       const block = voiceCallBlock({ fillers });
       expect(block).not.toMatch(/speaking style|Never speed up|whisper|pace|volume/i);
-      // A rule about being cut off with no words invites the model to narrate it aloud (22 Nov 2026 calls).
-      expect(block).not.toMatch(/cut off|hear no words|echo of your own voice|first language on your own/);
+      // A rule about being cut off with no words invites the model to narrate it aloud (22 Nov 2026 calls); so does a
+      // rule about hearing nothing or noise (owner, 23 Nov 2026: the model handles that itself).
+      expect(block).not.toMatch(/cut off|hear no words|echo of your own voice|first language on your own|hear nothing|only noise|cannot make out/);
     }
   });
 
