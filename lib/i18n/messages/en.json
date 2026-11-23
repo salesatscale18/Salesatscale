@@ -3092,6 +3092,7 @@
   "lab.voice.engine": "Voice engine",
   "lab.voice.engine.current": "Current",
   "lab.voice.engine.classic": "Classic (20 Nov)",
+  "lab.voice.engine.guarded": "Classic + guards",
   "lab.voice.engine_gemini_note": "Classic (20 Nov) runs on Gemini 3.8 Live only: this version's model ({model}) is not used.",
   "voice.settings.limit_line": "Calls: up to {limit}",
   "markets.switcher.label": "Market",

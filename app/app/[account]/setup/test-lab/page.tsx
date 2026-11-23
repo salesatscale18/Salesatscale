@@ -176,7 +176,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     const id = versionModelId(v.settings);
     return classicModelId(id) === id ? [] : [[v.value, voiceModelLabel(id)]];
   }));
-  const engineText = (engine: string | null | undefined) => t(engine === "classic" ? "lab.voice.engine.classic" : "lab.voice.engine.current");
+  const engineText = (engine: string | null | undefined) =>
+    t(engine === "classic" ? "lab.voice.engine.classic" : engine === "guarded" ? "lab.voice.engine.guarded" : "lab.voice.engine.current");
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
@@ -359,8 +360,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 {onVoice && voiceSummary?.mode === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
                 {/* The model this call ran on (its session row): calls on different models of one draft stay apart. */}
                 {onVoice && voiceSummary && voiceModelLabel(voiceSummary.model) !== voiceSummary.model ? <span className="sas-pill" data-voice-model-pill="">{voiceModelLabel(voiceSummary.model)}</span> : null}
-                {/* The voice engine of a Classic (20 Nov) call: compared side by side with Current calls. */}
-                {voice && onVoice && voiceSummary?.engine === "classic" ? <span className="sas-pill" data-voice-engine-pill="">{t("voice.pill.engine", { engine: engineText("classic") })}</span> : null}
+                {/* The voice engine of a Classic (20 Nov) or Classic + guards call: compared side by side with Current calls. */}
+                {voice && onVoice && voiceSummary && voiceSummary.engine !== "current" ? <span className="sas-pill" data-voice-engine-pill="">{t("voice.pill.engine", { engine: engineText(voiceSummary.engine) })}</span> : null}
                 {/* R5-14: when the chat started (its first message), not when the conversation row was made. */}
                 <span className="sas-small">{LANG_NAME[conv.language] ?? conv.language} · <time dateTime={chatStarted.toISOString()} title={zoneTitle(chatStarted, tz)} data-chat-started="">{local(chatStarted)}</time></span>
                 {onWhatsapp ? <span className="sas-chip"><Icon name="message-circle" />{t("lab.wa.chip", { phone: conv.channelAddress ?? "" })}</span> : null}

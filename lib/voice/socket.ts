@@ -27,6 +27,7 @@ import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from ".
 import { maxCallSeconds, voiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
+import { GUARDED_PROFILE } from "@/lib/voice-guarded/profile";
 
 /** What the relay needs from an engine: today's VoiceEngine, or the Classic (20 Nov) one a test-lab call picked. */
 type RelayEngine = Pick<VoiceEngine, "sessionId" | "start" | "onClientMessage" | "onClientAudio" | "onClientGone" | "stop">;
@@ -236,11 +237,13 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     if (!session) return refuse("ticket_invalid");
     // The mode the call was created in must still be on (a live call never runs as scripted, or the reverse).
     const mode = voiceMode(env);
-    // The engine stored on the session (test lab, platform admins): Classic (20 Nov, lib/voice-classic) or Current.
-    // Buyer calls always run on Current.
-    const classic = session.isTest && sessionEngine(session.settings) === "classic";
+    // The engine stored on the session (test lab, platform admins): Classic (20 Nov, lib/voice-classic), "Classic +
+    // guards" (today's engine with the Classic model side, lib/voice-guarded) or Current. Buyer calls always run on Current.
+    const stored = session.isTest ? sessionEngine(session.settings) : "current";
+    const classic = stored === "classic";
+    const guarded = stored === "guarded";
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;
-    const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model }) : null);
+    const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model, ...(guarded ? { rawTranscripts: true } : {}) }) : null);
     if (!model) {
       await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
       return refuse("model_unavailable");
@@ -280,7 +283,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);
       },
     };
-    engine = classic ? new ClassicVoiceEngine(deps) : new VoiceEngine(deps);
+    engine = classic ? new ClassicVoiceEngine(deps) : guarded ? new VoiceEngine({ ...deps, profile: GUARDED_PROFILE }) : new VoiceEngine(deps);
     phase = "live";
     // A last guard beyond the engine's own limit: the socket never outlives the call by much.
     timers.hard = clock.setTimeout(() => {

@@ -102,6 +102,8 @@ export async function createVoiceSession(
     ...(opts.engine === "classic" && a.isTest
       ? { settings: { engine: "classic" } as VoiceSettings, model: classicModelId(versionModelId(version?.voiceSettings, opts.env)) }
       : {}),
+    // A test-lab call on "Classic + guards" (lib/voice-guarded): stored on the session; any voice model, as Current.
+    ...(opts.engine === "guarded" && a.isTest ? { settings: { engine: "guarded" } as VoiceSettings } : {}),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }
@@ -204,13 +206,14 @@ export function startVoiceTestConversation(db: Db, accountId: string, userId: st
  * model (imported only here, so nothing else loads it), or null when voice is off.
  */
 export async function realtimeModelFor(
-  mode: VoiceMode, opts: { clock?: Clock; env?: Record<string, string | undefined>; modelId?: string | null } = {},
+  mode: VoiceMode, opts: { clock?: Clock; env?: Record<string, string | undefined>; modelId?: string | null; rawTranscripts?: boolean } = {},
 ): Promise<RealtimeModel | null> {
   if (mode === "scripted") return new ScriptedRealtime({ clock: opts.clock });
   if (mode === "live") {
     const { GatewayRealtime } = await import("./gateway-realtime");
     // The call's own model (its session row, from its version), the same for its whole length: wakes and retries too.
-    return new GatewayRealtime(opts.env, opts.modelId);
+    // `rawTranscripts`: a "Classic + guards" call stores what was said and heard as is (no cleaner).
+    return opts.rawTranscripts ? new GatewayRealtime(opts.env, opts.modelId, { rawTranscripts: true }) : new GatewayRealtime(opts.env, opts.modelId);
   }
   return null;
 }

@@ -212,7 +212,7 @@ export class ServerEventMapper {
       case "transcript-fragment":
         return e.speaker === "assistant" ? (this.lateDelta(e.delta) ?? this.agentDelta(e.delta)) : this.buyerDelta(e.delta);
       case "input-transcription-completed": {
-        const text = cleanTranscript((e.transcript || this.buyerText).trim());
+        const text = this.clean((e.transcript || this.buyerText).trim());
         this.buyerText = "";
         // An empty transcription (noise, the echo of the agent's own voice) still closes the buyer's turn: the
         // engine then knows nobody spoke (no line, no answer due).
@@ -242,7 +242,7 @@ export class ServerEventMapper {
       case "response-done": {
         this.responseDone = true;
         const out: RealtimeEvent[] = [...this.closeBuyerTurn(), ...this.cleanedNote()];
-        const said = cleanTranscript(this.agentText);
+        const said = this.clean(this.agentText);
         if (said) out.push({ type: "agent-transcript", text: said, final: true });
         this.late = { responseId: typeof e.responseId === "string" && e.responseId ? e.responseId : null, text: this.agentText };
         this.agentText = "";
@@ -281,7 +281,7 @@ export class ServerEventMapper {
    */
   private interrupt(): RealtimeEvent[] {
     const cleaned = this.cleanedNote();
-    const said = cleanTranscript(this.agentText);
+    const said = this.clean(this.agentText);
     if (said) this.cutSaid = this.agentText.trim();
     this.agentText = "";
     // The browser drops the audio still queued: a half sample carried from the cut response belongs to nothing.
@@ -294,8 +294,13 @@ export class ServerEventMapper {
    * before the provider's cancel) is dropped: the browser was told to flush it, and playing it after the flush puts a
    * fragment of the old answer before the new one. Gemini keeps its 5d1f427 behaviour (its response ids through the
    * Gateway are not known to change per response).
+   * `rawTranscripts` ("Classic + guards", lib/voice-guarded): transcripts go out as the provider sent them, markers
+   * included (no cleaner); default: cleaned (lib/voice/transcript-clean.ts).
    */
-  constructor(private readonly o: { dropCutAudio?: boolean } = {}) {}
+  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean } = {}) {}
+  private clean(text: string): string {
+    return this.o.rawTranscripts ? text : cleanTranscript(text);
+  }
   /** The response the buyer cut (its audio is dropped until another response speaks). */
   private cutResponse: string | null = null;
 
@@ -347,7 +352,7 @@ export class ServerEventMapper {
   private cleanedNote(): RealtimeEvent[] {
     const raw = this.agentText.trim();
     if (!raw) return [];
-    const said = cleanTranscript(raw);
+    const said = this.clean(raw);
     if (said === raw) return [];
     return [{ type: "diagnostic", kind: "cleaned-transcript", detail: `${said ? "marker in a line" : "marker only"} (${markerKinds(raw).join(",") || "other"})` }];
   }
@@ -361,7 +366,7 @@ export class ServerEventMapper {
       return null;
     }
     late.text = joinTranscript(late.text, delta);
-    const text = cleanTranscript(late.text);
+    const text = this.clean(late.text);
     return text ? [{ type: "agent-transcript", text, final: true, late: true }] : [];
   }
 
@@ -369,13 +374,13 @@ export class ServerEventMapper {
   private agentDelta(delta: string): RealtimeEvent[] {
     this.agentText = joinTranscript(this.agentText, delta, this.agentBoundary);
     this.agentBoundary = false;
-    const text = cleanTranscript(this.agentText);
+    const text = this.clean(this.agentText);
     return [...this.closeBuyerTurn(), ...(text ? [{ type: "agent-transcript" as const, text, final: false }] : [])];
   }
 
   private buyerDelta(delta: string): RealtimeEvent[] {
     this.buyerText += delta;
-    const text = cleanTranscript(this.buyerText.trim());
+    const text = this.clean(this.buyerText.trim());
     return text ? [{ type: "buyer-transcript", text, final: false }] : [];
   }
 
@@ -385,7 +390,7 @@ export class ServerEventMapper {
    * turn is final now, so it is stored before the answer.
    */
   private closeBuyerTurn(): RealtimeEvent[] {
-    const text = cleanTranscript(this.buyerText.trim());
+    const text = this.clean(this.buyerText.trim());
     this.buyerText = "";
     if (!text) return [];
     return [{ type: "buyer-transcript", text, final: true }];
@@ -478,8 +483,11 @@ export class GatewayRealtime implements RealtimeModel {
   readonly modelId: string;
   private readonly apiKey: string;
 
-  /** `modelId`: the call's model (its session row); the platform default when missing. One model for the whole call. */
-  constructor(env: Record<string, string | undefined> = process.env, modelId?: string | null) {
+  /**
+   * `modelId`: the call's model (its session row); the platform default when missing. One model for the whole call.
+   * `rawTranscripts`: transcripts as the provider sent them ("Classic + guards"; see ServerEventMapper).
+   */
+  constructor(env: Record<string, string | undefined> = process.env, modelId?: string | null, private readonly opts: { rawTranscripts?: boolean } = {}) {
     assertLiveAllowed(env);
     this.apiKey = env.AI_GATEWAY_API_KEY!.trim();
     this.modelId = modelId && modelId !== "scripted" ? modelId : voiceModelId(env);
@@ -491,7 +499,7 @@ export class GatewayRealtime implements RealtimeModel {
     if (!model.getServerWebSocketConfig) throw new Error("This realtime model has no server-owned connection");
     const { url, headers, protocols } = await model.getServerWebSocketConfig({ intent: "conversation" });
     const parse = model.createServerEventParser?.() ?? ((raw: unknown) => model.parseServerEvent(raw));
-    const mapper = new ServerEventMapper({ dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini" });
+    const mapper = new ServerEventMapper({ dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}) });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;
     let open = false;

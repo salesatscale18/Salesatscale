@@ -27,8 +27,11 @@ import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 import { startChatAction } from "./actions";
 import type { VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 
-/** "Current" / "Classic (20 Nov)". */
-const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engine === "classic" ? "lab.voice.engine.classic" : "lab.voice.engine.current");
+/** "Current" / "Classic (20 Nov)" / "Classic + guards". */
+const engineLabel = (engine: VoiceEngineName | null | undefined) =>
+  t(engine === "classic" ? "lab.voice.engine.classic" : engine === "guarded" ? "lab.voice.engine.guarded" : "lab.voice.engine.current");
+/** The select's value as an engine (anything else: Current; the server checks again). */
+const engineOf = (v: string): VoiceEngineName => (v === "classic" || v === "guarded" ? v : "current");
 
 // ---------------------------------------------------------------------------
 // The lab's call (module level)
@@ -36,7 +39,7 @@ const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engine ===
 
 type LabCall = {
   conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean; model?: string | null;
-  /** The voice engine the call runs on (the server's answer: Current unless a platform admin picked Classic). */
+  /** The voice engine the call runs on (the server's answer: Current unless a platform admin picked another). */
   engine?: VoiceEngineName;
 } | null;
 
@@ -176,7 +179,7 @@ export function VoiceLabChoices({
   settingsLine: string | null;
   settingsHref: string | null;
   /**
-   * The "Voice engine" select (Current / Classic (20 Nov)): platform admins only. The page decides on the server;
+   * The "Voice engine" select (Current / Classic (20 Nov) / Classic + guards): platform admins only. The page decides on the server;
    * the action checks again and ignores the field from anyone else.
    */
   engines?: boolean;
@@ -230,9 +233,10 @@ export function VoiceLabChoices({
           <div className="sas-input-group">
             <label className="sas-input-label" htmlFor="lab-engine">{t("lab.voice.engine")}</label>
             {/* Not a form field: "Start chat" ignores it; only "Start call" sends it. */}
-            <select className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(e.target.value === "classic" ? "classic" : "current")} data-voice-engine-select="">
+            <select className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(engineOf(e.target.value))} data-voice-engine-select="">
               <option value="current">{engineLabel("current")}</option>
               <option value="classic">{engineLabel("classic")}</option>
+              <option value="guarded">{engineLabel("guarded")}</option>
             </select>
           </div>
         ) : null}
