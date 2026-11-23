@@ -4,7 +4,7 @@
  * ({ ok: false, refused: true, rule, missing }) the agent reads and acts on.
  */
 import { randomUUID } from "node:crypto";
-import { and, desc, eq, inArray, max } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, max } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import { catalogItems, conversations, leadEvents, leads, messages, orderForms, orders, quoteLines, quotes, sellerAccounts, type Market, type Playbook, type QuoteVersion, type SellerAccount } from "@/db/schema";
@@ -30,7 +30,7 @@ import { deliveryByPhrase, percentText, quoteMessageText } from "./quote-message
 import { validHeadline } from "./quote-card";
 import { isLocale, t } from "@/lib/i18n";
 import { OPT_OUT_REPLY } from "./safety";
-import { askedCount, isReservedFieldKey } from "./core/facts";
+import { askedCount, askedKey, isReservedFieldKey, repeatAskCounts } from "./core/facts";
 import { applyAgentUpdates, approvedFacts, rankFacts, readDealState } from "./service";
 import { deriveStage } from "./core/stage";
 import { loadStageFacts } from "./core/stage-facts";
@@ -274,6 +274,35 @@ export type TurnMemo = {
   /** lookup_knowledge queries of this turn that found nothing (O4: ask_team records them with the question). */
   emptyLookups?: Set<string>;
 };
+
+/**
+ * The asked keys of an update_deal_state call that count (decision 1, fix of 23 Nov 2026). A first ask always
+ * counts. A repeat of a field still unknown counts only when the buyer had a real chance to answer since the
+ * last counted ask (core/facts.ts repeatAskCounts): an ask recorded before the question was put, or repeated
+ * after the buyer replied with a question of their own, is not a second ask. Read from the stored messages,
+ * so chat and voice (the buyer's line is stored before the turn's tools run) follow the same rule.
+ */
+async function askedThatCount(ctx: ToolContext, keys: string[]): Promise<string[]> {
+  if (!keys.length) return keys;
+  const fields = (await readDealState(ctx.db, ctx.accountId, ctx.leadId))?.fields ?? {};
+  const since = new Map<string, number>();
+  for (const k of keys) {
+    if (askedCount(fields, k) === 0 || fields[k]?.value?.trim()) continue;
+    const at = Date.parse(fields[askedKey(k)]?.updatedAt ?? "");
+    if (Number.isFinite(at)) since.set(k, at);
+  }
+  if (!since.size) return keys;
+  const lines = await ctx.db.select({ body: messages.body, createdAt: messages.createdAt }).from(messages)
+    .where(and(
+      eq(messages.accountId, ctx.accountId), eq(messages.conversationId, ctx.conversationId), eq(messages.actor, "buyer"),
+      gt(messages.createdAt, new Date(Math.min(...since.values()))),
+    ))
+    .orderBy(asc(messages.createdAt));
+  return keys.filter((k) => {
+    const at = since.get(k);
+    return at === undefined || repeatAskCounts(lines.filter((l) => l.createdAt.getTime() > at).map((l) => l.body));
+  });
+}
 
 function catalogOf(ctx: ToolContext) {
   if (!ctx.memo) return publishedCatalog(ctx.db, ctx.accountId);
@@ -621,7 +650,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
     // Fields the reply asks for, counted once per turn (decision 1: a question needed for the quote is asked twice at most, a pitch question once).
     const askedIn = Array.isArray(args.asked) ? args.asked.filter((k): k is string => typeof k === "string").map((k) => k.trim()) : [];
     const turnAsked = ctx.memo ? (ctx.memo.asked ??= new Set<string>()) : new Set<string>();
-    const asked = [...new Set(askedIn)].filter((k) => !turnAsked.has(k));
+    const asked = await askedThatCount(ctx, [...new Set(askedIn)].filter((k) => !turnAsked.has(k)));
     const r = await applyAgentUpdates(ctx.db, ctx.accountId, ctx.leadId, ctx.playbook, updates, {
       nextStep: typeof args.next_step === "string" ? args.next_step : undefined,
       objection,

@@ -78,6 +78,12 @@ describe("question roles and local names", () => {
     });
     return { c, ctx };
   };
+  // The buyer's reply between two asks (a repeat counts only after the buyer had a chance to answer).
+  const buyerSays = async (conversationId: string, body: string) => {
+    await new Promise((r) => setTimeout(r, 3));
+    await db.insert(messages).values({ accountId: acc, conversationId, actor: "buyer", body, language: "en" });
+    await new Promise((r) => setTimeout(r, 3));
+  };
   const ask = (keys: string[]) => ({ updates: [], next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: keys });
   const quoteInput = (assumed: { key: string; value: string }[] | null = null) => ({
     lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1, remove_auto_added: null, exception: null, headline: null, assumed,
@@ -98,7 +104,8 @@ describe("question roles and local names", () => {
       expect(deal.fields[askedKey("nope")]).toBeUndefined();
       // The stage block lists both as asked and not answered, each with what its role allows next.
       expect(again.result.stage).toContain("Asked and not answered: Number of sites (asked once; needed for the quote: ask once more, in different words, just before the quote); How they check today (asked once; helps the pitch: do not ask it in the next messages; you may come back to it once, later, only when it fits what the buyer is talking about, woven into your reply).");
-      // Next turn: counted again.
+      // Next turn, after a reply that does not answer it: counted again.
+      await buyerSays(c.conversationId, "We mostly worry about the freezers.");
       await runTool("update_deal_state", ask(["sites"]), ctx("a3", {}));
       deal = (await readDealState(db, acc, c.leadId))!;
       expect(askedCount(deal.fields, "sites")).toBe(2);
@@ -118,6 +125,7 @@ describe("question roles and local names", () => {
       expect(once).toMatchObject({ outcome: "refused", rule: "Before-quote fields missing", result: { asked_once: ["Number of sites"] } });
       expect(String(once.result.message)).toContain("Ask once more, in different words");
 
+      await buyerSays(c.conversationId, "Not sure yet.");
       await runTool("update_deal_state", ask(["sites"]), ctx("q4", {}));
       // Asked twice, but no assumed value: the result says how to go on.
       const noValue = await runTool("create_quote", quoteInput(null), ctx("q5"));
