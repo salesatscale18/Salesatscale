@@ -3,7 +3,8 @@
  * (tests/fixtures/voice-classic/input.json), the guarded instructions are Classic's instructions for the same inputs
  * with exactly these changes, in the Classic voice block, and nothing else:
  * - Classic's hand-off line ("…say goodbye: the call ends there.") replaced by Current's two hand-off lines (K7);
- * - the read-as-given line right after Classic's price line (K6);
+ * - the read-as-given line right after Classic's price line (K6), then the line that keeps the agent's own steps,
+ *   attempts, rules, tools and instructions out of what it says (and out of its reasons);
  * - the tools-before-words line where Classic's line about checks is, followed by Classic's "Do not announce your
  *   checks" line: Classic's filler line ("say a short filler first") is dropped whatever the fillers setting;
  * - Current's order_form_status line right before Classic's order-form note line (K12);
@@ -22,7 +23,7 @@ import { voiceCallBlock as currentBlock } from "@/lib/agent/core/voice";
 import { recordedCallRule } from "@/lib/voice/recording-settings";
 import {
   CLASSIC_FILLER_LINE, CLASSIC_FORM_NOTE_LINE_START, CLASSIC_HANDOFF_LINE, CLASSIC_NO_ANNOUNCE_LINE, CLASSIC_PRICES_LINE,
-  currentHandoffLines, currentOrderFormStatusLine, guardedAddedLines, guardedInstructions, guardedRemovedLines, READ_AS_GIVEN_LINE,
+  currentHandoffLines, currentOrderFormStatusLine, guardedAddedLines, guardedInstructions, guardedRemovedLines, NO_INTERNALS_LINE, READ_AS_GIVEN_LINE,
   TOOLS_FIRST_LINE,
 } from "@/lib/voice-guarded/instructions";
 import { voiceCallBlock as classicBlock } from "@/lib/voice-classic/voice-block";
@@ -66,7 +67,7 @@ describe("Classic + guards: instructions", () => {
         expect(d.removed).toEqual([...(fillers ? [CLASSIC_FILLER_LINE] : []), CLASSIC_HANDOFF_LINE]);
         expect(d.added).toEqual(guardedAddedLines({ recorded, fillers }));
         expect(d.added).toEqual([
-          READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...(fillers ? [CLASSIC_NO_ANNOUNCE_LINE] : []), ...currentHandoffLines(), currentOrderFormStatusLine(),
+          READ_AS_GIVEN_LINE, NO_INTERNALS_LINE, TOOLS_FIRST_LINE, ...(fillers ? [CLASSIC_NO_ANNOUNCE_LINE] : []), ...currentHandoffLines(), currentOrderFormStatusLine(),
           ...(recorded ? [recordedCallRule()] : []),
         ]);
         // The fillers setting makes no difference to guarded: never a filler before a tool.
@@ -81,12 +82,14 @@ describe("Classic + guards: instructions", () => {
         const lines = guarded.split("\n");
         const at = (l: string) => lines.indexOf(l);
         const classicLines = classic.split("\n");
-        // +2: the read-as-given and tools-before-words lines above it
-        expect(at(currentHandoffLines()[0])).toBe(classicLines.indexOf(CLASSIC_HANDOFF_LINE) + 2);
+        // +3: the read-as-given, no-internals and tools-before-words lines above it
+        expect(at(currentHandoffLines()[0])).toBe(classicLines.indexOf(CLASSIC_HANDOFF_LINE) + 3);
         expect(at(READ_AS_GIVEN_LINE)).toBe(at(CLASSIC_PRICES_LINE) + 1);
+        expect(at(NO_INTERNALS_LINE)).toBe(at(CLASSIC_PRICES_LINE) + 2);
         // Tools before words: early in the voice block, where Classic's line about checks is, then "Do not announce".
         expect(lines[at(TOOLS_FIRST_LINE) + 1]).toBe(CLASSIC_NO_ANNOUNCE_LINE);
-        expect(at(TOOLS_FIRST_LINE)).toBe(classicLines.findIndex((l) => l === CLASSIC_FILLER_LINE || l === CLASSIC_NO_ANNOUNCE_LINE) + 1);
+        // +2: the read-as-given and no-internals lines above it.
+        expect(at(TOOLS_FIRST_LINE)).toBe(classicLines.findIndex((l) => l === CLASSIC_FILLER_LINE || l === CLASSIC_NO_ANNOUNCE_LINE) + 2);
         expect(at(TOOLS_FIRST_LINE)).toBeLessThan(at(currentHandoffLines()[0]));
         expect(at(TOOLS_FIRST_LINE) - at("### On a voice call (always)")).toBeLessThanOrEqual(8);
         expect(lines[at(currentOrderFormStatusLine()) + 1].startsWith(CLASSIC_FORM_NOTE_LINE_START)).toBe(true);

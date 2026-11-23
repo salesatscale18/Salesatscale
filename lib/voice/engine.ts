@@ -28,13 +28,14 @@ import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
-import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
+import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
 import { callVoice, isProvenVoiceModel, maxCallSeconds, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
+import { orderFormAgreed } from "./form-agreement";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
@@ -152,6 +153,10 @@ export type VoiceProfile = {
   quoteMessage(quote: string): string;
   /** The spoken summary of a quote made on the call, amounts in words; null when there is none. */
   quoteSummary(db: Db, a: { account: SellerAccount; quoteId: string; version: number; requested: string[]; language: "en" | "he" }): Promise<string | null>;
+  /** The session's tool behaviour on this model family (absent: "blocking"). */
+  toolBehavior?(family: SchemaFamily): RealtimeSessionConfig["toolBehavior"];
+  /** A tool result's last shaping before it goes to the model (guarded: plain objection notes; the silent probe: scheduling). */
+  shapeResult?(name: string, forModel: Record<string, unknown>, o: { family: SchemaFamily }): Record<string, unknown>;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -243,30 +248,15 @@ export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
   return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder && !result.kept_as_buyer_said;
 }
 
-/** The order form named in a line (English or Hebrew). */
-const FORM_WORDS = /\b(order form|the form|form|order|sign|send it|send me)\b|טופס|הזמנה|שלח/i;
-/** A reply that is not a yes (English or Hebrew). */
-const NOT_YES = /\b(no|not|don'?t|expensive|too much|later|wait|think)\b|לא|יקר|אחר כך|לחשוב/i;
 /** A line in English or Hebrew (other languages are not judged: the model decides). */
-const JUDGEABLE = /[A-Za-z\u0590-\u05FF]/;
+const JUDGEABLE = /[A-Za-z֐-׿]/;
 
 /**
- * Whether the buyer agreed to the order form, from the call's last lines: "yes" when the buyer's last line asks for
- * the form (or the order), or answers the agent's offer of the form with no "no", "expensive", "later"…; "no"
- * otherwise. "unknown" (allowed) when there is no buyer line yet in this call or it is in another language: the
- * guard never blocks what it cannot read. On 23 Nov 2026 the form was sent on "Yeah, I guess so. I need a
- * solution." in reply to an objection question, two turns after "It's quite expensive".
+ * Whether the buyer agreed to the order form, from the call's last lines (lib/voice/form-agreement.ts): an explicit
+ * yes or ask for the form or to go ahead, with no reservation (but, a price or competitor remark, a question, a no)
+ * in the same line; a plain yes or "right" only as the answer to the agent's offer of the form.
  */
-export function orderFormAgreed(lines: readonly { role: string; text: string }[]): "yes" | "no" | "unknown" {
-  const lastBuyerAt = lines.findLastIndex((l) => l.role === "buyer");
-  if (lastBuyerAt < 0) return "unknown";
-  const buyer = lines[lastBuyerAt].text;
-  if (!JUDGEABLE.test(buyer)) return "unknown";
-  if (FORM_WORDS.test(buyer) && !/\b(no|not|don'?t)\b|לא/i.test(buyer)) return "yes";
-  const agentBefore = lines.slice(0, lastBuyerAt).reverse().find((l) => l.role === "agent")?.text ?? "";
-  if (/order form|טופס/i.test(agentBefore) && !NOT_YES.test(buyer)) return "yes";
-  return "no";
-}
+export { orderFormAgreed };
 
 /**
  * The reminder a call's quiet results carry (the short bookkeeping result, the quote): conditional, so it asks for
@@ -353,6 +343,18 @@ export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four sho
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
 export function configSummary(cfg: RealtimeSessionConfig): string {
   return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
+}
+
+/**
+ * The log line of a browser's `ready` (lib/voice/client/readiness.ts): how long its check took, its playback route,
+ * when each step was done (ms into the check), its output latency and the step that timed out ("-" where unknown;
+ * an older page sends no diagnostics).
+ */
+export function browserReadyLine(msg: Extract<ClientMessage, { t: "ready" }>): string {
+  const v = (n: number | null | undefined) => (n === null || n === undefined ? "-" : String(n));
+  const lat = msg.baseLatencyMs === undefined && msg.outputLatencyMs === undefined ? "-" : String((msg.baseLatencyMs ?? 0) + (msg.outputLatencyMs ?? 0));
+  const s = msg.steps;
+  return `browser ready waitedMs=${v(msg.waitedMs)} route=${msg.route ?? "-"} mic=${v(s?.mic)} ctx=${v(s?.ctx)} out=${v(s?.out)} primer=${v(s?.primer)} latency=${lat}ms timedOut=${msg.timedOut ?? "-"}`;
 }
 
 /** Languages written in a script other than Latin. */
@@ -467,6 +469,10 @@ export class VoiceEngine {
   private stageDelivered: string | null = null;
   /** The browser said it can play the agent (`{t:"ready"}`). */
   private clientReady = false;
+  /** When the first agent audio of the call went to the browser (the `heard` log line's delta). */
+  private firstAudioSentAt: number | null = null;
+  /** The browser's `heard` was logged (once per call). */
+  private heardLogged = false;
   /** The opening line, until it is asked for (see sendOpener). */
   private pendingOpener: { prompt: string; kind: string; since: number } | null = null;
   /** The call continues a chat (a pick-up line instead of an opener). */
@@ -585,8 +591,15 @@ export class VoiceEngine {
       case "ping":
         return;
       case "ready":
+        if (!this.clientReady) this.log.info(voiceLine(this.sessionId, browserReadyLine(msg)));
         this.clientReady = true;
         this.sendOpener("ready");
+        return;
+      case "heard":
+        // Log only: when the first agent audio actually started playing in the browser (once per call).
+        if (this.heardLogged) return;
+        this.heardLogged = true;
+        this.trace(`browser heard first audio +${this.firstAudioSentAt === null ? "-" : Math.max(0, Math.round(this.clock.now() - this.firstAudioSentAt))}ms after it was sent (browser: ${msg.sinceFirstChunkMs}ms after it arrived, queued ${msg.queuedMs}ms)`);
         return;
       case "context":
         this.onFormContext(msg);
@@ -734,6 +747,7 @@ export class VoiceEngine {
   }
 
   private send(msg: ServerMessage | Uint8Array) {
+    if (this.firstAudioSentAt === null && msg instanceof Uint8Array && msg.byteLength > 0) this.firstAudioSentAt = this.clock.now();
     try {
       this.out(msg);
     } catch (e) {
@@ -1161,7 +1175,7 @@ export class VoiceEngine {
       // The order form's latest step (a note the model reads, never answers), on every connection after it came.
       // (A profile: notes go in as notes, as Classic: never in the instructions.)
       instructions: this.formNote && !this.profile ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
-      tools: this.profile ? this.profile.tools(family) : realtimeTools(family), toolBehavior: "blocking", pace: settings.pace,
+      tools: this.profile ? this.profile.tools(family) : realtimeTools(family), toolBehavior: this.profile?.toolBehavior?.(family) ?? "blocking", pace: settings.pace,
       // The call starts in the conversation's language; the buyer may switch (never locked).
       language: languages?.language ?? (this.loaded!.conv.language || "en"),
       ...(languages ? { expectedLanguages: languages.expectedLanguages } : {}),
@@ -1875,7 +1889,7 @@ export class VoiceEngine {
     } else {
       if (this.conn) {
         const at = this.traceCallAt.get(callId);
-        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}`);
+        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}`);
         // The model's audio from here on is its next response (Gemini continues by itself after a result).
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }
@@ -2011,7 +2025,7 @@ export class VoiceEngine {
       forModel = this.afterCallTool(turn, name, r, forModel);
     }
     if (typeof forModel.message === "string") forModel = { ...forModel, message: profile.resultMessage(forModel.message) };
-    return forModel;
+    return profile.shapeResult ? profile.shapeResult(name, forModel, { family: schemaFamilyOf(this.model.modelId) }) : forModel;
   }
 
   /** request_callback's booking card: the browser shows it during the call (an ok result, or a refusal after the card). */

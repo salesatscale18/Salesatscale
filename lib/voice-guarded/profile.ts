@@ -11,7 +11,8 @@
  * - K5/K6 a created quote: a short spoken summary, every amount in words (say_this);
  * - K7 the hand-off asks first and keeps the call (Current's lines and result);
  * - K8 recording as Current (the rule in the voice block, the notice in the opener once per conversation);
- * - K12 order_form_status offered.
+ * - K12 order_form_status offered;
+ * - update_deal_state's objection notes in plain words, with no attempt counts (lib/voice-guarded/plain-notes.ts).
  * Everything else (the opener's wait for the browser, one agent at a time, heartbeat, stale close, end-of-call
  * writes, the provider close handling, backpressure, logs, Gemini and the GPT realtime models) is the engine's own.
  * The instruction lines added: lib/voice-guarded/instructions.ts guardedAddedLines.
@@ -21,9 +22,11 @@ import { realtimeTools as currentRealtimeTools, ORDER_FORM_STATUS_TOOL, type Sch
 import { realtimeTools as classicRealtimeTools } from "@/lib/voice-classic/tool-schema";
 import { classicStageText } from "@/lib/voice-classic/instructions";
 import { voiceToolResultMessage as classicResultMessage } from "@/lib/voice-classic/voice-block";
-import { GUARDED_ENGINE } from "@/lib/voice-classic/engine-choice";
+import { GUARDED_ENGINE, GUARDED_SILENT_ENGINE } from "@/lib/voice-classic/engine-choice";
 import { loadGuardedInstructions } from "./instructions";
 import { loadQuoteSummary } from "./quote-summary";
+import { plainDealStateResult } from "./plain-notes";
+import { silentProbeToolBehavior, withScheduling } from "./silent-probe";
 
 /** The model's tools: Classic's (today's tools and Classic's end_call, the 20 Nov descriptions), plus order_form_status (K12, Current's). */
 export function guardedTools(family: SchemaFamily) {
@@ -38,6 +41,11 @@ export function guardedQuoteMessage(quote: string): string {
   return `The quote${quote ? ` ${quote}` : ""} is in the chat. Say say_this now, as written, every amount exactly as given there (never worked out again from digits); then add only your closing question.`;
 }
 
+/** A tool result's last shaping on a guarded call: update_deal_state's objection note in plain words, no attempt counts. */
+export function guardedShapeResult(name: string, forModel: Record<string, unknown>): Record<string, unknown> {
+  return name === "update_deal_state" ? plainDealStateResult(forModel) : forModel;
+}
+
 export const GUARDED_PROFILE: VoiceProfile = {
   engine: GUARDED_ENGINE,
   loadInstructions: loadGuardedInstructions,
@@ -48,4 +56,16 @@ export const GUARDED_PROFILE: VoiceProfile = {
   resultMessage: classicResultMessage,
   quoteMessage: guardedQuoteMessage,
   quoteSummary: loadQuoteSummary,
+  shapeResult: (name, forModel) => guardedShapeResult(name, forModel),
+};
+
+/**
+ * "Classic + guards (silent probe)" (test lab engine "guarded_silent"): exactly guarded, plus on Gemini models
+ * non-blocking tools and a scheduling hint on every tool result (lib/voice-guarded/silent-probe.ts). OpenAI: guarded.
+ */
+export const GUARDED_SILENT_PROFILE: VoiceProfile = {
+  ...GUARDED_PROFILE,
+  engine: GUARDED_SILENT_ENGINE,
+  toolBehavior: silentProbeToolBehavior,
+  shapeResult: (name, forModel, o) => withScheduling(name, guardedShapeResult(name, forModel), o.family),
 };

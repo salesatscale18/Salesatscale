@@ -39,7 +39,7 @@ const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-la
 const { VoiceCallAgainBar } = await import("@/app/app/[account]/setup/test-lab/voice-lab");
 const { labEngineChoice, sessionEngine } = await import("@/lib/voice-classic/engine-choice");
 const { VoiceEngine } = await import("@/lib/voice/engine");
-const { GUARDED_PROFILE } = await import("@/lib/voice-guarded/profile");
+const { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } = await import("@/lib/voice-guarded/profile");
 const { flushAsync, ManualClock } = await import("@/lib/voice/realtime");
 const { micPcm, ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
 const { saveDraftVoiceSettings } = await import("@/lib/voice/service");
@@ -92,10 +92,10 @@ afterAll(async () => tdb.close());
 afterEach(() => vi.unstubAllEnvs());
 
 /** Runs a test-lab call's session to its end on the guarded engine (scripted model): the relay's part, in process. */
-async function runGuarded(sessionId: string) {
+async function runGuarded(sessionId: string, profile = GUARDED_PROFILE) {
   const clock = new ManualClock();
   const model = new ScriptedRealtime({ clock });
-  const engine = new VoiceEngine({ db, model, sessionId, send: () => {}, clock, limits: { standbyAfterQuietMs: 600_000, env: {} }, log: { info: () => {}, warn: () => {} }, profile: GUARDED_PROFILE });
+  const engine = new VoiceEngine({ db, model, sessionId, send: () => {}, clock, limits: { standbyAfterQuietMs: 600_000, env: {} }, log: { info: () => {}, warn: () => {} }, profile });
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
       await flushAsync();
@@ -126,8 +126,8 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     const html = await render();
     save("guarded-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
-    expect([...select.matchAll(/<option value="([a-z]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
-      ["current", "Current"], ["classic", "Classic (20 Nov)"], ["guarded", "Classic + guards"],
+    expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
+      ["current", "Current"], ["classic", "Classic (20 Nov)"], ["guarded", "Classic + guards"], ["guarded_silent", "Classic + guards (silent probe)"],
     ]);
     expect(select).toContain('<option value="current" selected="">Current</option>');
   });
@@ -190,5 +190,53 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     as(seller);
     const sellerHtml = await render({ c: r.conversationId });
     expect(sellerHtml).not.toContain("Classic + guards");
+  });
+});
+
+describe("test lab: the voice engine selector, Classic + guards (silent probe)", () => {
+  it("a seller never gets it; an admin's choice is stored on the session, on the version's own model", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    as(seller);
+    expect(await render()).not.toContain("silent probe");
+    expect(await startVoiceCallAction({ slug, engine: "guarded_silent" })).toEqual({ ok: false, reason: "not_allowed" });
+    expect(labEngineChoice(seller, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("current");
+    expect(labEngineChoice(admin, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("guarded_silent");
+    expect(labEngineChoice(admin, "guarded_silent", { VOICE_REALTIME: "off" })).toBe("current");
+    expect(sessionEngine({ engine: "guarded_silent" })).toBe("guarded_silent");
+    expect(sessionEngine({ engine: "guarded-silent" })).toBe("current");
+    as(admin);
+    expect((await saveDraftVoiceSettings(db, account.id, { model: "openai/gpt-realtime-mini" })).ok).toBe(true);
+    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "guarded_silent" });
+    if (!r.ok) throw new Error(r.reason);
+    expect(r).toMatchObject({ engine: "guarded_silent", model: "GPT-Realtime mini" });
+    const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
+    expect(s.settings).toEqual({ engine: "guarded_silent" });
+    expect(s.model).toBe("openai/gpt-realtime-mini");
+    await endMyVoiceCallAction({ slug });
+    expect((await saveDraftVoiceSettings(db, account.id, { model: "google/gemini-3.8-live" })).ok).toBe(true);
+  });
+
+  it("a saved silent-probe call: Engine in the header and on This call, Call again keeps it", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    as(admin);
+    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "guarded_silent" });
+    if (!r.ok) throw new Error(r.reason);
+    await runGuarded(r.sessionId, GUARDED_SILENT_PROFILE);
+    const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
+    expect(s.status).toBe("ended");
+    expect(s.settings).toMatchObject({ engine: "guarded_silent" });
+    const html = await render({ c: r.conversationId });
+    save("guarded-silent-page-call", html);
+    expect(html).toContain("Engine: Classic + guards (silent probe)");
+    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">Classic \+ guards \(silent probe\)<\/dd>/);
+    const [again] = findElements(await pageElement({ c: r.conversationId }), VoiceCallAgainBar);
+    expect(again.props).toMatchObject({ engine: "guarded_silent" });
+    const props = again.props as { versionId: string | null; scenario: string | null; engine: string | null };
+    const next = await startVoiceCallAction({ slug, versionId: props.versionId, scenario: props.scenario, engine: props.engine });
+    if (!next.ok) throw new Error(next.reason);
+    expect(next.engine).toBe("guarded_silent");
+    await endMyVoiceCallAction({ slug });
   });
 });

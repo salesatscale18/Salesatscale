@@ -103,8 +103,8 @@ function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkS
           ...(tt.prefixPaddingMs !== undefined ? { prefixPaddingMs: tt.prefixPaddingMs } : {}),
         },
     tools: cfg.tools.map((t): SdkTool => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters as SdkTool["parameters"] })),
-    // Our tools run on our server and the model must wait for each result.
-    ...(gemini ? { providerOptions: { google: { defaultToolBehavior: "BLOCKING" } } } : {}),
+    // Our tools run on our server and the model must wait for each result (the test lab's silent probe: NON_BLOCKING).
+    ...(gemini ? { providerOptions: { google: { defaultToolBehavior: cfg.toolBehavior === "non_blocking" ? "NON_BLOCKING" : "BLOCKING" } } } : {}),
   };
 }
 

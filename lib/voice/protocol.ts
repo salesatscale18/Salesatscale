@@ -35,15 +35,67 @@ export type ClientMessage =
   | { t: "wake" }
   | { t: "ping" }
   /**
-   * The browser can play the agent now: its audio context runs and a short silent buffer has played through the
-   * output. The relay asks for the opening line only then (or after a timeout), so its first words are heard.
+   * The browser can play the agent now: its mic capture runs (the phone's audio route has switched), its audio
+   * context runs, its output is moving and a short silent primer has played through the agent's output path
+   * (lib/voice/client/readiness.ts). The relay asks for the opening line only then (or after a timeout), so its
+   * first words are heard. The diagnostics are optional (older pages send a bare `{t:"ready"}`); log only.
    */
-  | { t: "ready" }
+  | ({ t: "ready" } & ReadyDiagnostics)
+  /**
+   * The first agent audio of the call actually started playing in the browser (once per call; log only):
+   * `sinceFirstChunkMs` from its arrival to then, `queuedMs` how far ahead it was scheduled when it arrived.
+   */
+  | { t: "heard"; sinceFirstChunkMs: number; queuedMs: number }
   /**
    * The order form open in another tab of the buyer's browser (relayed by the chat tab): which step it shows.
    * `step` is a fixed id, `label` the step's name as the page shows it; never what the buyer typed.
    */
   | { t: "context"; kind: "order_form"; step: string; label: string; event: FormContextEvent };
+
+/** The readiness steps a browser reports (lib/voice/client/readiness.ts), in order. */
+export const READY_STEPS = ["mic", "ctx", "out", "primer"] as const;
+export type ReadyStep = (typeof READY_STEPS)[number];
+/** Where the browser plays the agent: an <audio> element fed by a MediaStream, or the audio context's own output. */
+export type ReadyRoute = "element" | "direct";
+/** Largest number (ms) a browser's diagnostic may carry; larger values are clamped. */
+export const MAX_DIAG_MS = 60_000;
+
+/** What a browser's `ready` may say about how it got ready (all optional; ms; ints in 0..MAX_DIAG_MS). */
+export type ReadyDiagnostics = {
+  /** From the start of the readiness check to `ready`. */
+  waitedMs?: number;
+  route?: ReadyRoute;
+  /** When each step was done, ms after the start of the check; null: it did not happen before the cap. */
+  steps?: Record<ReadyStep, number | null>;
+  /** The first step that had not happened by the cap (`ready` went anyway). */
+  timedOut?: ReadyStep;
+  /** AudioContext.baseLatency / outputLatency, where the browser has them. */
+  baseLatencyMs?: number;
+  outputLatencyMs?: number;
+};
+
+/** A finite number as an int in 0..MAX_DIAG_MS, or undefined (untrusted input). */
+function diagMs(v: unknown): number | undefined {
+  return typeof v === "number" && Number.isFinite(v) ? Math.min(MAX_DIAG_MS, Math.max(0, Math.round(v))) : undefined;
+}
+
+/** A `ready` frame: the bare old form, or with its diagnostics (invalid fields are dropped, never the frame). */
+function parseReady(o: Record<string, unknown>): ClientMessage {
+  const out: { t: "ready" } & ReadyDiagnostics = { t: "ready" };
+  const waited = diagMs(o.waitedMs);
+  if (waited !== undefined) out.waitedMs = waited;
+  if (o.route === "element" || o.route === "direct") out.route = o.route;
+  if (o.steps && typeof o.steps === "object" && !Array.isArray(o.steps)) {
+    const s = o.steps as Record<string, unknown>;
+    out.steps = { mic: diagMs(s.mic) ?? null, ctx: diagMs(s.ctx) ?? null, out: diagMs(s.out) ?? null, primer: diagMs(s.primer) ?? null };
+  }
+  if ((READY_STEPS as readonly unknown[]).includes(o.timedOut)) out.timedOut = o.timedOut as ReadyStep;
+  const base = diagMs(o.baseLatencyMs);
+  if (base !== undefined) out.baseLatencyMs = base;
+  const output = diagMs(o.outputLatencyMs);
+  if (output !== undefined) out.outputLatencyMs = output;
+  return out;
+}
 
 /** A text frame from the browser as a message, or null when it is not one (untrusted input). */
 export function parseClientMessage(raw: unknown): ClientMessage | null {
@@ -63,8 +115,14 @@ export function parseClientMessage(raw: unknown): ClientMessage | null {
     case "end":
     case "wake":
     case "ping":
-    case "ready":
       return { t: o.t };
+    case "ready":
+      return parseReady(o);
+    case "heard": {
+      const since = diagMs(o.sinceFirstChunkMs);
+      const queued = diagMs(o.queuedMs);
+      return since === undefined || queued === undefined ? null : { t: "heard", sinceFirstChunkMs: since, queuedMs: queued };
+    }
     case "mute":
       return typeof o.on === "boolean" ? { t: "mute", on: o.on } : null;
     case "text": {

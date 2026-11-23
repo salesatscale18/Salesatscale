@@ -14,7 +14,7 @@ import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
 import { VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
 import { ServerEventMapper, ToolResponseGate } from "@/lib/voice/gateway-realtime";
-import { VOICE_SAMPLE_RATE } from "@/lib/voice/protocol";
+import { VOICE_SAMPLE_RATE, parseClientMessage } from "@/lib/voice/protocol";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
 import { createVoiceSession, startVoiceTestConversation } from "@/lib/voice/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -77,7 +77,8 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     const s = await createVoiceSession(db, { accountId: acc, conversationId: conv.conversationId, userId: me.id, isTest: true }, { env: { VOICE_REALTIME: "scripted" } });
     if (!s.ok) throw new Error(s.reason);
     const clock = new ManualClock();
-    const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: () => undefined, log: { info() {}, warn() {} }, limits: { env: {}, standbyAfterQuietMs: 600_000, ...limits } });
+    const logs: string[] = [];
+    const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: () => undefined, log: { info: (l: string) => void logs.push(l), warn: (l: string) => void logs.push(l) }, limits: { env: {}, standbyAfterQuietMs: 600_000, ...limits } });
     const settle = async () => {
       for (let i = 0; i < 4; i++) {
         await flushAsync();
@@ -95,7 +96,7 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     await settle();
     const rows = async () => (await db.select({ actor: messages.actor, body: messages.body }).from(messages)
       .where(and(eq(messages.voiceSessionId, s.sessionId), eq(messages.accountId, acc))).orderBy(asc(messages.createdAt))).map((m) => [m.actor, m.body]);
-    return { engine, clock, settle, rows, run: (ms: number) => clock.advance(ms, settle), sdk: (e: Record<string, unknown>) => { for (const x of model.conns.at(-1)!.mapper.map({ raw: null, ...e } as never)) model.conns.at(-1)!.emit(x); } };
+    return { engine, clock, settle, rows, logs, run: (ms: number) => clock.advance(ms, settle), sdk: (e: Record<string, unknown>) => { for (const x of model.conns.at(-1)!.mapper.map({ raw: null, ...e } as never)) model.conns.at(-1)!.emit(x); } };
   }
 
   it("a browser that announced `ready`: the opening waits for it (buyer audio meanwhile does not reach the model), then once", async () => {
@@ -114,6 +115,44 @@ describe("single-shot wiring (recording fake model, fake clock)", () => {
     c.engine.onClientMessage({ t: "ready" });
     await c.run(5_000);
     expect(sent().filter((x) => x.kind === "respond")).toHaveLength(1);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("`ready` with the browser's diagnostics: the opening waits for it, one browser line is logged; `heard` is logged once", async () => {
+    const model = new RecordingModel();
+    const c = await call(model, { waitForClientAudio: true, clientReadyMs: 3_000 });
+    await c.run(400);
+    expect(model.conns[0].sent.filter((x) => x.kind === "respond")).toHaveLength(0);
+    const ready = parseClientMessage(JSON.stringify({ t: "ready", waitedMs: 412, route: "element", steps: { mic: 40, ctx: 41, out: 250, primer: 410 }, baseLatencyMs: 10, outputLatencyMs: 35 }));
+    c.engine.onClientMessage(ready!);
+    c.engine.onClientMessage({ t: "ready" }); // a duplicate: no second line
+    await c.settle();
+    expect(model.conns[0].sent[0]).toMatchObject({ kind: "respond" });
+    const browser = c.logs.filter((l) => l.includes("browser ready"));
+    expect(browser).toHaveLength(1);
+    expect(browser[0]).toMatch(/browser ready waitedMs=412 route=element mic=40 ctx=41 out=250 primer=410 latency=45ms timedOut=-$/);
+    expect(c.logs.some((l) => /opening waited \d+ms for the browser's audio \(ready\)/.test(l))).toBe(true);
+    // The first agent audio goes out; 180 ms later the browser says it started playing.
+    model.conns[0].emit({ type: "audio", pcm: new Uint8Array(960) });
+    await c.settle();
+    await c.run(180);
+    c.engine.onClientMessage({ t: "heard", sinceFirstChunkMs: 150, queuedMs: 50 });
+    c.engine.onClientMessage({ t: "heard", sinceFirstChunkMs: 999, queuedMs: 0 });
+    const heard = c.logs.filter((l) => l.includes("browser heard first audio"));
+    expect(heard).toHaveLength(1);
+    expect(heard[0]).toMatch(/trace t=\d+ browser heard first audio \+180ms after it was sent \(browser: 150ms after it arrived, queued 50ms\)$/);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("an older page's bare `ready`: the opening goes, the browser line has no figures", async () => {
+    const model = new RecordingModel();
+    const c = await call(model, { waitForClientAudio: true, clientReadyMs: 3_000 });
+    c.engine.onClientMessage(parseClientMessage(JSON.stringify({ t: "ready" }))!);
+    await c.settle();
+    expect(model.conns[0].sent[0]).toMatchObject({ kind: "respond" });
+    expect(c.logs.find((l) => l.includes("browser ready"))).toMatch(/browser ready waitedMs=- route=- mic=- ctx=- out=- primer=- latency=-ms timedOut=-$/);
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });

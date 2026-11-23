@@ -25,13 +25,12 @@ import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/vo
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
 import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 import { startChatAction } from "./actions";
-import type { VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { engineLabelKey, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 
 /** "Current" / "Classic (20 Nov)" / "Classic + guards". */
-const engineLabel = (engine: VoiceEngineName | null | undefined) =>
-  t(engine === "classic" ? "lab.voice.engine.classic" : engine === "guarded" ? "lab.voice.engine.guarded" : "lab.voice.engine.current");
+const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engineLabelKey(engine));
 /** The select's value as an engine (anything else: Current; the server checks again). */
-const engineOf = (v: string): VoiceEngineName => (v === "classic" || v === "guarded" ? v : "current");
+const engineOf = (v: string): VoiceEngineName => otherEngine(v) ?? "current";
 
 // ---------------------------------------------------------------------------
 // The lab's call (module level)
@@ -179,7 +178,7 @@ export function VoiceLabChoices({
   settingsLine: string | null;
   settingsHref: string | null;
   /**
-   * The "Voice engine" select (Current / Classic (20 Nov) / Classic + guards): platform admins only. The page decides on the server;
+   * The "Voice engine" select (Current / Classic (20 Nov) / Classic + guards / Classic + guards (silent probe)): platform admins only. The page decides on the server;
    * the action checks again and ignores the field from anyone else.
    */
   engines?: boolean;
@@ -237,6 +236,7 @@ export function VoiceLabChoices({
               <option value="current">{engineLabel("current")}</option>
               <option value="classic">{engineLabel("classic")}</option>
               <option value="guarded">{engineLabel("guarded")}</option>
+              <option value="guarded_silent">{engineLabel("guarded_silent")}</option>
             </select>
           </div>
         ) : null}
