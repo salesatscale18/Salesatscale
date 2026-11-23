@@ -64,6 +64,8 @@ export async function ensureChatStarted(
   const continuation = await leadContinuation(db, accountId, leadId, now);
   const r = await startSimulatorConversation(db, input.actor ?? { userId: null, actingAs: false }, accountId, leadId, now, {
     contactHours: false, leadInterest: await leadInterest(db, accountId, leadId),
+    // A continuation goes on in the language the buyer last wrote in (lib/conversations/current-language.ts).
+    language: continuation?.language,
     firstMessage: continuation
       ? ({ names, firstName, lang }) => continuationText(continuation.state, { name: firstName, agent: names.agent, seller: names.seller }, lang, continuation.date)
       : undefined,

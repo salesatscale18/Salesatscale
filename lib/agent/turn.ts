@@ -8,7 +8,7 @@ import { and, desc, eq, exists } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { agentVersions, conversations, leads, messages, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
+import { agentVersions, conversations, leads, markets, messages, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
 import { AiBudgetError, budgetGuarded } from "@/lib/ai/usage";
 import { isRetryableModelError, withHistoryCacheBreakpoint, type Block, type LlmClient, type LlmRequest, type LlmResponse } from "./llm";
@@ -28,7 +28,8 @@ import { leadCallForContext, teamCallLogLine } from "@/lib/team-calls/service";
 import { teamQuestionsContext } from "@/lib/team-questions/service";
 import { priceApprovalContext } from "./price-approval";
 import { formatBuyerLocal, localNowLine } from "@/lib/follow-ups/rules";
-import { leadContactSettings } from "@/lib/markets/lead-settings";
+import { marketContactSettings } from "@/lib/markets/settings";
+import { supportedTurnLanguages, turnLanguage } from "@/lib/conversations/turn-language";
 import { storedBuyerZone } from "@/lib/team-calls/zone";
 import { textTurnBlocked } from "@/lib/voice/one-agent";
 import { writtenByAgent } from "./core/stage";
@@ -59,20 +60,34 @@ export async function runBuyerTurn(
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
   if (await textTurnBlocked(db, args.accountId, conv.id, args.trigger ?? "chat turn")) return { status: "in_call" };
-  const lang = conv.language;
   const masked = maskCardNumbers(args.text.slice(0, 4000));
 
-  // One round trip: lead, version, account and deal state are read while the buyer message is stored.
-  const [[lead], [version], [account], deal] = await Promise.all([
+  // One round trip: lead, its market, version, account and deal state.
+  const [[lead], [ofLead], [version], [account], deal] = await Promise.all([
     db.select().from(leads).where(and(eq(leads.id, conv.leadId), eq(leads.accountId, args.accountId))),
+    // The lead's market (only one of the account's own), for its selling languages and clock.
+    db.select({ market: markets }).from(markets).innerJoin(leads, eq(leads.marketId, markets.id))
+      .where(and(eq(leads.id, conv.leadId), eq(markets.accountId, args.accountId))),
     db.select().from(agentVersions).where(and(eq(agentVersions.id, conv.agentVersionId), eq(agentVersions.accountId, args.accountId))),
     db.select().from(sellerAccounts).where(eq(sellerAccounts.id, args.accountId)),
     readDealState(db, args.accountId, conv.leadId),
+  ]);
+  if (!lead || !version || !account) return { status: "not_found" };
+  // The lead's market: its own time zone and selling languages, else the account's.
+  const contact = marketContactSettings(account, ofLead?.market ?? null);
+  // The turn's language (owner rule): the language of the buyer's latest message, among the market's selling
+  // languages; a short, neutral or mixed message keeps the conversation's language so far (lib/conversations/turn-language.ts).
+  // Stored on the conversation, so every text the app writes later (follow-ups, cards, SMS, approvals) uses it too.
+  // The lead's own language is only the conversation's starting value and is never changed here.
+  const lang = turnLanguage(masked.text, conv.language, supportedTurnLanguages(contact.languages));
+  await Promise.all([
     args.buyerMessageStored
       ? Promise.resolve()
       : db.insert(messages).values({ id: randomUUID(), accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang }),
+    lang === conv.language
+      ? Promise.resolve()
+      : db.update(conversations).set({ language: lang }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, args.accountId))),
   ]);
-  if (!lead || !version || !account) return { status: "not_found" };
 
   const say = async (body: string) => {
     const [m] = await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "agent", body, language: lang, agentVersionId: version.id }).returning();
@@ -100,14 +115,12 @@ export async function runBuyerTurn(
   // The stage facts (quote, order form, payment) and the published catalog are read alongside;
   // the catalog is shared with this turn's tools through the memo.
   const catalogRead = publishedCatalog(db, args.accountId);
-  const [recentDesc, stageFacts, catalog, followUp, contact, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
+  const [recentDesc, stageFacts, catalog, followUp, callback, loggedCall, teamQuestions, priceApproval, buyerZone] = await Promise.all([
     db.select({ m: messages, u: users }).from(messages).leftJoin(users, eq(users.id, messages.actorUserId))
       .where(eq(messages.conversationId, conv.id)).orderBy(desc(messages.createdAt)).limit(HISTORY),
     loadStageFacts(db, args.accountId, conv.leadId),
     catalogRead.catch(() => null),
     scheduledFollowUp(db, args.accountId, conv.leadId),
-    // The lead's market: its own time zone and selling languages, else the account's.
-    leadContactSettings(db, account, lead.marketId),
     // The buyer's open call request (O6): the agent keeps answering until the call.
     leadCallback(db, args.accountId, conv.leadId),
     // The team's log of its call with the buyer (lib/team-calls): the agent reads the note before it continues.
@@ -159,7 +172,7 @@ export async function runBuyerTurn(
       priceApproval,
       // The clock the agent reads local times by: the tools read them in the buyer's stored zone, else the market's.
       localNow: localNowLine(new Date(), buyerZone ?? contact.timezone),
-    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nConversation language: ${lang}.`,
+    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nReply language: ${lang} (the language of the buyer's latest message). Write your reply and any text you pass to tools in it.`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({

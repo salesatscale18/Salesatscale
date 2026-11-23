@@ -179,8 +179,10 @@ async function processOne(
       playbooks.set(conv.agentVersionId, v?.playbook ?? null);
     }
     const playbook = playbooks.get(conv.agentVersionId);
+    // The conversation's language now (the language of the buyer's latest message), not the one when it was scheduled.
+    const language = conv.language || f.language;
     body = followUpText({
-      language: f.language, leadName: lead.fullName, topic: f.topic,
+      language, leadName: lead.fullName, topic: f.topic,
       playbook: playbook ?? { agentName: account.tradeName },
       account: { tradeName: account.tradeName, tradeNameLocal: account.tradeNameLocal },
     });
@@ -189,7 +191,7 @@ async function processOne(
     const mid = messageId;
     await atomic(db, (q) => [
       // Stored as an agent message the app wrote, so the agent sees it in its history if the buyer replies.
-      q.insert(messages).values({ id: mid, accountId: f.accountId, conversationId: conv.id, actor: "agent", body: body!, language: f.language, createdAt: at }),
+      q.insert(messages).values({ id: mid, accountId: f.accountId, conversationId: conv.id, actor: "agent", body: body!, language, createdAt: at }),
       q.insert(toolCalls).values({
         accountId: f.accountId, conversationId: conv.id, messageId: mid, sequence: 0, name: APP_MESSAGE_CALL, input: {},
         result: { message_id: mid, kind: "follow_up", follow_up_id: f.id }, outcome: "ok", createdAt: at,
