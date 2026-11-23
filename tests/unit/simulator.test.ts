@@ -53,7 +53,11 @@ describe("buyer simulator rules", () => {
     expect(token).toMatch(/^[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{22}$/);
     expect(linkIdFromChatToken(token)).toBe(id);
     expect(linkIdFromChatToken(tokenFor(id))).toBeNull();
-    expect(linkIdFromChatToken(`${token.slice(0, -2)}AA`)).toBeNull();
+    // Tamper with the first character of the signature: always a real change. (Replacing the last two
+    // characters with "AA" was a no-op for about one random token in sixteen, which made this test flaky.)
+    const dot = token.indexOf(".");
+    const swapped = token[dot + 1] === "A" ? "B" : "A";
+    expect(linkIdFromChatToken(`${token.slice(0, dot + 1)}${swapped}${token.slice(dot + 2)}`)).toBeNull();
     expect(linkIdFromChatToken("")).toBeNull();
   });
 
