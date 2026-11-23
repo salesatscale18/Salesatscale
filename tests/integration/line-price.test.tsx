@@ -14,7 +14,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import fs from "node:fs";
 import path from "node:path";
 import { and, eq } from "drizzle-orm";
-import { leadEvents, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
+import { conversations, leadEvents, messages, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -44,9 +44,13 @@ const { ensureDraftVersion, saveDraftPlaybook, publishDraftVersion } = await imp
 const { createSimulatedBuyer, startSimulatorConversation } = await import("@/lib/simulator/service");
 const { getQuote } = await import("@/lib/quotes/service");
 const { exceptionNotice } = await import("@/lib/quotes/exception-notice");
+const { customPricesOf } = await import("@/lib/quotes/pricing");
 const { createOrderForm } = await import("@/lib/orders/service");
 const { saveLegalSection } = await import("@/lib/orders/settings");
 const { leadEventTitle } = await import("@/lib/leads/event-icons");
+const { ConversationPanel } = await import("@/app/app/[account]/leads/[leadId]/conversation");
+const { conversationView } = await import("@/lib/agent/conversation");
+const { HANDOFF_REPLY } = await import("@/lib/agent/safety");
 const { t: tr } = await import("@/lib/i18n");
 
 const OUT = process.env.EXC_RENDER_DIR;
@@ -120,7 +124,7 @@ describe("A person's line prices in the quote editor", () => {
     const quoteId = String(r.result.quote_id);
     const [q] = await db.select().from(quotes).where(eq(quotes.id, quoteId));
     expect(q.status).toBe("awaiting_approval");
-    return { quoteId, leadId: made.lead.id };
+    return { quoteId, leadId: made.lead.id, conversationId: started.conversationId };
   };
   /** The editor's form: the agent's lines, plus `extra` fields (prices, note). */
   const editorForm = (b: { quoteId: string; leadId: string }, extra: Record<string, string> = {}) =>
@@ -199,6 +203,49 @@ describe("A person's line prices in the quote editor", () => {
     expect(v3.version.version).toBe(3);
     expect(v3.lines.find((l) => l.sku === "SVC-INST")).toMatchObject({ priceSource: "custom", lineTotalMinor: 0 });
     expect(v3.version.approvalReasons).toEqual([{ kind: "exception", id: "exc-install", text: EXC_TEXT }]);
+    // Back to the list price after a person's price: a change against v3, so the event is written.
+    await run(saveQuoteAction({ status: "idle" }, editorForm(b, { "qty:SNS-200": "3", note: "Installation at the list price again", intent: "draft" })));
+    expect(await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, b.leadId), eq(leadEvents.type, "quote.price_changed")))).toHaveLength(2);
+  });
+
+  const priceEvents = async (leadId: string) => db.select().from(leadEvents).where(and(eq(leadEvents.leadId, leadId), eq(leadEvents.type, "quote.price_changed")));
+
+  it("a price typed equal to the list price (also on the auto-added line) is not a person's price: no custom line, no event, the warning and the confirm stay", async () => {
+    const b = await heldQuote();
+    const pv = ok(await previewQuoteAction(editorForm(b, { "price:SNS-200:one_time": "590.00", "price:SVC-INST:one_time": "250", "price:GW-10:recurring": "90" })));
+    for (const l of pv.lines) {
+      expect(l.priceSource).toBe("list");
+      expect(l).not.toHaveProperty("listUnitPriceMinor");
+    }
+    await run(saveQuoteAction({ status: "idle" }, editorForm(b, { "price:SNS-200:one_time": "590.00", "price:SVC-INST:one_time": "250", "price:GW-10:recurring": "90", note: "Checked the prices", intent: "draft" })));
+    const d = (await getQuote(db, acc.id, b.quoteId))!;
+    const cur = d.versions[0];
+    expect(cur.version).toMatchObject({ version: 2, createdByActor: "human", approvedByUserId: null });
+    expect(cur.lines.every((l) => l.priceSource === "list")).toBe(true);
+    expect(customPricesOf(cur.lines)).toEqual({});
+    expect(d.quote.status).toBe("awaiting_approval");
+    expect(exceptionNotice(d.quote.status, cur.version, cur.lines)).toEqual({ texts: [EXC_TEXT], confirmUnchanged: true });
+    expect(await priceEvents(b.leadId)).toHaveLength(0);
+    const page = renderToStaticMarkup(await OrdersPage({ params: Promise.resolve({ account: acc.slug }), searchParams: Promise.resolve({ quote: b.quoteId }) }));
+    expect(page).toContain("data-exception-notice");
+    expect(page).toContain("data-confirm-unchanged");
+    expect(page).not.toContain("data-price-changed");
+    // The editor shows the list price with no strike and no Reset.
+    const editor = renderToStaticMarkup(await QuoteEditorPage({ params: Promise.resolve({ account: acc.slug, leadId: b.leadId }), searchParams: Promise.resolve({ from: b.quoteId }) }));
+    expect(editor).not.toContain("data-list-price");
+    expect(editor).not.toContain("data-reset-price");
+  });
+
+  it("one line equal to the list price and another lower: only the lower one is a person's price", async () => {
+    const b = await heldQuote();
+    await run(saveQuoteAction({ status: "idle" }, editorForm(b, { "price:SNS-200:one_time": "590", "price:SVC-INST:one_time": "100", note: "Installation at 100", intent: "draft" })));
+    const d = (await getQuote(db, acc.id, b.quoteId))!;
+    const cur = d.versions[0];
+    expect(customPricesOf(cur.lines)).toEqual({ "SVC-INST:one_time": 10_000 });
+    expect(cur.lines.find((l) => l.sku === "SNS-200")).toMatchObject({ priceSource: "list", unitPriceMinor: 59_000 });
+    expect(d.quote.status).toBe("draft");
+    expect(exceptionNotice(d.quote.status, cur.version, cur.lines)).toBeNull();
+    expect(await priceEvents(b.leadId)).toHaveLength(1);
   });
 
   it("the order form follows the person's prices and shows the 0 line as Free, in English and Hebrew", async () => {
@@ -216,5 +263,38 @@ describe("A person's line prices in the quote editor", () => {
       const [line] = await db.select().from(quoteLines).where(and(eq(quoteLines.sku, "SVC-INST"), eq(quoteLines.quoteVersionId, (await db.select().from(quoteVersions).where(and(eq(quoteVersions.quoteId, b.quoteId), eq(quoteVersions.version, 2))))[0].id)));
       expect(line.lineTotalMinor).toBe(0);
     }
+  });
+
+  it("seller thread: a fixed Hebrew text reads right to left from its stored language; free text keeps dir=auto", async () => {
+    const b = await heldQuote("he");
+    const at = Date.now() + 60_000;
+    await db.insert(messages).values([
+      // The app's fixed hand-off reply, in Hebrew.
+      { accountId: acc.id, conversationId: b.conversationId, actor: "agent", body: HANDOFF_REPLY.he, language: "he", createdAt: new Date(at) },
+      // The agent's free text, in Hebrew, starting with a Latin name.
+      { accountId: acc.id, conversationId: b.conversationId, actor: "agent", body: "Polar Demo כאן, נשמח לעזור", language: "he", createdAt: new Date(at + 1000) },
+    ]);
+    const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
+    const html = renderToStaticMarkup(ConversationPanel({ slug: acc.slug, view: await conversationView(db, acc.id, conv), me, buyerName: "רינה", leadOptedOut: false }));
+    expect(html).toContain(`<div class="sas-msg__bubble" lang="he" dir="rtl"><div dir="rtl" data-msg-dir="">`);
+    expect(html).toMatch(/<div class="sas-msg__bubble" lang="he" dir="auto"><div dir="auto" data-msg-dir="">(?:(?!<\/div>).)*Polar Demo כאן/);
+  });
+
+  it("timeline title names the person as the line under it does: you for the viewer, else the name", async () => {
+    expect(leadEventTitle("quote.price_changed", { by: "testuser" }, tr, null, "you")).toBe("Price changed by you");
+    expect(leadEventTitle("quote.price_changed", { by: "testuser" }, tr, null, "Shira Golan")).toBe("Price changed by Shira Golan");
+    expect(leadEventTitle("quote.price_changed", { by: "Danny" }, tr)).toBe("Price changed by Danny");
+    expect(leadEventTitle("quote.price_changed", {}, tr)).toBe("Price changed");
+    // The stored name is the display name: the person's name when they have one, never an email.
+    const [named] = await db.insert(users).values({ clerkId: "u2", email: "shira.g+clerk@polar.test", firstName: "Shira", lastName: "Golan", role: "user" }).returning();
+    const b = await heldQuote();
+    holder.access = { account: acc, user: named, actingAs: false, role: "seller_admin" as const };
+    try {
+      await run(saveQuoteAction({ status: "idle" }, editorForm(b, { "price:SVC-INST:one_time": "0", note: "Installation free", intent: "draft" })));
+    } finally {
+      holder.access = { account: acc, user: me, actingAs: false, role: "seller_admin" as const };
+    }
+    const [ev] = await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, b.leadId), eq(leadEvents.type, "quote.price_changed")));
+    expect(ev.data).toMatchObject({ by: "Shira Golan" });
   });
 });

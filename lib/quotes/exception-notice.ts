@@ -5,9 +5,9 @@
  * approving. Seller-facing only; nothing here reaches the agent.
  *
  * `confirmUnchanged`: Approve first asks "Approve without changing the
- * prices?" while the lines are still the ones the agent made, i.e. the held
- * (current) version was not created by a person. A person's edit makes a new
- * version with `createdByActor = "human"`, and then no confirm is needed.
+ * prices?" while no line has a person's price (priceSource "custom"; the
+ * engine never stores a price equal to the list or tier price as one).
+ * Without the lines, a version not created by a person counts as unchanged.
  * Computed here, on the server; the confirm itself is UI only and never
  * blocks the approval.
  */
@@ -38,5 +38,6 @@ export function exceptionNotice(
     texts.push(r.text.trim());
   }
   if (texts.length === 0) return null;
-  return { texts, confirmUnchanged: version.createdByActor !== "human" };
+  // With the lines: unchanged = no line at a person's price (a price typed equal to the list price is not one).
+  return { texts, confirmUnchanged: lines ? !lines.some((l) => l.priceSource === "custom") : version.createdByActor !== "human" };
 }

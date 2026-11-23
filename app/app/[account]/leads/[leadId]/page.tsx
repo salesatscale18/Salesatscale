@@ -156,14 +156,15 @@ export default async function LeadCardPage({
   /** The same inside a sentence ("added by you"). */
   const whoIn = (u: Parameters<typeof personName>[0]) => isolate(personName(u, me.id, t("people.you_lower")));
   /** An event's title as text (the folded timeline's "last:" line). */
-  const eventTitle = (type: string, data: unknown) => leadEventTitle(type, data, t, viewerZone);
+  // The acting person as the version history names them: "you" for the viewer, else their name (never an email).
+  const eventTitle = (type: string, data: unknown, by?: Parameters<typeof personName>[0] | null) => leadEventTitle(type, data, t, viewerZone, by ? whoIn(by) : null);
   const callTime = (at: Date, zone: string) => `${viewerTime(at, viewerZone, zone)}${yourTimeSuffix(at, viewerZone, zone)}`;
   const timeline: TimelineItem[] = events.map(({ event, user }) => {
     // Signed and paid: success-toned, with the order and its amount.
     const won = event.type === "order_form.signed" || event.type === "order.paid";
     const ord = won ? orderById.get(String((event.data as { orderId?: string } | null)?.orderId ?? "")) : undefined;
     // A conversation started in the web chat (real or simulated) is not a WhatsApp start (leadEventKey).
-    const title = eventTitle(event.type, event.data);
+    const title = eventTitle(event.type, event.data, user);
     return {
     id: event.id,
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
@@ -214,7 +215,7 @@ export default async function LeadCardPage({
     ? t("lead.card.timeline_none")
     : t(events.length === 1 ? "lead.card.timeline_summary_one" : "lead.card.timeline_summary", {
         count: events.length,
-        event: eventTitle(lastEvent.event.type, lastEvent.event.data),
+        event: eventTitle(lastEvent.event.type, lastEvent.event.data, lastEvent.user),
         time: formatShortDateTimeIn(lastEvent.event.createdAt, tz),
       });
 

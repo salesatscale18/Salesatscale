@@ -5,6 +5,7 @@ import { AgentStepsSwitch, ChatMessage, ChatThread, ThreadMarkerLine, TraceChips
 import type { ThreadMarker } from "@/lib/agent/thread-markers";
 import type { SmsEntry } from "@/lib/sms/thread";
 import { MessageBody } from "@/components/sas/message-body";
+import { messageTextDir } from "@/lib/conversations/text-dir";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import type { ConversationView, SellerFormCard } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
@@ -528,11 +529,12 @@ export function ConversationPanel({
                 title: `${t(m.typedInCall ? "voice.typed_at" : "voice.spoken_at", { time: callClock(m.spokenAtMs / 1000) })} · ${full(m.createdAt)}`,
               } : undefined}
               locale={m.language && isLocale(m.language) ? m.language : "en"}
+              textDir={messageTextDir(m, kind)}
               // A system line carries steps when a turn failed after its tools ran (lib/agent/turn.ts).
               trace={(actor === "agent" || m.actor === "system") && showSteps ? traceChips(calls, rawToolNames) : undefined}
             >
               {/* Each message takes its own direction (R5-2): an English reply in a Hebrew chat stays left to right. */}
-              <div dir="auto" data-msg-dir="">
+              <div dir={messageTextDir(m, kind)} data-msg-dir="">
                 <MessageBody body={m.body} kind={kind} />
               </div>
             </ChatMessage>

@@ -140,7 +140,7 @@ describe("Exception notice on a held quote", () => {
     }
   });
 
-  it("a person's version: no confirm; once a person changed a price the warning is gone; the editor's save ends the hold", async () => {
+  it("a person's version with the same prices keeps the warning and the confirm; once a person changed a price the warning is gone; the editor's save ends the hold", async () => {
     const human = { kind: "human" as const, userId: me.id, actingAs: false };
     /** A person's held version of the quote (stored as such a version is), with the line prices `custom` gives. */
     const personVersion = async (quoteId: string, custom: boolean) => {
@@ -152,13 +152,13 @@ describe("Exception notice on a held quote", () => {
       await db.update(quotes).set({ currentVersion: 2 }).where(eq(quotes.id, quoteId));
       return (await getQuote(db, acc.id, quoteId))!;
     };
-    // Same prices: the notice stays, without the confirm.
+    // Same prices (no line at a person's price): the notice stays, and Approve still asks.
     const b = await heldQuote({ exception: "exc-install", discount: 0 });
     const same = await personVersion(b.quoteId, false);
-    expect(exceptionNotice(same.quote.status, same.versions[0].version, same.versions[0].lines)).toEqual({ texts: [EXC_TEXT], confirmUnchanged: false });
+    expect(exceptionNotice(same.quote.status, same.versions[0].version, same.versions[0].lines)).toEqual({ texts: [EXC_TEXT], confirmUnchanged: true });
     const html = await b.orders();
     expect(html).toContain("data-exception-notice");
-    expect(html).not.toContain("data-confirm-unchanged");
+    expect(html).toContain("data-confirm-unchanged");
     // A person's price on a line: the warning is gone.
     const d = await heldQuote({ exception: "exc-install", discount: 0 });
     const priced = await personVersion(d.quoteId, true);

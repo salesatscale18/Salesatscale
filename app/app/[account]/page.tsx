@@ -126,7 +126,7 @@ export default async function OverviewPage({ params, searchParams }: { params: P
     actor: event.actor === "human" ? "human" : event.actor === "agent" ? "agent" : event.actor === "buyer" ? "buyer" : "system",
     icon: leadEventIcon(event.type, { data: event.data }),
     // A conversation started in the web chat (real or simulated) is not a WhatsApp start (leadEventKey).
-    title: leadEventTitle(event.type, event.data, t, viewerZone),
+    title: leadEventTitle(event.type, event.data, t, viewerZone, by ? personName(by, user.id, t("people.you_lower")) : null),
     detail: (
       <>
         <a href={`${base}/leads/${lead.id}`}>{lead.fullName}</a>

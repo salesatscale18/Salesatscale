@@ -106,6 +106,12 @@ export function leadEventTitle(
   type: string, data: unknown, tr: (key: MessageKey, vars?: Record<string, string | number>) => string,
   /** The viewer's own zone (the sas_tz cookie) for a booked call's time; null: the zone it was booked in. */
   viewerZone: string | null = null,
+  /**
+   * The acting person as the line under the title names them for this viewer
+   * (personName: "you" for the viewer, else the name). Used by "Price changed
+   * by …"; without it, the display name stored with the event.
+   */
+  actorName: string | null = null,
 ): string {
   const key = `lead.event.${leadEventKey(type, data)}` as MessageKey;
   // The buyer's booking on the booking card (booked: true) is a booked call, not a request: "Call booked · Mon 23 Nov 15:30".
@@ -118,8 +124,9 @@ export function leadEventTitle(
     return typeof by === "string" && by.trim() ? tr("lead.event.voice.recording_deleted_by", { name: by }) : tr(key);
   }
   if (type === "quote.price_changed") {
-    // The person's display name stored when they saved the version (never an email).
-    const by = (data as { by?: unknown } | null | undefined)?.by;
+    // The person as the viewer sees them ("you", or their name); else the display name stored when they saved (never an email).
+    const stored = (data as { by?: unknown } | null | undefined)?.by;
+    const by = actorName?.trim() ? actorName : stored;
     return typeof by === "string" && by.trim() ? tr("lead.event.quote.price_changed_by", { name: by }) : tr(key);
   }
   if (!SMS_WITH_KIND.has(type)) return tr(key);
