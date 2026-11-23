@@ -70,7 +70,12 @@ export type RealtimeEvent =
    * out ("cleaned-transcript"), an audio piece had an odd byte count and its last byte was carried to the next
    * piece ("audio-odd-bytes"), audio of an earlier response came again after a newer one ("audio-interleaved").
    */
-  | { type: "diagnostic"; kind: "cleaned-transcript" | "audio-odd-bytes" | "audio-interleaved" | "audio-after-cut" | "tool-continuation"; detail?: string };
+  | { type: "diagnostic"; kind: "cleaned-transcript" | "audio-odd-bytes" | "audio-interleaved" | "audio-after-cut" | "tool-continuation"; detail?: string }
+  /**
+   * A provider event the engine reads nothing from, for the model event trace in the log only (never content): the
+   * buyer's speech stopped (OpenAI VAD, Gemini voice activity), the model's turn or generation complete (Gemini).
+   */
+  | { type: "trace"; what: string };
 
 export interface RealtimeConnection {
   /** Mic audio, PCM16 mono 24 kHz little-endian. */

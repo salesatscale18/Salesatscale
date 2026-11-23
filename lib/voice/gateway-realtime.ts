@@ -167,6 +167,35 @@ export function cancelledCallIds(raw: unknown): string[] {
 }
 
 /**
+ * The model event trace (log only): what a provider event we otherwise read nothing from says about the turn. The
+ * buyer's speech stopped (OpenAI's VAD; Gemini's voiceActivity), the agent's audio done, Gemini's turnComplete,
+ * generationComplete and interrupted (as their own events or as flags of a serverContent message). Never content.
+ */
+export function traceOf(e: { type?: unknown; rawType?: unknown; raw?: unknown }): string[] {
+  if (e.type === "speech-stopped") return ["buyer speech stopped"];
+  if (e.type === "audio-done") return ["model audio done"];
+  if (e.type !== "custom") return [];
+  const name = customEventName(e);
+  const raw = e.raw && typeof e.raw === "object" ? (e.raw as Record<string, unknown>) : {};
+  if (name === "voiceActivity") {
+    const v = raw.voiceActivity && typeof raw.voiceActivity === "object" ? (raw.voiceActivity as Record<string, unknown>) : raw;
+    const kind = v.voiceActivityType ?? v.type ?? (typeof v.speaking === "boolean" ? (v.speaking ? "speaking" : "not speaking") : "?");
+    return [`buyer voice activity ${String(kind).replace(/\s+/g, " ").slice(0, 40)}`];
+  }
+  if (name === "turnComplete") return ["model turn complete"];
+  if (name === "generationComplete") return ["model generation complete"];
+  if (name === "serverContent") {
+    const c = raw.serverContent && typeof raw.serverContent === "object" ? (raw.serverContent as Record<string, unknown>) : raw;
+    return [
+      ...(c.generationComplete === true ? ["model generation complete"] : []),
+      ...(c.interrupted === true ? ["model interrupted"] : []),
+      ...(c.turnComplete === true ? ["model turn complete"] : []),
+    ];
+  }
+  return [];
+}
+
+/**
  * Maps normalized server events to ours. Stateful (one per connection): it
  * accumulates the turn's transcripts, so every transcript event we emit
  * carries the whole turn so far.
@@ -527,6 +556,7 @@ export class GatewayRealtime implements RealtimeModel {
       }
       const parsed = parse(raw);
       for (const se of Array.isArray(parsed) ? parsed : [parsed]) {
+        for (const what of traceOf(se)) onEvent({ type: "trace", what });
         for (const ev of mapper.map(se)) onEvent(ev);
         if (se.type === "response-done") {
           const more = maybeRequestToolResponse("response end");

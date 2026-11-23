@@ -4,6 +4,7 @@
  * with exactly these changes, in the Classic voice block, and nothing else:
  * - Classic's hand-off line ("…say goodbye: the call ends there.") replaced by Current's two hand-off lines (K7);
  * - the read-as-given line right after Classic's price line (K6);
+ * - the tools-before-words line right before Classic's line about checks (the filler line, or "Do not announce");
  * - Current's order_form_status line right before Classic's order-form note line (K12);
  * - a recorded call: Current's recording rule at the end of the voice block (K8).
  * The later Current texts left out (T2 "tools first, speak once", T3 language notes) are asserted absent. The tools
@@ -19,8 +20,8 @@ import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
 import { voiceCallBlock as currentBlock } from "@/lib/agent/core/voice";
 import { recordedCallRule } from "@/lib/voice/recording-settings";
 import {
-  CLASSIC_FORM_NOTE_LINE_START, CLASSIC_HANDOFF_LINE, CLASSIC_PRICES_LINE, currentHandoffLines, currentOrderFormStatusLine,
-  guardedAddedLines, guardedInstructions, READ_AS_GIVEN_LINE,
+  CLASSIC_CHECKS_LINE_STARTS, CLASSIC_FORM_NOTE_LINE_START, CLASSIC_HANDOFF_LINE, CLASSIC_PRICES_LINE, currentHandoffLines,
+  currentOrderFormStatusLine, guardedAddedLines, guardedInstructions, READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE,
 } from "@/lib/voice-guarded/instructions";
 import { guardedTools } from "@/lib/voice-guarded/profile";
 
@@ -61,7 +62,7 @@ describe("Classic + guards: instructions", () => {
         expect(d.removed).toEqual([CLASSIC_HANDOFF_LINE]);
         expect(d.added).toEqual(guardedAddedLines({ recorded }));
         expect(d.added).toEqual([
-          READ_AS_GIVEN_LINE, ...currentHandoffLines(), currentOrderFormStatusLine(), ...(recorded ? [recordedCallRule()] : []),
+          READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...currentHandoffLines(), currentOrderFormStatusLine(), ...(recorded ? [recordedCallRule()] : []),
         ]);
         // Everything else is Classic's, in Classic's order.
         expect(d.commonB).toEqual(d.commonA);
@@ -70,8 +71,14 @@ describe("Classic + guards: instructions", () => {
         const lines = guarded.split("\n");
         const at = (l: string) => lines.indexOf(l);
         const classicLines = classic.split("\n");
-        expect(at(currentHandoffLines()[0])).toBe(classicLines.indexOf(CLASSIC_HANDOFF_LINE) + 1); // +1: the read-as-given line above it
+        // +2: the read-as-given and tools-before-words lines above it
+        expect(at(currentHandoffLines()[0])).toBe(classicLines.indexOf(CLASSIC_HANDOFF_LINE) + 2);
         expect(at(READ_AS_GIVEN_LINE)).toBe(at(CLASSIC_PRICES_LINE) + 1);
+        // Tools before words: early in the voice block, right before Classic's line about checks.
+        const checksAt = at(TOOLS_FIRST_LINE) + 1;
+        expect(CLASSIC_CHECKS_LINE_STARTS.some((s) => lines[checksAt].startsWith(s))).toBe(true);
+        expect(at(TOOLS_FIRST_LINE)).toBeLessThan(at(currentHandoffLines()[0]));
+        expect(at(TOOLS_FIRST_LINE) - at("### On a voice call (always)")).toBeLessThanOrEqual(8);
         expect(lines[at(currentOrderFormStatusLine()) + 1].startsWith(CLASSIC_FORM_NOTE_LINE_START)).toBe(true);
         if (recorded) {
           expect(guarded).toContain(`\n${recordedCallRule()}\n\n### Deal-state fields\n`);

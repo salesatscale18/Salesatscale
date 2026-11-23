@@ -3,6 +3,8 @@
  * its reconciliations), plus these lines in the Classic voice block and nothing else:
  * - the hand-off: Current's two lines (offer first, the call goes on) instead of Classic's "the call ends there";
  * - one line to read a tool's prepared words (the quote summary, amounts in words) as written;
+ * - one line: tools before words (call the tools first, say nothing before them, speak once after the results),
+ *   early in the voice block: right before Classic's line about checks (the filler line, or "Do not announce");
  * - Current's order_form_status line, where Current places it (before the order-form note line);
  * - a recorded call: Current's one recording rule, at the end of the voice block (where Current places it).
  * tests/unit/voice-guarded-instructions.test.ts asserts the result is Classic's plus exactly these.
@@ -23,6 +25,15 @@ export const CLASSIC_FORM_NOTE_LINE_START = "- A note from the system may say wh
 
 /** The one line that makes the prepared words of a tool result (the quote summary) be read as written (K6). */
 export const READ_AS_GIVEN_LINE = "- When a tool result gives you words to say (say_this), say them as written: every amount exactly as given there, never worked out again from digits.";
+
+/** The start of Classic's line about tool checks (fillers on or off): the tools-before-words line goes right before it. */
+export const CLASSIC_CHECKS_LINE_STARTS = ["- Before a tool that takes time", "- Do not announce your checks"] as const;
+
+/**
+ * Tools before words (23 Nov 2026): on Gemini the model spoke its answer, called update_deal_state about a second
+ * in, and said the same sentence again once the (BLOCKING) tool result came back. One plain line, read early.
+ */
+export const TOOLS_FIRST_LINE = "- Tools before words: when a buyer's line needs a tool (saving what they said, an objection, the catalog, a quote, the order form), call the tool or tools FIRST and say nothing before them. Speak only after the results are back, once. Never say a sentence and then say it again after a tool result.";
 
 /** A line of Current's voice block (lib/agent/core/voice.ts), by its start: Current's own wording, never a copy. */
 function currentLine(start: string): string {
@@ -55,6 +66,9 @@ function lineStarting(text: string, start: string): string {
 export function guardedInstructions(classic: string, o: { recorded?: boolean } = {}): string {
   let out = replaceLine(classic, CLASSIC_HANDOFF_LINE, currentHandoffLines());
   out = replaceLine(out, CLASSIC_PRICES_LINE, [CLASSIC_PRICES_LINE, READ_AS_GIVEN_LINE]);
+  const checks = CLASSIC_CHECKS_LINE_STARTS.map((s) => (out.includes(`\n${s}`) ? lineStarting(out, s) : null)).find((l) => l !== null);
+  if (!checks) throw new Error("guarded instructions: no line about tool checks");
+  out = replaceLine(out, checks, [TOOLS_FIRST_LINE, checks]);
   const note = lineStarting(out, CLASSIC_FORM_NOTE_LINE_START);
   out = replaceLine(out, note, [currentOrderFormStatusLine(), note]);
   if (o.recorded) {
@@ -68,7 +82,7 @@ export function guardedInstructions(classic: string, o: { recorded?: boolean } =
 
 /** The lines guarded adds to Classic's instructions, in the order they appear (tests assert exactly these). */
 export function guardedAddedLines(o: { recorded?: boolean } = {}): string[] {
-  return [READ_AS_GIVEN_LINE, ...currentHandoffLines(), currentOrderFormStatusLine(), ...(o.recorded ? [recordedCallRule()] : [])];
+  return [READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...currentHandoffLines(), currentOrderFormStatusLine(), ...(o.recorded ? [recordedCallRule()] : [])];
 }
 
 /**

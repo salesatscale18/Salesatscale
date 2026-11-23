@@ -39,7 +39,7 @@ import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
 import { cleanTranscript } from "./transcript-clean";
-import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
+import { clip, consoleVoiceLog, errorSummary, textPrint, voiceLine, type VoiceLog } from "./log";
 import { CallRecorder, recordingPrefix, recordingStoreFor, type RecordingStore } from "./recording";
 import { recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
 
@@ -442,6 +442,15 @@ export class VoiceEngine {
   private state: VoiceState | null = null;
 
   private callStart: number | null = null;
+  /**
+   * The model event trace (log lines only, never read by the call): the response whose audio is going out, numbered
+   * per call. A response ends at the model's turn-done, a barge-in, or a tool result (the audio after a result is
+   * the model's next response: on Gemini, BLOCKING tools make it continue by itself).
+   */
+  private traceResp: { n: number; at: number; audioMs: number; textFrom: number; closedBy: string | null } | null = null;
+  private traceRespSeq = 0;
+  /** When each tool call came from the model (the trace's `took`). */
+  private traceCallAt = new Map<string, number>();
   private maxSec = 0;
   private muted = false;
   private agentTurn: AgentTurn | null = null;
@@ -566,6 +575,7 @@ export class VoiceEngine {
         this.muted = msg.on;
         return;
       case "text":
+        this.trace(`buyer typed len=${msg.text.length}`);
         this.buyerActivity();
         void this.enqueue(() => this.handleBuyerFinal(msg.text, true));
         return;
@@ -792,6 +802,7 @@ export class VoiceEngine {
     this.conn = conn;
     this.connAt = this.clock.now();
     this.connAudio = false;
+    this.traceResp = null;
     this.activeSince = this.clock.now();
     this.usageAcc.newSession();
     // Profile (Classic): a form note held while the model was away goes in now, after the fresh instructions and recap.
@@ -1052,13 +1063,30 @@ export class VoiceEngine {
     this.pendingOpener = null;
     this.clearTimer("ready");
     if (why !== "now") this.log.info(voiceLine(this.sessionId, `opening waited ${Math.round(this.clock.now() - o.since)}ms for the browser's audio (${why})`));
-    this.noteSent(o.kind);
+    this.noteSent(o.kind, true);
     this.conn.requestResponse(o.prompt);
   }
 
-  /** One log line per text the engine puts into the model's conversation mid-call: its kind only, never its words. */
-  private noteSent(kind: string) {
+  /**
+   * One log line per text the engine puts into the model's conversation mid-call: its kind only, never its words.
+   * `response`: it goes with a request for the model's response (requestResponse); the trace says which.
+   */
+  private noteSent(kind: string, response = false) {
     this.log.info(voiceLine(this.sessionId, `note sent: ${kind}`));
+    this.trace(`${response ? "response request" : "note"} kind=${kind}`);
+  }
+
+  /** A model event trace line: `trace t=<ms since the call went live> <what>`. Log only; never content. */
+  private trace(what: string) {
+    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} ${what}`));
+  }
+
+  /** The trace's view of the current response: its number, audio sent, and its own text's length and print. */
+  private traceRespSummary(): string {
+    const r = this.traceResp;
+    if (!r) return "r=- audio=none";
+    const said = (this.agentTurn?.text ?? "").slice(r.textFrom).trim();
+    return `r=${r.n} audioMs=${Math.round(r.audioMs)} len=${said.length}${said ? ` print=${textPrint(said)}` : ""}`;
   }
 
   /**
@@ -1174,7 +1202,7 @@ export class VoiceEngine {
     // On standby (or waking) nobody is listening: the limit just ends the call.
     if (!this.conn || this.reconnecting) return;
     this.send({ t: "notice", kind: "limit_soon" });
-    this.noteSent("time limit");
+    this.noteSent("time limit", true);
     this.conn?.requestResponse(this.profile
       ? "The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat."
       : `The call is close to its time limit. Tell the buyer the call is about to end and offer to continue in the chat. ${this.sayIn()}`);
@@ -1192,6 +1220,7 @@ export class VoiceEngine {
         return;
       case "audio": {
         const turn = this.ensureAgentTurn();
+        this.traceAudio(e.pcm.byteLength, turn.heardAudio ? turn.text.length : 0);
         turn.heardAudio = true;
         turn.awaitingContinuation = false;
         if (turn.answerMs === null && this.buyerEndedAt !== null) {
@@ -1243,6 +1272,8 @@ export class VoiceEngine {
         this.markHeard();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
         if (e.final) {
+          // The buyer's words never go to the log: their length only.
+          this.trace(`buyer said len=${heard.trim().length}`);
           void this.enqueue(() => this.handleBuyerFinal(heard, false));
         } else {
           this.send({ t: "transcript", id: this.buyerTurn.id, role: "buyer", text: maskPartialDigits(heard), final: false, atMs: this.buyerTurn.startMs });
@@ -1250,9 +1281,12 @@ export class VoiceEngine {
         return;
       }
       case "speech-started":
+        this.trace("buyer speech started");
         this.buyerActivity();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
         if (this.agentSpeaking) {
+          this.trace(`interrupted (barge-in) ${this.traceRespSummary()}`);
+          if (this.traceResp) this.traceResp.closedBy = "barge-in";
           // Barge-in: the browser drops the agent audio it still has queued; the turn is stored as cut.
           if (this.agentTurn) this.agentTurn.interrupted = true;
           this.send({ t: "flush" });
@@ -1262,15 +1296,22 @@ export class VoiceEngine {
           this.setState("listening");
         }
         return;
-      case "tool-call":
+      case "tool-call": {
+        // Whether the agent's audio of the current response had already gone out when the model called the tool.
+        const r = this.traceResp && !this.traceResp.closedBy ? this.traceResp : null;
+        this.traceCallAt.set(e.callId, this.clock.now());
+        this.trace(`tool call received name=${clip(e.name, 40)} id=${clip(e.callId, 200).slice(-8)} r=${r ? r.n : "-"} afterSpeech=${r ? `yes sinceAudioMs=${Math.round(this.clock.now() - r.at)}` : "no"}`);
         void this.enqueue(() => this.handleTool(e.callId, e.name, e.args));
         return;
+      }
       case "tool-cancelled":
         // Not queued: a result still being worked out must see it before it is sent.
         for (const id of e.callIds) this.cancelledCalls.add(id);
         this.log.info(voiceLine(this.sessionId, `tools: the model cancelled ${e.callIds.length || "its"} call(s); their results are not sent`));
         return;
       case "turn-done":
+        this.trace(`turn done interrupted=${e.interrupted ? "yes" : "no"} ${this.traceRespSummary()}`);
+        this.traceResp = null;
         if (!this.agentTurn) this.cutText = null;
         void this.enqueue(() => this.handleTurnDone(!!e.interrupted));
         return;
@@ -1303,8 +1344,11 @@ export class VoiceEngine {
         // Every cleaned agent transcript is logged (the cleaner must never hide spoken junk silently); audio
         // anomalies once, with their totals at the end of the call.
         if (e.kind === "cleaned-transcript") this.log.warn(voiceLine(this.sessionId, `cleaned agent transcript: ${e.detail ?? "marker"}`));
-        else if (e.kind === "tool-continuation") this.log.info(voiceLine(this.sessionId, `tools: ${e.detail ?? "response requested"}`));
-        else if (n === 1) {
+        else if (e.kind === "tool-continuation") {
+          this.log.info(voiceLine(this.sessionId, `tools: ${e.detail ?? "response requested"}`));
+          // OpenAI: the adapter asked for the model's next response after the tool results.
+          if (!e.detail || e.detail.startsWith("response requested")) this.trace(`response request kind=tool results (${clip(e.detail ?? "", 60)})`);
+        } else if (n === 1) {
           const what = e.kind === "audio-odd-bytes" ? "a piece with an odd byte count (carried to the next piece)"
             : e.kind === "audio-after-cut" ? "audio of a cut response arrived after the cut (dropped)"
             : "audio of an earlier response after a newer one";
@@ -1331,7 +1375,25 @@ export class VoiceEngine {
         else this.log.info(line);
         return;
       }
+      case "trace":
+        this.trace(clip(e.what, 80));
+        return;
     }
+  }
+
+  /**
+   * The trace for a piece of agent audio: the first piece of a response (none open, or the open one ended by a
+   * barge-in or a tool result) starts the next one; every piece adds its length. One line per response, never per piece.
+   */
+  private traceAudio(bytes: number, textLength: number) {
+    const open = this.traceResp;
+    if (open && !open.closedBy) {
+      open.audioMs += pcmDurationMs(bytes);
+      return;
+    }
+    if (open) this.trace(`agent response end by=${open.closedBy} ${this.traceRespSummary()}`);
+    this.traceResp = { n: ++this.traceRespSeq, at: this.clock.now(), audioMs: pcmDurationMs(bytes), textFrom: textLength, closedBy: null };
+    this.trace(`agent response start r=${this.traceResp.n}${open ? ` after=${open.closedBy}` : ""}`);
   }
 
   private ensureAgentTurn(): AgentTurn {
@@ -1609,10 +1671,10 @@ export class VoiceEngine {
       // Classic: the fixed replies are asked for on any line, spoken or typed, in English.
       if (isSpokenOptOut(masked.text)) await this.codeOptOut(masked.text, true, OPT_OUT_REPLY.en);
       else if (masked.found) {
-        this.noteSent("card number");
+        this.noteSent("card number", true);
         this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY.en}"`);
       } else if (typed) {
-        this.noteSent("typed line");
+        this.noteSent("typed line", schemaFamilyOf(this.model.modelId) !== "gemini");
         this.conn.sendText(masked.text);
       }
     } else if (isSpokenOptOut(masked.text)) {
@@ -1621,10 +1683,10 @@ export class VoiceEngine {
       this.log.info(voiceLine(this.sessionId, "note skipped: card number on a spoken turn (the model answers it)"));
     } else if (masked.found) {
       // Card details never belong in a call: the fixed security reply, as in chat.
-      this.noteSent("card number");
+      this.noteSent("card number", true);
       this.conn.requestResponse(`The buyer started reading out a card number. Stop them politely and say exactly this and nothing else: "${CARD_REPLY[this.spokenLanguage] ?? CARD_REPLY.en}"`);
     } else if (typed) {
-      this.noteSent("typed line");
+      this.noteSent("typed line", schemaFamilyOf(this.model.modelId) !== "gemini");
       this.conn.sendText(masked.text);
     }
   }
@@ -1655,7 +1717,7 @@ export class VoiceEngine {
       this.log.info(voiceLine(this.sessionId, "note skipped: opt-out on a spoken turn (the model answers it)"));
       return;
     }
-    this.noteSent("opt-out reply");
+    this.noteSent("opt-out reply", true);
     this.conn?.requestResponse(`The buyer asked not to be contacted again and is now opted out. Say exactly this and nothing else: "${reply}"`);
   }
 
@@ -1811,8 +1873,15 @@ export class VoiceEngine {
     if (this.cancelledCalls.has(callId)) {
       this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} result not sent: the model cancelled the call`));
     } else {
+      if (this.conn) {
+        const at = this.traceCallAt.get(callId);
+        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}`);
+        // The model's audio from here on is its next response (Gemini continues by itself after a result).
+        if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
+      }
       this.conn?.sendToolResult(callId, name, forModel);
     }
+    this.traceCallAt.delete(callId);
     turn.awaitingContinuation = true;
     this.send({ t: "tool", id: callId, name, label, status: r.outcome });
   }
@@ -2174,7 +2243,7 @@ export class VoiceEngine {
       // The retried session says the opening now; a first one still waiting for the browser is not sent as well.
       this.pendingOpener = null;
       this.clearTimer("ready");
-      this.noteSent("opener (retry)");
+      this.noteSent("opener (retry)", true);
       opened.conn.requestResponse(opened.openerPrompt);
     }
     else this.startQuiet();
