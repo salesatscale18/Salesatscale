@@ -13,6 +13,7 @@ import { UNPAID_DEFAULTS, UNPAID_STEPS, unpaidRemindersOf, type PlaybookWithUnpa
 import { readOpener } from "./core/opener";
 import { questionBudgetOf } from "./core/stage";
 import { objectionAttemptsOf } from "./core/objections";
+import { hasStoredOffers, offersOf, type PlaybookWithOffers } from "./offer-settings";
 import type { LlmClient } from "./llm";
 import type { Actor } from "@/lib/accounts/audit";
 
@@ -86,7 +87,7 @@ function buildRowsDraft(current: PlaybookWithUnpaid, input: PlaybookRowsInput, k
   if (!parsed.ok) return parsed;
   const stored = current.exceptions ?? [];
   const exceptions = keptExceptions ? stored.filter((x) => keptExceptions.has(x.id)) : stored;
-  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, unpaidReminders, ...rest } = parsed.value;
+  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, unpaidReminders, offers, ...rest } = parsed.value;
   void _x;
   const keepOpener = input.opener === undefined ? current.opener : opener;
   const keepPlays = input.plays === undefined ? current.plays : plays;
@@ -106,10 +107,13 @@ function buildRowsDraft(current: PlaybookWithUnpaid, input: PlaybookRowsInput, k
   const keepUnpaid = input.unpaidReminders === undefined ? current.unpaidReminders : unpaidReminders;
   // Automatic name versions are kept; they are stale (and remade) when the name changed (lib/agent/names-auto.ts).
   const keepAuto = current.agentNameAuto;
+  // Offers (23 Nov): the rows sent replace the list; a form without them keeps a stored list, its General row moved to the limit sent.
+  const keepOffers = input.offers !== undefined ? offers : hasStoredOffers(current) ? offersOf({ offers: (current as PlaybookWithOffers).offers, maxDiscountBp: rest.maxDiscountBp }) : undefined;
   return {
     ok: true,
     value: {
       ...rest,
+      ...(keepOffers ? { offers: keepOffers } : {}),
       ...(Object.keys(keepNames).length ? { agentNameLocal: keepNames } : {}),
       ...(keepAuto ? { agentNameAuto: keepAuto } : {}),
       ...(keepGender ? { agentGender: keepGender } : {}),
@@ -127,7 +131,7 @@ function buildRowsDraft(current: PlaybookWithUnpaid, input: PlaybookRowsInput, k
 /** Keys the editor's save writes (buildRowsDraft); a stored playbook can hold others (a part added later). */
 const EDITOR_KEYS = new Set<string>([
   "agentName", "agentNameLocal", "agentNameAuto", "agentGender", "questionBudget", "objectionAttempts", "goal", "tone", "outcomes", "fields",
-  "objections", "maxDiscountBp", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays", "unpaidReminders",
+  "objections", "maxDiscountBp", "offers", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays", "unpaidReminders",
 ]);
 
 /** Structural equality of stored JSON values; a property set to undefined counts as missing. */

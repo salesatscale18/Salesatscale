@@ -7,6 +7,7 @@ import { QUESTION_BUDGET } from "./core/stage";
 import { CALL_ROLE_MAX } from "./core/call-role";
 import { MAX_OBJECTION_ATTEMPTS, MIN_OBJECTION_ATTEMPTS } from "./core/objections";
 import { parseUnpaidRows, unpaidRowsFromForm, type PlaybookWithUnpaid, type UnpaidRowsInput } from "@/lib/orders/unpaid-reminders";
+import { maxDiscountBpFromOffers, parseOfferRows, type OfferRowInput, type PlaybookWithOffers } from "./offer-settings";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -57,7 +58,14 @@ export type PlaybookRowsInput = {
   /** `key` is set on rows that already existed, so renaming a label keeps the key (and the deal-state values stored under it). */
   fields: { key?: string; label: string; stage: string; example?: string; hint?: string }[];
   objections: { objection: string; answer: string; source?: string }[];
+  /** The older single limit ("Discount without approval"); used only when the form sent no offers rows. */
   maxDiscount: string;
+  /**
+   * "Offers the agent may make" (23 Nov), in the order sent (`offerOrder`),
+   * from `offer.<type>.on|pct|units`. Undefined when the form did not show them:
+   * then `maxDiscount` sets the General discount and the stored list is kept.
+   */
+  offers?: OfferRowInput[];
   offerMeetingWhen: string;
   handOffWhen: string;
   /** "Who takes calls" (O6), as typed; "" = the default. Undefined when the form did not show it (the stored one is kept). */
@@ -145,7 +153,12 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
   const topics = new Map<number, { en: string; he: string }>();
   const plays = new Map<string, Record<string, string>>();
   const facts = new Map<string, Map<number, { text: string; source: string }>>();
+  const offerRows = new Map<string, OfferRowInput>();
+  let offerOrder: string[] | undefined;
   for (const [name, value] of entries) {
+    if (name === "offerOrder") { offerOrder = value.split(",").map((x) => x.trim()).filter(Boolean); continue; }
+    const of = name.match(/^offer\.([a-z_]{1,20})\.(on|pct|units)$/);
+    if (of) { offerRows.set(of[1], { ...(offerRows.get(of[1]) ?? { type: of[1] }), [of[2]]: value }); continue; }
     const m = name.match(/^(field|objection)\.(\d{1,3})\.(\w+)$/);
     if (m) {
       const map = rows[m[1] as "field" | "objection"];
@@ -181,6 +194,12 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
   }
   const ordered = <T,>(m: Map<number, T>) => [...m.entries()].sort((a, b) => a[0] - b[0]).map(([, v]) => v);
   if (opener) opener.topics = ordered(topics);
+  // Offers in the order sent; a row missing from the order comes after it, and an order entry without inputs still counts (the pinned row).
+  let offers: OfferRowInput[] | undefined;
+  if (offerOrder || offerRows.size) {
+    const order = [...new Set([...(offerOrder ?? []), ...offerRows.keys()])];
+    offers = order.map((type) => offerRows.get(type) ?? { type });
+  }
   return {
     agentName: scalar.agentName ?? "",
     ...(localNames(scalar) ? { agentNameLocal: localNames(scalar) } : {}),
@@ -193,6 +212,7 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
     fields: ordered(rows.field).map((r) => ({ key: r.key || undefined, label: r.label ?? "", stage: r.stage ?? "", example: r.example, hint: r.hint })),
     objections: ordered(rows.objection).map((r) => ({ objection: r.objection ?? "", answer: r.answer ?? "", source: r.source })),
     maxDiscount: scalar.maxDiscount ?? "",
+    ...(offers ? { offers } : {}),
     offerMeetingWhen: scalar.offerMeetingWhen ?? "",
     handOffWhen: scalar.handOffWhen ?? "",
     ...("callRole" in scalar ? { callRole: scalar.callRole } : {}),
@@ -302,7 +322,7 @@ export function parsePlayRow(key: PlayKey, r: PlayRowInput, errors: PlaybookErro
  * keyed by input name: `agentName`, `field.<i>.label`, `objection.<i>.answer`,
  * `maxDiscount`, `never.<i>`, …
  */
-export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: PlaybookWithUnpaid } | { ok: false; errors: PlaybookErrors } {
+export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: PlaybookWithUnpaid & PlaybookWithOffers } | { ok: false; errors: PlaybookErrors } {
   const errors: PlaybookErrors = {};
   const agentName = input.agentName.trim();
   if (!agentName) errors.agentName = "Give the agent a name it uses to introduce itself.";
@@ -384,9 +404,11 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   });
   if (objections.length > 30) errors.objections = "Use 30 objections or fewer.";
 
+  // Offers rows (23 Nov) replace the single limit: the discount without approval is then the General discount's percent when it is on.
+  const offers = input.offers ? parseOfferRows(input.offers, errors) : undefined;
   const discount = input.maxDiscount.trim();
-  const pct = discount ? Number(discount) : 0;
-  if (!Number.isFinite(pct) || pct < 0 || pct > 50) errors.maxDiscount = "Enter a discount limit from 0 to 50%.";
+  const pct = offers ? 0 : discount ? Number(discount) : 0;
+  if (!offers && (!Number.isFinite(pct) || pct < 0 || pct > 50)) errors.maxDiscount = "Enter a discount limit from 0 to 50%.";
 
   const neverDo: string[] = [];
   input.neverDo.forEach((n, i) => {
@@ -429,7 +451,8 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
       outcomes: { orderForm: !!input.outcomes.orderForm, bankTransfer: !!input.outcomes.bankTransfer, meeting: !!input.outcomes.meeting },
       fields,
       objections,
-      maxDiscountBp: Math.round(pct * 100),
+      maxDiscountBp: offers ? maxDiscountBpFromOffers(offers) : Math.round(pct * 100),
+      ...(offers ? { offers } : {}),
       offerMeetingWhen: input.offerMeetingWhen.trim().slice(0, 500),
       handOffWhen: input.handOffWhen.trim().slice(0, 500),
       // Empty = the default ("a member of our team"); only a role typed is stored.

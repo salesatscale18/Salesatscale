@@ -14,6 +14,7 @@ import {
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { modelFor } from "@/lib/ai/models";
 import { defaultPlaybook } from "./playbook";
+import { maxDiscountBpOf, syncPlaybookOffers, type PlaybookWithOffers } from "./offer-settings";
 import { askedCount, askedKey, isReservedFieldKey, PRICE_ASKED_KEY, RECOMMENDATION_CONFIRMED_KEY } from "./core/facts";
 import { applyObjection, objectionAttemptsOf, type ObjectionInput } from "./core/objections";
 import { answeredQuestionKey, normalizeQuestion, QUESTION_PREFIX, questionSourceLabel, type FactStatus } from "./knowledge";
@@ -73,9 +74,10 @@ export async function ensureDraftVersion(db: Db, accountId: string): Promise<Age
   return (await byStatus(db, accountId, "draft"))!;
 }
 
-export async function saveDraftPlaybook(db: Db, accountId: string, playbook: Playbook, changeNote?: string) {
+export async function saveDraftPlaybook(db: Db, accountId: string, playbook: PlaybookWithOffers, changeNote?: string) {
   const draft = await ensureDraftVersion(db, accountId);
-  await db.update(agentVersions).set({ playbook, changeNote: changeNote ?? draft.changeNote }).where(and(eq(agentVersions.id, draft.id), eq(agentVersions.status, "draft")));
+  // A stored offers list stays in step with the discount limit (a write that only set maxDiscountBp moves the General row).
+  await db.update(agentVersions).set({ playbook: syncPlaybookOffers(playbook), changeNote: changeNote ?? draft.changeNote }).where(and(eq(agentVersions.id, draft.id), eq(agentVersions.status, "draft")));
 }
 
 export async function listVersions(db: Db, accountId: string) {
@@ -92,7 +94,7 @@ export async function publishDraftVersion(db: Db, actor: Actor, accountId: strin
   await atomic(db, (q) => [
     q.update(agentVersions).set({ status: "retired" }).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))),
     q.update(agentVersions).set({ status: "live", publishedAt: now, publishedByUserId: actor.userId }).where(and(eq(agentVersions.id, draft.id), eq(agentVersions.status, "draft"))),
-    q.update(sellerAccounts).set({ maxDiscountBp: draft.playbook.maxDiscountBp }).where(eq(sellerAccounts.id, accountId)),
+    q.update(sellerAccounts).set({ maxDiscountBp: maxDiscountBpOf(draft.playbook) }).where(eq(sellerAccounts.id, accountId)),
   ]);
   await writeAudit(db, actor, { accountId, action: "agent.published", targetType: "agent_version", targetId: draft.id, details: { version: draft.version } });
   return draft.version;
@@ -105,7 +107,7 @@ export async function rollbackTo(db: Db, actor: Actor, accountId: string, versio
   await atomic(db, (q) => [
     q.update(agentVersions).set({ status: "retired" }).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live"))),
     q.update(agentVersions).set({ status: "live", publishedAt: now, publishedByUserId: actor.userId }).where(eq(agentVersions.id, target.id)),
-    q.update(sellerAccounts).set({ maxDiscountBp: target.playbook.maxDiscountBp }).where(eq(sellerAccounts.id, accountId)),
+    q.update(sellerAccounts).set({ maxDiscountBp: maxDiscountBpOf(target.playbook) }).where(eq(sellerAccounts.id, accountId)),
   ]);
   await writeAudit(db, actor, { accountId, action: "agent.rolled_back", targetType: "agent_version", targetId: target.id, details: { version: target.version } });
   return target.version;
