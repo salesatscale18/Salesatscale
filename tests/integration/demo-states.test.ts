@@ -133,13 +133,16 @@ describe("demo account review states", () => {
     expect(entries.filter((e) => partState(e, "one_time") === "price_missing").map((e) => e.sku)).toEqual([UNPRICED_SKU]);
   });
 
-  it("has one scenario chat that passed and one that failed, by the scenario check", async () => {
+  it("has scenario chats on live that pass and one that fails, by the scenario check", async () => {
     const [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "live")));
     const results = await latestScenarioResults(db, accountId, live.id);
     const by = Object.fromEntries(results.map((r) => [r.scenarioId, r.check?.result ?? "not_run"]));
     expect(by.no_approved_answer).toBe("passed");
     expect(by.hebrew_buyer).toBe("failed");
-    expect(Object.values(by).filter((r) => r !== "not_run")).toHaveLength(2);
+    // Compare versions (seedCompareDraft): two more on live, so live -> draft shows Worse and Same.
+    expect(by.discount_push).toBe("passed");
+    expect(by.asks_for_person).toBe("passed");
+    expect(Object.values(by).filter((r) => r !== "not_run")).toHaveLength(4);
   });
 
   it("has an order signed with a bank transfer expected, and a quote at the pay step", async () => {
@@ -245,7 +248,8 @@ describe("demo account review states", () => {
 
   it("has one human-handled and two needs-you conversations (the upset buyer was handed off; one started at the spend cap)", async () => {
     const inbox = await listInbox(db, accountId, { now: NOW });
-    expect(inbox.counts).toMatchObject({ needs_you: 2, human: 1, test: 4 });
+    // test: the four review-state test chats plus the six Compare versions chats (two on live, four on the draft).
+    expect(inbox.counts).toMatchObject({ needs_you: 2, human: 1, test: 10 });
     const needs = inbox.rows.find((r) => r.group === "needs_you")!;
     const human = inbox.rows.find((r) => r.group === "human")!;
     expect(needs).toBeDefined();

@@ -42,6 +42,7 @@
 .vc-empty { padding: 16px 14px; border-block-start: 1px solid var(--line); }
 
 .vc-change { display: inline-flex; align-items: center; gap: 4px; }
+.vc-nochange { color: var(--ink-muted); }
 .vc-chats { display: flex; flex-wrap: wrap; gap: 4px 10px; justify-content: flex-end; }
 
 @media (max-width: 640px) {
@@ -64,4 +65,9 @@
 @media (max-width: 767px) {
   .vc-page .sas-table--stack tr:has(> td.sas-td-actions) > td:first-child { padding-inline-end: 0 !important; }
   .vc-page .sas-table--stack td.sas-td-actions { position: static; justify-content: flex-start; padding: 4px 0 !important; }
+}
+
+/* Phone: both chip rows wrap instead of scrolling sideways, so the selected chip (aria-current) is always in view after a reload. */
+@media (max-width: 767px) {
+  .vc-page .sas-listbar__chips { flex-wrap: wrap; overflow-x: visible; margin-inline: 0; padding-inline: 0; }
 }

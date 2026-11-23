@@ -312,16 +312,17 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
 
   describe("Versions and test lab", () => {
     it("scenarios table: the automatic result on the chosen version, last chat link, Run per scenario", async () => {
-      const [live] = await listVersions(db, account.id);
-      // A draft next to the live version, so "Results for" offers a choice.
+      // The demo seed already has a draft next to the live version (Compare versions), so "Results for" offers a choice.
+      const live = (await listVersions(db, account.id)).find((v) => v.status === "live")!;
       await saveDraftPlaybook(db, account.id, live.playbook, "R3-5 test");
       const c = await startTestConversation(db, account.id, seller.id, { language: "en", scenario: "discount_push", versionId: live.id });
       const html = await render(TestLabPage, slug, { v: live.id });
       save("test-lab", html);
       expect(html).toContain("data-new-chat");
       expect(html.indexOf("data-new-chat")).toBeLessThan(html.indexOf("data-scenarios"));
-      // The demo seed has one scenario chat that passes (and one that fails).
-      expect(html).toMatch(/data-scenarios-passed="">1 of \d+ passed on v1</);
+      // The demo seed's scenario chats on live: no_approved_answer and asks_for_person pass (hebrew_buyer fails;
+      // discount_push's latest chat is the empty one started above).
+      expect(html).toMatch(/data-scenarios-passed="">2 of \d+ passed on v1</);
       expect(html).toContain(">Result</th>");
       const row = (id: string) => html.slice(html.indexOf(`data-scenario="${id}"`), html.indexOf("</tr>", html.indexOf(`data-scenario="${id}"`)));
       // The chat has no messages yet, so its check is "Not yet" (not "Not run").

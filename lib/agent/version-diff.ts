@@ -448,16 +448,18 @@ export function areaCounts(rows: readonly ChangeRow[]): { area: DiffArea; count:
 export type ScenarioOutcome = "passed" | "not_yet" | "failed" | "not_run";
 /**
  * How a scenario's latest result moved from the base version to the compared one.
- * run_it: not run in the compared version; first: run there but not in the base (nothing to compare with).
+ * run_it: a result in the base version and none in the compared one (a gap in the newer version);
+ * never_run: no result in either version (not a gap, nothing to compare);
+ * first: run in the compared version but not in the base (nothing to compare with).
  */
-export type ScenarioChange = "worse" | "run_it" | "better" | "first" | "same";
-/** Worse first, then Not run, Better, a first result, Same. */
-export const CHANGE_ORDER: readonly ScenarioChange[] = ["worse", "run_it", "better", "first", "same"];
+export type ScenarioChange = "worse" | "run_it" | "better" | "first" | "same" | "never_run";
+/** Worse first, then Not run, Better, a first result, Same, and never run in either last. */
+export const CHANGE_ORDER: readonly ScenarioChange[] = ["worse", "run_it", "better", "first", "same", "never_run"];
 
 const RANK: Record<Exclude<ScenarioOutcome, "not_run">, number> = { failed: 0, not_yet: 1, passed: 2 };
 
 export function classifyScenario(before: ScenarioOutcome, after: ScenarioOutcome): ScenarioChange {
-  if (after === "not_run") return "run_it";
+  if (after === "not_run") return before === "not_run" ? "never_run" : "run_it";
   if (before === "not_run") return "first";
   const d = RANK[after] - RANK[before];
   return d > 0 ? "better" : d < 0 ? "worse" : "same";
@@ -472,7 +474,30 @@ export function orderScenarios<T extends { before: ScenarioOutcome; after: Scena
 }
 
 export function changeCounts(rows: readonly { change: ScenarioChange }[]): Record<ScenarioChange, number> {
-  const out: Record<ScenarioChange, number> = { worse: 0, run_it: 0, better: 0, first: 0, same: 0 };
+  const out: Record<ScenarioChange, number> = { worse: 0, run_it: 0, better: 0, first: 0, same: 0, never_run: 0 };
   for (const r of rows) out[r.change]++;
   return out;
+}
+
+/**
+ * The amber notice (board VersionCompare): scenarios that got worse, and scenarios with a
+ * result in the older version but none in the newer. Never-run-in-both scenarios are not
+ * part of it. Null when both are zero, and always when both sides are the same version
+ * (nothing can be missing from a version compared with itself).
+ */
+export function scenarioNotice(counts: Record<ScenarioChange, number>, sameVersion = false): { worse: number; notRun: number } | null {
+  if (sameVersion) return null;
+  const worse = counts.worse;
+  const notRun = counts.run_it;
+  return worse + notRun > 0 ? { worse, notRun } : null;
+}
+
+/** The notice's sentence: "1 scenario got worse and 4 were not run in the draft.", or one part alone when the other is zero. */
+export function scenarioNoticeText(n: { worse: number; notRun: number }, where: string): string {
+  const worse = n.worse === 1 ? L("compare.notice.worse_one") : L("compare.notice.worse", { n: n.worse });
+  if (n.worse && n.notRun) {
+    return L("compare.notice.both", { worse, notRun: n.notRun === 1 ? L("compare.notice.not_run_one") : L("compare.notice.not_run", { n: n.notRun }), where });
+  }
+  const part = n.worse ? worse : n.notRun === 1 ? L("compare.notice.not_run_alone_one") : L("compare.notice.not_run_alone", { n: n.notRun });
+  return L("compare.notice.one_part", { part, where });
 }

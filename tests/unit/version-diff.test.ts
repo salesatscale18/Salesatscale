@@ -3,7 +3,7 @@ import type { Playbook } from "@/db/schema";
 import { defaultPlaybook } from "@/lib/agent/playbook";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import {
-  alignList, areaCounts, changeCounts, classifyScenario, diffVersions, orderScenarios, wordDiff, type ChangeRow, type Seg, type VersionContent,
+  alignList, areaCounts, changeCounts, classifyScenario, diffVersions, orderScenarios, scenarioNotice, scenarioNoticeText, wordDiff, type ChangeRow, type Seg, type VersionContent,
 } from "@/lib/agent/version-diff";
 
 const text = (segs: Seg[] | null, ops: Seg["op"][] = ["same", "del", "ins"]) => (segs ?? []).filter((s) => ops.includes(s.op)).map((s) => s.text).join("");
@@ -220,11 +220,14 @@ describe("scenario changes", () => {
     expect(classifyScenario("passed", "not_yet")).toBe("worse");
     expect(classifyScenario("passed", "passed")).toBe("same");
     expect(classifyScenario("passed", "not_run")).toBe("run_it");
-    expect(classifyScenario("not_run", "not_run")).toBe("run_it");
+    // Never run in either version is not a gap in the newer one.
+    expect(classifyScenario("not_run", "not_run")).toBe("never_run");
     expect(classifyScenario("not_run", "failed")).toBe("first");
+    // One version against itself: never a gap.
+    for (const o of ["passed", "not_yet", "failed", "not_run"] as const) expect(["same", "never_run"]).toContain(classifyScenario(o, o));
   });
 
-  it("orders Worse, Not run, Better, first result, Same and counts them", () => {
+  it("orders Worse, Not run, Better, first result, Same, never run last, and counts them", () => {
     const rows = orderScenarios([
       { id: "s1", before: "passed", after: "passed" },
       { id: "s2", before: "passed", after: "not_run" },
@@ -232,8 +235,28 @@ describe("scenario changes", () => {
       { id: "s4", before: "passed", after: "failed" },
       { id: "s5", before: "not_run", after: "passed" },
       { id: "s6", before: "passed", after: "not_run" },
+      { id: "s7", before: "not_run", after: "not_run" },
     ] as const);
-    expect(rows.map((r) => r.id)).toEqual(["s4", "s2", "s6", "s3", "s5", "s1"]);
-    expect(changeCounts(rows)).toEqual({ worse: 1, run_it: 2, better: 1, first: 1, same: 1 });
+    expect(rows.map((r) => r.id)).toEqual(["s4", "s2", "s6", "s3", "s5", "s1", "s7"]);
+    expect(changeCounts(rows)).toEqual({ worse: 1, run_it: 2, better: 1, first: 1, same: 1, never_run: 1 });
+  });
+
+  const counts = (c: Partial<Record<string, number>>) => ({ worse: 0, run_it: 0, better: 0, first: 0, same: 0, never_run: 0, ...c });
+
+  it("the notice counts worse and not-run-in-the-newer only; never run in both is left out", () => {
+    expect(scenarioNotice(counts({ never_run: 12, same: 3, better: 1 }))).toBeNull();
+    expect(scenarioNotice(counts({ worse: 1, never_run: 12 }))).toEqual({ worse: 1, notRun: 0 });
+    expect(scenarioNotice(counts({ run_it: 2, never_run: 12 }))).toEqual({ worse: 0, notRun: 2 });
+    expect(scenarioNotice(counts({ worse: 2, run_it: 1 }))).toEqual({ worse: 2, notRun: 1 });
+    // The same version on both sides: never a notice.
+    expect(scenarioNotice(counts({ worse: 2, run_it: 13 }), true)).toBeNull();
+  });
+
+  it("the notice reads correctly with both numbers or only one", () => {
+    expect(scenarioNoticeText({ worse: 1, notRun: 4 }, "the draft")).toBe("1 scenario got worse and 4 were not run in the draft.");
+    expect(scenarioNoticeText({ worse: 2, notRun: 1 }, "v3")).toBe("2 scenarios got worse and 1 was not run in v3.");
+    expect(scenarioNoticeText({ worse: 1, notRun: 0 }, "the draft")).toBe("1 scenario got worse in the draft.");
+    expect(scenarioNoticeText({ worse: 0, notRun: 1 }, "the draft")).toBe("1 scenario was not run in the draft.");
+    expect(scenarioNoticeText({ worse: 0, notRun: 3 }, "the draft")).toBe("3 scenarios were not run in the draft.");
   });
 });
