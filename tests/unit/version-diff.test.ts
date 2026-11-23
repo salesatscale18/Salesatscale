@@ -3,7 +3,7 @@ import type { Playbook } from "@/db/schema";
 import { defaultPlaybook } from "@/lib/agent/playbook";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import {
-  alignList, areaCounts, changeCounts, classifyScenario, diffVersions, orderScenarios, scenarioNotice, scenarioNoticeText, wordDiff, type ChangeRow, type Seg, type VersionContent,
+  alignList, areaCounts, changeCounts, classifyScenario, diffVersions, orderScenarios, playName, scenarioNotice, scenarioNoticeText, wordDiff, type ChangeRow, type Seg, type VersionContent,
 } from "@/lib/agent/version-diff";
 
 const text = (segs: Seg[] | null, ops: Seg["op"][] = ["same", "del", "ins"]) => (segs ?? []).filter((s) => ops.includes(s.op)).map((s) => s.text).join("");
@@ -93,9 +93,10 @@ describe("diffVersions", () => {
     b.fields = [a.fields[1], a.fields[2], a.fields[0]];
     const rows = diffVersions(version(a), version(b), opts);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ area: "questions", kind: "moved", item: "Sites" });
-    expect(text(rows[0].before)).toBe("Position 1");
-    expect(text(rows[0].after)).toBe("Position 3");
+    // The moved item's own text on both sides, with its positions.
+    expect(rows[0]).toMatchObject({ area: "questions", kind: "moved", item: "Sites", positions: { before: 1, after: 3 } });
+    expect(text(rows[0].before)).toBe("Sites");
+    expect(text(rows[0].after)).toBe("Sites");
   });
 
   it("a renamed question (same key) is an edit, not a removal plus an addition", () => {
@@ -116,7 +117,7 @@ describe("diffVersions", () => {
     b.plays = { too_expensive: { own: { ...card, do: ["Ask which kind.", "Then offer the smaller first step. If they hesitate, offer free installation."] } } };
     const rows = diffVersions(version(a), version(b), opts);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ area: "plays", item: `${DEFAULT_PLAYS.too_expensive.title} · step 2`, kind: "changed" });
+    expect(rows[0]).toMatchObject({ area: "plays", item: "Too expensive · step 2", kind: "changed" });
     expect(text(rows[0].after, ["ins"]).trim()).toBe("If they hesitate, offer free installation.");
   });
 
@@ -128,13 +129,32 @@ describe("diffVersions", () => {
     b.plays = { need: { own: { ...card, do: ["Two.", "One.", "Three."] } } };
     const rows = diffVersions(version(a), version(b), opts);
     expect(rows.map((r) => r.kind)).toEqual(["moved"]);
+    // One of the two swapped steps is the one that moved (here "One.", from step 1 to step 2).
+    expect(rows[0]).toMatchObject({ item: `${playName("need")} · step 2`, positions: { before: 1, after: 2 } });
+    expect(text(rows[0].after)).toBe("One.");
   });
 
-  it("switching to an own card names the card change and the edited parts", () => {
+  it("play names have no quotes", () => {
+    expect(playName("too_expensive")).toBe("Too expensive");
+    expect(playName("need")).not.toMatch(/["\u201c\u201d]/);
+  });
+
+  it("switching to an own card with edited parts: no card row, a tag on the play's first changed row", () => {
     const b = clone(base());
     b.plays = { competitor: { own: { ...DEFAULT_PLAYS.competitor, when: "They name a rival." } } };
     const rows = diffVersions(version(base()), version(b), opts);
-    expect(rows.map((r) => r.item)).toEqual([`${DEFAULT_PLAYS.competitor.title} · card`, `${DEFAULT_PLAYS.competitor.title} · When`]);
+    expect(rows.map((r) => r.item)).toEqual([`${playName("competitor")} · When`]);
+    expect(rows[0].tag).toBe("now your own card");
+    // And back to the default card.
+    const back = diffVersions(version(b), version(base()), opts);
+    expect(back.map((r) => [r.item, r.tag])).toEqual([[`${playName("competitor")} · When`, "now the default card"]]);
+  });
+
+  it("switching card with no other visible change keeps its own card row", () => {
+    const b = clone(base());
+    b.plays = { competitor: { own: { ...DEFAULT_PLAYS.competitor } } };
+    const rows = diffVersions(version(base()), version(b), opts);
+    expect(rows.map((r) => [r.item, r.kind, r.tag])).toEqual([[`${playName("competitor")} · card`, "changed", undefined]]);
   });
 
   it("play facts: added fact, older single-text facts read as one fact", () => {
@@ -144,7 +164,7 @@ describe("diffVersions", () => {
     b.plays = { proof: { facts: [{ text: "We serve 40 shops." }, { text: "Installed in 2 days.", source: "site" }] } };
     const rows = diffVersions(version(a), version(b), opts);
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ kind: "added", item: `${DEFAULT_PLAYS.proof.title} · fact 2` });
+    expect(rows[0]).toMatchObject({ kind: "added", item: `${playName("proof")} · fact 2` });
     expect(text(rows[0].after)).toBe("Installed in 2 days. · site");
   });
 

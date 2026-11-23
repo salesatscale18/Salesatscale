@@ -48,6 +48,16 @@ function Segs({ segs }: { segs: Seg[] }) {
   );
 }
 
+/** A moved item: its position (muted) above its own text, cut at two lines. */
+function MovedText({ position, segs }: { position: number; segs: Seg[] | null }) {
+  return (
+    <span className="vc-moved">
+      <span className="vc-moved__pos">{t("compare.position", { n: position })}</span>
+      <span className="vc-moved__text">{segs ? <Segs segs={segs} /> : null}</span>
+    </span>
+  );
+}
+
 /**
  * Setup · Versions and test lab › Compare versions (board VersionCompare). Any two
  * versions side by side: what changed in what a version holds (the playbook, the
@@ -141,15 +151,15 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
         <form method="get" action={path} className="vc-pick__form" role="search" aria-label={t("compare.pick")}>
           <span className="sas-group-label">{t("compare.pick")}</span>
           <div className="vc-pick__row">
-            <label>
-              <span className="sas-sr">{t("compare.pick_before")}</span>
+            <label className="vc-pick__field">
+              <span className="vc-pick__cap">{t("compare.pick_before")}</span>
               <select className="sas-select" name="a" defaultValue={before.id} data-compare-a="">
                 {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
               </select>
             </label>
             <span className="vc-pick__arrow" aria-hidden="true"><Icon name="arrow-right" /></span>
-            <label>
-              <span className="sas-sr">{t("compare.pick_after")}</span>
+            <label className="vc-pick__field">
+              <span className="vc-pick__cap">{t("compare.pick_after")}</span>
               <select className="sas-select" name="b" defaultValue={after.id} data-compare-b="">
                 {versions.map((v) => <option key={v.id} value={v.id}>{optionLabel(v)}</option>)}
               </select>
@@ -223,15 +233,16 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
                     <span className="vc-where">
                       <strong>{t(`compare.area.${r.area}`)}</strong>
                       <span>{r.item}{r.kind === "moved" ? <> · {t("compare.moved")}</> : null}</span>
+                      {r.tag ? <span className="vc-tag" data-change-tag="">{r.tag}</span> : null}
                     </span>
                   </td>
                   <td className="vc-old">
                     <span className="vc-side-label">{sideLabel(before)}</span>
-                    {r.before ? <Segs segs={r.before} /> : missingText(r)}
+                    {r.positions ? <MovedText position={r.positions.before} segs={r.before} /> : r.before ? <Segs segs={r.before} /> : missingText(r)}
                   </td>
                   <td>
                     <span className="vc-side-label">{sideLabel(after)}</span>
-                    {r.after ? <Segs segs={r.after} /> : missingText(r)}
+                    {r.positions ? <MovedText position={r.positions.after} segs={r.after} /> : r.after ? <Segs segs={r.after} /> : missingText(r)}
                     {r.note ? <span className="vc-note"> · {r.note}</span> : null}
                   </td>
                 </tr>

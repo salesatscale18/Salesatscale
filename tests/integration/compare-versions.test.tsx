@@ -38,7 +38,6 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { DEFAULT_PLAYS } = await import("@/lib/agent/core/plays");
 const { loadVersionComparison, pickVersions } = await import("@/lib/agent/version-compare");
 const { default: ComparePage } = await import("@/app/app/[account]/setup/test-lab/compare/page");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
@@ -98,10 +97,9 @@ describe("Compare versions", () => {
 
   it("the seeded pair shows every diff kind", async () => {
     const c = (await loadVersionComparison(db, account.id, { languages: account.languages, platformDetails: false }))!;
-    const title = DEFAULT_PLAYS.too_expensive.title;
+    // Six rows: the switch to an own card is a tag on the edited step, not a row of its own.
     expect(c.changes.map((r) => [r.area, r.item, r.kind])).toEqual([
-      ["plays", `${title} · card`, "changed"],
-      ["plays", `${title} · step 2`, "changed"],
+      ["plays", "Too expensive · step 2", "changed"],
       ["questions", "Deal details", "added"],
       ["limits", "Discount without approval", "changed"],
       ["limits", "Offer a call when", "changed"],
@@ -109,7 +107,8 @@ describe("Compare versions", () => {
       ["voice", "Speaking pace", "changed"],
     ]);
     // The play step: words removed and added in the middle of one sentence.
-    const step = c.changes[1];
+    const step = c.changes[0];
+    expect(step.tag).toBe("now your own card");
     const del = step.before!.filter((s) => s.op === "del").map((s) => s.text.trim());
     const ins = step.after!.filter((s) => s.op === "ins").map((s) => s.text.trim());
     expect(del).toEqual(["the problem", "unit"]);
@@ -117,9 +116,14 @@ describe("Compare versions", () => {
     expect(step.before![0].op).toBe("same");
     expect(step.before!.at(-1)!.op).toBe("same");
     // The new question: nothing on the old side ("Not asked").
-    expect(c.changes[2]).toMatchObject({ before: null, missing: "not_asked" });
-    expect(c.changes[3].before).toEqual([{ op: "del", text: "5%" }]);
-    expect(c.changes[3].after).toEqual([{ op: "ins", text: "8%" }]);
+    expect(c.changes[1]).toMatchObject({ before: null, missing: "not_asked" });
+    expect(c.changes[2].before).toEqual([{ op: "del", text: "5%" }]);
+    expect(c.changes[2].after).toEqual([{ op: "ins", text: "8%" }]);
+    // The moved rule: its own text on both sides, with the positions.
+    const moved = c.changes[4];
+    expect(moved.positions).toEqual({ before: 1, after: 2 });
+    expect(moved.before![0].text).toBe(draft.playbook.neverDo[1]);
+    expect(moved.after![0].text).toBe(draft.playbook.neverDo[1]);
   });
 
   it("the seeded pair shows every scenario change kind, ordered worse first and never run last", async () => {
@@ -142,7 +146,15 @@ describe("Compare versions", () => {
     save("compare-desktop", html);
     expect(html).toContain("Compare versions");
     expect(html).toContain(`href="/app/${account.slug}/setup/test-lab"`);
-    expect(html).toMatch(/data-count="changes">7</);
+    expect(html).toMatch(/data-count="changes">6</);
+    expect(html).toMatch(/data-area-chip="plays"[^>]*>Plays<span class="sas-fchip__count sas-num">1</);
+    expect(html).toContain('data-change-tag="">now your own card<');
+    expect(html).toContain('<span class="vc-moved__pos">Position 1</span>');
+    expect(html).toContain("Too expensive · step 2");
+    expect(html).not.toContain("&quot;Too expensive&quot;");
+    // Visible version captions.
+    expect(html).toContain('<span class="vc-pick__cap">Older version</span>');
+    expect(html).toContain('<span class="vc-pick__cap">Newer version</span>');
     expect(html).toMatch(/data-count="better">1</);
     expect(html).toMatch(/data-count="worse">1</);
     // Not run = a result on live and none on the draft (no_approved_answer); never run in both is not counted.
@@ -211,7 +223,7 @@ describe("Compare versions", () => {
   it("the test lab's Versions panel: changes from live, Compare with live, a blue Live pill, one Publish", async () => {
     const html = await render(TestLabPage as unknown as Page, account.slug);
     save("testlab-versions", html);
-    expect(html).toContain("7 changes from live");
+    expect(html).toContain("6 changes from live");
     expect(html).toContain(`href="/app/${account.slug}/setup/test-lab/compare?a=${live.id}&amp;b=${draft.id}"`);
     expect(html).toMatch(/class="sas-pill sas-pill--info" data-status="agent_version.live"/);
     // One Publish only: the header's; the draft row keeps Compare with live and the change count.

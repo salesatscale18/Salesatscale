@@ -9,7 +9,10 @@
 .vc-pick__form { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .vc-pick__row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; }
 .vc-pick__row .sas-select { max-width: 100%; min-width: 0; }
-.vc-pick__arrow { color: var(--ink-muted); display: inline-flex; }
+.vc-pick__arrow { color: var(--ink-muted); display: inline-flex; align-self: flex-end; padding-block-end: 8px; }
+.vc-pick__row { align-items: flex-end; }
+.vc-pick__field { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.vc-pick__cap { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
 .vc-counts { margin-inline-start: auto; display: flex; gap: 22px; align-items: center; margin-block: 0; }
 .vc-counts > div { display: flex; flex-direction: column; }
 .vc-counts dt { order: 2; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
@@ -36,6 +39,10 @@
 .vc-where span { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 .vc-side-label { display: none; }
 .vc-missing { color: var(--ink-muted); }
+.vc-where .vc-tag { font-size: 12px; line-height: 16px; color: var(--ink-muted); font-style: italic; }
+.vc-moved { display: flex; flex-direction: column; gap: 2px; }
+.vc-moved__pos { font-size: 12px; line-height: 16px; color: var(--ink-muted); }
+.vc-moved__text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden; }
 .vc-note { color: var(--ink-muted); }
 .vc-page del.vc-del { background: var(--vc-del-bg); color: var(--vc-del); text-decoration: line-through; border-radius: 3px; padding: 0 2px; }
 .vc-page ins.vc-ins { background: var(--vc-ins-bg); color: var(--vc-ins); text-decoration: none; border-radius: 3px; padding: 0 2px; }
@@ -49,7 +56,8 @@
   .vc-counts { margin-inline-start: 0; width: 100%; justify-content: space-between; gap: 8px; }
   .vc-card__head .sas-listbar__chips { margin-inline-start: 0; width: 100%; }
   .vc-pick__row .sas-select { width: 100%; }
-  .vc-pick__form, .vc-pick__row { width: 100%; }
+  .vc-pick__form, .vc-pick__row, .vc-pick__field { width: 100%; }
+  .vc-pick__cap { font-size: 13px; font-weight: 600; color: var(--ink); }
   .vc-pick__arrow { display: none; }
   /* Phone: one block per change; the older text above the newer, each labelled. */
   .vc-diff, .vc-diff tbody, .vc-diff tr, .vc-diff td { display: block; width: auto; }
