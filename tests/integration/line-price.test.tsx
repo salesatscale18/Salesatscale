@@ -273,11 +273,14 @@ describe("A person's line prices in the quote editor", () => {
       { accountId: acc.id, conversationId: b.conversationId, actor: "agent", body: HANDOFF_REPLY.he, language: "he", createdAt: new Date(at) },
       // The agent's free text, in Hebrew, starting with a Latin name.
       { accountId: acc.id, conversationId: b.conversationId, actor: "agent", body: "Polar Demo כאן, נשמח לעזור", language: "he", createdAt: new Date(at + 1000) },
+      // The held-quote line exactly as sendHeldQuoteMessage stores it (actor agent), with no tool call linking it.
+      { accountId: acc.id, conversationId: b.conversationId, actor: "agent", body: tr("buyer.qcard.held_text", { seller: "Polar Demo" }, "he"), language: "he", createdAt: new Date(at + 2000) },
     ]);
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, b.conversationId));
     const html = renderToStaticMarkup(ConversationPanel({ slug: acc.slug, view: await conversationView(db, acc.id, conv), me, buyerName: "רינה", leadOptedOut: false }));
     expect(html).toContain(`<div class="sas-msg__bubble" lang="he" dir="rtl"><div dir="rtl" data-msg-dir="">`);
     expect(html).toMatch(/<div class="sas-msg__bubble" lang="he" dir="auto"><div dir="auto" data-msg-dir="">(?:(?!<\/div>).)*Polar Demo כאן/);
+    expect(html).toMatch(/<div class="sas-msg__bubble" lang="he" dir="rtl"><div dir="rtl" data-msg-dir="">(?:(?!<\/div>).)*Polar Demo בודקים את ההצעה/);
   });
 
   it("timeline title names the person as the line under it does: you for the viewer, else the name", async () => {
