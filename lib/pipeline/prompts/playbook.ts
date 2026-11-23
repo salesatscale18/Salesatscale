@@ -7,7 +7,7 @@ import { PLAY_KEYS } from "@/db/schema";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { PLAYBOOK_TOOL } from "./system";
 
-export const PROMPT_VERSION = "playbook-v6";
+export const PROMPT_VERSION = "playbook-v7";
 
 /** Field keys the order form prefill reads (lib/orders/prefill.ts): suggest these exact keys for those details. */
 export const ORDER_FORM_KEYS: Record<string, string> = {
@@ -35,7 +35,8 @@ Base the playbook first on how the seller's reps actually sell in the recorded c
 - play_content: for each play the corpus supports, the seller's facts for that situation, following the play's seller_hint (for example the gap common existing solutions leave, or the entry price and what drives the total). Facts only, no instructions to the agent. A price may come from a document or the website, never only from a call. Put proof points (customers the seller names, numbers and results, testimonials, certifications, awards, guarantees; facts with topic Proof or Customers) into proof, and also into tried_failed when they answer a failed earlier attempt. Put value points (buyer problems and what each feature brings; topic Value) into value and too_expensive. Put differentiators (topic Differentiators) into competitor and existing_solution, and who the product suits (topic Ideal customer) into fit. Use the play keys exactly as listed under plays, and the claim's own figures.
 - play_cards: only when call transcripts clearly show the reps' own way of handling a situation: when it applies, 2 to 5 moves in order, an example reply and a reply to avoid. Otherwise leave it out: the default card applies.
 - catalog_items: for each catalog SKU, the plain name a buyer would use in chat and one sentence on what the buyer gets. Leave out items whose current plain_name and value_line already say this.
-- Leave out anything the current playbook already says with the same meaning. Use only items you can support with evidence from the corpus.`;
+- Leave out anything the current playbook already says with the same meaning. Use only items you can support with evidence from the corpus.
+- Evidence must cite the source the words come from: the quote is copied from the section whose source id and locator you give. Never credit words from a call to a document or note, or the other way round.`;
 
 export type PlaybookStageData = {
   facts: { topic: string; statement: string; status: string }[];
