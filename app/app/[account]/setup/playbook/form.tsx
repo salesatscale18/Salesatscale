@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useRef, useState, type ReactNode } from "react";
+import { useActionState, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Playbook, PlaybookField } from "@/db/schema";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
@@ -154,6 +154,12 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const [objections, setObjections] = useState<ObjectionRow[]>(() => p.objections.map((o, i) => ({ id: i, objection: o.objection, answer: o.answer, source: o.source ?? "" })));
   const [never, setNever] = useState<NeverRow[]>(() => p.neverDo.map((text, i) => ({ id: i, text })));
   const [exceptions, setExceptions] = useState(() => p.exceptions ?? []);
+  // "Signed, not paid yet": an error shows under a days field (checked when it loses focus): Save waits for the fix.
+  const [unpaidBlocked, setUnpaidBlocked] = useState(false);
+  useEffect(() => {
+    // The page header's Save (outside the form, form="pb-form") follows the same rule.
+    for (const b of document.querySelectorAll<HTMLButtonElement>('button[type="submit"][form="pb-form"]')) b.disabled = unpaidBlocked;
+  }, [unpaidBlocked]);
 
   const err = (name: string) => (e[name] ? <span className="sas-error" id={`pb-${name}-error`}>{e[name]}</span> : null);
   const invalid = (name: string) => ({ "aria-invalid": e[name] ? (true as const) : undefined, "aria-describedby": e[name] ? `pb-${name}-error` : undefined });
@@ -244,7 +250,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
   const firstError = Object.values(e)[0];
 
   return (
-    <form id="pb-form" action={action} className="sas-stack-6 pb-form" noValidate>
+    <form id="pb-form" action={action} className="sas-stack-6 pb-form" noValidate onSubmit={(ev) => { if (unpaidBlocked) ev.preventDefault(); }}>
       <input type="hidden" name="slug" value={slug} />
       {panel("pb-agent-h", "playbook.agent", null, null, (
         <>
@@ -527,7 +533,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         <>
           <SignedNotPaidCard
             initial={unpaidValues(unpaidRemindersOf(p as PlaybookWithUnpaid), state.status === "error" ? state.values.unpaidReminders : undefined)} errors={e}
-            draft={unpaidRemindersOf(p as PlaybookWithUnpaid)} live={liveUnpaid ?? unpaidRemindersOf(null)}
+            draft={unpaidRemindersOf(p as PlaybookWithUnpaid)} live={liveUnpaid ?? unpaidRemindersOf(null)} onBlocked={setUnpaidBlocked}
           />
           <ReminderWording />
         </>
@@ -540,7 +546,7 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
         </>
       ))}
       {firstError ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("playbook.error_summary", { count: Object.keys(e).length })} {firstError}</span></div> : null}
-      <div><button type="submit" className={buttonClass("primary")} disabled={pending}>{pending ? t("playbook.saving") : t("playbook.save")}</button></div>
+      <div><button type="submit" className={buttonClass("primary")} disabled={pending || unpaidBlocked}>{pending ? t("playbook.saving") : t("playbook.save")}</button></div>
     </form>
   );
 }

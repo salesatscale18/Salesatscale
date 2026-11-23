@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { t, type MessageKey } from "@/lib/i18n";
-import { sameUnpaidSettings, UNPAID_STEPS, type UnpaidReminderSettings, type UnpaidRowsInput, type UnpaidStep } from "@/lib/orders/unpaid-reminders";
+import { parseUnpaidRows, sameUnpaidSettings, UNPAID_STEPS, type UnpaidReminderSettings, type UnpaidRowsInput, type UnpaidStep } from "@/lib/orders/unpaid-reminders";
 import "./playbook.css";
 
 const STEP_TEXT: Record<UnpaidStep, { title: MessageKey; sub: MessageKey; icon: IconName }> = {
@@ -20,16 +20,44 @@ export function unpaidValues(stored: UnpaidReminderSettings, sent: UnpaidRowsInp
 }
 
 /**
+ * The errors the card shows: for a step the seller has left (blur) or switched, the browser's own check of the
+ * card as typed (the same rules as the server: parseUnpaidRows); for the others, what the last save returned.
+ * The server stays the authority on save.
+ */
+export function shownUnpaidErrors(rows: UnpaidRowsInput, touched: ReadonlySet<UnpaidStep>, serverErrors: Record<string, string>): Partial<Record<UnpaidStep, string>> {
+  const now: Record<string, string> = {};
+  parseUnpaidRows(rows, now);
+  const out: Partial<Record<UnpaidStep, string>> = {};
+  for (const step of UNPAID_STEPS) {
+    const key = `unpaid.${step}.days`;
+    const error = touched.has(step) ? now[key] : serverErrors[key];
+    if (error) out[step] = error;
+  }
+  return out;
+}
+
+/** Leaving a step's field (or switching it) checks it and every later step, whose order depends on it. */
+export const touchFrom = (touched: ReadonlySet<UnpaidStep>, step: UnpaidStep): Set<UnpaidStep> =>
+  new Set([...touched, ...UNPAID_STEPS.slice(UNPAID_STEPS.indexOf(step))]);
+
+/**
  * Playbook › After the order: "Signed, not paid yet" (board UnpaidReminders). Three rows, each "N days after
  * signing" with a switch; a step that is off is greyed and shows "Off" in place of the days (its days stay in a
  * hidden input, so switching it back on brings them back). The server validates again (parseUnpaidRows).
  * `draft` / `live`: the saved draft's settings and the live version's (defaults when nothing is live); when they
  * differ the card says "Applies after you publish" (the runner reads the live version).
+ * A field's error shows when it loses focus ("Must be after the first reminder."); `onBlocked` tells the form
+ * while one shows, so Save stays disabled until it is fixed.
  */
-export function SignedNotPaidCard({ initial, errors, draft, live }: {
+export function SignedNotPaidCard({ initial, errors, draft, live, onBlocked }: {
   initial: UnpaidRowsInput; errors: Record<string, string>; draft: UnpaidReminderSettings; live: UnpaidReminderSettings;
+  onBlocked?: (blocked: boolean) => void;
 }) {
   const [rows, setRows] = useState(initial);
+  const [touched, setTouched] = useState<Set<UnpaidStep>>(() => new Set());
+  const shown = shownUnpaidErrors(rows, touched, errors);
+  const blocked = Object.keys(shown).length > 0;
+  useEffect(() => { onBlocked?.(blocked); }, [blocked, onBlocked]);
   const set = (step: UnpaidStep, patch: Partial<UnpaidRowsInput[UnpaidStep]>) => setRows((r) => ({ ...r, [step]: { ...r[step], ...patch } }));
   return (
     <div className="pb-unpaid" data-testid="unpaid-card">
@@ -42,7 +70,7 @@ export function SignedNotPaidCard({ initial, errors, draft, live }: {
         const row = rows[step];
         const text = STEP_TEXT[step];
         const id = `pb-unpaid.${step}.days`;
-        const error = errors[`unpaid.${step}.days`];
+        const error = shown[step];
         const title = t(text.title);
         return (
           <div key={step} className="pb-unpaid__row" data-step={step} data-off={row.on ? undefined : ""}>
@@ -58,6 +86,7 @@ export function SignedNotPaidCard({ initial, errors, draft, live }: {
                   <input
                     className="sas-num" id={id} name={`unpaid.${step}.days`} inputMode="numeric" maxLength={2} value={row.days}
                     onChange={(ev) => set(step, { days: ev.target.value.replace(/\D/g, "").slice(0, 2) })}
+                    onBlur={() => setTouched((x) => touchFrom(x, step))}
                     aria-invalid={error ? true : undefined} aria-describedby={error ? `${id}-error` : undefined}
                   />
                   <span aria-hidden="true">{t("playbook.unpaid.days_after")}</span>
@@ -72,7 +101,7 @@ export function SignedNotPaidCard({ initial, errors, draft, live }: {
             </span>
             <input
               type="checkbox" role="switch" className="sas-switch" name={`unpaid.${step}.on`} checked={row.on}
-              onChange={(ev) => set(step, { on: ev.target.checked })} aria-label={title}
+              onChange={(ev) => { set(step, { on: ev.target.checked }); setTouched((x) => touchFrom(x, step)); }} aria-label={title}
             />
           </div>
         );
@@ -103,9 +132,9 @@ export function ReminderWording() {
         <b>{t("playbook.unpaid.wording")}</b>
         <span className="sas-small">{t("playbook.unpaid.wording_sub")}</span>
         <span className="pb-unpaid__fixed" data-testid="unpaid-wording-fixed"><Icon name="lock" />{t("playbook.unpaid.wording_fixed")}</span>
-        <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.first")}</b> {t("buyer.unpaid.first", vars)}</span></span>
-        <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.second")}</b> {second}{bank ? <> <span className="pb-unpaid__optional" data-testid="unpaid-wording-bank">{bank} <i>({t("playbook.unpaid.wording.bank_note")})</i></span></> : null}</span></span>
-        <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.sms")}</b> {t("playbook.unpaid.wording.sms_text")}</span></span>
+        <span className="pb-unpaid__line"><span className="pb-unpaid__bullet" aria-hidden="true" /><span><b>{t("playbook.unpaid.wording.first")}</b> {t("buyer.unpaid.first", vars)}</span></span>
+        <span className="pb-unpaid__line"><span className="pb-unpaid__bullet" aria-hidden="true" /><span><b>{t("playbook.unpaid.wording.second")}</b> {second}{bank ? <> <span className="pb-unpaid__optional" data-testid="unpaid-wording-bank">{bank} <i>({t("playbook.unpaid.wording.bank_note")})</i></span></> : null}</span></span>
+        <span className="pb-unpaid__line"><span className="pb-unpaid__bullet" aria-hidden="true" /><span><b>{t("playbook.unpaid.wording.sms")}</b> {t("playbook.unpaid.wording.sms_text")}</span></span>
       </div>
     </div>
   );

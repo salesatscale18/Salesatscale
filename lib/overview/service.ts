@@ -34,7 +34,7 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "bank_transfer"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   | { kind: "payment_failed"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   /**
-   * "Signed, not paid for {n} days" (board UnpaidReminders): the playbook's "Tell your team" step flagged the order
+   * "Signed {n} days ago, not paid" (board UnpaidReminders): the playbook's "Tell your team" step flagged the order
    * (lib/orders/unpaid-run.ts); it stays until the order is paid. `remindersSent`: reminders the buyer got.
    */
   | { kind: "order_unpaid"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string; signedAt: Date; remindersSent: number }

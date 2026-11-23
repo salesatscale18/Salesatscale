@@ -173,10 +173,10 @@ describe("Needs you and the timeline", () => {
     quoteId: "q1", orderId: "o1", orderNumber: 10002, amountMinor: 385_860, currency: "ILS", signedAt, remindersSent,
   });
   const ctx = { tradeName: "Polar Demo", timezone: "Asia/Jerusalem", now: at(7.2) };
-  it("\"Signed, not paid for {n} days\" · order · amount · reminders sent, in group Payments", () => {
-    expect(needCell(item(2, signed), ctx)).toMatchObject({ icon: "credit-card", title: "Signed, not paid for 7 days", detail: "PD-10002 · ₪3,858.60 · 2 reminders sent", detailId: "PD-10002" });
-    expect(needCell(item(1, signed), { ...ctx, now: at(1.5) })).toMatchObject({ title: "Signed, not paid for 1 day", detail: "PD-10002 · ₪3,858.60 · 1 reminder sent" });
-    expect(needCell(item(0, signed), { ...ctx, now: at(12) }).title).toBe("Signed, not paid for 12 days");
+  it("\"Signed {n} days ago, not paid\" · order · amount · reminders sent, in group Payments", () => {
+    expect(needCell(item(2, signed), ctx)).toMatchObject({ icon: "credit-card", title: "Signed 7 days ago, not paid", detail: "PD-10002 · ₪3,858.60 · 2 reminders sent", detailId: "PD-10002" });
+    expect(needCell(item(1, signed), { ...ctx, now: at(1.5) })).toMatchObject({ title: "Signed 1 day ago, not paid", detail: "PD-10002 · ₪3,858.60 · 1 reminder sent" });
+    expect(needCell(item(0, signed), { ...ctx, now: at(12) }).title).toBe("Signed 12 days ago, not paid");
     expect(NEEDS_GROUP_OF.order_unpaid).toBe("payments");
   });
   it("the row opens the lead's Orders card", () => {
@@ -201,5 +201,20 @@ describe("step ids", () => {
     expect(unpaidStepEventId("2b0c6f6e-8a37-4f1a-9a7c-6c3f8f1e2d11", "first")).toBe(a);
     expect(unpaidStepEventId("2b0c6f6e-8a37-4f1a-9a7c-6c3f8f1e2d11", "second")).not.toBe(a);
     expect(unpaidStepEventId("2b0c6f6e-8a37-4f1a-9a7c-6c3f8f1e2d12", "first")).not.toBe(a);
+  });
+});
+
+describe("stacked pay cards (buyer chat)", () => {
+  const url = "https://x.test/f/AAAAAAAAAAAAAAAAAAAAAA.BBBBBBBBBBBBBBBBBBBBBB";
+  const other = "https://x.test/f/CCCCCCCCCCCCCCCCCCCCCC.DDDDDDDDDDDDDDDDDDDDDD";
+  const pay = { url, seller: "Polar Demo", ref: "Q-1002 v1", oneTime: "₪3,858.60", recurring: null, pay: true };
+  it("folds every earlier pay card of the same order; the newest keeps its card", async () => {
+    const { foldedPayCards } = await import("@/lib/simulator/service");
+    const rows = [{ id: "m1", body: url }, { id: "m2", body: `Hi\n${url}` }, { id: "m3", body: other }, { id: "m4", body: `Still open\n${url}` }];
+    const previews = new Map([[url, pay], [other, { ...pay, url: other, ref: "Q-1003 v2", pay: false }]]);
+    expect(foldedPayCards(rows, previews, "en")).toEqual({ [`m1 ${url}`]: "Payment · Q-1002 · latest is below", [`m2 ${url}`]: "Payment · Q-1002 · latest is below" });
+    expect(foldedPayCards(rows, previews, "he")[`m1 ${url}`]).toBe("תשלום · Q-1002 · העדכני למטה");
+    // A paid order (no pay card) keeps its cards as they are.
+    expect(foldedPayCards(rows, new Map([[url, { ...pay, pay: false }]]), "en")).toEqual({});
   });
 });

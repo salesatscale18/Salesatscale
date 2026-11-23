@@ -205,7 +205,9 @@ export function FormCardMessage({ actor, who, time, timeTitle, locale, text, car
         <span className="sas-msg__time" title={timeTitle}>{time}</span>
       </div>
       {text ? <div className="sas-msg__bubble" lang={locale} dir="auto">{text}</div> : null}
-      {cards.map(({ preview: p }) => <OrderFormCard key={p.url} p={p} locale={locale} />)}
+      {cards.map(({ preview: p, folded }) => (folded
+        ? <div key={p.url} className="sas-fcard sas-fcard--folded" lang={locale} dir="auto" data-pay-folded="">{folded}</div>
+        : <OrderFormCard key={p.url} p={p} locale={locale} />))}
     </div>
   );
 }
