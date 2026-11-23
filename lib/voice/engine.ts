@@ -207,7 +207,7 @@ export function stageKey(text: string): string | null {
  */
 export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
   const saved = Array.isArray(result.saved) ? result.saved : [];
-  return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder;
+  return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder && !result.kept_as_buyer_said;
 }
 
 /** The order form named in a line (English or Hebrew). */
@@ -260,6 +260,23 @@ export function removalAsked(lines: readonly { role: string; text: string }[]): 
   const buyer = lines.findLast((l) => l.role === "buyer")?.text;
   if (!buyer || !JUDGEABLE.test(buyer)) return "unknown";
   return REMOVE_WORDS.test(buyer) ? "yes" : "no";
+}
+
+/** "Not saved yet: …" for the short bookkeeping result (data, not a cue to speak). */
+export function notSavedYet(missing: readonly string[]): string {
+  return `Not saved yet: ${missing.join(", ")}. If the buyer already told you, save it now with update_deal_state updates (this is not a cue to speak).`;
+}
+
+const NUMBER_WORDS: Record<number, RegExp> = {
+  0: /\b(zero|none)\b|אפס/i, 1: /\b(one|a single|single)\b|אחד|אחת/i, 2: /\b(two|both|a couple)\b|שתיים|שניים|שני|שתי/i,
+  3: /\bthree\b|שלוש|שלושה/i, 4: /\bfour\b|ארבע|ארבעה/i, 5: /\bfive\b|חמש|חמישה/i, 6: /\bsix\b|שש|שישה/i,
+  7: /\bseven\b|שבע|שבעה/i, 8: /\beight\b|שמונה/i, 9: /\bnine\b|תשע|תשעה/i, 10: /\bten\b|עשר|עשרה/i,
+};
+
+/** Whether a line says this number, in digits or in words (English, Hebrew; up to ten in words). */
+export function lineSaysNumber(line: string, n: number): boolean {
+  if (new RegExp(`(^|[^\\d])${n}([^\\d]|$)`).test(line)) return true;
+  return NUMBER_WORDS[n]?.test(line) ?? false;
 }
 
 /** How a call presents a ready quote (create_quote's result on a call, with `lines_for_call`). */
@@ -1533,6 +1550,32 @@ export class VoiceEngine {
     this.timer("grace", graceMs, () => void this.stop(reason));
   }
 
+  /**
+   * update_deal_state on a call: updates that LOWER a number the buyer stated (provenance buyer) are taken out of the
+   * call (the rest runs) unless the buyer's last line says that number. 23 Nov 2026: "Yeah, I guess so. I need a
+   * solution." turned two sites into one. Returns what was kept (field label and the buyer's value).
+   */
+  private async holdLoweredNumbers(args: unknown): Promise<{ key: string; label: string; value: string }[]> {
+    if (!this.loaded || !args || typeof args !== "object" || !Array.isArray((args as { updates?: unknown }).updates)) return [];
+    const a = args as { updates: unknown[] };
+    const deal = await readDealState(this.db, this.loaded.account.id, this.loaded.conv.leadId);
+    const fields = (deal?.fields ?? {}) as Record<string, { value?: string; provenance?: string } | undefined>;
+    const buyerLine = this.lines.findLast((l) => l.role === "buyer")?.text ?? "";
+    const kept: { key: string; label: string; value: string }[] = [];
+    a.updates = a.updates.filter((u) => {
+      const key = u && typeof u === "object" ? String((u as { key?: unknown }).key ?? "") : "";
+      const next = Number(String((u as { value?: unknown })?.value ?? "").trim());
+      const was = fields[key];
+      const before = Number(String(was?.value ?? "").trim());
+      if (!key || !was || was.provenance !== "buyer" || !Number.isFinite(next) || !Number.isFinite(before) || next >= before) return true;
+      if (lineSaysNumber(buyerLine, next)) return true;
+      const label = this.loaded!.version.playbook.fields.find((f) => f.key === key)?.label ?? key;
+      kept.push({ key, label, value: String(was.value) });
+      return false;
+    });
+    return kept;
+  }
+
   /** A tool call the engine refuses on a call without running it, recorded like any other (the steps view shows it). */
   private async refuseRecorded(turn: AgentTurn, callId: string, name: string, args: unknown, why: { rule: string; message: string }): Promise<ToolResult> {
     await this.stamp();
@@ -1622,6 +1665,8 @@ export class VoiceEngine {
     const args = await this.voiceToolArgs(name, rawArgs).catch(() => rawArgs);
     const t0 = this.clock.now();
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
+    // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
+    const kept = name === "update_deal_state" ? await this.holdLoweredNumbers(args).catch(() => []) : [];
     const formGate = name === "send_order_form" ? orderFormAgreed(this.lines) : "yes";
     // A line the app adds to a quote (installation, setup) comes off only when the buyer asked: see removalAsked.
     const removing = name === "create_quote" ? removedAutoAdded(args) : [];
@@ -1638,10 +1683,22 @@ export class VoiceEngine {
         })
         : await this.runRecorded(turn, callId, name, args);
     if (formGate === "no") this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the buyer has not agreed to it yet"));
+    if (kept.length) {
+      this.log.info(voiceLine(this.sessionId, `tool update_deal_state: ${kept.length} lowered number(s) kept as the buyer said`));
+      r.result = { ...r.result, kept_as_buyer_said: kept, kept_message: `Not changed: ${kept.map((k) => `${k.label} stays ${k.value}`).join("; ")}, as the buyer said. Change it only when the buyer says the new number; an offer of a smaller start becomes the quote only after they accept it in so many words.` };
+    }
     if (removeGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: removes a line the buyer did not ask to remove"));
     // One line per tool call: its name, outcome and time (never its arguments or result).
     this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
     let forModel: Record<string, unknown> = r.result;
+    if (name === "create_quote" && r.outcome !== "ok" && Array.isArray(r.result.missing) && r.result.missing.length) {
+      // No quote: no total may be said (23 Nov 2026: a total was spoken after this refusal, on an assumption).
+      const missing = r.result.missing.map(String);
+      forModel = {
+        ...r.result,
+        message: `No quote was made: ${missing.join(", ")} not saved yet. If the buyer already told you, save it now with update_deal_state updates, then call create_quote again; otherwise ask for it in one short question. Do not say any total or price for the quote until create_quote has made one.`,
+      };
+    }
     if (name === "send_order_form" && r.outcome !== "ok") {
       // Never a success line for a form that was not sent (the 22 Nov 2026 call said "the link is in the chat").
       const why = typeof r.result.rule === "string" ? r.result.rule : typeof r.result.error === "string" ? r.result.error : "it could not be sent";
@@ -1710,7 +1767,13 @@ export class VoiceEngine {
           // Nothing new from the buyer and the stage as the model last saw it: no "Do: …" to act on again. With
           // BLOCKING tools the model continues after every result; a full stage block here made it speak again
           // (a second question, or narration of the room: "no speech detected").
-          forModel = { ok: true, saved: [], ...(Array.isArray(r.result.recorded_as_asked) ? { recorded_as_asked: r.result.recorded_as_asked } : {}), note: OBJECTION_FIRST };
+          // Data only (no "Do:"): what is still missing for a quote, so a fact the model forgot to save is not lost.
+          const missing = Array.isArray(r.result.still_needed_before_quote) ? r.result.still_needed_before_quote.map(String) : [];
+          forModel = {
+            ok: true, saved: [], ...(Array.isArray(r.result.recorded_as_asked) ? { recorded_as_asked: r.result.recorded_as_asked } : {}),
+            still_needed_before_quote: missing,
+            note: `${missing.length ? `${notSavedYet(missing)} ` : ""}${OBJECTION_FIRST}`,
+          };
           this.log.info(voiceLine(this.sessionId, "tools: bookkeeping result shortened"));
         } else {
           forModel = { ...r.result, stage: voiceStageText(r.result.stage) };
