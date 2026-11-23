@@ -30,3 +30,25 @@ export function askedCount(fields: Record<string, DealFieldValue> | null | undef
   const n = Number(fields?.[askedKey(fieldKey)]?.value ?? 0);
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
 }
+
+/** The buyer's line ends with a question of their own ("?", full-width "？" or Arabic "؟", closing quotes, brackets or emoji after it allowed). */
+export function endsWithQuestion(text: string): boolean {
+  return /[?？؟][\s"'”’»)\]!.…\p{Extended_Pictographic}\uFE0F]*$/u.test(text);
+}
+
+/** Buyer lines since the last counted ask after which a repeat counts even if each one was a question (no endless asking). */
+export const ASK_CHANCE_LINES = 3;
+
+/**
+ * Whether a repeated ask of a field counts (the field was asked before and is
+ * still unknown): only once the buyer had a real chance to answer it since the
+ * last counted ask. `buyerLines` are the buyer's messages after that ask, oldest
+ * first. A chance is a line that is not a question of the buyer's own, or
+ * ASK_CHANCE_LINES lines of any kind (so a buyer who answers only with
+ * questions cannot keep the agent asking the same thing forever). No buyer line
+ * since: the earlier record was made before the buyer could answer (or in the
+ * same reply), so the repeat is the same ask and does not count.
+ */
+export function repeatAskCounts(buyerLines: readonly string[]): boolean {
+  return buyerLines.length >= ASK_CHANCE_LINES || buyerLines.some((t) => !endsWithQuestion(t.trim()));
+}
