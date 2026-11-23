@@ -17,6 +17,7 @@ import { and, eq } from "drizzle-orm";
 import { dealStates, leads, quotes, quoteVersions, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -124,6 +125,8 @@ describe("Polish-1: wrong or contradicting data", () => {
     const [v] = await db.select().from(quoteVersions).where(eq(quoteVersions.idempotencyKey, "tool:q1"));
     expect(r.result.valid_until).toBe(new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Jerusalem" }).format(v.validUntil));
 
+    // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn.
+    await primeOffers(db, ctx, { lines: quoteInput.lines, sites: 1 });
     const held = await runTool("create_quote", { ...quoteInput, discount_percent: 15 }, ctx("q2"));
     const heldId = String(held.result.quote_id);
     expect(await statusOf(heldId)).toBe("awaiting_approval");

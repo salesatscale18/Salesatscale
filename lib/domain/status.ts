@@ -45,6 +45,14 @@ export const STATUS = {
     replaced: { tone: "neutral", icon: "file-text" },
     cancelled: { tone: "neutral", icon: "file-x" },
   },
+  // Offers (board OfferTool, 23 Nov): the state of an offer the agent made, on the seller's offer card.
+  offer: {
+    offered: { tone: "neutral", icon: "clock" },
+    accepted: { tone: "success", icon: "check-circle" },
+    not_taken: { tone: "neutral", icon: "x" },
+    expired: { tone: "neutral", icon: "calendar-x" },
+    needs_approval: { tone: "warning", icon: "alert-triangle" },
+  },
   order_form: {
     sent: { tone: "neutral", icon: "send" },
     opened: { tone: "neutral", icon: "eye" },

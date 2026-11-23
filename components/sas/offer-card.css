@@ -1,0 +1,20 @@
+/* The seller-only offer card in threads (board OfferTool): violet border, "Only you see this" footer. */
+.sas-offers { align-self: flex-end; display: flex; flex-direction: column; gap: 6px; width: min(100%, 560px); max-width: 78%; }
+.sas-offer { border: 1px solid var(--agent); border-radius: var(--radius-md); background: var(--surface-raised); overflow: hidden; font-size: 13px; line-height: 18px; }
+.sas-offer__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 10px 12px; }
+.sas-offer__icon { display: inline-flex; color: var(--agent); }
+.sas-offer__pill { margin-inline-start: auto; }
+.sas-offer__kv { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 4px 10px; margin: 0; padding: 0 12px 10px; }
+.sas-offer__kv dt { color: var(--ink-muted); }
+.sas-offer__kv dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.sas-offer__old { color: var(--ink-muted); }
+.sas-offer__accepted { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px 12px; border-top: 1px solid var(--line); }
+.sas-offer__accepted > .sas-ico { color: var(--success); }
+.sas-offer__accepted a { margin-inline-start: auto; }
+.sas-offer__only { display: flex; align-items: center; gap: 6px; padding: 6px 12px; font-size: 12px; color: var(--ink-muted); background: var(--surface); border-top: 1px dashed var(--line); }
+.sas-offer-chip { align-self: flex-end; border-color: var(--agent); color: var(--agent); max-width: 100%; white-space: normal; }
+@media (max-width: 640px) {
+  .sas-offers { max-width: 100%; }
+  .sas-offer__kv { grid-template-columns: minmax(0, 1fr); gap: 0 0; }
+  .sas-offer__kv dd { margin-bottom: 6px; }
+}

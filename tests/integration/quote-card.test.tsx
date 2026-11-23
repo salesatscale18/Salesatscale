@@ -16,6 +16,7 @@ import { and, eq } from "drizzle-orm";
 import { conversations, messages, quotes, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -116,7 +117,13 @@ describe("Quote card", () => {
     const draft = await ensureDraftVersion(db, a.id);
     const ctx = (callId: string) => ({ db, accountId: a.id, conversationId: started.conversationId, leadId: made.lead.id, playbook: draft.playbook, currency: "ILS", callId, language });
     await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, ctx(`u${++seq}`));
+    let primed = false;
     const quote = async (input: Record<string, unknown>) => {
+      // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn.
+      if (Number(input.discount_percent) > 0 && !input.offer && !primed) {
+        primed = true;
+        await primeOffers(db, ctx, { lines: (input.lines as { sku: string; qty: number }[]) ?? [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], sites: input.sites === undefined ? 1 : (input.sites as number | null) });
+      }
       const callId = `q${++seq}`;
       const r = await runTool("create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1, remove_auto_added: null, exception: null, headline: null, ...input }, ctx(callId));
       await db.insert(toolCalls).values({ accountId: a.id, conversationId: started.conversationId, sequence: seq, name: "create_quote", input, result: r.result, outcome: r.outcome });
@@ -210,7 +217,9 @@ describe("Quote card", () => {
     expect(chat.cards[id]).toMatchObject({ state: "sent" });
     const last = chat.messages.at(-1)!;
     // In place: the card is the placeholder; the close is the only new message, after the buyer's.
-    expect(chat.messages.filter((m) => m.kind === "quote" || m.kind === "quote_held")).toHaveLength(1);
+    // (The first quote, without a discount, came before it: offers part 2.)
+    expect(chat.messages.filter((m) => (m.kind === "quote" || m.kind === "quote_held") && m.id === id)).toHaveLength(1);
+    expect(chat.messages.filter((m) => m.kind === "quote" || m.kind === "quote_held")).toHaveLength(2);
     expect(last).toMatchObject({ from: "agent", kind: "quote_close" });
     expect(last.body).toBe(`The team approved your quote. If this looks right, I'll send the order form now and it can be with you ${chat.cards[id].delivery!.replace("Delivery ", "")}. Sounds good?`);
     // The agent sees it in its history: an agent message of this conversation, delivered on the simulator (read once the chat loaded it).

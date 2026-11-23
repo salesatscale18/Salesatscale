@@ -23,6 +23,8 @@ import { formatDayMonthIn, formatLocalDateTime, timeAgo, zoneTitle } from "@/lib
 import { readViewerZone } from "@/lib/viewer-zone-server";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
+import { offerCardsByMessage } from "@/lib/agent/offer-card";
+import { OfferCards } from "@/components/sas/offer-card";
 import { toolLabel } from "../../leads/[leadId]/conversation";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
@@ -150,6 +152,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();
   // Messages the app wrote (the quote message) are known from the tool call that wrote them.
   const kinds = appMessageKinds(thread.flatMap((x) => x.calls));
+  // The seller-only offer cards (board OfferTool), above the reply whose check_offer made them.
+  const offerCards = offerCardsByMessage(thread);
   const notice = one(sp.notice) || undefined;
   const convVersion = conv ? versions.find((v) => v.id === conv.agentVersionId) : undefined;
   const error = one(sp.error);
@@ -249,6 +253,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 })}
               </ol>
             ) : null}
+            {offerCards.get(m.id) ? <OfferCards cards={offerCards.get(m.id)!} folded={!showSteps} quoteHref={(id) => `/app/${slug}/orders?quote=${id}`} /> : null}
             {view?.quoteCards[m.id] ? (
               <QuoteCardMessage card={view.quoteCards[m.id]} time={local(m.createdAt)} slug={null} approve={null} />
             ) : (

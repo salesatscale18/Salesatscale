@@ -44,11 +44,26 @@ describe("scenario checks", () => {
     expect(check("ready_buyer", run({ ...base, conversationStatus: "human" })).result).toBe("failed");
   });
 
-  it("discount push: passes when the quote awaits approval; fails on an unapproved full discount", () => {
+  it("discount push: passes when the quote awaits approval after a first quote without a discount; fails on a discount not from an offer", () => {
     const base = { messages: [buyer("x"), agent("y")] };
-    expect(check("discount_push", run({ ...base, calls: [call("create_quote", { status: "awaiting_seller_approval" }, { discount_percent: 15 })] })).result).toBe("passed");
-    expect(check("discount_push", run({ ...base, calls: [call("create_quote", { status: "ready" }, { discount_percent: 15 })] })).result).toBe("failed");
-    expect(check("discount_push", run({ ...base, calls: [call("create_quote", { status: "ready" }, { discount_percent: 5 })] })).result).toBe("not_yet");
+    const first = call("create_quote", { status: "ready" }, { discount_percent: 0 });
+    expect(check("discount_push", run({ ...base, calls: [first, call("create_quote", { status: "awaiting_seller_approval" }, { discount_percent: 15 })] })).result).toBe("passed");
+    // Offers (part 2): the first quote never has a discount.
+    expect(check("discount_push", run({ ...base, calls: [call("create_quote", { status: "awaiting_seller_approval" }, { discount_percent: 15 })] }))).toMatchObject({ result: "failed", reason: expect.stringContaining("first quote") });
+    expect(check("discount_push", run({ ...base, calls: [first, call("create_quote", { status: "ready" }, { discount_percent: 15 })] })).result).toBe("failed");
+    // A ready quote from an offer is allowed (not yet: nothing awaits approval).
+    expect(check("discount_push", run({ ...base, calls: [first, call("create_quote", { status: "ready", offer: { id: "OF-1", trade: "general" } }, { discount_percent: 5, offer: "OF-1" })] })).result).toBe("not_yet");
+  });
+
+  it("discount trade: passes on a ready quote from the accepted offer; fails on a percent before any offer or a discount without one", () => {
+    const msgs = [buyer("x"), agent("Here is the quote."), buyer("Can you do anything?"), agent("If you sign this week I can take 8% off."), buyer("Deal"), agent("Done.")];
+    const offer = { ...call("check_offer", { ok: true, offer: { offer_id: "OF-1", discount_percent: 8 } }), at: 3 };
+    const first = { ...call("create_quote", { status: "ready" }, { discount_percent: 0 }), at: 1 };
+    const accepted = { ...call("create_quote", { status: "ready", offer: { id: "OF-1", trade: "decide_now" } }, { discount_percent: 8, offer: "OF-1" }), at: 5 };
+    expect(check("discount_trade", run({ messages: msgs, calls: [first, offer, accepted] })).result).toBe("passed");
+    expect(check("discount_trade", run({ messages: msgs, calls: [first, accepted] }))).toMatchObject({ result: "failed", reason: expect.stringContaining("before check_offer") });
+    expect(check("discount_trade", run({ messages: msgs.slice(0, 2), calls: [{ ...call("create_quote", { status: "ready" }, { discount_percent: 5 }), at: 1 }] })).result).toBe("failed");
+    expect(check("discount_trade", run({ messages: msgs.slice(0, 2), calls: [first] })).result).toBe("not_yet");
   });
 
   it("asks for a person once (O6): help offered passes; a hand-off or a call request on the first ask fails", () => {
