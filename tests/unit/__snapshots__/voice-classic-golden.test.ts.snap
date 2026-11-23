@@ -1,0 +1,27 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Classic (20 Nov) engine: golden against af85493 > lists the optional 20 Nov replacements today's text does not have (left unmatched, by design) 1`] = `
+[
+  "stable prompt: End with one question that keeps the chat going.",
+  "stage: (already sent to the buyer in a message: do not repeat it un",
+  "stage: Do: this is your first message.",
+  "stage: End with one question that keeps the chat going.",
+  "stage: Here is a link to pick a time."",
+  "stage: If they ask again, or do not want to say: book the call: sen",
+  "stage: In the same message, promise the outcome",
+  "stage: Keep answering until the call. Do not pause the chat.",
+  "stage: Keep answering until the call. If the buyer wants another ti",
+  "stage: Moves on when: the team decides. The app tells the buyer eit",
+  "stage: Offer to answer that person's questions here, or to include ",
+  "stage: Send the one approved item that fits, or a short summary wri",
+  "stage: The app told the buyer: "",
+  "stage: With the quote, close in the same message: a short lead-in, ",
+  "stage: in one message with four parts",
+  "stage: in the next messages",
+  "stage: never pause the chat only because of one open question.",
+  "stage: reply once that you will confirm here when the order goes th",
+  "stage: send a real approval request to the team, say you have asked",
+  "stage: the buyer ends the chat.",
+  "stage: then write a short summary for them (what it solves, what it",
+]
+`;

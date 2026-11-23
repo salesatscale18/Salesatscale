@@ -1,0 +1,47 @@
+/**
+ * Generates af85493.json: what the 20 Nov voice code (commit af85493) produced for input.json. Kept as .txt: it runs
+ * only inside a temporary checkout of af85493, never in this tree. Done once (23 Nov 2026):
+ *   git archive af85493 | tar -x -C <tmp>        # the 20 Nov tree
+ *   ln -s <repo>/node_modules <tmp>/node_modules
+ *   cp tests/fixtures/voice-classic/input.json <tmp>/input.json
+ *   cp tests/fixtures/voice-classic/generate-af85493.ts.txt <tmp>/gen.ts
+ *   (cd <tmp> && npx tsx gen.ts) > tests/fixtures/voice-classic/af85493.json
+ * Pure functions only (no database, no model): the instructions, the opener prompt, the session config the 20 Nov
+ * engine built (VoiceEngine.sessionConfig, copied below as it was) and the AI SDK session config it sent.
+ */
+import { readFileSync } from "node:fs";
+import { buildVoiceInstructions, continuingInstruction, expectedCallLanguages, openerInstruction } from "@/lib/voice/instructions";
+import { resolveVoiceSettings, turnTakingFor } from "@/lib/voice/settings";
+import { realtimeTools, schemaFamilyOf } from "@/lib/voice/tool-schema";
+import { toSdkSessionConfig } from "@/lib/voice/gateway-realtime";
+
+const GEMINI = "google/gemini-3.8-live";
+const input = JSON.parse(readFileSync("input.json", "utf8"));
+const out = input.cases.map((c: any) => {
+  const expectedLanguages = expectedCallLanguages(c.language, c.seller.languages);
+  const instructions = buildVoiceInstructions({ ...c, expectedLanguages });
+  // lib/voice/engine.ts VoiceEngine.sessionConfig at af85493, with this.model.modelId = Gemini.
+  const settings = resolveVoiceSettings(c.voiceSettings);
+  const tt = turnTakingFor(settings.style, GEMINI);
+  const sessionConfig = {
+    instructions, tools: realtimeTools(schemaFamilyOf(GEMINI)), toolBehavior: "blocking", pace: settings.pace,
+    language: c.language,
+    expectedLanguages,
+    ...(settings.voice ? { voice: settings.voice } : {}),
+    ...(tt ? { turnTaking: tt } : {}),
+    scenario: null,
+  };
+  const openerPrompt = c.resumed ? null : c.continuing ? continuingInstruction(c.opener, c.language) : openerInstruction(c.opener, c.language);
+  const { instructions: _i, tools, ...config } = sessionConfig;
+  const { instructions: _si, tools: sdkTools, ...sdkConfig } = toSdkSessionConfig(sessionConfig as any, GEMINI) as any;
+  // Instructions once per case; the tools once for all cases (the same for every case).
+  return { id: c.id, instructions, openerPrompt, sessionConfig: config, sdkConfig, tools, sdkTools };
+});
+const tools = out[0].tools;
+const sdkTools = out[0].sdkTools;
+for (const o of out) {
+  if (JSON.stringify(o.tools) !== JSON.stringify(tools) || JSON.stringify(o.sdkTools) !== JSON.stringify(sdkTools)) throw new Error("tools differ per case");
+  delete o.tools;
+  delete o.sdkTools;
+}
+process.stdout.write(`${JSON.stringify({ note: "Output of the 20 Nov voice code (af85493) for input.json: generate-af85493.ts.txt. sessionConfig and sdkConfig leave out instructions and tools (given once).", tools, sdkTools, cases: out }, null, 2)}\n`);

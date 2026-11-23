@@ -1,0 +1,24 @@
+{
+  "note": "sha256 of the Current voice code's output before the Classic engine (e20617c), for input.json: generate-current.ts.txt.",
+  "cases": [
+    {
+      "id": "new-call",
+      "instructions": "895a2ef975e3381405044071db472706b8ec8f50d608eb21ac4a17a2e9f68c94",
+      "recorded": "45e867e2049e3a767b6048408b476db9d2903495b8e8698b46ef0954a7576811"
+    },
+    {
+      "id": "continuing-chat",
+      "instructions": "b80e8b1b18a0252d7d4400f87f455c8390eb73d89e50b1ab26fb64dbcd1902d5",
+      "recorded": "f62002c7eca154f9b440046fb5e75e0923569efa69ed2d58c60a7203675eeab4"
+    },
+    {
+      "id": "woke-he",
+      "instructions": "acd2a5ac8dc4fbbfa3c4664e9c22b6722c10f64af156e846c5628501eeb1021e",
+      "recorded": "5a5e24a6da7c7a49b73bf2269c2cc76a94a3fc47db771b2f1a577d5bbec6c8ed"
+    }
+  ],
+  "sdk": {
+    "gemini": "e6c3d0f006f873bb41eff016a68e76528c99bb7826076f9dafd90ed5d5ab3181",
+    "openai": "f73a3677a97d51bb1e6989de29d770443fb28c85e6f95c4bbd50b5727b21a5cb"
+  }
+}

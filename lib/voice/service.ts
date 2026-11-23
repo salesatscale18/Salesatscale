@@ -15,6 +15,8 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
+import { sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { classicModelId } from "@/lib/voice-classic/settings";
 import { PLATFORM_MAX_CALL_SEC, validateVoiceSettings, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
@@ -54,7 +56,7 @@ export type CreateVoiceSessionResult =
 export async function createVoiceSession(
   db: Db,
   a: { accountId: string; conversationId: string; userId: string | null; isTest: boolean },
-  opts: { now?: Date; env?: Record<string, string | undefined> } = {},
+  opts: { now?: Date; env?: Record<string, string | undefined>; engine?: VoiceEngineName } = {},
 ): Promise<CreateVoiceSessionResult> {
   const now = opts.now ?? new Date();
   const mode = voiceMode(opts.env);
@@ -96,6 +98,10 @@ export async function createVoiceSession(
     accountId: a.accountId, conversationId: conv.id, agentVersionId: conv.agentVersionId, startedByUserId: a.userId, isTest: a.isTest,
     status: "pending", createdAt: now, model: versionModelId(version?.voiceSettings, opts.env), mode,
     ticketHash: sha256(ticket),
+    // A test-lab call on the Classic (20 Nov) engine: stored on the session, which the socket reads; Gemini only.
+    ...(opts.engine === "classic" && a.isTest
+      ? { settings: { engine: "classic" } as VoiceSettings, model: classicModelId(versionModelId(version?.voiceSettings, opts.env)) }
+      : {}),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }
@@ -314,6 +320,8 @@ export type VoiceSessionSummary = {
   standbySec: number | null;
   /** How it ended, technically (who ended it, socket and model close codes, the last error), when stored. */
   endDetail: VoiceEndDetail | null;
+  /** The voice engine the call ran on (test lab): Current, or Classic (20 Nov). */
+  engine: VoiceEngineName;
   wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
@@ -341,6 +349,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     standbySec: s.usage?.standbys ? s.usage.standbySec ?? null : null,
     wakes: s.usage?.wakes ?? 0,
     endDetail: s.usage?.endDetail ?? null,
+    engine: sessionEngine(s.settings),
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

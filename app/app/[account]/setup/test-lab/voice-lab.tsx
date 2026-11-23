@@ -25,12 +25,20 @@ import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/vo
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
 import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 import { startChatAction } from "./actions";
+import type { VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+
+/** "Current" / "Classic (20 Nov)". */
+const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engine === "classic" ? "lab.voice.engine.classic" : "lab.voice.engine.current");
 
 // ---------------------------------------------------------------------------
 // The lab's call (module level)
 // ---------------------------------------------------------------------------
 
-type LabCall = { conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean; model?: string | null } | null;
+type LabCall = {
+  conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean; model?: string | null;
+  /** The voice engine the call runs on (the server's answer: Current unless a platform admin picked Classic). */
+  engine?: VoiceEngineName;
+} | null;
 
 let client: VoiceClient | null = null;
 let call: LabCall = null;
@@ -92,7 +100,7 @@ export function VoiceLabBackGuard() {
   return g.sheet ? <LeaveSheet ask={g.sheet} tr={translator("en")} dir="ltr" onChoose={g.choose} callWords="end" /> : null;
 }
 
-type StartInput = { slug: string; lab: string; versionId: string | null; scenario: string | null; language?: string | null; maxSec?: number | null };
+type StartInput = { slug: string; lab: string; versionId: string | null; scenario: string | null; language?: string | null; maxSec?: number | null; engine?: VoiceEngineName | null };
 
 /** Starts a call: audio unlocked in the click, the mic, then the server creates the call, then the socket. */
 function useStartCall() {
@@ -106,7 +114,7 @@ function useStartCall() {
       if (!(await c.prepare())) return;
       let r: Awaited<ReturnType<typeof startVoiceCallAction>>;
       try {
-        r = await startVoiceCallAction({ slug: input.slug, versionId: input.versionId, scenario: input.scenario, language: input.language ?? null });
+        r = await startVoiceCallAction({ slug: input.slug, versionId: input.versionId, scenario: input.scenario, language: input.language ?? null, engine: input.engine ?? null });
       } catch {
         c.unavailable("error");
         return;
@@ -115,7 +123,7 @@ function useStartCall() {
         c.unavailable(r.reason, { retryAt: r.retryAt, ownCall: r.ownCall });
         return;
       }
-      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model });
+      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model, engine: r.engine });
       c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec, mode: r.mode });
       router.push(`${input.lab}?c=${r.conversationId}`, { scroll: false });
     })();
@@ -151,6 +159,7 @@ export type StarterOption = { value: string; label: string };
  */
 export function VoiceLabChoices({
   slug, lab, scenarios, languages, defaultLanguage, versions, defaultVersionId, callMax, limitLines, usageHref, settingsLine, settingsHref,
+  engines = false, classicModelNotes = {},
 }: {
   slug: string;
   lab: string;
@@ -166,18 +175,27 @@ export function VoiceLabChoices({
   usageHref: string;
   settingsLine: string | null;
   settingsHref: string | null;
+  /**
+   * The "Voice engine" select (Current / Classic (20 Nov)): platform admins only. The page decides on the server;
+   * the action checks again and ignores the field from anyone else.
+   */
+  engines?: boolean;
+  /** Per version id: the version's model label when Classic cannot use it (Classic runs on Gemini only). */
+  classicModelNotes?: Record<string, string>;
 }) {
   const c = labClient();
   const s = useVoiceSnapshot(c);
   const [scenario, setScenario] = useState("");
   const [language, setLanguage] = useState(defaultLanguage);
   const [versionId, setVersionId] = useState(defaultVersionId);
+  const [engine, setEngine] = useState<VoiceEngineName>("current");
   const start = useStartCall();
   const busy = !isIdlePhase(s.phase) && !STARTER_PHASES.has(s.phase);
   const own = STARTER_PHASES.has(s.phase);
   // A scenario brings its own buyer language (as for a chat).
   const callLanguage = scenarios.find((x) => x.value === scenario)?.language ?? language;
-  const startCall = () => start({ slug, lab, versionId: versionId || null, scenario: scenario || null, language: callLanguage, maxSec: callMax[versionId] ?? null });
+  const startCall = () => start({ slug, lab, versionId: versionId || null, scenario: scenario || null, language: callLanguage, maxSec: callMax[versionId] ?? null, engine: engines ? engine : null });
+  const geminiNote = engines && engine === "classic" ? classicModelNotes[versionId] : undefined;
   const onAction = (a: BarAction) => {
     if (a.kind === "cancel") c.cancel();
     else if (a.kind === "end_other") void endOtherCall(slug);
@@ -208,6 +226,16 @@ export function VoiceLabChoices({
             {versions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
+        {engines ? (
+          <div className="sas-input-group">
+            <label className="sas-input-label" htmlFor="lab-engine">{t("lab.voice.engine")}</label>
+            {/* Not a form field: "Start chat" ignores it; only "Start call" sends it. */}
+            <select className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(e.target.value === "classic" ? "classic" : "current")} data-voice-engine-select="">
+              <option value="current">{engineLabel("current")}</option>
+              <option value="classic">{engineLabel("classic")}</option>
+            </select>
+          </div>
+        ) : null}
         <div className="lab-choices__actions">
           <button type="submit" className={buttonClass("primary")}><Icon name="plus" />{t("lab.voice.start_chat")}</button>
           <button
@@ -223,6 +251,11 @@ export function VoiceLabChoices({
           {s.phase === "unavailable" ? (
             <button type="button" className={`${buttonClass("ghost", "sm")} lab-call__dismiss`} onClick={() => c.cancel()}>{t("voice.cancel")}</button>
           ) : null}
+        </div>
+      ) : null}
+      {geminiNote ? (
+        <div className="lab-call__foot">
+          <span className="sas-small" data-voice-engine-note="">{t("lab.voice.engine_gemini_note", { model: geminiNote })}</span>
         </div>
       ) : null}
       {line ? (
@@ -295,7 +328,7 @@ export function VoiceLabLive({ conversationId, slug, lab, usageHref, children }:
     <VoiceCall
       client={c}
       context={{ savedNote: t("voice.ended.saved"), usageHref, fx: mine.fx }}
-      onStart={() => start({ slug, lab, versionId: mine.versionId, scenario: mine.scenario })}
+      onStart={() => start({ slug, lab, versionId: mine.versionId, scenario: mine.scenario, engine: mine.engine ?? null })}
       emptyText={t("voice.transcript.empty")}
     />
   );
@@ -312,7 +345,7 @@ export function VoiceLabStats({ conversationId, children }: { conversationId: st
     <VoiceCallStats
       durationSec={elapsedSec(s, now)} maxSec={s.maxSec} costMicros={s.costMicros} scripted={s.mode === "scripted"} fx={mine.fx}
       answerMsAvg={s.answerMsAvg} live={s.phase !== "ended"} endReason={s.phase === "ended" ? s.endReason : null} errorCode={s.errorCode}
-      model={mine.model ?? null}
+      model={mine.model ?? null} engine={engineLabel(mine.engine)}
     />
   );
 }
@@ -322,8 +355,10 @@ export function VoiceLabStats({ conversationId, children }: { conversationId: st
  * again). Call again starts a new call on the same version and scenario; its
  * microphone and connecting steps show here until the new call opens.
  */
-export function VoiceCallAgainBar({ view, slug, lab, versionId, scenario, usageHref }: {
+export function VoiceCallAgainBar({ view, slug, lab, versionId, scenario, usageHref, engine = null }: {
   view: BarView; slug: string; lab: string; versionId: string | null; scenario: string | null; usageHref: string;
+  /** The saved call's engine: Call again keeps it (the action checks the caller again). */
+  engine?: VoiceEngineName | null;
 }) {
   const c = labClient();
   const s = useVoiceSnapshot(c);
@@ -340,7 +375,7 @@ export function VoiceCallAgainBar({ view, slug, lab, versionId, scenario, usageH
         else if (a.kind === "end_other") void endOtherCall(slug);
         else if (a.kind === "call_again" || a.kind === "try_again" || a.kind === "start") {
           setMine(true);
-          start({ slug, lab, versionId, scenario });
+          start({ slug, lab, versionId, scenario, engine });
         }
       }}
     />
