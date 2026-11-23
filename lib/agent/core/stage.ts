@@ -214,7 +214,7 @@ function stageLines(stage: Stage, d: Detail): string[] {
     }
     case "recommend":
       return [
-        "Do: recommend one set now, in one message with four parts: what you understood, the set in plain words, what it gives this buyer, a check question. No prices, no SKUs. Look the products up first (search_catalog).",
+        "Do: recommend one set now, in one message with four parts: what you understood, the set in plain words, what it gives this buyer, a check question. No prices, no SKUs. Look the products up first (search_catalog). Do not state a quantity the buyer has not given: ask for it, or describe the set without a number.",
         ...(d.missing.length ? ["If something is still missing for a quote, ask for it only after the buyer confirms, in one short question."] : []),
         `If the buyer says it does not fit: ask what does not fit and recommend once more. After a second no, ${meetingOrHandOff}.`,
         "Moves on when: the buyer says it sounds right. Then, in the same turn: call update_deal_state with recommendation_confirmed true, and go on to the quote.",

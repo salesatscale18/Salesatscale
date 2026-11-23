@@ -64,6 +64,16 @@ export type QuoteInput = {
   exceptions?: { id: string; text: string }[];
   /** Optional: rows the caller already loaded (see price()). */
   preloaded?: PricingPreload;
+  /**
+   * The discount this quote may carry without approval, in place of the
+   * account's limit. Only the agent's create_quote sets it: the percent of the
+   * offer the buyer accepted (checked against the stored offer), or the highest
+   * percent offered so far for a request above the offers (which then waits for
+   * approval). The seller's editor and approvals never set it.
+   */
+  discountLimitBp?: number;
+  /** The offer this quote carries (create_quote `offer`), on the "quote.created" lead event. */
+  offer?: { id: string; type: string };
 };
 
 export type QuoteRefusal =
@@ -131,7 +141,7 @@ async function price(db: Db, accountId: string, marketId: string | null, input: 
     lines: input.lines.map((l) => ({ sku: l.sku, qty: l.qty, ...customsFor(customs, l.sku, entryBySku.get(l.sku)) })),
     sites: input.sites,
     discountBp: input.discountBp,
-    maxDiscountBp: account.maxDiscountBp,
+    maxDiscountBp: input.discountLimitBp ?? account.maxDiscountBp,
     autoAdd: rules,
     removedByBuyer: removed,
     autoCustoms,
@@ -281,7 +291,10 @@ export async function createQuote(db: Db, accountId: string, actor: QuoteActor, 
         ...lines.map((l) => q.insert(quoteLines).values(l)),
         q.insert(leadEvents).values({
           accountId, leadId, type: "quote.created", actor: actor.kind, actorUserId: actor.kind === "human" ? actor.userId : null,
-          data: { quoteId, number, version: 1, oneTimeTotalMinor: v.oneTimeTotalMinor, recurringTotalMinor: v.recurringTotalMinor, currency: v.currency, status },
+          data: {
+            quoteId, number, version: 1, oneTimeTotalMinor: v.oneTimeTotalMinor, recurringTotalMinor: v.recurringTotalMinor, currency: v.currency, status,
+            ...(input.offer ? { offer: { id: input.offer.id, type: input.offer.type } } : {}),
+          },
         }),
         ...(approvedBy && v.approvalReasons.length
           ? [q.insert(leadEvents).values({ accountId, leadId, type: "quote.approved", actor: "human", actorUserId: approvedBy, data: { quoteId, number, version: 1, reasons: v.approvalReasons.map(approvalReasonText) } })]

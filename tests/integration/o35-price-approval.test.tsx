@@ -15,6 +15,7 @@ import { and, eq } from "drizzle-orm";
 import { auditLog, conversations, leadEvents, messages, quotes, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -107,8 +108,10 @@ describe("O1 part 5: special-price approval as a step", () => {
     const draft = await ensureDraftVersion(db, acc.id);
     const ctx = (callId: string) => ({ db, accountId: acc.id, conversationId: started.conversationId, leadId: made.lead.id, playbook: draft.playbook, currency: "ILS", callId, language });
     await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, ctx(`u${++seq}`));
+    // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn.
+    if (discount > 0) await primeOffers(db, ctx, { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], sites: 1 });
     const callId = `q${++seq}`;
-    const input = { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: discount, sites: 1, remove_auto_added: null, exception: null, headline: null };
+    const input = { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: discount, offer: null, sites: 1, remove_auto_added: null, exception: null, headline: null };
     const r = await runTool("create_quote", input, ctx(callId));
     await db.insert(toolCalls).values({ accountId: acc.id, conversationId: started.conversationId, sequence: seq, name: "create_quote", input, result: r.result, outcome: r.outcome });
     const chatCtx = (await resolveChatToken(db, made.token))!;
@@ -180,7 +183,7 @@ describe("O1 part 5: special-price approval as a step", () => {
     expect(ctx).toContain("## Price approval");
     expect(ctx).toMatch(/The team declined Q-\d+ with a 10% discount \(Discount 10\.0% is above the 5\.0% limit\.\)\. That quote is withdrawn\./);
     expect(ctx).toContain("The app told the buyer: \"We couldn't approve that price. Shall we look at what else could work for you?\"");
-    expect(ctx).toContain("a discount within your limit only as a trade (for deciding now, more units, or paying yearly)");
+    expect(ctx).toContain("a smaller first step or a discount only as a trade, each from check_offer (one offer at a time)");
     expect(ctx).not.toContain("if the buyer accepts");
     expect(ctx).toContain("Never ask the team to approve the same price again.");
     const llm = new ScriptedLlm([() => ({ content: [{ type: "text", text: "Done, here it is." }] })]);
@@ -190,7 +193,7 @@ describe("O1 part 5: special-price approval as a step", () => {
     expect(await priceApprovalContext(db, other.id, b.lead.id)).toBe("");
     // A new quote after the decline: the block goes.
     const draft = await ensureDraftVersion(db, acc.id);
-    await runTool("create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 5, sites: 1, remove_auto_added: null, exception: null, headline: null },
+    await runTool("create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 0, offer: null, sites: 1, remove_auto_added: null, exception: null, headline: null },
       { db, accountId: acc.id, conversationId: b.conversationId, leadId: b.lead.id, playbook: draft.playbook, currency: "ILS", callId: `q${++seq}`, language: "en" });
     expect(await priceApprovalContext(db, acc.id, b.lead.id)).toBe("");
     // turnContext places it next to the other blocks; nothing when empty.

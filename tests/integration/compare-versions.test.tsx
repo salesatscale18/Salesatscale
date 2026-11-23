@@ -112,8 +112,8 @@ describe("Compare versions", () => {
     expect(step.tag).toBe("now your own card");
     const del = step.before!.filter((s) => s.op === "del").map((s) => s.text.trim());
     const ins = step.after!.filter((s) => s.op === "ins").map((s) => s.text.trim());
-    expect(del).toEqual(["the problem", "unit"]);
-    expect(ins).toEqual(["one spoiled delivery", "fridge"]);
+    expect(del).toEqual(["the problem"]);
+    expect(ins).toEqual(["one spoiled delivery"]);
     expect(step.before![0].op).toBe("same");
     expect(step.before!.at(-1)!.op).toBe("same");
     // The new question: nothing on the old side ("Not asked").
@@ -167,8 +167,8 @@ describe("Compare versions", () => {
     expect(html).toMatch(/data-run-the="" href="[^"]*change=run_it#vc-scen-h">Run the 1</);
     expect(html).toContain('<del class="vc-del">5%</del>');
     expect(html).toContain('<ins class="vc-ins">8%</ins>');
-    expect(html).toContain('<del class="vc-del">unit</del>');
-    expect(html).toContain('<ins class="vc-ins">fridge</ins>');
+    expect(html).toContain('<del class="vc-del">the problem</del>');
+    expect(html).toContain('<ins class="vc-ins">one spoiled delivery</ins>');
     expect(html).toContain("Not asked");
     expect(html).toContain("· Moved");
     expect(html).toMatch(/data-change-chip="never_run"[^>]*>Never run<span class="sas-fchip__count sas-num">\d+</);

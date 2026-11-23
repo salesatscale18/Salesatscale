@@ -20,6 +20,12 @@ export const TRACE_LABEL: Record<string, string> = {
   schedule_follow_up: "follow_up.schedule",
   request_callback: "callback.request",
   ask_team: "team.ask",
+  check_offer: "offer.check",
+  reply_figures: "reply.figures",
+};
+
+const TRADE: Record<string, string> = {
+  next: "Next offer", smaller_start: "A smaller first step", more_units: "More units", decide_now: "Decide now", general: "General discount", pay_yearly: "Pay yearly",
 };
 
 export type TraceLine = { label: string; sent: string; got: string; missing: string[] };
@@ -53,8 +59,21 @@ export function describeCall(name: string, input: Obj, result: Obj, outcome: "ok
       got = `Saved ${arr(result.saved).length}${kept.length ? `; kept verified: ${kept.join(", ")}` : ""}${placeholders.length ? `; not saved (no real value): ${placeholders.join(", ")}` : ""}`;
       break;
     }
+    case "check_offer": {
+      sent = `${TRADE[str(input.reason)] ?? "Next offer"}, for ${str(input.quote)}`;
+      const o = result.offer && typeof result.offer === "object" ? (result.offer as Obj) : null;
+      const totals = o?.totals && typeof o.totals === "object" ? (o.totals as Obj) : null;
+      const rec = result.record && typeof result.record === "object" ? (result.record as Obj) : null;
+      got = o ? `${str(rec?.short ?? o.trade)}: ${str(totals?.total_today_including_vat)} incl. VAT (${str(o.offer_id)})` : result.ok === true ? "Nothing more to offer" : "";
+      break;
+    }
+    case "reply_figures":
+      sent = `Figures: ${arr(input.figures).map(str).join(", ")}`;
+      got = result.removed === true ? "Sentences removed" : result.handedOff === true ? "Handed to a person" : result.rewritten === true ? "Reply rewritten" : "";
+      break;
     case "create_quote": {
-      sent = `${lines(input.lines)}${input.discount_percent ? `, ${str(input.discount_percent)}% discount` : ""}`;
+      const offerId = input.offer ? `, offer ${str(input.offer)}` : "";
+      sent = `${lines(input.lines)}${input.discount_percent ? `, ${str(input.discount_percent)}% discount` : ""}${offerId}`;
       // Results since P11 carry labelled totals (none while awaiting approval); older ones due_on_signing and monthly.
       const totals = result.totals && typeof result.totals === "object" ? (result.totals as Obj) : null;
       const awaiting = result.status === "awaiting_seller_approval" ? " (awaiting your approval)" : "";

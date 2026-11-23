@@ -140,7 +140,7 @@ describe("WhatsApp channel (Twilio)", () => {
     expect((await db.select().from(leads).where(eq(leads.id, lead.id)))[0].status).toBe("agent_handling");
 
     tw.sent = [];
-    const out = await replyToBuyer(db, new ScriptedLlm([step(say("It is 590 ILS per sensor."))]), tw, r, { statusCallback: "https://app.test/api/webhooks/whatsapp/status" });
+    const out = await replyToBuyer(db, new ScriptedLlm([step(say("It depends on how many sensors you need."))]), tw, r, { statusCallback: "https://app.test/api/webhooks/whatsapp/status" });
     // The card number was found in the stored message: the fixed safety reply goes out, not the model's.
     expect(out.turn.status).toBe("replied");
     expect(out.delivery).toEqual({ delivered: true });
@@ -152,9 +152,9 @@ describe("WhatsApp channel (Twilio)", () => {
     const next = await receiveInbound(db, inbound(lead.phone, "How much is the sensor?"));
     if (next.kind !== "stored") throw new Error();
     tw.sent = [];
-    const out2 = await replyToBuyer(db, new ScriptedLlm([step(say("It is 590 ILS per sensor."))]), tw, next);
+    const out2 = await replyToBuyer(db, new ScriptedLlm([step(say("It depends on how many sensors you need."))]), tw, next);
     expect(out2.delivery).toEqual({ delivered: true });
-    expect(tw.sent[0]).toMatchObject({ body: "It is 590 ILS per sensor." });
+    expect(tw.sent[0]).toMatchObject({ body: "It depends on how many sensors you need." });
   });
 
   it("applies status callbacks in order, ignoring late ones", async () => {

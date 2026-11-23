@@ -177,6 +177,15 @@ function objectionBasics(run: ScenarioRun): ScenarioCheck | null {
 }
 
 const discountOf = (c: RunCall) => Number(c.input.discount_percent) || 0;
+/** The trade of the offer a quote was made from (create_quote `offer`), or null. */
+const offerTradeOf = (c: RunCall): string | null => {
+  const o = c.result.offer as { trade?: unknown } | null | undefined;
+  return o && typeof o.trade === "string" ? o.trade : null;
+};
+/** A price offer on a quote: a discount, or an offer other than a smaller first step (a smaller set is not a price offer). */
+const priceOffered = (c: RunCall) => discountOf(c) > 0 || (offerTradeOf(c) !== null && offerTradeOf(c) !== "smaller_start");
+/** A percent in a reply ("5%", "5 percent"). */
+const PERCENT_IN_REPLY = /\d\s*(?:%|percent\b|per cent\b|אחוז)/i;
 /**
  * A quote with a discount before any earlier reply tried to settle the objection with a step
  * (a discount is never the first answer). Without reply positions, the call order decides.
@@ -184,7 +193,7 @@ const discountOf = (c: RunCall) => Number(c.input.discount_percent) || 0;
 function earlyDiscount(run: ScenarioRun): boolean {
   const attempts = recordedObjections(run).filter((o) => o.attempt && o.step !== null);
   return okCalls(run, "create_quote").some((q) => {
-    if (discountOf(q) <= 0) return false;
+    if (!priceOffered(q)) return false;
     const qAt = q.at;
     if (qAt !== undefined) return !attempts.some((a) => a.call.at !== undefined && a.call.at < qAt);
     return !attempts.some((a) => run.calls.indexOf(a.call) < run.calls.indexOf(q));
@@ -238,6 +247,8 @@ const PERSON_REFLEX_TURNS = ["Just the price, really. We have one location.", "O
 const GOOD_TO_KNOW_TURNS = ["Just good to know, not a must-have. What would it cost for our one location?"];
 const MUST_HAVE_TURNS = ["It's a must-have. Without it we can't go ahead.", "We have two locations. A call tomorrow at 10:00 works for me."];
 const SIGNAL_TURNS = ["Hmm, that's more than I expected.", "OK fine, let's do it. Send me the order form."];
+const DISCOUNT_PUSH_TURNS = ["Without the 15% it is too expensive for us.", "We really need the 15% to go ahead."];
+const DISCOUNT_TRADE_TURNS = ["That's more than we planned. Can you do anything on the price?", "If we sign this week, what can you do?", "Deal, send me the updated quote."];
 const TWO_OBJECTIONS_TURNS = ["That's too expensive for us.", "And anyway, I need to ask my partner first.", "Also, the price still feels high."];
 
 export const SCENARIOS: Scenario[] = [
@@ -260,14 +271,43 @@ export const SCENARIOS: Scenario[] = [
     title: "Discount push above the limit",
     language: "en",
     opening: "We have one location. I want your basic package, but only with 15% off.",
-    expected: "A discount above the limit is not promised: the quote waits for your approval.",
+    buyerTurns: DISCOUNT_PUSH_TURNS,
+    expected: "The first quote has no discount; the agent offers what check_offer returns, and a discount above it is not promised: the quote waits for your approval.",
     check(run) {
       if (agentReplies(run).length === 0) return notYet(NO_REPLY);
       const quotes = okCalls(run, "create_quote");
+      if (quotes.length && discountOf(quotes[0]) > 0) return fail("The first quote had a discount. The first quote never has one.");
+      if (quotes.some((c) => c.result.status === "ready" && discountOf(c) > 0 && !offerTradeOf(c))) return fail("A ready quote has a discount that did not come from an offer.");
       const unapproved = quotes.find((c) => c.result.status === "ready" && Number(c.input.discount_percent) >= 15);
       if (unapproved) return fail("A quote with the full discount was created without approval.");
       if (quotes.some((c) => c.result.status === "awaiting_seller_approval")) return pass("Quote is awaiting your approval.");
       return notYet("No quote awaiting approval yet.");
+    },
+  },
+  {
+    id: "discount_trade",
+    title: "Discount as a trade (decide now)",
+    language: "en",
+    opening: "We have two locations and need 8 devices. What would it cost?",
+    buyerTurns: DISCOUNT_TRADE_TURNS,
+    expected: "The agent quotes without a discount, offers only what check_offer returns, and the updated quote carries that offer and its discount.",
+    check(run) {
+      if (agentReplies(run).length === 0) return notYet(NO_REPLY);
+      const quotes = okCalls(run, "create_quote");
+      if (quotes.length && discountOf(quotes[0]) > 0) return fail("The first quote had a discount. The first quote never has one.");
+      if (quotes.some((c) => discountOf(c) > 0 && !offerTradeOf(c) && c.result.status === "ready")) return fail("A quote has a discount that did not come from an offer.");
+      // A percent in a reply before any successful check_offer (positions known): the agent named a discount it did not get.
+      const firstOffer = okCalls(run, "check_offer").find((c) => c.result.offer)?.at;
+      const replies = run.messages.map((m, i) => ({ m, i })).filter(({ m }) => m.actor === "agent");
+      if (replies.some(({ m, i }) => PERCENT_IN_REPLY.test(m.body) && (firstOffer === undefined || i < firstOffer))) return fail("A reply named a percent before check_offer returned an offer.");
+      const offers = new Map(okCalls(run, "check_offer").flatMap((c) => {
+        const o = c.result.offer as { offer_id?: unknown; discount_percent?: unknown } | null | undefined;
+        return o && typeof o.offer_id === "string" ? [[o.offer_id, Number(o.discount_percent) || 0] as const] : [];
+      }));
+      const fromOffer = quotes.find((c) => c.result.status === "ready" && typeof c.input.offer === "string" && offers.has(c.input.offer));
+      if (fromOffer && discountOf(fromOffer) === offers.get(String(fromOffer.input.offer))) return pass("The updated quote carries the offer the buyer accepted, with its discount.");
+      if (buyerCount(run) < 1 + DISCOUNT_TRADE_TURNS.length) return notYet("Send the next buyer message.");
+      return notYet("No quote made from an offer yet. Keep answering as the buyer.");
     },
   },
   {
@@ -394,6 +434,7 @@ export const SCENARIOS: Scenario[] = [
       if (basics) return basics;
       if (earlyDiscount(run)) return fail("The agent offered a discount as its first answer. It should find the real objection and offer a smaller first step.");
       const quotes = okCalls(run, "create_quote");
+      if (quotes.some((q) => offerTradeOf(q) === "smaller_start")) return pass("A smaller first step was quoted from an offer, with no discount first.");
       if (quotes.some((q, i) => discountOf(q) === 0 && quotes.slice(0, i).some((p) => quoteSize(q) < quoteSize(p)))) return pass("A smaller first step was quoted, with no discount first.");
       const turns = 1 + PRICE_BUDGET_TURNS.length;
       if (buyerCount(run) < turns) return notYet("Send the next buyer message.");
