@@ -42,7 +42,7 @@ import { isLocale, t, type Locale } from "@/lib/i18n";
 import { buyerLocale } from "@/lib/conversations/current-language";
 import { openerText } from "@/lib/agent/core/opener";
 import { buyerNames, type BuyerNames } from "@/lib/agent/core/names";
-import { displaySeller } from "@/lib/orders/service";
+import { displaySeller, orderLabel } from "@/lib/orders/service";
 import { SMS_NUDGE_EVENTS } from "@/lib/sms/rules";
 import { CHAT_OPENED_EVENT } from "@/lib/agent/thread-markers";
 import {
@@ -477,8 +477,10 @@ export async function receiveSimulatorInbound(db: Db, ctx: Pick<ChatContext, "le
 
 /**
  * An order-form link card: the client lays it out per language, with amounts and IDs isolated left-to-right.
- * `pay`: the form is signed and its order waits for payment, so the card reads "Payment · Q-1002" / "Pay now"
+ * `pay`: the form is signed and its order waits for payment, so the card reads "Payment · PD-10002" / "Pay now"
  * (the same link opens at the payment step).
+ * `ref`: before signing the quote reference ("Q-1002 v1"); once signed the order number ("PD-10002"), as the pay
+ * page, the reminders and the bank-transfer reference show it, so the buyer sees one number per order.
  */
 export type LinkPreview = { url: string; seller: string; ref: string; oneTime: string | null; recurring: string | null; pay?: boolean };
 
@@ -544,7 +546,8 @@ export async function linkPreviews(db: Db, accountId: string, bodies: string[], 
     if (!view || view.form.accountId !== accountId) return;
     const s = view.form.snapshot;
     out.set(l.url, {
-      url: l.url, seller: displaySeller(view.form, lang), ref: `Q-${s.quote.number} v${s.quote.version}`,
+      url: l.url, seller: displaySeller(view.form, lang),
+      ref: view.state === "signed" && view.order ? orderLabel(s.seller.tradeName, view.order.number) : `Q-${s.quote.number} v${s.quote.version}`,
       oneTime: s.oneTime.totalMinor ? formatMoney(s.oneTime.totalMinor, s.currency) : null,
       recurring: s.recurring.totalMinor ? formatMoney(s.recurring.totalMinor, s.currency) : null,
       pay: view.state === "signed" && !!view.order && view.order.paymentStatus !== "paid" && view.order.paymentStatus !== "refunded",

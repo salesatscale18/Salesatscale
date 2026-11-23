@@ -352,7 +352,11 @@ describe("Signed, not paid yet", () => {
       await run(at(2));
       const first = await buyerChat(db, ctx, { now: at(2.1) });
       const card1 = first.messages.find((m) => m.kind === "pay_reminder")!;
-      expect(card1.previews).toMatchObject([{ pay: true, ref: "Q-1002 v1", oneTime: "₪3,858.60" }]);
+      // Signed: the pay card names the ORDER, the same number as the reminder text and the pay page.
+      const [{ number }] = await db.select({ number: orders.number }).from(orders).where(eq(orders.id, o.orderId));
+      const label = `PD-${number}`;
+      expect(card1.previews).toMatchObject([{ pay: true, ref: label, oneTime: "₪3,858.60" }]);
+      expect(card1.body.split("\n")[0]).toContain(`your order ${label} is signed`);
       expect(first.foldedPay).toEqual({});
 
       await run(at(5));
@@ -360,25 +364,56 @@ describe("Signed, not paid yet", () => {
       const [m1, m2] = second.messages.filter((m) => m.kind === "pay_reminder");
       const url = m1.previews[0].url;
       expect(m2.previews[0].url).toBe(url);
-      // Only the earlier card folds: "Payment · Q-1002 · latest is below"; the newest keeps the amount and "Pay now".
-      expect(second.foldedPay).toEqual({ [`${m1.id} ${url}`]: "Payment · Q-1002 · latest is below" });
+      // Only the earlier card folds: "Payment · PD-10002 · latest is below"; the newest keeps the amount and "Pay now".
+      expect(second.foldedPay).toEqual({ [`${m1.id} ${url}`]: `Payment · ${label} · latest is below` });
       // A poll for newer messages still carries every fold (the earlier card folds in place).
       expect((await buyerChat(db, ctx, { after: m2.id, now: at(5.2) })).foldedPay).toEqual(second.foldedPay);
 
       // The chat's current language decides the folded line's words.
       await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, o.conversationId));
-      expect(Object.values((await buyerChat(db, ctx, { now: at(5.3) })).foldedPay ?? {})).toEqual(["תשלום · Q-1002 · העדכני למטה"]);
+      expect(Object.values((await buyerChat(db, ctx, { now: at(5.3) })).foldedPay ?? {})).toEqual([`תשלום · ${label} · העדכני למטה`]);
       await db.update(conversations).set({ language: "en" }).where(eq(conversations.id, o.conversationId));
 
       // The seller's thread mirrors the fold (as replaced quote cards).
       const thread = (await reminders(o.conversationId)).map((m) => ({ message: m }));
       const seller = await sellerFormCards(db, o.accountId, thread, "en", at(5.3));
-      expect(seller[m1.id][0].folded).toBe("Payment · Q-1002 · latest is below");
+      expect(seller[m1.id][0].folded).toBe(`Payment · ${label} · latest is below`);
+      expect(seller[m2.id][0].preview).toMatchObject({ pay: true, ref: label });
       expect(seller[m2.id][0].folded).toBeUndefined();
 
       // Paid: no pay cards, nothing folded (the existing paid behaviour).
       await db.update(orders).set({ paymentStatus: "paid", paidAt: at(6) }).where(eq(orders.id, o.orderId));
       expect((await buyerChat(db, ctx, { now: at(6.1) })).foldedPay).toEqual({});
+    });
+  });
+
+  describe("one number per order on the cards", () => {
+    it("before signing the form card shows the quote reference; once signed the order number (buyer chat and seller thread)", async () => {
+      const acc = await mkAccount();
+      const o = await mkOrder(acc);
+      // The same form, not signed yet (an order form sent, waiting for the signature): no order on it.
+      await db.delete(orders).where(eq(orders.id, o.orderId));
+      await db.update(orderForms).set({ status: "sent", signedAt: null, expiresAt: at(30) }).where(eq(orderForms.id, o.formId));
+      const url = `${process.env.APP_URL?.trim() || "http://localhost:3000"}/f/${tokenFor(o.formId)}`;
+      const [m] = await db.insert(messages).values({ accountId: o.accountId, conversationId: o.conversationId, actor: "agent", body: url, language: "en", createdAt: at(0.5) }).returning();
+      const [lead] = await db.select().from(leads).where(eq(leads.id, o.leadId));
+      const ctx = { lead, account: acc.account, brandColor: "#0f6b5a" };
+      const before = (await buyerChat(db, ctx, { now: at(1) })).messages.find((x) => x.id === m.id)!;
+      expect(before.previews).toMatchObject([{ ref: "Q-1002 v1", pay: false }]);
+      expect((await sellerFormCards(db, o.accountId, [{ message: m }], "en", at(1)))[m.id][0].preview).toMatchObject({ ref: "Q-1002 v1", pay: false });
+
+      // Signed: an order exists, and every card of that form names it.
+      await db.update(orderForms).set({ status: "signed", signedAt: at(1) }).where(eq(orderForms.id, o.formId));
+      const [order] = await db.insert(orders).values({
+        id: randomUUID(), accountId: o.accountId, leadId: o.leadId, quoteId: o.quoteId, orderFormId: o.formId, number: 10_500 + n++, currency: "ILS",
+        amountDueMinor: 385_860, recurringMinor: 0, createdAt: at(1),
+      }).returning();
+      const after = (await buyerChat(db, ctx, { now: at(1.1) })).messages.find((x) => x.id === m.id)!;
+      expect(after.previews).toMatchObject([{ ref: `PD-${order.number}`, pay: true }]);
+      expect((await sellerFormCards(db, o.accountId, [{ message: m }], "en", at(1.1)))[m.id][0].preview).toMatchObject({ ref: `PD-${order.number}`, pay: true });
+      // Paid: still the order number (the card reads "Order form · PD-…", Open).
+      await db.update(orders).set({ paymentStatus: "paid", paidAt: at(2) }).where(eq(orders.id, order.id));
+      expect((await buyerChat(db, ctx, { now: at(2.1) })).messages.find((x) => x.id === m.id)!.previews).toMatchObject([{ ref: `PD-${order.number}`, pay: false }]);
     });
   });
 });

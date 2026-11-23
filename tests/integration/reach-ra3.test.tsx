@@ -2,7 +2,7 @@
  * Reach RA3 (production review of RA2): the web-chat start says so on the
  * timeline; Conversations previews are readable (no emphasis markers, "Quote
  * Q-1003", the form card's title instead of the raw /f/ URL); a signed form
- * waiting for payment is the pay card ("Payment · Q-1002", "Pay now") in the
+ * waiting for payment is the pay card ("Payment · PD-10002", the order number, "Pay now") in the
  * buyer chat and the seller thread; Settings › Channels keeps Go live under the
  * SMS row. On the one-click demo account: no model call, no network, no Twilio.
  */
@@ -123,7 +123,7 @@ describe("Reach RA3", () => {
     expect(yoni.lastBody).toMatch(/\*/);
     const avi = await rowOf(STATE_LEADS.payStep.n);
     expect(avi.lastBody).toMatch(/\/f\//);
-    expect(previewText(avi.lastBody!, facts.get(avi.lastMessageId!))).toMatch(/^Payment · Q-\d+$/);
+    expect(previewText(avi.lastBody!, facts.get(avi.lastMessageId!))).toMatch(/^Payment · (?!Q-)[A-Z]{1,2}-\d+$/);
   });
 
   it("account isolation: another account's facts find none of these quotes or forms", async () => {
@@ -137,7 +137,7 @@ describe("Reach RA3", () => {
     }
   }, 120_000);
 
-  it("the pay card: a signed form waiting for payment is Payment · Q-… / Pay now in the buyer chat and the seller thread", async () => {
+  it("the pay card: a signed form waiting for payment is Payment · <order number> / Pay now in the buyer chat and the seller thread", async () => {
     const avi = await leadOf(STATE_LEADS.payStep.n);
     const token = await activeChatToken(db, acc.id, avi.id);
     const ctx = await resolveChatToken(db, token!);
@@ -149,7 +149,8 @@ describe("Reach RA3", () => {
     const html = await page(LeadCardPage, { account: acc.slug, leadId: avi.id });
     save("lead-avi-pay", html);
     const conv = html.slice(html.indexOf('id="conversation"'));
-    expect(conv).toMatch(/Payment · <bdi class="sas-id sas-id--plain">Q-\d+<\/bdi>/);
+    // Signed: the order number, as on the pay page (one number per order).
+    expect(conv).toMatch(/Payment · <bdi class="sas-id sas-id--plain">(?!Q-)[A-Z]{1,2}-\d+<\/bdi>/);
     expect(conv).toMatch(/data-card-pay="">Pay now<\/a>/);
     expect(conv).not.toContain("Open order form");
 
@@ -159,7 +160,7 @@ describe("Reach RA3", () => {
     if (!r.started) throw new Error();
     const he = await page(LeadCardPage, { account: acc.slug, leadId: ronit.id });
     // Hebrew chat: the card is in the chat's language.
-    expect(he).toMatch(/תשלום · <bdi class="sas-id sas-id--plain">Q-\d+<\/bdi>/);
+    expect(he).toMatch(/תשלום · <bdi class="sas-id sas-id--plain">(?!Q-)[A-Z]{1,2}-\d+<\/bdi>/);
     expect(he).toContain(">לתשלום</a>");
   });
 
