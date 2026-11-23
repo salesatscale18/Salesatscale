@@ -72,6 +72,11 @@ export function unpaidRemindersOf(p: Playbook | PlaybookWithUnpaid | null | unde
   return out;
 }
 
+/** Whether two settings are the same (the Playbook card: a draft that differs from live "applies after you publish"). */
+export function sameUnpaidSettings(a: UnpaidReminderSettings, b: UnpaidReminderSettings): boolean {
+  return UNPAID_STEPS.every((s) => a[s].on === b[s].on && a[s].days === b[s].days);
+}
+
 // ---------------------------------------------------------------------------
 // The Playbook form
 // ---------------------------------------------------------------------------
