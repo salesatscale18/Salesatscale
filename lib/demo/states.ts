@@ -63,7 +63,9 @@ import { SMS_EVENTS, smsSegments } from "@/lib/sms/rules";
 import { normalizeQuestion } from "@/lib/agent/knowledge";
 import type { Actor } from "@/lib/accounts/audit";
 import { handBack, takeOver } from "@/lib/agent/conversation";
-import { addFact, startTestConversation } from "@/lib/agent/service";
+import { addFact, ensureDraftVersion, saveDraftPlaybook, startTestConversation } from "@/lib/agent/service";
+import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
+import { saveDraftVoiceSettings } from "@/lib/voice/service";
 import { parseItemEdit } from "@/lib/catalog/rules";
 import { saveDraftItem } from "@/lib/catalog/service";
 import { parseLead } from "@/lib/leads/rules";
@@ -247,6 +249,8 @@ export const OPEN_QUESTIONS = ["Can the sensors connect to our building manageme
 // ---------------------------------------------------------------------------
 
 export type ReviewStates = {
+  /** The draft seeded to differ from live (Compare versions). */
+  compareDraftVersionId: string;
   sources: number;
   facts: number;
   leads: number;
@@ -426,6 +430,9 @@ export async function seedReviewStates(
   // W6: a saved test-lab chat (no scenario) whose agent reply has recorded steps.
   const stepsConversationId = await stepsChat(db, accountId, userId, liveVersionId, now);
 
+  // 10b. Compare versions: a draft that differs from live, with scenario results on both (before the analysis: its hashes cover the draft).
+  const compare = await seedCompareDraft(db, userId, accountId, { liveVersionId, now });
+
   // 11. The analysis that made the facts, recorded last (its hashes cover the final facts, catalog and playbook).
   const analysisRuns = await recordAnalysis(db, accountId, now);
 
@@ -440,7 +447,7 @@ export async function seedReviewStates(
     priceListLineageId: list.list.lineageId, marketId: market.market.id, intakeKeyId: key.id,
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
     callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, buyerNamedCallConversationId, bookingOpenConversationId, talkNowConversationId, expiringQuoteId, declinedQuoteId,
-    passedConversationId, failedConversationId, analysisRuns,
+    passedConversationId, failedConversationId, analysisRuns, compareDraftVersionId: compare.draftVersionId,
   };
 }
 
@@ -1110,4 +1117,72 @@ async function recordAnalysis(db: Db, accountId: string, now: Date): Promise<num
     },
   ]);
   return 2;
+}
+
+/**
+ * Compare versions (board VersionCompare): a draft that differs from live in the
+ * ways the comparison shows, and scenario results on both versions, so Live -> Draft
+ * shows every kind of change. No model call: the draft goes through the playbook and
+ * voice-settings saves the editor uses, and the test chats are stored messages and tool
+ * calls the scenario checks read (latestScenarioResults).
+ *
+ * Draft changes: one sentence edited inside a step of the "Too expensive" play (the draft
+ * gets its own card, so a "card" row shows too), a new deal-detail question, two limits
+ * (discount 5% -> 8%; offer a call from 10 -> 8 sites), two Never-do rules swapped (one
+ * Moved row) and a slower speaking pace.
+ *
+ * Scenario results, live -> draft (live already has no_approved_answer passed and
+ * hebrew_buyer failed from step 10): hebrew_buyer Better, discount_push Worse,
+ * asks_for_person Same, ready_buyer a first result (draft only), no_approved_answer
+ * Run it (live only); every other scenario is never run.
+ */
+async function seedCompareDraft(db: Db, userId: string, accountId: string, opts: { liveVersionId: string; now: Date }): Promise<{ draftVersionId: string }> {
+  const { now, liveVersionId } = opts;
+  const draft = await ensureDraftVersion(db, accountId);
+  const pb = structuredClone(draft.playbook);
+  const card = DEFAULT_PLAYS.too_expensive;
+  const from = "set the price against what the problem costs them, in their own numbers, per unit or per month.";
+  if (!card.do[1]?.includes(from)) throw new Error("Demo seed: the Too expensive play changed; update the compare draft");
+  pb.plays = {
+    ...pb.plays,
+    too_expensive: {
+      ...pb.plays?.too_expensive,
+      own: {
+        when: card.when, example: card.example, notThis: card.notThis,
+        do: card.do.map((step, i) => (i === 1 ? step.replace(from, "set the price against what one spoiled delivery costs them, in their own numbers, per fridge or per month.") : step)),
+      },
+    },
+  };
+  pb.fields = [...pb.fields, { key: "cold_rooms", label: "Number of cold rooms", stage: "optional", example: "Do you also have a cold room?" }];
+  pb.maxDiscountBp = 800;
+  pb.offerMeetingWhen = pb.offerMeetingWhen.replace("more than 10 sites", "more than 8 sites");
+  if (pb.neverDo.length >= 2) pb.neverDo = [pb.neverDo[1], pb.neverDo[0], ...pb.neverDo.slice(2)];
+  await saveDraftPlaybook(db, accountId, pb, "Demo seed: changes to compare with live");
+  const voice = await saveDraftVoiceSettings(db, accountId, { pace: "slower" });
+  if (!voice.ok) throw new Error(`Demo seed: draft voice settings refused: ${JSON.stringify(voice.errors)}`);
+
+  const chat = async (versionId: string, scenario: string, language: "en" | "he", buyer: string, agent: string, calls: SeedCall[] = [], ago = 30) => {
+    const test = await startTestConversation(db, accountId, userId, { language, scenario, versionId });
+    if (!test) throw new Error(`Demo seed: compare chat ${scenario} not started`);
+    await insertThread(db, accountId, test.conversationId, language, versionId, [
+      { actor: "buyer", at: min(now, ago), body: buyer },
+      { actor: "agent", at: min(now, ago - 1), body: agent, calls },
+    ]);
+  };
+  // Better: hebrew_buyer failed on live (step 10); on the draft every reply is in Hebrew.
+  await chat(draft.id, "hebrew_buyer", "he", "שלום, יש לנו עסק עם סניף אחד. כמה זה עולה?", "שלום! המחיר תלוי במספר המקררים והמקפיאים. כמה יש לכם בסניף?");
+  // Worse: discount_push. Live holds the quote for approval; the draft's quote went out with the full discount.
+  const push = "We have one location. I want your basic package, but only with 15% off.";
+  const quoteCall = (status: string): SeedCall => ({ name: "create_quote", input: { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 15, sites: 1 }, result: { ok: true, status } });
+  await chat(liveVersionId, "discount_push", "en", push, "I can't confirm 15% myself, so I've asked the team to approve it. You'll hear back shortly.", [quoteCall("awaiting_seller_approval")], 40);
+  await chat(draft.id, "discount_push", "en", push, "Done: here is your quote with 15% off.", [quoteCall("ready")]);
+  // Same: asks_for_person passes on both (offers to help, keeps the chat).
+  const person = "I'd rather talk to a person from your team, please.";
+  const help = "Of course. I can help with most questions right now: what would you like to know?";
+  await chat(liveVersionId, "asks_for_person", "en", person, help, [], 41);
+  await chat(draft.id, "asks_for_person", "en", person, help);
+  // First result: ready_buyer only on the draft. (Run it: no_approved_answer, run on live in step 10, not on the draft.)
+  await chat(draft.id, "ready_buyer", "en", "Hi, I run a business with one location. I decide on purchases. Please send me a price and the order form so I can sign today.",
+    "Happy to. How many fridges and freezers do you have at your location?");
+  return { draftVersionId: draft.id };
 }

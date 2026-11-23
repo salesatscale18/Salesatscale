@@ -3940,5 +3940,8 @@
   "compare.open_chat_label": "Open the v{version} test chat: {title}",
   "compare.start_test": "Start test",
   "compare.start_test_label": "Start test on v{version}: {title}",
-  "compare.need_two": "Compare needs two versions. Edit the playbook to make a draft, then compare it with live."
+  "compare.need_two": "Compare needs two versions. Edit the playbook to make a draft, then compare it with live.",
+  "compare.change.never_run": "Never run in either version",
+  "compare.chip.never_run": "Never run",
+  "compare.pick_two": "Pick two different versions to compare."
 }

@@ -8,7 +8,7 @@ import { appDb, requireAccount } from "@/lib/auth/account";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import type { AgentVersion } from "@/db/schema";
 import { loadVersionComparison } from "@/lib/agent/version-compare";
-import { areaCounts, changeCounts, CHANGE_ORDER, DIFF_AREAS, type ChangeRow, type DiffArea, type ScenarioChange, type Seg } from "@/lib/agent/version-diff";
+import { areaCounts, changeCounts, CHANGE_ORDER, scenarioNotice, scenarioNoticeText, DIFF_AREAS, type ChangeRow, type DiffArea, type ScenarioChange, type Seg } from "@/lib/agent/version-diff";
 import { formatDayMonthIn } from "@/lib/format";
 import { readViewerZone } from "@/lib/viewer-zone-server";
 import { t, type MessageKey } from "@/lib/i18n";
@@ -26,6 +26,7 @@ const CHANGE_LOOK: Record<ScenarioChange, { cls: string; icon: IconName }> = {
   same: { cls: "sas-pill", icon: "minus" },
   run_it: { cls: "sas-pill sas-pill--warning", icon: "play" },
   first: { cls: "sas-pill", icon: "circle-dot" },
+  never_run: { cls: "", icon: "minus" },
 };
 
 /** Diff pieces of one side; the whitespace after a marked word stays outside the mark. */
@@ -115,12 +116,11 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
   const chipHref = (patch: Record<string, string | null>, hash: string) => `${hrefWith(path, { ...sp, ...keep }, patch)}#${hash}`;
 
   // Notice: worse or not run in the compared version. Publishing is never blocked.
-  const worse = counts.worse;
-  const notRun = counts.run_it;
-  const worsePart = worse === 1 ? t("compare.notice.worse_one") : t("compare.notice.worse", { n: worse });
-  const notice = worse + notRun === 0 ? null
-    : worse && notRun ? t("compare.notice.both", { worse: worsePart, notRun: notRun === 1 ? t("compare.notice.not_run_one") : t("compare.notice.not_run", { n: notRun }), where })
-      : t("compare.notice.one_part", { part: worse ? worsePart : notRun === 1 ? t("compare.notice.not_run_alone_one") : t("compare.notice.not_run_alone", { n: notRun }), where });
+  // Only scenarios with a result in the older version and none in the newer count as not run; never run in either is no gap.
+  const sameVersion = before.id === after.id;
+  const noticeCounts = scenarioNotice(counts, sameVersion);
+  const notRun = sameVersion ? 0 : counts.run_it;
+  const notice = noticeCounts ? scenarioNoticeText(noticeCounts, where) : null;
   const backVersion = afterIsDraft && live ? live.version : null;
 
   const missingText = (r: ChangeRow) => <span className="vc-missing">{t(`compare.missing.${r.missing}`)}</span>;
@@ -158,13 +158,21 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
             <AutoSubmit />
           </div>
         </form>
+        {sameVersion ? null : (
         <dl className="vc-counts" aria-label={t("compare.counts")} data-compare-counts="">
           <div><dt>{t("compare.count.changes")}</dt><dd data-count="changes">{changes.length}</dd></div>
           <div className="vc-better"><dt>{t("compare.count.better")}</dt><dd data-count="better">{counts.better}</dd></div>
           <div className="vc-worse"><dt>{t("compare.count.worse")}</dt><dd data-count="worse">{counts.worse}</dd></div>
-          <div className="vc-notrun"><dt>{t("compare.count.not_run")}</dt><dd data-count="not_run">{counts.run_it}</dd></div>
+          <div className="vc-notrun"><dt>{t("compare.count.not_run")}</dt><dd data-count="not_run">{notRun}</dd></div>
         </dl>
+        )}
       </section>
+
+      {sameVersion ? (
+        // One version against itself: nothing to compare, so no notice and no tables.
+        <p className="sas-panel vc-empty" style={{ margin: 0 }} role="status" data-compare-pick-two="">{t("compare.pick_two")}</p>
+      ) : (
+      <>
 
       {notice ? (
         <div className="vc-notice" role="status" data-compare-notice="">
@@ -245,9 +253,9 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
                 <Link className="sas-fchip" href={chipHref({ change: null }, "vc-scen-h")} aria-current={change === null ? "true" : undefined} replace scroll={false}>
                   {t("compare.chip.all")}<span className="sas-fchip__count sas-num">{scenarios.length}</span>
                 </Link>
-                {(["better", "worse", "same", "first", "run_it"] as const).filter((c) => counts[c] > 0 || c !== "first").map((c) => (
+                {(["better", "worse", "same", "first", "run_it", "never_run"] as const).filter((c) => counts[c] > 0 || (c !== "first" && c !== "never_run")).map((c) => (
                   <Link key={c} className="sas-fchip" href={chipHref({ change: c }, "vc-scen-h")} aria-current={change === c ? "true" : undefined} replace scroll={false} data-change-chip={c}>
-                    {c === "run_it" ? t("compare.chip.not_run", { where: whereShort }) : t(`compare.change.${c}`)}<span className="sas-fchip__count sas-num">{counts[c]}</span>
+                    {c === "run_it" ? t("compare.chip.not_run", { where: whereShort }) : c === "never_run" ? t("compare.chip.never_run") : t(`compare.change.${c}`)}<span className="sas-fchip__count sas-num">{counts[c]}</span>
                   </Link>
                 ))}
               </div>
@@ -277,7 +285,12 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
                   {r.afterChat ? <a href={chatHref(r.afterChat, after)} aria-label={t("compare.open_chat_label", { version: after.version, title: r.scenario.title })}><ResultChip result={r.after} /></a> : <ResultChip result={r.after} />}
                 </td>
                 <td data-label={t("compare.col.change")}>
-                  <span className={`${CHANGE_LOOK[r.change].cls} vc-change`} data-change-pill={r.change}><Icon name={CHANGE_LOOK[r.change].icon} />{t(`compare.change.${r.change}`)}</span>
+                  {r.change === "never_run" ? (
+                    // Never run in either version: nothing to compare, so a muted dash instead of a pill.
+                    <span className="vc-nochange" data-change-pill={r.change} title={t("compare.change.never_run")}>—<span className="sas-sr">{t("compare.change.never_run")}</span></span>
+                  ) : (
+                    <span className={`${CHANGE_LOOK[r.change].cls} vc-change`} data-change-pill={r.change}><Icon name={CHANGE_LOOK[r.change].icon} />{t(`compare.change.${r.change}`)}</span>
+                  )}
                 </td>
                 <td data-label="" className="sas-td-actions">
                   {r.afterChat ? (
@@ -298,6 +311,8 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
           </tbody>
         </ListTable>
       </section>
+      </>
+      )}
     </main>
   );
 }

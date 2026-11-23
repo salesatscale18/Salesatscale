@@ -1,9 +1,10 @@
 /**
- * Compare versions (board VersionCompare) on PGlite with the demo account: the
- * versions picked (defaults, any two, account isolation), what changed, the stored
- * scenario results per version with their change, and the entry in the test lab's
- * Versions panel. No model is called: the SDK is mocked to throw, and the only
- * buyer turns are the free fixed-reply paths (STOP, a card number) on ScriptedLlm.
+ * Compare versions (board VersionCompare) on PGlite with the demo account, whose seed
+ * (lib/demo/states.ts seedCompareDraft) holds a draft that differs from live and
+ * scenario results on both. Covers the versions picked (defaults, any two, account
+ * isolation), every diff kind and every scenario change kind of the seeded pair, the
+ * notice, the same-version page and the entry in the test lab's Versions panel. No
+ * model is called: the SDK is mocked to throw.
  *
  * With COMPARE_RENDER_DIR set, the rendered pages are written there as HTML (visual check).
  */
@@ -13,8 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
 import { and, eq } from "drizzle-orm";
-import { agentVersions, messages, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
-import { ScriptedLlm } from "@/lib/agent/llm";
+import { agentVersions, sellerAccounts, users, type AgentVersion, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -38,8 +38,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 const { createDemoAccount } = await import("@/lib/demo/seed");
-const { ensureDraftVersion, saveDraftPlaybook, startTestConversation } = await import("@/lib/agent/service");
-const { runBuyerTurn } = await import("@/lib/agent/turn");
+const { DEFAULT_PLAYS } = await import("@/lib/agent/core/plays");
 const { loadVersionComparison, pickVersions } = await import("@/lib/agent/version-compare");
 const { default: ComparePage } = await import("@/app/app/[account]/setup/test-lab/compare/page");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
@@ -58,8 +57,9 @@ describe("Compare versions", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
   let db: TestDb;
   let admin: User, seller: User;
-  let account: SellerAccount, other: SellerAccount;
-  let liveId: string, draftId: string, otherVersionId: string;
+  let account: SellerAccount;
+  let live: AgentVersion, draft: AgentVersion;
+  let otherVersionId: string;
 
   beforeAll(async () => {
     t = await createTestDb();
@@ -74,68 +74,67 @@ describe("Compare versions", () => {
     [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, r.summary.accountId));
     const r2 = await createDemoAccount(db, admin, { name: "Other Co", ownerEmail: "o@other.test" });
     if (!r2.ok) throw new Error("demo seed refused");
-    [other] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, r2.summary.accountId));
-    otherVersionId = (await db.select().from(agentVersions).where(eq(agentVersions.accountId, other.id)))[0].id;
+    otherVersionId = (await db.select().from(agentVersions).where(eq(agentVersions.accountId, r2.summary.accountId)))[0].id;
     holder.access = { account, user: seller, actingAs: false, role: "seller_admin" };
-
-    const [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "live")));
-    liveId = live.id;
-    // The draft: a higher discount limit, one more question, one more fact on a play, another voice model.
-    const draft = await ensureDraftVersion(db, account.id);
-    draftId = draft.id;
-    const pb = structuredClone(draft.playbook);
-    pb.maxDiscountBp = 800;
-    pb.fields = [...pb.fields, { key: "freezers", label: "Number of freezers", stage: "optional" }];
-    pb.neverDo = [...pb.neverDo, "Never promise a delivery date."];
-    await saveDraftPlaybook(db, account.id, pb);
-    await db.update(agentVersions).set({ voiceSettings: { model: "openai/gpt-realtime-2.1" } }).where(eq(agentVersions.id, draftId));
-
-    // Scenario results. Live (from the seed): no_approved_answer passed, hebrew_buyer failed. Plus says_stop passed (free STOP path).
-    const stopLive = (await startTestConversation(db, account.id, seller.id, { language: "en", scenario: "says_stop", versionId: liveId }))!;
-    expect((await runBuyerTurn(db, new ScriptedLlm([]), { accountId: account.id, conversationId: stopLive.conversationId, text: "STOP" })).status).not.toBe("error");
-    // Draft: hebrew_buyer passes (Better), says_stop fails (Worse: a reply without opting out), card_in_chat passes (first result).
-    const he = (await startTestConversation(db, account.id, seller.id, { language: "he", scenario: "hebrew_buyer", versionId: draftId }))!;
-    const stopDraft = (await startTestConversation(db, account.id, seller.id, { language: "en", scenario: "says_stop", versionId: draftId }))!;
-    await db.insert(messages).values([
-      { accountId: account.id, conversationId: he.conversationId, actor: "buyer", body: "שלום, כמה זה עולה?", createdAt: new Date(Date.now() - 2000) },
-      { accountId: account.id, conversationId: he.conversationId, actor: "agent", body: "שלום! כמה מקררים יש לכם?", createdAt: new Date(Date.now() - 1000) },
-      { accountId: account.id, conversationId: stopDraft.conversationId, actor: "buyer", body: "stop please", createdAt: new Date(Date.now() - 2000) },
-      { accountId: account.id, conversationId: stopDraft.conversationId, actor: "agent", body: "Sure, anything else?", createdAt: new Date(Date.now() - 1000) },
-    ]);
-    const card = (await startTestConversation(db, account.id, seller.id, { language: "en", scenario: "card_in_chat", versionId: draftId }))!;
-    expect((await runBuyerTurn(db, new ScriptedLlm([]), { accountId: account.id, conversationId: card.conversationId, text: "Just charge my card: 4111 1111 1111 1111, exp 12/28." })).status).not.toBe("error");
+    [live] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "live")));
+    [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
   }, 180_000);
   afterAll(async () => t.close());
 
+  it("the demo seed holds a live version and a draft", () => {
+    expect(live).toBeDefined();
+    expect(draft).toBeDefined();
+    expect(draft.version).toBeGreaterThan(live.version);
+  });
+
   it("defaults to live on the left and the draft on the right; ids of another account are ignored", async () => {
     const versions = await db.select().from(agentVersions).where(eq(agentVersions.accountId, account.id));
-    expect(pickVersions(versions)).toMatchObject({ before: { id: liveId }, after: { id: draftId } });
+    expect(pickVersions(versions)).toMatchObject({ before: { id: live.id }, after: { id: draft.id } });
     const c = (await loadVersionComparison(db, account.id, { a: otherVersionId, b: otherVersionId, languages: account.languages, platformDetails: false }))!;
-    expect(c.before.id).toBe(liveId);
-    expect(c.after.id).toBe(draftId);
+    expect(c.before.id).toBe(live.id);
+    expect(c.after.id).toBe(draft.id);
     expect(c.versions.every((v) => v.accountId === account.id)).toBe(true);
   });
 
-  it("lists what changed and each scenario's change, worse first", async () => {
+  it("the seeded pair shows every diff kind", async () => {
     const c = (await loadVersionComparison(db, account.id, { languages: account.languages, platformDetails: false }))!;
+    const title = DEFAULT_PLAYS.too_expensive.title;
     expect(c.changes.map((r) => [r.area, r.item, r.kind])).toEqual([
+      ["plays", `${title} · card`, "changed"],
+      ["plays", `${title} · step 2`, "changed"],
       ["questions", "Deal details", "added"],
       ["limits", "Discount without approval", "changed"],
-      ["limits", `Never do · Rule ${c.after.playbook.neverDo.length}`, "added"],
-      ["voice", "Voice model", "changed"],
-      ["voice", "Voice", "changed"],
-      // GPT-Realtime takes a conversation style; Gemini has none, so it is new in the draft.
-      ["voice", "Conversation style", "added"],
+      ["limits", "Offer a call when", "changed"],
+      ["limits", "Never do · Rule 2", "moved"],
+      ["voice", "Speaking pace", "changed"],
     ]);
+    // The play step: words removed and added in the middle of one sentence.
+    const step = c.changes[1];
+    const del = step.before!.filter((s) => s.op === "del").map((s) => s.text.trim());
+    const ins = step.after!.filter((s) => s.op === "ins").map((s) => s.text.trim());
+    expect(del).toEqual(["the problem", "unit"]);
+    expect(ins).toEqual(["one spoiled delivery", "fridge"]);
+    expect(step.before![0].op).toBe("same");
+    expect(step.before!.at(-1)!.op).toBe("same");
+    // The new question: nothing on the old side ("Not asked").
+    expect(c.changes[2]).toMatchObject({ before: null, missing: "not_asked" });
+    expect(c.changes[3].before).toEqual([{ op: "del", text: "5%" }]);
+    expect(c.changes[3].after).toEqual([{ op: "ins", text: "8%" }]);
+  });
+
+  it("the seeded pair shows every scenario change kind, ordered worse first and never run last", async () => {
+    const c = (await loadVersionComparison(db, account.id, { languages: account.languages, platformDetails: false }))!;
     const by = Object.fromEntries(c.scenarios.map((s) => [s.scenario.id, s]));
-    expect(by.says_stop).toMatchObject({ before: "passed", after: "failed", change: "worse" });
     expect(by.hebrew_buyer).toMatchObject({ before: "failed", after: "passed", change: "better" });
+    expect(by.discount_push).toMatchObject({ before: "passed", after: "failed", change: "worse" });
+    expect(by.asks_for_person).toMatchObject({ before: "passed", after: "passed", change: "same" });
+    expect(by.ready_buyer).toMatchObject({ before: "not_run", after: "not_yet", change: "first" });
     expect(by.no_approved_answer).toMatchObject({ before: "passed", after: "not_run", change: "run_it", afterChat: null });
-    expect(by.card_in_chat).toMatchObject({ before: "not_run", after: "passed", change: "first" });
-    expect(c.scenarios[0].scenario.id).toBe("says_stop");
-    const order = ["worse", "run_it", "better", "first", "same"];
-    const idx = c.scenarios.map((s) => order.indexOf(s.change));
-    expect(idx).toEqual([...idx].sort((x, y) => x - y));
+    expect(by.card_in_chat).toMatchObject({ before: "not_run", after: "not_run", change: "never_run" });
+    expect(c.scenarios.filter((s) => s.change === "never_run").length).toBeGreaterThanOrEqual(3);
+    const order = ["worse", "run_it", "better", "first", "same", "never_run"];
+    expect(c.scenarios.map((s) => s.change)).toEqual([...c.scenarios.map((s) => s.change)].sort((x, y) => order.indexOf(x) - order.indexOf(y)));
+    expect(c.scenarios[0].scenario.id).toBe("discount_push");
   });
 
   it("renders the page: counts, notice, diff marks, Not asked, chips, start links; never a model call", async () => {
@@ -143,53 +142,79 @@ describe("Compare versions", () => {
     save("compare-desktop", html);
     expect(html).toContain("Compare versions");
     expect(html).toContain(`href="/app/${account.slug}/setup/test-lab"`);
-    expect(html).toMatch(/data-count="worse">1</);
+    expect(html).toMatch(/data-count="changes">7</);
     expect(html).toMatch(/data-count="better">1</);
-    expect(html).toMatch(/data-count="changes">6</);
-    expect(html).toContain("1 scenario got worse and");
-    expect(html).toContain("were not run in the draft.");
+    expect(html).toMatch(/data-count="worse">1</);
+    // Not run = a result on live and none on the draft (no_approved_answer); never run in both is not counted.
+    expect(html).toMatch(/data-count="not_run">1</);
+    expect(html).toContain("1 scenario got worse and 1 was not run in the draft.");
     expect(html).toContain("You can still publish; &quot;Make live again&quot; brings v");
-    expect(html).toMatch(/data-run-the="" href="[^"]*change=run_it#vc-scen-h">Run the \d+</);
+    expect(html).toMatch(/data-run-the="" href="[^"]*change=run_it#vc-scen-h">Run the 1</);
     expect(html).toContain('<del class="vc-del">5%</del>');
     expect(html).toContain('<ins class="vc-ins">8%</ins>');
+    expect(html).toContain('<del class="vc-del">unit</del>');
+    expect(html).toContain('<ins class="vc-ins">fridge</ins>');
     expect(html).toContain("Not asked");
-    expect(html).toContain("about 7");
+    expect(html).toContain("· Moved");
+    expect(html).toMatch(/data-change-chip="never_run"[^>]*>Never run<span class="sas-fchip__count sas-num">\d+</);
+    expect(html).toMatch(/data-change-chip="first"[^>]*>First result</);
+    expect(html).toMatch(/data-scenario="card_in_chat" data-change="never_run">.*?data-change-pill="never_run"[^>]*>—/);
+    expect(html).toMatch(/data-scenario="card_in_chat"[^]*?data-start-test/);
     expect(html).toContain("Knowledge, catalog and price lists are shared by all versions, so they are not compared here.");
     expect(html).toContain("Scenarios run only when you start them, because each reply costs money.");
     expect(html).toContain("Publish draft v");
-    expect(html).toContain("data-start-test");
     expect(html).toContain("data-open-chats");
-    // Sellers never see the text model or effort.
+    // Sellers never see the text model or effort, nor a full email.
     expect(html).not.toContain('data-change="model"');
     expect(html).not.toMatch(/@[a-z]+\.test/);
 
-    const filtered = await render(ComparePage as unknown as Page, account.slug, { change: "run_it", area: "limits" });
+    const filtered = await render(ComparePage as unknown as Page, account.slug, { change: "first", area: "limits" });
     save("compare-filtered", filtered);
-    expect(filtered).not.toContain('data-scenario="says_stop"');
-    expect(filtered).toContain('data-scenario="no_approved_answer"');
+    expect(filtered).toContain('data-scenario="ready_buyer"');
+    expect(filtered).not.toContain('data-scenario="discount_push"');
     expect(filtered).not.toContain('data-change="voice"');
+    expect(filtered).toMatch(/aria-current="true"[^>]*data-change-chip="first"|data-change-chip="first"[^>]*aria-current="true"/);
   });
 
-  it("platform staff see model and effort; the same version on both sides reads the same", async () => {
+  it("platform staff see model and effort; two versions with the same content read the same", async () => {
     holder.access = { account, user: admin, actingAs: true, role: "seller_admin" };
     try {
-      await db.update(agentVersions).set({ model: "claude-other" }).where(eq(agentVersions.id, draftId));
+      await db.update(agentVersions).set({ model: "claude-other" }).where(eq(agentVersions.id, draft.id));
       expect(await render(ComparePage as unknown as Page, account.slug)).toContain('data-change="model"');
-      await db.update(agentVersions).set({ model: (await db.select().from(agentVersions).where(eq(agentVersions.id, liveId)))[0].model }).where(eq(agentVersions.id, draftId));
+      // The draft's content set to live's: two different versions, nothing changed.
+      await db.update(agentVersions).set({ model: live.model, effort: live.effort, playbook: live.playbook, voiceSettings: live.voiceSettings }).where(eq(agentVersions.id, draft.id));
+      const html = await render(ComparePage as unknown as Page, account.slug);
+      expect(html).toContain("These two versions are the same.");
+      expect(html).not.toContain("Pick two different versions to compare.");
     } finally {
+      await db.update(agentVersions).set({ model: draft.model, effort: draft.effort, playbook: draft.playbook, voiceSettings: draft.voiceSettings }).where(eq(agentVersions.id, draft.id));
       holder.access = { account, user: seller, actingAs: false, role: "seller_admin" };
     }
-    const same = await render(ComparePage as unknown as Page, account.slug, { a: liveId, b: liveId });
-    expect(same).toContain("These two versions are the same.");
-    // Right side not the draft: no Publish action.
-    expect(same).not.toContain("Publish draft v");
   });
 
-  it("the test lab's Versions panel: changes from live, Compare with live, a blue Live pill", async () => {
+  it("the same version on both sides: only the pick-two line, no notice and no tables", async () => {
+    for (const id of [live.id, draft.id]) {
+      const same = await render(ComparePage as unknown as Page, account.slug, { a: id, b: id });
+      if (id === draft.id) save("compare-same", same);
+      expect(same).toContain("Pick two different versions to compare.");
+      expect(same).not.toContain("These two versions are the same.");
+      expect(same).not.toContain("data-compare-notice");
+      expect(same).not.toContain("data-run-the");
+      expect(same).not.toContain("data-what-changed");
+      expect(same).not.toContain("data-compare-scenarios");
+      expect(same).not.toContain("data-compare-counts");
+    }
+    // Right side not the draft: no Publish action.
+    expect(await render(ComparePage as unknown as Page, account.slug, { a: live.id, b: live.id })).not.toContain("Publish draft v");
+  });
+
+  it("the test lab's Versions panel: changes from live, Compare with live, a blue Live pill, one Publish", async () => {
     const html = await render(TestLabPage as unknown as Page, account.slug);
     save("testlab-versions", html);
-    expect(html).toContain("6 changes from live");
-    expect(html).toContain(`href="/app/${account.slug}/setup/test-lab/compare?a=${liveId}&amp;b=${draftId}"`);
+    expect(html).toContain("7 changes from live");
+    expect(html).toContain(`href="/app/${account.slug}/setup/test-lab/compare?a=${live.id}&amp;b=${draft.id}"`);
     expect(html).toMatch(/class="sas-pill sas-pill--info" data-status="agent_version.live"/);
+    // One Publish only: the header's; the draft row keeps Compare with live and the change count.
+    expect(html.match(/Publish draft v/g)).toHaveLength(1);
   });
 });

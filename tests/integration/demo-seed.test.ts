@@ -185,11 +185,13 @@ describe("one-click demo account", () => {
     expect(Object.values(pb.plays!).some((x) => x?.own)).toBe(false);
 
     const tests = await db.select().from(conversations).where(and(eq(conversations.accountId, accountId), eq(conversations.isTest, true)));
-    // The empty test chat, two scenario chats and one chat with recorded steps (review states), all on the live version.
-    expect(tests).toHaveLength(4);
-    for (const c of tests) expect(c.agentVersionId).toBe(live.id);
+    // On the live version: the empty test chat, two scenario chats and one chat with recorded steps (review states),
+    // plus two scenario chats for Compare versions. On the draft Compare versions seeds (lib/demo/states.ts seedCompareDraft): four scenario chats.
     const drafts = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));
-    expect(drafts).toHaveLength(0);
+    expect(drafts).toHaveLength(1);
+    expect(tests.filter((c) => c.agentVersionId === live.id)).toHaveLength(6);
+    expect(tests.filter((c) => c.agentVersionId === drafts[0].id)).toHaveLength(4);
+    expect(tests).toHaveLength(10);
   });
 
   it("has nineteen consented leads with fictional numbers that are never contacted", async () => {

@@ -524,13 +524,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                       ) : <StatusPill object="agent_version" state={v.status} />}
                     </div>
                     <span className="sas-small">{showModel ? <span data-version-model="">{t("lab.version_model", { model: v.model, effort: v.effort })}</span> : null}{showModel && v.publishedAt ? " · " : null}{v.publishedAt ? <><time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}{changes !== null ? <span data-changes-from-live="">{showModel || v.publishedAt ? " · " : null}{changes === 0 ? t("compare.same_as_live") : changes === 1 ? t("compare.changes_from_live_one") : t("compare.changes_from_live", { n: changes })}</span> : null}</span>
-                    {compareHref || v.status === "retired" || v.status === "draft" ? (
+                    {compareHref || v.status === "retired" ? (
                       <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                         {compareHref ? (
                           <a className={buttonClass(v.status === "draft" ? "secondary" : "ghost", "sm")} href={compareHref} aria-label={t("compare.with_live_label", { version: v.version })} data-compare-with-live="">{t("compare.with_live")}</a>
-                        ) : null}
-                        {v.status === "draft" ? (
-                          <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="primary" size="sm">{t("lab.publish", { version: v.version })}</Button></form>
                         ) : null}
                         {v.status === "retired" ? (
                           <form action={rollbackAction}>
