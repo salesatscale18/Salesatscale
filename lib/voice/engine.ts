@@ -28,7 +28,7 @@ import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
-import type { ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
+import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
@@ -355,6 +355,18 @@ export function configSummary(cfg: RealtimeSessionConfig): string {
   return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
 }
 
+/**
+ * The log line of a browser's `ready` (lib/voice/client/readiness.ts): how long its check took, its playback route,
+ * when each step was done (ms into the check), its output latency and the step that timed out ("-" where unknown;
+ * an older page sends no diagnostics).
+ */
+export function browserReadyLine(msg: Extract<ClientMessage, { t: "ready" }>): string {
+  const v = (n: number | null | undefined) => (n === null || n === undefined ? "-" : String(n));
+  const lat = msg.baseLatencyMs === undefined && msg.outputLatencyMs === undefined ? "-" : String((msg.baseLatencyMs ?? 0) + (msg.outputLatencyMs ?? 0));
+  const s = msg.steps;
+  return `browser ready waitedMs=${v(msg.waitedMs)} route=${msg.route ?? "-"} mic=${v(s?.mic)} ctx=${v(s?.ctx)} out=${v(s?.out)} primer=${v(s?.primer)} latency=${lat}ms timedOut=${msg.timedOut ?? "-"}`;
+}
+
 /** Languages written in a script other than Latin. */
 const NON_LATIN = /^(?:he|ar|fa|ur|ru|uk|bg|el|yi)\b/i;
 
@@ -467,6 +479,10 @@ export class VoiceEngine {
   private stageDelivered: string | null = null;
   /** The browser said it can play the agent (`{t:"ready"}`). */
   private clientReady = false;
+  /** When the first agent audio of the call went to the browser (the `heard` log line's delta). */
+  private firstAudioSentAt: number | null = null;
+  /** The browser's `heard` was logged (once per call). */
+  private heardLogged = false;
   /** The opening line, until it is asked for (see sendOpener). */
   private pendingOpener: { prompt: string; kind: string; since: number } | null = null;
   /** The call continues a chat (a pick-up line instead of an opener). */
@@ -585,8 +601,15 @@ export class VoiceEngine {
       case "ping":
         return;
       case "ready":
+        if (!this.clientReady) this.log.info(voiceLine(this.sessionId, browserReadyLine(msg)));
         this.clientReady = true;
         this.sendOpener("ready");
+        return;
+      case "heard":
+        // Log only: when the first agent audio actually started playing in the browser (once per call).
+        if (this.heardLogged) return;
+        this.heardLogged = true;
+        this.trace(`browser heard first audio +${this.firstAudioSentAt === null ? "-" : Math.max(0, Math.round(this.clock.now() - this.firstAudioSentAt))}ms after it was sent (browser: ${msg.sinceFirstChunkMs}ms after it arrived, queued ${msg.queuedMs}ms)`);
         return;
       case "context":
         this.onFormContext(msg);
@@ -734,6 +757,7 @@ export class VoiceEngine {
   }
 
   private send(msg: ServerMessage | Uint8Array) {
+    if (this.firstAudioSentAt === null && msg instanceof Uint8Array && msg.byteLength > 0) this.firstAudioSentAt = this.clock.now();
     try {
       this.out(msg);
     } catch (e) {

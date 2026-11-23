@@ -18,6 +18,10 @@ import { PlaybackSchedule } from "./playback";
 import { outputChoices, playbackRoute, type OutputDevice, type PlaybackRoute } from "./output";
 import { INITIAL_SNAPSHOT, isIdlePhase, voiceReducer, type VoiceEvent, type VoiceSnapshot, type VoiceUnavailableReason } from "./state";
 import { CAPTURE_PROCESSOR, CAPTURE_WORKLET_SOURCE } from "./worklet";
+import { READY_PRIMER_MS, latencyMs, runReadiness, type ReadinessProbe } from "./readiness";
+
+/** Where the output clocks were at a moment (the readiness and `heard` checks compare against it). */
+type OutputMark = { ctxTime: number; outTime: number | null; elTime: number | null };
 
 export type VoiceStartParams = {
   wsUrl: string;
@@ -39,8 +43,9 @@ export type VoiceClientOptions = {
   getUserMedia?: (c: MediaStreamConstraints) => Promise<MediaStream>;
 };
 
-/** The longest the page waits for its audio output before telling the relay it is ready anyway. */
-const READY_MAX_MS = 2_500;
+/** The longest the page watches for its first agent audio to start playing (the `heard` report; log only). */
+const HEARD_MAX_MS = 10_000;
+const HEARD_POLL_MS = 20;
 const DEFAULT_AUDIO: MediaTrackConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 };
 const PING_MS = 10_000;
 
@@ -68,7 +73,13 @@ export class VoiceClient {
   private schedule = new PlaybackSchedule();
   private playing = new Set<AudioBufferSourceNode>();
   private ws: WebSocket | null = null;
-  private timers: { ping?: ReturnType<typeof setInterval>; lost?: ReturnType<typeof setTimeout>; end?: ReturnType<typeof setTimeout> } = {};
+  private timers: { ping?: ReturnType<typeof setInterval>; lost?: ReturnType<typeof setTimeout>; end?: ReturnType<typeof setTimeout>; heard?: ReturnType<typeof setInterval> } = {};
+  /** The output clocks when the mic capture delivered its first frame (null: not yet this call). */
+  private micLiveMark: OutputMark | null = null;
+  /** The <audio> element of this call fired `playing`. */
+  private elPlaying = false;
+  /** The first agent audio of this call: when it arrived, where it was scheduled; `sent` once `heard` went. */
+  private firstChunk: { recvMs: number; startAt: number; queuedMs: number; mark: OutputMark; sent: boolean } | null = null;
   /** Bumped by every new call and by cancel: async steps of an older attempt stop. */
   private attempt = 0;
   private levelBuf: Float32Array<ArrayBuffer> | null = null;
@@ -184,6 +195,9 @@ export class VoiceClient {
         el.autoplay = true;
         el.setAttribute("playsinline", "");
         el.srcObject = dest.stream;
+        el.addEventListener("playing", () => {
+          if (this.outEl === el) this.elPlaying = true;
+        });
         this.outAnalyser.connect(dest);
         this.outDest = dest;
         this.outEl = el;
@@ -222,6 +236,7 @@ export class VoiceClient {
     }
     this.outEl = null;
     this.outDest = null;
+    this.elPlaying = false;
     this.route = "context";
   }
 
@@ -290,8 +305,8 @@ export class VoiceClient {
       // waitAudio: the relay asks for the opening line once this page says it can play it (`ready`).
       ws.send(JSON.stringify({ t: "auth", sessionId: p.sessionId, ticket: p.ticket, waitAudio: true }));
       this.timers.ping = setInterval(() => this.sendMsg({ t: "ping" }), PING_MS);
-      void this.whenOutputRuns().then(() => {
-        if (my === this.attempt) this.sendMsg({ t: "ready" });
+      void this.whenOutputRuns(my).then((report) => {
+        if (my === this.attempt) this.sendMsg({ t: "ready", ...report });
       });
     };
     ws.onmessage = (ev) => {
@@ -434,6 +449,8 @@ export class VoiceClient {
   }
 
   private onMicSamples(samples: Float32Array) {
+    // The capture runs: the audio route switch that starting the mic causes on a phone has happened (readiness).
+    if (!this.micLiveMark && this.ctx) this.micLiveMark = this.outputMark(this.ctx);
     if (!this.resampler || this.snap.muted) return;
     // Audio goes out only while the call is live (the relay drops anything earlier).
     if (this.snap.phase !== "live") return;
@@ -460,33 +477,94 @@ export class VoiceClient {
     this.playing.add(src);
     src.onended = () => this.playing.delete(src);
     src.start(at);
+    if (!this.firstChunk) this.watchFirstAudio(ctx, at);
+  }
+
+  /** The output clocks now: the context's, its output timestamp's (where the browser has one), the element's. */
+  private outputMark(ctx: AudioContext): OutputMark {
+    let outTime: number | null = null;
+    try {
+      const ts = typeof ctx.getOutputTimestamp === "function" ? ctx.getOutputTimestamp() : null;
+      if (ts && typeof ts.contextTime === "number" && Number.isFinite(ts.contextTime)) outTime = ts.contextTime;
+    } catch {
+      // No output timestamp.
+    }
+    return { ctxTime: ctx.currentTime, outTime, elTime: this.route === "element" && this.outEl ? this.outEl.currentTime : null };
   }
 
   /**
-   * Resolves once the agent's voice can be heard: the audio context runs and a short silent buffer has played
-   * through the output (the phone's output path is up), so the opening line's first words are not lost. Bounded:
-   * at most READY_MAX_MS, then it resolves anyway (the relay has its own timeout too).
+   * The output has moved on since `since`: on the element route the element plays and its time advanced; on the
+   * direct route the context clock advanced by `minSec` and, where the browser reports it, its output timestamp too.
    */
-  private whenOutputRuns(): Promise<void> {
+  private outputMovedSince(ctx: AudioContext, since: OutputMark, minSec: number): boolean {
+    const now = this.outputMark(ctx);
+    if (this.route === "element" && this.outEl) {
+      const el = this.outEl;
+      const plays = this.elPlaying || (!el.paused && el.readyState >= 2);
+      return plays && now.elTime !== null && now.elTime > (since.elTime ?? 0);
+    }
+    if (now.ctxTime - since.ctxTime < minSec) return false;
+    return now.outTime === null || now.outTime > (since.outTime ?? 0);
+  }
+
+  /**
+   * The `ready` check (lib/voice/client/readiness.ts): mic capture live, context running, output moving, then a
+   * 150 ms silent primer through the agent's output path. Bounded (READY_MAX_MS); resolves with its diagnostics.
+   */
+  private whenOutputRuns(my: number) {
     const ctx = this.ctx;
-    const out = this.outGain;
-    if (!ctx || !out) return Promise.resolve();
-    const played = (async () => {
-      if (ctx.state !== "running") await ctx.resume().catch(() => undefined);
-      await new Promise<void>((resolve) => {
-        try {
-          const buf = ctx.createBuffer(1, Math.round(VOICE_SAMPLE_RATE * 0.15), VOICE_SAMPLE_RATE);
-          const src = ctx.createBufferSource();
-          src.buffer = buf;
-          src.connect(out);
-          src.onended = () => resolve();
-          src.start();
-        } catch {
-          resolve();
-        }
-      });
-    })();
-    return Promise.race([played, new Promise<void>((r) => setTimeout(r, READY_MAX_MS))]);
+    const startMark = ctx ? this.outputMark(ctx) : null;
+    const self = this;
+    const probe: ReadinessProbe = {
+      get route() {
+        return self.route === "element" ? "element" : "direct";
+      },
+      micLive: () => !!this.micLiveMark || (!this.worklet && !!this.stream?.getAudioTracks().some((tr) => tr.readyState === "live" && !tr.muted)),
+      ctxRunning: () => !!ctx && ctx.state === "running",
+      resumeCtx: () => void ctx?.resume().catch(() => undefined),
+      outputMoving: () => !!ctx && !!startMark && this.outputMovedSince(ctx, this.micLiveMark ?? startMark, 0.1),
+      playPrimer: (done) => {
+        const out = this.outGain;
+        if (!ctx || !out) throw new Error("no output");
+        const src = ctx.createBufferSource();
+        src.buffer = ctx.createBuffer(1, Math.round((VOICE_SAMPLE_RATE * READY_PRIMER_MS) / 1000), VOICE_SAMPLE_RATE);
+        src.connect(out);
+        src.onended = () => done();
+        src.start();
+      },
+      latency: () => ({ baseLatencyMs: latencyMs(ctx?.baseLatency), outputLatencyMs: latencyMs((ctx as { outputLatency?: number } | null)?.outputLatency) }),
+    };
+    return runReadiness(probe, undefined, () => my === this.attempt).then((r) => {
+      // No undefined fields on the wire.
+      if (r.baseLatencyMs === undefined) delete r.baseLatencyMs;
+      if (r.outputLatencyMs === undefined) delete r.outputLatencyMs;
+      return r;
+    });
+  }
+
+  /**
+   * The first agent audio of the call: once its scheduled start has passed and the output is moving, the page
+   * tells the relay (`heard`, log only) how long that took since the chunk arrived. Gives up after HEARD_MAX_MS.
+   */
+  private watchFirstAudio(ctx: AudioContext, startAt: number) {
+    const fc = { recvMs: performance.now(), startAt, queuedMs: Math.max(0, Math.round((startAt - ctx.currentTime) * 1000)), mark: this.outputMark(ctx), sent: false };
+    this.firstChunk = fc;
+    const my = this.attempt;
+    clearInterval(this.timers.heard);
+    this.timers.heard = setInterval(() => {
+      const waited = performance.now() - fc.recvMs;
+      if (my !== this.attempt || this.ctx !== ctx || fc.sent || waited > HEARD_MAX_MS) {
+        clearInterval(this.timers.heard);
+        return;
+      }
+      if (ctx.currentTime < fc.startAt || !this.outputMovedSince(ctx, fc.mark, 0)) return;
+      const out = this.outputMark(ctx);
+      // Where the browser reports its output clock, the start time must have reached the output itself.
+      if (this.route !== "element" && out.outTime !== null && out.outTime < fc.startAt) return;
+      fc.sent = true;
+      clearInterval(this.timers.heard);
+      this.sendMsg({ t: "heard", sinceFirstChunkMs: Math.round(waited), queuedMs: fc.queuedMs });
+    }, HEARD_POLL_MS);
   }
 
   private flushPlayback() {
@@ -558,7 +636,11 @@ export class VoiceClient {
     clearInterval(this.timers.ping);
     clearTimeout(this.timers.lost);
     clearTimeout(this.timers.end);
+    clearInterval(this.timers.heard);
     this.timers = {};
+    this.micLiveMark = null;
+    this.elPlaying = false;
+    this.firstChunk = null;
     const ws = this.ws;
     this.ws = null;
     if (ws) {
