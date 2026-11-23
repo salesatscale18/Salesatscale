@@ -101,15 +101,17 @@ export function OrderLines({ s, tr, lang, paidLabel }: {
     const unit = l.unit ? unitLabel(l.unit, l.unitCustom ?? null, lang, 1) : null;
     const each = unit ? tr("buyer.per_unit", { price: money(l.unitPriceMinor), unit }) : tr("buyer.each", { price: money(l.unitPriceMinor) });
     const included = l.priceSource === "not_charged";
+    // A charged line at 0 (a person priced it at 0): "Free", never "₪0.00".
+    const free = !included && l.lineTotalMinor === 0;
     return (
       <div key={`${l.sku}-${charge}-${i}`} className="b-row" data-charge={charge}>
         <span>
           <LineName s={s} l={l} tr={tr} />
           <span className="b-mut" style={{ display: "block" }}>
-            {included ? null : <><bdi>{each}</bdi> · </>}<bdi>{l.sku}</bdi> · {chargeLabel(tr, charge, p)}
+            {included || free ? null : <><bdi>{each}</bdi> · </>}<bdi>{l.sku}</bdi> · {chargeLabel(tr, charge, p)}
           </span>
         </span>
-        <span className="b-num">{included ? tr("buyer.included") : money(l.lineTotalMinor, p)}</span>
+        <span className="b-num" data-free={free ? "" : undefined}>{included ? tr("buyer.included") : free ? tr("buyer.free") : money(l.lineTotalMinor, p)}</span>
       </div>
     );
   };

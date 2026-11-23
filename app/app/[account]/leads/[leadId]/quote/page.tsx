@@ -5,7 +5,8 @@ import { Icon } from "@/components/sas/icon";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { getLead } from "@/lib/leads/service";
 import { getQuote, QUOTE_VALID_DAYS } from "@/lib/quotes/service";
-import { catalogAutoAdd, pricingContext } from "@/lib/quotes/pricing";
+import { catalogAutoAdd, customPricesOf, pricingContext } from "@/lib/quotes/pricing";
+import { minorToField } from "@/lib/quotes/price-field";
 import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
 import { QuoteEditor, type EditorItem } from "./editor";
@@ -54,7 +55,7 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
     ? { text: t("quote.editor.delivery", { range: formatDeliveryShort(estimateDelivery({ ...plan, from: new Date() })) }), lead: leadAfterSigning(plan.leadTime) }
     : null;
   const initialPreview = catalog && priceList && from && cv
-    ? await buildPreview(appDb, account, leadId, { lines: Object.entries(initialQty).map(([sku, qty]) => ({ sku, qty })), discountBp: cv.discountBp, sites: start.sites, removedByBuyer: initialRemoved }, from.quote.id)
+    ? await buildPreview(appDb, account, leadId, { lines: Object.entries(initialQty).map(([sku, qty]) => ({ sku, qty })), discountBp: cv.discountBp, sites: start.sites, removedByBuyer: initialRemoved }, from.quote.id, customPricesOf(current?.lines ?? []))
     : undefined;
 
   return (
@@ -106,6 +107,7 @@ export default async function QuoteEditorPage({ params, searchParams }: { params
           initialRemoved={initialRemoved}
           delivery={delivery}
           deliverySettingsHref={`/app/${account.slug}/setup/company#delivery`}
+          initialPrices={from && cv ? Object.fromEntries(Object.entries(customPricesOf(current?.lines ?? [])).map(([k, m]) => [k, minorToField(m, cv.currency)])) : undefined}
         />
       )}
     </main>

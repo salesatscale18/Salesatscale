@@ -124,7 +124,9 @@ export function quoteMessageText(q: QuoteMessageInput): string {
     };
     const one = amount(ls.find((l) => l.charge === "one_time"), false);
     const rec = amount(ls.find((l) => l.charge === "recurring"), true);
-    const price = one && rec ? tr("buyer.quote.plus", { one_time: one, recurring: rec }) : one ?? rec ?? tr("buyer.quote.included");
+    // An item charged at 0 (a person priced it at 0) is "free"; one the price list does not charge is "included".
+    const free = ls.some((l) => l.priceSource !== "not_charged" && l.lineTotalMinor === 0) && ls.every((l) => l.priceSource === "not_charged" || l.lineTotalMinor === 0);
+    const price = one && rec ? tr("buyer.quote.plus", { one_time: one, recurring: rec }) : one ?? rec ?? (free ? tr("buyer.quote.free") : tr("buyer.quote.included"));
     // The chat name, first letter capitalised as on the quote card (lib/agent/quote-card.ts).
     const name = capFirst(first.name);
     // Every line shows its quantity, 1 included, as on the quote card; a single service still leaves out its code.

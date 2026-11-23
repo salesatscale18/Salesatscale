@@ -22,6 +22,7 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "lead.market_changed": "layers",
   "quote.created": "file-text",
   "quote.versioned": "file-text",
+  "quote.price_changed": "file-text",
   "quote.approved": "check-circle",
   "quote.cancelled": "file-x",
   "quote.declined": "x-circle",
@@ -115,6 +116,11 @@ export function leadEventTitle(
   if (type === "voice.recording_deleted") {
     const by = (data as { by?: unknown } | null | undefined)?.by;
     return typeof by === "string" && by.trim() ? tr("lead.event.voice.recording_deleted_by", { name: by }) : tr(key);
+  }
+  if (type === "quote.price_changed") {
+    // The person's display name stored when they saved the version (never an email).
+    const by = (data as { by?: unknown } | null | undefined)?.by;
+    return typeof by === "string" && by.trim() ? tr("lead.event.quote.price_changed_by", { name: by }) : tr(key);
   }
   if (!SMS_WITH_KIND.has(type)) return tr(key);
   const kind = (data as { kind?: unknown } | null | undefined)?.kind;

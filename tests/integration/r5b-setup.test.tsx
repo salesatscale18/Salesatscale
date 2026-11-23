@@ -268,7 +268,7 @@ describe("pages (demo account)", () => {
     const [he] = await db.select().from(conversations).where(and(eq(conversations.accountId, account.id), eq(conversations.isTest, true), eq(conversations.language, "he")));
     const html = await render(TestLabPage, { account: slug }, { c: he.id });
     save("r5b-lab-he", html);
-    expect(html).toMatch(/class="sas-msg__bubble" lang="he" dir="rtl"><div dir="auto" data-msg-dir="">/);
+    expect(html).toMatch(/class="sas-msg__bubble" lang="he" dir="auto"><div dir="auto" data-msg-dir="">/);
     const started = html.match(/<time dateTime="([^"]+)"[^>]*data-chat-started="">/)?.[1];
     expect(started).toBeTruthy();
     expect(new Date(started!).getTime()).toBeLessThan(he.createdAt.getTime());

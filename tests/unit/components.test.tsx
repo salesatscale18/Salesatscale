@@ -19,9 +19,9 @@ describe("design system components", () => {
     expect(html(<StatusPill object="lead" state="new" />)).toMatch(/class="sas-pill"/);
   });
 
-  it("sets dir and lang on a Hebrew bubble only", () => {
+  it("a Hebrew bubble carries lang and dir=\"auto\" (its text finds its direction), the row has no dir", () => {
     const out = html(<ChatMessage actor="buyer" who="Rina" locale="he">שלום</ChatMessage>);
-    expect(out).toMatch(/class="sas-msg__bubble" lang="he" dir="rtl"/);
+    expect(out).toMatch(/class="sas-msg__bubble" lang="he" dir="auto"/);
     expect(out).not.toMatch(/class="sas-msg sas-msg--buyer"[^>]*dir=/);
   });
 

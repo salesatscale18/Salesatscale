@@ -66,6 +66,8 @@ export type EngineLine = {
   /** "not_charged": the entry charges nothing for this item (shown as included, total 0). */
   priceSource: "list" | "tier" | "custom" | "not_charged";
   lineTotalMinor: number | null;
+  /** A person's price (priceSource "custom"): the list or tier price the line would have had (null: the list has none). */
+  listUnitPriceMinor?: number | null;
   /** Added by an "Add automatically with" rule. */
   autoAdded: boolean;
   /** False for auto-added lines the buyer cannot remove. */
@@ -116,6 +118,8 @@ export type EngineInput = {
   discountBp: number;
   maxDiscountBp: number;
   autoAdd?: AutoAddRule[];
+  /** A person's prices for lines an auto-add rule adds, by SKU (as on request lines). */
+  autoCustoms?: Record<string, Pick<EngineRequestLine, "customOneTimeMinor" | "customRecurringMinor">>;
   /** SKUs the buyer removed from an earlier version of the quote. */
   removedByBuyer?: string[];
 };
@@ -136,7 +140,8 @@ export function priceWithList(input: EngineInput): EngineResult {
   const lines: EngineLine[] = [];
 
   const skipped = new Set<string>();
-  for (const l of auto.lines as EngineRequestLine[]) {
+  for (const req of auto.lines as EngineRequestLine[]) {
+    const l: EngineRequestLine = autoBySku.has(req.sku) && input.autoCustoms?.[req.sku] ? { ...req, ...input.autoCustoms[req.sku] } : req;
     const item = itemBySku.get(l.sku);
     // An auto-add SKU that is not sold here (not in this price list, inactive or
     // gone from the catalog) is simply not added.
@@ -177,9 +182,11 @@ export function priceWithList(input: EngineInput): EngineResult {
     for (const p of charged) {
       let unitPriceMinor: number | null;
       let priceSource: EngineLine["priceSource"];
+      let listUnitPriceMinor: number | null | undefined;
       if (p.custom !== undefined) {
         unitPriceMinor = p.custom;
         priceSource = "custom";
+        listUnitPriceMinor = unitPriceFor({ priceMinor: p.price, volumeTiers: p.tiers }, l.qty).priceMinor;
       } else {
         const u = unitPriceFor({ priceMinor: p.price, volumeTiers: p.tiers }, l.qty);
         unitPriceMinor = u.priceMinor;
@@ -197,6 +204,7 @@ export function priceWithList(input: EngineInput): EngineResult {
         unitPriceMinor,
         priceSource,
         lineTotalMinor: unitPriceMinor === null ? null : unitPriceMinor * l.qty,
+        ...(listUnitPriceMinor !== undefined ? { listUnitPriceMinor } : {}),
       });
     }
   }

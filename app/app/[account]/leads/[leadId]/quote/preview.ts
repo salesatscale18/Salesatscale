@@ -15,6 +15,8 @@ import { t, type MessageKey } from "@/lib/i18n";
 export type PreviewLine = {
   sku: string; name: string; qty: number; charge: Charge; period: "month" | "year" | null;
   unitPriceMinor: number | null; lineTotalMinor: number | null; priceSource: "list" | "tier" | "custom" | "not_charged"; autoAdded: boolean;
+  /** A person's price (priceSource "custom"): the list or tier price it replaces (null: the list has none). */
+  listUnitPriceMinor?: number | null;
   /** False for an auto-added line the buyer cannot remove. */
   removable: boolean;
   /** For an auto-added line the buyer cannot remove: the quoted items it comes with ("Required with …"). */
@@ -66,9 +68,11 @@ export function refusalMessages(slug: string, r: QuoteRefusal): { messages: stri
  */
 export async function buildPreview(
   db: Db, account: { id: string; slug: string }, leadId: string, input: QuoteInput, fromQuote?: string,
+  /** A person's unit prices per charge ("SKU:one_time" / "SKU:recurring"), a new version only. */
+  customs?: Record<string, number>,
 ): Promise<QuotePreview> {
   if (input.lines.length === 0) return { status: "empty" };
-  const r = await previewQuote(db, account.id, leadId, input, fromQuote);
+  const r = await previewQuote(db, account.id, leadId, input, fromQuote, customs);
   if (!r.ok) return { status: "errors", ...refusalMessages(account.slug, r) };
   const { priced, fit, context } = r;
   const nameOf = (sku: string) => context.catalog.items.find((i) => i.sku === sku)?.name ?? sku;
@@ -90,6 +94,7 @@ export async function buildPreview(
     lines: priced.lines.map((l) => ({
       sku: l.sku, name: l.name, qty: l.qty, charge: l.charge, period: l.period,
       unitPriceMinor: l.unitPriceMinor, lineTotalMinor: l.lineTotalMinor, priceSource: l.priceSource, autoAdded: l.autoAdded,
+      ...(l.listUnitPriceMinor !== undefined ? { listUnitPriceMinor: l.listUnitPriceMinor } : {}),
       removable: l.removable, ...(l.autoAdded && !l.removable ? { requiredWith: requiredWith(l.sku) } : {}),
       ...(l.autoAdded && perSite.has(l.sku) ? { perCount: { qty: l.qty, unit: "site" } } : {}),
     })),

@@ -3950,5 +3950,17 @@
   "quote.exception.many": "This quote uses these exceptions. They are not in the prices yet: edit the lines before approving.",
   "quote.exception.edit_lines": "Edit lines",
   "quote.exception.confirm": "Approve without changing the prices?",
-  "quote.exception.confirm_yes": "Confirm"
+  "quote.exception.confirm_yes": "Confirm",
+  "lead.event.quote.price_changed": "Price changed",
+  "lead.event.quote.price_changed_by": "Price changed by {name}",
+  "quote.editor.price_of": "Unit price of {name}, {charge}",
+  "quote.editor.list_price": "List price {price}",
+  "quote.editor.reset_price": "Reset",
+  "quote.editor.reset_price_of": "Reset the price of {name} to the list price",
+  "quote.editor.price_invalid": "The price for {sku} must be a number of 0 or more, up to {max}.",
+  "orders.detail.exception_applied": "Exception applied: {text}",
+  "orders.detail.price_changed_by": "Price changed by {name}",
+  "buyer.qcard.free": "Free",
+  "buyer.free": "Free",
+  "buyer.quote.free": "free"
 }
