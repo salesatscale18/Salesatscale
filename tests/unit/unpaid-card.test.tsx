@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
-import { ReminderWording, SignedNotPaidCard, unpaidValues } from "@/app/app/[account]/setup/playbook/after-order";
+import { ReminderWording, shownUnpaidErrors, SignedNotPaidCard, touchFrom, unpaidValues } from "@/app/app/[account]/setup/playbook/after-order";
 import { sameUnpaidSettings, UNPAID_DEFAULTS, type UnpaidReminderSettings } from "@/lib/orders/unpaid-reminders";
 
 const card = (draft: UnpaidReminderSettings, live: UnpaidReminderSettings) =>
@@ -26,5 +26,34 @@ describe("Signed, not paid yet card", () => {
     expect(html).not.toMatch(/<(input|textarea|select)\b/);
     expect(html).toContain("Still open, [first name]. Is anything holding up the payment?");
     expect(html).toMatch(/data-testid="unpaid-wording-bank">If a bank transfer is easier, you can choose it on the payment page\. <i>\(only when bank transfer is offered\)<\/i>/);
+  });
+});
+
+describe("validation when a field loses focus", () => {
+  const rows = (first: string, second: string, team: string, secondOn = true) => ({
+    first: { days: first, on: true }, second: { days: second, on: secondOn }, team: { days: team, on: true },
+  });
+  it("shows the browser's check for fields left, the last save's errors for the others", () => {
+    expect(shownUnpaidErrors(rows("6", "5", "7"), new Set(), {})).toEqual({});
+    // Leaving "First reminder" checks it and the later steps: the second is now before it.
+    const touched = touchFrom(new Set(), "first");
+    expect([...touched]).toEqual(["first", "second", "team"]);
+    expect(shownUnpaidErrors(rows("6", "5", "7"), touched, {})).toEqual({ second: "Must be after the first reminder." });
+    expect(shownUnpaidErrors(rows("2", "5", "7"), touched, {})).toEqual({});
+    // Tell your team against the last ACTIVE reminder (the second is off).
+    expect(shownUnpaidErrors(rows("4", "5", "3", false), touchFrom(new Set(), "team"), {})).toEqual({ team: "Must be after the first reminder." });
+    expect(shownUnpaidErrors(rows("2", "8", "6"), touchFrom(new Set(), "team"), {})).toEqual({ team: "Must be after the second reminder." });
+    expect(shownUnpaidErrors(rows("0", "5", "7"), touchFrom(new Set(), "first"), {})).toEqual({ first: "Choose a number from 1 to 60." });
+    // Untouched fields keep the server's answer.
+    expect(shownUnpaidErrors(rows("2", "5", "7"), new Set(), { "unpaid.second.days": "Must be after the first reminder." })).toEqual({ second: "Must be after the first reminder." });
+    expect(touchFrom(new Set(), "second").has("first")).toBe(false);
+  });
+});
+
+describe("Reminder wording card (no green)", () => {
+  it("uses neutral bullets, not green ticks", () => {
+    const html = renderToStaticMarkup(<ReminderWording />);
+    expect((html.match(/pb-unpaid__bullet/g) ?? []).length).toBe(3);
+    expect(html).not.toContain("lucide-check ");
   });
 });

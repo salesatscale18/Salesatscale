@@ -244,8 +244,8 @@
   "buyer.opener.intro.male": "היי {name}, כאן {agent}, העוזר האוטומטי של {company}.",
   "buyer.sim.opener.female": "היי {name}, כאן {agent}, העוזרת האוטומטית של {company}. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?",
   "buyer.sim.opener.male": "היי {name}, כאן {agent}, העוזר האוטומטי של {company}. ביקשת שניצור קשר. מה גרם לך לפנות אלינו היום?",
-  "buyer.sim.automated.female": "{agent} · עוזרת אוטומטית",
-  "buyer.sim.automated.male": "{agent} · עוזר אוטומטי",
+  "buyer.sim.automated.female": "{agent} · שירות אוטומטי",
+  "buyer.sim.automated.male": "{agent} · שירות אוטומטי",
   "buyer.sim.typing.female": "מקלידה…",
   "buyer.sim.typing.male": "מקליד…",
   "buyer.sim.typing_label.female": "{agent} מקלידה",
@@ -475,5 +475,6 @@
   "buyer.unpaid.first": "היי {name}, ההזמנה {order} נחתמה. השלב האחרון הוא התשלום, {amount}, כאן:",
   "buyer.unpaid.first_no_amount": "היי {name}, ההזמנה {order} נחתמה. השלב האחרון הוא התשלום, כאן:",
   "buyer.unpaid.second_bank": "ההזמנה עדיין פתוחה, {name}. משהו מעכב את התשלום? אם העברה בנקאית נוחה יותר, אפשר לבחור בה בעמוד התשלום.",
-  "buyer.unpaid.second": "ההזמנה עדיין פתוחה, {name}. משהו מעכב את התשלום?"
+  "buyer.unpaid.second": "ההזמנה עדיין פתוחה, {name}. משהו מעכב את התשלום?",
+  "buyer.sim.pay_folded": "תשלום · {order} · העדכני למטה"
 }

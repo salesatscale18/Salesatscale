@@ -1563,6 +1563,7 @@ label.st-voice__row { cursor: pointer; }
 
 /* RA2: an order form sent in the chat, in the seller's thread, as the card the buyer sees (buyer chat .c-card). */
 .sas-fcard { width: 300px; max-width: 100%; background: var(--surface-raised); border: 1px solid var(--line); border-radius: var(--radius-lg); border-start-end-radius: var(--radius-sm); overflow: hidden; }
+.sas-fcard--folded { padding: 8px 12px; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 .sas-fcard__top { display: flex; gap: 10px; align-items: center; padding: 10px; background: var(--surface); border-block-end: 1px solid var(--line); }
 .sas-fcard__logo { flex: none; width: 34px; height: 34px; border-radius: var(--radius-md); background: var(--primary); color: var(--on-primary, #fff); display: grid; place-items: center; font-weight: 700; font-size: 12px; }
 .sas-fcard__text { display: flex; flex-direction: column; min-width: 0; font-size: 13px; line-height: 18px; color: var(--ink); }

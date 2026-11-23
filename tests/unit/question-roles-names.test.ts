@@ -121,9 +121,9 @@ describe("decision 2: names in the buyer's language", () => {
       .toBe("Hi Rina, this is Maya, the automated assistant of Polar Demo. You asked about monitoring your fridges. How do you check them today?");
   });
 
-  it("chat header texts: gendered in Hebrew, the same in English", () => {
-    expect(tg("buyer.sim.automated", "female", { agent: "מאיה" }, "he")).toBe("מאיה · עוזרת אוטומטית");
-    expect(tg("buyer.sim.automated", "male", { agent: "דני" }, "he")).toBe("דני · עוזר אוטומטי");
+  it("chat header texts: one approved Hebrew role label (שירות אוטומטי) whatever the gender; typing stays gendered", () => {
+    expect(tg("buyer.sim.automated", "female", { agent: "מאיה" }, "he")).toBe("מאיה · שירות אוטומטי");
+    expect(tg("buyer.sim.automated", "male", { agent: "דני" }, "he")).toBe("דני · שירות אוטומטי");
     expect(tg("buyer.sim.automated", "neutral", { agent: "Maya" }, "he")).toBe("Maya · שירות אוטומטי");
     expect(tg("buyer.sim.typing_label", "female", { agent: "מאיה" }, "he")).toBe("מאיה מקלידה");
     expect(tg("buyer.sim.typing", "male", undefined, "he")).toBe("מקליד…");

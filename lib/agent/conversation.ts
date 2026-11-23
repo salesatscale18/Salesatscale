@@ -19,7 +19,7 @@ import type { QuoteCardView } from "./quote-card";
 import { deliverText, publicBaseUrl, statusCallbackUrl, type Delivery } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
 import { isWebChat, orderFormLinks } from "@/lib/simulator/rules";
-import { linkPreviews, type LinkPreview } from "@/lib/simulator/service";
+import { foldedPayCards, linkPreviews, type LinkPreview } from "@/lib/simulator/service";
 import { formIdFromToken } from "@/lib/orders/token";
 import { isLocale } from "@/lib/i18n";
 import { sendChatLink } from "@/lib/sms/outbound";
@@ -186,8 +186,11 @@ export type ConversationView = {
   formCards?: Record<string, SellerFormCard[]>;
 };
 
-/** An order-form link in the seller's thread: the buyer's card (seller, "Order form · Q-2041", totals) and its form. */
-export type SellerFormCard = { formId: string | null; preview: LinkPreview };
+/**
+ * An order-form link in the seller's thread: the buyer's card (seller, "Order form · Q-2041", totals) and its form.
+ * `folded`: an earlier pay card of an order with a newer one below, as the buyer's chat folds it (the one line).
+ */
+export type SellerFormCard = { formId: string | null; preview: LinkPreview; folded?: string };
 
 /** The order-form cards of a thread's messages from the seller's side (the buyer's own messages never get one). Scoped by account. */
 export async function sellerFormCards(
@@ -195,12 +198,16 @@ export async function sellerFormCards(
 ): Promise<Record<string, SellerFormCard[]>> {
   const withLinks = thread.filter(({ message: m }) => m.actor !== "buyer" && m.body.includes("/f/"));
   if (!withLinks.length) return {};
-  const previews = await linkPreviews(db, accountId, withLinks.map(({ message: m }) => m.body), language && isLocale(language) ? language : "en", now);
+  const lang = language && isLocale(language) ? language : "en";
+  const previews = await linkPreviews(db, accountId, withLinks.map(({ message: m }) => m.body), lang, now);
+  // Mirrors the buyer chat: earlier pay cards of an order fold once a newer one follows (as replaced quote cards do).
+  const folded = foldedPayCards(withLinks.map(({ message: m }) => ({ id: m.id, body: m.body })), previews, lang);
   const out: Record<string, SellerFormCard[]> = {};
   for (const { message: m } of withLinks) {
     const cards = orderFormLinks(m.body).flatMap((l) => {
       const preview = previews.get(l.url);
-      return preview ? [{ formId: formIdFromToken(l.token), preview }] : [];
+      const line = folded[`${m.id} ${l.url}`];
+      return preview ? [{ formId: formIdFromToken(l.token), preview, ...(line ? { folded: line } : {}) }] : [];
     });
     if (cards.length) out[m.id] = cards;
   }

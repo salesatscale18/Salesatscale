@@ -19,6 +19,9 @@ import { needsYou, needsYouCount } from "@/lib/overview/service";
 import { needCell } from "@/lib/leads/list-row";
 import { leadEventTitle } from "@/lib/leads/event-icons";
 import { t } from "@/lib/i18n";
+import { hashToken, tokenFor } from "@/lib/orders/token";
+import { buyerChat } from "@/lib/simulator/service";
+import { sellerFormCards } from "@/lib/agent/conversation";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown }));
@@ -94,8 +97,12 @@ describe("Signed, not paid yet", () => {
     });
     const formId = randomUUID();
     await db.insert(orderForms).values({
-      id: formId, accountId, leadId: lead.id, quoteId, quoteVersionId: qvId, tokenHash: randomUUID(), language: o.language ?? "en",
-      snapshot: { paymentMethods: { card: true, bankTransfer: o.bankTransfer ?? true } } as never,
+      id: formId, accountId, leadId: lead.id, quoteId, quoteVersionId: qvId, tokenHash: hashToken(tokenFor(formId)), language: o.language ?? "en",
+      // Only what the runner and the chat cards read of the frozen form.
+      snapshot: {
+        paymentMethods: { card: true, bankTransfer: o.bankTransfer ?? true }, quote: { number: 1002, version: 1 }, currency: "ILS",
+        oneTime: { totalMinor: 385_860 }, recurring: { totalMinor: 0 }, seller: { tradeName: "Polar Demo" },
+      } as never,
       expiresAt: new Date(signedAt.getTime() + 7 * DAY), createdBy: "agent", status: "signed", signedAt,
     });
     const orderId = randomUUID();
@@ -317,7 +324,7 @@ describe("Signed, not paid yet", () => {
       expect(items).toHaveLength(1);
       expect(items[0]).toMatchObject({ kind: "order_unpaid", leadId: o.leadId, orderId: o.orderId, quoteId: o.quoteId, amountMinor: 385_860, currency: "ILS", remindersSent: 2 });
       const cell = needCell(items[0], { tradeName: "Polar Demo", timezone: "Asia/Jerusalem", now });
-      expect(cell.title).toBe("Signed, not paid for 7 days");
+      expect(cell.title).toBe("Signed 7 days ago, not paid");
       expect(cell.detail).toMatch(/^PD-\d+ · ₪3,858\.60 · 2 reminders sent$/);
       expect(await needsYouCount(db, acc.account.id, now)).toBe((await needsYou(db, acc.account.id, now)).length);
 
@@ -333,6 +340,45 @@ describe("Signed, not paid yet", () => {
       await run(at(7));
       expect((await needsYou(db, b.account.id, at(7.1))).filter((i) => i.kind === "order_unpaid")).toHaveLength(0);
       expect((await needsYou(db, a.account.id, at(7.1))).filter((i) => i.kind === "order_unpaid")).toHaveLength(1);
+    });
+  });
+
+  describe("stacked pay cards", () => {
+    it("the buyer chat folds the earlier pay card once the second reminder posts a newer one; the seller thread mirrors it", async () => {
+      const acc = await mkAccount();
+      const o = await mkOrder(acc);
+      const [lead] = await db.select().from(leads).where(eq(leads.id, o.leadId));
+      const ctx = { lead, account: acc.account, brandColor: "#0f6b5a" };
+      await run(at(2));
+      const first = await buyerChat(db, ctx, { now: at(2.1) });
+      const card1 = first.messages.find((m) => m.kind === "pay_reminder")!;
+      expect(card1.previews).toMatchObject([{ pay: true, ref: "Q-1002 v1", oneTime: "₪3,858.60" }]);
+      expect(first.foldedPay).toEqual({});
+
+      await run(at(5));
+      const second = await buyerChat(db, ctx, { now: at(5.1) });
+      const [m1, m2] = second.messages.filter((m) => m.kind === "pay_reminder");
+      const url = m1.previews[0].url;
+      expect(m2.previews[0].url).toBe(url);
+      // Only the earlier card folds: "Payment · Q-1002 · latest is below"; the newest keeps the amount and "Pay now".
+      expect(second.foldedPay).toEqual({ [`${m1.id} ${url}`]: "Payment · Q-1002 · latest is below" });
+      // A poll for newer messages still carries every fold (the earlier card folds in place).
+      expect((await buyerChat(db, ctx, { after: m2.id, now: at(5.2) })).foldedPay).toEqual(second.foldedPay);
+
+      // The chat's current language decides the folded line's words.
+      await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, o.conversationId));
+      expect(Object.values((await buyerChat(db, ctx, { now: at(5.3) })).foldedPay ?? {})).toEqual(["תשלום · Q-1002 · העדכני למטה"]);
+      await db.update(conversations).set({ language: "en" }).where(eq(conversations.id, o.conversationId));
+
+      // The seller's thread mirrors the fold (as replaced quote cards).
+      const thread = (await reminders(o.conversationId)).map((m) => ({ message: m }));
+      const seller = await sellerFormCards(db, o.accountId, thread, "en", at(5.3));
+      expect(seller[m1.id][0].folded).toBe("Payment · Q-1002 · latest is below");
+      expect(seller[m2.id][0].folded).toBeUndefined();
+
+      // Paid: no pay cards, nothing folded (the existing paid behaviour).
+      await db.update(orders).set({ paymentStatus: "paid", paidAt: at(6) }).where(eq(orders.id, o.orderId));
+      expect((await buyerChat(db, ctx, { now: at(6.1) })).foldedPay).toEqual({});
     });
   });
 });

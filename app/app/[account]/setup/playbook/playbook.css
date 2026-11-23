@@ -144,7 +144,8 @@
 .pb-unpaid__hint, .pb-unpaid__line { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 18px; }
 .pb-unpaid__hint { padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface); color: var(--ink-muted); }
 .pb-unpaid__hint svg, .pb-unpaid__line svg { flex: none; margin-top: 1px; }
-.pb-unpaid__line svg { color: var(--success); }
+/* Neutral bullets: green is only for wins and verified facts. */
+.pb-unpaid__bullet { flex: none; width: 6px; height: 6px; margin: 6px 4px 0; border-radius: 999px; background: var(--ink-muted); }
 .pb-unpaid--wording { margin-top: 12px; }
 .pb-unpaid__foot { display: flex; flex-direction: column; gap: 8px; }
 .pb-unpaid__pending, .pb-unpaid__fixed { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; line-height: 18px; font-weight: 600; }

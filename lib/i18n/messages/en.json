@@ -3989,8 +3989,8 @@
   "playbook.unpaid.wording.name": "[first name]",
   "playbook.unpaid.wording.order": "[order]",
   "playbook.unpaid.wording.amount": "[amount]",
-  "leads.need.order_unpaid": "Signed, not paid for {days} days",
-  "leads.need.order_unpaid_one": "Signed, not paid for 1 day",
+  "leads.need.order_unpaid": "Signed {days} days ago, not paid",
+  "leads.need.order_unpaid_one": "Signed 1 day ago, not paid",
   "leads.need.order_unpaid.reminders": "{count} reminders sent",
   "leads.need.order_unpaid.reminders_one": "1 reminder sent",
   "lead.event.order.pay_reminder": "Payment reminder sent",
@@ -4001,5 +4001,6 @@
   "conv.sms.kind.pay_reminder": "Payment reminder",
   "playbook.unpaid.applies_after_publish": "Applies after you publish",
   "playbook.unpaid.wording_fixed": "Fixed wording for now",
-  "playbook.unpaid.wording.bank_note": "only when bank transfer is offered"
+  "playbook.unpaid.wording.bank_note": "only when bank transfer is offered",
+  "buyer.sim.pay_folded": "Payment · {order} · latest is below"
 }

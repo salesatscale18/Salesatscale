@@ -520,6 +520,13 @@ export type BuyerChat = {
   /** "Talk to us" (lib/voice/buyer.ts): set by the page and the messages route, which check the gates. */
   voice?: BuyerVoiceState;
   /**
+   * Earlier pay cards of an order that a newer pay card for the same order replaced (a payment reminder posts
+   * the card again): "<message id> <link>" → the one folded line ("Payment · Q-1002 · latest is below"), in the
+   * chat's current language. Every poll carries all of them, so an earlier card folds in place. The buyer page
+   * uses the keys and builds the line from its own card labels (the polled language), like every other card.
+   */
+  foldedPay?: Record<string, string>;
+  /**
    * The chat's current language: the latest conversation's (the language of the buyer's latest message,
    * lib/conversations/turn-language.ts), else the lead's. The page's cards follow it as it changes.
    */
@@ -543,6 +550,25 @@ export async function linkPreviews(db: Db, accountId: string, bodies: string[], 
       pay: view.state === "signed" && !!view.order && view.order.paymentStatus !== "paid" && view.order.paymentStatus !== "refunded",
     });
   }));
+  return out;
+}
+
+/**
+ * Earlier pay cards that a newer pay card for the same order follows (same link: one link per signed form, so per
+ * order), keyed "<message id> <link>", with the folded line in `lang`. Cards that are not pay cards (an unsigned
+ * form, a paid order) are never folded: they keep their own state. Pure.
+ */
+export function foldedPayCards(linkRows: readonly { id: string; body: string }[], previews: ReadonlyMap<string, LinkPreview>, lang: Locale): Record<string, string> {
+  const latest = new Map<string, string>();
+  for (const r of linkRows) for (const l of orderFormLinks(r.body)) if (previews.get(l.url)?.pay) latest.set(l.url, r.id);
+  const out: Record<string, string> = {};
+  for (const r of linkRows) {
+    for (const l of orderFormLinks(r.body)) {
+      const p = previews.get(l.url);
+      if (!p?.pay || latest.get(l.url) === r.id) continue;
+      out[`${r.id} ${l.url}`] = t("buyer.sim.pay_folded", { order: p.ref.replace(/ v1$/, "") }, lang);
+    }
+  }
   return out;
 }
 
@@ -601,8 +627,13 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   await db.update(messages).set({ deliveryStatus: "read" })
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"]), eq(messages.deliveryStatus, "delivered")));
 
+  // Every order-form link from the seller's side in the whole chat (not only this poll's), oldest first: the pay
+  // cards that a newer one for the same order follows are folded.
+  const linkRows = await db.select({ id: messages.id, body: messages.body }).from(messages)
+    .where(and(scope, inArray(messages.actor, ["agent", "human"]), sql`${messages.body} like ${"%/f/%"}`))
+    .orderBy(asc(messages.createdAt), asc(messages.id));
   const [previews, calls, cards, callRows] = await Promise.all([
-    linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
+    linkPreviews(db, accountId, [...rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), ...linkRows.map((r) => r.body)], lang, now),
     db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result, messageId: toolCalls.messageId }).from(toolCalls)
       .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL, "request_callback"]))),
     // Every card's fixed text and direction follow the chat's current language, on every poll (earlier cards too).
@@ -622,6 +653,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const placed = placeBookingCards(rows, ({ m }) => ({ id: m.id, actor: m.actor, isCard: kinds.get(m.id) === "booking", offersCard: offers.has(m.id) }));
   return {
     language: lang,
+    foldedPay: foldedPayCards(linkRows, previews, lang),
     typing: !ended && agentTyping(latest, last ?? null, ctx.account.status, now),
     closedAt,
     ended,

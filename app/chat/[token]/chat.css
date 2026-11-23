@@ -63,6 +63,9 @@
 @media (prefers-reduced-motion: reduce) { .c-dots i { animation: none; } }
 
 .c-card { width: 100%; min-width: 240px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; border-start-start-radius: 4px; overflow: hidden; }
+/* An earlier pay card of an order with a newer one below it: one muted line, no amount, no button. */
+.c-card--folded { padding: 8px 12px; }
+.c-card__folded { display: block; font-size: 13px; line-height: 18px; color: var(--muted); }
 .c-card__top { display: flex; gap: 10px; align-items: center; padding: 10px; background: var(--surface); border-block-end: 1px solid var(--line); }
 .c-card__logo { width: 34px; height: 34px; border-radius: 8px; background: var(--brand); color: var(--brand-on, #fff); display: grid; place-items: center; font-weight: 700; font-size: 12px; flex: none; }
 .c-card__text { display: flex; flex-direction: column; min-width: 0; }

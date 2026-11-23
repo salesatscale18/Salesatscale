@@ -97,6 +97,16 @@ function Card({ p, s, initials, dir }: { p: LinkPreview; s: CardStrings; initial
   );
 }
 
+/** An earlier pay card folded to one line ("Payment · Q-1002 · latest is below"): no amount, no button. */
+function FoldedPay({ p, template, dir }: { p: LinkPreview; template: string; dir: "ltr" | "rtl" }) {
+  const [before, after = ""] = template.split("{order}");
+  return (
+    <div className="c-card c-card--folded" dir={dir} data-pay-folded="">
+      <span className="c-card__folded">{before}<Num>{p.ref.replace(/ v1$/, "")}</Num>{after}</span>
+    </div>
+  );
+}
+
 /** The calendar day in the market's time zone (R5-3), so the date separators match the times. */
 const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-CA", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(d);
 
@@ -148,6 +158,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const [calls, setCalls] = useState(initial.calls ?? []);
   // The chat's current language (the buyer's latest message): the booking and talk-now cards follow it as it changes.
   const [cardLang, setCardLang] = useState<string>(initial.language ?? lang);
+  const [foldedPay, setFoldedPay] = useState<Record<string, string>>(initial.foldedPay ?? {});
   // "Switch to voice" (live voice): the server's gates, refreshed on every poll (with the reason on a simulated chat or for the seller's signed-in staff).
   const [voiceState, setVoiceState] = useState<BuyerVoiceState>(initial.voice ?? { available: false });
   // The buyer's first switch in this conversation: the bar says what they say appears as text.
@@ -179,6 +190,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       formLabel: ct("buyer.sim.form_label"), payLabel: ct("buyer.sim.pay_label"), todayWord: ct("buyer.sim.today_word"), perMonth: ct("buyer.sim.per_month"),
       openForm: ct("buyer.sim.open_form"), payNow: ct("buyer.sim.pay_now"), replyYes: ct("buyer.qcard.reply_yes"), replyChange: ct("buyer.qcard.reply_change"),
       replies: ct("buyer.qcard.replies"),
+      // "Payment · {order} · latest is below": an earlier pay card of an order folded under a newer one.
+      payFolded: ct("buyer.sim.pay_folded"),
     };
   }, [cardLang]);
 
@@ -196,6 +209,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       // Every card comes back on every poll: an approved, replaced or expired quote changes in place.
       setCards(data.cards ?? {});
       setCalls(data.calls ?? []);
+      // Earlier pay cards fold once a newer one for the same order is posted (every poll carries them all).
+      setFoldedPay(data.foldedPay ?? {});
       if (data.language) setCardLang(data.language);
       if (data.voice) setVoiceState(data.voice);
       const polledReach = (data as BuyerChat & { reach?: ChatReach }).reach;
@@ -469,7 +484,13 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
             </span>
           </div>
         )}
-        {m.previews.map((p) => <Card key={p.url} p={p} s={cardStrings} initials={initials} dir={cardDir} />)}
+        {m.previews.map((p) => (
+          // An earlier pay card of an order with a newer one below (the server marks it): one line, no amount, no button,
+          // in the chat's current language and direction like every other card.
+          foldedPay[`${m.id} ${p.url}`] !== undefined
+            ? <FoldedPay key={p.url} p={p} template={cardStrings.payFolded} dir={cardDir} />
+            : <Card key={p.url} p={p} s={cardStrings} initials={initials} dir={cardDir} />
+        ))}
       </div>,
     );
     if (m.id === repliesAfter) {

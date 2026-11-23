@@ -52,7 +52,7 @@ export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
       return { icon, title: t(`leads.need.${it.kind}`), detail: `${label} · ${formatMoney(it.amountMinor, it.currency)}`, detailId: label };
     }
     case "order_unpaid": {
-      // "Signed, not paid for 7 days" · "PD-10002 · ₪3,858.60 · 2 reminders sent" (board UnpaidReminders).
+      // "Signed 7 days ago, not paid" · "PD-10002 · ₪3,858.60 · 2 reminders sent" (board UnpaidReminders, UX polish 23 Nov).
       const label = orderLabel(ctx.tradeName, it.orderNumber);
       const days = Math.max(1, Math.floor((ctx.now.getTime() - it.signedAt.getTime()) / 86_400_000));
       const sent = t(it.remindersSent === 1 ? "leads.need.order_unpaid.reminders_one" : "leads.need.order_unpaid.reminders", { count: it.remindersSent });

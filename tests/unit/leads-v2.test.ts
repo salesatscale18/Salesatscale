@@ -36,7 +36,7 @@ describe("Needs you groups (L-2)", () => {
       "bank_transfer", "call_finished", "follow_up_failed", "form_expiring", "form_unsigned",
       "human_handling", "order_unpaid", "payment_failed", "quote_approval", "team_question",
     ]);
-    // "Signed, not paid for {n} days" (board UnpaidReminders) is a payment item.
+    // "Signed {n} days ago, not paid" (board UnpaidReminders) is a payment item.
     expect(NEEDS_GROUP_OF.order_unpaid).toBe("payments");
     expect(NEEDS_GROUP_OF.call_finished).toBe("calls");
     expect(NEEDS_GROUP_OF.payment_failed).toBe("payments");
