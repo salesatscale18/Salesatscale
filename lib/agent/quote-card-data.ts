@@ -18,8 +18,13 @@ import type { ApprovalReason } from "@/db/schema";
 import { APP_MESSAGE_CALL } from "./app-message";
 import { buildQuoteCards, quoteCardLinks, type CardData, type CardLine, type CardVersion, type QuoteCardView } from "./quote-card";
 
+/**
+ * `language`: the language of every card's fixed text and direction (the buyer page: the conversation's current
+ * language, lib/conversations/turn-language.ts). Without it each card is in its own message's language (seller threads).
+ * Seller-entered content (headline, product names) is shown as stored either way.
+ */
 export async function loadQuoteCards(
-  db: Db, accountId: string, conversationIds: string[], opts: { audience: "buyer" | "seller"; now?: Date },
+  db: Db, accountId: string, conversationIds: string[], opts: { audience: "buyer" | "seller"; now?: Date; language?: string | null },
 ): Promise<Record<string, QuoteCardView>> {
   if (conversationIds.length === 0) return {};
   const calls = await db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result, conversationId: toolCalls.conversationId })
@@ -33,7 +38,7 @@ export async function loadQuoteCards(
     .where(and(eq(messages.accountId, accountId), inArray(messages.id, links.map((l) => l.messageId))))
     .orderBy(asc(messages.createdAt), asc(messages.id));
   const linkOf = new Map(links.map((l) => [l.messageId, l]));
-  const inputs = msgs.map((m) => ({ link: { ...linkOf.get(m.id)!, conversationId: m.conversationId }, language: m.language }));
+  const inputs = msgs.map((m) => ({ link: { ...linkOf.get(m.id)!, conversationId: m.conversationId }, language: opts.language ?? m.language }));
   if (inputs.length === 0) return {};
 
   const ids = [...new Set(inputs.map((i) => i.link.quoteId).filter((x): x is string => !!x))];

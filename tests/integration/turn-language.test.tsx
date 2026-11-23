@@ -6,7 +6,7 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { and, asc, eq } from "drizzle-orm";
-import { conversations, followUps, leads, messages, quotes, sellerAccounts, users, type SellerAccount, type User } from "@/db/schema";
+import { conversations, followUps, leads, messages, quotes, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -37,6 +37,7 @@ const { scheduleFollowUp } = await import("@/lib/follow-ups/schedule");
 const { runDueFollowUps } = await import("@/lib/follow-ups/scheduler");
 const { currentBuyerLanguage } = await import("@/lib/conversations/current-language");
 
+const HE_UPDATED = "ההצעה המעודכנת שלך";
 const HELD_EN = "Polar Demo is reviewing this quote. It will appear here when it's ready, and nothing is charged before you sign.";
 const REPLY_LINE = (lang: string) => `\nReply language: ${lang} (the language of the buyer's latest message). Write your reply and any text you pass to tools in it.`;
 
@@ -180,6 +181,49 @@ describe("Turn language: the buyer's latest message decides", () => {
     const [m] = await db.select().from(messages).where(eq(messages.id, f.sentMessageId!));
     expect(m.language).toBe("en");
     expect(m.body).toMatch(/Is now a good time\?$/);
+  });
+
+  it("buyer page: earlier English quote cards (sent and replaced) follow the chat's current language; the stored headline stays", async () => {
+    const made = await createSimulatedBuyer(db, { userId: me.id, actingAs: false }, acc, { fullName: "Rina Cohen", company: "Rina's Kitchen", language: "en", country: "IL" });
+    if (!made.ok) throw new Error("buyer");
+    const started = await startSimulatorConversation(db, { userId: me.id, actingAs: false }, acc.id, made.lead.id);
+    if (!started.ok) throw new Error(started.reason);
+    const draft = await ensureDraftVersion(db, acc.id);
+    const ctx = (callId: string) => ({ db, accountId: acc.id, conversationId: started.conversationId, leadId: made.lead.id, playbook: draft.playbook, currency: "ILS", callId, language: "en" });
+    await runTool("update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }], next_step: null, objection: null }, ctx(`u${++seq}`));
+    const quote = async (qty: number) => {
+      const input = { lines: [{ sku: "SNS-200", qty }, { sku: "GW-10", qty: 1 }], discount_percent: 0, sites: 1, remove_auto_added: null, exception: null, headline: "Cold-chain kit for Rina's Kitchen" };
+      const r = await runTool("create_quote", input, ctx(`q${++seq}`));
+      await db.insert(toolCalls).values({ accountId: acc.id, conversationId: started.conversationId, sequence: seq, name: "create_quote", input, result: r.result, outcome: r.outcome });
+      return String(r.result.quote_message_id);
+    };
+    const first = await quote(2);
+    await new Promise((r) => setTimeout(r, 3));
+    const second = await quote(3);
+    const chatCtx = (await resolveChatToken(db, made.token))!;
+
+    const en = await buyerChat(db, chatCtx);
+    expect(en.language).toBe("en");
+    expect(en.cards[first]).toMatchObject({ state: "replaced", lang: "en", dir: "ltr" });
+    expect(en.cards[second]).toMatchObject({ state: "sent", lang: "en", dir: "ltr", title: "Your updated quote", headline: "Cold-chain kit for Rina's Kitchen" });
+
+    // The buyer went on in Hebrew: the next poll gives every card Hebrew labels and rtl; the stored messages stay as written.
+    await db.update(conversations).set({ language: "he" }).where(eq(conversations.id, started.conversationId));
+    const he = await buyerChat(db, chatCtx);
+    expect(he.language).toBe("he");
+    expect(he.cards[second]).toMatchObject({ state: "sent", lang: "he", dir: "rtl", title: HE_UPDATED, headline: "Cold-chain kit for Rina's Kitchen" });
+    expect(he.cards[first]).toMatchObject({ state: "replaced", lang: "he", dir: "rtl" });
+    expect(JSON.stringify(he.cards[first])).toContain("למטה");
+    expect(JSON.stringify(he.cards[first])).not.toContain("below");
+    const [stored] = await db.select().from(messages).where(eq(messages.id, second));
+    expect(stored.language).toBe("en");
+
+    const page = renderToStaticMarkup(await BuyerChatPage({ params: Promise.resolve({ token: made.token }) }));
+    expect(page).toContain('class="c-root" lang="he"');
+    expect(page).toMatch(/class="sas-qc sas-qc--sent[^"]*" dir="rtl" lang="he"/);
+    expect(page).toContain(HE_UPDATED);
+    expect(page).toContain("Cold-chain kit for Rina&#x27;s Kitchen");
+    expect(page).not.toContain("Your updated quote");
   });
 
   it("app texts outside a turn (SMS, order forms) read the conversation's current language, else the lead's", async () => {
