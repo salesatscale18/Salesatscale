@@ -21,13 +21,14 @@
  * in-limit offer when there is one (O1 part 5). "booking" is the booking card
  * the agent's request_callback posts (lib/team-calls; web chats show the card,
  * the text is the fallback), and "booked" the line after the buyer books or
- * cancels the call on it. Pure: safe in client components.
+ * cancels the call on it. "pay_reminder" is a "Signed, not paid yet" reminder with the pay card (the signed
+ * form's link in the same message; lib/orders/unpaid-run.ts). Pure: safe in client components.
  */
-export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up" | "callback" | "team_answer" | "quote_declined" | "booking" | "booked";
+export type AppMessageKind = "quote" | "quote_held" | "quote_close" | "quote_offer" | "follow_up" | "callback" | "team_answer" | "quote_declined" | "booking" | "booked" | "pay_reminder";
 
 /** The tool_calls name of a message the app wrote outside a model turn. */
 export const APP_MESSAGE_CALL = "app_message";
-const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback", "team_answer", "quote_declined", "booking", "booked"];
+const APP_KINDS: readonly string[] = ["quote", "quote_close", "quote_offer", "follow_up", "callback", "team_answer", "quote_declined", "booking", "booked", "pay_reminder"];
 
 /**
  * Text a team action sent (UX, O7): the callback time the seller confirmed, changed or cancelled,
@@ -38,7 +39,7 @@ export const isTeamText = (k: AppMessageKind | undefined) => k === "callback" ||
 
 /** Plain text the app wrote (not a quote card): shown as "Sent by the app" in seller views. */
 export const isAppText = (k: AppMessageKind | undefined) =>
-  k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback" || k === "team_answer" || k === "quote_declined" || k === "booking" || k === "booked";
+  k === "quote_close" || k === "quote_offer" || k === "follow_up" || k === "callback" || k === "team_answer" || k === "quote_declined" || k === "booking" || k === "booked" || k === "pay_reminder";
 
 type CallLike = { name: string; outcome: string; result: Record<string, unknown> | null | undefined };
 

@@ -16,7 +16,7 @@ export const NEEDS_GROUP_KINDS: Record<NeedsGroup, readonly NeedsYouKind[]> = {
   person: ["human_handling"],
   calls: ["call_finished"],
   questions: ["team_question"],
-  payments: ["bank_transfer", "payment_failed"],
+  payments: ["bank_transfer", "payment_failed", "order_unpaid"],
   prices: ["quote_approval"],
   forms: ["form_unsigned", "form_expiring"],
   // Not on the UX board; added last (L-2).

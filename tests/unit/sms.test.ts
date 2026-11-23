@@ -146,7 +146,8 @@ describe("SMS texts and segments", () => {
     for (const kind of SMS_KINDS) expect(smsSegments(smsText(kind, "en", vars))).toBe(1);
     for (const kind of SMS_KINDS) {
       const he = smsText(kind, "he", { ...vars, agent: "מאיה", time: "ב' 23.11 15:30" });
-      expect(smsSegments(he)).toBe(kind === "follow_up" || kind === "opener" ? 2 : 1);
+      // The payment reminder is the board's text verbatim (UnpaidReminders): 73 characters with "Polar Demo", two in Hebrew.
+      expect(smsSegments(he)).toBe(kind === "follow_up" || kind === "opener" || kind === "pay_reminder" ? 2 : 1);
     }
     expect(smsText("named_time", "en", vars)).toHaveLength(82);
     expect(smsText("chat_link", "he", vars)).toHaveLength(70);

@@ -126,3 +126,29 @@
 
 /* O1: the notice that unknown questions no longer hand off (dismissible). */
 .pb-notice { flex-wrap: wrap; align-items: center; background: var(--surface); border: 1px solid var(--line); }
+
+/* After the order › Signed, not paid yet (board UnpaidReminders): rows of icon, text, days, switch. */
+.pb-unpaid { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); overflow: hidden; min-width: 0; }
+.pb-unpaid__head { display: flex; flex-direction: column; gap: 2px; padding: 14px 16px; }
+.pb-unpaid__row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 12px 16px; border-top: 1px solid var(--line); }
+.pb-unpaid__icon { width: 32px; height: 32px; border-radius: var(--radius-md); background: var(--surface-sunken); color: var(--ink-muted); display: grid; place-items: center; }
+.pb-unpaid__text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.pb-unpaid__row[data-off] .pb-unpaid__icon, .pb-unpaid__row[data-off] .pb-unpaid__text { opacity: .55; }
+.pb-unpaid__when { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.pb-unpaid__days { display: inline-flex; align-items: center; height: 36px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); overflow: hidden; }
+.pb-unpaid__days input { width: 44px; height: 100%; border: 0; padding: 0 10px; font: inherit; font-weight: 600; color: var(--ink); background: transparent; text-align: center; }
+.pb-unpaid__days input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.pb-unpaid__days input[aria-invalid] { box-shadow: inset 0 0 0 1px var(--danger); }
+.pb-unpaid__days span { display: inline-flex; align-items: center; height: 100%; padding: 0 10px; border-inline-start: 1px solid var(--line); color: var(--ink-muted); font-size: 13px; white-space: nowrap; }
+.pb-unpaid__foot { padding: 10px 16px; border-top: 1px solid var(--line); }
+.pb-unpaid__hint, .pb-unpaid__line { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; line-height: 18px; }
+.pb-unpaid__hint { padding: 10px 12px; border-radius: var(--radius-md); background: var(--surface); color: var(--ink-muted); }
+.pb-unpaid__hint svg, .pb-unpaid__line svg { flex: none; margin-top: 1px; }
+.pb-unpaid__line svg { color: var(--success); }
+.pb-unpaid--wording { margin-top: 12px; }
+/* Phone: the days (or "Off") go under the text; the switch stays at the end of the first line. */
+@media (max-width: 600px) {
+  .pb-unpaid__row { grid-template-columns: 36px minmax(0, 1fr) auto; }
+  .pb-unpaid__when { grid-column: 2 / 3; grid-row: 2; align-items: flex-start; }
+  .pb-unpaid__row > .sas-switch { grid-column: 3; grid-row: 1; }
+}

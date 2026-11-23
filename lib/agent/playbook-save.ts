@@ -8,6 +8,7 @@ import type { Playbook } from "@/db/schema";
 import { isPlayKey, parsePlaybookRows, parsePlayRow, playbookRowsFromForm, type PlaybookErrors, type PlaybookRowsInput, type PlayRowInput } from "./playbook";
 import { ensureDraftVersion, saveDraftPlaybook } from "./service";
 import { refreshAgentNameAuto } from "./names-auto";
+import type { PlaybookWithUnpaid } from "@/lib/orders/unpaid-reminders";
 import type { LlmClient } from "./llm";
 import type { Actor } from "@/lib/accounts/audit";
 
@@ -51,12 +52,12 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   const input = playbookRowsFromForm(entries.filter(([k]) => k !== "exceptionId" && k !== "exceptionsShown"));
   const parsed = parsePlaybookRows(input);
   if (!parsed.ok) return { ok: false, errors: parsed.errors, values: input };
-  const current = (await ensureDraftVersion(db, accountId)).playbook;
+  const current: PlaybookWithUnpaid = (await ensureDraftVersion(db, accountId)).playbook;
   const stored = current.exceptions ?? [];
   const shown = entries.some(([k, v]) => k === "exceptionsShown" && v === "1");
   const kept = new Set(entries.filter(([k]) => k === "exceptionId").map(([, v]) => v));
   const exceptions = shown ? stored.filter((x) => kept.has(x.id)) : stored;
-  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, ...rest } = parsed.value;
+  const { exceptions: _x, opener, plays, agentNameLocal, agentGender, questionBudget, objectionAttempts, callRole, unpaidReminders, ...rest } = parsed.value;
   void _x;
   const keepOpener = input.opener === undefined ? current.opener : opener;
   const keepPlays = input.plays === undefined ? current.plays : plays;
@@ -72,6 +73,8 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
   const keepAttempts = input.objectionAttempts === undefined ? current.objectionAttempts : objectionAttempts;
   // Who takes calls (O6): a form without it keeps what is stored; sent empty, it goes back to the default.
   const keepRole = input.callRole === undefined ? current.callRole : callRole;
+  // "Signed, not paid yet" (After the order): likewise; a playbook that never had them reads the defaults.
+  const keepUnpaid = input.unpaidReminders === undefined ? current.unpaidReminders : unpaidReminders;
   // Automatic name versions are kept; they are stale (and remade) when the name changed (lib/agent/names-auto.ts).
   const keepAuto = current.agentNameAuto;
   await saveDraftPlaybook(db, accountId, {
@@ -85,6 +88,7 @@ export async function savePlaybookForm(db: Db, accountId: string, entries: [stri
     ...(exceptions.length ? { exceptions } : {}),
     ...(keepOpener ? { opener: keepOpener } : {}),
     ...(keepPlays ? { plays: keepPlays } : {}),
+    ...(keepUnpaid ? { unpaidReminders: keepUnpaid } : {}),
   });
   // Automatic versions for a new name or new market languages, once, on save (retrying earlier failures).
   if (opts.names !== undefined) await refreshAgentNameAuto(db, accountId, opts.names, { actor: opts.actor ?? null, retry: true });

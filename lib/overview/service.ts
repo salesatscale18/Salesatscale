@@ -4,7 +4,7 @@
  * Read-only: derived from leads, quotes, order forms, orders and lead events.
  */
 import { cache } from "react";
-import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sum } from "drizzle-orm";
+import { and, count, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, notExists, notInArray, or, sql, sum } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule";
 import { finishedCallbacks } from "@/lib/callbacks/service";
@@ -14,6 +14,7 @@ import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
 import { HIDDEN_LEAD_EVENTS } from "@/lib/leads/event-icons";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
+import { UNPAID_EVENTS, UNPAID_STATUSES } from "@/lib/orders/unpaid-reminders";
 import {
   conversations, followUps, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users,
   type ApprovalReason, type LeadEvent, type Market, type User,
@@ -32,6 +33,11 @@ export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "human_handling"; why: string | null }
   | { kind: "bank_transfer"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   | { kind: "payment_failed"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
+  /**
+   * "Signed, not paid for {n} days" (board UnpaidReminders): the playbook's "Tell your team" step flagged the order
+   * (lib/orders/unpaid-run.ts); it stays until the order is paid. `remindersSent`: reminders the buyer got.
+   */
+  | { kind: "order_unpaid"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string; signedAt: Date; remindersSent: number }
   | { kind: "form_unsigned"; quoteId: string; formId: string; quoteNumber: number; openedAt: Date }
   | { kind: "form_expiring"; quoteId: string; formId: string; quoteNumber: number; expiresAt: Date }
   | { kind: "follow_up_failed"; followUpId: string; dueAt: Date; reason: string | null }
@@ -75,6 +81,12 @@ const handedWhere = (db: Db, accountId: string) =>
   );
 const orderWhere = (accountId: string) =>
   and(eq(orders.accountId, accountId), inArray(orders.paymentStatus, ["bank_transfer_expected", "failed"]), notTest);
+/** Orders still waiting for payment that "Tell your team" flagged (the flag event names the order in data.orderId). */
+const unpaidFlagWhere = (accountId: string) =>
+  and(
+    eq(orders.accountId, accountId), inArray(orders.paymentStatus, [...UNPAID_STATUSES]), ne(quotes.status, "cancelled"), notTest,
+    eq(leadEvents.accountId, accountId), eq(leadEvents.type, UNPAID_EVENTS.flagged), sql`${leadEvents.data}->>'orderId' = ${orders.id}::text`,
+  );
 /** Open, unsigned, unexpired forms of live quotes (before the expiring / long-unsigned split). */
 const openFormWhere = (accountId: string, now: Date) =>
   and(
@@ -89,7 +101,7 @@ const openFormWhere = (accountId: string, now: Date) =>
 
 /** The "Needs you" queue for one account, newest first. Selects only the columns it shows (never the form snapshot). */
 export async function needsYou(db: Db, accountId: string, now: Date): Promise<NeedsYouItem[]> {
-  const [approvals, handed, orderRows, formRows, failedRows] = await Promise.all([
+  const [approvals, handed, orderRows, formRows, failedRows, unpaidRows] = await Promise.all([
     db
       .select({
         ...leadCols,
@@ -127,13 +139,32 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       .where(openFormWhere(accountId, now)),
     // An agreed follow-up that could not be sent (lib/follow-ups): someone should write to the buyer.
     failedFollowUps(db, accountId, now),
+    // Signed, not paid: flagged by "Tell your team" and still unpaid.
+    db
+      .select({
+        ...leadCols,
+        order: { id: orders.id, quoteId: orders.quoteId, number: orders.number, amountDueMinor: orders.amountDueMinor, currency: orders.currency, createdAt: orders.createdAt },
+        flaggedAt: leadEvents.createdAt,
+      })
+      .from(orders)
+      .innerJoin(leads, eq(leads.id, orders.leadId))
+      .innerJoin(quotes, eq(quotes.id, orders.quoteId))
+      .innerJoin(leadEvents, eq(leadEvents.leadId, orders.leadId))
+      .where(unpaidFlagWhere(accountId)),
   ]);
   // A team call to log (lib/callbacks), and questions sent to the team (lib/team-questions, O4).
-  const [finished, questions, whys] = await Promise.all([
+  const [finished, questions, whys, reminded] = await Promise.all([
     finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
     // Why each handed lead needs a person (O35): the latest hand-off's reason line.
     handoffWhyByLead(db, accountId, handed.map((r) => r.leadId)),
+    // How many reminders each flagged order's buyer got.
+    unpaidRows.length
+      ? db.select({ orderId: sql<string>`${leadEvents.data}->>'orderId'`, n: count() }).from(leadEvents)
+        .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.type, UNPAID_EVENTS.reminder), inArray(leadEvents.leadId, unpaidRows.map((r) => r.leadId))))
+        .groupBy(sql`${leadEvents.data}->>'orderId'`)
+      : Promise.resolve([] as { orderId: string; n: number }[]),
   ]);
+  const remindersOf = new Map(reminded.map((r) => [r.orderId, Number(r.n)]));
 
   const items: NeedsYouItem[] = [];
   const ref = (r: LeadRef): LeadRef => ({ leadId: r.leadId, leadName: r.leadName, company: r.company, marketId: r.marketId });
@@ -151,6 +182,14 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
     items.push({
       ...ref(r), kind, id: `${kind}:${o.id}`, at: o.updatedAt,
       quoteId: o.quoteId, orderId: o.id, orderNumber: o.number, amountMinor: o.amountDueMinor, currency: o.currency,
+    });
+  }
+  for (const r of unpaidRows) {
+    const o = r.order;
+    items.push({
+      ...ref(r), kind: "order_unpaid", id: `order_unpaid:${o.id}`, at: r.flaggedAt,
+      quoteId: o.quoteId, orderId: o.id, orderNumber: o.number, amountMinor: o.amountDueMinor, currency: o.currency,
+      signedAt: o.createdAt, remindersSent: remindersOf.get(o.id) ?? 0,
     });
   }
   for (const r of formRows) {
@@ -196,7 +235,7 @@ export const needsYouForRequest = cache((db: Db, accountId: string) => needsYou(
 export async function needsYouCount(db: Db, accountId: string, now: Date): Promise<number> {
   const expiringBy = new Date(now.getTime() + EXPIRING_WITHIN_MS);
   const openedBefore = new Date(now.getTime() - UNSIGNED_AFTER_MS);
-  const [[a], [h], [o], [f], [u]] = await Promise.all([
+  const [[a], [h], [o], [f], [u], [np]] = await Promise.all([
     db.select({ n: count() }).from(quotes).innerJoin(leads, eq(leads.id, quotes.leadId))
       .innerJoin(quoteVersions, and(eq(quoteVersions.quoteId, quotes.id), eq(quoteVersions.version, quotes.currentVersion)))
       .where(approvalWhere(accountId)),
@@ -215,10 +254,15 @@ export async function needsYouCount(db: Db, accountId: string, now: Date): Promi
         ),
       ),
     db.select({ n: count() }).from(followUps).innerJoin(leads, eq(leads.id, followUps.leadId)).where(failedFollowUpWhere(accountId, now)),
+    db.select({ n: count() }).from(orders)
+      .innerJoin(leads, eq(leads.id, orders.leadId))
+      .innerJoin(quotes, eq(quotes.id, orders.quoteId))
+      .innerJoin(leadEvents, eq(leadEvents.leadId, orders.leadId))
+      .where(unpaidFlagWhere(accountId)),
   ]);
   // Calls are folded from lead events (lib/callbacks), so they are counted from the same read as the list.
   const [cf, q] = await Promise.all([finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true })]);
-  return a.n + h.n + o.n + f.n + u.n + cf.length + q.length;
+  return a.n + h.n + o.n + f.n + u.n + np.n + cf.length + q.length;
 }
 
 /** needsYouCount at the current time, cached per request (the nav badge in the layout). */
@@ -240,6 +284,7 @@ export function needsYouHref(base: string, item: NeedsYouItem): string {
       return `${base}/orders?tab=approval&quote=${item.quoteId}`;
     case "bank_transfer":
     case "payment_failed":
+    case "order_unpaid":
       return `${base}/orders?tab=orders&quote=${item.quoteId}`;
     default:
       return `${base}/orders?quote=${item.quoteId}`;

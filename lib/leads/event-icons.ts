@@ -35,6 +35,9 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "payment.bank_transfer": "clock",
   "payment.failed": "x-circle",
   "order.paid": "credit-card",
+  // "Signed, not paid yet" (lib/orders/unpaid-run.ts): a reminder in the chat, and the order flagged for the team.
+  "order.pay_reminder": "alarm-clock",
+  "order.unpaid_flagged": "hourglass",
   "conversation.taken_over": "user",
   "conversation.handed_back": "sparkles",
   "conversation.human_reply": "message-square",
@@ -128,6 +131,11 @@ export function leadEventTitle(
     const stored = (data as { by?: unknown } | null | undefined)?.by;
     const by = actorName?.trim() ? actorName : stored;
     return typeof by === "string" && by.trim() ? tr("lead.event.quote.price_changed_by", { name: by }) : tr(key);
+  }
+  if (type === "order.pay_reminder") {
+    // "First payment reminder sent" / "Second payment reminder sent".
+    const step = (data as { step?: unknown } | null | undefined)?.step;
+    return step === "first" || step === "second" ? tr(`lead.event.order.pay_reminder.${step}`) : tr(key);
   }
   if (!SMS_WITH_KIND.has(type)) return tr(key);
   const kind = (data as { kind?: unknown } | null | undefined)?.kind;
