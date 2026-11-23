@@ -39,6 +39,7 @@ import { buyerCallRows, type BuyerCallRow, type BuyerVoiceState } from "@/lib/vo
 import { pendingAfterCall } from "@/lib/voice/after-call";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { isLocale, t, type Locale } from "@/lib/i18n";
+import { buyerLocale } from "@/lib/conversations/current-language";
 import { openerText } from "@/lib/agent/core/opener";
 import { buyerNames, type BuyerNames } from "@/lib/agent/core/names";
 import { displaySeller } from "@/lib/orders/service";
@@ -393,6 +394,8 @@ export async function startSimulatorConversation(
    */
   opts: {
     contactHours?: boolean; leadInterest?: string | null;
+    /** The conversation's starting language in place of the lead's (a continuation: the language the buyer last wrote in). */
+    language?: Locale;
     firstMessage?: (f: { names: BuyerNames; firstName: string; lang: Locale }) => string | null;
   } = {},
 ): Promise<SimStartResult> {
@@ -402,7 +405,7 @@ export async function startSimulatorConversation(
   const { lead, account, live, template } = facts;
   if (!live) return { ok: false, reason: "no_agent" };
   const channel = webChatChannelOf(lead);
-  const lang: Locale = isLocale(lead.language) ? lead.language : "en";
+  const lang: Locale = opts.language ?? (isLocale(lead.language) ? lead.language : "en");
   const vars = templateVariables(lead, account);
   // Names in the lead's language, and the intro's grammar in the agent's gender (decision 2).
   const names = buyerNames(live.playbook, account, lang);
@@ -414,10 +417,10 @@ export async function startSimulatorConversation(
   const messageId = randomUUID();
   await atomic(db, (q) => [
     q.insert(conversations).values({
-      id: conversationId, accountId, leadId, channel, agentVersionId: live.id, language: lead.language, createdByUserId: actor.userId, createdAt: now, updatedAt: now,
+      id: conversationId, accountId, leadId, channel, agentVersionId: live.id, language: opts.language ?? lead.language, createdByUserId: actor.userId, createdAt: now, updatedAt: now,
     }),
     q.insert(messages).values({
-      id: messageId, accountId, conversationId, actor: "agent", body, language: lead.language, agentVersionId: live.id,
+      id: messageId, accountId, conversationId, actor: "agent", body, language: opts.language ?? lead.language, agentVersionId: live.id,
       deliveryStatus: "delivered", templateId: continued ? null : template?.id ?? null, createdAt: now,
     }),
     q.update(leads).set({ status: "waiting_for_reply", lastActivityAt: now })
@@ -516,6 +519,11 @@ export type BuyerChat = {
   calls: BuyerCallRow[];
   /** "Talk to us" (lib/voice/buyer.ts): set by the page and the messages route, which check the gates. */
   voice?: BuyerVoiceState;
+  /**
+   * The chat's current language: the latest conversation's (the language of the buyer's latest message,
+   * lib/conversations/turn-language.ts), else the lead's. The page's cards follow it as it changes.
+   */
+  language?: Locale;
 };
 
 const CHAT_LIMIT = 200;
@@ -553,7 +561,9 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const latest = convs.at(-1) ?? null;
   const ended = lead?.status === "opted_out" || latest?.status === "closed";
   const closedAt = latest?.status === "closed" ? latest.updatedAt.toISOString() : null;
-  if (convs.length === 0) return { messages: [], typing: false, ended, closedAt, cards: {}, calls: [] };
+  // The chat's current language (each turn stores the buyer's latest language on the conversation); the lead's is only the start.
+  const lang: Locale = buyerLocale(latest?.language ?? ctx.lead.language);
+  if (convs.length === 0) return { messages: [], typing: false, ended, closedAt, cards: {}, calls: [], language: lang };
   const ids = convs.map((c) => c.id);
   const scope = and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["buyer", "agent", "human"]));
 
@@ -591,7 +601,6 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   await db.update(messages).set({ deliveryStatus: "read" })
     .where(and(eq(messages.accountId, accountId), inArray(messages.conversationId, ids), inArray(messages.actor, ["agent", "human"]), eq(messages.deliveryStatus, "delivered")));
 
-  const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
   const [previews, calls, cards, callRows] = await Promise.all([
     linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
     db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result, messageId: toolCalls.messageId }).from(toolCalls)
@@ -611,6 +620,7 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
   const offers = new Set(calls.flatMap((c) => (c.name === "request_callback" && c.outcome === "ok" && c.messageId ? [c.messageId] : [])));
   const placed = placeBookingCards(rows, ({ m }) => ({ id: m.id, actor: m.actor, isCard: kinds.get(m.id) === "booking", offersCard: offers.has(m.id) }));
   return {
+    language: lang,
     typing: !ended && agentTyping(latest, last ?? null, ctx.account.status, now),
     closedAt,
     ended,

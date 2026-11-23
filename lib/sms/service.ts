@@ -21,6 +21,7 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { twilioConfig } from "@/lib/channels/twilio";
 import { publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
+import { currentBuyerLanguage } from "@/lib/conversations/current-language";
 import { publicUrl } from "@/lib/orders/token";
 import { rateLimit } from "@/lib/security/rate-limit";
 import { activeChatToken, chatNames, ensureChatLink } from "@/lib/simulator/service";
@@ -123,7 +124,8 @@ export async function nudgeBuyer(db: Db, actor: Actor, input: NudgeInput, deps: 
   const link = await ensureChatLink(db, actor, accountId, leadId);
   const linkId = link ? linkIdFromChatToken(link.token) : null;
   if (!link || !linkId) return refuse("no_chat_link");
-  const lang = lead.language === "he" ? "he" : "en";
+  // The conversation's current language (the buyer's latest message), else the lead's.
+  const lang = await currentBuyerLanguage(db, accountId, lead, conversationId);
   const seller = account.tradeNameLocal?.[lang]?.replace(/\s+/g, " ").trim() || account.tradeName;
   // One link per SMS: the short chat link (/c/<code>), shown without its scheme.
   const body = smsText(kind, lang, {
@@ -190,8 +192,9 @@ export async function stopPageInfo(db: Db, token: string): Promise<StopPageInfo 
     .innerJoin(sellerAccounts, eq(sellerAccounts.id, leads.accountId))
     .where(eq(leads.id, leadId));
   if (!row) return null;
-  const lang = row.lead.language === "he" ? "he" : "en";
-  const [state, chatToken, [brand]] = await Promise.all([
+  const [lang, state, chatToken, [brand]] = await Promise.all([
+    // The language the buyer last wrote in, else the lead's.
+    currentBuyerLanguage(db, row.account.id, row.lead),
     smsState(db, row.account.id, leadId),
     activeChatToken(db, row.account.id, leadId),
     db.select({ color: orderFormSettings.brandColor }).from(orderFormSettings).where(eq(orderFormSettings.accountId, row.account.id)),

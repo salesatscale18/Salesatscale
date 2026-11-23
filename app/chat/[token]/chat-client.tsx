@@ -144,6 +144,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const [notice, setNotice] = useState<string | null>(null);
   const [announce, setAnnounce] = useState("");
   const [calls, setCalls] = useState(initial.calls ?? []);
+  // The chat's current language (the buyer's latest message): the booking and talk-now cards follow it as it changes.
+  const [cardLang, setCardLang] = useState<string>(initial.language ?? lang);
   // "Switch to voice" (live voice): the server's gates, refreshed on every poll (with the reason on a simulated chat or for the seller's signed-in staff).
   const [voiceState, setVoiceState] = useState<BuyerVoiceState>(initial.voice ?? { available: false });
   // The buyer's first switch in this conversation: the bar says what they say appears as text.
@@ -181,6 +183,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       // Every card comes back on every poll: an approved, replaced or expired quote changes in place.
       setCards(data.cards ?? {});
       setCalls(data.calls ?? []);
+      if (data.language) setCardLang(data.language);
       if (data.voice) setVoiceState(data.voice);
       const polledReach = (data as BuyerChat & { reach?: ChatReach }).reach;
       if (polledReach) setReach(polledReach);
@@ -403,7 +406,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     for (const c of chipsBefore(chipsLeft, m.id, m.at)) rows.push(<SmsChip key={`sms-${c.at}`} at={c.at} tz={buyerZone} lang={lang} />);
     // Reach RB: the latest booking card books; older ones stay as their text.
     if (m.kind === "booking" && reach?.booking && reach.booking.offerMessageId === m.id) {
-      rows.push(<CardRow key={m.id}><BookingCard token={token} booking={reach.booking} tz={buyerZone} lang={lang} seller={seller} onReach={setReach} /></CardRow>);
+      rows.push(<CardRow key={m.id}><BookingCard token={token} booking={reach.booking} tz={buyerZone} lang={cardLang} seller={seller} onReach={setReach} /></CardRow>);
       return;
     }
     const card = cards[m.id];
@@ -473,7 +476,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     rows.push(
       <CardRow key="talk-now">
         <TalkNowCard
-          talk={talkNow} tz={buyerZone} lang={lang} canTalk={canTalk}
+          talk={talkNow} tz={buyerZone} lang={cardLang} canTalk={canTalk}
           onTalk={() => { setTalkCard(null); startCall(); }}
           onWrite={() => { setTalkCard(null); inputRef.current?.focus(); }}
           onPickAnother={() => setTalkCard("new_time")}
@@ -481,7 +484,7 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       </CardRow>,
     );
   } else if (talkCard === "new_time" && !ended) {
-    rows.push(<CardRow key="new-time"><NewTimeCard token={token} tz={buyerZone} lang={lang} canTalk={canTalk} onTalk={() => { setTalkCard(null); startCall(); }} /></CardRow>);
+    rows.push(<CardRow key="new-time"><NewTimeCard token={token} tz={buyerZone} lang={cardLang} canTalk={canTalk} onTalk={() => { setTalkCard(null); startCall(); }} /></CardRow>);
   }
   if (closedAt) {
     separator(new Date(closedAt), "d-closed");

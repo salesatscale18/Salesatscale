@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
-import { isLocale, translator, type Locale } from "@/lib/i18n";
+import { translator, type Locale } from "@/lib/i18n";
+import { currentBuyerLanguage } from "@/lib/conversations/current-language";
 import { buyerChat, chatNames, recordChatOpen, resolveChatLink } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
 import { ChatClient, type ChatSms } from "./chat-client";
@@ -43,7 +44,8 @@ export default async function BuyerChatPage({ params, searchParams }: { params: 
   const link = await resolveChatLink(appDb, token);
   if (!link) notFound();
   const { ctx } = link;
-  const lang: Locale = isLocale(ctx.lead.language) ? ctx.lead.language : "en";
+  // The language the buyer last wrote in (the conversation's current language), else the lead's: the lead's is only the start.
+  const lang: Locale = await currentBuyerLanguage(appDb, ctx.account.id, ctx.lead);
   const tr = translator(lang);
   // The agent's and the seller's names in the lead's language; the Hebrew texts about the agent follow its gender (decision 2).
   const names = await chatNames(appDb, ctx.account, lang);

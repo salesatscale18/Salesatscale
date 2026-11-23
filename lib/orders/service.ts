@@ -35,6 +35,7 @@ import { marketWhere } from "@/lib/markets/selection";
 import { marketNameSort } from "@/lib/markets/sort";
 import { orderFormPrefillWithSources, signedDealValues, type PrefillKey, type PrefillSource } from "./prefill";
 import { getOrderFormSettings } from "./settings";
+import { currentBuyerLanguage } from "@/lib/conversations/current-language";
 import { isSimulatedLead } from "@/lib/simulator/rules";
 import { formIdFromToken, hashToken, publicUrl, tokenFor } from "./token";
 
@@ -119,7 +120,7 @@ export async function createOrderForm(
   // The quote's market decides languages, legal texts and payment methods.
   const market = await resolveMarket(db, accountId, v.marketId ?? q.quote.marketId ?? q.lead.marketId);
   const itemIds = [...new Set(cur.lines.map((l) => l.catalogItemId).filter((x): x is string => !!x))];
-  const [settings, sections, [list], [catalogVersion], units, [deal]] = await Promise.all([
+  const [settings, sections, [list], [catalogVersion], units, [deal], buyerLanguage] = await Promise.all([
     getOrderFormSettings(db, accountId),
     marketLegal(db, accountId, market.id),
     v.priceListId ? db.select().from(priceLists).where(and(eq(priceLists.id, v.priceListId), eq(priceLists.accountId, accountId))) : Promise.resolve([]),
@@ -128,10 +129,12 @@ export async function createOrderForm(
       ? db.select({ id: catalogItems.id, unitCustom: catalogItems.unitCustom, plainName: catalogItems.plainName }).from(catalogItems).where(and(eq(catalogItems.accountId, accountId), inArray(catalogItems.id, itemIds)))
       : Promise.resolve([]),
     db.select({ fields: dealStates.fields }).from(dealStates).where(and(eq(dealStates.accountId, accountId), eq(dealStates.leadId, q.lead.id))),
+    // No language given (a form a person sends): the language the buyer last wrote in, else the lead's.
+    opts.language ? Promise.resolve(null) : currentBuyerLanguage(db, accountId, q.lead),
   ]);
   const eff = effectiveSettings(accountDefaultsFrom(account, settings), market, list ?? null);
   const languages = eff.languages.value;
-  const language = opts.language && languages.includes(opts.language) ? opts.language : q.lead.language && languages.includes(q.lead.language) ? q.lead.language : languages[0] ?? "en";
+  const language = [opts.language, buyerLanguage, q.lead.language].find((l): l is string => !!l && languages.includes(l)) ?? languages[0] ?? "en";
   const legal = sections.filter((s) => s.language === language);
   if (legal.length === 0) return { ok: false, reason: "no_legal" };
   const unitCustomOf = new Map(units.map((u) => [u.id, u.unitCustom ?? null]));

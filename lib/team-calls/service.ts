@@ -256,7 +256,8 @@ export async function bookCall(
     const lang = langOf(conv.language ?? lead.language);
     messageId = await appMessage(db, account.id, conv, t("buyer.app.booked", undefined, lang), lang, { kind: BOOKED_KIND, at: at.toISOString() }, now);
   }
-  const lang = lead.language === "he" ? "he" : "en";
+  // The SMS in the conversation's current language (the buyer's latest message), as the chat line above.
+  const lang = langOf(conv?.language ?? lead.language);
   // Never to a simulated buyer, a test lead or a fictional demo number (nothing is tried or recorded).
   const sms = isSimulatedLead(lead) || lead.isTest || isFictionalDemoLead(lead) ? null : await nudgeBuyer(db, { userId: null, actingAs: false }, {
     accountId: account.id, leadId: lead.id, kind: "team_call", messageId, time: smsCallTime(at, buyerTimezone ?? tz, lang), now,

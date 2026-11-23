@@ -21,6 +21,7 @@ import { quoteMessageBody } from "@/lib/agent/tools";
 import { formatDayMonthIn } from "@/lib/format";
 import { t, type Locale } from "@/lib/i18n";
 import { leadContactSettings } from "@/lib/markets/lead-settings";
+import { currentBuyerLanguage } from "@/lib/conversations/current-language";
 import { linkFor, payLinkOpen } from "@/lib/orders/service";
 import { WEB_CHAT_CHANNELS } from "@/lib/simulator/rules";
 
@@ -88,16 +89,23 @@ export async function continuationState(db: Db, accountId: string, leadId: strin
   return { kind: "other" };
 }
 
-/** The continuation for a lead with an earlier conversation, or null (the lead gets the normal intro). */
-export async function leadContinuation(db: Db, accountId: string, leadId: string, now = new Date()): Promise<{ state: ContinuationState; date: string } | null> {
+/**
+ * The continuation for a lead with an earlier conversation, or null (the lead gets the normal intro).
+ * `language`: the earlier conversation's current language (the buyer's latest message there), which the
+ * new chat starts in, else the lead's.
+ */
+export async function leadContinuation(db: Db, accountId: string, leadId: string, now = new Date()): Promise<{ state: ContinuationState; date: string; language: Locale } | null> {
   if (!(await hasEarlierConversation(db, accountId, leadId))) return null;
-  const state = await continuationState(db, accountId, leadId, now);
-  if (state.kind !== "quote") return { state, date: "" };
-  const [row] = await db.select({ lead: leads, account: sellerAccounts }).from(leads)
-    .innerJoin(sellerAccounts, eq(sellerAccounts.id, leads.accountId))
-    .where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
+  const [state, [row]] = await Promise.all([
+    continuationState(db, accountId, leadId, now),
+    db.select({ lead: leads, account: sellerAccounts }).from(leads)
+      .innerJoin(sellerAccounts, eq(sellerAccounts.id, leads.accountId))
+      .where(and(eq(leads.id, leadId), eq(leads.accountId, accountId))),
+  ]);
+  const language = await currentBuyerLanguage(db, accountId, { id: leadId, language: row?.lead.language ?? null });
+  if (state.kind !== "quote") return { state, date: "", language };
   const zone = row ? (await leadContactSettings(db, row.account, row.lead.marketId)).timezone : "UTC";
-  return { state, date: formatDayMonthIn(state.at, zone, row?.lead.language) };
+  return { state, date: formatDayMonthIn(state.at, zone, language), language };
 }
 
 /**

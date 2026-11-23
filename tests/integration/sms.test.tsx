@@ -30,8 +30,9 @@ const TESTER2 = "+972509990002";
 const TESTER3 = "+972509990003";
 const TESTER4 = "+972509990004";
 const TESTER5 = "+972509990005";
+const TESTER6 = "+972509990006";
 const testEnv = (extra: Record<string, string> = {}) => ({
-  SMS_MODE: "test", SMS_TEST_NUMBERS: [TESTER, TESTER2, TESTER3, TESTER4, TESTER5].join(","), TWILIO_ACCOUNT_SID: "AC1", TWILIO_AUTH_TOKEN: "tok",
+  SMS_MODE: "test", SMS_TEST_NUMBERS: [TESTER, TESTER2, TESTER3, TESTER4, TESTER5, TESTER6].join(","), TWILIO_ACCOUNT_SID: "AC1", TWILIO_AUTH_TOKEN: "tok",
   TWILIO_SMS_MESSAGING_SERVICE_SID: MG, APP_URL: "https://app.example.com", ...extra,
 });
 
@@ -56,7 +57,9 @@ describe("SMS core (mock sender, fake transport)", () => {
   };
   const chatMessage = async (leadId: string, accountId = acc) => {
     const [v] = await db.select().from(agentVersions).where(eq(agentVersions.accountId, accountId)).limit(1);
-    const [conv] = await db.insert(conversations).values({ accountId, leadId, channel: "simulator", agentVersionId: v.id, language: "en" }).returning();
+    // A chat starts in the lead's language (the SMS follows the conversation's current language).
+    const [lead] = await db.select({ language: leads.language }).from(leads).where(eq(leads.id, leadId));
+    const [conv] = await db.insert(conversations).values({ accountId, leadId, channel: "simulator", agentVersionId: v.id, language: lead?.language ?? "en" }).returning();
     const [m] = await db.insert(messages).values({ accountId, conversationId: conv.id, actor: "agent", body: "Here is your answer.", deliveryStatus: "delivered" }).returning();
     return m;
   };
@@ -153,6 +156,16 @@ describe("SMS core (mock sender, fake transport)", () => {
     expect((await db.select().from(messages).where(eq(messages.id, m.id)))[0].deliveryStatus).toBe("sent");
     expect(await applyStatusCallback(db, { MessageSid: r.sid, MessageStatus: "delivered" })).toBe(true);
     expect((await db.select().from(messages).where(eq(messages.id, m.id)))[0].deliveryStatus).toBe("delivered");
+  });
+
+  it("follows the chat's current language, not the lead's: a Hebrew lead whose chat went on in English gets an English SMS", async () => {
+    const lead = await addLead({ phone: TESTER6, language: "he" });
+    const m = await chatMessage(lead.id);
+    await db.update(conversations).set({ language: "en" }).where(eq(conversations.id, m.conversationId));
+    const tr = new MockSmsTransport();
+    expect(await nudgeBuyer(db, actor(), { accountId: acc, leadId: lead.id, kind: "named_time", messageId: m.id }, { transport: tr, env: testEnv() })).toMatchObject({ outcome: "sent" });
+    expect(tr.sent[0].body).toMatch(/^It's the time you asked for\. Talk or write: app\.example\.com\/c\/[A-Za-z0-9_-]{10}$/);
+    expect((await db.select().from(leads).where(eq(leads.id, lead.id)))[0].language).toBe("he");
   });
 
   it("test mode handles a number that is not a tester as mock", async () => {
