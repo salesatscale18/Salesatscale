@@ -194,6 +194,21 @@ describe("Signed, not paid yet", () => {
         const s = await run(at(5));
         expect(s.stopped).toBeGreaterThanOrEqual(1);
         expect(await reminders(o.conversationId)).toHaveLength(1);
+        await run(at(6));
+        await run(at(7));
+        // No second reminder: not in the chat, no SMS for it, no event for the step; only the day-7 flag remains.
+        expect(await reminders(o.conversationId)).toHaveLength(1);
+        const ev = await events(o.leadId);
+        expect(ev.filter((e) => e.type === "order.pay_reminder").map((e) => (e.data as { step: string }).step)).toEqual(["first"]);
+        expect(ev.some((e) => e.id === unpaidStepEventId(o.orderId, "second"))).toBe(false);
+        const sms = ev.filter((e) => e.type.startsWith("sms.") && (e.data as { kind?: string }).kind === "pay_reminder");
+        expect(sms).toHaveLength(1);
+        const flags = ev.filter((e) => e.type === "order.unpaid_flagged");
+        expect(flags).toHaveLength(1);
+        expect(flags[0].data).toMatchObject({ remindersSent: 1 });
+        const items = (await needsYou(db, acc.account.id, at(7.1))).filter((i) => i.kind === "order_unpaid" && i.leadId === o.leadId);
+        expect(items).toHaveLength(1);
+        expect(needCell(items[0], { tradeName: "Polar Demo", timezone: "Asia/Jerusalem", now: at(7.1) }).detail).toMatch(/· 1 reminder sent$/);
       });
       it("when a person holds the chat (taken over, handed off, owned)", async () => {
         const taken = await mkOrder(acc);

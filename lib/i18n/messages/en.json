@@ -3998,5 +3998,8 @@
   "lead.event.order.pay_reminder.second": "Second payment reminder sent",
   "lead.event.order.unpaid_flagged": "Signed, not paid: flagged for your team",
   "lead.event.sms_kind.pay_reminder": "payment reminder",
-  "conv.sms.kind.pay_reminder": "Payment reminder"
+  "conv.sms.kind.pay_reminder": "Payment reminder",
+  "playbook.unpaid.applies_after_publish": "Applies after you publish",
+  "playbook.unpaid.wording_fixed": "Fixed wording for now",
+  "playbook.unpaid.wording.bank_note": "only when bank transfer is offered"
 }

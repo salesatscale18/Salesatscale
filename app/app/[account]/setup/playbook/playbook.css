@@ -146,6 +146,12 @@
 .pb-unpaid__hint svg, .pb-unpaid__line svg { flex: none; margin-top: 1px; }
 .pb-unpaid__line svg { color: var(--success); }
 .pb-unpaid--wording { margin-top: 12px; }
+.pb-unpaid__foot { display: flex; flex-direction: column; gap: 8px; }
+.pb-unpaid__pending, .pb-unpaid__fixed { display: inline-flex; gap: 6px; align-items: center; font-size: 13px; line-height: 18px; font-weight: 600; }
+.pb-unpaid__pending { color: var(--warning); }
+.pb-unpaid__fixed { color: var(--ink-muted); font-weight: 500; }
+.pb-unpaid__optional { color: var(--ink-muted); }
+.pb-unpaid__optional i { font-style: normal; }
 /* Phone: the days (or "Off") go under the text; the switch stays at the end of the first line. */
 @media (max-width: 600px) {
   .pb-unpaid__row { grid-template-columns: 36px minmax(0, 1fr) auto; }

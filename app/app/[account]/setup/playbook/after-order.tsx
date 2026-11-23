@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Icon, type IconName } from "@/components/sas/icon";
 import { t, type MessageKey } from "@/lib/i18n";
-import { UNPAID_STEPS, type UnpaidReminderSettings, type UnpaidRowsInput, type UnpaidStep } from "@/lib/orders/unpaid-reminders";
+import { sameUnpaidSettings, UNPAID_STEPS, type UnpaidReminderSettings, type UnpaidRowsInput, type UnpaidStep } from "@/lib/orders/unpaid-reminders";
 import "./playbook.css";
 
 const STEP_TEXT: Record<UnpaidStep, { title: MessageKey; sub: MessageKey; icon: IconName }> = {
@@ -23,8 +23,12 @@ export function unpaidValues(stored: UnpaidReminderSettings, sent: UnpaidRowsInp
  * Playbook › After the order: "Signed, not paid yet" (board UnpaidReminders). Three rows, each "N days after
  * signing" with a switch; a step that is off is greyed and shows "Off" in place of the days (its days stay in a
  * hidden input, so switching it back on brings them back). The server validates again (parseUnpaidRows).
+ * `draft` / `live`: the saved draft's settings and the live version's (defaults when nothing is live); when they
+ * differ the card says "Applies after you publish" (the runner reads the live version).
  */
-export function SignedNotPaidCard({ initial, errors }: { initial: UnpaidRowsInput; errors: Record<string, string> }) {
+export function SignedNotPaidCard({ initial, errors, draft, live }: {
+  initial: UnpaidRowsInput; errors: Record<string, string>; draft: UnpaidReminderSettings; live: UnpaidReminderSettings;
+}) {
   const [rows, setRows] = useState(initial);
   const set = (step: UnpaidStep, patch: Partial<UnpaidRowsInput[UnpaidStep]>) => setRows((r) => ({ ...r, [step]: { ...r[step], ...patch } }));
   return (
@@ -75,21 +79,32 @@ export function SignedNotPaidCard({ initial, errors }: { initial: UnpaidRowsInpu
       })}
       <div className="pb-unpaid__foot">
         <span className="pb-unpaid__hint"><Icon name="info" />{t("playbook.unpaid.hint")}</span>
+        {sameUnpaidSettings(draft, live) ? null : (
+          <span className="pb-unpaid__pending" data-testid="unpaid-not-live" role="status"><Icon name="clock" />{t("playbook.unpaid.applies_after_publish")}</span>
+        )}
       </div>
     </div>
   );
 }
 
-/** What the buyer gets with each reminder: the fixed lines (v1 sends templates, in the buyer's language) and the SMS line. */
+/**
+ * What the buyer gets with each reminder, read-only (no edit field: the wording is fixed for now): the fixed
+ * lines (sent in the buyer's language), the bank-transfer sentence marked as optional, and the SMS line.
+ */
 export function ReminderWording() {
   const vars = { name: t("playbook.unpaid.wording.name"), order: t("playbook.unpaid.wording.order"), amount: t("playbook.unpaid.wording.amount") };
+  const second = t("buyer.unpaid.second", vars);
+  // The bank sentence is what the "bank" variant adds after the plain second reminder.
+  const withBank = t("buyer.unpaid.second_bank", vars);
+  const bank = withBank.startsWith(second) ? withBank.slice(second.length).trim() : "";
   return (
     <div className="pb-unpaid pb-unpaid--wording" data-testid="unpaid-wording">
       <div className="pb-unpaid__head" style={{ gap: 8 }}>
         <b>{t("playbook.unpaid.wording")}</b>
         <span className="sas-small">{t("playbook.unpaid.wording_sub")}</span>
+        <span className="pb-unpaid__fixed" data-testid="unpaid-wording-fixed"><Icon name="lock" />{t("playbook.unpaid.wording_fixed")}</span>
         <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.first")}</b> {t("buyer.unpaid.first", vars)}</span></span>
-        <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.second")}</b> {t("buyer.unpaid.second_bank", vars)}</span></span>
+        <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.second")}</b> {second}{bank ? <> <span className="pb-unpaid__optional" data-testid="unpaid-wording-bank">{bank} <i>({t("playbook.unpaid.wording.bank_note")})</i></span></> : null}</span></span>
         <span className="pb-unpaid__line"><Icon name="check" /><span><b>{t("playbook.unpaid.wording.sms")}</b> {t("playbook.unpaid.wording.sms_text")}</span></span>
       </div>
     </div>

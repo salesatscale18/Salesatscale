@@ -17,7 +17,7 @@ import { PlatformFixed, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
 import type { PlaysSummary } from "./plays/overview";
 import { ReminderWording, SignedNotPaidCard, unpaidValues } from "./after-order";
-import { unpaidRemindersOf, type PlaybookWithUnpaid } from "@/lib/orders/unpaid-reminders";
+import { unpaidRemindersOf, type PlaybookWithUnpaid, type UnpaidReminderSettings } from "@/lib/orders/unpaid-reminders";
 
 /** "Names in other languages" for the agent (C2): rows from the account's markets, built on the server. */
 export type AgentNamesView = { rows: NameRow[]; source: string; notice: string | null; marketsHref: string };
@@ -131,11 +131,13 @@ function QuestionCounting({ max }: { max: number }) {
  * deal-state values. Sales plays have their own pages (the form does not send
  * them, so the stored plays are kept).
  */
-export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref, names, handOffNotice }: {
+export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyLocal, plays, playsHref, orderFormHref, names, handOffNotice, liveUnpaid }: {
   slug: string; p: Playbook; draftVersion: number; labHref: string; company: string; companyLocal?: Partial<Record<string, string>> | null; plays: PlaysSummary; playsHref: string; orderFormHref: string;
   names: AgentNamesView;
   /** O1: the notice that unknown questions no longer hand off, with the link to that play (null: not shown). */
   handOffNotice?: { playHref: string } | null;
+  /** "Signed, not paid yet" settings of the live version (defaults when nothing is live): the card says when the draft differs. */
+  liveUnpaid?: UnpaidReminderSettings;
 }) {
   const [state, action, pending] = useActionState<PlaybookFormState, FormData>(savePlaybookAction, { status: "idle" });
   const e = state.status === "error" ? state.errors : {};
@@ -523,7 +525,10 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
       {/* After the order (board UnpaidReminders): what happens when a buyer signs and does not pay. */}
       {panel("pb-after-h", "playbook.after_order", null, null, (
         <>
-          <SignedNotPaidCard initial={unpaidValues(unpaidRemindersOf(p as PlaybookWithUnpaid), state.status === "error" ? state.values.unpaidReminders : undefined)} errors={e} />
+          <SignedNotPaidCard
+            initial={unpaidValues(unpaidRemindersOf(p as PlaybookWithUnpaid), state.status === "error" ? state.values.unpaidReminders : undefined)} errors={e}
+            draft={unpaidRemindersOf(p as PlaybookWithUnpaid)} live={liveUnpaid ?? unpaidRemindersOf(null)}
+          />
           <ReminderWording />
         </>
       ), isNew)}

@@ -12,6 +12,7 @@ import { t } from "@/lib/i18n";
 import { PlaybookForm } from "./form";
 import { playsOverview, playsSummary } from "./plays/overview";
 import { PlaybookToc } from "./toc";
+import { unpaidRemindersOf } from "@/lib/orders/unpaid-reminders";
 import { cookies } from "next/headers";
 import { HANDOFF_NOTICE_COOKIE, showHandoffNotice } from "@/lib/agent/handoff-notice";
 
@@ -67,7 +68,7 @@ export default async function PlaybookPage({ params, searchParams }: { params: P
           <div className="pb-main pb-main--spy">
             <PlaybookForm
               slug={account.slug} p={draft.playbook} draftVersion={draft.version} labHref={lab} company={account.tradeName} companyLocal={account.tradeNameLocal}
-              plays={playsSummary(plays)} handOffNotice={handOffNotice}
+              plays={playsSummary(plays)} handOffNotice={handOffNotice} liveUnpaid={unpaidRemindersOf(live?.playbook ?? null)}
               playsHref={`${here}/plays`} orderFormHref={`${base}/setup/order-form`} key={JSON.stringify(draft.playbook)}
               names={{ rows, source: draft.playbook.agentName, notice: asWritten.length ? t("names.as_written_notice", { languages: asWritten.join(", ") }) : null, marketsHref: `${base}/markets` }}
             />
