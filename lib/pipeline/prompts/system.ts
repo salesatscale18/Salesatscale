@@ -17,7 +17,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { PLAY_KEYS } from "@/db/schema";
 
-export const PROMPT_VERSION = "system-v8";
+export const PROMPT_VERSION = "system-v9";
 
 export const FACTS_TOOL = "record_facts";
 export const PLAYBOOK_TOOL = "record_playbook";
@@ -35,7 +35,7 @@ After the corpus comes a task. It tells you which tool to call. These rules appl
 2. General knowledge only. The agent talks to many buyers. Facts about one particular customer (their figures, losses, sites, staff, names, or the deal they were offered) are not general knowledge. Do not return them as facts; list them under customer_specific so the seller sees what was kept back.
 3. Prices and discounts. Prices, discounts, free extras and special terms heard in calls are never facts, and you never change a price list. Report them only as playbook limits, which the seller must approve explicitly.
 4. Personal data. Never restore masked details. Never output phone numbers, email addresses or the names of buyers. The one exception: the seller's own published contact details (its company phone number, website and company email address, as the seller wrote them in its own documents or website) may be kept as a fact.
-5. Language. Write each fact in the language of the source it came from, and give that language as an ISO 639-1 code ("en", "he"). Write playbook text in English. When the evidence for a playbook item is in Hebrew, also give a natural Hebrew version in the matching *_he field; otherwise leave the *_he field as an empty string.
+5. Language. Write each fact in English, whatever the language of the source it came from, and give the fact's language as an ISO 639-1 code ("en"). Evidence quotes stay word for word in the source's language. Write playbook text in English. When the evidence for a playbook item is in Hebrew, also give a natural Hebrew version in the matching *_he field; otherwise leave the *_he field as an empty string.
 6. Style. One idea per fact or item. Short, concrete, plain words; no marketing tone. Do not repeat the same item in different words.
 7. Output. Return the result only by calling the tool the task names, exactly once, with every required field. Do not answer in text.`;
 
@@ -63,7 +63,7 @@ const EVIDENCE = arr(
 const FACTS_SCHEMA = obj({
   facts: arr(obj({
     topic: str("Short English topic, 1 to 3 words, e.g. Product, Warranty, Installation, Pricing terms, Company. Reuse the same topic words across facts."),
-    statement: str("One self-contained sentence a buyer could be told, in the language of the source."),
+    statement: str("One self-contained sentence a buyer could be told, in English."),
     language: str("ISO 639-1 code of the statement, e.g. en or he."),
     customer_specific: { type: "boolean", description: "True only if the statement is about one particular customer. Prefer leaving such statements out." },
     known_fact_id: str("The id of the known fact (from known_facts, e.g. K12) this statement says something different from; an empty string otherwise."),
@@ -73,7 +73,7 @@ const FACTS_SCHEMA = obj({
     topic: str("Short English topic."),
     summary: str("What the sources disagree about, in English, e.g. Warranty length."),
     options: arr(obj({
-      statement: str("One of the conflicting statements, in the language of its source."),
+      statement: str("One of the conflicting statements, in English."),
       language: str("ISO 639-1 code of the statement."),
       evidence: EVIDENCE,
     }), "Two or more conflicting statements, each with its evidence."),

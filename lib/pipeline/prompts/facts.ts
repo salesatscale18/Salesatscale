@@ -4,16 +4,19 @@
  */
 import { FACTS_TOOL } from "./system";
 
-export const PROMPT_VERSION = "facts-v3";
+export const PROMPT_VERSION = "facts-v4";
 
-const COMMON = `- facts: every general fact a buyer could ask about: what the products and services are and do (and do not do), specifications, compatibility, installation, delivery and lead times, warranty, support, contract and payment terms, compliance and certifications, and the company itself. One sentence per fact, in the language of its source.
+const COMMON = `- facts: every general fact a buyer could ask about: what the products and services are and do (and do not do), specifications, compatibility, installation, delivery and lead times, warranty, support, contract and payment terms, compliance and certifications, and the company itself. One sentence per fact.
+- Language: Write every fact in English, whatever the language of the source. Keep the evidence quote word for word in the source's language. Never translate the names of products, companies or people.
 - Also return these as facts, each with its own evidence:
   - Proof points: customers the seller names (by name or by type of business), numbers and results, testimonials, certifications, awards and guarantees. Keep the claim's own wording and figures; do not round, add to or soften them. Topic "Proof", or "Customers" for the customers the seller names. A list of customers the seller publishes as references in its own documents or website is a proof point, not a statement about one customer.
   - Value: the buyer problems the material names, and what each feature brings the buyer (what they get, save or avoid). Topic "Value".
+  - Comparisons the material itself makes between the old way of working and the product (before and after, without and with): one Value fact per point compared, keeping both sides in the fact, for example "Before: a paper log checked twice a day; after: an alert within 15 minutes." Topic "Value". Only the seller's own comparisons; one buyer's account of their own routine in a call is customer_specific.
   - Who the product suits: types and sizes of business, and the situations it is made for. Topic "Ideal customer".
-  - What sets the seller apart, and every mention of competitors or alternatives (including the old way of working the material compares itself with). Topic "Differentiators".
-  - Integrations and connections to systems or equipment the buyer already has. Topic "Integrations".
+  - What sets the seller apart, and every mention of competitors or alternatives. Topic "Differentiators".
+  - Integrations and connections to systems or equipment the buyer already has. Topic "Integrations". This includes every statement that the product connects to, works with or fits onto what the buyer already has (their machines and other equipment, software, door or alarm systems), such as "works with the equipment you already have, nothing to replace", also when the statement is about installation.
   - The seller's own published contact details (company phone number, website, company email address). Topic "Contact".
+- Complete lists: when the material lists named items (customers, products, models, benefits, features, certifications), return every item it names. Never shorten a list with "such as", "including", "for example" or "etc.". When one fact would be too long, split the list over several facts of the same topic, each with its own evidence.
 - A source that names a different company or brand from the rest of the corpus: do not merge its claims into the seller's facts as if they were the seller's. Name that company or brand in each fact you take from it, and add a gap asking how it relates to the seller (or a contradiction, when it conflicts with the seller's own sources).
 - A number whose meaning the text does not make clear (for example a percentage with no label, or a figure without what it measures): never guess what it refers to and leave it out of facts. Add a gap asking what it means.
 - Leave out catalog prices (the catalog and price lists hold prices) and any price, discount or special term heard in a call.
@@ -57,7 +60,7 @@ export function factsInstruction(base: string, known: { topic: string; statement
   if (known.length === 0) return head;
   const json = JSON.stringify(known.slice(0, KNOWN_FACTS_MAX).map((f, i) => ({ id: knownFactRef(i), topic: f.topic, statement: f.statement })));
   return `${head}
-- known_facts below are facts the seller already approved, from these or other sources, each with an id. Do not return a fact that says the same thing as a known fact, in any wording or language. Do return what adds to a known fact.
+- known_facts below are facts the seller already has, approved or waiting for review, from these or other sources, each with an id. Do not return a fact that says the same thing as a known fact, in any wording or language. Do return what adds to a known fact.
 - When the corpus says something different from a known fact about the same thing (another number, the opposite, or another answer to the same question), return it as a fact and set its known_fact_id to that known fact's id, so the seller can choose which one is right. Leave known_fact_id empty for every other fact.
 
 <known_facts>

@@ -7,16 +7,45 @@ import { describe, expect, it } from "vitest";
 import { PLAY_KEYS } from "@/db/schema";
 import { DEFAULT_PLAYS } from "@/lib/agent/core/plays";
 import { INSTRUCTION_TOKENS, tokensOf } from "@/lib/pipeline/corpus";
-import { comparable, factTokens, nearDuplicate, numberKey, sameWords, tokenSetSimilarity, wordsKey } from "@/lib/pipeline/dedup";
+import { comparable, differs, factTokens, nearDuplicate, numberKey, sameWords, tokenSetSimilarity, wordsKey } from "@/lib/pipeline/dedup";
 import { FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION, factsInstruction, KNOWN_FACTS_MAX, PROMPT_VERSION as FACTS_V } from "@/lib/pipeline/prompts/facts";
 import { PLAYBOOK_INSTRUCTION, PROMPT_VERSION as PLAYBOOK_V } from "@/lib/pipeline/prompts/playbook";
-import { PROMPT_VERSION as SYSTEM_V, SYSTEM_PROMPT } from "@/lib/pipeline/prompts/system";
+import { PIPELINE_TOOLS, PROMPT_VERSION as SYSTEM_V, SYSTEM_PROMPT } from "@/lib/pipeline/prompts/system";
+import { normalizeQuote, parseFactsOutput, type CorpusIndex } from "@/lib/pipeline/validate";
 
-describe("stage 1 instruction (facts-v3)", () => {
+describe("stage 1 instruction (facts-v4)", () => {
   it("bumps every prompt version that changed", () => {
-    expect(FACTS_V).toBe("facts-v3");
-    expect(SYSTEM_V).toBe("system-v8");
-    expect(PLAYBOOK_V).toBe("playbook-v6");
+    expect(FACTS_V).toBe("facts-v4");
+    expect(SYSTEM_V).toBe("system-v9");
+    expect(PLAYBOOK_V).toBe("playbook-v7");
+  });
+
+  it("KQ3: complete lists, the material's own before/after as Value, connections to existing equipment as Integrations", () => {
+    for (const text of [FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION]) {
+      expect(text).toMatch(/Complete lists: .*return every item it names\. Never shorten a list with "such as", "including", "for example" or "etc\."\. .*split the list over several facts/);
+      expect(text).toMatch(/Comparisons the material itself makes between the old way of working and the product \(before and after, without and with\): one Value fact per point compared, keeping both sides in the fact/);
+      expect(text).not.toContain("including the old way of working the material compares itself with");
+      expect(text).toMatch(/connects to, works with or fits onto what the buyer already has .*also when the statement is about installation/);
+    }
+    const known = factsInstruction(FACTS_INSTRUCTION, [{ topic: "Warranty", statement: "Two years." }]);
+    expect(known).toContain("facts the seller already has, approved or waiting for review");
+    expect(known).not.toContain("already approved");
+  });
+
+  it("KQ3 (owner, 23 Nov): every fact in English, the quote in the source's language, names never translated", () => {
+    const rule = "Write every fact in English, whatever the language of the source. Keep the evidence quote word for word in the source's language. Never translate the names of products, companies or people.";
+    for (const text of [FACTS_INSTRUCTION, FACTS_ONE_SOURCE_INSTRUCTION]) {
+      expect(text).toContain(rule);
+      expect(text).not.toContain("in the language of its source");
+      expect(text).not.toContain("Never translate a fact");
+    }
+    expect(SYSTEM_PROMPT).toContain("5. Language. Write each fact in English, whatever the language of the source it came from");
+    expect(SYSTEM_PROMPT).toContain("Evidence quotes stay word for word in the source's language.");
+    expect(SYSTEM_PROMPT).not.toContain("Write each fact in the language of the source");
+    // The record_facts schema says the same.
+    const schema = JSON.stringify(PIPELINE_TOOLS);
+    expect(schema).not.toMatch(/in the language of (the|its) source/);
+    expect(schema).toContain("One self-contained sentence a buyer could be told, in English.");
   });
 
   it("asks for proof, value, ideal customer, differentiators, integrations and contact details, with their topics", () => {
@@ -83,6 +112,37 @@ describe("stage 2 instruction: proof and value go into play_content", () => {
     expect(line).toMatch(/Put proof points .* into proof, and also into tried_failed/);
     expect(line).toMatch(/Put value points .* into value and too_expensive/);
     expect(line).not.toContain("explain_value");
+  });
+
+  it("KQ3: evidence cites the source of its words; no new rule about one customer's story (owner did not approve it)", () => {
+    expect(PLAYBOOK_INSTRUCTION).toContain("Evidence must cite the source the words come from");
+    expect(PLAYBOOK_INSTRUCTION).toContain("Never credit words from a call to a document or note, or the other way round.");
+    expect(PLAYBOOK_INSTRUCTION).not.toContain("Use only general facts about the seller");
+    expect(PLAYBOOK_INSTRUCTION).not.toContain("The answer uses only general facts about the seller");
+  });
+});
+
+describe("English facts from a Hebrew source (KQ3, owner 23 Nov)", () => {
+  const DECK = "00000000-0000-4000-8000-0000000000d1";
+  const PAGE = "לפני: גיליון נייר, בדיקה פעמיים ביום. אחרי: התראה בוואטסאפ תוך 15 דקות.";
+  const index: CorpusIndex = new Map([[DECK, { kind: "file", title: "Deck", locators: new Set(["p.2"]), sections: [{ locator: "p.2", text: normalizeQuote(PAGE) }] }]]);
+
+  it("keeps an English fact whose evidence quote is the Hebrew words of the source", () => {
+    const out = parseFactsOutput({ facts: [{
+      topic: "Value", statement: "Before: a paper log checked twice a day; after: a WhatsApp alert within 15 minutes.", language: "en",
+      customer_specific: false, known_fact_id: "", evidence: [{ source_id: DECK, locator: "p.2", quote: "לפני: גיליון נייר, בדיקה פעמיים ביום" }],
+    }] }, index);
+    expect(out.facts).toHaveLength(1);
+    expect(out.facts[0]).toMatchObject({ language: "en", evidence: [{ sourceId: DECK, locator: "p.2" }] });
+    expect(out.evidenceCheck).toMatchObject({ notFound: 0, reattributed: 0 });
+  });
+
+  it("the code's duplicate and conflict checks do not match an English fact with an older Hebrew one (only the model's known facts do)", () => {
+    const he = "התראה בוואטסאפ תוך 15 דקות.";
+    const en = "A WhatsApp alert within 15 minutes.";
+    expect(sameWords(en, he)).toBe(false);
+    expect(nearDuplicate(en, he)).toBe(false);
+    expect(differs("A WhatsApp alert within 10 minutes.", he)).toBe(false);
   });
 });
 
