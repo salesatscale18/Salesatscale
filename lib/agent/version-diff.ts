@@ -174,6 +174,8 @@ export type DiffArea = (typeof DIFF_AREAS)[number];
  * One change. `before` / `after`: the old and the new text as diff pieces; null
  * when the item is not in that version (shown as "Not asked" / "Not set", see
  * `missing`). `note`: a muted hint after the new text (the voice model's cost).
+ * `tag`: a muted line under the item ("now your own card"). A moved row holds the item's
+ * own text on both sides, and `positions` its place before and after (1-based).
  */
 export type ChangeRow = {
   area: DiffArea;
@@ -183,6 +185,8 @@ export type ChangeRow = {
   after: Seg[] | null;
   missing: "not_asked" | "not_set";
   note?: string;
+  tag?: string;
+  positions?: { before: number; after: number };
 };
 
 /** What a version holds, as far as the comparison reads it (an agent_versions row). */
@@ -221,9 +225,10 @@ class Rows {
     const segs: Seg[] = [...plain(norm(main), op), ...rest.filter(Boolean).map((r): Seg => ({ op: "same", text: ` · ${norm(r)}` }))];
     this.list.push({ area: this.area, item, missing: this.missing, kind: side, before: side === "removed" ? segs : null, after: side === "added" ? segs : null });
   }
-  moved(item: string, from: number, to: number) {
-    const d = wordDiff(L("compare.position", { n: from + 1 }), L("compare.position", { n: to + 1 }));
-    this.list.push({ area: this.area, item, missing: this.missing, kind: "moved", before: d.before, after: d.after });
+  /** An item that only moved: its text on both sides (the page shows the positions above it). */
+  moved(item: string, from: number, to: number, text: string) {
+    const segs = plain(norm(text), "same");
+    this.list.push({ area: this.area, item, missing: this.missing, kind: "moved", before: segs, after: [...segs], positions: { before: from + 1, after: to + 1 } });
   }
 }
 
@@ -236,24 +241,27 @@ const stageText = (s: PlaybookField["stage"] | undefined) => (s && STAGE_KEY[s] 
 const yesNo = (v: boolean | undefined) => L(v ? "compare.value.yes" : "compare.value.no");
 const pct = (bp: number | undefined) => (typeof bp === "number" ? `${Math.round(bp) / 100}%` : "");
 
+/** A play's name as the Where column shows it: the default card's title without its quotes ("Too expensive"). */
+export function playName(key: PlayKey): string {
+  return DEFAULT_PLAYS[key].title.replace(/["\u201c\u201d]/g, "").trim();
+}
+
 function diffPlays(r: Rows, a: Playbook, b: Playbook) {
   r.in("plays");
   for (const key of PLAY_KEYS as readonly PlayKey[]) {
-    const title = DEFAULT_PLAYS[key].title;
+    const title = playName(key);
     const pa = a.plays?.[key];
     const pb = b.plays?.[key];
     const ca = pa?.own ?? DEFAULT_PLAYS[key];
     const cb = pb?.own ?? DEFAULT_PLAYS[key];
-    if (!!pa?.own !== !!pb?.own) {
-      r.text(`${title} · ${L("compare.item.card")}`, L(pa?.own ? "playbook.play.own" : "playbook.play.default_card"), L(pb?.own ? "playbook.play.own" : "playbook.play.default_card"));
-    }
+    const first = r.list.length;
     r.text(`${title} · ${L("playbook.play.when")}`, ca.when, cb.when);
     for (const s of alignList(ca.do ?? [], cb.do ?? [], norm, true)) {
       const at = (n: number) => `${title} · ${L("compare.item.step", { n: n + 1 })}`;
       if (s.kind === "paired") r.text(at(s.bi), s.a, s.b);
       else if (s.kind === "added") r.whole(at(s.bi), "added", s.b);
       else if (s.kind === "removed") r.whole(at(s.ai), "removed", s.a);
-      else if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi);
+      else if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi, s.b);
     }
     r.text(`${title} · ${L("playbook.play.example")}`, ca.example, cb.example);
     r.text(`${title} · ${L("playbook.play.not_this")}`, ca.notThis, cb.notThis);
@@ -262,11 +270,17 @@ function diffPlays(r: Rows, a: Playbook, b: Playbook) {
     for (const s of alignList(fa, fb, (f) => norm(f.text), true)) {
       const at = (n: number) => `${title} · ${L("compare.item.fact", { n: n + 1 })}`;
       if (s.kind === "same" || s.kind === "paired" || s.kind === "moved") {
-        if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi);
+        if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi, s.b.text);
         r.text(at(s.bi), s.a.text, s.b.text);
         r.text(`${at(s.bi)} · ${L("playbook.objection.source")}`, s.a.source, s.b.source);
       } else if (s.kind === "added") r.whole(at(s.bi), "added", s.b.text, [s.b.source ?? ""]);
       else r.whole(at(s.ai), "removed", s.a.text, [s.a.source ?? ""]);
+    }
+    // A switch between the default card and the seller's own: a tag on the play's first changed row,
+    // or its own row when nothing else in the play changed.
+    if (!!pa?.own !== !!pb?.own) {
+      if (r.list.length > first) r.list[first].tag = L(pb?.own ? "compare.tag.own_card" : "compare.tag.default_card");
+      else r.text(`${title} · ${L("compare.item.card")}`, L(pa?.own ? "playbook.play.own" : "playbook.play.default_card"), L(pb?.own ? "playbook.play.own" : "playbook.play.default_card"));
     }
   }
 }
@@ -280,7 +294,7 @@ function diffQuestions(r: Rows, a: Playbook, b: Playbook) {
     else if (s.kind === "removed") r.whole(deal, "removed", s.a.label, [stageText(s.a.stage), s.a.example ?? ""]);
     else if (s.kind === "same" || s.kind === "moved" || s.kind === "paired") {
       const name = norm(s.b.label) || norm(s.a.label);
-      if (s.kind === "moved") r.moved(name, s.ai, s.bi);
+      if (s.kind === "moved") r.moved(name, s.ai, s.bi, s.b.label);
       r.text(deal, s.a.label, s.b.label);
       r.text(`${name} · ${L("playbook.field.needed")}`, stageText(s.a.stage), stageText(s.b.stage));
       r.text(`${name} · ${L("playbook.field.example")}`, s.a.example, s.b.example);
@@ -308,14 +322,14 @@ function diffLimits(r: Rows, a: Playbook, b: Playbook) {
     if (s.kind === "paired") r.text(at(s.bi), s.a, s.b);
     else if (s.kind === "added") r.whole(at(s.bi), "added", s.b);
     else if (s.kind === "removed") r.whole(at(s.ai), "removed", s.a);
-    else if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi);
+    else if (s.kind === "moved") r.moved(at(s.bi), s.ai, s.bi, s.b);
   }
   const exc = L("playbook.exceptions");
   for (const s of alignList(a.exceptions ?? [], b.exceptions ?? [], (x) => x.id, false)) {
     if (s.kind === "added") r.whole(exc, "added", s.b.text);
     else if (s.kind === "removed") r.whole(exc, "removed", s.a.text);
     else if (s.kind !== "paired") {
-      if (s.kind === "moved") r.moved(`${exc} · ${norm(s.b.text)}`, s.ai, s.bi);
+      if (s.kind === "moved") r.moved(exc, s.ai, s.bi, s.b.text);
       r.text(exc, s.a.text, s.b.text);
     }
   }
@@ -344,7 +358,7 @@ function diffOpening(r: Rows, a: Playbook, b: Playbook) {
     if (s.kind === "added") r.whole(at(s.bi), "added", topicText(s.b));
     else if (s.kind === "removed") r.whole(at(s.ai), "removed", topicText(s.a));
     else {
-      if (s.kind === "moved") r.moved(norm(s.b.en), s.ai, s.bi);
+      if (s.kind === "moved") r.moved(L("playbook.opening.topic_n", { n: s.bi + 1 }), s.ai, s.bi, topicText(s.b));
       r.text(at(s.bi), topicText(s.a), topicText(s.b));
     }
   }
@@ -364,7 +378,7 @@ function diffObjections(r: Rows, a: Playbook, b: Playbook) {
     else if (s.kind === "removed") r.whole(obj, "removed", s.a.objection, [s.a.answer]);
     else {
       const name = norm(s.b.objection);
-      if (s.kind === "moved") r.moved(name, s.ai, s.bi);
+      if (s.kind === "moved") r.moved(obj, s.ai, s.bi, `${name} · ${norm(s.b.answer)}`);
       r.text(obj, s.a.objection, s.b.objection);
       r.text(`${name} · ${L("playbook.objection.answer")}`, s.a.answer, s.b.answer);
       r.text(`${name} · ${L("playbook.objection.source")}`, s.a.source, s.b.source);
