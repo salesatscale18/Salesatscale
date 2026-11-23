@@ -605,7 +605,8 @@ export async function buyerChat(db: Db, ctx: ChatContext, opts: { after?: string
     linkPreviews(db, accountId, rows.filter((r) => r.m.actor !== "buyer").map((r) => r.m.body), lang, now),
     db.select({ name: toolCalls.name, outcome: toolCalls.outcome, result: toolCalls.result, messageId: toolCalls.messageId }).from(toolCalls)
       .where(and(eq(toolCalls.accountId, accountId), inArray(toolCalls.conversationId, ids), inArray(toolCalls.name, ["create_quote", APP_MESSAGE_CALL, "request_callback"]))),
-    loadQuoteCards(db, accountId, ids, { audience: "buyer", now }),
+    // Every card's fixed text and direction follow the chat's current language, on every poll (earlier cards too).
+    loadQuoteCards(db, accountId, ids, { audience: "buyer", now, language: lang }),
     buyerCallRows(db, accountId, ids),
   ]);
   const kinds = appMessageKinds(calls);

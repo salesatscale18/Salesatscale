@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useCallback, useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { BuyerChat, BuyerMessage, LinkPreview } from "@/lib/simulator/service";
 import { boldSegments } from "@/lib/agent/app-message";
 import { QuoteCard } from "@/components/sas/quote-card";
@@ -71,7 +71,9 @@ function Bolded({ text }: { text: string }) {
 /** Amounts and IDs stay left-to-right inside Hebrew text. */
 const Num = ({ children }: { children: ReactNode }) => <span className="c-num">{children}</span>;
 
-function Card({ p, s, initials, dir }: { p: LinkPreview; s: ChatStrings; initials: string; dir: "ltr" | "rtl" }) {
+type CardStrings = Pick<ChatStrings, "formLabel" | "payLabel" | "todayWord" | "perMonth" | "openForm" | "payNow">;
+
+function Card({ p, s, initials, dir }: { p: LinkPreview; s: CardStrings; initials: string; dir: "ltr" | "rtl" }) {
   return (
     <div className="c-card" dir={dir}>
       <div className="c-card__top">
@@ -168,6 +170,17 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   const base = `/chat/${token}/messages`;
   const locale = lang === "he" ? "he-IL" : "en-GB";
   const dir = lang === "he" ? "rtl" : "ltr";
+  // Cards (order-form and pay cards, the reply buttons under the quote's close, booking cards) in the chat's current
+  // language, which the poll keeps up to date; quote cards come from the server already in it. Messages stay as written.
+  const cardDir = cardLang === "he" ? "rtl" : "ltr";
+  const cardStrings = useMemo(() => {
+    const ct = translator((cardLang === "he" ? "he" : "en") as Locale);
+    return {
+      formLabel: ct("buyer.sim.form_label"), payLabel: ct("buyer.sim.pay_label"), todayWord: ct("buyer.sim.today_word"), perMonth: ct("buyer.sim.per_month"),
+      openForm: ct("buyer.sim.open_form"), payNow: ct("buyer.sim.pay_now"), replyYes: ct("buyer.qcard.reply_yes"), replyChange: ct("buyer.qcard.reply_change"),
+      replies: ct("buyer.qcard.replies"),
+    };
+  }, [cardLang]);
 
   const poll = useCallback(async () => {
     if (busy.current) return;
@@ -456,14 +469,14 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
             </span>
           </div>
         )}
-        {m.previews.map((p) => <Card key={p.url} p={p} s={strings} initials={initials} dir={dir} />)}
+        {m.previews.map((p) => <Card key={p.url} p={p} s={cardStrings} initials={initials} dir={cardDir} />)}
       </div>,
     );
     if (m.id === repliesAfter) {
       rows.push(
-        <div key={`r-${m.id}`} className="c-replies" role="group" aria-label={strings.replies} data-reply-buttons="">
-          <button type="button" className="c-reply" onClick={() => void send(strings.replyYes)}>{strings.replyYes}</button>
-          <button type="button" className="c-reply" onClick={() => void send(strings.replyChange)}>{strings.replyChange}</button>
+        <div key={`r-${m.id}`} className="c-replies" role="group" aria-label={cardStrings.replies} dir={cardDir} data-reply-buttons="">
+          <button type="button" className="c-reply" onClick={() => void send(cardStrings.replyYes)}>{cardStrings.replyYes}</button>
+          <button type="button" className="c-reply" onClick={() => void send(cardStrings.replyChange)}>{cardStrings.replyChange}</button>
         </div>,
       );
     }
