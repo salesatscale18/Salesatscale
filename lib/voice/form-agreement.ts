@@ -125,3 +125,54 @@ export function orderFormAgreed(lines: readonly { role: string; text: string }[]
   const agentBefore = lines.slice(0, lastBuyerAt).findLast((l) => l.role === "agent")?.text ?? "";
   return plainYes && any(AGENT_OFFER, agentBefore) ? "yes" : "no";
 }
+
+/** One line of a quote as the smaller-quote gate compares it: its SKU, name, units and whether it is a recurring charge. */
+export type QuoteUnitsLine = { sku: string; name: string; qty: number; recurring?: boolean };
+
+/**
+ * Whether a new create_quote on a call is a SMALLER quote (it then needs the buyer's ask first: smallerQuoteAgreed),
+ * and what it covers less of. Smaller means: strictly fewer sites than the buyer stated, or strictly fewer units of
+ * at least one item than the latest quote AND no item with more units (an item the latest quote does not have
+ * counts as more). Equal quantities never count, whatever the discount, exception or the latest quote's status (a
+ * held, declined or cancelled quote is compared the same way: it must not block its own replacement). The latest
+ * quote's units of an item are counted once per charge: an item with a one-time line and a subscription line (or one
+ * line per site of each) has the larger of the two sums, never both added (23 Nov 2026: the same 6 units after a
+ * held quote read as "fewer than 12").
+ */
+export function smallerQuoteParts(o: {
+  sites: number | null; statedSites: number | null; asked: readonly { sku: string; qty: number }[]; latest: readonly QuoteUnitsLine[];
+}): { numbers: number[]; what: string } | null {
+  const numbers: number[] = [];
+  const what: string[] = [];
+  if (o.sites !== null && o.statedSites !== null && o.sites < o.statedSites) {
+    numbers.push(o.sites);
+    what.push(`${o.sites} site${o.sites === 1 ? "" : "s"}`);
+  }
+  const key = (sku: string) => sku.trim().toUpperCase();
+  const asked = new Map<string, number>();
+  for (const l of o.asked) if (key(l.sku) && Number.isInteger(l.qty) && l.qty > 0) asked.set(key(l.sku), (asked.get(key(l.sku)) ?? 0) + l.qty);
+  // Per item and charge: summed over its lines (one per site); per item: the larger charge.
+  const perCharge = new Map<string, { name: string; oneTime: number; recurring: number }>();
+  for (const l of o.latest) {
+    const k = key(l.sku);
+    const had = perCharge.get(k) ?? { name: l.name, oneTime: 0, recurring: 0 };
+    if (l.recurring) had.recurring += l.qty;
+    else had.oneTime += l.qty;
+    perCharge.set(k, had);
+  }
+  const fewer: { qty: number; name: string }[] = [];
+  let more = false;
+  for (const [sku, qty] of asked) {
+    const had = perCharge.get(sku);
+    const before = had ? Math.max(had.oneTime, had.recurring) : 0;
+    if (qty > before) more = true;
+    else if (qty < before) fewer.push({ qty, name: had!.name });
+  }
+  if (fewer.length && !more) {
+    for (const f of fewer) {
+      numbers.push(f.qty);
+      what.push(`${f.qty} × ${f.name}`);
+    }
+  }
+  return numbers.length ? { numbers, what: what.join(", ") } : null;
+}

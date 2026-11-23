@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { canonicalJson, grownFrom, LIMIT_WARN_LONG_SEC, limitWarnSecFor, lineSaysNumber } from "@/lib/voice/engine";
-import { smallerQuoteAgreed } from "@/lib/voice/form-agreement";
+import { smallerQuoteAgreed, smallerQuoteParts } from "@/lib/voice/form-agreement";
 import { ServerEventMapper } from "@/lib/voice/gateway-realtime";
 import { LIMIT_FINISH_MAX_SEC, limitFinishSec } from "@/lib/voice/socket-limits";
 import { sameUtterance } from "@/lib/voice/transcript-clean";
@@ -40,6 +40,31 @@ describe("S5: a smaller quote needs the buyer's ask first", () => {
   for (const [name, lines, n, want] of cases) {
     it(name, () => expect(smallerQuoteAgreed(lines, says(n))).toBe(want));
   }
+});
+
+describe("S5: what counts as a smaller quote (equal quantities never do)", () => {
+  const sensors = (qty: number) => [{ sku: "SENSOR", name: "Temperature sensor", qty, recurring: false }, { sku: "SENSOR", name: "Temperature sensor", qty, recurring: true }];
+  const latest = [...sensors(6), { sku: "INSTALL", name: "Installation", qty: 1, recurring: false }];
+  type Row = [string, Parameters<typeof smallerQuoteParts>[0], "runs" | "held"];
+  const rows: Row[] = [
+    // The create_quote's own discount or exception is not an input: the same quantities are the same quote size.
+    ["same quantities without discount", { sites: 1, statedSites: 1, asked: [{ sku: "SENSOR", qty: 6 }], latest }, "runs"],
+    ["same quantities with an added discount", { sites: 1, statedSites: 1, asked: [{ sku: "sensor", qty: 6 }], latest }, "runs"],
+    // A held quote's lines (one-time and subscription for the same item): 6, not 12 (23 Nov 2026).
+    ["same quantities after a held quote", { sites: null, statedSites: null, asked: [{ sku: "SENSOR", qty: 6 }], latest: sensors(6) }, "runs"],
+    ["same quantities split per site", { sites: 2, statedSites: 2, asked: [{ sku: "SENSOR", qty: 6 }], latest: [...sensors(3), ...sensors(3)] }, "runs"],
+    ["fewer units of one item", { sites: 1, statedSites: 1, asked: [{ sku: "SENSOR", qty: 4 }], latest }, "held"],
+    ["fewer sites than stated", { sites: 1, statedSites: 2, asked: [{ sku: "SENSOR", qty: 6 }], latest }, "held"],
+    ["fewer of one item, more of another", { sites: null, statedSites: null, asked: [{ sku: "SENSOR", qty: 4 }, { sku: "GATEWAY", qty: 1 }], latest }, "runs"],
+    ["more units", { sites: null, statedSites: null, asked: [{ sku: "SENSOR", qty: 8 }], latest }, "runs"],
+    ["no earlier quote", { sites: null, statedSites: null, asked: [{ sku: "SENSOR", qty: 2 }], latest: [] }, "runs"],
+  ];
+  for (const [name, input, want] of rows) {
+    it(`${name}: ${want}`, () => expect(smallerQuoteParts(input) ? "held" : "runs").toBe(want));
+  }
+  it("names what it covers less of", () => {
+    expect(smallerQuoteParts({ sites: 1, statedSites: 2, asked: [{ sku: "SENSOR", qty: 4 }], latest })).toEqual({ numbers: [1, 4], what: "1 site, 4 × Temperature sensor" });
+  });
 });
 
 describe("S4: the time limit", () => {

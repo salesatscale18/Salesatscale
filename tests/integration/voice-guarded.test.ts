@@ -275,7 +275,7 @@ describe("Classic + guards", () => {
           expect(c.logs.some((l) => l.endsWith("tool send_order_form held: the quote waits for the team's approval"))).toBe(true);
           expect((await thread(c.conversationId)).some((m) => /order form:/i.test(m.body))).toBe(false);
           // A later ready quote lifts the hold.
-          await c.buyer(he ? "בסדר, אז 6 חיישנים בלי הנחה" : "OK, 6 sensors without the discount then.");
+          await c.buyer(he ? "בסדר, בלי הנחה" : "OK, without the discount then.");
           const ready = await c.tool("q2", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }]));
           expect(ready, JSON.stringify(ready)).toMatchObject({ ok: true, status: "ready" });
           expect(ready.say_this).not.toBe(HELD_QUOTE_SAY[he ? "he" : "en"]);

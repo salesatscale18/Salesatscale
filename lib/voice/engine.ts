@@ -36,7 +36,7 @@ import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine
 import { callVoice, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
-import { orderFormAgreed, smallerQuoteAgreed } from "./form-agreement";
+import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
@@ -1994,43 +1994,27 @@ export class VoiceEngine {
     if (!this.loaded || !args || typeof args !== "object") return null;
     const { account, conv } = this.loaded;
     const a = args as { lines?: unknown; sites?: unknown };
-    const numbers: number[] = [];
-    const what: string[] = [];
-    if (typeof a.sites === "number" && Number.isInteger(a.sites) && a.sites > 0) {
+    const sites = typeof a.sites === "number" && Number.isInteger(a.sites) && a.sites > 0 ? a.sites : null;
+    let statedSites: number | null = null;
+    if (sites !== null) {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const stated = (deal?.fields as Record<string, { value?: string; provenance?: string } | undefined> | undefined)?.sites;
       const before = Number(String(stated?.value ?? "").trim());
-      if (stated?.provenance === "buyer" && Number.isFinite(before) && a.sites < before) {
-        numbers.push(a.sites);
-        what.push(`${a.sites} site${a.sites === 1 ? "" : "s"}`);
-      }
+      if (stated?.provenance === "buyer" && Number.isFinite(before)) statedSites = before;
     }
-    const asked = new Map<string, number>();
-    for (const l of Array.isArray(a.lines) ? a.lines : []) {
-      const sku = String((l as { sku?: unknown })?.sku ?? "").trim().toUpperCase();
-      const qty = Number((l as { qty?: unknown })?.qty);
-      if (sku && Number.isInteger(qty) && qty > 0) asked.set(sku, (asked.get(sku) ?? 0) + qty);
-    }
-    if (asked.size) {
+    const asked = (Array.isArray(a.lines) ? a.lines : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
+    let latest: { sku: string; name: string; qty: number; recurring: boolean }[] = [];
+    if (asked.length) {
+      // The latest quote, whatever its status (held, declined or cancelled included): compared by its quantities.
       const [q] = await this.db.select({ id: quotes.id, version: quotes.currentVersion }).from(quotes)
         .where(and(eq(quotes.accountId, account.id), eq(quotes.leadId, conv.leadId))).orderBy(desc(quotes.createdAt), desc(quotes.number)).limit(1);
       const [v] = q ? await this.db.select({ id: quoteVersions.id }).from(quoteVersions)
         .where(and(eq(quoteVersions.accountId, account.id), eq(quoteVersions.quoteId, q.id), eq(quoteVersions.version, q.version))) : [];
-      const rows = v ? await this.db.select({ sku: quoteLines.sku, name: quoteLines.name, qty: quoteLines.qty }).from(quoteLines)
+      const rows = v ? await this.db.select({ sku: quoteLines.sku, name: quoteLines.name, qty: quoteLines.qty, chargeType: quoteLines.chargeType }).from(quoteLines)
         .where(and(eq(quoteLines.accountId, account.id), eq(quoteLines.quoteVersionId, v.id))) : [];
-      const had = new Map<string, { name: string; qty: number }>();
-      for (const r of rows) {
-        const k = r.sku.trim().toUpperCase();
-        had.set(k, { name: r.name, qty: (had.get(k)?.qty ?? 0) + r.qty });
-      }
-      for (const [sku, qty] of asked) {
-        const before = had.get(sku);
-        if (!before || qty >= before.qty) continue;
-        numbers.push(qty);
-        what.push(`${qty} × ${before.name}`);
-      }
+      latest = rows.map((r) => ({ sku: r.sku, name: r.name, qty: r.qty, recurring: r.chargeType !== "one_time" }));
     }
-    return numbers.length ? { numbers, what: what.join(", ") } : null;
+    return smallerQuoteParts({ sites, statedSites, asked, latest });
   }
 
   /**
