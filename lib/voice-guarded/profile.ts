@@ -26,7 +26,7 @@ import { GUARDED_ENGINE, GUARDED_SILENT_ENGINE } from "@/lib/voice-classic/engin
 import { loadGuardedInstructions } from "./instructions";
 import { loadQuoteSummary } from "./quote-summary";
 import { plainDealStateResult } from "./plain-notes";
-import { silentProbeToolBehavior, withScheduling } from "./silent-probe";
+import { DUPLICATE_TOOL_CALL_MS, silentProbeToolBehavior, withScheduling } from "./silent-probe";
 
 /** The model's tools: Classic's (today's tools and Classic's end_call, the 20 Nov descriptions), plus order_form_status (K12, Current's). */
 export function guardedTools(family: SchemaFamily) {
@@ -61,11 +61,14 @@ export const GUARDED_PROFILE: VoiceProfile = {
 
 /**
  * "Classic + guards (silent probe)" (test lab engine "guarded_silent"): exactly guarded, plus on Gemini models
- * non-blocking tools and a scheduling hint on every tool result (lib/voice-guarded/silent-probe.ts). OpenAI: guarded.
+ * non-blocking tools and a scheduling hint on every tool result (lib/voice-guarded/silent-probe.ts), and the run-once
+ * guard for identical tool calls (any model). OpenAI: otherwise guarded.
  */
 export const GUARDED_SILENT_PROFILE: VoiceProfile = {
   ...GUARDED_PROFILE,
   engine: GUARDED_SILENT_ENGINE,
   toolBehavior: silentProbeToolBehavior,
   shapeResult: (name, forModel, o) => withScheduling(name, guardedShapeResult(name, forModel), o.family),
+  // P1: an identical tool call within 5 s is answered with the first one's result, silently, and not run again.
+  dedupeToolCallsMs: DUPLICATE_TOOL_CALL_MS,
 };

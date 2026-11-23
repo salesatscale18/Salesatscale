@@ -12,13 +12,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { and, asc, eq } from "drizzle-orm";
-import { conversations, messages, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
+import { conversations, messages, quotes, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, readDealState } from "@/lib/agent/service";
 import { ClassicVoiceEngine } from "@/lib/voice-classic/engine";
-import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, refusedQuoteMessage, VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
-import { GUARDED_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
+import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, refusedQuoteMessage, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
 import { guardedInstructions } from "@/lib/voice-guarded/instructions";
 import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
@@ -189,15 +189,16 @@ describe("Classic + guards", () => {
   });
 
   describe("(c) the guards", () => {
-    async function fakeCall(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = [], limits: VoiceLimits = {}) {
+    async function fakeCall(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = [], limits: VoiceLimits = {}, profile: VoiceProfile = GUARDED_PROFILE) {
       const c = (await startVoiceTestConversation(db, acc, me.id, { scenario: null }))!;
       for (const l of lines) await db.insert(messages).values({ accountId: acc, conversationId: c.conversationId, actor: l.actor, body: l.body, language: "en", createdAt: new Date(Date.now() - l.ageMs) });
-      const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: "guarded" });
+      const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: profile.engine as "guarded" | "guarded_silent" });
       if (!s.ok) throw new Error(s.reason);
       const clock = new ManualClock();
       const model = new FakeModel();
       const { lines: logs, log } = memLog();
-      const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: () => undefined, log, limits: { ...QUIET, ...limits }, recording: { store: null, reason: "test" }, profile: GUARDED_PROFILE });
+      const sent: unknown[] = [];
+      const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: (m) => void sent.push(m), log, limits: { ...QUIET, ...limits }, recording: { store: null, reason: "test" }, profile });
       const settle = async () => {
         for (let i = 0; i < 4; i++) {
           await flushAsync();
@@ -206,7 +207,7 @@ describe("Classic + guards", () => {
       };
       const run = (ms: number) => clock.advance(ms, settle);
       return {
-        ...s, conversationId: c.conversationId, leadId: c.leadId, clock, model, engine, logs, settle, run,
+        ...s, conversationId: c.conversationId, leadId: c.leadId, clock, model, engine, logs, sent, settle, run,
         startNow: async () => { await engine.start(); await settle(); },
         emit: (e: RealtimeEvent) => model.conns.at(-1)!.emit(e),
         said: async (text: string) => {
@@ -309,14 +310,90 @@ describe("Classic + guards", () => {
         const say = String(q.say_this);
         // Named by the catalog plain_name when there is one (the gateway), else by the name (the sensor).
         if (!he) {
-          expect(say).toMatch(/^Six Temperature sensors and two kitchen hubs\. That's four thousand five hundred shekels today and one hundred and six shekels and twenty agorot a month, including VAT\./);
+          // G1: whole shekels (106.20 → one hundred and six), the exact figures in the chat.
+          expect(say).toMatch(/^Six Temperature sensors and two kitchen hubs\. That's four thousand five hundred shekels today and one hundred and six shekels a month, including VAT\./);
+          expect(say).toMatch(/ The exact figures are in the chat\.$/);
           expect(say).not.toContain("forty");
+          expect(say).not.toContain("agor");
         } else {
-          expect(say).toMatch(/^שש יחידות Temperature sensor ושתי יחידות kitchen hub\. זה ארבעת אלפים וחמש מאות שקלים היום ומאה ושישה שקלים ועשרים אגורות לחודש, כולל מע״מ\./);
+          expect(say).toMatch(/^שש יחידות Temperature sensor ושתי יחידות kitchen hub\. זה ארבעת אלפים וחמש מאות שקלים היום ומאה ושישה שקלים לחודש, כולל מע״מ\./);
+          expect(say).toMatch(/ הסכומים המדויקים מופיעים בצ'אט\.$/);
         }
         expect(say.replace(/\d+ (December|January|בדצמבר|בינואר)/g, "")).not.toMatch(/\d/);
         await c.end();
       }
+    });
+
+    it("S5: a quote for fewer sites is held until the buyer asks for it (English and Hebrew), in the guarded result's words", async () => {
+      for (const he of [false, true]) {
+        const c = await fakeCall();
+        await c.startNow();
+        await c.buyer(he ? "מסעדה עם שני סניפים" : "A restaurant with two sites.");
+        await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "2", provenance: "buyer" }] });
+        await c.said(he ? "יעזור להתחיל עם סניף אחד?" : "Would starting with one site help?");
+        await c.buyer(he ? "כן, נראה לי. אני צריך פתרון." : "Yeah, I guess so. I need a solution.");
+        const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }));
+        expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked", message: smallerQuoteNotAsked("1 site").message });
+        expect(c.logs.some((l) => l.endsWith("tool create_quote held: a smaller quote the buyer did not ask for"))).toBe(true);
+        await c.said(he ? "להכין הצעת מחיר לסניף אחד?" : "Shall I prepare a quote for one site?");
+        await c.buyer(he ? "כן בבקשה" : "yes please");
+        expect(await c.tool("q2", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }))).toMatchObject({ ok: true, status: "ready" });
+        await c.end();
+      }
+    });
+
+    it("P1 (silent probe): an identical create_quote 400 ms later is not run again: one quote, one card, one spoken summary", async () => {
+      const c = await fakeCall([], {}, GUARDED_SILENT_PROFILE);
+      await c.startNow();
+      await c.buyer("A restaurant with one site. Two seats please.");
+      await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+      const args = quoteArgs([{ sku: "SEAT-M", qty: 2 }]);
+      c.emit({ type: "tool-call", callId: "q1", name: "create_quote", args });
+      await c.run(400);
+      // The same arguments in another key order: the same call.
+      c.emit({ type: "tool-call", callId: "q2", name: "create_quote", args: Object.fromEntries(Object.entries(args).reverse()) });
+      await c.run(500);
+      const results = c.model.conns.at(-1)!.results.filter((r) => r.name === "create_quote").map((r) => r.result);
+      expect(results).toHaveLength(2);
+      expect(results.filter((r) => typeof r.say_this === "string")).toHaveLength(1);
+      expect(results[0]).toMatchObject({ ok: true, status: "ready", scheduling: "WHEN_IDLE" });
+      expect(results[1]).toMatchObject({ ok: true, status: "ready", duplicate_of: "q1", scheduling: "SILENT", quote: results[0].quote });
+      expect(results[1]).not.toHaveProperty("message");
+      const cards = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && !m.voiceSessionId);
+      expect(cards).toHaveLength(1);
+      expect(c.sent.filter((m) => (m as { t?: string }).t === "message")).toHaveLength(1);
+      expect(c.logs.some((l) => / tool create_quote duplicate of q1: not run again$/.test(l))).toBe(true);
+      expect(c.logs.some((l) => / tool call received name=create_quote id=q2 .* dup=yes$/.test(l))).toBe(true);
+      expect(c.logs.filter((l) => / dup=yes$/.test(l) && / tool call received name=create_quote id=q1 /.test(l))).toHaveLength(0);
+      await c.end();
+      // One quote and one recorded create_quote (the duplicate is not a tool run).
+      expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId))).filter((r) => r.name === "create_quote")).toHaveLength(1);
+      expect(await db.select().from(quotes).where(eq(quotes.leadId, c.leadId))).toHaveLength(1);
+    });
+
+    it("P1: different arguments both run; the same arguments 6 s apart both run; guarded (no probe) never dedupes", async () => {
+      const c = await fakeCall([], {}, GUARDED_SILENT_PROFILE);
+      await c.startNow();
+      await c.buyer("A restaurant with one site.");
+      await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+      c.emit({ type: "tool-call", callId: "q1", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 2 }]) });
+      await c.run(400);
+      c.emit({ type: "tool-call", callId: "q2", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 3 }]) });
+      await c.run(6_000);
+      c.emit({ type: "tool-call", callId: "q3", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 3 }]) });
+      await c.run(500);
+      const results = c.model.conns.at(-1)!.results.filter((r) => r.name === "create_quote").map((r) => r.result);
+      expect(results.map((r) => r.duplicate_of)).toEqual([undefined, undefined, undefined]);
+      expect(results.filter((r) => typeof r.say_this === "string")).toHaveLength(3);
+      expect(c.logs.some((l) => /duplicate of/.test(l))).toBe(false);
+      await c.end();
+      const g = await fakeCall();
+      await g.startNow();
+      await g.tool("u1", "update_deal_state", noUpdate);
+      await g.tool("u2", "update_deal_state", noUpdate);
+      expect(g.model.conns.at(-1)!.results.filter((r) => r.name === "update_deal_state").every((r) => r.result.duplicate_of === undefined)).toBe(true);
+      await g.end();
+      expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, g.conversationId))).filter((r) => r.name === "update_deal_state")).toHaveLength(2);
     });
 
     it("K7: the hand-off keeps the call (Current's result); Classic's 'the call ends there' is not in the instructions", async () => {

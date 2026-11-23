@@ -127,8 +127,8 @@ describe("test lab: the voice engine selector", () => {
     save("page-engine-select", html);
     expect(html).toContain('data-voice-engine-select=""');
     expect(html).toContain("Voice engine");
-    expect(html).toContain('<option value="current" selected="">Current</option>');
-    expect(html).toContain('<option value="classic">Classic (20 Nov)</option>');
+    expect(html).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
+    expect(html).toContain('<option value="classic">Old baseline (20 Nov)</option>');
     expect(html.indexOf('id="lab-ver"')).toBeLessThan(html.indexOf('id="lab-engine"'));
   });
 
@@ -137,7 +137,7 @@ describe("test lab: the voice engine selector", () => {
     as(seller);
     const html = await render();
     expect(html).not.toContain("data-voice-engine-select");
-    expect(html).not.toContain("Classic (20 Nov)");
+    expect(html).not.toContain("Old baseline (20 Nov)");
     const before = (await db.select({ id: voiceSessions.id }).from(voiceSessions)).length;
     expect(await startVoiceCallAction({ slug, engine: "classic" })).toEqual({ ok: false, reason: "not_allowed" });
     expect((await db.select({ id: voiceSessions.id }).from(voiceSessions)).length).toBe(before);
@@ -189,8 +189,8 @@ describe("test lab: the voice engine selector", () => {
     const html = await render({ c: r.conversationId });
     save("page-classic-call", html);
     expect(html).toContain('data-voice-engine-pill=""');
-    expect(html).toContain("Engine: Classic (20 Nov)");
-    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">Classic \(20 Nov\)<\/dd>/);
+    expect(html).toContain("Engine: Old baseline (20 Nov)");
+    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">Old baseline \(20 Nov\)<\/dd>/);
     expect(html).toContain("Not recorded");
     expect(html).toContain("Call again");
     // Call again starts the next call on the same engine (the action checks the caller again).
@@ -204,7 +204,7 @@ describe("test lab: the voice engine selector", () => {
     // A seller opening the saved call sees no engine.
     as(seller);
     const sellerHtml = await render({ c: r.conversationId });
-    expect(sellerHtml).not.toContain("Classic (20 Nov)");
+    expect(sellerHtml).not.toContain("Old baseline (20 Nov)");
     expect(sellerHtml).not.toContain("data-voice-engine");
     // The conversation is still the test lab's voice conversation.
     const [conv] = await db.select().from(conversations).where(eq(conversations.id, r.conversationId));

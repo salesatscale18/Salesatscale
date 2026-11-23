@@ -25,10 +25,10 @@ import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/vo
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
 import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 import { startChatAction } from "./actions";
-import { engineLabelKey, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { ENGINE_ORDER, engineHelpKey, engineLabelKey, engineLabelVars, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 
-/** "Current" / "Classic (20 Nov)" / "Classic + guards". */
-const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engineLabelKey(engine));
+/** "Live for buyers (22 Nov)" / "New (23 Nov)" / "New + silent tools (23 Nov, testing)" / "Old baseline (20 Nov)". */
+const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engineLabelKey(engine), engineLabelVars(engine));
 /** The select's value as an engine (anything else: Current; the server checks again). */
 const engineOf = (v: string): VoiceEngineName => otherEngine(v) ?? "current";
 
@@ -222,21 +222,21 @@ export function VoiceLabChoices({
             {languages.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
-        <div className="sas-input-group">
+        <div className="sas-input-group lab-choices__ver">
           <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
           <select className="sas-select" id="lab-ver" name="versionId" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
             {versions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         {engines ? (
-          <div className="sas-input-group">
+          <div className="sas-input-group lab-choices__engine">
             <label className="sas-input-label" htmlFor="lab-engine">{t("lab.voice.engine")}</label>
             {/* Not a form field: "Start chat" ignores it; only "Start call" sends it. */}
-            <select className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(engineOf(e.target.value))} data-voice-engine-select="">
-              <option value="current">{engineLabel("current")}</option>
-              <option value="classic">{engineLabel("classic")}</option>
-              <option value="guarded">{engineLabel("guarded")}</option>
-              <option value="guarded_silent">{engineLabel("guarded_silent")}</option>
+            <select
+              className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(engineOf(e.target.value))} data-voice-engine-select=""
+              aria-describedby="lab-engine-help"
+            >
+              {ENGINE_ORDER.map((e) => <option key={e} value={e}>{engineLabel(e)}</option>)}
             </select>
           </div>
         ) : null}
@@ -248,6 +248,8 @@ export function VoiceLabChoices({
             <Icon name="phone-call" />{t("lab.voice.start_call")}
           </button>
         </div>
+        {/* Under the row: what the chosen engine is based on and whether buyers get it. */}
+        {engines ? <p className="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">{t(engineHelpKey(engine))}</p> : null}
       </form>
       {own ? (
         <div className="lab-call__bar">

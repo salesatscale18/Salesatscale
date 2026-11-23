@@ -84,6 +84,36 @@ export function formReservation(line: string): "contrast" | "price" | "question"
   return null;
 }
 
+/** A hedged yes ("I guess so"): not a yes without reservation to a smaller quote. */
+const HEDGE = [/\b(i guess|i suppose|kind of|sort of|i think so)\b/i, he(["נראה לי", "כנראה", "אני מניח", "אני מניחה"], "ו")];
+
+/** Asking for a quote or a price in so many words. */
+const QUOTE_OR_PRICE = [/\b(quotes?|quotation|prices?|pricing|costs?|how much)\b/i, he(["הצעה", "הצעת מחיר", "מחיר", "כמה עולה", "כמה זה עולה", "עלות"], "וה")];
+/** A smaller set in words ("just one", "fewer", "a smaller start"). */
+const SMALLER = [/\b(smaller|fewer|less|just|only|start with|starting with|to start)\b/i, he(["קטן", "קטנה", "פחות", "רק", "להתחיל", "נתחיל"], "ו")];
+
+/**
+ * Whether the buyer asked for a quote that covers fewer units or sites than the latest one (or than what they said),
+ * from the call's last lines: their last line says the new number (`saysNew`) or asks for a quote or price for a
+ * smaller set; or the agent's line right before it asked whether to prepare a quote for the smaller set (it names a
+ * quote and the new number, and asks) and the buyer said yes with no reservation. "unknown": no buyer line yet, or a
+ * line in another language (left to the model). The order form's reservations (formReservation) apply, and a hedged
+ * yes ("I guess so") is no yes. 23 Nov 2026: "Would starting with one site help?" + "Yeah, I guess so. I need a
+ * solution." became a one-site quote.
+ */
+export function smallerQuoteAgreed(lines: readonly { role: string; text: string }[], saysNew: (line: string) => boolean): "yes" | "no" | "unknown" {
+  const lastBuyerAt = lines.findLastIndex((l) => l.role === "buyer");
+  if (lastBuyerAt < 0) return "unknown";
+  const buyer = lines[lastBuyerAt].text;
+  if (!JUDGEABLE.test(buyer)) return "unknown";
+  if (saysNew(buyer)) return "yes";
+  if (any(QUOTE_OR_PRICE, buyer) && any(SMALLER, buyer)) return "yes";
+  const agentBefore = lines.slice(0, lastBuyerAt).findLast((l) => l.role === "agent")?.text ?? "";
+  const askedFirst = /[?؟]/.test(agentBefore) && any(QUOTE_OR_PRICE, agentBefore) && saysNew(agentBefore);
+  const yes = (any(PLAIN_YES, buyer) || any(EXPLICIT_ASK, buyer)) && !formReservation(buyer) && !any(HEDGE, buyer);
+  return askedFirst && yes ? "yes" : "no";
+}
+
 export function orderFormAgreed(lines: readonly { role: string; text: string }[]): "yes" | "no" | "unknown" {
   const lastBuyerAt = lines.findLastIndex((l) => l.role === "buyer");
   if (lastBuyerAt < 0) return "unknown";

@@ -23,6 +23,12 @@ export const SCHEDULING_BY_TOOL: Readonly<Record<string, ToolScheduling>> = { up
 
 export const schedulingFor = (tool: string): ToolScheduling => SCHEDULING_BY_TOOL[tool] ?? OTHER_TOOLS_SCHEDULING;
 
+/**
+ * The run-once guard (Google's recommended client-side dedupe for non-blocking tools): a tool call with the same name
+ * and arguments as one received this long before in the same call is not run again (lib/voice/engine.ts duplicateOf).
+ */
+export const DUPLICATE_TOOL_CALL_MS = 5_000;
+
 /** The session's tool behaviour on this model family: non-blocking on Gemini, as guarded elsewhere. */
 export const silentProbeToolBehavior = (family: SchemaFamily): RealtimeSessionConfig["toolBehavior"] =>
   family === "gemini" ? SILENT_PROBE_TOOL_BEHAVIOR : "blocking";

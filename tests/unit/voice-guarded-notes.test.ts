@@ -122,11 +122,14 @@ describe("Classic + guards (silent probe): its pieces", () => {
   });
 
   it("the profile: guarded's, plus non-blocking tools and scheduling on Gemini only", () => {
-    const { engine, toolBehavior, shapeResult, ...rest } = GUARDED_SILENT_PROFILE;
+    const { engine, toolBehavior, shapeResult, dedupeToolCallsMs, ...rest } = GUARDED_SILENT_PROFILE;
     const { engine: gEngine, toolBehavior: gTb, shapeResult: gShape, ...gRest } = GUARDED_PROFILE;
     expect(engine).toBe("guarded_silent");
     expect(gEngine).toBe("guarded");
     expect(rest).toEqual(gRest);
+    // P1: the run-once guard for identical tool calls (5 s), the silent probe only.
+    expect(dedupeToolCallsMs).toBe(5_000);
+    expect(GUARDED_PROFILE.dedupeToolCallsMs).toBeUndefined();
     expect(gTb).toBeUndefined();
     expect(toolBehavior!("gemini")).toBe("non_blocking");
     expect(toolBehavior!("openai")).toBe("blocking");

@@ -143,6 +143,22 @@ export function moneyWords(amountMinor: number, currency: string, lang: WordsLan
   return `${count(major, names[0], lang)}${and}${count(minor, names[1], lang)}`;
 }
 
+/**
+ * An amount rounded to the nearest whole major unit (half up), in words, with no minor units (owner, 23 Nov 2026:
+ * "whole shekels, exact figures in the chat"): 10620 ILS → "one hundred and six shekels"; 562860 → "five thousand six
+ * hundred and twenty-nine shekels". An amount above zero that rounds to zero is "less than one shekel", never zero.
+ */
+export function wholeMoneyWords(amountMinor: number, currency: string, lang: WordsLanguage): string {
+  if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) throw new Error(`wholeMoneyWords expects whole minor units, got ${amountMinor}`);
+  const scale = 10 ** minorDigits(currency);
+  const major = Math.floor((amountMinor * 2 + scale) / (2 * scale));
+  if (major === 0 && amountMinor > 0) {
+    const one = moneyWords(scale, currency, lang);
+    return lang === "en" ? `less than ${one}` : `פחות מ${one}`;
+  }
+  return moneyWords(major * scale, currency, lang);
+}
+
 /** A quantity of items in words: English "six"; Hebrew counts יחידות (feminine): "שש". */
 export function quantityWords(n: number, lang: WordsLanguage): string {
   return lang === "en" ? englishNumber(n) : hebrewNumber(n, "f");

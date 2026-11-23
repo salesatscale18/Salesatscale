@@ -119,7 +119,7 @@ async function runGuarded(sessionId: string, profile = GUARDED_PROFILE) {
 }
 
 describe("test lab: the voice engine selector, Classic + guards", () => {
-  it("shows three options to a platform admin: Current (default), Classic (20 Nov), Classic + guards", async () => {
+  it("shows the engines to a platform admin in the owner's order and names (live for buyers first, by default)", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
@@ -127,16 +127,31 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     save("guarded-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
-      ["current", "Current"], ["classic", "Classic (20 Nov)"], ["guarded", "Classic + guards"], ["guarded_silent", "Classic + guards (silent probe)"],
+      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"], ["classic", "Old baseline (20 Nov)"],
     ]);
-    expect(select).toContain('<option value="current" selected="">Current</option>');
+    expect(select).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
+    // One helper line under the row for the selected engine (what it is based on, whether buyers get it).
+    expect(html).toMatch(/<p class="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">The engine every buyer call runs on: [^<]*Buyers get it\.<\/p>/);
+    expect(html).toMatch(/<select[^>]*aria-describedby="lab-engine-help"/);
+    // The Version select names each version's date: "v1 · Draft · 23 Nov".
+    const ver = /<select[^>]*id="lab-ver"[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
+    expect(ver).toMatch(/<option value="[0-9a-f-]+"[^>]*>v1 · Draft · \d{1,2} [A-Z][a-z]{2}<\/option>/);
+  });
+
+  it("the helper line of each engine", async () => {
+    const { t } = await import("@/lib/i18n");
+    const { ENGINE_ORDER, engineHelpKey } = await import("@/lib/voice-classic/engine-choice");
+    const help = Object.fromEntries(ENGINE_ORDER.map((e) => [e, t(engineHelpKey(e))]));
+    expect(help.guarded).toBe("Newest engine code with the simpler speaking instructions, a server-written price sentence and plain objection notes. Test lab only.");
+    expect(help.current).toMatch(/Buyers get it\.$/);
+    for (const e of ["guarded", "guarded_silent", "classic"] as const) expect(help[e]).toMatch(/Test lab only\.$/);
   });
 
   it("never shows it to a seller, and the server ignores the field from one", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     as(seller);
     const html = await render();
-    expect(html).not.toContain("Classic + guards");
+    expect(html).not.toContain("New (23 Nov)");
     expect(await startVoiceCallAction({ slug, engine: "guarded" })).toEqual({ ok: false, reason: "not_allowed" });
     expect(labEngineChoice(seller, "guarded", { VOICE_REALTIME: "scripted" })).toBe("current");
     expect(labEngineChoice(admin, "guarded", { VOICE_REALTIME: "scripted" })).toBe("guarded");
@@ -177,8 +192,8 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     const html = await render({ c: r.conversationId });
     save("guarded-page-call", html);
     expect(html).toContain('data-voice-engine-pill=""');
-    expect(html).toContain("Engine: Classic + guards");
-    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">Classic \+ guards<\/dd>/);
+    expect(html).toContain("Engine: New (23 Nov)");
+    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">New \(23 Nov\)<\/dd>/);
     expect(html).toContain("Call again");
     const [again] = findElements(await pageElement({ c: r.conversationId }), VoiceCallAgainBar);
     expect(again.props).toMatchObject({ engine: "guarded" });
@@ -189,7 +204,7 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     await endMyVoiceCallAction({ slug });
     as(seller);
     const sellerHtml = await render({ c: r.conversationId });
-    expect(sellerHtml).not.toContain("Classic + guards");
+    expect(sellerHtml).not.toContain("New (23 Nov)");
   });
 });
 
@@ -229,8 +244,8 @@ describe("test lab: the voice engine selector, Classic + guards (silent probe)",
     expect(s.settings).toMatchObject({ engine: "guarded_silent" });
     const html = await render({ c: r.conversationId });
     save("guarded-silent-page-call", html);
-    expect(html).toContain("Engine: Classic + guards (silent probe)");
-    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">Classic \+ guards \(silent probe\)<\/dd>/);
+    expect(html).toContain("Engine: New + silent tools (23 Nov, testing)");
+    expect(html).toMatch(/<dt>Engine<\/dt><dd data-voice-engine="">New \+ silent tools \(23 Nov, testing\)<\/dd>/);
     const [again] = findElements(await pageElement({ c: r.conversationId }), VoiceCallAgainBar);
     expect(again.props).toMatchObject({ engine: "guarded_silent" });
     const props = again.props as { versionId: string | null; scenario: string | null; engine: string | null };
