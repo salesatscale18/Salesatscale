@@ -101,7 +101,7 @@ describe("Compare versions", () => {
     expect(c.changes.map((r) => [r.area, r.item, r.kind])).toEqual([
       ["plays", "Too expensive · step 2", "changed"],
       ["questions", "Deal details", "added"],
-      ["limits", "Discount without approval", "changed"],
+      ["limits", "Offers the agent may make · General discount", "changed"],
       ["limits", "Offer a call when", "changed"],
       // Never do is its own area since the Playbook parts (S1).
       ["never", "Never do · Rule 2", "moved"],
@@ -118,8 +118,10 @@ describe("Compare versions", () => {
     expect(step.before!.at(-1)!.op).toBe("same");
     // The new question: nothing on the old side ("Not asked").
     expect(c.changes[1]).toMatchObject({ before: null, missing: "not_asked" });
-    expect(c.changes[2].before).toEqual([{ op: "del", text: "5%" }]);
-    expect(c.changes[2].after).toEqual([{ op: "ins", text: "8%" }]);
+    // The General discount row (Offers, 23 Nov): only the percent is struck and added.
+    expect(c.changes[2].before!.filter((s) => s.op !== "same").map((s) => s.text.trim())).toEqual(["5%"]);
+    expect(c.changes[2].after!.filter((s) => s.op !== "same").map((s) => s.text.trim())).toEqual(["8%"]);
+    expect(c.changes[2].after!.map((s) => s.text).join("")).toBe("On · 8% off at most");
     // The moved rule: its own text on both sides, with the positions.
     const moved = c.changes[4];
     expect(moved.positions).toEqual({ before: 1, after: 2 });

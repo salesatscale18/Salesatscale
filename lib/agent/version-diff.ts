@@ -16,6 +16,7 @@ import { DEFAULT_PLAYS, playFacts } from "@/lib/agent/core/plays";
 import { objectionAttemptsOf } from "@/lib/agent/core/objections";
 import { questionBudgetOf } from "@/lib/agent/core/stage";
 import { UNPAID_STEPS, unpaidRemindersOf } from "@/lib/orders/unpaid-reminders";
+import { activeOffers, offersOf, type OfferType, type StoredOffer } from "@/lib/agent/offer-settings";
 import { t, type MessageKey } from "@/lib/i18n";
 import { callLimitShort } from "@/lib/voice/lab";
 import { callVoice, resolveVoiceSettings, voiceCapabilities, voiceModelLabel } from "@/lib/voice/settings";
@@ -168,7 +169,7 @@ export function alignList<T>(before: readonly T[], after: readonly T[], key: (x:
 // ---------------------------------------------------------------------------
 
 /** The areas of a version, in the order the page shows them. */
-export const DIFF_AREAS = ["plays", "questions", "limits", "never", "agent", "opening", "objections", "close", "after", "other", "model", "voice"] as const;
+export const DIFF_AREAS = ["plays", "questions", "limits", "never", "agent", "opening", "objections", "offers", "close", "after", "other", "model", "voice"] as const;
 export type DiffArea = (typeof DIFF_AREAS)[number];
 
 /**
@@ -240,7 +241,6 @@ const STAGE_KEY: Record<PlaybookField["stage"], MessageKey> = {
 };
 const stageText = (s: PlaybookField["stage"] | undefined) => (s && STAGE_KEY[s] ? L(STAGE_KEY[s]) : String(s ?? ""));
 const yesNo = (v: boolean | undefined) => L(v ? "compare.value.yes" : "compare.value.no");
-const pct = (bp: number | undefined) => (typeof bp === "number" ? `${Math.round(bp) / 100}%` : "");
 
 /** A play's name as the Where column shows it: the default card's title without its quotes ("Too expensive"). */
 export function playName(key: PlayKey): string {
@@ -304,9 +304,38 @@ function diffQuestions(r: Rows, a: Playbook, b: Playbook) {
   }
 }
 
+/** An offer row as Compare shows it: "On · 5% off at most" (a playbook without a list reads as the one derived from its limit). */
+function offerText(o: StoredOffer): string {
+  const nums = o.type === "smaller_start" ? L("compare.offer.none")
+    : o.type === "more_units" ? L("compare.offer.units", { pct: (o.percentBp ?? 0) / 100, units: o.minUnits ?? 0 })
+    : L("compare.offer.pct", { pct: (o.percentBp ?? 0) / 100 });
+  return `${L(o.on ? "compare.offer.on" : "compare.offer.off")} · ${nums}`;
+}
+
+/**
+ * Offers (23 Nov; its own area since the Playbook's Offers part): one row per offer
+ * whose switch or numbers changed, and a Moved row per offer whose place among the
+ * active ones changed. Items are the offers' names in words, never stored JSON.
+ */
+function diffOffers(r: Rows, a: Playbook, b: Playbook) {
+  r.in("offers");
+  const la = offersOf(a);
+  const lb = offersOf(b);
+  const name = (t: OfferType) => L(`playbook.offers.type.${t}` as MessageKey);
+  for (const ob of lb) {
+    const oa = la.find((x) => x.type === ob.type);
+    if (!oa) r.whole(name(ob.type), "added", offerText(ob));
+    else r.text(name(ob.type), offerText(oa), offerText(ob));
+  }
+  for (const oa of la) if (!lb.some((x) => x.type === oa.type)) r.whole(name(oa.type), "removed", offerText(oa));
+  // Only active offers have a place; switching one on or off is its own row above, not a move.
+  for (const s of alignList(activeOffers(la), activeOffers(lb), (o) => o.type, false)) {
+    if (s.kind === "moved") r.moved(name(s.b.type), s.ai, s.bi, L(`playbook.offers.type.${s.b.type}` as MessageKey));
+  }
+}
+
 function diffLimits(r: Rows, a: Playbook, b: Playbook) {
   r.in("limits");
-  r.text(L("playbook.max_discount"), pct(a.maxDiscountBp), pct(b.maxDiscountBp));
   r.text(L("playbook.meeting_when"), a.offerMeetingWhen, b.offerMeetingWhen);
   r.text(L("playbook.handoff_when"), a.handOffWhen, b.handOffWhen);
   const exc = L("playbook.exceptions");
@@ -413,7 +442,7 @@ function diffAfter(r: Rows, a: Playbook, b: Playbook) {
 /** Playbook keys the areas above cover. `agentNameAuto` is derived from the name (made automatically), so not compared. */
 const COVERED = new Set<string>([
   "agentName", "agentNameLocal", "agentNameAuto", "agentGender", "questionBudget", "objectionAttempts", "goal", "tone", "outcomes", "fields",
-  "objections", "maxDiscountBp", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays", "unpaidReminders",
+  "objections", "maxDiscountBp", "offers", "offerMeetingWhen", "handOffWhen", "callRole", "neverDo", "exceptions", "opener", "plays", "unpaidReminders",
 ]);
 
 /** Anything else a playbook holds (a part added later): compared as its stored value. */
@@ -463,6 +492,7 @@ export function diffVersions(a: VersionContent, b: VersionContent, opts: DiffOpt
   diffAgent(r, a.playbook, b.playbook);
   diffOpening(r, a.playbook, b.playbook);
   diffObjections(r, a.playbook, b.playbook);
+  diffOffers(r, a.playbook, b.playbook);
   diffClose(r, a.playbook, b.playbook);
   diffAfter(r, a.playbook, b.playbook);
   diffOther(r, a.playbook, b.playbook);
