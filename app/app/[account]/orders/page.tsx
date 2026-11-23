@@ -25,6 +25,9 @@ import { isolate } from "@/lib/leads/bidi";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { MARKET_PARAM, marketSelection, marketWhere, switcherReturnTo } from "@/lib/markets/selection";
 import type { DocMarketFilter } from "@/lib/quotes/service";
+import { exceptionNotice } from "@/lib/quotes/exception-notice";
+import { ExceptionNoticeLine } from "@/components/sas/exception-notice";
+import { ApproveButton } from "@/components/sas/approve-confirm";
 
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -178,6 +181,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
   const periodLabel = t(tab === "orders" ? "orders.period.signed" : "orders.period.created");
 
   const cur = detail?.versions[0];
+  // A held quote using an approved exception: the notice and whether Approve asks first (computed here, on the server).
+  const exception = detail && cur ? exceptionNotice(detail.quote.status, cur.version) : null;
   const incomplete = !!cur?.lines.some((l) => l.unitPriceMinor === null);
   // The selected quote's amounts: its own currency and recurring period (older quotes: monthly).
   const dm = cur ? moneyIn(cur.version.currency) : money;
@@ -569,6 +574,8 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
             <form action={approveQuoteAction} className="sas-alert sas-alert--warning sas-stack-2" style={{ flexDirection: "column", alignItems: "stretch" }}>
               <input type="hidden" name="slug" value={account.slug} />
               <input type="hidden" name="quoteId" value={detail.quote.id} />
+              {/* An approved exception is not in the prices: the seller edits the lines first (existing new-version editor). */}
+              {exception ? <ExceptionNoticeLine notice={exception} editHref={`/app/${account.slug}/leads/${detail.quote.leadId}/quote?from=${detail.quote.id}`} /> : null}
               <strong>{t("orders.detail.approval")}</strong>
               <ul style={{ margin: 0, paddingInlineStart: 18 }}>{cur.version.approvalReasons.map((r, i) => <li key={i} className="sas-small" style={{ color: "var(--ink)" }}>{approvalReasonText(r)}</li>)}</ul>
               {/* A price per charge: "price:<SKU>:<one_time|recurring>". */}
@@ -584,7 +591,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               })}
               {/* O1 part 5: Decline withdraws the quote and tells the buyer (formNoValidate: no price needed to decline). */}
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
-                <Button type="submit" variant="primary" size="sm">{t("orders.detail.approve")}</Button>
+                <ApproveButton label={t("orders.detail.approve")} confirmUnchanged={exception?.confirmUnchanged ?? false} />
                 <Button type="submit" variant="secondary" size="sm" formAction={declineQuoteAction} formNoValidate data-decline="">{t("orders.detail.decline")}</Button>
               </div>
               <span className="sas-small" style={{ color: "var(--ink)" }}>{t("orders.detail.approval_buyer_sees")}</span>

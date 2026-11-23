@@ -3945,5 +3945,10 @@
   "compare.chip.never_run": "Never run",
   "compare.pick_two": "Pick two different versions to compare.",
   "compare.tag.own_card": "now your own card",
-  "compare.tag.default_card": "now the default card"
+  "compare.tag.default_card": "now the default card",
+  "quote.exception.one": "This quote uses the exception \"{text}\". It is not in the prices yet: edit the lines before approving.",
+  "quote.exception.many": "This quote uses these exceptions. They are not in the prices yet: edit the lines before approving.",
+  "quote.exception.edit_lines": "Edit lines",
+  "quote.exception.confirm": "Approve without changing the prices?",
+  "quote.exception.confirm_yes": "Confirm"
 }

@@ -4,6 +4,8 @@ import { QuoteCard } from "@/components/sas/quote-card";
 import type { QuoteCardView } from "@/lib/agent/quote-card";
 import { percentText } from "@/lib/agent/quote-message";
 import { t } from "@/lib/i18n";
+import { ExceptionNoticeLine } from "@/components/sas/exception-notice";
+import { ApproveButton } from "@/components/sas/approve-confirm";
 import { approveQuoteInThreadAction, declineQuoteInThreadAction, sendInLimitAction } from "./quote-card-actions";
 
 /**
@@ -44,8 +46,11 @@ function ApprovalPanel({ card, slug, back }: { card: QuoteCardView; slug: string
       <input type="hidden" name="back" value={back} />
     </>
   );
+  const editHref = `/app/${slug}/leads/${card.leadId}/quote?from=${card.quoteId}`;
   return (
     <section className="sas-qc-approval" aria-labelledby={id} data-quote-approval="">
+      {/* An approved exception is not in the prices: the seller edits the lines first (the existing new-version editor). */}
+      {a.exception ? <ExceptionNoticeLine notice={a.exception} editHref={editHref} /> : null}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <StatusPill object="quote" state="awaiting_approval" />
         <b id={id} className="sas-id" style={{ fontSize: 13 }}><span className="sas-sr">{t("conv.qcard.approval_label")} </span>{a.ref}</b>
@@ -58,12 +63,12 @@ function ApprovalPanel({ card, slug, back }: { card: QuoteCardView; slug: string
       {a.canApprove ? null : <span className="sas-small" style={{ color: "var(--ink)" }}>{t("conv.qcard.price_first")}</span>}
       <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
         {a.canApprove ? (
-          <form action={approveQuoteInThreadAction}>{hidden}<button type="submit" className={buttonClass("primary", "sm")}><Icon name="check-circle" />{t("conv.qcard.approve")}</button></form>
+          <form action={approveQuoteInThreadAction}>{hidden}<ApproveButton label={t("conv.qcard.approve")} icon="check-circle" confirmUnchanged={a.exception?.confirmUnchanged ?? false} /></form>
         ) : null}
         {a.inLimitBp !== null ? (
           <form action={sendInLimitAction}>{hidden}<button type="submit" className={buttonClass("secondary", "sm")}>{t("conv.qcard.in_limit", { rate: percentText(a.inLimitBp) })}</button></form>
         ) : null}
-        <a className={buttonClass("ghost", "sm")} href={`/app/${slug}/leads/${card.leadId}/quote?from=${card.quoteId}`}>{t("conv.qcard.edit")}</a>
+        <a className={buttonClass("ghost", "sm")} href={editHref}>{t("conv.qcard.edit")}</a>
         {/* O1 part 5: the buyer is told the price could not be approved; the agent continues the price ladder. */}
         <form action={declineQuoteInThreadAction}>{hidden}<button type="submit" className={buttonClass("ghost", "sm")} data-decline=""><Icon name="x" />{t("conv.qcard.decline")}</button></form>
       </div>

@@ -15,6 +15,7 @@ import { dir as dirOf, isLocale, t, type Locale, type MessageKey } from "@/lib/i
 import { APP_MESSAGE_CALL } from "./app-message";
 import { recurringTotalKey } from "@/lib/orders/display";
 import { longCalendarDate, longDate, percentText } from "./quote-message";
+import { exceptionNotice, type ExceptionNotice } from "@/lib/quotes/exception-notice";
 
 // ---------------------------------------------------------------------------
 // Headline (create_quote `headline`)
@@ -159,6 +160,8 @@ export type QuoteApproval = {
   canApprove: boolean;
   /** "Send 5% instead": the only reason is a discount above the limit. */
   inLimitBp: number | null;
+  /** The quote uses an approved exception that is not in the prices (seller notice; lib/quotes/exception-notice.ts). */
+  exception: ExceptionNotice | null;
 };
 
 // Raw rows the loader gives (subsets of the schema's rows).
@@ -168,7 +171,9 @@ export type CardVersion = {
   oneTimeSubtotalMinor: number; oneTimeDiscountMinor: number; oneTimeTaxMinor: number; oneTimeTotalMinor: number;
   recurringSubtotalMinor: number; recurringDiscountMinor: number; recurringTaxMinor: number; recurringTotalMinor: number;
   recurringPeriod: string | null; validUntil: Date; createdAt: Date; priceListId: string | null;
-  approvalReasons: { kind: string; requestedBp?: number; limitBp?: number }[];
+  approvalReasons: { kind: string; requestedBp?: number; limitBp?: number; id?: string; text?: string }[];
+  /** Who made the version ("agent" | "human" | "system"); a person's version means the lines were edited. */
+  createdByActor?: string;
 };
 export type CardLine = {
   sku: string; name: string; qty: number; charge: "one_time" | "recurring"; lineTotalMinor: number | null;
@@ -425,5 +430,6 @@ function approvalOf(quote: CardQuote, v: CardVersion, data: CardData): QuoteAppr
     total: unpriced ? null : { label: t(v.taxRateBp > 0 ? "conv.qcard.total_incl_vat" : "conv.qcard.total"), amount: money(v.oneTimeTotalMinor) },
     canApprove: !unpriced,
     inLimitBp: discountOnly && typeof limit === "number" && limit > 0 ? limit : null,
+    exception: exceptionNotice(quote.status, v),
   };
 }

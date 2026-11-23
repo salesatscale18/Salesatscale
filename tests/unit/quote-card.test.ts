@@ -131,7 +131,7 @@ describe("card states", () => {
     expect(seller.approval).toEqual({
       ref: "Q-1001 v1", reasons: ["reason discount_over_limit"],
       lines: [{ label: "12 × Wireless fridge sensor", amount: "₪7,080.00" }, { label: "Discount 10%", amount: "−₪708.00" }],
-      total: { label: "Total incl. VAT", amount: "₪7,518.96" }, canApprove: true, inLimitBp: 500,
+      total: { label: "Total incl. VAT", amount: "₪7,518.96" }, canApprove: true, inLimitBp: 500, exception: null,
     });
     // Approved (status back to draft): the same message shows the current version in place.
     expect(cards([{ ...held, status: "draft" }], [v], lines, [link("m1", "q1", 1001, 1, { held: true })]).m1).toMatchObject({ state: "sent", total: { label: "Total" } });
