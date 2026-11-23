@@ -17,10 +17,9 @@ import { seesPlatformDetails } from "@/lib/auth/display";
 import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { conversationView } from "@/lib/agent/conversation";
-import { nextBuyerText, SCENARIOS, scenarioById, type ScenarioResult } from "@/lib/agent/scenarios";
+import { nextBuyerText, SCENARIOS, scenarioById } from "@/lib/agent/scenarios";
 import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
-import { type IconName } from "@/components/sas/icon";
 import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { readViewerZone } from "@/lib/viewer-zone-server";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
@@ -49,6 +48,9 @@ import { callClock, callLimitShort, voiceLabAccess, voiceSettingsSummary } from 
 import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceModelChoices } from "@/lib/voice/model-choices";
+import { ResultChip } from "./result-chip";
+import { countChanges } from "@/lib/agent/version-compare";
+import { statusDef } from "@/lib/domain/status";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { engineLabelKey, sessionEngine } from "@/lib/voice-classic/engine-choice";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
@@ -73,21 +75,6 @@ const json = (v: unknown) => JSON.stringify(v, null, 2);
  * sent until the seller clicks Send), so there is no run-all. Versions,
  * Recent test chats and Test on WhatsApp sit on the side.
  */
-/**
- * Scenario results have no status word in the design system, so they are
- * plain pill-styled chips with an icon (neutral / success / danger).
- */
-const RESULT_LOOK: Record<ScenarioResult | "not_run", { cls: string; icon: IconName }> = {
-  passed: { cls: "sas-pill sas-pill--success", icon: "check-circle" },
-  not_yet: { cls: "sas-pill", icon: "clock" },
-  failed: { cls: "sas-pill sas-pill--danger", icon: "x-circle" },
-  not_run: { cls: "sas-pill", icon: "circle-dot" },
-};
-function ResultChip({ result }: { result: ScenarioResult | "not_run" }) {
-  const look = RESULT_LOOK[result];
-  return <span className={look.cls} data-scenario-result={result}><Icon name={look.icon} />{t(`lab.scenario_result.${result}`)}</span>;
-}
-
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
   const sp = await searchParams;
@@ -521,22 +508,42 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <h2 id="lab-ver-h" className="sas-heading">{t("lab.versions")}</h2>
               {versions.length === 0 ? <span className="sas-small">{t("lab.no_draft")}</span> : null}
               <ul className="sas-stack-4" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {versions.map((v) => (
-                  <li key={v.id} className="sas-stack-2">
+                {versions.map((v) => {
+                  // Compare (board VersionCompareEntry): the draft against live, an earlier version against live (older on the left).
+                  const compareHref = liveVersion && v.id !== liveVersion.id
+                    ? `${lab}/compare?${v.status === "draft" ? `a=${liveVersion.id}&b=${v.id}` : `a=${v.id}&b=${liveVersion.id}`}`
+                    : null;
+                  const changes = v.status === "draft" && liveVersion ? countChanges(liveVersion, v, showModel) : null;
+                  return (
+                  <li key={v.id} className="sas-stack-2" data-version-row={v.status}>
                     <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       <strong className="sas-id">{t("lab.version", { version: v.version })}</strong>
-                      <StatusPill object="agent_version" state={v.status} />
-                      {v.status === "retired" ? (
-                        <form action={rollbackAction} style={{ marginInlineStart: "auto" }}>
-                          <input type="hidden" name="slug" value={account.slug} />
-                          <input type="hidden" name="versionId" value={v.id} />
-                          <Button type="submit" variant="ghost" size="sm">{t("lab.rollback")}</Button>
-                        </form>
-                      ) : null}
+                      {/* The live version's pill is blue here (board VersionCompareEntry): the same word and icon, the info tone. */}
+                      {v.status === "live" ? (
+                        <span className="sas-pill sas-pill--info" data-status="agent_version.live"><Icon name={statusDef("agent_version", "live").icon} />{t("status.agent_version.live")}</span>
+                      ) : <StatusPill object="agent_version" state={v.status} />}
                     </div>
-                    <span className="sas-small">{showModel ? <span data-version-model="">{t("lab.version_model", { model: v.model, effort: v.effort })}</span> : null}{showModel && v.publishedAt ? " · " : null}{v.publishedAt ? <><time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}</span>
+                    <span className="sas-small">{showModel ? <span data-version-model="">{t("lab.version_model", { model: v.model, effort: v.effort })}</span> : null}{showModel && v.publishedAt ? " · " : null}{v.publishedAt ? <><time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}{changes !== null ? <span data-changes-from-live="">{showModel || v.publishedAt ? " · " : null}{changes === 0 ? t("compare.same_as_live") : changes === 1 ? t("compare.changes_from_live_one") : t("compare.changes_from_live", { n: changes })}</span> : null}</span>
+                    {compareHref || v.status === "retired" || v.status === "draft" ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        {compareHref ? (
+                          <a className={buttonClass(v.status === "draft" ? "secondary" : "ghost", "sm")} href={compareHref} aria-label={t("compare.with_live_label", { version: v.version })} data-compare-with-live="">{t("compare.with_live")}</a>
+                        ) : null}
+                        {v.status === "draft" ? (
+                          <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="primary" size="sm">{t("lab.publish", { version: v.version })}</Button></form>
+                        ) : null}
+                        {v.status === "retired" ? (
+                          <form action={rollbackAction}>
+                            <input type="hidden" name="slug" value={account.slug} />
+                            <input type="hidden" name="versionId" value={v.id} />
+                            <Button type="submit" variant="ghost" size="sm">{t("lab.rollback")}</Button>
+                          </form>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </li>
-                ))}
+                  );
+                })}
               </ul>
             </div>
           </section>
