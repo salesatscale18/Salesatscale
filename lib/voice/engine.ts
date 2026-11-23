@@ -235,6 +235,33 @@ export function orderFormAgreed(lines: readonly { role: string; text: string }[]
   return "no";
 }
 
+/**
+ * The reminder a call's quiet results carry (the short bookkeeping result, the quote): conditional, so it asks for
+ * nothing now (no forced speech), but keeps the objection step in view: since bookkeeping results lost the stage
+ * block (e2953e5), objections on calls went unrecorded (live calls of 23 Nov 2026).
+ */
+export const OBJECTION_FIRST = "If the buyer objects or hesitates next (price, timing, another offer, needing to think), record it first with update_deal_state objection, then answer.";
+
+/** The SKUs a create_quote call asks to take off (remove_auto_added), if any. */
+export function removedAutoAdded(args: unknown): string[] {
+  const v = args && typeof args === "object" ? (args as { remove_auto_added?: unknown }).remove_auto_added : null;
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && !!x.trim()) : [];
+}
+
+/** Asking to leave something out (English or Hebrew). */
+const REMOVE_WORDS = /\b(without|remove|drop|skip|leave (it )?out|take (it )?out|no need|don'?t need|do not need|not needed)\b|בלי|להוריד|תוריד|לא צריך|לוותר/i;
+
+/**
+ * Whether the buyer asked to take something off the quote, from their last line on this call ("yes"/"no"; "unknown"
+ * when there is no buyer line or it is in another language: left to the model). On 23 Nov 2026 the agent dropped
+ * the installation on its own after "It is more than we plan to spend".
+ */
+export function removalAsked(lines: readonly { role: string; text: string }[]): "yes" | "no" | "unknown" {
+  const buyer = lines.findLast((l) => l.role === "buyer")?.text;
+  if (!buyer || !JUDGEABLE.test(buyer)) return "unknown";
+  return REMOVE_WORDS.test(buyer) ? "yes" : "no";
+}
+
 /** How a call presents a ready quote (create_quote's result on a call, with `lines_for_call`). */
 export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four short spoken sentences: what they need and what each part costs, from lines_for_call (for example \"For your two locations you need twelve seats at 59 shekels each, and setup at 200 per location\"), then the total today and the monthly amount, once each, then that the quote is in the chat now. Then ask if it looks right.";
 
@@ -1596,13 +1623,22 @@ export class VoiceEngine {
     const t0 = this.clock.now();
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     const formGate = name === "send_order_form" ? orderFormAgreed(this.lines) : "yes";
+    // A line the app adds to a quote (installation, setup) comes off only when the buyer asked: see removalAsked.
+    const removing = name === "create_quote" ? removedAutoAdded(args) : [];
+    const removeGate = removing.length ? removalAsked(this.lines) : "yes";
     const r = formGate === "no"
       ? await this.refuseRecorded(turn, callId, name, args, {
         rule: "Not agreed yet",
         message: "The buyer has not agreed to the order form. Offer it in one short sentence and wait for their yes; if they raised the price or another concern, answer that first.",
       })
-      : await this.runRecorded(turn, callId, name, args);
+      : removeGate === "no"
+        ? await this.refuseRecorded(turn, callId, name, args, {
+          rule: "Removal not asked",
+          message: `The buyer did not ask to remove ${removing.join(", ")}. The quote stays as it is. If it helps, offer that option in one short sentence and make the new quote only when the buyer agrees.`,
+        })
+        : await this.runRecorded(turn, callId, name, args);
     if (formGate === "no") this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the buyer has not agreed to it yet"));
+    if (removeGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: removes a line the buyer did not ask to remove"));
     // One line per tool call: its name, outcome and time (never its arguments or result).
     this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
     let forModel: Record<string, unknown> = r.result;
@@ -1648,7 +1684,7 @@ export class VoiceEngine {
         forModel = {
           ...rest, ...(lines.length ? { lines_for_call: lines } : {}),
           ...(typeof r.result.quote === "string" ? {
-            message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}.${lines.length ? ` ${QUOTE_WALKTHROUGH}` : ""} Offer the order form and wait for the buyer's yes; when they agree (or if they already asked for it), call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}". Never send it unasked.`.trim(),
+            message: `${String(r.result.message ?? "")} This quote is ${r.result.quote}.${lines.length ? ` ${QUOTE_WALKTHROUGH}` : ""} ${OBJECTION_FIRST} Offer the order form and wait for the buyer's yes; when they agree (or if they already asked for it), call send_order_form with quote "${String(r.result.quote).replace(/\s*v\d+$/i, "")}". Never send it unasked.`.trim(),
           } : {}),
         };
       }
@@ -1674,7 +1710,7 @@ export class VoiceEngine {
           // Nothing new from the buyer and the stage as the model last saw it: no "Do: …" to act on again. With
           // BLOCKING tools the model continues after every result; a full stage block here made it speak again
           // (a second question, or narration of the room: "no speech detected").
-          forModel = { ok: true, saved: [], ...(Array.isArray(r.result.recorded_as_asked) ? { recorded_as_asked: r.result.recorded_as_asked } : {}) };
+          forModel = { ok: true, saved: [], ...(Array.isArray(r.result.recorded_as_asked) ? { recorded_as_asked: r.result.recorded_as_asked } : {}), note: OBJECTION_FIRST };
           this.log.info(voiceLine(this.sessionId, "tools: bookkeeping result shortened"));
         } else {
           forModel = { ...r.result, stage: voiceStageText(r.result.stage) };

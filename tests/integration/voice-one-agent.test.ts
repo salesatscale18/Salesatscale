@@ -11,7 +11,7 @@ import { conversations, messages, rateLimits, users, voiceSessions, type User } 
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion } from "@/lib/agent/service";
-import { VoiceEngine, inheritedSummary } from "@/lib/voice/engine";
+import { OBJECTION_FIRST, VoiceEngine, inheritedSummary } from "@/lib/voice/engine";
 import { activeCallOn, textTurnBlocked } from "@/lib/voice/one-agent";
 import { replyAfterCall, unansweredCallTurn } from "@/lib/voice/after-call";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
@@ -230,7 +230,7 @@ describe("one agent at a time", () => {
     await c.run(300);
     // Only an ask recorded, the stage as the model saw it: the short form, logged.
     await upd("u1", { asked: ["business_type"], next_step: "Wait for the answer." });
-    expect(results()[0]).toEqual({ ok: true, saved: [], recorded_as_asked: ["business_type"] });
+    expect(results()[0]).toEqual({ ok: true, saved: [], recorded_as_asked: ["business_type"], note: OBJECTION_FIRST });
     expect(logs.filter((l) => l.endsWith("tools: bookkeeping result shortened"))).toHaveLength(1);
     // A save that leaves a field missing: the full result with the stage block ("still missing" changed).
     await upd("u2", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }] });
@@ -238,7 +238,7 @@ describe("one agent at a time", () => {
     expect(results()[1].saved).toEqual(["business_type"]);
     // Bookkeeping again, nothing changed since that block: short.
     await upd("u3", { next_step: "Ask for the number of sites." });
-    expect(results()[2]).toEqual({ ok: true, saved: [] });
+    expect(results()[2]).toEqual({ ok: true, saved: [], note: OBJECTION_FIRST });
     // The last field saved: the stage moves on, so the block comes again.
     await upd("u4", { updates: [{ key: "sites", value: "2", provenance: "buyer" }] });
     expect(String(results()[3].stage)).toContain("Still missing for a quote: nothing.");
@@ -266,6 +266,67 @@ describe("one agent at a time", () => {
     expect(String(r.message)).toContain("The order form was NOT sent");
     expect(String(r.message)).toContain("Offer it in one short sentence and wait for their yes");
     expect(logs.some((l) => l.endsWith("tool send_order_form held: the buyer has not agreed to it yet"))).toBe(true);
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("objections on a call: recorded before the answer, the full result names the open objection; a second one moves the ladder", async () => {
+    const conv = await conversation();
+    const logs: string[] = [];
+    const c = await engineFor(conv, logs);
+    await c.engine.start();
+    await c.settle();
+    const emit = c.model.conns[0].emit;
+    const results = () => c.model.conns[0].results.filter((r) => r.name === "update_deal_state").map((r) => r.result);
+    const objection = async (id: string, step: number, words: string) => {
+      emit({ type: "tool-call", callId: id, name: "update_deal_state", args: {
+        updates: [], next_step: null, recommendation_confirmed: null, price_asked: null, asked: null,
+        objection: { play: "too_expensive", buyer_words: words, step, attempt: step > 1, status: "open" },
+      } });
+      await c.run(300);
+    };
+    emit({ type: "audio", pcm: new Uint8Array(480) });
+    emit({ type: "agent-transcript", text: "Hi, this is Ava. What kind of business is it?", final: true });
+    emit({ type: "turn-done" });
+    await c.run(300);
+    c.engine.onClientMessage({ t: "text", text: "It is actually quite expensive." });
+    await c.run(300);
+    await objection("o1", 1, "quite expensive");
+    // Never the short form: the full result, with the open objection and the card's step used.
+    expect(results()[0].objection_recorded).toMatchObject({ play: "too_expensive", status: "open", steps_used: [1] });
+    expect(String(results()[0].stage)).toContain("Paused: the buyer has an open objection");
+    expect(logs.some((l) => l.endsWith("tools: bookkeeping result shortened"))).toBe(false);
+    c.engine.onClientMessage({ t: "text", text: "It is more than we plan to spend." });
+    await c.run(300);
+    await objection("o2", 2, "more than we plan to spend");
+    expect(results()[1].objection_recorded).toMatchObject({ steps_used: [1, 2] });
+    expect(String(results()[1].stage)).toContain("Paused: the buyer has an open objection");
+    c.engine.onClientMessage({ t: "end" });
+    await c.settle();
+  });
+
+  it("create_quote on a call that removes a line the buyer did not ask to remove: held; asked for, it runs", async () => {
+    const conv = await conversation();
+    const logs: string[] = [];
+    const c = await engineFor(conv, logs);
+    await c.engine.start();
+    await c.settle();
+    const emit = c.model.conns[0].emit;
+    const quoteArgs = { lines: [{ sku: "SEAT-M", qty: 2 }], discount_percent: 0, sites: 1, remove_auto_added: ["INST-1"], exception: null, headline: null, assumed: null };
+    c.engine.onClientMessage({ t: "text", text: "It is more than we plan to spend." });
+    await c.run(300);
+    emit({ type: "tool-call", callId: "q1", name: "create_quote", args: quoteArgs });
+    await c.run(500);
+    const held = c.model.conns[0].results.find((r) => r.name === "create_quote")!.result;
+    expect(held).toMatchObject({ ok: false, rule: "Removal not asked" });
+    expect(String(held.message)).toContain("The buyer did not ask to remove INST-1");
+    expect(logs.some((l) => l.endsWith("tool create_quote held: removes a line the buyer did not ask to remove"))).toBe(true);
+    c.engine.onClientMessage({ t: "text", text: "Can we do it without the installation?" });
+    await c.run(300);
+    emit({ type: "tool-call", callId: "q2", name: "create_quote", args: quoteArgs });
+    await c.run(500);
+    const ran = c.model.conns[0].results.filter((r) => r.name === "create_quote")[1].result;
+    expect(ran.rule).not.toBe("Removal not asked");
     c.engine.onClientMessage({ t: "end" });
     await c.settle();
   });
