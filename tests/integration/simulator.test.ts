@@ -161,7 +161,7 @@ describe("Buyer simulator", () => {
     expect((await buyerChat(db, ctx)).typing).toBe(true);
 
     tw.sent = [];
-    const llm = new ScriptedLlm([step(say("Hello Maya! A sensor is 590 ILS."))]);
+    const llm = new ScriptedLlm([step(say("Hello Maya! How many fridges do you have?"))]);
     const out = await replyToBuyer(db, llm, tw, r);
     expect(out.turn.status).toBe("replied");
     expect(out.delivery).toEqual({ delivered: true });
@@ -176,7 +176,7 @@ describe("Buyer simulator", () => {
     expect(chat.ended).toBe(false);
     expect(chat.messages.map((m) => [m.from, m.body, m.status])).toEqual([
       ["buyer", "Hi, how much is a sensor?", "read"],
-      ["agent", "Hello Maya! A sensor is 590 ILS.", null],
+      ["agent", "Hello Maya! How many fridges do you have?", null],
     ]);
     // Loading the page marked the reply as read for the seller.
     const [after] = await db.select().from(messages).where(eq(messages.id, out.turn.messageId));

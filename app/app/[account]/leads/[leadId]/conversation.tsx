@@ -9,6 +9,8 @@ import { messageTextDir } from "@/lib/conversations/text-dir";
 import { APP_MESSAGE_CALL, appMessageKinds, isAppText, isTeamText } from "@/lib/agent/app-message";
 import type { ConversationView, SellerFormCard } from "@/lib/agent/conversation";
 import { describeCall } from "@/lib/agent/trace";
+import { offerCardsByMessage } from "@/lib/agent/offer-card";
+import { OfferCards } from "@/components/sas/offer-card";
 import { displayName, personName } from "@/lib/auth/display";
 import { formatClockIn, formatDateTimeIn, formatDayIn, localDateIso } from "@/lib/format";
 import { viewerTime, yourTimeSuffix } from "@/lib/viewer-zone";
@@ -454,6 +456,9 @@ export function ConversationPanel({
     return <div key={`day-${day}`} className="sas-day" role="separator" aria-label={t("conv.day", { day: formatDayIn(d, zone) })}><span>{formatDayIn(d, zone)}</span></div>;
   };
   const showSteps = steps?.show ?? true;
+  // The seller-only offer cards (board OfferTool), above the reply whose check_offer made them; a chip when steps are hidden.
+  const offerCards = offerCardsByMessage(thread);
+  const quoteHref = (id: string) => `/app/${slug}/orders?quote=${id}`;
   const { timed, after } = splitMarkers(view.markers);
   // Calls shown as a block: their lines go inside it (board RecThread), not in the thread.
   const blocks = timed.filter(isCallBlock);
@@ -520,7 +525,8 @@ export function ConversationPanel({
               />
             ), ...noteAfter(m.id), ...afterNodes(m.id)];
           }
-          return [...noteNodes, day, (
+          const offers = offerCards.get(m.id);
+          return [...noteNodes, day, ...(offers ? [<OfferCards key={`offers-${m.id}`} cards={offers} folded={!showSteps} quoteHref={quoteHref} />] : []), (
             <ChatMessage
               key={m.id} actor={actor} who={who} timeTitle={full(m.createdAt)}
               // A line of a voice call shows the time in the call with a mic (or keyboard) mark; the clock time stays on hover.

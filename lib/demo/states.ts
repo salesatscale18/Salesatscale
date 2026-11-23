@@ -1155,7 +1155,7 @@ async function seedCompareDraft(db: Db, userId: string, accountId: string, opts:
   const draft = await ensureDraftVersion(db, accountId);
   const pb = structuredClone(draft.playbook);
   const card = DEFAULT_PLAYS.too_expensive;
-  const from = "set the price against what the problem costs them, in their own numbers, per unit or per month.";
+  const from = "set the price against what the problem costs them, in their own numbers.";
   if (!card.do[1]?.includes(from)) throw new Error("Demo seed: the Too expensive play changed; update the compare draft");
   pb.plays = {
     ...pb.plays,
@@ -1163,7 +1163,7 @@ async function seedCompareDraft(db: Db, userId: string, accountId: string, opts:
       ...pb.plays?.too_expensive,
       own: {
         when: card.when, example: card.example, notThis: card.notThis,
-        do: card.do.map((step, i) => (i === 1 ? step.replace(from, "set the price against what one spoiled delivery costs them, in their own numbers, per fridge or per month.") : step)),
+        do: card.do.map((step, i) => (i === 1 ? step.replace(from, "set the price against what one spoiled delivery costs them, in their own numbers.") : step)),
       },
     },
   };
@@ -1187,8 +1187,9 @@ async function seedCompareDraft(db: Db, userId: string, accountId: string, opts:
   await chat(draft.id, "hebrew_buyer", "he", "שלום, יש לנו עסק עם סניף אחד. כמה זה עולה?", "שלום! המחיר תלוי במספר המקררים והמקפיאים. כמה יש לכם בסניף?");
   // Worse: discount_push. Live holds the quote for approval; the draft's quote went out with the full discount.
   const push = "We have one location. I want your basic package, but only with 15% off.";
-  const quoteCall = (status: string): SeedCall => ({ name: "create_quote", input: { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 15, sites: 1 }, result: { ok: true, status } });
-  await chat(liveVersionId, "discount_push", "en", push, "I can't confirm 15% myself, so I've asked the team to approve it. You'll hear back shortly.", [quoteCall("awaiting_seller_approval")], 40);
+  const quoteCall = (status: string, discount = 15): SeedCall => ({ name: "create_quote", input: { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: discount, sites: 1 }, result: { ok: true, status } });
+  // Offers (part 2): live quotes first without a discount, then holds the 15% for approval.
+  await chat(liveVersionId, "discount_push", "en", push, "I can't confirm 15% myself, so I've asked the team to approve it. You'll hear back shortly.", [quoteCall("ready", 0), quoteCall("awaiting_seller_approval")], 40);
   await chat(draft.id, "discount_push", "en", push, "Done: here is your quote with 15% off.", [quoteCall("ready")]);
   // Same: asks_for_person passes on both (offers to help, keeps the chat).
   const person = "I'd rather talk to a person from your team, please.";

@@ -55,10 +55,10 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
     when: "The buyer says the price is too high, or asks for a discount.",
     do: [
       "Acknowledge, and find which kind it is: over their budget, more than another offer, or not clear what they get for it.",
-      "Answer that kind. Value not clear: set the price against what the problem costs them, in their own numbers, per unit or per month. Another offer: say what this price includes that the other may not. Budget: offer a smaller first step that still solves the main problem.",
+      "Answer that kind. Value not clear: set the price against what the problem costs them, in their own numbers. Another offer: say what this price includes that the other may not. Budget: offer a smaller first step that still solves the main problem, with its figures from check_offer (smaller_start).",
       "Ask: \"If the price worked, is anything else in the way?\" If something else is, handle that first.",
-      "Offer a discount only as a trade, inside your limit: for deciding now, for more units, or for paying yearly. Make a new quote with it.",
-      "If they need more than your limit: send a real approval request to the team, say you have asked, and keep the chat going.",
+      "Offer a discount only as a trade: call check_offer with the trade the buyer named (or next) and offer only what it returns, one offer at a time. When the buyer accepts, make a new quote with its offer id.",
+      "If they need more than check_offer returned: send a real approval request to the team, say you have asked, and keep the chat going.",
       "Last rungs: agree a time to come back, then a call.",
     ],
     example: "I understand. Is it more than you planned to spend, or more than another offer you have?",
@@ -171,9 +171,13 @@ export const DEFAULT_PLAYS: Record<PlayKey, DefaultPlay> = {
   handoff: {
     title: "The buyer is upset",
     when: "The buyer is annoyed, complains, raises a legal or existing-customer issue, or insists on a person.",
-    do: ["Stop selling and ask nothing more.", "Say a person from the team will take over.", "Hand over at once."],
-    example: "Understood. I am passing you to a member of the team now.",
-    notThis: "Before I do that, can I just ask one more question?",
+    do: [
+      "Stop selling.",
+      "Offer that someone from the team gets back to them, and ask if that is OK.",
+      "Hand over (hand_off_to_human) when they agree or insist on a person. A legal or existing-customer issue: say you are passing it to the team and hand over. Annoyed by a mistake of yours: apologise once and carry on; that is not a hand-over case.",
+    ],
+    example: "I'll ask someone from the team to get back to you. Would that be OK?",
+    notThis: "\"I am passing you to the team now.\" without asking first.",
     sellerContentHint: "",
   },
   no_answer: {

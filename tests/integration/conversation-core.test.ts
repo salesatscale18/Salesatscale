@@ -19,6 +19,7 @@ import { runBuyerTurn } from "@/lib/agent/turn";
 import { replyToBuyer } from "@/lib/channels/whatsapp";
 import { saveLegalSection } from "@/lib/orders/settings";
 import { createSimulatedBuyer, receiveSimulatorInbound, resolveChatToken, startSimulatorConversation } from "@/lib/simulator/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -159,6 +160,8 @@ describe("conversation core (scripted model)", () => {
   it("a quote above the discount limit waits for approval: the stage does not close", async () => {
     const { c, ctx } = await toolCtx();
     await runTool("update_deal_state", { ...qualify, recommendation_confirmed: true, price_asked: null }, ctx("a1"));
+    // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn.
+    await primeOffers(db, (id) => ctx(id), { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], sites: 1 });
     const q = await runTool("create_quote", { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 30, sites: 1, remove_auto_added: null, exception: null }, ctx("a2"));
     expect(q.result).toMatchObject({ status: "awaiting_seller_approval" });
     expect(await loadStageFacts(db, acc, c.leadId)).toMatchObject({ quote: "awaiting_approval" });

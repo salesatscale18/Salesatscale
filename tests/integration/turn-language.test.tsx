@@ -9,6 +9,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { conversations, followUps, leads, messages, quotes, sellerAccounts, toolCalls, users, type SellerAccount, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -91,7 +92,9 @@ describe("Turn language: the buyer's latest message decides", () => {
       return { llm, done: runBuyerTurn(db, llm, { accountId: acc.id, conversationId: started.conversationId, text }) };
     };
     const chatCtx = (await resolveChatToken(db, made.token))!;
-    return { lead: made.lead, token: made.token, conversationId: started.conversationId, conv, leadRow: lead, turn, chat: () => buyerChat(db, chatCtx) };
+    // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn.
+    const prime = () => primeOffers(db, (callId) => ({ db, accountId: acc.id, conversationId: started.conversationId, leadId: made.lead.id, playbook: draft.playbook, currency: "ILS", callId, language: "he" }), { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], sites: 1 });
+    return { lead: made.lead, token: made.token, conversationId: started.conversationId, conv, leadRow: lead, turn, prime, chat: () => buyerChat(db, chatCtx) };
   };
 
   const contextOf = (llm: InstanceType<typeof ScriptedLlm>) => llm.requests[0].system[1];
@@ -99,6 +102,7 @@ describe("Turn language: the buyer's latest message decides", () => {
   it("a Hebrew lead writing English gets an English held-quote line and an English quote card; the lead keeps Hebrew", async () => {
     const b = await hebrewBuyer();
     expect((await b.conv()).language).toBe("he");
+    await b.prime();
     const { llm, done } = b.turn("Hi, I need a quote for two sensors please, with a 10% discount", "I'm checking the discount with the team.", [{
       name: "create_quote",
       input: { lines: [{ sku: "SNS-200", qty: 2 }, { sku: "GW-10", qty: 1 }], discount_percent: 10, sites: 1, remove_auto_added: null, exception: null, headline: null },
@@ -121,10 +125,11 @@ describe("Turn language: the buyer's latest message decides", () => {
     expect(chat.cards[held!.id]).toMatchObject({ state: "held", title: "Your quote", sub: "Being checked by the team" });
 
     // The seller approves later: the quote and its card are posted in the conversation's current language (English).
-    const [q] = await db.select().from(quotes).where(and(eq(quotes.accountId, acc.id), eq(quotes.leadId, b.lead.id)));
+    const [q] = await db.select().from(quotes).where(and(eq(quotes.accountId, acc.id), eq(quotes.leadId, b.lead.id), eq(quotes.status, "awaiting_approval")));
     expect(await approveHeldQuote(db, { account: acc, user: me, actingAs: false, role: "seller_admin" } as never, q.id)).toMatchObject({ ok: true });
     const after = await b.chat();
-    expect(after.cards[held!.id]).toMatchObject({ state: "sent", title: "Your quote" });
+    // The buyer had a first quote (without a discount) before: this one is the updated quote.
+    expect(after.cards[held!.id]).toMatchObject({ state: "sent", title: "Your updated quote" });
     const close = after.messages.at(-1)!;
     expect(close).toMatchObject({ from: "agent", kind: "quote_close" });
     expect(close.body).toMatch(/^The team approved your quote\./);

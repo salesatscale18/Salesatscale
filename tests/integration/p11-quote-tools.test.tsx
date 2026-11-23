@@ -5,6 +5,7 @@ import { and, eq } from "drizzle-orm";
 import { messages, quoteVersions, sellerAccounts, signatures, users, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
+import { primeOffers } from "../helpers/offers";
 import { createTestDb, type TestDb } from "../helpers/db";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
@@ -168,12 +169,15 @@ describe("P11 tools: prices, the quote message and the order form", () => {
   it("a quote awaiting the seller's approval sends no quote message and promises no totals", async () => {
     const { c, ctx } = await session("en");
     await runTool("update_deal_state", qualify, ctx("u3"));
+    // Offers (part 2): a first quote without a discount, a price objection and check_offer, stored as an earlier turn.
+    await primeOffers(db, ctx, { lines: quoteInput.lines, sites: 1 });
+    const before = (await db.select().from(messages).where(eq(messages.conversationId, c.conversationId))).length;
     const r = await runTool("create_quote", { ...quoteInput, discount_percent: 15 }, ctx("q-wait"));
     expect(r.result).toMatchObject({ status: "awaiting_seller_approval", totals: "not final: the seller must approve this quote first" });
     expect(String(r.result.message)).toContain("Tell the buyer you have asked the team to approve that price, and keep going");
     // P11 wave 2: the web chat gets a placeholder card instead (no numbers), linked as a held quote message.
     expect(r.result).toMatchObject({ quote_held: true });
-    const rows = await db.select().from(messages).where(eq(messages.conversationId, c.conversationId));
+    const rows = (await db.select().from(messages).where(eq(messages.conversationId, c.conversationId)).orderBy(messages.createdAt)).slice(before);
     expect(rows.map((m) => m.id)).toEqual([r.result.quote_message_id]);
     expect(rows[0].body).not.toMatch(/\d/);
   });
