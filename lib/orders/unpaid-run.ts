@@ -59,7 +59,7 @@ export type UnpaidRunSummary = { orders: number; reminders: number; flagged: num
 
 type Candidate = {
   id: string; accountId: string; leadId: string; number: number; amountMinor: number; currency: string;
-  formId: string; signedAt: Date | null; createdAt: Date; bankTransfer: string | null;
+  formId: string; signedAt: Date | null; createdAt: Date; bankTransfer: string | null; sellerName: string | null;
 };
 
 export async function runUnpaidReminders(
@@ -71,6 +71,8 @@ export async function runUnpaidReminders(
     currency: orders.currency, formId: orders.orderFormId, signedAt: orderForms.signedAt, createdAt: orders.createdAt,
     // Only this flag of the frozen form, never the whole snapshot.
     bankTransfer: sql<string | null>`${orderForms.snapshot}->'paymentMethods'->>'bankTransfer'`,
+    // The trade name frozen on the form: the order number reads as on the pay page and the chat's pay card.
+    sellerName: sql<string | null>`${orderForms.snapshot}->'seller'->>'tradeName'`,
   }).from(orders)
     .innerJoin(leads, and(eq(leads.id, orders.leadId), eq(leads.accountId, orders.accountId)))
     .innerJoin(quotes, and(eq(quotes.id, orders.quoteId), eq(quotes.accountId, orders.accountId)))
@@ -179,7 +181,7 @@ async function remind(
   if (!claimed) return "skipped";
 
   const text = reminderText({
-    step, language: conv.language, leadName: lead.fullName, order: orderLabel(account.tradeName, o.number),
+    step, language: conv.language, leadName: lead.fullName, order: orderLabel(o.sellerName || account.tradeName, o.number),
     amountMinor: o.amountMinor, currency: o.currency, bankTransfer: o.bankTransfer === "true",
   });
   // The signed form's link: every chat shows it as the pay card (it opens at the payment step).

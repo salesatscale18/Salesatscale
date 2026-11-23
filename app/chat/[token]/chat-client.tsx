@@ -81,7 +81,7 @@ function Card({ p, s, initials, dir }: { p: LinkPreview; s: CardStrings; initial
         <span className="c-card__text">
           <b className="c-card__seller">{p.seller}</b>
           {/* The buyer sees a version only from v2 on, as on the quote card and the form. */}
-          {/* A signed form waiting for payment reads "Payment · Q-1002" with "Pay now" (same link, at the payment step). */}
+          {/* A signed form waiting for payment reads "Payment · PD-10002" (the order number once signed) with "Pay now" (same link, at the payment step). */}
           <span className="c-card__title">{p.pay ? s.payLabel : s.formLabel} · <Num>{p.ref.replace(/ v1$/, "")}</Num></span>
           {p.oneTime || p.recurring ? (
             <span className="c-card__sum">
