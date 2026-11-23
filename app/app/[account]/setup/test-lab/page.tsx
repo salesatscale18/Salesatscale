@@ -50,6 +50,7 @@ import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceModelChoices } from "@/lib/voice/model-choices";
 import { classicModelId } from "@/lib/voice-classic/settings";
+import { engineLabelKey, sessionEngine } from "@/lib/voice-classic/engine-choice";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
@@ -176,8 +177,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     const id = versionModelId(v.settings);
     return classicModelId(id) === id ? [] : [[v.value, voiceModelLabel(id)]];
   }));
-  const engineText = (engine: string | null | undefined) =>
-    t(engine === "classic" ? "lab.voice.engine.classic" : engine === "guarded" ? "lab.voice.engine.guarded" : "lab.voice.engine.current");
+  const engineText = (engine: string | null | undefined) => t(engineLabelKey(sessionEngine({ engine })));
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";

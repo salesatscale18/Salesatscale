@@ -27,7 +27,8 @@ import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from ".
 import { maxCallSeconds, voiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
-import { GUARDED_PROFILE } from "@/lib/voice-guarded/profile";
+import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
+import { GUARDED_SILENT_ENGINE, isGuardedEngine } from "@/lib/voice-classic/engine-choice";
 
 /** What the relay needs from an engine: today's VoiceEngine, or the Classic (20 Nov) one a test-lab call picked. */
 type RelayEngine = Pick<VoiceEngine, "sessionId" | "start" | "onClientMessage" | "onClientAudio" | "onClientGone" | "stop">;
@@ -238,10 +239,11 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // The mode the call was created in must still be on (a live call never runs as scripted, or the reverse).
     const mode = voiceMode(env);
     // The engine stored on the session (test lab, platform admins): Classic (20 Nov, lib/voice-classic), "Classic +
-    // guards" (today's engine with the Classic model side, lib/voice-guarded) or Current. Buyer calls always run on Current.
+    // guards" (today's engine with the Classic model side, lib/voice-guarded), its silent probe or Current. Buyer calls
+    // always run on Current.
     const stored = session.isTest ? sessionEngine(session.settings) : "current";
     const classic = stored === "classic";
-    const guarded = stored === "guarded";
+    const guarded = isGuardedEngine(stored);
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;
     const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model, ...(guarded ? { rawTranscripts: true } : {}) }) : null);
     if (!model) {
@@ -283,7 +285,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);
       },
     };
-    engine = classic ? new ClassicVoiceEngine(deps) : guarded ? new VoiceEngine({ ...deps, profile: GUARDED_PROFILE }) : new VoiceEngine(deps);
+    engine = classic ? new ClassicVoiceEngine(deps) : guarded ? new VoiceEngine({ ...deps, profile: stored === GUARDED_SILENT_ENGINE ? GUARDED_SILENT_PROFILE : GUARDED_PROFILE }) : new VoiceEngine(deps);
     phase = "live";
     // A last guard beyond the engine's own limit: the socket never outlives the call by much.
     timers.hard = clock.setTimeout(() => {

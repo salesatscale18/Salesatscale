@@ -35,6 +35,7 @@ import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine
 import { callVoice, isProvenVoiceModel, maxCallSeconds, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
+import { orderFormAgreed } from "./form-agreement";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
@@ -152,6 +153,10 @@ export type VoiceProfile = {
   quoteMessage(quote: string): string;
   /** The spoken summary of a quote made on the call, amounts in words; null when there is none. */
   quoteSummary(db: Db, a: { account: SellerAccount; quoteId: string; version: number; requested: string[]; language: "en" | "he" }): Promise<string | null>;
+  /** The session's tool behaviour on this model family (absent: "blocking"). */
+  toolBehavior?(family: SchemaFamily): RealtimeSessionConfig["toolBehavior"];
+  /** A tool result's last shaping before it goes to the model (guarded: plain objection notes; the silent probe: scheduling). */
+  shapeResult?(name: string, forModel: Record<string, unknown>, o: { family: SchemaFamily }): Record<string, unknown>;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -243,30 +248,15 @@ export function isBookkeepingOnly(result: Record<string, unknown>): boolean {
   return result.ok === true && saved.length === 0 && !result.recorded && !result.objection_recorded && !result.rejected_placeholder && !result.kept_as_buyer_said;
 }
 
-/** The order form named in a line (English or Hebrew). */
-const FORM_WORDS = /\b(order form|the form|form|order|sign|send it|send me)\b|טופס|הזמנה|שלח/i;
-/** A reply that is not a yes (English or Hebrew). */
-const NOT_YES = /\b(no|not|don'?t|expensive|too much|later|wait|think)\b|לא|יקר|אחר כך|לחשוב/i;
 /** A line in English or Hebrew (other languages are not judged: the model decides). */
-const JUDGEABLE = /[A-Za-z\u0590-\u05FF]/;
+const JUDGEABLE = /[A-Za-z֐-׿]/;
 
 /**
- * Whether the buyer agreed to the order form, from the call's last lines: "yes" when the buyer's last line asks for
- * the form (or the order), or answers the agent's offer of the form with no "no", "expensive", "later"…; "no"
- * otherwise. "unknown" (allowed) when there is no buyer line yet in this call or it is in another language: the
- * guard never blocks what it cannot read. On 23 Nov 2026 the form was sent on "Yeah, I guess so. I need a
- * solution." in reply to an objection question, two turns after "It's quite expensive".
+ * Whether the buyer agreed to the order form, from the call's last lines (lib/voice/form-agreement.ts): an explicit
+ * yes or ask for the form or to go ahead, with no reservation (but, a price or competitor remark, a question, a no)
+ * in the same line; a plain yes or "right" only as the answer to the agent's offer of the form.
  */
-export function orderFormAgreed(lines: readonly { role: string; text: string }[]): "yes" | "no" | "unknown" {
-  const lastBuyerAt = lines.findLastIndex((l) => l.role === "buyer");
-  if (lastBuyerAt < 0) return "unknown";
-  const buyer = lines[lastBuyerAt].text;
-  if (!JUDGEABLE.test(buyer)) return "unknown";
-  if (FORM_WORDS.test(buyer) && !/\b(no|not|don'?t)\b|לא/i.test(buyer)) return "yes";
-  const agentBefore = lines.slice(0, lastBuyerAt).reverse().find((l) => l.role === "agent")?.text ?? "";
-  if (/order form|טופס/i.test(agentBefore) && !NOT_YES.test(buyer)) return "yes";
-  return "no";
-}
+export { orderFormAgreed };
 
 /**
  * The reminder a call's quiet results carry (the short bookkeeping result, the quote): conditional, so it asks for
@@ -1185,7 +1175,7 @@ export class VoiceEngine {
       // The order form's latest step (a note the model reads, never answers), on every connection after it came.
       // (A profile: notes go in as notes, as Classic: never in the instructions.)
       instructions: this.formNote && !this.profile ? `${instructions}\n\n### The order form (a note from the app, not from the buyer)\n${this.formNote}` : instructions,
-      tools: this.profile ? this.profile.tools(family) : realtimeTools(family), toolBehavior: "blocking", pace: settings.pace,
+      tools: this.profile ? this.profile.tools(family) : realtimeTools(family), toolBehavior: this.profile?.toolBehavior?.(family) ?? "blocking", pace: settings.pace,
       // The call starts in the conversation's language; the buyer may switch (never locked).
       language: languages?.language ?? (this.loaded!.conv.language || "en"),
       ...(languages ? { expectedLanguages: languages.expectedLanguages } : {}),
@@ -1899,7 +1889,7 @@ export class VoiceEngine {
     } else {
       if (this.conn) {
         const at = this.traceCallAt.get(callId);
-        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}`);
+        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}`);
         // The model's audio from here on is its next response (Gemini continues by itself after a result).
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }
@@ -2035,7 +2025,7 @@ export class VoiceEngine {
       forModel = this.afterCallTool(turn, name, r, forModel);
     }
     if (typeof forModel.message === "string") forModel = { ...forModel, message: profile.resultMessage(forModel.message) };
-    return forModel;
+    return profile.shapeResult ? profile.shapeResult(name, forModel, { family: schemaFamilyOf(this.model.modelId) }) : forModel;
   }
 
   /** request_callback's booking card: the browser shows it during the call (an ok result, or a refusal after the card). */

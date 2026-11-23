@@ -19,8 +19,11 @@ export type RealtimeSessionConfig = {
   language: string;
   /** Languages the buyer most likely speaks (a transcription hint where the provider takes one). */
   expectedLanguages?: string[];
-  /** The model waits for a tool's result before it continues (Gemini: defaultToolBehavior BLOCKING). */
-  toolBehavior: "blocking";
+  /**
+   * The model waits for a tool's result before it continues (Gemini: defaultToolBehavior BLOCKING). "non_blocking":
+   * Gemini's NON_BLOCKING (the test lab's silent probe only, lib/voice-guarded/silent-probe.ts).
+   */
+  toolBehavior: "blocking" | "non_blocking";
   /** Speaking rate hint for the instructions-level pace (no provider takes a numeric rate today). */
   pace?: "slower" | "normal" | "faster";
   turnTaking?: TurnTaking;

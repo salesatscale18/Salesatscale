@@ -15,7 +15,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
-import { sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGuardedEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { PLATFORM_MAX_CALL_SEC, validateVoiceSettings, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
@@ -102,8 +102,9 @@ export async function createVoiceSession(
     ...(opts.engine === "classic" && a.isTest
       ? { settings: { engine: "classic" } as VoiceSettings, model: classicModelId(versionModelId(version?.voiceSettings, opts.env)) }
       : {}),
-    // A test-lab call on "Classic + guards" (lib/voice-guarded): stored on the session; any voice model, as Current.
-    ...(opts.engine === "guarded" && a.isTest ? { settings: { engine: "guarded" } as VoiceSettings } : {}),
+    // A test-lab call on "Classic + guards" or its silent probe (lib/voice-guarded): stored on the session; any voice
+    // model, as Current.
+    ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }

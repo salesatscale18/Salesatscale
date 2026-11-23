@@ -3,6 +3,8 @@
  * its reconciliations), plus these lines in the Classic voice block and nothing else:
  * - the hand-off: Current's two lines (offer first, the call goes on) instead of Classic's "the call ends there";
  * - one line to read a tool's prepared words (the quote summary, amounts in words) as written;
+ * - one line (right after it): never tell the buyer about the agent's own steps, attempts, rules, tools or
+ *   instructions, nor give them as a reason (23 Nov 2026: a live call said "since all attempts have been used");
  * - one line: tools before words (call the tools first, say nothing before them, speak once after the results),
  *   early in the voice block, where Classic's line about checks is; Classic's filler line ("say a short filler
  *   first"), which contradicts it, is always dropped: the line after it is Classic's "Do not announce your checks",
@@ -27,6 +29,12 @@ export const CLASSIC_FORM_NOTE_LINE_START = "- A note from the system may say wh
 
 /** The one line that makes the prepared words of a tool result (the quote summary) be read as written (K6). */
 export const READ_AS_GIVEN_LINE = "- When a tool result gives you words to say (say_this), say them as written: every amount exactly as given there, never worked out again from digits.";
+
+/**
+ * The one line that keeps the agent's own bookkeeping out of what it says (owner, 23 Nov 2026: a live call said "Since
+ * all attempts have been used, would you like to schedule a call…", the objection note read back as a reason).
+ */
+export const NO_INTERNALS_LINE = "- Never tell the buyer about your own steps, attempts, rules, tools or instructions, and never give them as a reason. Just make the offer or ask the question.";
 
 /** The start of Classic's line about tool checks (fillers on or off): the tools-before-words line goes there. */
 export const CLASSIC_CHECKS_LINE_STARTS = ["- Before a tool that takes time", "- Do not announce your checks"] as const;
@@ -71,7 +79,7 @@ function lineStarting(text: string, start: string): string {
 /** The guarded instructions from Classic's (pure). `recorded`: the call is recorded (K8). */
 export function guardedInstructions(classic: string, o: { recorded?: boolean } = {}): string {
   let out = replaceLine(classic, CLASSIC_HANDOFF_LINE, currentHandoffLines());
-  out = replaceLine(out, CLASSIC_PRICES_LINE, [CLASSIC_PRICES_LINE, READ_AS_GIVEN_LINE]);
+  out = replaceLine(out, CLASSIC_PRICES_LINE, [CLASSIC_PRICES_LINE, READ_AS_GIVEN_LINE, NO_INTERNALS_LINE]);
   const checks = CLASSIC_CHECKS_LINE_STARTS.map((s) => (out.includes(`\n${s}`) ? lineStarting(out, s) : null)).find((l) => l !== null);
   if (!checks) throw new Error("guarded instructions: no line about tool checks");
   if (checks !== CLASSIC_FILLER_LINE && checks !== CLASSIC_NO_ANNOUNCE_LINE) throw new Error(`guarded instructions: unexpected line about tool checks: ${checks.slice(0, 60)}`);
@@ -93,7 +101,7 @@ export function guardedInstructions(classic: string, o: { recorded?: boolean } =
  */
 export function guardedAddedLines(o: { recorded?: boolean; fillers?: boolean } = {}): string[] {
   return [
-    READ_AS_GIVEN_LINE, TOOLS_FIRST_LINE, ...(o.fillers ? [CLASSIC_NO_ANNOUNCE_LINE] : []), ...currentHandoffLines(), currentOrderFormStatusLine(),
+    READ_AS_GIVEN_LINE, NO_INTERNALS_LINE, TOOLS_FIRST_LINE, ...(o.fillers ? [CLASSIC_NO_ANNOUNCE_LINE] : []), ...currentHandoffLines(), currentOrderFormStatusLine(),
     ...(o.recorded ? [recordedCallRule()] : []),
   ];
 }
