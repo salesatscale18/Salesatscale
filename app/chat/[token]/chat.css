@@ -71,14 +71,16 @@
 .c-card__btn { display: block; text-align: center; padding: 9px; font-weight: 600; font-size: 14px; color: var(--brand-text, var(--brand)); text-decoration: none; }
 .c-card__btn:hover { background: var(--surface); }
 
-.c-bar { flex: none; display: flex; gap: 8px; align-items: flex-end; padding: 8px 10px; background: var(--raised); border-block-start: 1px solid var(--line); }
-.c-input { flex: 1; min-height: 38px; max-height: 120px; resize: none; border: 1px solid var(--line-strong); border-radius: 20px; padding: 8px 14px;
-  font: inherit; font-size: 14px; color: var(--ink); background: var(--raised); line-height: 20px; }
+/* The composer (owner, 23 Nov: a bit taller): a 48 px field and 48 px round buttons, bottom-aligned when the field grows.
+   16 px text so iOS does not zoom on focus; 22 px line + 2 x 12 px padding + 2 x 1 px border = 48 px for one line. */
+.c-bar { flex: none; display: flex; gap: 10px; align-items: flex-end; padding: 10px 12px; background: var(--raised); border-block-start: 1px solid var(--line); }
+.c-input { flex: 1; min-height: 48px; max-height: 120px; resize: none; border: 1px solid var(--line-strong); border-radius: 24px; padding: 12px 16px;
+  font: inherit; font-size: 16px; color: var(--ink); background: var(--raised); line-height: 22px; }
 .c-input::placeholder { color: var(--muted); }
 .c-input:focus-visible, .c-send:focus-visible, .c-card__btn:focus-visible, .c-bubble a:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
-.c-send { flex: none; width: 38px; height: 38px; border-radius: 999px; border: 0; background: var(--brand); color: var(--brand-on, #fff); display: grid; place-items: center; cursor: pointer; }
+.c-send { flex: none; width: 48px; height: 48px; border-radius: 999px; border: 0; background: var(--brand); color: var(--brand-on, #fff); display: grid; place-items: center; cursor: pointer; }
 .c-send:disabled { opacity: .75; cursor: default; }
-.c-send svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.c-send svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
 .c-bar[dir="rtl"] .c-send svg { transform: scaleX(-1); }
 .c-ended { flex: none; padding: 14px 12px; text-align: center; color: var(--muted); font-size: 13px; background: var(--surface); border-block-start: 1px solid var(--line); }
 .c-notice { flex: none; padding: 6px 12px; font-size: 13px; line-height: 18px; background: var(--warning-soft); color: var(--ink); }
@@ -111,9 +113,9 @@
 .c-voice__close:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
 /* The composer's edge (as in chat apps): Send while there is text, else "Switch to voice", or "Back to text" during a call.
    A filled round button with the waveform; disabled (a simulated chat with a gate off) it stays tappable and the reason shows under the composer. */
-.c-mode { flex: none; width: 38px; height: 38px; border-radius: 999px; border: 0; background: var(--brand); color: var(--brand-on, #fff);
+.c-mode { flex: none; width: 48px; height: 48px; border-radius: 999px; border: 0; background: var(--brand); color: var(--brand-on, #fff);
   display: grid; place-items: center; cursor: pointer; }
-.c-mode .sas-ico { width: 18px; height: 18px; }
+.c-mode .sas-ico { width: 22px; height: 22px; }
 .c-mode--back { background: var(--ink); color: #fff; }
 .c-mode[aria-disabled="true"] { background: var(--sunken); color: var(--muted); cursor: not-allowed; box-shadow: inset 0 0 0 1px var(--line-strong); }
 .c-mode:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
