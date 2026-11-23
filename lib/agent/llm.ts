@@ -2,6 +2,7 @@
  * The model behind the agent (decision D1), behind a small interface so tests
  * run a scripted fake and never call the API.
  */
+import { createHash } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 
 export type ToolDef = Anthropic.Beta.BetaTool;
@@ -23,6 +24,14 @@ export type LlmRequest = {
   maxTokens?: number;
   /** Server-side refusal fallback; default on (the agent). Off for models that do not offer it (Haiku). */
   fallbacks?: boolean;
+  /**
+   * The tools' `strict` mode an earlier round of the same turn was sent with
+   * (that round's `LlmResponse.strictTools`). Thinking blocks are bound to the
+   * exact tool list they were made with, so every round of one turn must send
+   * the same tools: false sends them without `strict` (never tries strict),
+   * true sends them as given (never falls back). Unset on a turn's first call.
+   */
+  strictTools?: boolean;
 };
 
 export type LlmResponse = {
@@ -32,6 +41,8 @@ export type LlmResponse = {
   model: string;
   /** `cacheWriteTokens`: 5-minute cache writes (the only TTL the agent uses). Optional for fakes. */
   usage: { inputTokens: number; outputTokens: number; cacheReadTokens: number; cacheWriteTokens?: number };
+  /** Whether the tools went out with their `strict` flags (true) or without (false): pass it to the turn's next round. Optional for fakes. */
+  strictTools?: boolean;
 };
 
 export interface LlmClient {
@@ -117,6 +128,36 @@ export function countCacheBreakpoints(params: Pick<Anthropic.Beta.MessageCreateP
 }
 
 /**
+ * Tool lists (by hash) whose strict grammar the API found too large, in this
+ * process: later calls with the same list go without `strict` straight away
+ * (saves a failing round trip). The grammar depends only on the tool schemas.
+ */
+const grammarTooLargeTools = new Set<string>();
+const toolsKey = (tools: readonly unknown[]) => createHash("sha256").update(JSON.stringify(tools)).digest("hex");
+
+/** Tests only: forget which tool lists compiled too large. */
+export function resetStrictToolsMemo(): void {
+  grammarTooLargeTools.clear();
+}
+
+/**
+ * Errors where the same request can succeed when sent again: no response or a
+ * timeout, 408, 409, 429, any 5xx (529 overloaded included), and the 400 for
+ * thinking blocks made with a different tool list (the list is stable per turn,
+ * so it is not caused by the request). Auth, permission and other invalid
+ * requests fail again and are not retried.
+ */
+export function isRetryableModelError(e: unknown): boolean {
+  const err = e as { status?: number; name?: string; message?: string; error?: { error?: { message?: string } } } | null;
+  if (!err || typeof err !== "object") return false;
+  if (err.name === "APIConnectionError" || err.name === "APIConnectionTimeoutError") return true;
+  const status = err.status;
+  if (typeof status !== "number") return false;
+  if (status === 408 || status === 409 || status === 429 || status >= 500) return true;
+  return status === 400 && /tools.{0,40}differs/i.test(String(err.error?.error?.message ?? err.message ?? ""));
+}
+
+/**
  * Claude via the official SDK. Refusal fallbacks are on by default
  * ("default" routing): a declined request is retried server-side on a
  * fallback model inside the same call. Caching: one breakpoint on the stable
@@ -129,14 +170,20 @@ export class AnthropicLlm implements LlmClient {
   }
   async create(req: LlmRequest): Promise<LlmResponse> {
     const params = buildRequestParams(req);
+    const key = params.tools?.length ? toolsKey(params.tools) : null;
+    // Pinned by an earlier round of this turn, else non-strict when this tool list is known to compile too large.
+    let strict = req.strictTools ?? !(key && grammarTooLargeTools.has(key));
     let res: Anthropic.Beta.BetaMessage;
     try {
-      res = await this.client.beta.messages.create(params);
+      res = await this.client.beta.messages.create(strict ? params : withoutStrict(params));
     } catch (e) {
-      // A 400 costs nothing. If the strict tool schemas ever compile too large, send the
+      // A 400 costs nothing. If the strict tool schemas compile too large, send the
       // same request once without `strict` (tool inputs are checked in code anyway).
-      if (!isGrammarTooLarge(e)) throw e;
+      // Not when an earlier round of the turn already went strict: its thinking blocks need the same tools.
+      if (!strict || req.strictTools === true || !isGrammarTooLarge(e)) throw e;
       console.warn("[agent] strict tool grammar too large; retrying without strict");
+      if (key) grammarTooLargeTools.add(key);
+      strict = false;
       res = await this.client.beta.messages.create(withoutStrict(params));
     }
     return {
@@ -149,6 +196,7 @@ export class AnthropicLlm implements LlmClient {
         cacheReadTokens: res.usage.cache_read_input_tokens ?? 0,
         cacheWriteTokens: res.usage.cache_creation_input_tokens ?? 0,
       },
+      strictTools: strict,
     };
   }
 }
