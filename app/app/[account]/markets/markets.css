@@ -1,23 +1,75 @@
-/* Settings › Markets. Scoped `mk-` classes on top of components/sas/sas.css. */
+/* Settings › Markets (canvas: MarketsV2). Scoped `mk-` classes on top of components/sas/sas.css. */
 
-/* Phone: the price list select takes the full width, with Change below it. */
+/* The content width is capped; the selected market sits beside the markets list. */
+.mk-page { width: 100%; max-width: 1144px; display: flex; flex-direction: column; gap: var(--space-6); }
+.mk-layout { display: flex; gap: 20px; align-items: flex-start; }
+.mk-detail { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 16px; container-type: inline-size; }
+
+/* Markets list: name + status, then "Home market · 16 leads" / "0 leads · 3 of 4 checks". */
+.mk-list { width: 232px; flex: none; overflow: hidden; }
+.mk-list__h { margin: 0; padding: 12px 14px; font-size: 14px; line-height: 20px; font-weight: 600; }
+.mk-list li { border-top: 1px solid var(--line); }
+.sas-app a.mk-list__row, .mk-list__row { display: flex; flex-direction: column; gap: 4px; padding: 12px 14px; color: var(--ink); text-decoration: none; }
+.sas-app a.mk-list__row:hover { background: var(--surface-sunken); }
+.sas-app a.mk-list__row[aria-current="page"] { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
+.mk-list__top { display: flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; }
+.mk-list__top strong { min-width: 0; overflow-wrap: anywhere; }
+
+/* Phone: the list becomes a picker on top. */
+.mk-picker { display: none; }
 @media (max-width: 767px) {
-  .mk-pl-form > label, .mk-pl-form > .mk-pl-field { flex-basis: 100% !important; }
+  .mk-list { display: none; }
+  .mk-picker { display: flex; flex-direction: column; gap: 6px; }
 }
+
+/* Header card: name, tags, status action; the differ line; the readiness strip. */
+.mk-head { padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.mk-head__top { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.mk-head__name { margin: 0; font-size: 18px; line-height: 24px; font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
+.mk-ready { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 18px; padding-top: 10px; border-top: 1px solid var(--line); font-size: 13px; line-height: 18px; }
+.mk-ready__list { display: contents; list-style: none; margin: 0; padding: 0; }
+.mk-ck { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.mk-ck__icon { display: inline-grid; place-items: center; width: 16px; height: 16px; flex: none; }
+.mk-ck__icon .sas-ico, .mk-ck__icon svg { width: 15px; height: 15px; }
+.mk-ck__icon--pass { color: var(--success); }
+.mk-ck--fail { color: var(--warning); font-weight: 600; }
+.mk-ck__icon--fail { color: var(--warning); }
+.mk-ck__icon--optional { width: 12px; height: 12px; margin: 2px; border-radius: 50%; border: 1.5px dashed var(--ink-muted); }
+.mk-ck--optional, .sas-app a.mk-ck__muted { color: var(--ink-muted); text-decoration: none; }
+.sas-app a.mk-ck__muted:hover { text-decoration: underline; }
+
+/* Two columns of grouped cards; one column when the detail is narrow (tablet, phone). */
+.mk-cols { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+.mk-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+@container (max-width: 759px) { .mk-cols { grid-template-columns: minmax(0, 1fr); } }
+.mk-card { overflow: hidden; min-width: 0; }
+.mk-card__h { margin: 0; padding: 12px 16px; font-size: 15px; line-height: 22px; font-weight: 600; }
+
+/* A row: label (muted, 132px) · value · action, close together. */
+.mk-row { display: grid; grid-template-columns: 132px minmax(0, 1fr) auto; gap: 4px 12px; align-items: baseline; padding: 10px 16px; border-top: 1px solid var(--line); }
+.mk-row__label { color: var(--ink-muted); font-weight: 500; }
+.mk-row__value { min-width: 0; overflow-wrap: anywhere; }
+.mk-row__act { display: inline-flex; align-items: baseline; gap: 12px; white-space: nowrap; }
+.mk-row__note { font-size: 12px; color: var(--ink-muted); }
+/* Phone: the label on its own line, value and action under it. */
+@container (max-width: 480px) {
+  .mk-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .mk-row__label { grid-column: 1 / -1; }
+}
+
+/* Row actions: small text links (Change, Reset, Edit). */
+.sas-app a.mk-act, .mk-act { font: 500 13px/18px var(--font-sans); color: var(--primary); background: none; border: 0; padding: 0; cursor: pointer; text-decoration: none; }
+.sas-app a.mk-act:hover, .mk-act:hover { text-decoration: underline; }
+/* Phone: a taller tap area for the small links. */
+@container (max-width: 480px) { .sas-app a.mk-act, .mk-act { display: inline-block; padding-block: 6px; } }
+
+/* "Different here" in the Trust Blue soft tint (a changed value), not the agent violet (R5-10). */
+.mk-diff { display: inline-flex; align-items: center; height: 20px; padding: 0 8px; border-radius: var(--radius-pill); background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 600; white-space: nowrap; vertical-align: 1px; }
+
+/* An open editor under its row. */
+.mk-edit { padding: 12px 16px 14px; border-top: 1px solid var(--line); background: var(--surface-sunken); }
 
 /* Holidays: one chip per chosen date, with a remove button. */
 .mk-holiday { display: inline-flex; align-items: center; gap: 2px; height: 28px; padding-inline: 10px 2px; border-radius: var(--radius-pill); border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 13px; }
 .mk-holiday__remove { display: inline-grid; place-items: center; width: 24px; height: 24px; border: 0; border-radius: 50%; background: none; color: var(--ink-muted); cursor: pointer; padding: 0; }
 .mk-holiday__remove:hover { background: var(--surface-sunken); color: var(--ink); }
-
-/* Phone: a row's pill and action share the full width, so "Change for this market" is never cut. */
-@media (max-width: 767px) {
-  [data-market-detail] [data-row-end] { min-width: 0 !important; flex: 1 1 100% !important; flex-wrap: wrap; justify-content: space-between !important; }
-}
-
-/* R5-10: "Set for this market" in the Trust Blue soft tint (a changed value), not the agent violet. */
-.mk-pill--set { background: var(--primary-soft); color: var(--primary); }
-/* R5-10: on a phone every row action sits under the value, start-aligned (pill, then action). */
-@media (max-width: 767px) {
-  [data-market-detail] [data-row-end] { justify-content: flex-start !important; }
-}

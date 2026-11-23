@@ -184,8 +184,9 @@ describe("UAT round 2 fixes", () => {
       expect(html).toContain("Connect a number in Settings › WhatsApp.");
       expect(html).toMatch(/data-legal-lang="en"[^]*?<bdi>Sales terms<\/bdi>/);
       expect(html).toMatch(/data-legal-lang="he"[^]*?<bdi>תנאי מכירה<\/bdi>/);
-      // Pill and "Change for this market"/Reset share one group on every setting row.
-      expect(html).toMatch(/data-row-end=""><span class="sas-pill" data-source="account">[^<]+<\/span><a [^>]*>Change for this market<\/a>/);
+      // MarketsV2: a row that follows the account has only "Change" in its action group (no tag).
+      expect(html).toMatch(/data-row-end=""><a class="mk-act" [^>]*>Change<\/a>/);
+      expect(html).not.toContain('data-source="account"');
     });
   });
 

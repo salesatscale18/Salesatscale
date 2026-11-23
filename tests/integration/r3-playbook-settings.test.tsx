@@ -271,18 +271,18 @@ describe("R3-6: Playbook, Settings, Company, Go live, Markets", () => {
   });
 
   describe("C. Markets", () => {
-    it("price list select full width on a phone with Change below; no '· from account' beside the default pill", async () => {
+    it("legal texts that follow the account: no '· from account' and no tag; on a phone the markets list becomes a picker", async () => {
       for (const language of ["en", "he"]) await saveLegalSection(db, acc.id, admin.id, { sectionKey: "sales_terms", title: "Sales terms", language, body: "Terms" });
       const html = await render(MarketsPage);
       save("markets", html);
       expect(html).toMatch(/data-legal-lang="en">English · <span><bdi>Sales terms<\/bdi>\u00a0v1<\/span><\/span>/);
-      expect(html).toContain('class="mk-pl-form"');
-      expect(html).toContain('class="mk-pl-field"');
-      const legal = html.match(/data-legal-lang[\s\S]*?Same as account default/)?.[0] ?? "";
-      expect(html).toContain("Same as account default");
+      // MarketsV2: no "Same as account default" tags; the legal row of a market that follows the account has no tag.
+      expect(html).not.toContain("Same as account default");
+      const legal = html.split('data-setting="legal"')[1] ?? "";
       expect(legal).not.toContain("from account");
+      expect(legal).not.toContain("Different here");
       const mkCss = fs.readFileSync("app/app/[account]/markets/markets.css", "utf8");
-      expect(mkCss).toMatch(/\.mk-pl-form > label, \.mk-pl-form > \.mk-pl-field \{ flex-basis: 100% !important; \}/);
+      expect(mkCss).toMatch(/@media \(max-width: 767px\) \{\s*\.mk-list \{ display: none; \}\s*\.mk-picker \{ display: flex;/);
     });
   });
 });
