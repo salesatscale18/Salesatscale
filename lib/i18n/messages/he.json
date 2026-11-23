@@ -471,5 +471,9 @@
   "import.file_consent_hint": "הלידים במערכת שלך ביקשו לשמוע ממך. בטלו את הסימון רק אם אסור שהסוכן יפנה לאנשים בקובץ הזה.",
   "buyer.qcard.free": "חינם",
   "buyer.free": "חינם",
-  "buyer.quote.free": "חינם"
+  "buyer.quote.free": "חינם",
+  "buyer.unpaid.first": "היי {name}, ההזמנה {order} נחתמה. השלב האחרון הוא התשלום, {amount}, כאן:",
+  "buyer.unpaid.first_no_amount": "היי {name}, ההזמנה {order} נחתמה. השלב האחרון הוא התשלום, כאן:",
+  "buyer.unpaid.second_bank": "ההזמנה עדיין פתוחה, {name}. משהו מעכב את התשלום? אם העברה בנקאית נוחה יותר, אפשר לבחור בה בעמוד התשלום.",
+  "buyer.unpaid.second": "ההזמנה עדיין פתוחה, {name}. משהו מעכב את התשלום?"
 }

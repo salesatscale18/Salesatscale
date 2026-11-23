@@ -51,6 +51,16 @@ export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
       const label = orderLabel(ctx.tradeName, it.orderNumber);
       return { icon, title: t(`leads.need.${it.kind}`), detail: `${label} · ${formatMoney(it.amountMinor, it.currency)}`, detailId: label };
     }
+    case "order_unpaid": {
+      // "Signed, not paid for 7 days" · "PD-10002 · ₪3,858.60 · 2 reminders sent" (board UnpaidReminders).
+      const label = orderLabel(ctx.tradeName, it.orderNumber);
+      const days = Math.max(1, Math.floor((ctx.now.getTime() - it.signedAt.getTime()) / 86_400_000));
+      const sent = t(it.remindersSent === 1 ? "leads.need.order_unpaid.reminders_one" : "leads.need.order_unpaid.reminders", { count: it.remindersSent });
+      return {
+        icon, title: t(days === 1 ? "leads.need.order_unpaid_one" : "leads.need.order_unpaid", { days }),
+        detail: `${label} · ${formatMoney(it.amountMinor, it.currency)} · ${sent}`, detailId: label,
+      };
+    }
     case "quote_approval": {
       const ref = quoteRef(it.quoteNumber, it.version);
       return { icon, title: t("leads.need.quote_approval"), detail: [ref, ...it.reasons.map(approvalReasonText)].join(" · "), detailId: ref };
@@ -212,7 +222,7 @@ export function whoOnIt(lead: LeadLike, ownerName: string | null): WhoOnIt {
  * - human_handling: the lead page (it opens at the latest message, where the person replies).
  * - call_finished: the Deal tab at the Team call card, now the log form (#callback; needsYouHref).
  * - follow_up_failed: the Deal tab at the Follow-up card (#follow-up).
- * - bank_transfer, payment_failed: the Deal tab at the Orders card (#lead-orders).
+ * - bank_transfer, payment_failed, order_unpaid: the Deal tab at the Orders card (#lead-orders).
  * - form_unsigned, form_expiring: the Deal tab at the Quotes card (#lead-quotes; it shows the form's state).
  * - quote_approval: Quotes and orders, the quote to approve (needsYouHref; no approve card on the lead page).
  * - team_question: Knowledge, the answer panel for the question (needsYouHref; no card on the lead page).
@@ -228,6 +238,7 @@ export function rowHref(base: string, leadId: string, needs: LeadNeeds | null | 
       return `${lead}?tab=deal#follow-up`;
     case "bank_transfer":
     case "payment_failed":
+    case "order_unpaid":
       return `${lead}?tab=deal#lead-orders`;
     case "form_unsigned":
     case "form_expiring":

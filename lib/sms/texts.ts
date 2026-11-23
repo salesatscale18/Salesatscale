@@ -9,7 +9,7 @@
  *   "פרסומת:" in Hebrew, and STOP by reply. They stay off until the owner
  *   decides on a reply-capable number (lib/sms/rules agentSmsEnabled).
  * - Hebrew is UCS-2 (70 characters a segment): each text fits one SMS except the
- *   Hebrew follow-up (two).
+ *   Hebrew follow-up and opener (two), and the Hebrew payment reminder (two, unless the seller name is very short).
  * {time} (team call) is the slot in the buyer's zone, already formatted by the caller.
  */
 import type { SmsKind } from "./rules";
@@ -27,6 +27,8 @@ const BODY: Record<SmsLang, Record<SmsKind, string>> = {
     order_form: "Your order form is ready (about 2 min): {chat}",
     team_call: "Call with {seller}: {time} your time. Details: {chat}",
     chat_link: "Thanks for talking with us. Continue anytime: {chat}",
+    // Board UnpaidReminders (owner decision 23 Nov): the fixed line that goes with each payment reminder.
+    pay_reminder: "Your order from {seller} is waiting for payment: {chat}",
   },
   he: {
     opener: "פרסומת: {seller} - {agent} עם עדכון: {chat}\nלהסרה השב/י הסר",
@@ -37,6 +39,7 @@ const BODY: Record<SmsLang, Record<SmsKind, string>> = {
     order_form: "טופס ההזמנה מוכן (כ-2 דק'): {chat}",
     team_call: "שיחה {time} שעונך: {chat}",
     chat_link: "תודה על השיחה. אפשר להמשיך כאן: {chat}",
+    pay_reminder: "ההזמנה מ-{seller} ממתינה לתשלום: {chat}",
   },
 };
 

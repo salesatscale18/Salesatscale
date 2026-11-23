@@ -6,6 +6,7 @@ import { AGENT_GENDERS, languageName, writtenInScript, type AgentGender } from "
 import { QUESTION_BUDGET } from "./core/stage";
 import { CALL_ROLE_MAX } from "./core/call-role";
 import { MAX_OBJECTION_ATTEMPTS, MIN_OBJECTION_ATTEMPTS } from "./core/objections";
+import { parseUnpaidRows, unpaidRowsFromForm, type PlaybookWithUnpaid, type UnpaidRowsInput } from "@/lib/orders/unpaid-reminders";
 
 export function defaultPlaybook(tradeName: string, maxDiscountBp: number): Playbook {
   return {
@@ -72,6 +73,8 @@ export type PlaybookRowsInput = {
   plays?: Partial<Record<string, PlayRowInput>>;
   /** Approved exceptions are never typed in the editor; they pass through unchanged. */
   exceptions?: PlaybookException[];
+  /** "Signed, not paid yet" (After the order). Undefined when the form did not show the card (the stored settings are kept). */
+  unpaidReminders?: UnpaidRowsInput;
 };
 
 /**
@@ -195,6 +198,7 @@ export function playbookRowsFromForm(entries: Iterable<[string, string]>): Playb
     ...("callRole" in scalar ? { callRole: scalar.callRole } : {}),
     neverDo: ordered(never),
     ...(opener ? { opener } : {}),
+    ...(unpaidRowsFromForm(scalar) ? { unpaidReminders: unpaidRowsFromForm(scalar) } : {}),
     ...(plays.size ? {
       plays: Object.fromEntries([...plays].map(([k, r]) => [k, {
         ...(facts.has(k) || r.factsShown ? { facts: facts.has(k) ? ordered(facts.get(k)!) : [] } : { content: r.content ?? "" }),
@@ -298,7 +302,7 @@ export function parsePlayRow(key: PlayKey, r: PlayRowInput, errors: PlaybookErro
  * keyed by input name: `agentName`, `field.<i>.label`, `objection.<i>.answer`,
  * `maxDiscount`, `never.<i>`, …
  */
-export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: Playbook } | { ok: false; errors: PlaybookErrors } {
+export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: PlaybookWithUnpaid } | { ok: false; errors: PlaybookErrors } {
   const errors: PlaybookErrors = {};
   const agentName = input.agentName.trim();
   if (!agentName) errors.agentName = "Give the agent a name it uses to introduce itself.";
@@ -394,6 +398,8 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
   if (neverDo.length > 20) errors.never = "Use 20 rules or fewer.";
 
   const opener = input.opener ? parseOpenerRows(input.opener, errors) : undefined;
+  // After the order: the three "Signed, not paid yet" steps (each later than the one before).
+  const unpaidReminders = input.unpaidReminders ? parseUnpaidRows(input.unpaidReminders, errors) : undefined;
 
   let plays: Playbook["plays"];
   if (input.plays) {
@@ -432,6 +438,7 @@ export function parsePlaybookRows(input: PlaybookRowsInput): { ok: true; value: 
       ...(input.exceptions?.length ? { exceptions: input.exceptions } : {}),
       ...(opener ? { opener } : {}),
       ...(plays ? { plays } : {}),
+      ...(unpaidReminders ? { unpaidReminders } : {}),
     },
   };
 }

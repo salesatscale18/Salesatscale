@@ -16,6 +16,8 @@ import { LocalNames } from "../local-names";
 import { PlatformFixed, growProps } from "./parts";
 import { restatesDiscountLimit, shortDate } from "./checks";
 import type { PlaysSummary } from "./plays/overview";
+import { ReminderWording, SignedNotPaidCard, unpaidValues } from "./after-order";
+import { unpaidRemindersOf, type PlaybookWithUnpaid } from "@/lib/orders/unpaid-reminders";
 
 /** "Names in other languages" for the agent (C2): rows from the account's markets, built on the server. */
 export type AgentNamesView = { rows: NameRow[]; source: string; notice: string | null; marketsHref: string };
@@ -517,6 +519,14 @@ export function PlaybookForm({ slug, p, draftVersion, labHref, company, companyL
           <PlatformFixed>{t("playbook.never_hint")}</PlatformFixed>
         </>
       ))}
+
+      {/* After the order (board UnpaidReminders): what happens when a buyer signs and does not pay. */}
+      {panel("pb-after-h", "playbook.after_order", null, null, (
+        <>
+          <SignedNotPaidCard initial={unpaidValues(unpaidRemindersOf(p as PlaybookWithUnpaid), state.status === "error" ? state.values.unpaidReminders : undefined)} errors={e} />
+          <ReminderWording />
+        </>
+      ), isNew)}
 
       {panel("pb-pub-h", "playbook.publish.title", null, null, (
         <>

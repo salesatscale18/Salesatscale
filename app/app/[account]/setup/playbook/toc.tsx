@@ -14,6 +14,7 @@ export const TOC_SECTIONS: { id: string; label: MessageKey; isNew?: boolean }[] 
   { id: "pb-obj-h-s", label: "playbook.toc.objections" },
   { id: "pb-lim-h-s", label: "playbook.limits" },
   { id: "pb-never-h-s", label: "playbook.never" },
+  { id: "pb-after-h-s", label: "playbook.after_order", isNew: true },
 ];
 /** On the Playbook page, the Sales plays item follows the plays summary panel. */
 const spyId = (id: string) => (id === "plays" ? "pb-plays-h-s" : id);

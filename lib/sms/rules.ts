@@ -124,9 +124,11 @@ export function smsRoute(config: SmsConfig, twilioConfigured: boolean, to: strin
  * - automatic: started by the agent or the seller's outreach; only inside contact hours (spec 9);
  * - buyer_named: the time the buyer asked for, or a call the buyer booked; any hour;
  * - person: a person on the seller's team did something for this buyer now; any hour.
- * Hand-back and "Send chat link" both send `chat_link`.
+ * Hand-back and "Send chat link" both send `chat_link`. `pay_reminder` goes with a "Signed, not paid yet" reminder
+ * (lib/orders/unpaid-run.ts): automatic, so only inside contact hours; a service message about a signed order,
+ * not a commercial one (not behind SMS_AGENT_NUDGES).
  */
-export const SMS_KINDS = ["opener", "follow_up", "named_time", "named_time_retry", "quote_ready", "order_form", "team_call", "chat_link"] as const;
+export const SMS_KINDS = ["opener", "follow_up", "named_time", "named_time_retry", "quote_ready", "order_form", "team_call", "chat_link", "pay_reminder"] as const;
 export type SmsKind = (typeof SMS_KINDS)[number];
 export type SmsTiming = "automatic" | "buyer_named" | "person";
 
@@ -139,6 +141,7 @@ export const SMS_KIND_TIMING: Record<SmsKind, SmsTiming> = {
   order_form: "person",
   team_call: "buyer_named",
   chat_link: "person",
+  pay_reminder: "automatic",
 };
 
 /** Agent-started, commercial SMS (see agentSmsEnabled): every other kind is a service message the buyer asked for. */
