@@ -4034,5 +4034,6 @@
   "knowledge.questions.sources_sub": "Found while reading what you uploaded. No buyer has asked yet.",
   "knowledge.questions.show_more": "Show {n} more",
   "knowledge.questions.chat_with": "Chat with",
-  "knowledge.questions.pointer_before": "Questions the agent couldn't answer are in "
+  "knowledge.questions.pointer_before": "Questions the agent couldn't answer are in ",
+  "knowledge.summary_no_gaps": "{total} facts · {approved} approved · {suggested} to review."
 }

@@ -12,7 +12,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ReactElement } from "react";
 import { eq } from "drizzle-orm";
-import { pipelineRuns, sellerAccounts, toolCalls, users, type PipelineUsage, type SellerAccount, type User } from "@/db/schema";
+import { conversations, leads, pipelineRuns, sellerAccounts, toolCalls, users, type PipelineUsage, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -218,7 +218,43 @@ describe("KnowledgeV2: Questions to answer", () => {
     expect(text(html)).toContain("No open questions.");
     expect(html).not.toContain("data-question-group");
     const all = await render();
-    expect(text(all)).toContain("0 questions to answer.");
+    // The header summary leaves the questions part out at 0.
+    expect(text(all)).toMatch(/\d+ facts · \d+ approved · \d+ to review\./);
+    expect(text(all)).not.toContain("questions to answer");
+    expect(text(all)).not.toContain("question to answer");
     expect(all).not.toContain("data-questions-pointer");
+  });
+
+  it("a question the agent only looked up names the chat it came from: the lead (never a full email), a test chat, once per chat", async () => {
+    const live = (await listVersions(db, account.id)).find((v) => v.status === "live")!;
+    const q = "Does the gateway need its own power socket?";
+    const [lead] = await db.insert(leads).values({ accountId: account.id, fullName: "dana.levi+promo@example.com", phone: "+972525550777", language: "en", origin: "manual" }).returning();
+    const [conv] = await db.insert(conversations).values({ accountId: account.id, leadId: lead.id, channel: "whatsapp", agentVersionId: live.id, language: "en" }).returning();
+    const test = await startTestConversation(db, account.id, seller.id, { language: "en", versionId: live.id });
+    const at = Date.now() + 120_000;
+    await db.insert(toolCalls).values([
+      { accountId: account.id, conversationId: conv.id, sequence: 1, name: "lookup_knowledge", input: { query: q }, result: { facts: [] }, outcome: "ok" as const, createdAt: new Date(at) },
+      { accountId: account.id, conversationId: conv.id, sequence: 2, name: "lookup_knowledge", input: { query: q }, result: { facts: [] }, outcome: "ok" as const, createdAt: new Date(at - 1000) },
+      { accountId: account.id, conversationId: test!.conversationId, sequence: 1, name: "lookup_knowledge", input: { query: q }, result: { facts: [] }, outcome: "ok" as const, createdAt: new Date(at - 2000) },
+    ]);
+    const [row] = (await unansweredQuestions(db, account.id, 50)).filter((x) => x.question === q);
+    expect(row.asks).toEqual([]);
+    expect(row.times).toBe(3);
+    expect(row.chats.map((c) => [c.conversationId, c.leadId, c.isTest])).toEqual([[conv.id, lead.id, false], [test!.conversationId, expect.any(String), true]]);
+
+    const html = await render({ view: "questions" });
+    save("kv2-lookup-chats", html);
+    const i = html.indexOf(q);
+    const li = html.slice(html.lastIndexOf("<li", i), html.indexOf("</li>", i));
+    expect(li).toContain("data-asked-in");
+    expect(li).toContain(`Chat with <a href="/app/${slug}/leads/${lead.id}" dir="auto">dana.levi</a>`);
+    expect(li).not.toContain("example.com");
+    expect(li).toContain("Test lab chat");
+    expect(li.match(/data-chat=""/g)).toHaveLength(2);
+    // The answer panel names the same chats.
+    const panel = await render({ view: "questions", panel: "answer", question: q });
+    const p = panel.slice(panel.indexOf('data-answer-question=""'));
+    expect(p).toContain("data-asked-in");
+    expect(p).not.toContain("example.com");
   });
 });
