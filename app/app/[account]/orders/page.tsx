@@ -26,6 +26,10 @@ import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { MARKET_PARAM, marketSelection, marketWhere, switcherReturnTo } from "@/lib/markets/selection";
 import type { DocMarketFilter } from "@/lib/quotes/service";
 import { exceptionNotice } from "@/lib/quotes/exception-notice";
+import { customPricesOf } from "@/lib/quotes/pricing";
+
+/** Two sets of a person's prices per charge are the same. */
+const samePersonPrices = (a: Record<string, number>, b: Record<string, number>) => Object.keys(a).length === Object.keys(b).length && Object.keys(a).every((k) => b[k] === a[k]);
 import { ExceptionNoticeLine } from "@/components/sas/exception-notice";
 import { ApproveButton } from "@/components/sas/approve-confirm";
 
@@ -182,14 +186,15 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
 
   const cur = detail?.versions[0];
   // A held quote using an approved exception: the notice and whether Approve asks first (computed here, on the server).
-  const exception = detail && cur ? exceptionNotice(detail.quote.status, cur.version) : null;
+  const exception = detail && cur ? exceptionNotice(detail.quote.status, cur.version, cur.lines) : null;
   const incomplete = !!cur?.lines.some((l) => l.unitPriceMinor === null);
   // The selected quote's amounts: its own currency and recurring period (older quotes: monthly).
   const dm = cur ? moneyIn(cur.version.currency) : money;
   const recurringPeriod = cur?.version.recurringPeriod === "year" ? "year" : "month";
   // Round trip 3: everything that depends on the selected quote, in parallel.
   // People named in the panel (approver, creator, form sender) come from one users query.
-  const personIds = [cur?.version.approvedByUserId, cur?.version.createdByUserId].filter((x): x is string => !!x);
+  // Version creators too: "Price changed by …" in the version history.
+  const personIds = [cur?.version.approvedByUserId, cur?.version.createdByUserId, ...(detail?.versions.map((v) => v.version.createdByUserId) ?? [])].filter((x): x is string => !!x);
   const [people, [catalogVersion], forms, signed, [priceList], [market]] = detail
     ? await Promise.all([
         appDb.select().from(users).where(
@@ -237,6 +242,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
     return n ? n.charAt(0).toUpperCase() + n.slice(1) : null;
   };
   const nameOf = (id: string | null) => (id ? nameById.get(id) ?? null : null);
+  const priceChangers = nameById;
   /**
    * "2 × Kitchen hub"; the recurring charge of an item also bought once: "1 × Kitchen hub · monthly service"
    * (round-4 review B7). Every line shows its quantity, 1 included, so the two lines of one item match (R5-4).
@@ -602,14 +608,27 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
               {cur.version.approvalReasons.length ? `: ${cur.version.approvalReasons.map(approvalReasonText).join("; ")}` : ""}
             </span>
           ) : null}
+          {/* The approved exceptions the quote used, on record (seller only; the buyer never sees reasons). */}
+          {detail.quote.status !== "awaiting_approval"
+            ? cur.version.approvalReasons.flatMap((r, i) => (r.kind === "exception" ? [<span key={`exc-${i}`} className="sas-small" style={{ color: "var(--ink)", overflowWrap: "anywhere" }} data-exception-applied="">{t("orders.detail.exception_applied", { text: r.text })}</span>] : []))
+            : null}
 
           <section className="sas-stack-2" aria-labelledby="ver-h">
             <h3 id="ver-h" className="sas-heading">{t("orders.detail.versions")}</h3>
-            {detail.versions.map(({ version }, i) => (
-              <span key={version.id} className={i === 0 ? "sas-small" : "sas-small"} style={{ color: i === 0 ? "var(--ink)" : undefined }} title={atFull(version.createdAt)}>
-                <span className="sas-id">v{version.version}</span> · {at(version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}{i > 0 ? ` · ${t("orders.detail.replaced")}` : ""}
-              </span>
-            ))}
+            {detail.versions.map(({ version, lines }, i) => {
+              // A person's version whose prices differ from the version before it: "Price changed by …".
+              const before = detail.versions[i + 1];
+              const changedBy = version.createdByActor === "human" && before && !samePersonPrices(customPricesOf(lines), customPricesOf(before.lines))
+                ? priceChangers.get(version.createdByUserId ?? "") ?? null
+                : null;
+              return (
+                <span key={version.id} className="sas-small" style={{ color: i === 0 ? "var(--ink)" : undefined }} title={atFull(version.createdAt)}>
+                  <span className="sas-id">v{version.version}</span> · {at(version.createdAt)}{version.changeNote ? ` · ${version.changeNote}` : ""}
+                  {changedBy ? <span data-price-changed=""> · {t("orders.detail.price_changed_by", { name: changedBy })}</span> : null}
+                  {i > 0 ? ` · ${t("orders.detail.replaced")}` : ""}
+                </span>
+              );
+            })}
           </section>
           <section className="sas-stack-2" aria-labelledby="form-h">
             <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>

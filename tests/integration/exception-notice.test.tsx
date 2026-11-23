@@ -140,21 +140,30 @@ describe("Exception notice on a held quote", () => {
     }
   });
 
-  it("after a person's edit of the lines no confirm; the editor's own save ends the hold", async () => {
-    const b = await heldQuote({ exception: "exc-install", discount: 0 });
-    // A person's version that still waits for approval and keeps the exception (stored as such a version is): notice, no confirm.
+  it("a person's version: no confirm; once a person changed a price the warning is gone; the editor's save ends the hold", async () => {
     const human = { kind: "human" as const, userId: me.id, actingAs: false };
-    const [v1] = await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, b.quoteId));
-    const v1Lines = await db.select().from(quoteLines).where(eq(quoteLines.quoteVersionId, v1.id));
-    const v2Id = randomUUID();
-    await db.insert(quoteVersions).values({ ...v1, id: v2Id, version: 2, createdByActor: "human", createdByUserId: me.id, changeNote: "Installation free", idempotencyKey: null, createdAt: new Date() });
-    await db.insert(quoteLines).values(v1Lines.map((l) => ({ ...l, id: randomUUID(), quoteVersionId: v2Id, ...(l.sku === "GW-10" ? { priceSource: "custom", unitPriceMinor: 0, lineTotalMinor: 0 } : {}) })));
-    await db.update(quotes).set({ currentVersion: 2 }).where(eq(quotes.id, b.quoteId));
-    const detail = (await getQuote(db, acc.id, b.quoteId))!;
-    expect(exceptionNotice(detail.quote.status, detail.versions[0].version)).toEqual({ texts: [EXC_TEXT], confirmUnchanged: false });
+    /** A person's held version of the quote (stored as such a version is), with the line prices `custom` gives. */
+    const personVersion = async (quoteId: string, custom: boolean) => {
+      const [v1] = await db.select().from(quoteVersions).where(eq(quoteVersions.quoteId, quoteId));
+      const v1Lines = await db.select().from(quoteLines).where(eq(quoteLines.quoteVersionId, v1.id));
+      const v2Id = randomUUID();
+      await db.insert(quoteVersions).values({ ...v1, id: v2Id, version: 2, createdByActor: "human", createdByUserId: me.id, changeNote: "Installation free", idempotencyKey: null, createdAt: new Date() });
+      await db.insert(quoteLines).values(v1Lines.map((l) => ({ ...l, id: randomUUID(), quoteVersionId: v2Id, ...(custom && l.sku === "GW-10" ? { priceSource: "custom", unitPriceMinor: 0, lineTotalMinor: 0 } : {}) })));
+      await db.update(quotes).set({ currentVersion: 2 }).where(eq(quotes.id, quoteId));
+      return (await getQuote(db, acc.id, quoteId))!;
+    };
+    // Same prices: the notice stays, without the confirm.
+    const b = await heldQuote({ exception: "exc-install", discount: 0 });
+    const same = await personVersion(b.quoteId, false);
+    expect(exceptionNotice(same.quote.status, same.versions[0].version, same.versions[0].lines)).toEqual({ texts: [EXC_TEXT], confirmUnchanged: false });
     const html = await b.orders();
     expect(html).toContain("data-exception-notice");
     expect(html).not.toContain("data-confirm-unchanged");
+    // A person's price on a line: the warning is gone.
+    const d = await heldQuote({ exception: "exc-install", discount: 0 });
+    const priced = await personVersion(d.quoteId, true);
+    expect(exceptionNotice(priced.quote.status, priced.versions[0].version, priced.versions[0].lines)).toBeNull();
+    expect(await d.orders()).not.toContain("data-exception-notice");
 
     // The editor's save (no exception in its input, everything priced): a person's draft, nothing held, no notice.
     const c = await heldQuote({ exception: "exc-install", discount: 0 });

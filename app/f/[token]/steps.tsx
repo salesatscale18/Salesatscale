@@ -280,7 +280,7 @@ export function Summary({ s, tr, lang, eta, validUntil }: { s: FormSnapshot; tr:
     <aside className="b-summary" aria-labelledby="sm-h">
       <h2 id="sm-h" className="b-h2" style={{ fontSize: 15 }}>{tr("buyer.steps.order")}</h2>
       {oneTime.map((l, i) => (
-        <div key={`o-${i}`} className="b-row"><span><LineName s={s} l={l} tr={tr} /></span><span className="b-num">{l.priceSource === "not_charged" ? tr("buyer.included") : money(l.lineTotalMinor)}</span></div>
+        <div key={`o-${i}`} className="b-row"><span><LineName s={s} l={l} tr={tr} /></span><span className="b-num">{l.priceSource === "not_charged" ? tr("buyer.included") : l.lineTotalMinor === 0 ? tr("buyer.free") : money(l.lineTotalMinor)}</span></div>
       ))}
       {oneTime.length ? (
         <>
@@ -291,7 +291,7 @@ export function Summary({ s, tr, lang, eta, validUntil }: { s: FormSnapshot; tr:
       {recurring.length ? (
         <div className="b-mo">
           {recurring.map((l, i) => (
-            <div key={`r-${i}`} className="b-row"><span><LineName s={s} l={l} tr={tr} /></span><span className="b-num">{money(l.lineTotalMinor, l.period ?? period)}</span></div>
+            <div key={`r-${i}`} className="b-row"><span><LineName s={s} l={l} tr={tr} /></span><span className="b-num">{l.lineTotalMinor === 0 && l.priceSource !== "not_charged" ? tr("buyer.free") : money(l.lineTotalMinor, l.period ?? period)}</span></div>
           ))}
           {s.recurring.taxMinor > 0 && !s.pricesIncludeTax ? <div className="b-row b-mut"><span>{vatLabel(s, tr)}</span><span className="b-num">{money(s.recurring.taxMinor, period)}</span></div> : null}
           <div className="b-row" style={{ fontWeight: 700 }} data-summary-monthly="">

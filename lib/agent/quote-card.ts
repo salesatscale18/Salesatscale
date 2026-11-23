@@ -230,12 +230,14 @@ export function quoteTotalsRows(
 
 const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 const charged = (l: CardLine) => l.priceSource !== "not_charged" && (l.lineTotalMinor ?? 0) !== 0;
+/** A charged line at 0 (a person priced it at 0, or a 0 price): "Free" on the buyer's card. */
+export const freeLine = (l: Pick<CardLine, "priceSource" | "lineTotalMinor">) => l.priceSource !== "not_charged" && l.lineTotalMinor === 0;
 
 /** The lines of one charge as the card shows them: zero lines only when the item has no other charge. */
 function cardLines(all: CardLine[], charge: CardLine["charge"]): CardLine[] {
   return all
     .filter((l) => l.charge === charge)
-    .filter((l) => charged(l) || !all.some((o) => o.sku === l.sku && o.charge !== charge && charged(o)))
+    .filter((l) => charged(l) || freeLine(l) || !all.some((o) => o.sku === l.sku && o.charge !== charge && charged(o)))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 }
 
@@ -317,8 +319,8 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
   const lines = data.lines.get(v.id) ?? [];
   const oneTimeLines = cardLines(lines, "one_time");
   const recurringLines = cardLines(lines, "recurring");
-  const hasOneTime = v.oneTimeTotalMinor > 0 || oneTimeLines.some(charged);
-  const hasRecurring = v.recurringTotalMinor > 0;
+  const hasOneTime = v.oneTimeTotalMinor > 0 || oneTimeLines.some((l) => charged(l) || freeLine(l));
+  const hasRecurring = v.recurringTotalMinor > 0 || recurringLines.some(freeLine);
   const year = v.recurringPeriod === "year";
   // The buyer sees a version only from v2 on (live review, Package 3 item 7).
   const ref = v.version > 1 ? `Q-${r.quote.number} v${v.version}` : `Q-${r.quote.number}`;
@@ -364,7 +366,7 @@ function cardView(r: Resolved, data: CardData, ctx: CardContext, around: { previ
     // Every line shows its quantity, 1 included ("1 × <item name> · monthly service"), as on the seller side.
     const isolate = counted;
     const label = serviceOf ? tr(year ? "buyer.qcard.service_year" : "buyer.qcard.service_month", { name: isolate }) : isolate;
-    const amount = l.lineTotalMinor === null ? "—" : charged(l) ? money(l.lineTotalMinor) : tr("buyer.qcard.included");
+    const amount = l.lineTotalMinor === null ? "—" : charged(l) ? money(l.lineTotalMinor) : freeLine(l) ? tr("buyer.qcard.free") : tr("buyer.qcard.included");
     let was: string | null = null;
     if (prevLines) {
       const before = prevLines.find((p) => p.sku === l.sku && p.charge === l.charge);
@@ -430,6 +432,6 @@ function approvalOf(quote: CardQuote, v: CardVersion, data: CardData): QuoteAppr
     total: unpriced ? null : { label: t(v.taxRateBp > 0 ? "conv.qcard.total_incl_vat" : "conv.qcard.total"), amount: money(v.oneTimeTotalMinor) },
     canApprove: !unpriced,
     inLimitBp: discountOnly && typeof limit === "number" && limit > 0 ? limit : null,
-    exception: exceptionNotice(quote.status, v),
+    exception: exceptionNotice(quote.status, v, data.lines.get(v.id)),
   };
 }

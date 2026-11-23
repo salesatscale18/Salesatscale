@@ -16,10 +16,11 @@ import { marketTimezone } from "@/lib/markets/settings";
 import { marketWhere } from "@/lib/markets/selection";
 import { marketNameSort } from "@/lib/markets/sort";
 import {
-  leadEvents, leads, markets, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls,
+  leadEvents, leads, markets, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls, users,
   type ApprovalReason, type Quote, type QuoteStatus, type QuoteVersion,
 } from "@/db/schema";
 import { writeAudit } from "@/lib/accounts/audit";
+import { displayName } from "@/lib/auth/display";
 import { approvalReasonText, type PricingError, type QuoteRequestLine } from "@/lib/catalog/pricing";
 import { checkFit, type FitResult } from "@/lib/catalog/fit";
 import { priceWithList, type EngineResult } from "@/lib/pricing/engine";
@@ -56,6 +57,11 @@ export type QuoteInput = {
    * with the reason "Exception: <text>".
    */
   exception?: { id: string; text: string };
+  /**
+   * Approved exceptions a quote already used, kept on record on a person's new
+   * version (the quote editor). Stored as "exception" reasons, as `exception` is.
+   */
+  exceptions?: { id: string; text: string }[];
   /** Optional: rows the caller already loaded (see price()). */
   preloaded?: PricingPreload;
 };
@@ -111,6 +117,13 @@ async function price(db: Db, accountId: string, marketId: string | null, input: 
   const entryBySku = new Map(ctx.priceList.entries.map((e) => [e.sku, e]));
   const rules = catalogAutoAdd(ctx.catalog);
   const removed = effectiveRemovals(rules, input.removedByBuyer, input.lines.map((l) => l.sku));
+  // A person's price for a line a rule adds (not a request line) applies to that auto-added line.
+  const requested = new Set(input.lines.map((l) => l.sku));
+  const autoCustoms: Record<string, ReturnType<typeof customsFor>> = {};
+  for (const key of Object.keys(customs ?? {})) {
+    const sku = key.split(":")[0];
+    if (!requested.has(sku)) autoCustoms[sku] = customsFor(customs, sku, entryBySku.get(sku));
+  }
   const priced = priceWithList({
     items: engineItems(ctx.catalog),
     entries: ctx.priceList.entries,
@@ -121,9 +134,16 @@ async function price(db: Db, accountId: string, marketId: string | null, input: 
     maxDiscountBp: account.maxDiscountBp,
     autoAdd: rules,
     removedByBuyer: removed,
+    autoCustoms,
   });
   if (!priced.ok) return { ok: false, reason: "pricing", errors: priced.errors };
-  if (input.exception) priced.approvalReasons.push({ kind: "exception", id: input.exception.id, text: input.exception.text.slice(0, 300) });
+  const exceptions = [...(input.exception ? [input.exception] : []), ...(input.exceptions ?? [])];
+  const seenExc = new Set<string>();
+  for (const x of exceptions) {
+    if (seenExc.has(x.id)) continue;
+    seenExc.add(x.id);
+    priced.approvalReasons.push({ kind: "exception", id: x.id, text: x.text.slice(0, 300) });
+  }
   // Fit rules see what will be quoted, including lines added automatically.
   const fit = checkFit(ctx.catalog.rules, requestLinesOf(priced.lines), input.sites);
   const wouldAdd = new Set(removed.length ? applyAutoAdd(rules, input.lines, input.sites).autoAdded.map((a) => a.sku) : []);
@@ -142,7 +162,11 @@ export type QuotePreview =
  * (a new version) it prices in that quote's market, as createQuoteVersion does,
  * and carries over the current version's removals unless the input gives them.
  */
-export async function previewQuote(db: Db, accountId: string, leadId: string, input: QuoteInput, fromQuoteId?: string): Promise<QuotePreview> {
+export async function previewQuote(
+  db: Db, accountId: string, leadId: string, input: QuoteInput, fromQuoteId?: string,
+  /** A person's prices per charge ("SKU:one_time" / "SKU:recurring"), as createQuoteVersion takes them. */
+  customs?: Record<string, number>,
+): Promise<QuotePreview> {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
   if (!lead) return { ok: false, reason: "lead_not_found" };
   let marketId = lead.marketId;
@@ -153,7 +177,7 @@ export async function previewQuote(db: Db, accountId: string, leadId: string, in
     marketId = q.marketId ?? lead.marketId;
     removedByBuyer ??= (await currentVersionOf(db, q))?.removedAutoAdd ?? [];
   }
-  const p = await price(db, accountId, marketId, { ...input, removedByBuyer });
+  const p = await price(db, accountId, marketId, { ...input, removedByBuyer }, customs);
   if (!p.ok) return p;
   return { ok: true, priced: p.priced, fit: p.fit, context: p.ctx, removed: p.removed, removedNow: p.removedNow };
 }
@@ -317,7 +341,8 @@ export async function createQuoteVersion(
   const [lead] = await db.select().from(leads).where(eq(leads.id, q.leadId));
   if (lead.status === "opted_out") return { ok: false, reason: "lead_opted_out" };
   // The buyer's removals carry over from the current version unless the input gives them.
-  const removedByBuyer = input.removedByBuyer ?? (await currentVersionOf(db, q))?.removedAutoAdd ?? [];
+  const current = await currentVersionOf(db, q);
+  const removedByBuyer = input.removedByBuyer ?? current?.removedAutoAdd ?? [];
   // A quote stays in its market; quotes made before markets follow the lead's.
   const p = await price(db, accountId, q.marketId ?? lead.marketId, { ...input, removedByBuyer }, customs);
   if (!p.ok) return refusalOf(p);
@@ -327,6 +352,12 @@ export async function createQuoteVersion(
   const approvedBy = approvingUserId && p.priced.complete ? approvingUserId : decided.approvedBy;
   const next = q.currentVersion + 1;
   const { v, lines } = versionRows(accountId, q.id, next, p, actor, input, now, approvedBy);
+  // A person changed a price (set, changed or reset one) in the editor: "Price changed by …" on the lead's timeline.
+  const priceChanged = actor.kind === "human" && !approvingUserId && current
+    ? !samePrices(customPricesOf(await db.select().from(quoteLines).where(eq(quoteLines.quoteVersionId, current.id))), customPricesOf(lines))
+    : false;
+  // Named as the seller's screens name people (display name, never the full email).
+  const [changer] = priceChanged && actor.kind === "human" ? await db.select().from(users).where(eq(users.id, actor.userId)) : [];
   try {
     await atomic(db, (tx) => [
       tx.insert(quoteVersions).values(v),
@@ -337,6 +368,9 @@ export async function createQuoteVersion(
         accountId, leadId: q.leadId, type: "quote.versioned", actor: actor.kind, actorUserId: actor.kind === "human" ? actor.userId : null,
         data: { quoteId: q.id, number: q.number, version: next, note: v.changeNote, status },
       }),
+      ...(priceChanged && actor.kind === "human"
+        ? [tx.insert(leadEvents).values({ accountId, leadId: q.leadId, type: "quote.price_changed", actor: "human", actorUserId: actor.userId, data: { quoteId: q.id, number: q.number, version: next, by: changer ? displayName(changer) : null } })]
+        : []),
       ...(approvedBy && v.approvalReasons.length
         ? [tx.insert(leadEvents).values({ accountId, leadId: q.leadId, type: "quote.approved", actor: "human", actorUserId: approvedBy, data: { quoteId: q.id, number: q.number, version: next, reasons: v.approvalReasons.map(approvalReasonText) } })]
         : []),
@@ -358,6 +392,12 @@ export async function createQuoteVersion(
     await writeAudit(db, { userId: actor.userId, actingAs: actor.actingAs }, { accountId, action: "quote.versioned", targetType: "quote", targetId: q.id, details: { version: next } });
   }
   return { ok: true, quote, version, reused: false };
+}
+
+/** Two sets of a person's prices per charge are the same. */
+function samePrices(a: Record<string, number>, b: Record<string, number>): boolean {
+  const ka = Object.keys(a);
+  return ka.length === Object.keys(b).length && ka.every((k) => b[k] === a[k]);
 }
 
 /** The key of a person's price for one charge of a SKU (approve form: "price:SKU:charge"). */

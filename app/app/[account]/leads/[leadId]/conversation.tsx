@@ -136,7 +136,7 @@ export function TeamCallEntry({ call, meId, editHref, viewerZone = null }: { cal
       <span className="sas-teamcall-entry__icon" aria-hidden="true"><Icon name="phone-call" /></span>
       <div className="sas-teamcall-entry__body">
         <div className="sas-teamcall-entry__head">
-          <strong>{teamCallTitle(call, viewerZone)}</strong>
+          <strong dir="auto">{teamCallTitle(call, viewerZone)}</strong>
           {editHref ? <a href={editHref} className="sas-teamcall-entry__edit" data-team-call-edit="">{t("team_call.edit")}</a> : null}
         </div>
         <span className="sas-small">{call.phone ? t("team_call.logged_by", { who, by, phone: call.phone }) : t("team_call.logged_by_nophone", { who, by })}</span>
@@ -273,15 +273,15 @@ function FormNoteEntry({ note, time, timeTitle }: { note: FormNote; time: string
   return (
     <div className="sas-thread-note" data-thread-note="order_form" role="note">
       <Icon name="send" />
-      <strong>{t("conv.form_note.sent", { who: note.who })}</strong>
+      <strong dir="auto">{t("conv.form_note.sent", { who: note.who })}</strong>
       <span className="sas-msg__time" title={timeTitle}>{time}</span>
       {note.url ? (
         <>
           <a href={note.url} target="_blank" rel="noreferrer">{t("conv.form_note.open")}</a>
           <CopyButton value={note.url} label={t("conv.form_note.copy")} variant="ghost" />
         </>
-      ) : note.closed ? <span>{t("conv.form_note.closed")}</span> : null}
-      <span style={{ flexBasis: "100%" }}>{t("conv.form_note.only_you")}</span>
+      ) : note.closed ? <span dir="auto">{t("conv.form_note.closed")}</span> : null}
+      <span style={{ flexBasis: "100%" }} dir="auto">{t("conv.form_note.only_you")}</span>
     </div>
   );
 }

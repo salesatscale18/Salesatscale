@@ -4,7 +4,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import type { QuoteRequestLine } from "@/lib/catalog/pricing";
-import { createQuote, createQuoteVersion } from "@/lib/quotes/service";
+import { createQuote, createQuoteVersion, getQuote } from "@/lib/quotes/service";
+import { MAX_CUSTOM_PRICE_MAJOR, parseCustomPrices } from "@/lib/quotes/custom-prices";
+import { currencyDigits } from "@/lib/quotes/price-field";
+import { formatMoney } from "@/lib/domain/money";
 import { createOrderForm } from "@/lib/orders/service";
 import { offerOrderFormInChat } from "@/lib/sms/outbound";
 import { t } from "@/lib/i18n";
@@ -31,11 +34,33 @@ function readForm(form: FormData) {
   };
 }
 
+/**
+ * A new version only: the quote (of this account and lead) it is made from,
+ * and a person's unit prices from the form ("price:<SKU>:<charge>"), checked
+ * here: 0 or more, at most MAX_CUSTOM_PRICE_MAJOR, in the quote's currency.
+ */
+async function versionInput(accountId: string, leadId: string, fromQuote: string, form: FormData) {
+  const q = await getQuote(appDb, accountId, fromQuote);
+  if (!q || q.quote.leadId !== leadId) return { ok: true as const, customs: undefined, exceptions: [] };
+  const current = q.versions[0]?.version;
+  const currency = current?.currency ?? "USD";
+  const parsed = parseCustomPrices(form.entries(), currency);
+  if (!parsed.ok) {
+    return { ok: false as const, message: t("quote.editor.price_invalid", { sku: parsed.sku, max: formatMoney(MAX_CUSTOM_PRICE_MAJOR * 10 ** currencyDigits(currency), currency) }) };
+  }
+  // The approved exceptions the quote used stay on record on the person's version ("Exception applied").
+  const exceptions = (current?.approvalReasons ?? []).flatMap((r) => (r.kind === "exception" ? [{ id: r.id, text: r.text }] : []));
+  return { ok: true as const, customs: parsed.customs, exceptions };
+}
+
 /** Live preview: same pricing as saving (previewQuote), nothing saved. The account comes from requireAccount, never the form. */
 export async function previewQuoteAction(form: FormData): Promise<QuotePreview> {
   const { account } = await requireAccount(String(form.get("slug") ?? ""));
+  const leadId = String(form.get("leadId") ?? "");
   const fromQuote = String(form.get("fromQuote") ?? "") || undefined;
-  return buildPreview(appDb, account, String(form.get("leadId") ?? ""), readForm(form), fromQuote);
+  const v = fromQuote ? await versionInput(account.id, leadId, fromQuote, form) : null;
+  if (v && !v.ok) return { status: "errors", messages: [v.message] };
+  return buildPreview(appDb, account, leadId, readForm(form), fromQuote, v?.customs);
 }
 
 export type SaveQuoteState = { status: "idle" } | { status: "error"; messages: string[]; link?: RefusalLink };
@@ -47,9 +72,14 @@ export async function saveQuoteAction(_prev: SaveQuoteState, form: FormData): Pr
   const input = { ...readForm(form), idempotencyKey: String(form.get("idem") ?? "") || undefined, changeNote: String(form.get("note") ?? "").trim() || undefined };
   if (fromQuote && !input.changeNote) return { status: "error", messages: [t("quote.editor.note_required")] };
   const actor = { kind: "human" as const, userId: a.user.id, actingAs: a.actingAs };
-  const r = fromQuote
-    ? await createQuoteVersion(appDb, a.account.id, actor, fromQuote, input)
-    : await createQuote(appDb, a.account.id, actor, leadId, input);
+  let r;
+  if (fromQuote) {
+    const v = await versionInput(a.account.id, leadId, fromQuote, form);
+    if (!v.ok) return { status: "error", messages: [v.message] };
+    r = await createQuoteVersion(appDb, a.account.id, actor, fromQuote, { ...input, exceptions: v.exceptions }, new Date(), v.customs);
+  } else {
+    r = await createQuote(appDb, a.account.id, actor, leadId, input);
+  }
   // Refusals include no_price_list (with a link to price lists) and not_sold.
   if (!r.ok) return { status: "error", ...refusalMessages(a.account.slug, r) };
   // "Create and send": a quote that is ready (draft: approved or needing no approval) goes straight

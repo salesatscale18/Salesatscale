@@ -23,8 +23,11 @@ type Reason = { kind: string; id?: string; text?: string };
 export function exceptionNotice(
   status: string,
   version: { approvalReasons: readonly Reason[]; createdByActor?: string | null },
+  /** The version's lines: once a person set a price on one (priceSource "custom"), the warning is gone. */
+  lines?: readonly { priceSource: string }[],
 ): ExceptionNotice | null {
   if (status !== "awaiting_approval") return null;
+  if (version.createdByActor === "human" && lines?.some((l) => l.priceSource === "custom")) return null;
   const seen = new Set<string>();
   const texts: string[] = [];
   for (const r of version.approvalReasons) {

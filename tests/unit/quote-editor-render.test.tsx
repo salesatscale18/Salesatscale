@@ -65,7 +65,7 @@ describe("quote editor markup", () => {
     const head = /<thead>(.*?)<\/thead>/.exec(html)![1];
     expect([...head.matchAll(/<th /g)]).toHaveLength(5);
     expect(head).not.toContain(">Charge<");
-    expect(html).toContain('class="sas-table qe-table" style="min-width:500px"');
+    expect(html).toContain('class="sas-table sas-table--stack qe-table" style="min-width:500px"');
     expect(html).toContain('<td style="white-space:normal;min-width:160px">');
   });
 

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { dir, t, type Locale } from "@/lib/i18n";
+import { t, type Locale } from "@/lib/i18n";
 import { agentStepsAction, type StepsScope } from "@/lib/conversations/agent-steps";
 import { StatusPill, type Actor } from "./primitives";
 import { Icon, type IconName } from "./icon";
@@ -41,7 +41,8 @@ export function ChatMessage({
         {spoken ? <span className="sas-msg__spoken" title={spoken.title ?? spoken.label} data-spoken=""><Icon name={spoken.typed ? "keyboard" : "mic"} label={spoken.label} /><span className="sas-num">{spoken.at}</span></span> : null}
         {time ? <span className="sas-msg__time" title={timeTitle}>{time}</span> : null}
       </div>
-      <div className="sas-msg__bubble" lang={locale} dir={dir(locale)}>
+      {/* Each bubble finds its own direction from its text (Hebrew right to left, English left to right); the row keeps the speaker's side. */}
+      <div className="sas-msg__bubble" lang={locale} dir="auto">
         {children}
       </div>
       <TraceChips trace={trace} />
@@ -103,7 +104,7 @@ export function ThreadMarkerLine({ kind, text, time, timeTitle, dateTime }: { ki
     <div className="sas-thread-marker" role="note" data-thread-marker={kind}>
       <span className="sas-thread-marker__body">
         <Icon name={MARKER_ICON[kind]} />
-        <span>{text}</span>
+        <span dir="auto">{text}</span>
         {/* A marker whose text holds its own time ("Team call booked · Mon 23 Nov 15:30 · 15 min") passes no time. */}
         {time ? <><span aria-hidden="true">·</span><time className="sas-num" dateTime={dateTime} title={timeTitle}>{time}</time></> : null}
       </span>

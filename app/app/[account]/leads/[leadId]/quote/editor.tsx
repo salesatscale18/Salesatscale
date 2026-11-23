@@ -7,6 +7,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { formatMoney } from "@/lib/domain/money";
 import { t } from "@/lib/i18n";
 import { unitLabel } from "@/lib/pricing/units";
+import { minorToField, priceField } from "@/lib/quotes/price-field";
 import { previewQuoteAction, saveQuoteAction, type SaveQuoteState } from "./actions";
 import { autoAddChange, discountLabel, editorActions, filterItems, noteWithChange, perUnit } from "./editor-logic";
 import type { PreviewLine, QuotePreview, RefusalLink } from "./preview";
@@ -113,6 +114,11 @@ export function QuoteEditor(props: {
   delivery?: { text: string; lead: string } | null;
   /** Where the lead time is set, shown when there is none. */
   deliverySettingsHref?: string;
+  /**
+   * A new version: each charge's unit price is editable (a person's price, "SKU:charge" -> field text).
+   * Starts with the prices a person set on the current version; the list price is the default.
+   */
+  initialPrices?: Record<string, string>;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const [preview, setPreview] = useState<QuotePreview>(props.initialPreview ?? { status: "empty" });
@@ -124,6 +130,9 @@ export function QuoteEditor(props: {
   const [discount, setDiscount] = useState(props.initialDiscount);
   const [removed, setRemoved] = useState<string[]>(() => props.initialRemoved ?? []);
   const [note, setNote] = useState("");
+  /** A person's unit prices ("SKU:charge" -> field text); a charge not here uses the price list. */
+  const [prices, setPrices] = useState<Record<string, string>>(() => props.initialPrices ?? {});
+  const editPrices = !!props.fromQuote;
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ok = preview.status === "ok" ? preview : null;
   const currency = ok?.currency ?? props.currency;
@@ -137,7 +146,7 @@ export function QuoteEditor(props: {
       const fd = new FormData(formRef.current);
       startTransition(async () => setPreview(await previewQuoteAction(fd)));
     }, 250);
-  }, [qty, sites, discount, removed]);
+  }, [qty, sites, discount, removed, prices]);
 
   const add = (sku: string, n = 1) => {
     if (!bySku.get(sku)?.sold) return;
@@ -183,17 +192,47 @@ export function QuoteEditor(props: {
   const disabled = saving || !ok || red > 0;
   const hasChecks = ok ? ok.fitProblems.length + ok.approval.length + ok.notes.length > 0 : false;
 
-  type Cell = { period: Period | null; unit: string; total: string; note?: string; per?: string };
+  /** `price`: the charge's editable unit price (a new version): its form key, the list price and the line's name. */
+  type Cell = { period: Period | null; unit: string; total: string; note?: string; per?: string; price?: { key: string; sku: string; charge: "one_time" | "recurring"; list: number | null; name: string } };
+  const setPrice = (key: string, v: string) => setPrices((p) => ({ ...p, [key]: v }));
+  const resetPrice = (key: string) => setPrices((p) => { const { [key]: _, ...rest } = p; return rest; }); // eslint-disable-line @typescript-eslint/no-unused-vars
+  /** The unit price field of one charge: the list price by default; a person's price shows the list price struck through and Reset. */
+  const priceInput = (c: NonNullable<Cell["price"]>, period: Period | null) => {
+    const own = prices[c.key];
+    const changed = own !== undefined;
+    const value = changed ? own : c.list === null ? "" : minorToField(c.list, currency);
+    const label = t("quote.editor.price_of", { name: c.name, charge: chargeLabel(period) });
+    return (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }} data-price-edit={c.key} data-changed={changed ? "true" : undefined}>
+        {changed && c.list !== null ? (
+          <s className="sas-small sas-num" data-list-price="" aria-label={t("quote.editor.list_price", { price: money(c.list, period) })}>{money(c.list, period)}</s>
+        ) : null}
+        <input
+          className="sas-input sas-num" style={{ width: 96, height: 30 }} inputMode="decimal" aria-label={label}
+          name={changed ? priceField(c.sku, c.charge) : undefined} value={value} placeholder={c.list === null ? t("quote.to_price") : undefined}
+          onChange={(e) => setPrice(c.key, e.target.value)}
+        />
+        {changed ? (
+          <button type="button" className="sas-small" style={{ background: "none", border: 0, padding: 0, cursor: "pointer", color: "var(--primary)", textDecoration: "underline" }} aria-label={t("quote.editor.reset_price_of", { name: c.name })} onClick={() => resetPrice(c.key)} data-reset-price="">
+            {t("quote.editor.reset_price")}
+          </button>
+        ) : null}
+      </span>
+    );
+  };
   /** Unit price cell, one stacked row per charge ("₪90.00/month", then "× 2 sites" or the price source). */
   const chargeCells = (lines: Cell[]) => (
-    <td className="sas-num" style={{ textAlign: "end" }}>
-      {lines.map((l, k) => (
-        <div key={k}>
-          {l.unit}
-          {l.per ? <div className="sas-small">{l.per}</div> : null}
-          {l.note ? <div className="sas-small">{l.note}</div> : null}
-        </div>
-      ))}
+    <td className="sas-num" style={{ textAlign: "end" }} data-label={t("quote.editor.unit_price")}>
+      <div className="sas-stack-2" style={{ gap: 4, alignItems: "flex-end" }}>
+        {lines.map((l, k) => (
+          <div key={k}>
+            {l.price ? priceInput(l.price, l.period) : l.unit}
+            {l.price && (l.period || lines.length > 1) ? <div className="sas-small">{chargeLabel(l.period)}</div> : null}
+            {l.per ? <div className="sas-small">{l.per}</div> : null}
+            {l.note && !l.price ? <div className="sas-small">{l.note}</div> : null}
+          </div>
+        ))}
+      </div>
     </td>
   );
   /** "One-time", "One-time + Yearly": the charges of a line, shown under its name. */
@@ -204,12 +243,16 @@ export function QuoteEditor(props: {
     const unit = l.unitPriceMinor === null ? t("quote.to_price") : money(l.unitPriceMinor, l.period);
     // A recurring line whose quantity is another count (one per site): "₪90.00/mo × 2 sites".
     const per = l.period && l.perCount ? t("quote.editor.times_count", { count: l.perCount.qty, unit: unitLabel(l.perCount.unit, null, "en", l.perCount.qty) }) : undefined;
+    const key = `${l.sku}:${l.charge}`;
+    // The list (or tier) price: the line's own, or, for a person's price, the one it replaces.
+    const list = l.priceSource === "custom" ? (l.listUnitPriceMinor ?? null) : l.unitPriceMinor;
     return {
       period: l.period,
       unit,
       per,
       total: l.lineTotalMinor === null ? t("quote.to_price") : money(l.lineTotalMinor, l.period),
       note: l.priceSource === "list" ? undefined : t(`quote.price_source.${l.priceSource}`),
+      ...(editPrices && l.priceSource !== "not_charged" ? { price: { key, sku: l.sku, charge: l.charge, list, name: l.name } } : {}),
     };
   });
   const fromItem = (i: EditorItem | undefined): Cell[] => (i?.charges.length ? i.charges : [{ charge: "one_time" as const, period: null, priceMinor: null }]).map((c) => ({
@@ -218,7 +261,7 @@ export function QuoteEditor(props: {
     total: "—",
   }));
   const totalCell = (lines: { total: string }[]) => (
-    <td className="sas-num" style={{ textAlign: "end" }}>{lines.map((l, k) => <div key={k}>{l.total}</div>)}</td>
+    <td className="sas-num" style={{ textAlign: "end" }} data-label={t("quote.editor.total")}><div>{lines.map((l, k) => <div key={k}>{l.total}</div>)}</div></td>
   );
   const tax = ok
     ? money(ok.oneTime.tax) + (ok.recurringPeriod ? ` + ${money(ok.recurring.tax, ok.recurringPeriod)}` : "")
@@ -253,7 +296,7 @@ export function QuoteEditor(props: {
             <div style={{ overflowX: "auto", borderRadius: "0 0 var(--radius-lg) var(--radius-lg)" }}>
               {/* Tighter cells so the table fits its panel at 1280px; narrower screens scroll inside the panel. */}
               <style>{".qe-table th, .qe-table td { padding-inline: 10px } .qe-table th:first-child, .qe-table td:first-child { padding-inline-start: 16px }"}</style>
-              <table className="sas-table qe-table" style={{ minWidth: 500 }}>
+              <table className="sas-table sas-table--stack qe-table" style={{ minWidth: 500 }}>
                 <thead><tr>
                   <th scope="col">{t("quote.editor.product")}</th>
                   <th scope="col" style={{ textAlign: "end" }}>{t("quote.editor.unit_price")}</th>
@@ -277,7 +320,7 @@ export function QuoteEditor(props: {
                           </div>
                         </td>
                         {chargeCells(cells)}
-                        <td>
+                        <td data-label={t("quote.editor.qty")}>
                           <input
                             className="sas-input sas-num" style={{ width: 72 }} id={`q-${sku}`} name={`qty:${sku}`} type="number" min={1} step={1} inputMode="numeric"
                             aria-label={t("quote.editor.qty_of", { name })}
@@ -285,7 +328,7 @@ export function QuoteEditor(props: {
                           />
                         </td>
                         {totalCell(cells)}
-                        <td><button type="button" className={buttonClass("ghost", "sm")} onClick={() => remove(sku)} aria-label={`${t("quote.editor.remove")} ${name}`}><Icon name="x" /></button></td>
+                        <td className="sas-td-actions"><button type="button" className={buttonClass("ghost", "sm")} onClick={() => remove(sku)} aria-label={`${t("quote.editor.remove")} ${name}`}><Icon name="x" /></button></td>
                       </tr>
                     );
                   })}
@@ -319,7 +362,7 @@ export function QuoteEditor(props: {
                           )}
                         </td>
                         {chargeCells(cells)}
-                        <td className="sas-num">{ls[0].qty}</td>
+                        <td className="sas-num" data-label={t("quote.editor.qty")}>{ls[0].qty}</td>
                         {totalCell(cells)}
                         <td />
                       </tr>
@@ -340,9 +383,9 @@ export function QuoteEditor(props: {
                           </button>
                         </div>
                       </td>
-                      <td className="sas-num" style={{ textAlign: "end" }}>—</td>
-                      <td className="sas-num" style={{ textDecoration: "line-through" }}>{n ?? 0}</td>
-                      <td className="sas-num" style={{ textAlign: "end" }}>—</td>
+                      <td className="sas-num" style={{ textAlign: "end" }} data-label={t("quote.editor.unit_price")}>—</td>
+                      <td className="sas-num" style={{ textDecoration: "line-through" }} data-label={t("quote.editor.qty")}>{n ?? 0}</td>
+                      <td className="sas-num" style={{ textAlign: "end" }} data-label={t("quote.editor.total")}>—</td>
                       <td />
                     </tr>
                   ))}
