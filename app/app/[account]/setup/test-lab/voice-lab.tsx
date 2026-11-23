@@ -17,6 +17,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { VoiceCall, useNow, useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
 import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
+import type { CallVoiceInfo } from "@/lib/voice/settings";
 import { t, translator } from "@/lib/i18n";
 import { useBackGuard } from "@/lib/voice/client/back-guard";
 import { LeaveSheet } from "@/components/sas/voice/leave-sheet";
@@ -38,6 +39,8 @@ const engineOf = (v: string): VoiceEngineName => otherEngine(v) ?? "current";
 
 type LabCall = {
   conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean; model?: string | null;
+  /** The voice and fillers the call was started with (the saved call's card reads the session's). */
+  voiceUsed?: CallVoiceInfo | null;
   /** The voice engine the call runs on (the server's answer: Current unless a platform admin picked another). */
   engine?: VoiceEngineName;
 } | null;
@@ -125,7 +128,7 @@ function useStartCall() {
         c.unavailable(r.reason, { retryAt: r.retryAt, ownCall: r.ownCall });
         return;
       }
-      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model, engine: r.engine });
+      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model, engine: r.engine, voiceUsed: r.voiceUsed });
       c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec, mode: r.mode });
       router.push(`${input.lab}?c=${r.conversationId}`, { scroll: false });
     })();
@@ -351,7 +354,7 @@ export function VoiceLabStats({ conversationId, children }: { conversationId: st
     <VoiceCallStats
       durationSec={elapsedSec(s, now)} maxSec={s.maxSec} costMicros={s.costMicros} scripted={s.mode === "scripted"} fx={mine.fx}
       answerMsAvg={s.answerMsAvg} live={s.phase !== "ended"} endReason={s.phase === "ended" ? s.endReason : null} errorCode={s.errorCode}
-      model={mine.model ?? null} engine={engineLabel(mine.engine)}
+      model={mine.model ?? null} engine={engineLabel(mine.engine)} voiceUsed={mine.voiceUsed ?? null}
     />
   );
 }

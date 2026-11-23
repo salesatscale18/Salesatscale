@@ -17,7 +17,7 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, readDealState } from "@/lib/agent/service";
 import { ClassicVoiceEngine } from "@/lib/voice-classic/engine";
-import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, refusedQuoteMessage, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
 import { guardedInstructions } from "@/lib/voice-guarded/instructions";
 import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
@@ -189,16 +189,16 @@ describe("Classic + guards", () => {
   });
 
   describe("(c) the guards", () => {
-    async function fakeCall(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = [], limits: VoiceLimits = {}, profile: VoiceProfile = GUARDED_PROFILE) {
+    async function fakeCall(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = [], limits: VoiceLimits = {}, profile: VoiceProfile | null = GUARDED_PROFILE) {
       const c = (await startVoiceTestConversation(db, acc, me.id, { scenario: null }))!;
       for (const l of lines) await db.insert(messages).values({ accountId: acc, conversationId: c.conversationId, actor: l.actor, body: l.body, language: "en", createdAt: new Date(Date.now() - l.ageMs) });
-      const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: profile.engine as "guarded" | "guarded_silent" });
+      const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, ...(profile ? { engine: profile.engine as "guarded" | "guarded_silent" } : {}) });
       if (!s.ok) throw new Error(s.reason);
       const clock = new ManualClock();
       const model = new FakeModel();
       const { lines: logs, log } = memLog();
       const sent: unknown[] = [];
-      const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: (m) => void sent.push(m), log, limits: { ...QUIET, ...limits }, recording: { store: null, reason: "test" }, profile });
+      const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: (m) => void sent.push(m), log, limits: { ...QUIET, ...limits }, recording: { store: null, reason: "test" }, ...(profile ? { profile } : {}) });
       const settle = async () => {
         for (let i = 0; i < 4; i++) {
           await flushAsync();
@@ -246,6 +246,60 @@ describe("Classic + guards", () => {
       // Both calls are recorded with the call's line; the held one as refused.
       const rows = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId)).orderBy(asc(toolCalls.createdAt), asc(toolCalls.sequence));
       expect(rows.filter((x) => x.name === "send_order_form").map((x) => x.outcome)[0]).toBe("refused");
+    });
+
+    it("a quote held for approval: say_this first, no figure of the quote, the order form refused until a ready quote (Current, guarded, silent; English and Hebrew)", async () => {
+      for (const profile of [null, GUARDED_PROFILE, GUARDED_SILENT_PROFILE]) {
+        for (const he of [false, true]) {
+          const c = await fakeCall([], {}, profile);
+          await c.startNow();
+          await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+          await c.buyer(he ? "אפשר עשרה אחוז הנחה על שישה חיישנים?" : "Can you do ten percent off six sensors?");
+          const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { discount_percent: 10 }));
+          expect(Object.keys(q)[0]).toBe("say_this");
+          expect(q.say_this).toBe(HELD_QUOTE_SAY[he ? "he" : "en"]);
+          expect(q).toMatchObject({ ok: true, status: "awaiting_seller_approval", quote_held: true });
+          expect(String(q.message).startsWith(HELD_QUOTE_MESSAGE)).toBe(true);
+          if (he) expect(String(q.message)).toContain("Hebrew");
+          for (const k of ["totals", "lines_for_call", "headline", "price_basis", "delivery", "delivery_by", "approval_reasons", "valid_until"]) expect(q[k]).toBeUndefined();
+          // No figure of the quote anywhere: only its reference, version and ids carry digits.
+          const rest = JSON.stringify({ ...q, quote: undefined, quote_version: undefined, quote_id: undefined, quote_message_id: undefined });
+          expect(rest).not.toMatch(/\d/);
+          expect(c.logs.some((l) => l.endsWith("tool create_quote held for approval: totals withheld from the model"))).toBe(true);
+          expect(c.logs.some((l) => / tool result sent name=create_quote .* held=yes$/.test(l))).toBe(true);
+          // The buyer says yes to the form: refused while the quote waits for the team.
+          await c.buyer(he ? "כן, תשלח לי את טופס ההזמנה" : "Yes, send me the order form please.");
+          const f = await c.tool("f1", "send_order_form", { quote: String(q.quote) });
+          expect(f).toMatchObject({ ok: false, rule: HELD_FORM_RULE });
+          expect(String(f.message).startsWith(HELD_FORM_MESSAGE)).toBe(true);
+          expect(c.logs.some((l) => l.endsWith("tool send_order_form held: the quote waits for the team's approval"))).toBe(true);
+          expect((await thread(c.conversationId)).some((m) => /order form:/i.test(m.body))).toBe(false);
+          // A later ready quote lifts the hold.
+          await c.buyer(he ? "בסדר, אז 6 חיישנים בלי הנחה" : "OK, 6 sensors without the discount then.");
+          const ready = await c.tool("q2", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }]));
+          expect(ready, JSON.stringify(ready)).toMatchObject({ ok: true, status: "ready" });
+          expect(ready.say_this).not.toBe(HELD_QUOTE_SAY[he ? "he" : "en"]);
+          await c.buyer(he ? "כן, תשלח לי את טופס ההזמנה" : "Yes, send me the order form please.");
+          const f2 = await c.tool("f2", "send_order_form", { quote: String(ready.quote) });
+          expect(f2.rule).not.toBe(HELD_FORM_RULE);
+          await c.end();
+        }
+      }
+    });
+
+    it("a held quote the team approves during the call: the order form is no longer refused for it", async () => {
+      const c = await fakeCall([], {}, null);
+      await c.startNow();
+      await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+      await c.buyer("Can you do ten percent off six sensors?");
+      const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { discount_percent: 10 }));
+      expect(q).toMatchObject({ status: "awaiting_seller_approval" });
+      const [row] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
+      await db.update(quotes).set({ status: "sent" }).where(eq(quotes.id, row.id));
+      await c.buyer("Yes, send me the order form please.");
+      const f = await c.tool("f1", "send_order_form", { quote: String(q.quote) });
+      expect(f.rule).not.toBe(HELD_FORM_RULE);
+      await c.end();
     });
 
     it("K2: a number the buyer stated is not lowered on an ambiguous yes; it is when the buyer says it; silent otherwise", async () => {

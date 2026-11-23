@@ -17,7 +17,7 @@ import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
 import { isGuardedEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
-import { PLATFORM_MAX_CALL_SEC, validateVoiceSettings, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
+import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
 
@@ -326,6 +326,8 @@ export type VoiceSessionSummary = {
   endDetail: VoiceEndDetail | null;
   /** The voice engine the call ran on (test lab): Current, or Classic (20 Nov). */
   engine: VoiceEngineName;
+  /** The voice and fillers this call ran with (stored at go-live); null parts: not recorded (older calls). */
+  voiceUsed: CallVoiceInfo;
   wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
@@ -354,6 +356,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     wakes: s.usage?.wakes ?? 0,
     endDetail: s.usage?.endDetail ?? null,
     engine: sessionEngine(s.settings),
+    voiceUsed: callVoiceInfo(s.settings),
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

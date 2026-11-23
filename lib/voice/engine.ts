@@ -33,7 +33,7 @@ import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from ".
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
-import { callVoice, isProvenVoiceModel, maxCallSeconds, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
+import { callVoice, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { orderFormAgreed, smallerQuoteAgreed } from "./form-agreement";
@@ -363,6 +363,41 @@ export function formNotSentMessage(result: Record<string, unknown>): string {
   return `The order form was NOT sent (${why}). Do not say the order form or its link is in the chat. ${typeof result.message === "string" ? `${result.message} ` : ""}Tell the buyer in one short sentence what happens next.`;
 }
 
+/**
+ * A quote held for the team's approval (create_quote: status awaiting_seller_approval / quote_held). A call once
+ * said a total from an earlier check_fit for such a quote, said "the quote is in your chat" and offered the order
+ * form (23 Nov 2026): the result the model gets says the held state first, in a sentence the server writes in the
+ * call's language, and carries no figure of that quote.
+ */
+export const isHeldQuoteResult = (result: Record<string, unknown>) => result.status === "awaiting_seller_approval" || result.quote_held === true;
+
+/** What the agent says when create_quote holds the quote for approval (no amount, no "the quote is in the chat"). */
+export const HELD_QUOTE_SAY: Readonly<Record<"en" | "he", string>> = {
+  en: "I've asked the team to approve this price. You'll see their answer here in the chat, and I'm staying on the line.",
+  he: "ביקשתי מהצוות לאשר את המחיר הזה. התשובה שלהם תופיע כאן בצ'אט, ואני נשאר כאן על הקו.",
+};
+
+export const HELD_QUOTE_MESSAGE = "The quote is NOT final and was NOT sent: the team must approve it first. Say say_this now, as written. Do not say any total or price for it (not from check_fit either), do not say the quote is in the chat, and do not offer the order form until the app says it was approved.";
+
+/** send_order_form while the conversation's latest quote waits for the team's approval. */
+export const HELD_FORM_RULE = "Quote waits for the seller's approval";
+export const HELD_FORM_MESSAGE = "The order form was not sent: the quote is waiting for the team's approval. Tell the buyer the team is checking the price.";
+
+/** Fields of a held create_quote result the model may see: ids and status, never a figure of the quote. */
+const HELD_QUOTE_KEEP = ["ok", "status", "quote", "quote_id", "quote_version", "removed_at_buyer_request", "cannot_remove", "cannot_remove_message", "duplicate_of", "scheduling"] as const;
+
+/**
+ * A held create_quote result as the model gets it on a call (any engine): say_this first, then ids and status, then
+ * the message. Totals, lines_for_call, headline, price basis, delivery and approval reasons are left out.
+ */
+export function heldQuoteForModel(forModel: Record<string, unknown>, language: "en" | "he", sayIn: string | null): Record<string, unknown> {
+  const out: Record<string, unknown> = { say_this: HELD_QUOTE_SAY[language] };
+  for (const k of HELD_QUOTE_KEEP) if (forModel[k] !== undefined) out[k] = forModel[k];
+  out.quote_held = true;
+  out.message = sayIn ? `${HELD_QUOTE_MESSAGE} ${sayIn}` : HELD_QUOTE_MESSAGE;
+  return out;
+}
+
 /** After hand_off_to_human on a call (owner, 22 Nov 2026): the team gets back to the buyer and the call goes on. */
 export const HANDOFF_RESULT_MESSAGE = "Done: the team will get back to the buyer. Say so in one short sentence (to confirm the time, if a call was requested), then ask if there is anything else you can help with. Do not continue selling. The call goes on until the buyer says goodbye: then say a short goodbye and call end_call.";
 
@@ -462,6 +497,12 @@ export class VoiceEngine {
   private endedAtMs: number | null = null;
   /** This call is recorded: its instructions carry the one recording rule (lib/voice/instructions.ts RECORDED_CALL_RULE). */
   private recorded = false;
+  /**
+   * The conversation's latest quote on this call waits for the team's approval (create_quote held it): the order
+   * form is refused until a later create_quote returns a ready quote, or the quote is no longer awaiting approval.
+   * `id` is null when the result named no quote id.
+   */
+  private heldQuote: { id: string | null } | null = null;
   /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
   private handedOffHere = false;
   /** Counts of the relay's diagnostics (RealtimeEvent "diagnostic"), logged when the call ends. */
@@ -1201,10 +1242,11 @@ export class VoiceEngine {
   /** The session's settings snapshot: the version's settings, the voice actually in effect ("model default" when none is sent) and the limit. */
   private settingsSnapshot() {
     const version = this.loaded!.version;
-    const voice = this.voiceInEffect() ?? (callVoice(null, this.model.modelId) ? "model default" : undefined);
+    // No voice sent: the model's own default (the test lab's "This call" card shows it, as the fillers setting).
+    const voice = this.voiceInEffect() ?? MODEL_DEFAULT_VOICE;
     // The model in the snapshot: the one this call ran on (live), or its version's (a scripted stand-in).
     return {
-      ...version.voiceSettings, voice, maxCallSec: this.maxSec, model: this.model.mode === "live" ? this.model.modelId : versionModelId(version.voiceSettings),
+      ...version.voiceSettings, voice, fillers: resolveVoiceSettings(version.voiceSettings).fillers, maxCallSec: this.maxSec, model: this.model.mode === "live" ? this.model.modelId : versionModelId(version.voiceSettings),
       // Another engine's model side: its name stays on the session (the test lab shows it; Call again keeps it).
       ...(this.profile ? { engine: this.profile.engine } : {}),
     };
@@ -1991,6 +2033,22 @@ export class VoiceEngine {
     return numbers.length ? { numbers, what: what.join(", ") } : null;
   }
 
+  /**
+   * Whether the quote create_quote held on this call still waits for the team's approval. Once the team approved
+   * (or declined) it, the hold is lifted and the tool decides (it refuses a quote that is not ready).
+   */
+  private async quoteStillHeld(): Promise<boolean> {
+    if (!this.heldQuote) return false;
+    if (!this.heldQuote.id || !this.loaded) return true;
+    const [q] = await this.db.select({ status: quotes.status }).from(quotes)
+      .where(and(eq(quotes.accountId, this.loaded.account.id), eq(quotes.id, this.heldQuote.id)));
+    if (q && q.status !== "awaiting_approval") {
+      this.heldQuote = null;
+      return false;
+    }
+    return true;
+  }
+
   /** A tool call the engine refuses on a call without running it, recorded like any other (the steps view shows it). */
   private async refuseRecorded(turn: AgentTurn, callId: string, name: string, args: unknown, why: { rule: string; message: string }): Promise<ToolResult> {
     await this.stamp();
@@ -2083,20 +2141,33 @@ export class VoiceEngine {
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
     const kept = name === "update_deal_state" ? await this.holdLoweredNumbers(args).catch(() => []) : [];
-    const formGate = name === "send_order_form" ? orderFormAgreed(this.lines) : "yes";
+    // The order form never goes for a quote waiting for the team's approval, even after the buyer's yes.
+    const quoteHeld = name === "send_order_form" ? await this.quoteStillHeld().catch(() => true) : false;
+    const formGate = name === "send_order_form" && !quoteHeld ? orderFormAgreed(this.lines) : "yes";
     // A line the app adds to a quote (installation, setup) comes off only when the buyer asked: see removalAsked.
     const removing = name === "create_quote" ? removedAutoAdded(args) : [];
     const removeGate = removing.length ? removalAsked(this.lines) : "yes";
     // A quote for fewer units or sites than before goes only when the buyer asked for it (or said yes to the offer).
     const smaller = name === "create_quote" && removeGate !== "no" ? await this.smallerQuote(args).catch(() => null) : null;
     const smallerGate = smaller ? smallerQuoteAgreed(this.lines, (line) => smaller.numbers.some((n) => lineSaysNumber(line, n))) : "yes";
-    const r = formGate === "no"
-      ? await this.refuseRecorded(turn, callId, name, args, FORM_NOT_AGREED)
-      : removeGate === "no"
-        ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
-        : smallerGate === "no" && smaller
-          ? await this.refuseRecorded(turn, callId, name, args, smallerQuoteNotAsked(smaller.what))
-          : await this.runRecorded(turn, callId, name, args);
+    const r = quoteHeld
+      ? await this.refuseRecorded(turn, callId, name, args, { rule: HELD_FORM_RULE, message: HELD_FORM_MESSAGE })
+      : formGate === "no"
+        ? await this.refuseRecorded(turn, callId, name, args, FORM_NOT_AGREED)
+        : removeGate === "no"
+          ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
+          : smallerGate === "no" && smaller
+            ? await this.refuseRecorded(turn, callId, name, args, smallerQuoteNotAsked(smaller.what))
+            : await this.runRecorded(turn, callId, name, args);
+    if (quoteHeld) this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the quote waits for the team's approval"));
+    // The conversation's latest quote: held for approval (the order form waits), or ready (the hold is lifted).
+    const heldNow = name === "create_quote" && r.outcome === "ok" && isHeldQuoteResult(r.result);
+    if (heldNow) {
+      this.heldQuote = { id: typeof r.result.quote_id === "string" ? r.result.quote_id : null };
+      this.log.info(voiceLine(this.sessionId, "tool create_quote held for approval: totals withheld from the model"));
+    } else if (name === "create_quote" && r.outcome === "ok" && r.result.status === "ready") {
+      this.heldQuote = null;
+    }
     if (smallerGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: a smaller quote the buyer did not ask for"));
     if (formGate === "no") this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the buyer has not agreed to it yet"));
     if (kept.length) {
@@ -2106,7 +2177,16 @@ export class VoiceEngine {
     if (removeGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: removes a line the buyer did not ask to remove"));
     // One line per tool call: its name, outcome and time (never its arguments or result).
     this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
-    const forModel = this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r);
+    let forModel = this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r);
+    // Held for approval: the held state first, in the call's language, and no figure of the quote (any engine).
+    const sayIn = this.spokenLanguage !== "en" ? this.sayIn() : null;
+    if (heldNow) forModel = heldQuoteForModel(forModel, this.spokenLanguage === "he" ? "he" : "en", sayIn);
+    if (quoteHeld) {
+      forModel = {
+        ok: false, rule: HELD_FORM_RULE, ...(typeof forModel.scheduling === "string" ? { scheduling: forModel.scheduling } : {}),
+        message: sayIn ? `${HELD_FORM_MESSAGE} ${sayIn}` : HELD_FORM_MESSAGE,
+      };
+    }
     // The run-once guard answers a duplicate of this call with this result.
     const recent = this.recentCalls.find((c) => c.id === callId);
     if (recent) recent.result = forModel;
@@ -2116,7 +2196,7 @@ export class VoiceEngine {
     } else {
       if (this.conn) {
         const at = this.traceCallAt.get(callId);
-        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}`);
+        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}${heldNow || quoteHeld ? " held=yes" : ""}`);
         // The model's audio from here on is its next response (Gemini continues by itself after a result).
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }

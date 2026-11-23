@@ -151,6 +151,30 @@ describe("the quote's spoken summary", () => {
     expect(s).toBe("Twelve User seats. That's seven thousand and eighty shekels a year, including VAT. The exact figures are in the chat.");
   });
 
+  it("names the items before any amount, in every branch (owner: the total straight away is alarming)", () => {
+    const q = quote("en", null);
+    const freeInstall = q.lines.map((l) => (l.sku === "INSTALL" ? { ...l, free: true } : l));
+    const branches: [string, SummaryInput, string[]][] = [
+      ["single item", { ...q, lines: [{ sku: "GATEWAY", name: "Gateway", qty: 1, recurring: false }], requested: ["GATEWAY"], recurringTotalMinor: 0, oneTimeTotalMinor: 90000 }, ["Gateway"]],
+      ["items the app added", q, ["Temperature sensors", "Gateways", "Installation"]],
+      ["free items", { ...q, lines: freeInstall }, ["Temperature sensors", "Gateways", "Installation free"]],
+      ["monthly only", { ...q, lines: [{ sku: "SEAT", name: "User seat", qty: 12, recurring: true }], requested: ["SEAT"], oneTimeTotalMinor: 0, recurringTotalMinor: 70800 }, ["User seats"]],
+      ["nothing to pay", { ...q, lines: [{ sku: "SENSOR", name: "Temperature sensor", qty: 1, recurring: false, free: true }], oneTimeTotalMinor: 0, recurringTotalMinor: 0 }, ["Temperature sensor"]],
+    ];
+    for (const [what, input, items] of branches) {
+      for (const language of ["en", "he"] as const) {
+        const s = quoteSummaryText({ ...input, language });
+        const firstAmount = s.search(language === "en" ? /shekel|free of charge/ : /שקל|ללא עלות/);
+        expect(firstAmount, `${what} (${language}): ${s}`).toBeGreaterThan(0);
+        // The first sentence is the item list, with no amount; the totals sentence comes after it.
+        const firstSentence = s.slice(0, s.indexOf(". ") + 1);
+        expect(firstAmount, `${what} (${language}): ${s}`).toBeGreaterThan(firstSentence.length - 1);
+        expect(s.slice(firstSentence.length).trimStart(), `${what} (${language})`).toMatch(language === "en" ? /^That's / : /^זה /);
+        if (language === "en") for (const item of items) expect(s.indexOf(item), `${what}: ${item}`).toBeLessThan(firstAmount);
+      }
+    }
+  });
+
   it("names items by their catalog plain_name when they have one (main items and the ones the app added)", () => {
     const q = quote("en", "by about Thursday, 3 December");
     const plain: Record<string, string> = { SENSOR: "wireless fridge sensor", GATEWAY: "kitchen hub", INSTALL: "installation visit" };
