@@ -179,7 +179,10 @@ describe("pipeline proof: listen, think, speak", () => {
     expect(turn1).toBeDefined();
     expect(Number(/listen=(\d+)ms/.exec(turn1!)![1])).toBeGreaterThanOrEqual(200);
     expect(lines.some((l) => /pipeline turn=2 listen=-ms think=\d+ms tools=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
-    expect(lines.some((l) => /pipeline summary turns=2 median answer=\d+ms listen=\d+ms think=\d+ms speak=\d+ms/.test(l))).toBe(true);
+    expect(lines.some((l) => /pipeline summary turns=2 spoken=2 median answer=\d+ms listen=\d+ms think=\d+ms speak=\d+ms/.test(l))).toBe(true);
+    // The speech end asked the listener to finalise the utterance; the final came a few hundred ms later and was used at once.
+    expect(listener.utteranceEnds).toBeGreaterThanOrEqual(1);
+    expect(lines.some((l) => /pipeline transcript final after [1-9]\d{2}ms/.test(l))).toBe(true);
     expect(lines.some((l) => /pipeline noise ignored len=1/.test(l))).toBe(true);
     expect(lines.some((l) => l.includes("text agent blocked: pipeline call"))).toBe(false);
     expect(lines.some((l) => /ended reason=user_hangup .* engine=pipeline/.test(l))).toBe(true);

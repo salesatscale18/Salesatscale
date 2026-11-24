@@ -16,7 +16,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { agentVersions, type VoiceSession } from "@/db/schema";
+import { agentVersions, conversations, type VoiceSession } from "@/db/schema";
 import { VoiceEngine, type VoiceLimits } from "./engine";
 import {
   AUTH_TIMEOUT_MS, MAX_CLIENT_AUDIO_BYTES, VOICE_CLOSE, VOICE_SAMPLE_RATE, parseAuthMessage, parseClientMessage, pcmDurationMs,
@@ -28,8 +28,8 @@ import { maxCallSeconds, voiceMode, type VoiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
-import { GUARDED_SILENT_ENGINE, isGuardedEngine, PIPELINE_ENGINE } from "@/lib/voice-classic/engine-choice";
-import { PipelineVoiceEngine, pipelinePartsFor, type PipelineParts } from "@/lib/voice-pipeline";
+import { GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
+import { PipelineVoiceEngine, pipelinePartsFor, type PipelineOverrides, type PipelineParts } from "@/lib/voice-pipeline";
 
 /**
  * What the relay needs from an engine: today's VoiceEngine, the Classic (20 Nov) one a test-lab call picked, or the
@@ -74,8 +74,8 @@ export type VoiceSocketOptions = {
   model?: RealtimeModel;
   /** Tests: shorter engine timings. */
   limits?: Omit<VoiceLimits, "deadlineSec" | "env">;
-  /** Tests: the pipeline proof's fakes (listener, speaker, chat model, chat turn) for a "pipeline" session. */
-  pipeline?: Partial<PipelineParts>;
+  /** Tests: the pipeline engines' fakes (listener, speaker, chat model, chat turn, gateway client factory). */
+  pipeline?: PipelineOverrides;
   /**
    * Runs once the call is stored, before the handler resolves (so the function stays alive for it):
    * the route answers a buyer turn the call left unanswered (lib/voice/after-call.ts). Never awaited past its own errors.
@@ -230,30 +230,38 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     return true;
   };
 
-  /** Starts a test-lab call on the pipeline proof (scripted mode: fakes and a scripted chat model, never paid). */
-  const startPipeline = async (session: VoiceSession, mode: VoiceMode, waitAudio: boolean) => {
+  /**
+   * Starts a test-lab call on a pipeline engine ("pipeline": Gemini Flash thinking; "pipeline_chat": the chat model).
+   * Scripted mode: fakes and a scripted chat model, never paid. A thinking model that cannot be built refuses the call.
+   */
+  const startPipeline = async (session: VoiceSession, mode: VoiceMode, waitAudio: boolean, pipelineEngine: PipelineEngineName) => {
     const callMode = mode === session.mode && (mode === "live" || mode === "scripted") ? mode : null;
+    // The call's agent version (the engine reads the same one): the session's, else its conversation's.
+    const versionId = session.agentVersionId ?? (await opts.db.select({ id: conversations.agentVersionId }).from(conversations)
+      .where(and(eq(conversations.id, session.conversationId), eq(conversations.accountId, session.accountId))))[0]?.id;
+    const [version] = versionId
+      ? await opts.db.select({ voiceSettings: agentVersions.voiceSettings, model: agentVersions.model, effort: agentVersions.effort }).from(agentVersions)
+        .where(and(eq(agentVersions.id, versionId), eq(agentVersions.accountId, session.accountId)))
+      : [];
     let parts: PipelineParts | null = null;
     try {
-      parts = callMode ? await pipelinePartsFor(callMode, env, opts.pipeline) : null;
+      parts = callMode ? await pipelinePartsFor(callMode, env, opts.pipeline, {
+        engine: pipelineEngine, version: { model: version?.model ?? "", effort: version?.effort ?? null },
+      }) : null;
     } catch (e) {
-      log.warn(voiceLine(session.id, `pipeline parts unavailable: ${errorSummary(e)}`));
+      log.warn(voiceLine(session.id, `pipeline parts unavailable (engine=${pipelineEngine}): ${errorSummary(e)}`));
     }
     if (!parts || !callMode) {
       await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
       return refuse("model_unavailable");
     }
-    const [version] = session.agentVersionId
-      ? await opts.db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
-        .where(and(eq(agentVersions.id, session.agentVersionId), eq(agentVersions.accountId, session.accountId)))
-      : [];
     if (isClosed()) {
       await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
       return;
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
     sessionId = session.id;
-    log.info(voiceLine(session.id, `socket accepted mode=${callMode} engine=${PIPELINE_ENGINE} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
+    log.info(voiceLine(session.id, `socket accepted mode=${callMode} engine=${pipelineEngine} think=${parts.thinkModel ?? version?.model ?? "-"} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
     sendJson({ t: "call", maxSec, mode: callMode });
     engine = new PipelineVoiceEngine({
       db: opts.db, sessionId: session.id, mode: callMode, clock, log, onEnding: keepAlive,
@@ -271,7 +279,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         sendJson(msg);
         if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);
       },
-      listener: parts.listener, speaker: parts.speaker, llm: parts.llm, ...(parts.turn ? { turn: parts.turn } : {}),
+      engine: pipelineEngine, listener: parts.listener, speaker: parts.speaker, llm: parts.llm, ...(parts.turn ? { turn: parts.turn } : {}),
+      ...(parts.thinkModel ? { thinkModel: parts.thinkModel } : {}),
       limits: { deadlineSec: opts.deadlineSec, env, ...(waitAudio ? { waitForClientAudio: true } : {}) },
     });
     phase = "live";
@@ -306,8 +315,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // guards" (today's engine with the Classic model side, lib/voice-guarded), its silent probe or Current. Buyer calls
     // always run on Current.
     const stored = session.isTest ? sessionEngine(session.settings) : "current";
-    // The pipeline proof (lib/voice-pipeline): no realtime model; a listener, the chat agent and a speaker.
-    if (stored === PIPELINE_ENGINE) return startPipeline(session, mode, auth.waitAudio === true);
+    // The pipeline engines (lib/voice-pipeline): no realtime model; a listener, the chat turn and a speaker.
+    if (isPipelineEngine(stored)) return startPipeline(session, mode, auth.waitAudio === true, stored);
     const classic = stored === "classic";
     const guarded = isGuardedEngine(stored);
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;

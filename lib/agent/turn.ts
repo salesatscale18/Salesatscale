@@ -32,7 +32,8 @@ import { marketContactSettings } from "@/lib/markets/settings";
 import { supportedTurnLanguages, turnLanguage } from "@/lib/conversations/turn-language";
 import { storedBuyerZone } from "@/lib/team-calls/zone";
 import { textTurnBlocked } from "@/lib/voice/one-agent";
-import { writtenByAgent } from "./core/stage";
+import { deriveStage, writtenByAgent } from "./core/stage";
+import { BOOKKEEPING_TOOLS, bookkeepingNeedsRound, callContextLineOf } from "./call-reply";
 
 export const MAX_TOOL_ROUNDS = 8;
 /** Wait before the one retry of a model call that failed after a tool round. */
@@ -58,9 +59,13 @@ const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
  * block it (every other pending or live call still does), and the messages this turn writes (the buyer's message
  * when stored here, the agent's reply) carry its id as `voiceSessionId`, so they group under the call. Only a
  * session of this conversation stamps (and only one can lift a block); without it, nothing changes.
+ * A valid call turn also (lib/agent/call-reply.ts): a response with reply text and only bookkeeping tool calls
+ * finishes the turn once the tools ran and their results add nothing the reply must reflect (one model round);
+ * and `callContextLine`, the caller's own line for the model, is added to the per-turn context (one line,
+ * trimmed, capped). Without a valid call session both are off: a chat turn is unchanged.
  */
 export async function runBuyerTurn(
-  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string; callSessionId?: string },
+  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string; callSessionId?: string; callContextLine?: string },
 ): Promise<TurnResult> {
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
@@ -72,6 +77,9 @@ export async function runBuyerTurn(
     ))).length > 0
     ? { voiceSessionId: args.callSessionId }
     : {};
+  const callTurn = !!callStamp.voiceSessionId;
+  // The caller's line for the model (the voice pipeline's own wording), on a valid call turn only.
+  const callLine = callTurn ? callContextLineOf(args.callContextLine) : "";
   const masked = maskCardNumbers(args.text.slice(0, 4000));
 
   // One round trip: lead, its market, version, account and deal state.
@@ -184,7 +192,7 @@ export async function runBuyerTurn(
       priceApproval,
       // The clock the agent reads local times by: the tools read them in the buyer's stored zone, else the market's.
       localNow: localNowLine(new Date(), buyerZone ?? contact.timezone),
-    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nReply language: ${lang} (the language of the buyer's latest message). Write your reply and any text you pass to tools in it.`,
+    })}${afterCall ? "\nThe voice call has just ended, and the buyer's last line from it is unanswered. Answer it now, here in the chat, in writing, as a natural continuation: answer the question directly, without referring back to the call unless that is needed to make the answer clear. Do not mention a technical problem." : ""}\nReply language: ${lang} (the language of the buyer's latest message). Write your reply and any text you pass to tools in it.${callLine ? `\n${callLine}` : ""}`,
   ];
   const memo: TurnMemo = { account, catalog: catalogRead };
   const ctx = (callId: string): ToolContext => ({
@@ -205,6 +213,11 @@ export async function runBuyerTurn(
   // The tools' strict mode of this turn's first call, sent again on every later round: the
   // model's thinking blocks are bound to the exact tool list they were made with.
   let strictTools: boolean | undefined;
+  // Call turns: the stage block the model last read (the per-turn context's, then each update_deal_state result's),
+  // for the "reply with bookkeeping" check (lib/agent/call-reply.ts). Same inputs as turnContext's stage.
+  let seenStage = callTurn
+    ? deriveStage({ ...stageFacts, playbook: version.playbook, fields: deal?.fields ?? {}, objections: deal?.objections, agentMessages }).instruction
+    : "";
   // A call after a tool round is retried once on an error that can pass on a retry: the tools
   // that already ran are not run again, and the buyer is not left with a tool's message and no reply.
   const callModel = async (req: LlmRequest, afterTools: boolean): Promise<LlmResponse> => {
@@ -243,6 +256,13 @@ export async function runBuyerTurn(
         text = plainChatText(res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n"));
         break;
       }
+      // Call turns: reply text written next to bookkeeping calls only may finish the turn after the tools run.
+      const replyNow = callTurn && uses.every((u) => BOOKKEEPING_TOOLS.has(u.name))
+        ? plainChatText(res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n"))
+        : "";
+      let needsRound = !replyNow.trim();
+      // Every result of this response is checked against the block the model read before writing it.
+      const stageBefore = seenStage;
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
       for (const u of uses) {
         let r: ToolResult;
@@ -254,7 +274,15 @@ export async function runBuyerTurn(
           console.error(`[agent] tool ${u.name} failed`, e);
         }
         pending.push({ name: u.name, input: u.input, r });
+        if (callTurn) {
+          if (!needsRound && bookkeepingNeedsRound(u.name, r, stageBefore)) needsRound = true;
+          if (u.name === "update_deal_state" && typeof r.result.stage === "string") seenStage = r.result.stage;
+        }
         results.push({ type: "tool_result", tool_use_id: u.id, content: JSON.stringify(r.result), ...(r.outcome === "failed" ? { is_error: true } : {}) });
+      }
+      if (!needsRound) {
+        text = replyNow;
+        break;
       }
       history.push({ role: "user", content: results });
     }

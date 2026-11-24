@@ -2,7 +2,8 @@
  * The live (paid) listener and speaker of the pipeline proof, over the Vercel AI Gateway with AI_GATEWAY_API_KEY.
  * Uses the installed SDK's own streaming interfaces (ai 7.0.177, @ai-sdk/gateway 4.0.150), nothing hand-rolled:
  *
- * - LISTENING: `experimental_streamTranscribe` with `gateway.experimental_transcription(model)`. The SDK opens
+ * - LISTENING: `experimental_streamTranscribe` with `gateway.experimental_transcription(model)`, one stream per
+ *   buyer utterance (GatewayListener below). The SDK opens
  *   `wss://ai-gateway.vercel.sh/v4/ai/transcription-model?ai-model-id=<model>` with the subprotocols
  *   ["ai-gateway-transcription.v1", "ai-gateway-auth.<key>"], sends the TEXT frame
  *   `{type:"transcription-stream.start", inputAudioFormat:{type:"audio/pcm", rate}}`, then the audio as BINARY frames
@@ -10,7 +11,8 @@
  *   transcript-delta / transcript-partial / transcript-final / error / finish.
  * - SPEAKING: `experimental_streamSpeech` with `gateway.experimental_speech(model)`: `…/speech-model?ai-model-id=…`,
  *   subprotocols ["ai-gateway-speech.v1", "ai-gateway-auth.<key>"], TEXT frames `speech-stream.start` (voice,
- *   outputFormat, language), `speech-stream.text-delta`, `speech-stream.text-done`; the server sends `audio` parts
+ *   outputFormat, language, providerOptions: the ElevenLabs dialogue option for the v3/v4 models),
+ *   `speech-stream.text-delta`, `speech-stream.text-done`; the server sends `audio` parts
  *   (base64 audio with its `audioFormat`), then `finish`.
  *
  * Built only for a live call (assertLiveAllowed: never under the test runner, VOICE_REALTIME=live, a Gateway key).
@@ -37,78 +39,226 @@ async function loadSdk(apiKey: string): Promise<Sdk> {
 
 const errText = (e: unknown) => String((e as { message?: unknown })?.message ?? e).replace(/\s+/g, " ").slice(0, 200);
 
+/** Audio kept for a transcription stream that is still connecting (and replayed on a new one): 2 s at most. */
+export const LISTEN_REPLAY_MS = 2_000;
+/** A finalised (retired) stream is aborted this long after its audio-done if the provider has not finished it. */
+const RETIRED_STREAM_MS = 5_000;
+/** Consecutive streams that fail before any transcript: then the listener gives up (reported once). */
+const MAX_STREAM_FAILURES = 3;
+
 /**
- * Streaming transcription for the whole call: one Gateway stream, the buyer's audio resampled from 24 kHz to
- * LISTEN_INPUT_RATE and pushed as it comes. Partial text: the latest transcript-partial, or the deltas of the
- * utterance so far; final: each transcript-final.
+ * The audio of one transcription stream, read by the SDK as it can: chunks queue while the stream connects (at most
+ * `maxBytes`, the oldest dropped) and `end()` makes the SDK send `transcription-stream.audio-done`.
+ */
+export class AudioPipe {
+  readonly stream: ReadableStream<Uint8Array>;
+  private queue: Uint8Array[] = [];
+  private bytes = 0;
+  private ended = false;
+  private wake: (() => void) | null = null;
+  dropped = 0;
+
+  constructor(private readonly maxBytes: number) {
+    this.stream = new ReadableStream<Uint8Array>({
+      pull: async (c) => {
+        for (;;) {
+          const next = this.queue.shift();
+          if (next) {
+            this.bytes -= next.byteLength;
+            c.enqueue(next);
+            return;
+          }
+          if (this.ended) {
+            c.close();
+            return;
+          }
+          await new Promise<void>((r) => (this.wake = r));
+        }
+      },
+      cancel: () => {
+        this.ended = true;
+        this.queue = [];
+        this.bytes = 0;
+        this.notify();
+      },
+    }, { highWaterMark: 0 });
+  }
+
+  private notify() {
+    const w = this.wake;
+    this.wake = null;
+    w?.();
+  }
+
+  push(chunk: Uint8Array) {
+    if (this.ended || !chunk.byteLength) return;
+    this.queue.push(chunk);
+    this.bytes += chunk.byteLength;
+    while (this.bytes > this.maxBytes && this.queue.length > 1) {
+      const old = this.queue.shift()!;
+      this.bytes -= old.byteLength;
+      this.dropped += old.byteLength;
+    }
+    this.notify();
+  }
+
+  /** No more audio: the SDK sends audio-done once it has read what is queued. */
+  end() {
+    this.ended = true;
+    this.notify();
+  }
+
+  get queuedBytes() {
+    return this.bytes;
+  }
+}
+
+/** One Gateway transcription stream (one buyer utterance, or the rest of the call). */
+type ListenStream = { n: number; pipe: AudioPipe; abort: AbortController; retired: boolean; heard: boolean; deltas: Map<string, string> };
+
+/**
+ * Streaming transcription, one Gateway stream per buyer utterance. The buyer's audio is resampled from 24 kHz to
+ * LISTEN_INPUT_RATE and pushed to the current stream. Partial text: the latest transcript-partial, or the deltas of
+ * the utterance so far; final: each transcript-final.
+ *
+ * Why per utterance (the first live call, 24 Nov: "no final transcript within 1500ms" on every turn): the stream
+ * protocol has no commit or flush frame (@ai-sdk/provider-utils transcription-stream envelope: start, binary audio,
+ * audio-done); google/gemini-3.5-transcribe-live (@ai-sdk/google google-transcription-model.ts) finalises a
+ * segment only on the server's own pause detection (`generationComplete`), or when the audio stream ends
+ * (audio-done → `audioStreamEnd`: the interim text becomes the segment's final). So `endUtterance()` (the engine's
+ * speech detector heard the buyer stop) ends the current stream's audio, which makes the provider finalise it, and
+ * opens a fresh stream at once for the next utterance; audio arriving while it connects is queued (2 s at most)
+ * and sent when it is open. A retired stream still delivers its trailing partials and final; it is aborted after
+ * RETIRED_STREAM_MS. A stream that fails is replaced (the last 2 s of audio replayed when it failed before any
+ * transcript); after MAX_STREAM_FAILURES such failures in a row the listener reports the error and stops.
  */
 export class GatewayListener extends ListenerBase implements Listener {
   private readonly resampler = new Resampler(VOICE_SAMPLE_RATE, LISTEN_INPUT_RATE);
-  private controller: ReadableStreamDefaultController<Uint8Array> | null = null;
-  private readonly abort = new AbortController();
+  private readonly apiKey: string;
+  private readonly maxBytes = Math.round((LISTEN_INPUT_RATE * 2 * LISTEN_REPLAY_MS) / 1000);
+  private sdk: Promise<Sdk> | null = null;
+  private current: ListenStream;
+  private seq = 0;
+  private recent: Uint8Array[] = [];
+  private recentBytes = 0;
+  private failures = 0;
   private closed = false;
-  private deltas = new Map<string, string>();
+  /** Streams opened (the logs, tests). */
+  streams = 0;
 
   constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env) {
     super();
     assertLiveAllowed(env);
-    const audio = new ReadableStream<Uint8Array>({ start: (c) => void (this.controller = c) });
-    void this.run(env.AI_GATEWAY_API_KEY!.trim(), audio);
+    this.apiKey = env.AI_GATEWAY_API_KEY!.trim();
+    this.current = this.open([]);
   }
 
-  private async run(apiKey: string, audio: ReadableStream<Uint8Array>) {
+  private open(replay: Uint8Array[]): ListenStream {
+    const st: ListenStream = { n: ++this.seq, pipe: new AudioPipe(this.maxBytes), abort: new AbortController(), retired: false, heard: false, deltas: new Map() };
+    for (const b of replay) st.pipe.push(b);
+    this.streams++;
+    void this.run(st);
+    return st;
+  }
+
+  private async run(st: ListenStream) {
     try {
-      const { ai, gateway } = await loadSdk(apiKey);
+      this.sdk ??= loadSdk(this.apiKey);
+      const { ai, gateway } = await this.sdk;
       const result = ai.experimental_streamTranscribe({
         model: gateway.experimental_transcription(this.modelId),
-        audio,
+        audio: st.pipe.stream,
         inputAudioFormat: { type: "audio/pcm", rate: LISTEN_INPUT_RATE },
-        abortSignal: this.abort.signal,
+        abortSignal: st.abort.signal,
       });
       for await (const part of result.fullStream) {
         if (this.closed) return;
         if (part.type === "transcript-delta") {
+          st.heard = true;
           const id = part.id ?? "_";
-          const text = (this.deltas.get(id) ?? "") + part.delta;
-          this.deltas.set(id, text);
+          const text = (st.deltas.get(id) ?? "") + part.delta;
+          st.deltas.set(id, text);
           this.emitPartial(text);
         } else if (part.type === "transcript-partial") {
+          st.heard = true;
           this.emitPartial(part.text);
         } else if (part.type === "transcript-final") {
-          this.deltas.delete(part.id ?? "_");
+          st.heard = true;
+          st.deltas.delete(part.id ?? "_");
           this.emitFinal(part.text);
         } else if (part.type === "error") {
-          this.emitError(`transcription error: ${errText(part.error)}`);
+          throw part.error instanceof Error ? part.error : new Error(errText(part.error));
         }
       }
-      if (!this.closed) this.emitError("transcription stream ended");
+      if (st.heard) this.failures = 0;
+      // A retired stream ends here once its utterance is final: normal. The current one ending is not.
+      if (!st.retired && !this.closed) this.replace(st, "transcription stream ended");
     } catch (e) {
-      if (!this.closed) this.emitError(`transcription failed: ${errText(e)}`);
+      if (this.closed || (st.retired && st.abort.signal.aborted)) return;
+      if (st.retired) return; // its utterance is over; a late error changes nothing
+      this.replace(st, `transcription failed: ${errText(e)}`);
     }
   }
 
+  /** The current stream failed or ended: a new one takes over (the last 2 s replayed if nothing was heard yet). */
+  private replace(st: ListenStream, why: string) {
+    if (st !== this.current || this.closed) return;
+    st.abort.abort();
+    this.failures = st.heard ? 0 : this.failures + 1;
+    if (this.failures >= MAX_STREAM_FAILURES) {
+      this.closed = true;
+      this.emitError(`${why} (${this.failures} streams in a row without a transcript; listening stopped)`);
+      return;
+    }
+    this.emitError(`${why}; stream ${st.n} replaced`);
+    this.current = this.open(st.heard ? [] : this.recent);
+  }
+
+  /**
+   * The buyer stopped speaking (the engine's detector): the current stream's audio ends (the provider finalises the
+   * utterance) and a fresh stream takes the next audio.
+   */
+  endUtterance() {
+    if (this.closed) return;
+    const old = this.current;
+    old.retired = true;
+    old.pipe.end();
+    const t = setTimeout(() => old.abort.abort(), RETIRED_STREAM_MS);
+    (t as { unref?: () => void }).unref?.();
+    this.recent = [];
+    this.recentBytes = 0;
+    this.current = this.open([]);
+  }
+
   pushAudio(pcm: Uint8Array) {
-    if (this.closed || !this.controller) return;
+    if (this.closed) return;
     const out = this.resampler.push(pcm);
     if (!out.byteLength) return;
     this.sentMs += (out.byteLength / 2 / LISTEN_INPUT_RATE) * 1000;
-    try {
-      this.controller.enqueue(out);
-    } catch {
-      // The stream already ended (an error was reported).
-    }
+    this.current.pipe.push(out);
+    this.recent.push(out);
+    this.recentBytes += out.byteLength;
+    while (this.recentBytes > this.maxBytes && this.recent.length > 1) this.recentBytes -= this.recent.shift()!.byteLength;
   }
 
   close() {
     if (this.closed) return;
     this.closed = true;
-    try {
-      this.controller?.close();
-    } catch {
-      // Already closed.
-    }
-    this.abort.abort();
+    this.current.pipe.end();
+    this.current.abort.abort();
   }
+}
+
+/**
+ * The provider options of an ElevenLabs speak attempt in dialogue mode: `{ elevenlabs: { dialogue: { voices: [voice] } } }`.
+ * The shape is @ai-sdk/elevenlabs's (3.0.88, elevenlabs-speech-model-options.ts: `dialogue: { voices: string[1..10],
+ * voiceSettings?: { stability } }`); the Gateway passes `providerOptions` through verbatim in the
+ * `speech-stream.start` frame (@ai-sdk/gateway gateway-speech-model.ts doStream). In dialogue mode the call's `voice`
+ * must be one of `voices` (else the provider refuses it), each text part is spoken by `voice`, and `language` still
+ * goes as the stream's `language_code`.
+ */
+export function speakProviderOptions(voice: string): { elevenlabs: { dialogue: { voices: string[] } } } {
+  return { elevenlabs: { dialogue: { voices: [voice] } } };
 }
 
 /**
@@ -121,10 +271,14 @@ export class GatewaySpeaker implements Speaker {
   private readonly active = new Set<AbortController>();
   private readonly apiKey: string;
 
-  constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env, voice: string = PIPELINE_VOICE) {
+  /** Streams through ElevenLabs Text-to-Dialogue (one voice) instead of text-to-speech: see speakProviderOptions. */
+  readonly dialogue: boolean;
+
+  constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env, voice: string = PIPELINE_VOICE, opts: { dialogue?: boolean } = {}) {
     assertLiveAllowed(env);
     this.apiKey = env.AI_GATEWAY_API_KEY!.trim();
     this.voice = voice;
+    this.dialogue = opts.dialogue === true;
   }
 
   async *speak(text: string, opts: { language: string }): AsyncIterable<Uint8Array> {
@@ -141,6 +295,7 @@ export class GatewaySpeaker implements Speaker {
         voice: this.voice,
         outputFormat: { type: "audio/pcm", rate: SPEAK_OUTPUT_RATE },
         language: opts.language,
+        ...(this.dialogue ? { providerOptions: speakProviderOptions(this.voice) } : {}),
         abortSignal: abort.signal,
         onError: ({ error }) => void (speechError = error),
       });

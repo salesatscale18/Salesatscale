@@ -18,6 +18,11 @@ export interface Listener {
   onFinal(cb: (text: string) => void): void;
   /** The listener failed for good (the call goes on without it; logged). */
   onError(cb: (message: string) => void): void;
+  /**
+   * Optional: the engine's detector heard the buyer stop. A listener that can finalise the utterance does so now
+   * (GatewayListener: audio-done on this stream, a fresh stream for the next utterance).
+   */
+  endUtterance?(): void;
   /** Seconds of audio sent to the model so far (the cost estimate). */
   readonly audioSec: number;
   close(): void;
@@ -45,6 +50,8 @@ export class ManualListener extends ListenerBase implements Listener {
   readonly modelId: string;
   closed = false;
   bytes = 0;
+  /** endUtterance calls (the engine's speech ends). */
+  utteranceEnds = 0;
   constructor(modelId = "scripted") {
     super();
     this.modelId = modelId;
@@ -56,6 +63,7 @@ export class ManualListener extends ListenerBase implements Listener {
   partial(text: string) { this.emitPartial(text); }
   final(text: string) { this.emitFinal(text); }
   fail(message: string) { this.emitError(message); }
+  endUtterance() { this.utteranceEnds++; }
   close() { this.closed = true; }
 }
 

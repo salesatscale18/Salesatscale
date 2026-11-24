@@ -7,7 +7,8 @@ import { spokenForm, splitSentences } from "@/lib/voice-pipeline/spoken";
 import { median, TurnTaking, type BuyerLine } from "@/lib/voice-pipeline/turns";
 import { PcmFramer, Resampler, resamplePcm16, toBytes, toSamples } from "@/lib/voice-pipeline/pcm";
 import { LISTEN_MICROS_PER_SEC, PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, pipelineCostMicros, SPEAK_MICROS_PER_CHAR } from "@/lib/voice-pipeline/models";
-import { pipelineCallInfo, pipelineModelsLabel } from "@/lib/voice-pipeline/summary";
+import { pipelineCallInfo, pipelineModelsLabel, thinkModelLabel } from "@/lib/voice-pipeline/summary";
+import { PIPELINE_TEXT_MODEL } from "@/lib/voice-pipeline/gateway-llm";
 import { ManualListener, ScriptedListener } from "@/lib/voice-pipeline/listener";
 import { ScriptedSpeaker } from "@/lib/voice-pipeline/speaker";
 import { micPcm } from "@/lib/voice/scripted-realtime";
@@ -150,10 +151,32 @@ describe("cost, the card's reading, the fakes", () => {
 
   it("reads a pipeline session's models and median for the card; other engines get nothing", () => {
     const info = pipelineCallInfo({ engine: "pipeline", pipeline: { listenModel: "l", thinkModel: "t", speakModel: "s" } }, { pipeline: { medianAnswerMs: 1234 } });
-    expect(info).toEqual({ listenModel: "l", thinkModel: "t", speakModel: "s", medianAnswerMs: 1234 });
+    expect(info).toEqual({ listenModel: "l", thinkModel: "t", speakModel: "s", medianAnswerMs: 1234, medianThinkMs: null });
+    // Speaking: the model the call kept (usage, at the end) over the first one tried (settings, at the start).
+    expect(pipelineCallInfo({ engine: "pipeline", pipeline: { speakModel: "first" } }, { pipeline: { speakModel: "kept", medianThinkMs: 3_500, medianAnswerMs: null } }))
+      .toMatchObject({ speakModel: "kept", medianThinkMs: 3_500, medianAnswerMs: null });
     expect(pipelineCallInfo({ engine: "guarded" }, null)).toBeNull();
     expect(pipelineCallInfo(null, null)).toBeNull();
     expect(pipelineModelsLabel(info!)).toBe("Listen l · think t · speak s");
+    expect(pipelineCallInfo({ engine: "pipeline_chat", pipeline: { thinkModel: "claude-sonnet-5-5" } }, null)?.thinkModel).toBe("claude-sonnet-5-5");
+  });
+
+  it("the thinking model's label: Gemini Flash and the chat models, as people read them", () => {
+    expect(thinkModelLabel("google/gemini-3.8-flash")).toBe("Gemini 3.8 Flash");
+    expect(thinkModelLabel("claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
+    expect(thinkModelLabel("claude-opus-5-5")).toBe("Claude Opus 5.5");
+    expect(thinkModelLabel("scripted")).toBe("Scripted");
+    expect(thinkModelLabel("")).toBe("");
+  });
+
+  it("the pipeline's own cost is unchanged by Flash thinking: listening + speaking only, thinking never counted here", () => {
+    // Thinking (Gemini Flash or the chat model) is priced by the chat turn on its reply row (usage.model); the
+    // session's estimate takes only the listen and speak models: the same figures whatever model thinks.
+    expect(pipelineCostMicros.length).toBe(4);
+    const c = pipelineCostMicros(PIPELINE_LISTEN_MODEL, 60, PIPELINE_SPEAK_MODEL, 500);
+    expect(c).toEqual({ listen: 9_000, speak: 20_000, known: true });
+    expect(LISTEN_MICROS_PER_SEC).not.toHaveProperty(PIPELINE_TEXT_MODEL);
+    expect(SPEAK_MICROS_PER_CHAR).not.toHaveProperty(PIPELINE_TEXT_MODEL);
   });
 
   it("the scripted listener hears speech with the detector; the scripted speaker stops on cancel", async () => {

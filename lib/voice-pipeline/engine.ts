@@ -1,5 +1,6 @@
 /**
- * The pipeline voice engine (PROOF; test lab only, platform admins only, engine id "pipeline"):
+ * The pipeline voice engine (PROOF; test lab only, platform admins only, engine ids "pipeline": thinking on Gemini
+ * 3.8 Flash through the AI Gateway, and "pipeline_chat": thinking on the agent version's chat model; ./index.ts):
  *
  *   buyer audio → LISTENING (a streaming transcription model) → THINKING (the text chat agent: tools first, then one
  *   reply, exactly as in chat) → SPEAKING (a streaming speech model) → agent audio to the browser.
@@ -45,7 +46,7 @@ import { EnergyVad, rms } from "@/lib/voice/vad";
 import { maskCardNumbers } from "@/lib/voice/safety";
 import { lineLanguage, limitWarnSecFor } from "@/lib/voice/engine";
 import { clip, consoleVoiceLog, errorSummary, textPrint, voiceLine, type VoiceLog } from "@/lib/voice/log";
-import { PIPELINE_ENGINE } from "@/lib/voice-classic/engine-choice";
+import { PIPELINE_ENGINE, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
 import { PIPELINE_TIMING, pipelineCostMicros, type PipelineUsage } from "./models";
 import type { Listener } from "./listener";
 import type { Speaker } from "./speaker";
@@ -63,7 +64,10 @@ export type PipelineLimits = {
   /** The browser said it will send `{t:"ready"}` (auth `waitAudio`): the opening line waits for it. */
   waitForClientAudio?: boolean;
   clientReadyMs?: number;
-  finalWaitMs?: number;
+  /** After the buyer's speech ends: the partial is the line once unchanged this long (no final yet). */
+  lineStableMs?: number;
+  /** After the buyer's speech ends: the longest wait for a final (or a stable partial). */
+  lineCapMs?: number;
   leadMs?: number;
 };
 
@@ -76,8 +80,12 @@ export type PipelineEngineDeps = {
   /** Builds the call's listener when the call starts (one for the whole call). */
   listener: () => Listener;
   speaker: Speaker;
-  /** The chat model client (live: the Anthropic client; scripted: a ScriptedLlm stand-in). */
+  /** The thinking client (live "pipeline": GatewayLlm on Gemini Flash; live "pipeline_chat": the Anthropic client; scripted: a ScriptedLlm stand-in). */
   llm: LlmClient;
+  /** Which pipeline engine this call runs on (settings.engine, the logs); default "pipeline". */
+  engine?: PipelineEngineName;
+  /** The thinking model id `llm` calls (settings.pipeline.thinkModel, the trace); default the agent version's model. */
+  thinkModel?: string;
   /** Tests: the chat-turn function (default: runCallTurn, the real chat turn). */
   turn?: CallTurnFn;
   clock?: Clock;
@@ -88,7 +96,8 @@ export type PipelineEngineDeps = {
 
 const DEFAULTS: Required<Omit<PipelineLimits, "deadlineSec" | "env">> = {
   limitWarnSec: 45, statsEveryMs: 5_000, heartbeatMs: 20_000, waitForClientAudio: false,
-  clientReadyMs: PIPELINE_TIMING.clientReadyMs, finalWaitMs: PIPELINE_TIMING.finalWaitMs, leadMs: PIPELINE_TIMING.leadMs,
+  clientReadyMs: PIPELINE_TIMING.clientReadyMs,
+  lineStableMs: PIPELINE_TIMING.lineWait.stableMs, lineCapMs: PIPELINE_TIMING.lineWait.capMs, leadMs: PIPELINE_TIMING.leadMs,
 };
 
 const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
@@ -102,11 +111,24 @@ const FINAL_WRITE_TIMEOUT_MS = 8_000;
 
 type Loaded = { conv: Conversation; lead: Lead; version: AgentVersion; account: SellerAccount };
 
-/** One answered turn's timings (ms) for the trace and the call's medians. */
-type TurnTimes = { listenMs: number | null; thinkMs: number; speakMs: number; totalMs: number; tools: number; chars: number };
+/**
+ * One answered turn's timings (ms) for the trace and the call's medians: listen and think for every turn that got a
+ * reply; speak and total only when its audio was sent (null when speech failed or was cut before any audio).
+ */
+type TurnTimes = { n: number; listenMs: number | null; thinkMs: number; speakMs: number | null; totalMs: number | null; tools: number; chars: number };
 
-/** What a spoken reply needs to measure itself: when its buyer line ended and when the reply text came. */
-type SpeakTurn = { messageId: string; n: number | null; speechEndAt: number | null; finalAt: number; replyAt: number; listenMs: number | null; thinkMs: number; tools: number; endAfter: VoiceEndReason | null };
+/**
+ * What a spoken line needs to measure itself: when its buyer line ended and when the reply text came. `n` null: not
+ * a buyer turn's reply (the opener, the retry line after a failed turn: `label`); `times`: the turn's entry.
+ */
+type SpeakTurn = {
+  messageId: string; n: number | null; label?: string; speechEndAt: number | null; finalAt: number; replyAt: number; listenMs: number | null; thinkMs: number; tools: number;
+  endAfter: VoiceEndReason | null; times?: TurnTimes;
+};
+
+/** Said after a failed turn instead of the error (never the agent's answer), in the call's language. */
+export const RETRY_LINE = { en: "Sorry, could you say that again?", he: "סליחה, אפשר לחזור על זה?" } as const;
+export const retryLineFor = (language: string) => (/^(he|iw)/i.test(language) ? RETRY_LINE.he : RETRY_LINE.en);
 
 export class PipelineVoiceEngine {
   readonly sessionId: string;
@@ -121,6 +143,8 @@ export class PipelineVoiceEngine {
   private readonly makeListener: () => Listener;
   private readonly mode: "live" | "scripted";
   private readonly onEnding: PipelineEngineDeps["onEnding"];
+  private readonly engineName: PipelineEngineName;
+  private readonly thinkModelId: string | undefined;
 
   private listener: Listener | null = null;
   private loaded: Loaded | null = null;
@@ -153,6 +177,10 @@ export class PipelineVoiceEngine {
   private finals: string[] = [];
   private lastFinalAt: number | null = null;
   private partial = "";
+  /** When the detector reported the speech end (the line wait runs from here); null when not waiting. */
+  private endHeardAt: number | null = null;
+  /** When the partial text last changed. */
+  private partialAt: number | null = null;
   /** A line was committed from its partial text (no final in time): its late final is dropped. */
   private dropLateFinal = false;
   private buyerSeq = 0;
@@ -186,6 +214,8 @@ export class PipelineVoiceEngine {
     this.makeListener = deps.listener;
     this.mode = deps.mode;
     this.onEnding = deps.onEnding;
+    this.engineName = deps.engine ?? PIPELINE_ENGINE;
+    this.thinkModelId = deps.thinkModel;
   }
 
   // -------------------------------------------------------------------------
@@ -240,6 +270,7 @@ export class PipelineVoiceEngine {
     if (e === "start") {
       this.speechStartMs = Math.max(0, this.offsetMs() - PIPELINE_TIMING.vad.minSpeechMs);
       this.speechEndAt = null;
+      this.endHeardAt = null;
       this.dropLateFinal = false;
       this.clearTimer("finalWait");
       this.trace("buyer speech start");
@@ -333,7 +364,7 @@ export class PipelineVoiceEngine {
 
   private fail(reason: VoiceEndReason, code: VoiceErrorCode, by?: VoiceEndBy) {
     this.errorCode = code;
-    this.log.warn(voiceLine(this.sessionId, `call failing: ${code} (${by ?? BY_REASON[reason]}) engine=${PIPELINE_ENGINE}`));
+    this.log.warn(voiceLine(this.sessionId, `call failing: ${code} (${by ?? BY_REASON[reason]}) engine=${this.engineName}`));
     this.send({ t: "error", code });
     void this.stop(reason, code, by);
   }
@@ -386,7 +417,7 @@ export class PipelineVoiceEngine {
     }
     this.loaded = { conv, lead, version, account };
     this.language = conv.language || "en";
-    this.thinkModel = version.model;
+    this.thinkModel = this.thinkModelId ?? version.model;
     this.maxSec = maxCallSeconds({ settings: version.voiceSettings, deadlineSec: this.limits.deadlineSec, env: this.limits.env });
     try {
       this.listener = this.makeListener();
@@ -402,10 +433,11 @@ export class PipelineVoiceEngine {
       this.lastError = clip(m);
       this.log.warn(voiceLine(this.sessionId, `pipeline listener: ${this.lastError}`));
     });
+    this.speaker.setLog?.((level, line) => (level === "warn" ? this.log.warn : this.log.info).call(this.log, voiceLine(this.sessionId, `trace t=${this.offsetMs()} ${line}`)));
     this.callStart = this.clock.now();
     const agentRows = await this.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))).limit(1);
-    this.log.info(voiceLine(this.sessionId, `engine=${PIPELINE_ENGINE} mode=${this.mode} listen=${listener.modelId} think=${version.model}/${version.effort} speak=${this.speaker.modelId} voice=${this.speaker.voice}`));
+    this.log.info(voiceLine(this.sessionId, `engine=${this.engineName} mode=${this.mode} listen=${listener.modelId} think=${this.thinkModel}/${version.effort} speak=${this.speaker.modelId} voice=${this.speaker.voice}`));
     await this.db.update(voiceSessions)
       .set({
         status: "live", connectedAt: new Date(this.callStart), mode: this.mode, ...(this.mode === "live" ? { model: listener.modelId } : {}),
@@ -433,8 +465,8 @@ export class PipelineVoiceEngine {
   private settingsSnapshot(): VoiceSettings {
     const version = this.loaded!.version;
     return {
-      ...version.voiceSettings, voice: this.speaker.voice, fillers: false, maxCallSec: this.maxSec, engine: PIPELINE_ENGINE,
-      pipeline: { listenModel: this.listener?.modelId ?? "", thinkModel: version.model, thinkEffort: version.effort, speakModel: this.speaker.modelId, voice: this.speaker.voice },
+      ...version.voiceSettings, voice: this.speaker.voice, fillers: false, maxCallSec: this.maxSec, engine: this.engineName,
+      pipeline: { listenModel: this.listener?.modelId ?? "", thinkModel: this.thinkModel, thinkEffort: version.effort, speakModel: this.speaker.modelId, voice: this.speaker.voice },
     } as VoiceSettings;
   }
 
@@ -467,11 +499,16 @@ export class PipelineVoiceEngine {
 
   private onPartial(text: string) {
     if (this.ended || this.pendingOpener) return;
-    this.partial = text.trim();
-    if (!this.partial) return;
+    // A trailing partial of a line already taken from its partial (the buyer is not speaking again): not a new line.
+    if (this.dropLateFinal && !this.vad.inSpeech) return;
+    const t = text.trim();
+    if (!t) return;
+    if (t !== this.partial) this.partialAt = this.clock.now();
+    this.partial = t;
     this.buyerLineId ||= `b${++this.buyerSeq}`;
     this.send({ t: "transcript", id: this.buyerLineId, role: "buyer", text: [...this.finals, this.partial].join(" "), final: false, atMs: this.offsetMs() });
     if (this.turns.state === "speaking" && this.partial.split(/\s+/).filter(Boolean).length >= PIPELINE_TIMING.bargeInWords) this.bargeIn("partial");
+    if (this.endHeardAt !== null) this.lineWait();
   }
 
   private onFinal(text: string) {
@@ -488,24 +525,52 @@ export class PipelineVoiceEngine {
     this.lastFinalAt = this.clock.now();
     this.trace(`final transcript len=${t.length}${this.speechEndAt !== null ? ` +${Math.round(this.clock.now() - this.speechEndAt)}ms after speech end` : ""}`);
     // The buyer is still speaking: more of the line may come; it is committed when the speech ends.
-    if (!this.vad.inSpeech) this.commitBuyer(null, false);
+    if (this.vad.inSpeech) return;
+    if (this.endHeardAt !== null) this.trace(`transcript final after ${Math.round(this.clock.now() - this.endHeardAt)}ms`);
+    this.commitBuyer(null, false);
   }
 
-  /** The local detector heard the buyer stop (endSilenceMs of quiet): commit what was heard, or wait for the final. */
+  /**
+   * The local detector heard the buyer stop (endSilenceMs of quiet): the listener is asked to finalise the utterance
+   * (endUtterance), then the line is committed from the final as soon as it comes, else from the partial once it has
+   * been unchanged for lineStableMs, and in any case after lineCapMs (lineWait).
+   */
   private onSpeechEnd() {
-    this.speechEndAt = this.clock.now() - PIPELINE_TIMING.vad.endSilenceMs;
+    const now = this.clock.now();
+    this.speechEndAt = now - PIPELINE_TIMING.vad.endSilenceMs;
+    this.endHeardAt = now;
     this.trace("buyer speech end");
-    if (this.finals.length) return this.commitBuyer(null, false);
-    this.timer("finalWait", this.limits.finalWaitMs, () => {
-      if (this.finals.length) return this.commitBuyer(null, false);
-      if (this.partial) {
-        this.trace(`no final transcript within ${this.limits.finalWaitMs}ms: the partial is the line`);
-        this.dropLateFinal = true;
-        return this.commitBuyer(null, false);
-      }
-      this.trace("speech without a transcript (noise)");
+    try {
+      this.listener?.endUtterance?.();
+    } catch (e) {
+      this.log.warn(voiceLine(this.sessionId, `pipeline listener endUtterance failed: ${errorSummary(e)}`));
+    }
+    if (this.finals.length) {
+      this.trace("transcript final after 0ms");
+      return this.commitBuyer(null, false);
+    }
+    this.lineWait();
+  }
+
+  /** Decides (or re-arms the wait) after a speech end without a final: the stable partial, the cap, or noise. */
+  private lineWait() {
+    if (this.endHeardAt === null || this.ended) return;
+    const now = this.clock.now();
+    const waited = Math.round(now - this.endHeardAt);
+    const capLeft = this.limits.lineCapMs - waited;
+    const stableLeft = this.limits.lineStableMs - (now - Math.max(this.endHeardAt, this.partialAt ?? this.endHeardAt));
+    if (this.partial && (stableLeft <= 0 || capLeft <= 0)) {
+      this.trace(`partial used after ${waited}ms${stableLeft > 0 ? " (cap)" : ""}`);
+      this.dropLateFinal = true;
+      return this.commitBuyer(null, false);
+    }
+    if (capLeft <= 0) {
+      this.trace(`speech without a transcript (noise) after ${waited}ms`);
       this.speechEndAt = null;
-    });
+      this.endHeardAt = null;
+      return;
+    }
+    this.timer("finalWait", Math.max(1, Math.ceil(this.partial ? Math.min(stableLeft, capLeft) : capLeft)), () => this.lineWait());
   }
 
   /** A buyer line is complete: `typed` text, or what the listener heard (`text` null). */
@@ -518,8 +583,10 @@ export class PipelineVoiceEngine {
     if (!typed) {
       this.finals = [];
       this.partial = "";
+      this.partialAt = null;
       this.lastFinalAt = null;
       this.speechEndAt = null;
+      this.endHeardAt = null;
       this.speechStartMs = null;
       this.clearTimer("finalWait");
     }
@@ -547,13 +614,31 @@ export class PipelineVoiceEngine {
   private runTurn(line: BuyerLine) {
     const n = ++this.turnSeq;
     const prev = this.running ?? Promise.resolve();
-    this.running = prev.then(() => this.think(line, n)).catch((e) => {
-      (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `pipeline turn ${n} failed: ${errorSummary(e)}`));
-      if (!this.ended) {
-        this.turns.replied(false);
-        this.setState("listening");
-      }
-    });
+    this.running = prev.then(() => this.think(line, n)).catch(async (e) => {
+      // Nothing of the error is spoken: a short neutral line asks the buyer to say it again, then listening.
+      const kind = e instanceof Error ? e.name : "error";
+      this.lastError = clip(`pipeline turn failed: ${kind}`);
+      (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `pipeline turn failed: ${kind} (turn=${n} think=${this.thinkModel}): ${errorSummary(e)}`));
+      await this.sayRetryLine(n);
+    }).catch((e) => this.log.warn(voiceLine(this.sessionId, `pipeline retry line failed: ${errorSummary(e)}`)));
+  }
+
+  /**
+   * After a failed turn (a model error, a timeout): never the error text. A short neutral line in the call's language
+   * (RETRY_LINE), not stored as an agent message, then listening (or the next queued line).
+   */
+  private async sayRetryLine(n: number) {
+    if (this.ended) return;
+    if (this.turns.state !== "thinking") {
+      this.setState("listening");
+      return;
+    }
+    const text = retryLineFor(this.language);
+    this.turns.replied(true);
+    this.trace(`turn=${n} retry line said instead of the failed turn len=${text.length}`);
+    this.send({ t: "transcript", id: `retry-${this.sessionId.slice(0, 8)}-${n}`, role: "agent", text, final: true, atMs: this.offsetMs() });
+    const now = this.clock.now();
+    await this.speakTurn(text, { messageId: "", n: null, label: `turn=${n} retry`, speechEndAt: null, finalAt: now, replyAt: now, listenMs: null, thinkMs: 0, tools: 0, endAfter: null });
   }
 
   private async think(line: BuyerLine, n: number) {
@@ -577,7 +662,14 @@ export class PipelineVoiceEngine {
       if (result.status === "in_call") {
         this.log.warn(voiceLine(this.sessionId, "pipeline turn refused by the one-agent block (in_call): the chat turn needs this call's callSessionId (lib/voice-pipeline/turn.ts PIPELINE-HOOK)"));
       } else if (result.status === "error") {
-        this.lastError = clip(result.error);
+        // The chat turn failed (a model error, a timeout): it stored its "The agent could not reply" system line in
+        // the thread; that line is never spoken. The engine says the neutral retry line and listens again.
+        this.lastError = clip(`pipeline turn failed: ${result.error}`);
+        this.log.warn(voiceLine(this.sessionId, `pipeline turn failed: ${result.error} (turn=${n} think=${this.thinkModel} after ${thinkMs}ms): the retry line is said, then listening`));
+        return this.sayRetryLine(n);
+      } else {
+        // A gate in the chat turn (a closed or handed-off conversation, a paused account, the platform AI budget).
+        this.log.warn(voiceLine(this.sessionId, `pipeline turn not answered: status=${result.status} (turn=${n} think=${this.thinkModel}): nothing spoken`));
       }
       if (this.ended) return;
       const next = this.turns.replied(false);
@@ -594,9 +686,12 @@ export class PipelineVoiceEngine {
     const [after] = await this.db.select({ status: conversations.status }).from(conversations).where(eq(conversations.id, conv.id));
     const endAfter: VoiceEndReason | null = after?.status === "closed" ? "opt_out" : after?.status === "human" ? "handoff" : null;
     if (this.ended) return this.markUnspoken(result.messageId, "the call ended while thinking");
-    this.trace(`turn=${n} reply len=${result.text.length} print=${textPrint(result.text)} think=${thinkMs}ms tools=${result.calls}`);
+    this.trace(`turn=${n} reply len=${result.text.length} print=${textPrint(result.text)} think=${thinkMs}ms tools=${result.calls} model=${this.thinkModel}`);
     if (this.turns.replied(true) !== null) return this.markUnspoken(result.messageId, "not in a thinking turn");
-    await this.speakTurn(result.text, { messageId: result.messageId, n, speechEndAt: line.speechEndAt, finalAt: line.finalAt, replyAt, listenMs, thinkMs, tools: result.calls, endAfter });
+    // The turn counts from here (listen, think), spoken or not; speak and total are set at its first audio.
+    const times: TurnTimes = { n, listenMs, thinkMs, speakMs: null, totalMs: null, tools: result.calls, chars: 0 };
+    this.times.push(times);
+    await this.speakTurn(result.text, { messageId: result.messageId, n, speechEndAt: line.speechEndAt, finalAt: line.finalAt, replyAt, listenMs, thinkMs, tools: result.calls, endAfter, times });
   }
 
   // -------------------------------------------------------------------------
@@ -615,11 +710,13 @@ export class PipelineVoiceEngine {
     let chars = 0;
     // Prefetch: each sentence's audio is collected as soon as its synthesis starts.
     const starts: Prefetch[] = [];
+    // A sentence's characters count (cost, figures) once its synthesis produced audio: a failed attempt costs nothing.
     const startSentence = (i: number) => {
       if (i >= sentences.length || starts[i]) return;
-      chars += sentences[i].length;
-      this.spokenChars += sentences[i].length;
-      starts[i] = prefetch(this.speaker.speak(sentences[i], { language }));
+      starts[i] = prefetch(this.speaker.speak(sentences[i], { language }), () => {
+        chars += sentences[i].length;
+        this.spokenChars += sentences[i].length;
+      });
     };
     try {
       for (let i = 0; i < sentences.length; i++) {
@@ -643,7 +740,10 @@ export class PipelineVoiceEngine {
       }
     } catch (e) {
       this.lastError = clip(e instanceof Error ? e.message : e);
-      this.log.warn(voiceLine(this.sessionId, `pipeline speech failed (model ${this.speaker.modelId}, voice ${this.speaker.voice}): ${this.lastError}; if the voice is refused, set PIPELINE_VOICE in lib/voice-pipeline/models.ts`));
+      // A speaker chain logs its own failures (each attempt, and once when none works): not again here.
+      if (!(e as { alreadyLogged?: boolean })?.alreadyLogged) {
+        this.log.warn(voiceLine(this.sessionId, `pipeline speech failed (model ${this.speaker.modelId}, voice ${this.speaker.voice}): ${this.lastError}; if the voice is refused, set PIPELINE_VOICE in lib/voice-pipeline/models.ts`));
+      }
       this.speaker.cancel();
       speechFailed = true;
     } finally {
@@ -654,8 +754,12 @@ export class PipelineVoiceEngine {
         await this.markUnspoken(t.messageId, why);
       }
     }
+    if (!firstAudio && t.times) {
+      // The turn still counts (listen, think): its speak and total stay empty.
+      this.trace(`turn=${t.n} listen=${t.listenMs ?? "-"}ms think=${t.thinkMs}ms tools=${t.tools} speak=- total=- chars=0 model=${this.thinkModel}`);
+    }
     if (gen !== this.speakGen) return;
-    if (!firstAudio) this.trace(`turn=${t.n ?? "opener"} said nothing (chars=${chars})`);
+    if (!firstAudio) this.trace(`${t.label ?? `turn=${t.n ?? "opener"}`} said nothing (chars=${chars})`);
     // The browser plays what was sent: speaking until the playhead, then the next line (or listening).
     const left = Math.max(0, this.playheadAt - this.clock.now());
     if (left > 0) await this.wait(left);
@@ -678,14 +782,14 @@ export class PipelineVoiceEngine {
 
   private onFirstAudio(t: SpeakTurn, now: number, chars: number) {
     const speakMs = Math.max(0, Math.round(now - t.replyAt));
-    if (t.n === null) {
-      this.trace(`opener first audio +${speakMs}ms chars=${chars}`);
+    if (t.n === null || !t.times) {
+      this.trace(`${t.label ?? "opener"} first audio +${speakMs}ms chars=${chars}`);
       return;
     }
     const from = t.speechEndAt ?? t.finalAt;
     const totalMs = Math.max(0, Math.round(now - from));
-    this.times.push({ listenMs: t.listenMs, thinkMs: t.thinkMs, speakMs, totalMs, tools: t.tools, chars });
-    this.trace(`turn=${t.n} listen=${t.listenMs ?? "-"}ms think=${t.thinkMs}ms tools=${t.tools} speak=${speakMs}ms total=${totalMs}ms chars=${chars}`);
+    Object.assign(t.times, { speakMs, totalMs, chars });
+    this.trace(`turn=${t.n} listen=${t.listenMs ?? "-"}ms think=${t.thinkMs}ms tools=${t.tools} speak=${speakMs}ms total=${totalMs}ms chars=${chars} model=${this.thinkModel}`);
     void this.db.update(messages).set({ spokenAtMs: this.offsetMs(), answerMs: totalMs }).where(eq(messages.id, t.messageId))
       .catch((e) => this.log.warn(voiceLine(this.sessionId, `spoken time not stored: ${errorSummary(e)}`)));
   }
@@ -730,11 +834,13 @@ export class PipelineVoiceEngine {
     return {
       listenModel: this.listener?.modelId ?? "", thinkModel: this.thinkModel, speakModel: this.speaker.modelId,
       listenSec, spokenChars: this.spokenChars, listenCostMicros: live ? cost.listen : 0, speakCostMicros: live ? cost.speak : 0,
+      // Every answered turn counts (listen, think); speak and total only those whose audio was sent.
       turns: this.times.length,
-      medianAnswerMs: median(this.times.map((x) => x.totalMs)),
+      spokenTurns: this.times.filter((x) => x.totalMs !== null).length,
+      medianAnswerMs: median(this.times.flatMap((x) => (x.totalMs === null ? [] : [x.totalMs]))),
       medianListenMs: median(this.times.flatMap((x) => (x.listenMs === null ? [] : [x.listenMs]))),
       medianThinkMs: median(this.times.map((x) => x.thinkMs)),
-      medianSpeakMs: median(this.times.map((x) => x.speakMs)),
+      medianSpeakMs: median(this.times.flatMap((x) => (x.speakMs === null ? [] : [x.speakMs]))),
       bargeIns: this.bargeIns,
     };
   }
@@ -746,7 +852,7 @@ export class PipelineVoiceEngine {
       audioInTokens: 0, audioOutTokens: 0, textInTokens: 0, textOutTokens: 0, cachedInTokens: 0,
       ...(endDetail ? { endDetail } : {}), pipeline,
     } as VoiceUsage;
-    const totals = this.times.map((x) => x.totalMs);
+    const totals = this.times.flatMap((x) => (x.totalMs === null ? [] : [x.totalMs]));
     const answerMsAvg = totals.length ? Math.round(totals.reduce((a, b) => a + b, 0) / totals.length) : null;
     return { durationSec, costMicros: pipeline.listenCostMicros + pipeline.speakCostMicros, usage, answerMsAvg };
   }
@@ -802,8 +908,8 @@ export class PipelineVoiceEngine {
     const f = this.figures(endDetail);
     const p = (f.usage as VoiceUsage & { pipeline: PipelineUsage }).pipeline;
     const ms = (v: number | null) => (v === null ? "-" : `${v}ms`);
-    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} pipeline summary turns=${p.turns} median answer=${ms(p.medianAnswerMs)} listen=${ms(p.medianListenMs)} think=${ms(p.medianThinkMs)} speak=${ms(p.medianSpeakMs)} chars=${p.spokenChars} listenSec=${p.listenSec} bargeIns=${p.bargeIns} costMicros=${f.costMicros} (listen ${p.listenCostMicros} + speak ${p.speakCostMicros}; thinking is on the chat rows)`));
-    this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${f.durationSec} by=${endDetail.by}${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""} engine=${PIPELINE_ENGINE}`));
+    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} pipeline summary turns=${p.turns} spoken=${p.spokenTurns ?? p.turns} median answer=${ms(p.medianAnswerMs)} listen=${ms(p.medianListenMs)} think=${ms(p.medianThinkMs)} speak=${ms(p.medianSpeakMs)} chars=${p.spokenChars} listenSec=${p.listenSec} bargeIns=${p.bargeIns} speakModel=${p.speakModel || "-"} costMicros=${f.costMicros} (listen ${p.listenCostMicros} + speak ${p.speakCostMicros}; thinking is on the chat rows) think=${p.thinkModel || "-"}`));
+    this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${f.durationSec} by=${endDetail.by}${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""} engine=${this.engineName}`));
     const set = { status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec: f.durationSec, usage: f.usage, costMicros: f.costMicros, answerMsAvg: f.answerMsAvg };
     const where = this.endedExternally
       ? and(eq(voiceSessions.id, this.sessionId), sql`coalesce(${voiceSessions.usage}->'endDetail'->>'by', '') <> 'relay_gone'`)
@@ -836,7 +942,7 @@ export class PipelineVoiceEngine {
 /** A speech stream consumed into a buffer as soon as it starts (the next sentence synthesizes while this one plays). */
 type Prefetch = { chunks(): AsyncIterable<Uint8Array>; stop(): void };
 
-function prefetch(source: AsyncIterable<Uint8Array>): Prefetch {
+function prefetch(source: AsyncIterable<Uint8Array>, onFirst?: () => void): Prefetch {
   const buf: Uint8Array[] = [];
   let done = false;
   let error: unknown = null;
@@ -849,8 +955,13 @@ function prefetch(source: AsyncIterable<Uint8Array>): Prefetch {
   };
   void (async () => {
     try {
+      let first = true;
       for await (const c of source) {
         if (stopped) break;
+        if (first && c.byteLength) {
+          first = false;
+          onFirst?.();
+        }
         buf.push(c);
         notify();
       }

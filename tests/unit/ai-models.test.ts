@@ -40,6 +40,14 @@ describe("prices", () => {
     }
   });
 
+  it("Gemini 3.8 Flash (the voice pipeline's thinking model, via the AI Gateway) is priced; implicit caching has no write charge", async () => {
+    const { PIPELINE_TEXT_MODEL, PIPELINE_TEXT_PRICE } = await import("@/lib/voice-pipeline/gateway-llm");
+    expect(DEFAULT_PRICES["google/gemini-3.8-flash"]).toEqual({ input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite5m: 0, cacheWrite1h: 0 });
+    expect(DEFAULT_PRICES[PIPELINE_TEXT_MODEL]).toEqual(PIPELINE_TEXT_PRICE);
+    // 1M uncached input + 1M output + 1M cache reads = $0.75 + $3.75 + $0.075.
+    expect(estimateCostMicros(PIPELINE_TEXT_MODEL, { inputTokens: 1_000_000, outputTokens: 1_000_000, cacheReadTokens: 1_000_000 }, priceTable({}))).toBe(4_575_000);
+  });
+
   it("estimates cost in USD micros from every token type", () => {
     const prices = priceTable({});
     // 1M input at $4 + 100k output at $20 + 1M cache read at $0.20 + 200k 5m writes at $5 = 4 + 2 + 0.2 + 1 = $7.20
