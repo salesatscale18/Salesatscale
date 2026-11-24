@@ -251,5 +251,8 @@ describe("the speed settings (models.ts)", () => {
   it("the spoken_reply argument's description (provisional): one line, names when to leave it null", () => {
     expect(PIPELINE_CALL_REPLY_ARG_DESCRIPTION).toBe("What you say to the buyer now, when recording is all you need to do this turn. Leave null when you need another tool or its result first.");
     expect(PIPELINE_CALL_REPLY_ARG_DESCRIPTION).not.toMatch(/[\r\n]/);
+    // The chat turn caps the description at 400 characters: ours fits whole.
+    expect(PIPELINE_CALL_REPLY_ARG_DESCRIPTION.trim().length).toBeGreaterThan(0);
+    expect(PIPELINE_CALL_REPLY_ARG_DESCRIPTION.length).toBeLessThan(400);
   });
 });

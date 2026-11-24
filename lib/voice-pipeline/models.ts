@@ -168,8 +168,8 @@ export const PIPELINE_FILLER = { afterMs: 3_000, afterPreviousMs: 6_000, text: {
 export const fillerTextFor = (language: string) => (/^(he|iw)/i.test(language) ? PIPELINE_FILLER.text.he : PIPELINE_FILLER.text.en);
 
 /**
- * The per-turn context line of a call turn (replyToBuyer's `callContextLine`, once the chat lane accepts it:
- * lib/voice-pipeline/turn.ts PIPELINE-HOOK). The wording is PROVISIONAL (test lab only, awaiting the owner's
+ * The per-turn context line of a call turn (replyToBuyer's `callContextLine`, passed by lib/voice-pipeline/turn.ts
+ * makeCallTurn). The wording is PROVISIONAL (test lab only, awaiting the owner's
  * confirmation). An empty string switches it off. One line, under 600 characters.
  */
 export const PIPELINE_CALL_CONTEXT_LINE =
@@ -177,7 +177,7 @@ export const PIPELINE_CALL_CONTEXT_LINE =
 
 /**
  * The description of update_deal_state's optional `spoken_reply` argument on a call turn (replyToBuyer's
- * `callReplyArgDescription`, once the chat lane accepts it: lib/voice-pipeline/turn.ts PIPELINE-HOOK). With it, a
+ * `callReplyArgDescription`, passed by lib/voice-pipeline/turn.ts makeCallTurn; capped at 400 characters there). With it, a
  * response that is only update_deal_state call(s) with a non-empty spoken_reply ends the turn in one round with that
  * text. The wording is PROVISIONAL (test lab only, awaiting the owner's confirmation). An empty string switches it off.
  */

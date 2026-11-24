@@ -25,23 +25,23 @@ export const PIPELINE_TURN_TRIGGER = "pipeline call";
  * Runs the chat turn for a buyer line this call already stored (the buyer row is the caller's: buyerMessageStored).
  * Transport null: a test-lab conversation sends nothing anywhere; the reply is the chat row it stores.
  * `replyArgDescription`: update_deal_state's spoken_reply description (models.ts PIPELINE_CALL_REPLY_ARG_DESCRIPTION,
- * PROVISIONAL), ready in `replyArg` for when replyToBuyer accepts `callReplyArgDescription` (the PIPELINE-HOOK line).
+ * PROVISIONAL), passed as replyToBuyer's `callReplyArgDescription` (left out when empty: no spoken_reply argument).
+ * With it, a response of update_deal_state calls only, no text and a non-empty spoken_reply ends the turn in one
+ * model round with that text (lib/agent/call-reply.ts).
  */
 export function makeCallTurn(contextLine: string = PIPELINE_CALL_CONTEXT_LINE, replyArgDescription: string = PIPELINE_CALL_REPLY_ARG_DESCRIPTION): CallTurnFn {
   const replyArg = callReplyArgOption(replyArgDescription);
   return async (db, llm, a) => {
     // Transport null: nothing is delivered anywhere. callSessionId: this call's own turn passes the one-agent block, and
     // the chat turn stamps its reply with the session (never spokenAtMs/answerMs: the engine sets those when it speaks).
-    const options = callTurnOptions(a.callSessionId, contextLine);
-    // PIPELINE-HOOK: pass callReplyArgDescription once replyToBuyer accepts it (the flip: `options` → `{ ...options, ...replyArg }`)
-    void replyArg;
+    const options = { ...callTurnOptions(a.callSessionId, contextLine), ...replyArg };
     const out = await replyToBuyer(db, llm, null, { accountId: a.accountId, conversationId: a.conversationId, leadId: a.leadId, text: a.text }, options);
     return out.turn;
   };
 }
 
 /**
- * replyToBuyer's future `callReplyArgDescription` option for a call turn: the description of update_deal_state's
+ * replyToBuyer's `callReplyArgDescription` option for a call turn: the description of update_deal_state's
  * optional spoken_reply argument (models.ts PIPELINE_CALL_REPLY_ARG_DESCRIPTION, PROVISIONAL wording); the property
  * is left out when the description is empty (off).
  */

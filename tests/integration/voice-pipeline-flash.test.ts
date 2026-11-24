@@ -355,11 +355,64 @@ describe("pipeline engine on Gemini Flash (fake gateway model)", () => {
     expect(summary?.pipeline?.thinkModel).toBe(PIPELINE_TEXT_MODEL_LITE);
   });
 
-  it("the spoken_reply description (provisional) is ready for the chat turn; empty switches it off", () => {
+  it("the spoken_reply description (provisional) goes to the chat turn; empty switches it off", () => {
     expect(callReplyArgOption(PIPELINE_CALL_REPLY_ARG_DESCRIPTION)).toEqual({ callReplyArgDescription: PIPELINE_CALL_REPLY_ARG_DESCRIPTION });
     expect(callReplyArgOption("  ")).toEqual({});
-    // Not passed to replyToBuyer yet (turn.ts PIPELINE-HOOK): the options carry no callReplyArgDescription today.
-    expect("callReplyArgDescription" in callTurnOptions("sess", PIPELINE_CALL_CONTEXT_LINE)).toBe(false);
+  });
+
+  /** A fake Gemini model answering with ONLY update_deal_state (no text), spoken_reply as given, then (2nd round) `next`. */
+  const spokenArgModel = (spoken: string | null, next = "Noted. How many sites do you run?") => new MockLanguageModelV4({
+    provider: "gateway", modelId: PIPELINE_TEXT_MODEL,
+    doGenerate: [
+      result([toolCall("g1", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }], next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null, spoken_reply: spoken })], "tool-calls"),
+      result([{ type: "text", text: next }], "stop"),
+    ],
+  });
+  const udsSchemaOf = (model: InstanceType<typeof MockLanguageModelV4>, i = 0) =>
+    (model.doGenerateCalls[i].tools!.find((x) => (x as { name: string }).name === "update_deal_state") as { inputSchema: { properties: Record<string, unknown>; required: string[] } }).inputSchema;
+
+  it("update_deal_state only, with spoken_reply: ONE model call, that text spoken, rounds=1 and oneRound=1/1; the tool row has no spoken_reply", async () => {
+    const SPOKEN = "A cafe, great. How many sites do you run?";
+    const model = spokenArgModel(SPOKEN);
+    const c = await startCall("pipeline", (v, env) => pipelineLlmFor(v, env, { model, timeoutMs: 15_000, maxRetries: 1 }));
+    const openerSaid = c.speaker.said.length;
+    await c.type("We run a cafe.");
+    await c.end();
+    expect(model.doGenerateCalls).toHaveLength(1);
+    // The default call turn sent the argument (nullable, required) with our description, and the context line.
+    expect(udsSchemaOf(model).properties.spoken_reply).toEqual({ type: "string", nullable: true, description: PIPELINE_CALL_REPLY_ARG_DESCRIPTION });
+    expect(udsSchemaOf(model).required).toContain("spoken_reply");
+    expect(systemOf(model)).toContain(PIPELINE_CALL_CONTEXT_LINE);
+    expect(c.speaker.said.slice(openerSaid).map((x) => x.text).join(" ")).toBe(spokenForm(SPOKEN));
+    const rows = await db.select().from(messages).where(eq(messages.conversationId, c.conv.conversationId));
+    const reply = rows.find((m) => m.body === SPOKEN)!;
+    expect(reply).toMatchObject({ actor: "agent", voiceSessionId: c.s.sessionId });
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.messageId, reply.id));
+    expect(calls.map((x) => [x.name, x.outcome])).toEqual([["update_deal_state", "ok"]]);
+    expect(calls[0].input).toHaveProperty("updates");
+    expect(calls[0].input).not.toHaveProperty("spoken_reply");
+    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=\d+ms rounds=1 roundsMs=\d+ other=\d+ms tools=1 /.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline summary .* rounds\/turn=1 oneRound=1\/1 /.test(l))).toBe(true);
+  });
+
+  it("update_deal_state with spoken_reply null: the normal next round runs (two model calls), its text is spoken", async () => {
+    const NEXT = "Noted. How many sites do you run?";
+    const model = spokenArgModel(null, NEXT);
+    const c = await startCall("pipeline", (v, env) => pipelineLlmFor(v, env, { model, timeoutMs: 15_000, maxRetries: 1 }));
+    const openerSaid = c.speaker.said.length;
+    await c.type("We run a cafe.");
+    await c.end();
+    expect(model.doGenerateCalls).toHaveLength(2);
+    expect(c.speaker.said.slice(openerSaid).map((x) => x.text).join(" ")).toBe(spokenForm(NEXT));
+    expect(c.lines.some((l) => /pipeline summary .* rounds\/turn=2 oneRound=0\/1 /.test(l))).toBe(true);
+  });
+
+  it("the description empty: no spoken_reply argument reaches the model", async () => {
+    const model = oneRoundModel("A cafe, noted. How many sites?");
+    const c = await startCall("pipeline", (v, env) => pipelineLlmFor(v, env, { model, timeoutMs: 15_000, maxRetries: 1 }), makeCallTurn(PIPELINE_CALL_CONTEXT_LINE, ""));
+    await c.type("We run a cafe.");
+    await c.end();
+    expect(udsSchemaOf(model).properties).not.toHaveProperty("spoken_reply");
   });
 
   it("the call's context line empty: the property is not passed and nothing reaches the model", async () => {
