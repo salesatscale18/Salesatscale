@@ -46,14 +46,14 @@ import { usdRate } from "@/lib/ai/models";
 import { INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
 import { barView, endDetailText } from "@/lib/voice/client/view";
 import { callClock, callLimitShort, voiceLabAccess, voiceSettingsSummary } from "@/lib/voice/lab";
-import { conversationVoiceModes, voiceSessionSummary } from "@/lib/voice/service";
+import { conversationVoiceModes, voiceSessionSummaries } from "@/lib/voice/service";
 import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceModelChoices } from "@/lib/voice/model-choices";
 import { ResultChip } from "./result-chip";
 import { countChanges } from "@/lib/agent/version-compare";
 import { statusDef } from "@/lib/domain/status";
 import { classicModelId } from "@/lib/voice-classic/settings";
-import { engineLabelKey, engineLabelVars, sessionEngine } from "@/lib/voice-classic/engine-choice";
+import { engineLabelKey, engineLabelVars, isPipelineEngine, sessionEngine } from "@/lib/voice-classic/engine-choice";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
@@ -101,10 +101,13 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // Voice calls (release 1): platform admins only, and only while VOICE_REALTIME is not off. Checked here, on the server.
   const voice = voiceLabAccess(user) === "ok";
   const onVoice = conv?.channel === "voice";
-  const [voiceSummary, voiceModes] = await Promise.all([
-    onVoice && conv ? voiceSessionSummary(appDb, account.id, conv.id) : Promise.resolve(null),
+  const [voiceSummaries, voiceModes] = await Promise.all([
+    onVoice && conv ? voiceSessionSummaries(appDb, account.id, conv.id) : Promise.resolve([]),
     conversationVoiceModes(appDb, account.id, chats.filter((c) => c.channel === "voice").map((c) => c.id)),
   ]);
+  const voiceSummary = voiceSummaries[0] ?? null;
+  // Calls on a pipeline engine are never recorded (test only): their call block says so, not as a failure.
+  const pipelineCalls = new Set(voiceSummaries.filter((v) => isPipelineEngine(v.engine)).map((v) => v.sessionId));
   const fx = { currency: account.currency, minorPerUsd: minorPerUsd(usdRate(account.currency)) };
   const usageHref = `${base}/settings`;
   const waWindow = onWhatsapp && conv && conv.status !== "closed" ? await conversationWindow(appDb, account.id, conv.id) : null;
@@ -132,7 +135,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   let pendingMarkers = timedMarkers;
   // A call since recordings exist: its block (header and player); its lines stay in the thread with their steps.
   const markerNode = (mk: ThreadMarker, key: string) => isCallBlock(mk)
-    ? <CallBlockEntry key={key} marker={mk} lines={thread.filter(({ message: m }) => m.voiceSessionId === mk.call.sessionId).map(({ message: m }) => m)} slug={slug} back={conv ? `${lab}?c=${conv.id}` : lab} buyer={t("lab.who.buyer")} zone={viewerZone ?? tz} linesInBlock={false} canDelete={mayDeleteRecordings(access)} />
+    ? <CallBlockEntry key={key} marker={mk} lines={thread.filter(({ message: m }) => m.voiceSessionId === mk.call.sessionId).map(({ message: m }) => m)} slug={slug} back={conv ? `${lab}?c=${conv.id}` : lab} buyer={t("lab.who.buyer")} zone={viewerZone ?? tz} linesInBlock={false} canDelete={mayDeleteRecordings(access)} pipeline={pipelineCalls.has(mk.call.sessionId)} />
     : <MarkerEntry key={key} marker={mk} meId={user.id} time={local(mk.at)} timeTitle={zoneTitle(mk.at, tz)} viewerZone={viewerZone} />;
   // R5-14: the chat started with its first message (a seeded or imported chat can be older than its row).
   const chatStarted = conv ? new Date(Math.min(conv.createdAt.getTime(), ...thread.map((x) => x.message.createdAt.getTime()))) : new Date();

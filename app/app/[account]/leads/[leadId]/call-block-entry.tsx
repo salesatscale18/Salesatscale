@@ -33,17 +33,19 @@ function strings(): CallBlockStrings {
  * audio is kept (the account-checked route under /app/<slug>/calls), and the call's lines with their times in
  * the call. `linesInBlock` false: the lines stay in the thread (the test lab, where each carries its steps).
  */
-export function CallBlockEntry({ marker, lines, cards = [], slug, back, buyer, zone, linesInBlock = true, canDelete = false }: {
+export function CallBlockEntry({ marker, lines, cards = [], slug, back, buyer, zone, linesInBlock = true, canDelete = false, pipeline = false }: {
   marker: CallMarker; lines: CallLineSource[]; cards?: CallCardSource[]; slug: string; back: string; buyer: string; zone: string | null; linesInBlock?: boolean;
   /** Account admins (lib/voice/recording-playback.ts mayDeleteRecordings): "Delete recording…" in the ⋯ menu. */
   canDelete?: boolean;
+  /** A test-lab call on a pipeline engine (lib/voice-pipeline): never recorded by design, said so ("Not recorded (pipeline test)"). */
+  pipeline?: boolean;
 }) {
   const c = marker.call;
   const range = `${formatDayIn(c.connectedAt, zone)} ${formatClockIn(c.connectedAt, zone)}–${formatClockIn(marker.at, zone)}`;
   const meta = [range, c.model && c.model !== "scripted" ? voiceModelLabel(c.model) : null].filter(Boolean).join(" · ");
   const stateText = c.state === "saved" ? t("conv.call.recorded") : c.state === "deleted"
     ? (c.keepDays ? t("conv.call.deleted_kept", { days: c.keepDays }) : t("conv.call.deleted"))
-    : t("conv.call.not_recorded");
+    : pipeline ? t("conv.call.not_recorded_pipeline") : t("conv.call.not_recorded");
   const blockLines: CallBlockLine[] = lines
     .filter((l) => l.spokenAtMs !== null && (l.actor === "agent" || l.actor === "buyer"))
     .map((l) => ({ id: l.id, atMs: l.spokenAtMs ?? 0, actor: l.actor as "agent" | "buyer", who: l.actor === "agent" ? t("conv.who.agent") : buyer, text: l.body, typed: !!l.typedInCall, steps: l.steps, seq: l.seq }));
@@ -53,7 +55,7 @@ export function CallBlockEntry({ marker, lines, cards = [], slug, back, buyer, z
     <CallBlock
       title={t("conv.call.title", { length: callLength(marker.durationSec, t) })}
       state={c.state} stateText={stateText} meta={meta}
-      note={c.state === "deleted" ? t("conv.call.deleted_note") : c.state === "not_recorded" ? t("conv.call.not_recorded_note") : undefined}
+      note={c.state === "deleted" ? t("conv.call.deleted_note") : c.state === "not_recorded" && !pipeline ? t("conv.call.not_recorded_note") : undefined}
       lines={blockLines} cards={blockCards} linesInBlock={linesInBlock} durationSec={c.recordingSec ?? c.durationSec}
       audioSrc={c.state === "saved" ? base : undefined} downloadHref={c.state === "saved" ? `${base}?download=1` : undefined}
       deleteForm={c.state === "saved" && canDelete ? { action: deleteRecordingAction, slug, sessionId: c.sessionId, back } : undefined}

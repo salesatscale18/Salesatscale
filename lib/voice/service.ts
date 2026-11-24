@@ -15,7 +15,7 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
-import { isGuardedEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGuardedEngine, isPipelineEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
 import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
@@ -106,8 +106,9 @@ export async function createVoiceSession(
     // A test-lab call on "Classic + guards" or its silent probe (lib/voice-guarded): stored on the session; any voice
     // model, as Current.
     ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
-    // A test-lab call on the pipeline proof (lib/voice-pipeline: listen, think, speak): stored on the session.
-    ...(opts.engine === "pipeline" && a.isTest ? { settings: { engine: "pipeline" } as VoiceSettings } : {}),
+    // A test-lab call on a pipeline engine (lib/voice-pipeline: listen, think, speak; Gemini Flash or the chat model
+    // thinking): stored on the session.
+    ...(opts.engine && isPipelineEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }

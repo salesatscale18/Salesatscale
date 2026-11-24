@@ -2,7 +2,7 @@ import { t } from "@/lib/i18n";
 import { answerSpeedText, callClock } from "@/lib/voice/lab";
 import { costText, endReasonText, errorText, type CostFormat } from "@/lib/voice/client/view";
 import type { CallVoiceInfo } from "@/lib/voice/settings";
-import type { PipelineCallInfo } from "@/lib/voice-pipeline/summary";
+import { thinkModelLabel, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
 
 /** "Puck" / "Model default" / "Not recorded" (an older call). */
 export function callVoiceText(voice: CallVoiceInfo["voice"]): string {
@@ -78,10 +78,13 @@ export function VoiceCallStats({
         {pipeline ? (
           <>
             <dt>{t("voice.stats.pipeline_listen")}</dt><dd data-voice-pipeline-listen="">{pipeline.listenModel || "—"}</dd>
-            <dt>{t("voice.stats.pipeline_think")}</dt><dd data-voice-pipeline-think="">{pipeline.thinkModel || "—"}</dd>
+            <dt>{t("voice.stats.pipeline_think")}</dt><dd data-voice-pipeline-think="" title={pipeline.thinkModel || undefined}>{thinkModelLabel(pipeline.thinkModel) || "—"}</dd>
             <dt>{t("voice.stats.pipeline_speak")}</dt><dd data-voice-pipeline-speak="">{pipeline.speakModel || "—"}</dd>
             <dt>{t("voice.stats.pipeline_median")}</dt>
             <dd className="sas-num" data-voice-pipeline-median="">{pipeline.medianAnswerMs === null ? "—" : answerSpeedText(pipeline.medianAnswerMs)}</dd>
+            {/* Thinking counts every answered turn, also those whose speech failed (no answer time then). */}
+            <dt>{t("voice.stats.pipeline_think_median")}</dt>
+            <dd className="sas-num" data-voice-pipeline-think-median="">{pipeline.medianThinkMs == null ? "—" : answerSpeedText(pipeline.medianThinkMs)}</dd>
           </>
         ) : null}
         {model && !pipeline ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}

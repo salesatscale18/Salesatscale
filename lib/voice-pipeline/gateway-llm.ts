@@ -37,8 +37,8 @@ export const PIPELINE_TEXT_MODEL_ENV = "VOICE_PIPELINE_TEXT_MODEL";
 
 /**
  * Gemini 3.8 Flash prices (USD per million tokens, from the product brief, 2026-11-24; not checked against
- * the gateway's price page). Spend tracking prices usage from lib/ai/models.ts DEFAULT_PRICES by model id:
- * until a line for PIPELINE_TEXT_MODEL is added there (or AI_PRICES sets it), its usage counts as unpriced.
+ * the gateway's price page). Spend tracking prices usage from lib/ai/models.ts DEFAULT_PRICES by model id, which
+ * carries the same line for PIPELINE_TEXT_MODEL (tests/unit/ai-models.test.ts keeps the two equal).
  * Implicit caching has no write charge.
  */
 export const PIPELINE_TEXT_PRICE: ModelPrice = { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite5m: 0, cacheWrite1h: 0 };
