@@ -16,6 +16,14 @@ export const INBOX_FILTERS = ["all", "needs_you", "agent", "human", "closed", "t
 export type InboxFilter = (typeof INBOX_FILTERS)[number];
 export const INBOX_PAGE_SIZE = 50;
 
+/** List order: most recent activity first (the default), or the oldest first. */
+export const INBOX_SORTS = ["newest", "oldest"] as const;
+export type InboxSort = (typeof INBOX_SORTS)[number];
+
+export function parseInboxSort(raw: string | undefined): InboxSort {
+  return (INBOX_SORTS as readonly string[]).includes(raw ?? "") ? (raw as InboxSort) : "newest";
+}
+
 /** Where a conversation sits in the inbox. Test-lab chats only ever show under the "test" filter. */
 export type InboxGroup = "needs_you" | "human" | "agent" | "closed";
 
@@ -99,13 +107,13 @@ export type InboxList = { rows: InboxRow[]; total: number; page: number; pages: 
 const toDate = (v: unknown): Date | null => (v === null || v === undefined ? null : v instanceof Date ? v : new Date(String(v)));
 
 /**
- * One page of the inbox, most recent activity first, plus the count of every
+ * One page of the inbox, most recent activity first (`sort` "oldest": oldest first), plus the count of every
  * filter (search and market applied). Three queries in one parallel batch.
  * `market`: the market switcher's choice (lib/markets/selection.ts), by the
  * lead's market (no market id = the home market); null or missing = all markets.
  */
 export async function listInbox(
-  db: Db, accountId: string, opts: { filter?: InboxFilter; q?: string; page?: number; now?: Date; simulateRules?: boolean; market?: { id: string; isHome: boolean } | null } = {},
+  db: Db, accountId: string, opts: { filter?: InboxFilter; sort?: InboxSort; q?: string; page?: number; now?: Date; simulateRules?: boolean; market?: { id: string; isHome: boolean } | null } = {},
 ): Promise<InboxList> {
   const filter = opts.filter ?? "all";
   const now = opts.now ?? new Date();
@@ -133,7 +141,7 @@ export async function listInbox(
       .innerJoin(leads, eq(leads.id, conversations.leadId))
       .leftJoin(markets, and(eq(markets.id, leads.marketId), eq(markets.accountId, accountId)))
       .where(where)
-      .orderBy(sql`coalesce(${lastAt}, ${conversations.updatedAt}) desc`, sql`${conversations.id}`)
+      .orderBy(opts.sort === "oldest" ? sql`coalesce(${lastAt}, ${conversations.updatedAt}) asc` : sql`coalesce(${lastAt}, ${conversations.updatedAt}) desc`, sql`${conversations.id}`)
       .limit(INBOX_PAGE_SIZE)
       .offset((requested - 1) * INBOX_PAGE_SIZE),
   ]);

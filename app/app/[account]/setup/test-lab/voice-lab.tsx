@@ -185,7 +185,7 @@ export function VoiceLabChoices({
    * the action checks again and ignores the field from anyone else.
    */
   engines?: boolean;
-  /** Per version id: the version's model label when Classic cannot use it (Classic runs on Gemini only). */
+  /** Per version id: the line saying Classic does not use the version's model (Gemini only), nor its ElevenLabs voice. */
   classicModelNotes?: Record<string, string>;
 }) {
   const c = labClient();
@@ -264,7 +264,7 @@ export function VoiceLabChoices({
       ) : null}
       {geminiNote ? (
         <div className="lab-call__foot">
-          <span className="sas-small" data-voice-engine-note="">{t("lab.voice.engine_gemini_note", { model: geminiNote })}</span>
+          <span className="sas-small" data-voice-engine-note="">{geminiNote}</span>
         </div>
       ) : null}
       {line ? (

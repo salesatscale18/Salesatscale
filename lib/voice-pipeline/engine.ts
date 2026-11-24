@@ -1,6 +1,7 @@
 /**
  * The pipeline voice engine (PROOF; test lab only, platform admins only, engine ids "pipeline": thinking on Gemini
- * 3.8 Flash through the AI Gateway, and "pipeline_chat": thinking on the agent version's chat model; ./index.ts):
+ * 3.8 Flash through the AI Gateway, "pipeline_lite": the same on Gemini 3.5 Flash-Lite, and "pipeline_chat": thinking
+ * on the agent version's chat model; ./index.ts):
  *
  *   buyer audio → LISTENING (a streaming transcription model) → THINKING (the text chat agent: tools first, then one
  *   reply, exactly as in chat) → SPEAKING (a streaming speech model) → agent audio to the browser.
@@ -24,7 +25,8 @@
  * Proof limits: not recorded (recording_state "off"); a barge-in cuts the audio but the reply row stays whole; no
  * standby (the listener runs for the whole call); no spoken time-limit announcement (the notice only); no tool
  * progress messages (the chat turn runs its tools inside one call; a turn thinking longer than PIPELINE_FILLER.afterMs
- * says one short "One moment." filler instead); the order-form context is not used.
+ * says one short "One moment." filler instead, never on two answered turns in a row unless the second thinks past
+ * PIPELINE_FILLER.afterPreviousMs); the order-form context is not used.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -53,9 +55,11 @@ import { thinkRoundLine, type GatewayRound, type GatewayRoundSink } from "./gate
 import type { Listener } from "./listener";
 import type { Speaker } from "./speaker";
 import { PcmFramer, pcmMs } from "./pcm";
+import { prefetch, type Prefetch } from "./prefetch";
 import { spokenForm, splitSentences } from "./spoken";
 import { median, TurnTaking, type BuyerLine } from "./turns";
 import { runCallTurn, type CallTurnFn } from "./turn";
+import { thinkModelLabel } from "./summary";
 
 export type PipelineLimits = {
   deadlineSec?: number | null;
@@ -82,7 +86,7 @@ export type PipelineEngineDeps = {
   /** Builds the call's listener when the call starts (one for the whole call). */
   listener: () => Listener;
   speaker: Speaker;
-  /** The thinking client (live "pipeline": GatewayLlm on Gemini Flash; live "pipeline_chat": the Anthropic client; scripted: a ScriptedLlm stand-in). */
+  /** The thinking client (live "pipeline" / "pipeline_lite": GatewayLlm on Gemini Flash / Flash-Lite; live "pipeline_chat": the Anthropic client; scripted: a ScriptedLlm stand-in). */
   llm: LlmClient;
   /** Which pipeline engine this call runs on (settings.engine, the logs); default "pipeline". */
   engine?: PipelineEngineName;
@@ -464,7 +468,7 @@ export class PipelineVoiceEngine {
     this.callStart = this.clock.now();
     const agentRows = await this.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))).limit(1);
-    this.log.info(voiceLine(this.sessionId, `engine=${this.engineName} mode=${this.mode} listen=${listener.modelId} think=${this.thinkModel}/${version.effort} speak=${this.speaker.modelId} voice=${this.speaker.voice} listenRate=${listenRateText(listener.modelId)}`));
+    this.log.info(voiceLine(this.sessionId, `engine=${this.engineName} mode=${this.mode} listen=${listener.modelId} think=${this.thinkModel}/${version.effort} speak=${this.speaker.modelId} voice=${this.speaker.voice} listenRate=${listenRateText(listener.modelId)} thinkName="${thinkModelLabel(this.thinkModel) || "-"}"`));
     await this.db.update(voiceSessions)
       .set({
         status: "live", connectedAt: new Date(this.callStart), mode: this.mode, ...(this.mode === "live" ? { model: listener.modelId } : {}),
@@ -703,7 +707,16 @@ export class PipelineVoiceEngine {
     this.trace(`turn=${n} think start len=${masked.text.length}${line.typed ? " typed" : ""}`);
     this.turnRounds = this.roundsReported ? [] : null;
     const fillersBefore = this.fillers;
-    this.timer("filler", Math.max(0, PIPELINE_FILLER.afterMs - (this.clock.now() - line.finalAt)), () => this.sayFiller(n, line.finalAt));
+    // "One moment" after PIPELINE_FILLER.afterMs of thinking, but not on two answered turns in a row: when the previous
+    // answered turn had a filler, this one gets it only past PIPELINE_FILLER.afterPreviousMs.
+    const previousHadFiller = this.times.length > 0 && this.times[this.times.length - 1].filler;
+    const sinceFinal = () => this.clock.now() - line.finalAt;
+    this.timer("filler", Math.max(0, PIPELINE_FILLER.afterMs - sinceFinal()), () => {
+      if (!previousHadFiller) return this.sayFiller(n, line.finalAt);
+      if (this.ended || this.turns.state !== "thinking") return;
+      this.trace(`filler skipped (previous turn had one) turn=${n} at ${Math.round(sinceFinal())}ms of thinking`);
+      this.timer("filler", Math.max(0, PIPELINE_FILLER.afterPreviousMs - sinceFinal()), () => this.sayFiller(n, line.finalAt));
+    });
     let result: Awaited<ReturnType<CallTurnFn>>;
     try {
       result = await this.turnFn(this.db, this.llm, { accountId: account.id, conversationId: conv.id, leadId: lead.id, text: masked.text, callSessionId: this.sessionId });
@@ -1063,7 +1076,7 @@ export class PipelineVoiceEngine {
     const f = this.figures(endDetail);
     const p = (f.usage as VoiceUsage & { pipeline: PipelineUsage }).pipeline;
     const ms = (v: number | null) => (v === null ? "-" : `${v}ms`);
-    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} pipeline summary turns=${p.turns} spoken=${p.spokenTurns ?? p.turns} median answer=${ms(p.medianAnswerMs)} listen=${ms(p.medianListenMs)} think=${ms(p.medianThinkMs)} speak=${ms(p.medianSpeakMs)} speakFirstAudio=${ms(p.medianSpeakFirstAudioMs ?? null)} rounds/turn=${p.medianRounds ?? "-"} oneRound=${p.roundTurns ? `${p.oneRoundTurns ?? 0}/${p.roundTurns}` : "-"} ms/round=${ms(p.medianRoundMs ?? null)} other/turn=${ms(p.medianOtherMs ?? null)} cachedIn=${p.medianCachedPct == null ? "-" : `${p.medianCachedPct}%`} fillers=${p.fillers ?? 0} chars=${p.spokenChars} listenSec=${p.listenSec} bargeIns=${p.bargeIns} speakModel=${p.speakModel || "-"} costMicros=${f.costMicros} (listen ${p.listenCostMicros} + speak ${p.speakCostMicros}; thinking is on the chat rows) think=${p.thinkModel || "-"}`));
+    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} pipeline summary turns=${p.turns} spoken=${p.spokenTurns ?? p.turns} median answer=${ms(p.medianAnswerMs)} listen=${ms(p.medianListenMs)} think=${ms(p.medianThinkMs)} speak=${ms(p.medianSpeakMs)} speakFirstAudio=${ms(p.medianSpeakFirstAudioMs ?? null)} rounds/turn=${p.medianRounds ?? "-"} oneRound=${p.roundTurns ? `${p.oneRoundTurns ?? 0}/${p.roundTurns}` : "-"} ms/round=${ms(p.medianRoundMs ?? null)} other/turn=${ms(p.medianOtherMs ?? null)} cachedIn=${p.medianCachedPct == null ? "-" : `${p.medianCachedPct}%`} fillers=${p.fillers ?? 0} chars=${p.spokenChars} listenSec=${p.listenSec} bargeIns=${p.bargeIns} speakModel=${p.speakModel || "-"} costMicros=${f.costMicros} (listen ${p.listenCostMicros} + speak ${p.speakCostMicros}; thinking is on the chat rows) think=${p.thinkModel || "-"} thinkName="${thinkModelLabel(p.thinkModel) || "-"}"`));
     this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${f.durationSec} by=${endDetail.by}${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""} engine=${this.engineName}`));
     const set = { status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec: f.durationSec, usage: f.usage, costMicros: f.costMicros, answerMsAvg: f.answerMsAvg };
     const where = this.endedExternally
@@ -1092,56 +1105,4 @@ export class PipelineVoiceEngine {
     this.state = null;
     this.setState("ended");
   }
-}
-
-/** A speech stream consumed into a buffer as soon as it starts (the next sentence synthesizes while this one plays). */
-type Prefetch = { chunks(): AsyncIterable<Uint8Array>; stop(): void };
-
-function prefetch(source: AsyncIterable<Uint8Array>, onFirst?: () => void): Prefetch {
-  const buf: Uint8Array[] = [];
-  let done = false;
-  let error: unknown = null;
-  let stopped = false;
-  let wake: (() => void) | null = null;
-  const notify = () => {
-    const w = wake;
-    wake = null;
-    w?.();
-  };
-  void (async () => {
-    try {
-      let first = true;
-      for await (const c of source) {
-        if (stopped) break;
-        if (first && c.byteLength) {
-          first = false;
-          onFirst?.();
-        }
-        buf.push(c);
-        notify();
-      }
-    } catch (e) {
-      error = e;
-    } finally {
-      done = true;
-      notify();
-    }
-  })();
-  return {
-    async *chunks() {
-      for (;;) {
-        if (buf.length) {
-          yield buf.shift()!;
-          continue;
-        }
-        if (error) throw error;
-        if (done || stopped) return;
-        await new Promise<void>((r) => (wake = r));
-      }
-    },
-    stop() {
-      stopped = true;
-      notify();
-    },
-  };
 }

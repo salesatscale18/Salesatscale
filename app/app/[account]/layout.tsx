@@ -5,6 +5,7 @@ import { SideNavForPath } from "@/components/sas/side-nav-client";
 import { Banner } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { needsYouCountForRequest } from "@/lib/overview/service";
+import { setupProgress } from "@/lib/overview/setup";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 import { Icon } from "@/components/sas/icon";
 import { initials, personName } from "@/lib/auth/display";
@@ -20,23 +21,29 @@ export default async function AccountLayout({ children, params }: { children: Re
   const { account: slug } = await params;
   const access = await requireAccount(slug);
   const { account, user, actingAs } = access;
-  const [listed, spend] = await Promise.all([needsYouCountForRequest(appDb, account.id), spendStateForRequest(appDb, account.id)]);
+  // Setup progress shows in the side menu until the account is live.
+  const [listed, spend, progress] = await Promise.all([
+    needsYouCountForRequest(appDb, account.id),
+    spendStateForRequest(appDb, account.id),
+    account.status === "live" ? null : setupProgress(appDb, account),
+  ]);
   // The spend warning is one more "Needs you" item (shown at the top of the Overview list).
   const spendAlert = spend && spend.state !== "ok" ? spend : null;
   const needsYouCount = listed + (spendAlert ? 1 : 0);
   const spendText = spendAlert ? spendTexts(spendAlert) : null;
 
   return (
-    <SasRoot>
+    <SasRoot tone="seller">
       {/* The viewer's own time zone, for scheduled moments on seller pages (lib/viewer-zone.ts). */}
       <ViewerZoneCookie />
-      <div className="sas-shell">
+      <div className="sas-shell sas-shell--seller">
         <SideNavForPath
           mode="seller"
           basePath={`/app/${account.slug}`}
           accountName={account.tradeName}
           user={{ name: personName(user), initials: initials(user), role: actingAs ? t("settings.users.platform_acting") : undefined }}
           counts={needsYouCount ? { overview: { value: needsYouCount, tone: "human" } } : undefined}
+          setup={progress ? { done: [...progress] } : undefined}
         />
         {/* Banners come first: the top row on a phone (above the menu bar), above the page on wide screens. */}
         {actingAs || account.status === "paused" || spendAlert ? (

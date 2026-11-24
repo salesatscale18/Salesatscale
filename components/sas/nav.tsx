@@ -5,7 +5,6 @@
 import { t, type MessageKey } from "@/lib/i18n";
 import { Icon, type IconName } from "./icon";
 import { Avatar } from "./primitives";
-import { ScrollCurrentIntoView } from "./scroll-current";
 
 /** `hidden`: the route exists (a "not built yet" placeholder) but the nav does not list it. */
 export type NavItem = { id: string; label: MessageKey; icon: IconName; path: string; hidden?: true };
@@ -25,6 +24,7 @@ export const SELLER_NAV: NavGroup[] = [
   {
     label: "nav.group.setup",
     items: [
+      { id: "company", label: "nav.company", icon: "building", path: "/setup/company" },
       { id: "sources", label: "nav.sources", icon: "upload", path: "/setup/sources" },
       { id: "knowledge", label: "nav.knowledge", icon: "book-open", path: "/setup/knowledge" },
       { id: "catalog", label: "nav.catalog", icon: "package", path: "/setup/catalog" },
@@ -63,6 +63,7 @@ export function SideNav({
   accountName,
   user,
   counts = {},
+  setup,
 }: {
   mode: "seller" | "admin";
   /** e.g. `/app/polar-monitoring` for a seller, `/sadmin` for the platform admin. */
@@ -72,27 +73,41 @@ export function SideNav({
   /** `role`: the footer line under the name; defaults to the mode's role ("Seller admin" / "Platform admin"). */
   user: { name: string; initials: string; role?: string };
   counts?: Record<string, NavCount>;
+  /** Setup progress while the account is not live: the menu shows the bar, the checks and "Next". */
+  setup?: NavSetup;
 }) {
   const groups = mode === "admin" ? ADMIN_NAV : SELLER_NAV;
+  const done = new Set(setup?.done ?? []);
+  const doneCount = SETUP_STEPS.filter((s) => done.has(s.id)).length;
+  const next = setup ? SETUP_STEPS.find((s) => !done.has(s.id))?.id : undefined;
   return (
     <nav className="sas-nav" aria-label={t("nav.main")}>
       <div className="sas-nav__brand">
         <span className="sas-nav__mark" aria-hidden="true" />
         Sales at Scale
       </div>
-      <div className="sas-nav__account">
-        <span className="sas-nav__account-text">
-          <span className="sas-nav__account-name">{mode === "admin" ? t("nav.all_accounts") : accountName}</span>
-          <span className="sas-nav__sub">{mode === "admin" ? t("nav.platform_admin_view") : t("nav.seller_account")}</span>
-        </span>
-        <Icon name="chevrons-up-down" />
-      </div>
+      {mode === "admin" ? null : (
+        <div className="sas-nav__account">
+          <span className="sas-nav__account-text">
+            <span className="sas-nav__account-name">{accountName}</span>
+            <span className="sas-nav__sub">{t("nav.seller_account")}</span>
+          </span>
+          <Icon name="chevrons-up-down" />
+        </div>
+      )}
       {groups.map((g, gi) => (
         <div key={gi}>
           {g.label ? <div className="sas-label sas-nav__group-label">{t(g.label)}</div> : null}
+          {setup && g.label === "nav.group.setup" ? (
+            <div className="sas-nav__progress" data-setup-done={doneCount}>
+              <ProgressBar done={doneCount} total={SETUP_STEPS.length} />
+              <span className="sas-nav__sub">{t("nav.setup.done", { done: doneCount, total: SETUP_STEPS.length })}</span>
+            </div>
+          ) : null}
           <ul className="sas-nav__group">
             {g.items.filter((it) => !it.hidden).map((it) => {
               const count = counts[it.id];
+              const step = setup ? NAV_STEP[it.id] : undefined;
               return (
                 <li key={it.id}>
                   <a className="sas-nav__item" href={`${basePath}${it.path}`} aria-current={it.id === active ? "page" : undefined}>
@@ -103,6 +118,8 @@ export function SideNav({
                         {count.value}
                       </span>
                     ) : null}
+                    {step && done.has(step) ? <span className="sas-nav__done" data-step-done={step}><Icon name="check-circle" label={t("nav.setup.step_done")} /></span> : null}
+                    {step && step === next ? <span className="sas-nav__next" data-step-next={step}>{t("nav.setup.next")}</span> : null}
                   </a>
                 </li>
               );
@@ -137,33 +154,46 @@ export const ALL_SETUP_STEPS: { id: string; label: MessageKey; path: string; hid
 /** The steps the step bar, the Overview and the admin page show and count: a hidden step is never an unfinished one. */
 export const SETUP_STEPS = ALL_SETUP_STEPS.filter((s) => !s.hidden);
 
+/** Nav item id → setup step id (the menu shows step state on these items). */
+const NAV_STEP: Record<string, string | undefined> = Object.fromEntries(
+  SETUP_STEPS.map((s) => [SELLER_NAV.flatMap((g) => g.items).find((it) => it.path === s.path)?.id ?? s.id, s.id]),
+);
+
+export type NavSetup = { done: readonly string[] };
+
+/** Thin progress bar (decorative: the text next to it says the same). */
+export function ProgressBar({ done, total }: { done: number; total: number }) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  return <span className="sas-progress" aria-hidden="true"><span className="sas-progress__fill" style={{ width: `${pct}%` }} /></span>;
+}
+
 /**
- * Setup steps bar: completed steps show a check, any step can be reopened.
- * One source of state: pages pass setupProgress (lib/overview/setup.ts). Rule:
- * every page under Setup shows the bar; a sub-page (a price list, a source)
- * marks its step as current; Test lab is no step, so none is current there.
+ * Setup step line under a setup page's title: "Step 4 of 8", a done mark, a
+ * thin progress bar and a link to the next step. The full list of steps, with
+ * their checks, is in the side menu (Agent setup). One source of state: pages
+ * pass setupProgress (lib/overview/setup.ts). A sub-page (a price list, a
+ * source) marks its step as current; Test lab is no step, so it shows the
+ * overall count and the first open step instead.
  */
 export function SetupSteps({ basePath, current, completed }: { basePath: string; current: string; completed: ReadonlySet<string> }) {
+  const total = SETUP_STEPS.length;
+  const doneCount = SETUP_STEPS.filter((s) => completed.has(s.id)).length;
+  const at = SETUP_STEPS.findIndex((s) => s.id === current);
+  const next = at >= 0 ? SETUP_STEPS[at + 1] : SETUP_STEPS.find((s) => !completed.has(s.id));
+  const currentDone = at >= 0 && completed.has(current);
   return (
-    <nav aria-label={t("setup.steps")}>
-      <ol className="sas-steps">
-        {SETUP_STEPS.map((s, i) => {
-          const done = completed.has(s.id);
-          return (
-            <li key={s.id}>
-              <a
-                className={done ? "sas-steps__step sas-steps__step--done" : "sas-steps__step"}
-                href={`${basePath}${s.path}`}
-                aria-current={s.id === current ? "step" : undefined}
-              >
-                <span className="sas-steps__dot">{done ? <Icon name="check" label="Done" /> : i + 1}</span>
-                {t(s.label)}
-              </a>
-            </li>
-          );
-        })}
-      </ol>
-      <ScrollCurrentIntoView selector=".sas-steps" />
+    <nav className="sas-stepline" aria-label={t("setup.steps")} data-step={at >= 0 ? current : undefined} data-step-done={currentDone ? "" : undefined} data-done={doneCount}>
+      <span className="sas-stepline__label">
+        {at >= 0 ? t("setup.step_of", { n: at + 1, total }) : t("overview.setup.count", { done: doneCount, total })}
+      </span>
+      {currentDone ? <span className="sas-stepline__done"><Icon name="check-circle" />{t("nav.setup.step_done")}</span> : null}
+      <ProgressBar done={doneCount} total={total} />
+      {next ? (
+        <a className="sas-stepline__next" href={`${basePath}${next.path}`} data-next={next.id}>
+          {t("setup.next_step", { step: t(next.label) })}
+          <Icon name="arrow-right" />
+        </a>
+      ) : null}
     </nav>
   );
 }

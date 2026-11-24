@@ -142,7 +142,8 @@ describe("O35 pages on the demo account", () => {
     const upset = await leadBy(STATE_LEADS.upset.n);
     const list = await render(ConversationsPage, { account: slug }, { filter: "needs_you" });
     save("conversations", list);
-    expect(list).toContain('class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="Upset: false night alarms, and wants a person now">Upset: false night alarms, and wants a person now</span>');
+    // ConvListV2: a Needs you row's second line is what waits, then the reason (one line, cut by CSS).
+    expect(list).toContain('data-handoff-why=""><span class="sas-inbox__preview-text" dir="auto" title="Hand-off requested · Upset: false night alarms, and wants a person now">Hand-off requested · Upset: false night alarms, and wants a person now</span>');
     const lead = await render(LeadPage, { account: slug, leadId: upset.id });
     save("lead-upset", lead);
     // The banner: the same reason once, never cut, wrapping (no one-line class), no restated copy.
@@ -202,9 +203,16 @@ describe("O35 pages on the demo account", () => {
         // Leads > Needs you (L-3): "Asked for a person", then the reason as the one muted line, isolated, cut with "…" by CSS.
         expect(rowOf(needsList, c.lead.fullName)).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="\u2068${c.why}\u2069">\u2068${c.why}\u2069</span>`);
       }
-      // Conversations row: the same line, one line.
+      // Conversations row (ConvListV2): a Needs you row's second line is the same reason after what waits; a chat a
+      // person holds (Human handling) shows its last message there instead, the reason stays in the open chat's brief.
       const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
-      expect(row.slice(0, row.indexOf("</li>"))).toContain(`class="sas-small sas-oneline" data-handoff-why="" dir="auto" title="${c.why}">${c.why}</span>`);
+      const line = row.slice(0, row.indexOf("</li>"));
+      if (c.held) {
+        expect(line).not.toContain("data-handoff-why");
+        expect(line).toContain("data-preview");
+      } else {
+        expect(line).toContain(`data-handoff-why=""><span class="sas-inbox__preview-text" dir="auto" title="Hand-off requested · ${c.why}">Hand-off requested · ${c.why}</span>`);
+      }
       // Lead page banner: the same reason once, wrapping, never cut.
       const lead = await render(LeadPage, { account: slug, leadId: (await leadBy(c.lead.n)).id });
       if (c.lead === STATE_LEADS.human) save("lead-human", lead);

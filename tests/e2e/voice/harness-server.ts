@@ -29,6 +29,7 @@ import { ROUTE_END_MARGIN_SEC, ROUTE_MAX_DURATION_SEC } from "@/lib/voice/socket
 import { DEFAULT_VOICE_MODEL, maxCallSeconds, resolveVoiceSettings, versionModelId, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceModelChoices } from "@/lib/voice/model-choices";
 import { voiceSettingsSummary } from "@/lib/voice/lab";
+import { voiceSampleResponse } from "@/lib/voice-rt-eleven/sample";
 import { createTestDb } from "../../helpers/db";
 import { seedCatalog, seedPricing } from "../../helpers/pricing";
 import { attachVoiceSockets } from "../../../scripts/voice-ws";
@@ -272,9 +273,11 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const d = (await listVersions(db, acc)).find((v) => v.status === "draft")!;
         const model = url.searchParams.get("model") ?? DEFAULT_VOICE_MODEL;
         return send(200, "application/json", JSON.stringify({
-          version: d.version, versionLabel: `v${d.version} Draft`, models: voiceModelChoices(), platformModel: model, settings: resolveVoiceSettings(d.voiceSettings), scenarios,
-          summary: voiceSettingsSummary(resolveVoiceSettings(d.voiceSettings), versionModelId(d.voiceSettings, { VOICE_MODEL: model })),
+          version: d.version, versionLabel: `v${d.version} Draft`, models: voiceModelChoices(), platformModel: model, settings: resolveVoiceSettings(d.voiceSettings, versionModelId(d.voiceSettings, { VOICE_MODEL: model })), scenarios,
+          summary: voiceSettingsSummary(resolveVoiceSettings(d.voiceSettings, versionModelId(d.voiceSettings, { VOICE_MODEL: model })), versionModelId(d.voiceSettings, { VOICE_MODEL: model })),
           fx: { currency: "ILS", minorPerUsd: 370 }, maxSec: maxCallSeconds({ settings: d.voiceSettings, deadlineSec: CAP, env: ENV }), cap: CAP,
+          // The company's selling languages (the account's buyer languages: English and Hebrew here).
+          languages: url.searchParams.get("languages")?.split(",").filter(Boolean) ?? (await db.select({ languages: sellerAccounts.languages }).from(sellerAccounts).where(eq(sellerAccounts.id, acc)))[0]?.languages ?? ["en"],
         }));
       }
       if (req.method === "POST" && url.pathname === "/api/call") {
@@ -293,12 +296,21 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
       if (req.method === "GET" && url.pathname === "/api/summary") {
         return send(200, "application/json", JSON.stringify(await voiceSessionSummary(db, acc, url.searchParams.get("c") ?? "")));
       }
+      // "Play sample" (the form posts to /app/<slug>/voice-sample): the real route's work, scripted (a tone, no gateway).
+      if (req.method === "POST" && url.pathname === "/app/harness/voice-sample") {
+        const me = (await db.select({ id: users.id, role: users.role }).from(users).limit(1))[0];
+        const r = await voiceSampleResponse({ user: { id: me.id, role: "super_admin" }, accountId: acc, body: JSON.parse((await body(req)) || "null") }, { db, env: ENV });
+        res.writeHead(r.status, { "content-type": r.headers.get("content-type") ?? "application/octet-stream" }).end(Buffer.from(await r.arrayBuffer()));
+        return;
+      }
       if (req.method === "POST" && url.pathname === "/api/settings") {
         const f = new URLSearchParams(await body(req));
         const r = await saveDraftVoiceSettings(db, acc, {
           model: f.get("model") ?? "", voice: f.get("voice") ?? "", pace: f.get("pace") ?? "", style: f.get("style") ?? "",
           pauseMs: f.get("pauseMs") ?? "", interrupt: f.get("interrupt") ?? "", fillers: f.get("fillers") === "on", maxCallSec: f.get("maxCallSec") ?? "",
-        }, ENV);
+          speech: f.get("speech") ?? "",
+          elevenModel: f.get("elevenModel") ?? "", elevenVoice: f.get("elevenVoice") ?? "", elevenStability: f.get("elevenStability") ?? "",
+        }, ENV, { canPickSpeech: true });
         return send(200, "application/json", JSON.stringify(r.ok ? { ok: true } : { ok: false, errors: r.errors }));
       }
       send(404, "text/plain", "not found");

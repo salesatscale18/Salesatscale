@@ -7,6 +7,8 @@ import { MockLanguageModelV4 } from "ai/test";
 import type { LanguageModelV4CallOptions, LanguageModelV4Content, LanguageModelV4GenerateResult } from "@ai-sdk/provider";
 import { isRetryableModelError, type Block, type LlmRequest } from "@/lib/agent/llm";
 import { TOOL_DEFS } from "@/lib/agent/tools";
+import { toolDefsWithSpokenReply } from "@/lib/agent/call-reply";
+import { PIPELINE_CALL_REPLY_ARG_DESCRIPTION } from "@/lib/voice-pipeline/models";
 import { geminiSchema } from "@/lib/voice/tool-schema";
 import {
   GatewayLlm, GatewayLlmError, PIPELINE_TEXT_MODEL, PIPELINE_TEXT_PRICE, pipelineLlmFor, pipelineTextModel, reasoningForEffort, roundFrom, thinkRoundLine, toGatewayLlmError,
@@ -83,6 +85,22 @@ describe("request mapping", () => {
     expect(all).not.toContain("\"null\"");
     expect(opts.maxOutputTokens).toBe(16000);
     expect(opts.reasoning).toBe("none");
+  });
+
+  it("update_deal_state's spoken_reply (call turns): kept in Gemini's dialect as a nullable string, required, with its description", async () => {
+    const defs = toolDefsWithSpokenReply(TOOL_DEFS, PIPELINE_CALL_REPLY_ARG_DESCRIPTION);
+    const uds = defs.find((d) => d.name === "update_deal_state")!;
+    const g = geminiSchema(uds.input_schema) as { properties: Record<string, Record<string, unknown>>; required: string[] };
+    expect(g.properties.spoken_reply).toEqual({ type: "string", nullable: true, description: PIPELINE_CALL_REPLY_ARG_DESCRIPTION });
+    expect(g.required).toContain("spoken_reply");
+    // Every other property of the tool is still there.
+    expect(Object.keys(g.properties).sort()).toEqual([...Object.keys((geminiSchema(TOOL_DEFS.find((d) => d.name === "update_deal_state")!.input_schema) as { properties: object }).properties), "spoken_reply"].sort());
+    // Through GatewayLlm: the tool sent to the model carries it.
+    const model = mock(result([text("Hello")]));
+    await new GatewayLlm({ model }).create({ ...req(), tools: defs });
+    const sent = (model.doGenerateCalls[0] as LanguageModelV4CallOptions).tools!.find((t) => (t as { name: string }).name === "update_deal_state") as { inputSchema: { properties: Record<string, unknown>; required: string[] } };
+    expect(sent.inputSchema.properties.spoken_reply).toEqual({ type: "string", nullable: true, description: PIPELINE_CALL_REPLY_ARG_DESCRIPTION });
+    expect(sent.inputSchema.required).toContain("spoken_reply");
   });
 
   it("multi-round history: thinking dropped, tool calls and results paired in order, tool names looked up", () => {

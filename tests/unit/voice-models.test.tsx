@@ -17,11 +17,13 @@ const GPT = "openai/gpt-realtime-2.1";
 const MINI = "openai/gpt-realtime-mini";
 
 describe("one list of voice models", () => {
-  it("three models with labels, families and the live-proven flag (all three proven live by 22 Nov 2026); Gemini is the default", () => {
+  it("five models with labels, families and the live-proven flag (the first three proven live by 22 Nov 2026; ElevenLabs Realtime not yet); Gemini is the default", () => {
     expect(VOICE_MODELS.map((m) => [m.id, m.label, m.family, m.proven])).toEqual([
       [GEMINI, "Gemini 3.8 Live", "gemini", true],
       [GPT, "GPT-Realtime 2.1", "openai", true],
       [MINI, "GPT-Realtime mini", "openai", true],
+      ["elevenlabs/eleven-realtime-v1-mini", "ElevenLabs Realtime mini (testing)", "elevenlabs", false],
+      ["elevenlabs/eleven-realtime-v1-max", "ElevenLabs Realtime max (testing)", "elevenlabs", false],
     ]);
     expect(isVoiceModel(GPT)).toBe(true);
     expect(isVoiceModel("openai/gpt-realtime-2")).toBe(false);
@@ -153,14 +155,18 @@ describe("usage and cost per model", () => {
     expect(modelCostHint(GEMINI)).toBe("About $0.013 a minute of call (estimate).");
     expect(modelCostHint(GPT)).toBe("About 7.1× the cost per minute of Gemini (estimate).");
     expect(modelCostHint(MINI)).toBe("About 2.2× the cost per minute of Gemini (estimate).");
-    expect(voiceModelChoices().map((c) => c.caps.style)).toEqual([false, true, true]);
+    expect(voiceModelChoices().map((c) => c.caps.style)).toEqual([false, true, true, false, false]);
   });
 });
 
 describe("the picker's cost and voice notes", () => {
   it("the cost next to each name, from the same price table as the hint under the field", () => {
     expect([GEMINI, GPT, MINI].map((m) => modelCostShort(m))).toEqual(["lowest cost", "~7× cost", "~2× cost"]);
-    expect(voiceModelChoices().map((c) => `${c.label} · ${c.short}`)).toEqual(["Gemini 3.8 Live · lowest cost", "GPT-Realtime 2.1 · ~7× cost", "GPT-Realtime mini · ~2× cost"]);
+    expect(voiceModelChoices().map((c) => `${c.label} · ${c.short}`)).toEqual([
+      "Gemini 3.8 Live · lowest cost", "GPT-Realtime 2.1 · ~7× cost", "GPT-Realtime mini · ~2× cost",
+      // The session price included (about $0.08 a minute) plus their tokens.
+      "ElevenLabs Realtime mini (testing) · ~6× cost", "ElevenLabs Realtime max (testing) · ~7× cost",
+    ]);
   });
 
   it("a voice the new model lacks: the note names the default it changes to, the same as what is saved and sent", () => {

@@ -15,7 +15,10 @@ import type { RealtimeToolDef } from "./realtime";
 
 export type SchemaFamily = "gemini" | "openai";
 
-/** The schema dialect a realtime model takes, from its id. */
+/**
+ * The schema dialect a realtime model takes, from its id. ElevenLabs Realtime (elevenlabs/eleven-realtime-*, OpenAI-
+ * compatible through the Gateway) takes the "openai" one, as does every id that is not Gemini.
+ */
 export function schemaFamilyOf(modelId: string): SchemaFamily {
   return /^google\/|gemini/i.test(modelId) ? "gemini" : "openai";
 }

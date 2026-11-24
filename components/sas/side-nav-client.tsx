@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { usePathname } from "next/navigation";
 import { t } from "@/lib/i18n";
 import { Icon } from "./icon";
-import { ADMIN_NAV, SELLER_NAV, SideNav, type NavCount } from "./nav";
+import { ADMIN_NAV, SELLER_NAV, SideNav, type NavCount, type NavSetup } from "./nav";
 
 /**
  * The active nav item for a URL: the longest matching path wins. An item whose
@@ -33,6 +33,7 @@ type NavProps = {
   /** `role`: the footer line under the name; defaults to the mode's role ("Seller admin" / "Platform admin"). */
   user: { name: string; initials: string; role?: string };
   counts?: Record<string, NavCount>;
+  setup?: NavSetup;
 };
 
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';

@@ -8,6 +8,8 @@
  *   cap; no text at all by the cap is noise;
  * - the figures (B3): a turn whose speech failed still counts (listen, think); speak and total only when audio was
  *   sent; the summary line and the card's medians say so;
+ * - the "one moment" filler: at 3,000 ms of thinking, never on two answered turns in a row unless the second passes
+ *   6,000 ms (the fake clock);
  * - a failed chat turn in Hebrew: the Hebrew retry line, never the error.
  */
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -56,7 +58,7 @@ const settle = async () => {
 };
 
 /** A pipeline call (scripted parts, a fake chat turn) past its opener, ready to hear the buyer. */
-async function call(o: { speaker?: Speaker; turn?: CallTurnFn; language?: "en" | "he"; thinkMs?: number } = {}) {
+async function call(o: { speaker?: Speaker; turn?: CallTurnFn; language?: "en" | "he"; thinkMs?: number; thinkMsByTurn?: number[] } = {}) {
   const conv = (await startVoiceTestConversation(db, acc, me.id, { scenario: null, ...(o.language ? { language: o.language } : {}) }))!;
   const s = await createVoiceSession(db, { accountId: acc, conversationId: conv.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: "pipeline" });
   if (!s.ok) throw new Error(s.reason);
@@ -67,8 +69,9 @@ async function call(o: { speaker?: Speaker; turn?: CallTurnFn; language?: "en" |
   const turns: { text: string; at: number }[] = [];
   const turn: CallTurnFn = o.turn ?? (async (_db, _llm, a) => {
     turns.push({ text: a.text, at: clock.now() });
-    // A slow turn (tools): the reply comes thinkMs later on the call clock.
-    if (o.thinkMs) await new Promise<void>((r) => clock.setTimeout(r, o.thinkMs!));
+    // A slow turn (tools): the reply comes thinkMs (or this turn's entry of thinkMsByTurn) later on the call clock.
+    const ms = o.thinkMsByTurn?.[turns.length - 1] ?? o.thinkMs;
+    if (ms) await new Promise<void>((r) => clock.setTimeout(r, ms));
     return { status: "replied", messageId: randomUUID(), text: "Okay, noted.", calls: 0 };
   });
   const speaker = o.speaker ?? new ScriptedSpeaker("scripted", { msPerChar: 2, maxMs: 300, chunkMs: 100 });
@@ -241,10 +244,11 @@ describe('"one moment" while a turn thinks long', () => {
     await c.end();
   });
 
-  it("a slow turn: one filler at 2,500 ms, then the reply once the filler has played (no overlap, no cut); not stored", async () => {
+  it("a slow turn: one filler at 3,000 ms, then the reply once the filler has played (no overlap, no cut); not stored", async () => {
+    expect(PIPELINE_FILLER.afterMs).toBe(3_000);
     const ref = { now: () => 0 };
     const t = timedSpeaker(ref);
-    const c = await call({ thinkMs: 3_000, speaker: t.speaker });
+    const c = await call({ thinkMs: 3_500, speaker: t.speaker });
     ref.now = () => c.clock.now();
     // The (long) opener plays out first.
     await c.clock.advance(10_000, settle);
@@ -254,14 +258,14 @@ describe('"one moment" while a turn thinks long', () => {
     await c.clock.advance(PIPELINE_FILLER.afterMs - 1, settle);
     expect(t.at.slice(-1)[0]?.text).not.toBe("One moment.");
     await c.clock.advance(1, settle);
-    expect(c.lines.some((l) => /pipeline filler spoken at 2500ms of thinking turn=1 len=11$/.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline filler spoken at 3000ms of thinking turn=1 len=11$/.test(l))).toBe(true);
     await c.clock.advance(5_000, settle);
     const after = t.at.filter((x) => x.at >= start);
     expect(after.map((x) => x.text)).toEqual(["One moment.", "Okay, noted."]);
-    // The reply waited for the filler's audio (1,100 ms from 2,500 ms), though it came at 3,000 ms.
+    // The reply waited for the filler's audio (1,100 ms from 3,000 ms), though it came at 3,500 ms.
     expect(after[1].at - after[0].at).toBeGreaterThanOrEqual(1_100);
     expect(c.sent.filter((m) => m.t === "flush")).toHaveLength(flushes);
-    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=3000ms rounds=- tools=0 speak=\d+ms total=\d+ms chars=\d+ filler=yes /.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=3500ms rounds=- tools=0 speak=\d+ms total=\d+ms chars=\d+ filler=yes /.test(l))).toBe(true);
     await c.end();
     expect((await rowsOf(c)).some((m) => m.body === "One moment.")).toBe(false);
     const [row] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, c.s.sessionId));
@@ -271,12 +275,67 @@ describe('"one moment" while a turn thinks long', () => {
     expect(c.lines.some((l) => /pipeline summary .* fillers=1 /.test(l))).toBe(true);
   });
 
+  const fillersSpoken = (c: Awaited<ReturnType<typeof call>>) =>
+    c.lines.map((l) => / pipeline filler spoken at (\d+)ms of thinking turn=(\d+) /.exec(l)).filter((m) => m !== null).map((m) => [Number(m[2]), Number(m[1])]);
+  const skipped = (c: Awaited<ReturnType<typeof call>>) =>
+    c.lines.map((l) => / pipeline filler skipped \(previous turn had one\) turn=(\d+) at (\d+)ms of thinking$/.exec(l)).filter((m) => m !== null).map((m) => [Number(m[1]), Number(m[2])]);
+  /** One typed buyer line, then the turn's thinking, reply and speech played out. */
+  const ask = async (c: Awaited<ReturnType<typeof call>>, text: string) => {
+    c.engine.onClientMessage({ t: "text", text });
+    await c.clock.advance(12_000, settle);
+  };
+
+  it("never on two answered turns in a row: the second is skipped (logged) at 3,000 ms; the turn after gets one again", async () => {
+    const c = await call({ thinkMsByTurn: [4_000, 4_000, 4_000] });
+    await ask(c, "Which sensors fit two kitchens?");
+    expect(fillersSpoken(c)).toEqual([[1, 3_000]]);
+    await ask(c, "And a gateway?");
+    // Turn 2: the previous answered turn had a filler, and it thought less than 6,000 ms: no filler, one log line.
+    expect(fillersSpoken(c)).toEqual([[1, 3_000]]);
+    expect(skipped(c)).toEqual([[2, 3_000]]);
+    expect(c.lines.filter((l) => l.includes("pipeline filler skipped (previous turn had one)"))).toHaveLength(1);
+    expect(c.lines.some((l) => /pipeline turn=2 listen=- think=4000ms .*chars=\d+ model=/.test(l) && !l.includes("filler=yes"))).toBe(true);
+    // Turn 3: turn 2 had none, so the 3,000 ms filler is back.
+    await ask(c, "How much is it?");
+    expect(fillersSpoken(c)).toEqual([[1, 3_000], [3, 3_000]]);
+    expect(skipped(c)).toEqual([[2, 3_000]]);
+    await c.end();
+    const [row] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, c.s.sessionId));
+    expect((row.usage as unknown as { pipeline: { fillers: number; turns: number } }).pipeline).toMatchObject({ fillers: 2, turns: 3 });
+  });
+
+  it("after a turn that had one, a turn thinking past 6,000 ms still gets the filler (at 6,000 ms, not before)", async () => {
+    expect(PIPELINE_FILLER.afterPreviousMs).toBe(6_000);
+    const c = await call({ thinkMsByTurn: [4_000, 7_000] });
+    await ask(c, "Which sensors fit two kitchens?");
+    expect(fillersSpoken(c)).toEqual([[1, 3_000]]);
+    c.engine.onClientMessage({ t: "text", text: "And for a third site?" });
+    await c.clock.advance(5_999, settle);
+    expect(skipped(c)).toEqual([[2, 3_000]]);
+    expect(fillersSpoken(c)).toEqual([[1, 3_000]]);
+    await c.clock.advance(1, settle);
+    expect(fillersSpoken(c)).toEqual([[1, 3_000], [2, 6_000]]);
+    await c.clock.advance(10_000, settle);
+    expect(c.lines.some((l) => /pipeline turn=2 listen=- think=7000ms .* filler=yes /.test(l))).toBe(true);
+    await c.end();
+  });
+
+  it("a fast turn after one with a filler: neither a filler nor the skip line", async () => {
+    const c = await call({ thinkMsByTurn: [4_000, 1_000] });
+    await ask(c, "Which sensors fit two kitchens?");
+    await ask(c, "Thanks.");
+    expect(fillersSpoken(c)).toEqual([[1, 3_000]]);
+    expect(skipped(c)).toEqual([]);
+    await c.end();
+  });
+
   it("the buyer speaking at the threshold: no filler", async () => {
     const c = await call({ thinkMs: 4_000 });
     const speaker = said(c) as InstanceType<typeof ScriptedSpeaker>;
     const before = speaker.said.length;
     c.engine.onClientMessage({ t: "text", text: "Hello there" });
-    await c.clock.advance(2_000, settle);
+    // Speech from 2,500 ms to 3,300 ms: the buyer is speaking at the 3,000 ms threshold.
+    await c.clock.advance(2_500, settle);
     for (let x = 0; x < 800; x += 100) {
       c.engine.onClientAudio(micPcm(100, true));
       await c.clock.advance(100, settle);

@@ -22,7 +22,8 @@ import { VOICE_SAMPLE_RATE } from "./protocol";
 import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionConfig } from "./realtime";
 import { schemaFamilyOf } from "./tool-schema";
 import { cleanTranscript, joinTranscript, markerKinds, sameUtterance } from "./transcript-clean";
-import { voiceModelId } from "./settings";
+import { isElevenRealtimeModel, voiceModelId } from "./settings";
+import { sessionAckSummary } from "./eleven-realtime";
 
 type SdkTool = NonNullable<SdkSessionConfig["tools"]>[number];
 
@@ -51,6 +52,15 @@ export const PROVEN_SESSION_FIELDS: Record<"gemini" | "openai", readonly (keyof 
 };
 
 /**
+ * What the FIRST connect of an ElevenLabs Realtime call sends (not tried live yet, so nothing is proven): OpenAI's
+ * proven fields with the OpenAI values, except turn detection, which is left out (the OpenAI safe config sends none:
+ * the provider's own turn-taking, which ElevenLabs tunes "as one system"), and the voice, which is sent only when the
+ * version stores one for this family (lib/voice/settings.ts elevenRealtimeVoice). Its retry sends OpenAI's
+ * SETUP_RETRY_FIELDS; a last retry leaves the tools out too (lib/voice/engine.ts reconnect).
+ */
+export const ELEVEN_FIRST_SESSION_FIELDS: readonly (keyof SdkSessionConfig)[] = PROVEN_SESSION_FIELDS.openai.filter((k) => k !== "turnDetection");
+
+/**
  * What the retry after a refused (or early-closed) session setup sends (`cfg.safe`), per family. Gemini: its proven
  * fields with the proven plain values (below). OpenAI: the smallest config that still carries the playbook and the
  * tools (the audio formats keep our PCM 24 kHz); voice, transcription and turn detection take the provider's
@@ -66,7 +76,21 @@ export const SESSION_FIELD_NAMES = ["instructions", "voice", "outputModalities",
 
 /** Our session config as the normalized AI SDK session config (`cfg.safe`: proven fields and values only). */
 export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
+  const sdk = familySdkSessionConfig(cfg, modelId);
+  // ElevenLabs Realtime's last retry: no tools field at all.
+  if (!cfg.withoutTools) return sdk;
+  const { tools: _tools, ...rest } = sdk;
+  void _tools;
+  return rest;
+}
+
+function familySdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
   const full = fullSdkSessionConfig(cfg, modelId);
+  if (isElevenRealtimeModel(modelId)) {
+    // OpenAI-compatible: the OpenAI config's fields, ElevenLabs' first-connect subset (or OpenAI's retry subset).
+    const keep = new Set<string>(cfg.safe ? SETUP_RETRY_FIELDS.openai : ELEVEN_FIRST_SESSION_FIELDS);
+    return Object.fromEntries(Object.entries(full).filter(([k]) => keep.has(k))) as SdkSessionConfig;
+  }
   if (!cfg.safe) return full;
   const family = schemaFamilyOf(modelId);
   const keep = new Set<string>(SETUP_RETRY_FIELDS[family]);
@@ -78,12 +102,15 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
 function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
   const gemini = schemaFamilyOf(modelId) === "gemini";
   const tt = cfg.turnTaking;
+  // Text output (the realtime + ElevenLabs engines, OpenAI only): the model answers in text, so no voice, no output
+  // audio format and no output transcription are sent; it still hears the buyer (input audio and its transcription).
+  const text = cfg.outputModality === "text";
   return {
     instructions: cfg.instructions,
-    ...(cfg.voice ? { voice: cfg.voice } : {}),
-    outputModalities: ["audio"],
+    ...(cfg.voice && !text ? { voice: cfg.voice } : {}),
+    outputModalities: [text ? "text" : "audio"],
     inputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
-    outputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
+    ...(text ? {} : { outputAudioFormat: { type: "audio/pcm" as const, rate: VOICE_SAMPLE_RATE } }),
     // Input transcription on, with no hints, for every model. A hint is not safe on either family:
     // - Gemini Live: on 21 Nov 2026 a language/prompt hint here made live calls end 0.3 s after connecting.
     // - OpenAI (GPT-Realtime 2.1 and mini, 22 Nov 2026): a `prompt` here was rejected ("invalid_value: The
@@ -92,7 +119,7 @@ function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkS
     //   and whether it takes a language, cannot be seen from here.
     // The expected languages reach every model through the instructions (lib/voice/instructions.ts).
     inputAudioTranscription: {},
-    outputAudioTranscription: {},
+    ...(text ? {} : { outputAudioTranscription: {} }),
     // Gemini Live: server voice activity detection is always on and not tunable here.
     turnDetection: gemini || !tt
       ? { type: "server-vad" }
@@ -138,7 +165,10 @@ export const KNOWN_IGNORED_EVENTS: ReadonlySet<string> = new Set([
   "custom:unnamed",
 ]);
 
-const unknownEvent = (name: string): RealtimeEvent[] => (KNOWN_IGNORED_EVENTS.has(name) ? [] : [{ type: "provider-event", kind: "unknown", name }]);
+const unknownEvent = (name: string, all = false): RealtimeEvent[] => (!all && KNOWN_IGNORED_EVENTS.has(name) ? [] : [{ type: "provider-event", kind: "unknown", name }]);
+
+/** How much of a provider error message the log keeps. */
+export const PROVIDER_ERROR_LOG_CHARS = 300;
 
 /**
  * A custom event's provider type. The SDK names it `rawType`; when the Gateway leaves that out (the live logs'
@@ -220,11 +250,38 @@ export class ServerEventMapper {
   responseDone = false;
   lastError: string | null = null;
 
+  /**
+   * Text output (`textOutput`): the text of the response in progress, per output item (text-delta pieces, replaced
+   * by the item's whole text at text-done), and the tool calls the same response made.
+   */
+  private responseItems = new Map<string, string>();
+  private responseTools = 0;
+
+  /** The response's whole text so far (its items in order, one space between them). */
+  private responseText(): string {
+    return [...this.responseItems.values()].map((t) => t.trim()).filter(Boolean).join(" ");
+  }
+
   map(e: SdkServerEvent): RealtimeEvent[] {
+    if (this.o.textOutput) {
+      const out = this.mapText(e);
+      if (out) return out;
+    }
     switch (e.type) {
       case "session-created":
       case "session-started":
-        return e.sessionId ? [{ type: "session", providerSessionId: e.sessionId }] : [];
+        return [
+          ...(e.sessionId ? [{ type: "session" as const, providerSessionId: e.sessionId }] : []),
+          ...(this.o.verbose && e.type === "session-created" ? [{ type: "session-ack" as const, name: e.type, detail: sessionAckSummary(e.raw) }] : []),
+        ];
+      case "session-updated":
+        // Verbose (ElevenLabs Realtime): what the provider took from our setup, for the log. Otherwise nothing we read.
+        return this.o.verbose ? [{ type: "session-ack", name: e.type, detail: sessionAckSummary(e.raw) }] : unknownEvent(e.type);
+      case "session-usage":
+        // The provider's own count of connected seconds (cumulative): what a session-priced model bills. Log only.
+        return this.o.verbose
+          ? [{ type: "provider-event", kind: "unknown", name: e.type, message: `seconds=${Number.isFinite(e.usage?.seconds) ? e.usage.seconds : "?"}` }]
+          : unknownEvent(e.type);
       case "audio-delta":
       case "audio-chunk":
         this.late = null;
@@ -297,19 +354,74 @@ export class ServerEventMapper {
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
         if (/^interrupted$/i.test(rawType)) return this.interrupt();
         // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
-        return unknownEvent(`custom:${rawType}`);
+        return unknownEvent(`custom:${rawType}`, this.o.verbose);
       }
       case "session-closed": {
         // The provider ended the session (a clean close): its reason, when it gives one.
         const reason = (e as { reason?: unknown }).reason;
         return [{ type: "closed", ...(typeof reason === "string" && reason ? { reason: reason.slice(0, 200) } : {}), ...(this.lastError ? { error: this.lastError } : {}) }];
       }
-      case "error":
-        this.lastError = (e.code ? `${e.code}: ${e.message}` : String(e.message ?? "")).slice(0, 200);
-        return [{ type: "provider-event", kind: "error", name: e.code ? `error:${e.code}` : "error", message: this.lastError }];
+      case "error": {
+        const message = e.code ? `${e.code}: ${e.message}` : String(e.message ?? "");
+        this.lastError = message.slice(0, 200);
+        // Verbose (ElevenLabs Realtime): the log gets more of the message (an unknown provider's refusal reads long).
+        return [{ type: "provider-event", kind: "error", name: e.code ? `error:${e.code}` : "error", message: this.o.verbose ? message.slice(0, PROVIDER_ERROR_LOG_CHARS) : this.lastError }];
+      }
       default:
-        // Not used by us: reported once per type per call (the engine logs it), unless known and ignored.
-        return unknownEvent(String((e as { type?: unknown }).type ?? "?"));
+        // Not used by us: reported once per type per call (the engine logs it), unless known and ignored (verbose:
+        // every type, ignored or not).
+        return unknownEvent(String((e as { type?: unknown }).type ?? "?"), this.o.verbose);
+    }
+  }
+
+  /**
+   * Text output only (null: the event is mapped as for audio output). The model's text never becomes an agent
+   * transcript here: the whole text of a response goes out once, at its response-done (`response-text`), with the
+   * number of tool calls it made, and the engine decides whether to speak it.
+   * SDK events (ai 7.0.177 / @ai-sdk/provider RealtimeModelV4ServerEvent): `text-delta` {responseId, itemId, delta},
+   * `text-done` {responseId, itemId, text?}, `response-created`, `function-call-arguments-done`, `response-done`
+   * {status, usage}. The AI SDK's own reducer (ai realtime-event-reducer) reads text-delta/text-done the same way.
+   */
+  private mapText(e: SdkServerEvent): RealtimeEvent[] | null {
+    switch (e.type) {
+      // Defensive: should the Gateway name the text of a text-only response as a transcript, it is read the same way
+      // (never as a spoken transcript: nothing here was spoken). Only a live call shows which names come.
+      case "audio-transcript-delta":
+      case "text-delta": {
+        const id = e.itemId || "item";
+        this.responseItems.set(id, `${this.responseItems.get(id) ?? ""}${e.delta ?? ""}`);
+        // The model is answering: the buyer's turn (streamed pieces without a final) is final now.
+        return this.closeBuyerTurn();
+      }
+      case "text-done":
+        if (typeof e.text === "string" && e.text) this.responseItems.set(e.itemId || "item", e.text);
+        return [];
+      case "audio-transcript-done":
+        if (typeof e.transcript === "string" && e.transcript) this.responseItems.set(e.itemId || "item", e.transcript);
+        return [];
+      case "response-created":
+        this.responseItems.clear();
+        this.responseTools = 0;
+        this.responseDone = false;
+        return [{ type: "response-started" }];
+      case "function-call-arguments-done": {
+        this.responseTools++;
+        return null;
+      }
+      case "response-done": {
+        this.responseDone = true;
+        const text = this.clean(this.responseText());
+        const interrupted = e.status === "cancelled" || e.status === "incomplete" || e.status === "failed";
+        const tools = this.responseTools;
+        this.responseItems.clear();
+        this.responseTools = 0;
+        const out: RealtimeEvent[] = [...this.closeBuyerTurn(), { type: "response-text", text, toolCalls: tools, ...(interrupted ? { interrupted: true } : {}) }];
+        out.push({ type: "turn-done", ...(interrupted ? { interrupted: true } : {}) });
+        if (e.usage) out.push({ type: "usage", usage: toVoiceUsage(e.usage) });
+        return out;
+      }
+      default:
+        return null;
     }
   }
 
@@ -335,8 +447,12 @@ export class ServerEventMapper {
    * Gateway are not known to change per response).
    * `rawTranscripts` ("Classic + guards", lib/voice-guarded): transcripts go out as the provider sent them, markers
    * included (no cleaner); default: cleaned (lib/voice/transcript-clean.ts).
+   * `textOutput` (the session's outputModality "text"): the model answers in text (mapText).
+   * `verbose` (ElevenLabs Realtime, not tried live): the session-created/updated acknowledgement is summarized for the
+   * log ("session-ack"), the provider's session seconds are reported, every event type the mapper does not read is
+   * reported once (the known-ignored ones too), and error messages keep up to 300 characters for the log.
    */
-  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean } = {}) {}
+  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean; textOutput?: boolean; verbose?: boolean } = {}) {}
   private clean(text: string): string {
     return this.o.rawTranscripts ? text : cleanTranscript(text);
   }
@@ -452,6 +568,7 @@ export class ServerEventMapper {
  *   src/realtime/google-realtime-event-mapper.ts serializeClientEvent: `case 'response-create': … return null`).
  *   Until 23 Nov 2026 a response-create still went out after a result on Gemini (three in 1.3 s on one buyer turn):
  *   a no-op if the Gateway maps it as the SDK does, a second answer to the same turn if it does not.
+ * - ElevenLabs Realtime (OpenAI-compatible): as OpenAI (its schema family is "openai").
  * Each completed batch is reported (diagnostic "tool-continuation"), once.
  */
 export class ToolResponseGate {
@@ -544,7 +661,11 @@ export class GatewayRealtime implements RealtimeModel {
     if (!model.getServerWebSocketConfig) throw new Error("This realtime model has no server-owned connection");
     const { url, headers, protocols } = await model.getServerWebSocketConfig({ intent: "conversation" });
     const parse = model.createServerEventParser?.() ?? ((raw: unknown) => model.parseServerEvent(raw));
-    const mapper = new ServerEventMapper({ dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}) });
+    const mapper = new ServerEventMapper({
+      dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}),
+      ...(cfg.outputModality === "text" ? { textOutput: true } : {}),
+      ...(isElevenRealtimeModel(this.modelId) ? { verbose: true } : {}),
+    });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;
     let open = false;

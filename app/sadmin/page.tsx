@@ -60,12 +60,15 @@ export default async function SuperAdminPage({ searchParams }: { searchParams: P
           </div>
         </header>
 
-        <section className="sas-metrics" aria-label={t("admin.activity.live_accounts")}>
+        <section className="sas-metrics" aria-label={t("admin.activity.title")}>
           <MetricTile
+            accent
             label={t("admin.activity.live_accounts")}
             value={byStatus.live ?? 0}
             delta={t("admin.activity.live_delta", { total, setup: byStatus.setting_up ?? 0, paused: byStatus.paused ?? 0 })}
           />
+          <MetricTile label={t("admin.activity.total_accounts")} value={total} />
+          <MetricTile label={t("admin.activity.users_tile")} value={userCount} />
         </section>
 
         <section className="sas-panel" aria-labelledby="log-h" style={{ overflow: "hidden" }}>

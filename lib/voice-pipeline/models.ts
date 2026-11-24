@@ -85,6 +85,14 @@ export const PIPELINE_VOICE = "21m00Tcm4TlvDq8ikWAM";
 /** The voice's name for people (the "This call" card). */
 export const PIPELINE_VOICE_NAME = "Rachel (ElevenLabs)";
 
+/**
+ * The voice's stability, sent in dialogue mode only (providerOptions.elevenlabs.dialogue.voiceSettings.stability,
+ * lib/voice-pipeline/gateway.ts speakProviderOptions; text-to-speech attempts get nothing new). ElevenLabs v3/v4
+ * dialogue accepts 0, 0.5 and 1: 0 = most expressive, 0.5 = natural, 1 = most stable. Default 1 (owner, 24 Nov: the
+ * voice changed mid-answer).
+ */
+export const PIPELINE_VOICE_STABILITY = 1;
+
 /** What the listener is sent: PCM16 mono at this rate (the browser's 24 kHz mic audio is resampled on the server). */
 export const LISTEN_INPUT_RATE = 16_000;
 /** What the speaker is asked for: raw PCM16 mono 24 kHz, what the browser plays (anything else is converted or refused). */
@@ -96,13 +104,15 @@ export const SPEAK_OUTPUT_RATE = 24_000;
 
 /**
  * Speech per character: $0.04 per 1,000 characters (eleven-v4-turbo, eleven-v3-conversational, eleven-flash-v2.5)
- * = 40 micros; $0.08 per 1,000 (eleven-multilingual-v2) = 80 micros. Charged on the model the call kept.
+ * = 40 micros; $0.08 per 1,000 (eleven-multilingual-v2, eleven-v4) = 80 micros. Charged on the model the call kept.
+ * Every model of the panel's catalog (lib/voice-rt-eleven/catalog.ts ELEVEN_MODELS) has its rate here.
  */
 export const SPEAK_MICROS_PER_CHAR: Readonly<Record<string, number>> = {
   "elevenlabs/eleven-v4-turbo": 40,
   "elevenlabs/eleven-v3-conversational": 40,
   "elevenlabs/eleven-flash-v2.5": 40,
   "elevenlabs/eleven-multilingual-v2": 80,
+  "elevenlabs/eleven-v4": 80,
 };
 /**
  * Transcription per second of audio sent: gemini-3.5-transcribe-live $0.00015/s, gpt-transcribe $0.000075/s,
@@ -157,20 +167,32 @@ export const PIPELINE_TIMING = {
 export const PIPELINE_MAX_OUTPUT_TOKENS = 700;
 
 /**
- * "One moment": when a turn has been thinking this long (from its final transcript) with no reply yet, the engine
+ * "One moment": when a turn has been thinking `afterMs` (from its final transcript) with no reply yet, the engine
  * says ONE short filler in the call's language (at most once per turn, never while the buyer speaks); the reply
- * follows once the filler has played. Not stored as a chat message; its characters count as speech.
+ * follows once the filler has played. Not on two answered turns in a row: when the previous answered turn had one,
+ * the filler waits for `afterPreviousMs` instead (logged "pipeline filler skipped (previous turn had one)" at
+ * `afterMs`). Not stored as a chat message; its characters count as speech. The call of 24 Nov ran with 2,500 ms and
+ * no consecutive rule: the filler fired on all four turns.
  */
-export const PIPELINE_FILLER = { afterMs: 2_500, text: { en: "One moment.", he: "רגע אחד." } } as const;
+export const PIPELINE_FILLER = { afterMs: 3_000, afterPreviousMs: 6_000, text: { en: "One moment.", he: "רגע אחד." } } as const;
 export const fillerTextFor = (language: string) => (/^(he|iw)/i.test(language) ? PIPELINE_FILLER.text.he : PIPELINE_FILLER.text.en);
 
 /**
- * The per-turn context line of a call turn (replyToBuyer's `callContextLine`, once the chat lane accepts it:
- * lib/voice-pipeline/turn.ts PIPELINE-HOOK). The wording is PROVISIONAL (test lab only, awaiting the owner's
+ * The per-turn context line of a call turn (replyToBuyer's `callContextLine`, passed by lib/voice-pipeline/turn.ts
+ * makeCallTurn). The wording is PROVISIONAL (test lab only, awaiting the owner's
  * confirmation). An empty string switches it off. One line, under 600 characters.
  */
 export const PIPELINE_CALL_CONTEXT_LINE =
-  "This is a live call. When you only need to record what the buyer said (update_deal_state), write your spoken reply in the same response as that tool call; do not wait for its result.";
+  "This is a live call. When recording what the buyer said is all you need to do this turn, call update_deal_state and put what you say to the buyer in its spoken_reply argument: one response, no second step. When you need another tool or its result first, leave spoken_reply null and answer after the results.";
+
+/**
+ * The description of update_deal_state's optional `spoken_reply` argument on a call turn (replyToBuyer's
+ * `callReplyArgDescription`, passed by lib/voice-pipeline/turn.ts makeCallTurn; capped at 400 characters there). With it, a
+ * response that is only update_deal_state call(s) with a non-empty spoken_reply ends the turn in one round with that
+ * text. The wording is PROVISIONAL (test lab only, awaiting the owner's confirmation). An empty string switches it off.
+ */
+export const PIPELINE_CALL_REPLY_ARG_DESCRIPTION =
+  "What you say to the buyer now, when recording is all you need to do this turn. Leave null when you need another tool or its result first.";
 
 /** Text-only usage of a pipeline call, stored under voice_sessions.usage.pipeline (no schema change). */
 export type PipelineUsage = {

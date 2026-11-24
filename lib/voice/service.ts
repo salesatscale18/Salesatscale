@@ -15,10 +15,14 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
-import { isGuardedEngine, isPipelineEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGuardedEngine, isPipelineEngine, isRtElevenEngine, RT_ELEVEN_MODELS, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
-import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
+import { rtElevenCallInfo, rtElevenVoiceUsed, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
+import { speechFor } from "@/lib/voice-rt-eleven/rule";
+import { callModelFor, callToolsOff, sessionCostMicros } from "./eleven-realtime";
+import { consoleVoiceLog, voiceLine } from "./log";
+import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, resolveVoiceSettings, storedEleven, storedSpeech, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
 
@@ -95,21 +99,36 @@ export async function createVoiceSession(
   // too (the scripted model stands in for it; `mode` says so), so the test lab shows which model was being tried.
   const [version] = await db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
     .where(and(eq(agentVersions.id, conv.agentVersionId), eq(agentVersions.accountId, a.accountId)));
+  // Who speaks (lib/voice-rt-eleven/rule.ts, the one rule): the version's "Voice from" on the version's model, on the
+  // wiring picked (Classic never; buyer calls not while ELEVEN_FOR_BUYER_CALLS is off). Stored on the session; the
+  // socket applies it. The retired realtime + ElevenLabs engines (old stored ids) keep their own path.
+  // ElevenLabs Realtime is for test calls only for now: a buyer call runs on the platform default (logged below).
+  const pick = callModelFor(versionModelId(version?.voiceSettings, opts.env), a.isTest, opts.env);
+  const versionModel = pick.modelId;
+  const wiring = opts.engine && a.isTest ? opts.engine : "current";
+  const speech = isRtElevenEngine(wiring) || isPipelineEngine(wiring) ? null
+    : speechFor({ wanted: resolveVoiceSettings(version?.voiceSettings, versionModel).speech, modelId: versionModel, engine: wiring, isTest: a.isTest });
+  const speechSettings = speech?.speech === "elevenlabs" ? { speech: "elevenlabs" as const } : {};
   const [row] = await db.insert(voiceSessions).values({
     accountId: a.accountId, conversationId: conv.id, agentVersionId: conv.agentVersionId, startedByUserId: a.userId, isTest: a.isTest,
-    status: "pending", createdAt: now, model: versionModelId(version?.voiceSettings, opts.env), mode,
+    status: "pending", createdAt: now, model: versionModel, mode,
     ticketHash: sha256(ticket),
+    ...(speech?.speech === "elevenlabs" ? { settings: speechSettings as Record<string, unknown> as VoiceSettings } : {}),
     // A test-lab call on the Classic (20 Nov) engine: stored on the session, which the socket reads; Gemini only.
     ...(opts.engine === "classic" && a.isTest
       ? { settings: { engine: "classic" } as VoiceSettings, model: classicModelId(versionModelId(version?.voiceSettings, opts.env)) }
       : {}),
     // A test-lab call on "Classic + guards" or its silent probe (lib/voice-guarded): stored on the session; any voice
     // model, as Current.
-    ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
+    ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine, ...speechSettings } as Record<string, unknown> as VoiceSettings } : {}),
     // A test-lab call on a pipeline engine (lib/voice-pipeline: listen, think, speak; Gemini Flash or the chat model
     // thinking): stored on the session.
     ...(opts.engine && isPipelineEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
+    // A test-lab call on a realtime + ElevenLabs engine (lib/voice-rt-eleven): stored on the session, with the
+    // engine's own realtime model (GPT-Realtime 2.1 or mini, whatever the version's model is).
+    ...(opts.engine && isRtElevenEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings, model: RT_ELEVEN_MODELS[opts.engine] } : {}),
   }).returning({ id: voiceSessions.id });
+  if (pick.ignored) consoleVoiceLog.info(voiceLine(row.id, pick.ignored));
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }
 
@@ -188,7 +207,8 @@ export async function closeStaleVoiceSessions(db: Db, accountId: string | null, 
     const started = (s.connectedAt ?? s.createdAt).getTime();
     const durationSec = Math.min(PLATFORM_MAX_CALL_SEC, Math.max(0, Math.round((t - started) / 1000)));
     const base: VoiceUsage | null = s.mode === "live" ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
-    const costMicros = s.mode === "live" && base ? estimateRealtimeCostMicros(s.model, base) ?? 0 : 0;
+    // A session-priced model (ElevenLabs Realtime): its connected seconds too (here the whole call: no standby record).
+    const costMicros = s.mode === "live" && base ? (estimateRealtimeCostMicros(s.model, base) ?? 0) + sessionCostMicros(s.model, durationSec) : 0;
     const usage = { ...(base ?? {}), endDetail: RELAY_GONE } as VoiceUsage;
     const done = await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "connection_lost", durationSec, usage, costMicros, ...staleRecording(s) })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.status, "live"))).returning({ id: voiceSessions.id });
@@ -230,10 +250,12 @@ export async function realtimeModelFor(
  */
 export async function saveDraftVoiceSettings(
   db: Db, accountId: string, input: unknown, env: Record<string, string | undefined> = process.env,
+  /** `canPickSpeech`: the caller is a platform admin (the model picker's rule); anyone else's "Voice from" is ignored. */
+  opts: { canPickSpeech?: boolean } = {},
 ): Promise<{ ok: true; settings: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors }> {
   const draft = await ensureDraftVersion(db, accountId);
   // Checked against the model the draft uses now; a model change in the input re-checks the rest for the new one.
-  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env));
+  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env), { canPickSpeech: opts.canPickSpeech === true, storedSpeech: storedSpeech(draft.voiceSettings), storedEleven: storedEleven(draft.voiceSettings) });
   if (!v.ok) return v;
   await db.update(agentVersions).set({ voiceSettings: v.value })
     .where(and(eq(agentVersions.id, draft.id), eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));
@@ -290,7 +312,7 @@ export async function endUserTestVoiceSessions(db: Db, accountId: string, userId
     const durationSec = s.connectedAt ? Math.min(PLATFORM_MAX_CALL_SEC, Math.max(0, Math.round((now.getTime() - s.connectedAt.getTime()) / 1000))) : 0;
     // Priced like a stale call, in case no relay is left to store its own figures (a running one overwrites these).
     const usage: VoiceUsage | null = s.mode === "live" && s.connectedAt ? (s.usage ?? { ...estimatedRealtimeUsage(durationSec), estimated: true }) : s.usage;
-    const costMicros = s.mode === "live" && usage ? estimateRealtimeCostMicros(s.model, usage) ?? 0 : 0;
+    const costMicros = s.mode === "live" && usage ? (estimateRealtimeCostMicros(s.model, usage) ?? 0) + sessionCostMicros(s.model, durationSec) : 0;
     await db.update(voiceSessions).set({ status: "ended", endedAt: now, endReason: "user_hangup", durationSec, usage, costMicros })
       .where(and(eq(voiceSessions.id, s.id), eq(voiceSessions.accountId, accountId), inArray(voiceSessions.status, ["pending", "live"])));
   }
@@ -332,8 +354,12 @@ export type VoiceSessionSummary = {
   engine: VoiceEngineName;
   /** The voice and fillers this call ran with (stored at go-live); null parts: not recorded (older calls). */
   voiceUsed: CallVoiceInfo;
+  /** The call ran without tools (ElevenLabs Realtime's last retry): the card says "Tools: not available on this model". */
+  toolsOff: boolean;
   /** A pipeline-proof call (lib/voice-pipeline): its three models and median answer time; null for the other engines. */
   pipeline: PipelineCallInfo | null;
+  /** A realtime + ElevenLabs call (lib/voice-rt-eleven): its realtime and speech models and median answer time; null otherwise. */
+  rtEleven: RtElevenCallInfo | null;
   wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
@@ -362,8 +388,10 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     wakes: s.usage?.wakes ?? 0,
     endDetail: s.usage?.endDetail ?? null,
     engine: sessionEngine(s.settings),
-    voiceUsed: callVoiceInfo(s.settings),
+    voiceUsed: rtElevenVoiceUsed(s.settings, s.usage) ?? callVoiceInfo(s.settings),
+    toolsOff: callToolsOff(s.settings),
     pipeline: pipelineCallInfo(s.settings, s.usage),
+    rtEleven: rtElevenCallInfo(s.settings, s.usage),
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

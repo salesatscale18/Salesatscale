@@ -211,8 +211,12 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     expect(all).toMatch(/>Test lab chats <span class="sas-num">1<\/span>/);
     const tests = await page(ConversationsPage(props(account.slug, { filter: "test" })));
     save("conversations-test", tests);
-    expect(tests).toMatch(/<span class="sas-channel-pill"[^>]*data-test-chat="">[\s\S]*?Test lab chat<\/span>/);
-    expect(tests).not.toContain('class="sas-chip" data-test-chat');
+    // ConvListV2: rows carry no chip; the open test chat's header shows the flask chip.
+    expect(tests).not.toContain("data-test-chat");
+    const testConv = /[?;]c=([0-9a-f-]{36})/.exec(tests)![1];
+    const open = await page(ConversationsPage(props(account.slug, { filter: "test", c: testConv })));
+    expect(open).toMatch(/<span class="sas-channel-pill"[^>]*data-test-chat="">[\s\S]*?Test lab chat<\/span>/);
+    expect(open).not.toContain('class="sas-chip" data-test-chat');
     expect(all).not.toMatch(/Test chats?</);
     // The empty All view names the hidden ones in the plural form.
     const { t: tr } = await import("@/lib/i18n");

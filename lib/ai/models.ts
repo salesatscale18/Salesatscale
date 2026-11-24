@@ -56,6 +56,7 @@ export const DEFAULT_PRICES: Record<string, ModelPrice> = {
   "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.1, cacheWrite5m: 2.5, cacheWrite1h: 4 },
   "claude-haiku-5-5": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite5m: 0.125, cacheWrite1h: 0.2 },
   "google/gemini-3.8-flash": { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite5m: 0, cacheWrite1h: 0 },
+  "google/gemini-3.5-flash-lite": { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite5m: 0, cacheWrite1h: 0 },
 };
 
 const PRICE_KEYS = ["input", "output", "cacheRead", "cacheWrite5m", "cacheWrite1h"] as const;
@@ -178,6 +179,11 @@ export const DEFAULT_REALTIME_PRICES: Record<string, RealtimePrice> = {
   "openai/gpt-realtime-2": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
   "openai/gpt-realtime-2.1": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
   "openai/gpt-realtime-mini": { textIn: 0.6, textOut: 2.4, cachedIn: 0.06, audioIn: 10, audioOut: 20 },
+  // ElevenLabs Realtime (Vercel AI Gateway model page, 24 Nov 2026): one input and one output token price (no modality
+  // split, so text and audio carry the same), plus $0.0013334 per connected second, which this table cannot hold:
+  // lib/voice/eleven-realtime.ts adds that part to the call's cost.
+  "elevenlabs/eleven-realtime-v1-mini": { textIn: 0.2, textOut: 6, cachedIn: 0.02, audioIn: 0.2, audioOut: 6 },
+  "elevenlabs/eleven-realtime-v1-max": { textIn: 1.8, textOut: 9, cachedIn: 0.18, audioIn: 1.8, audioOut: 9 },
 };
 
 const REALTIME_PRICE_KEYS = ["textIn", "textOut", "audioIn", "audioOut", "cachedIn"] as const;

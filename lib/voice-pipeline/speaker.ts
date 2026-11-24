@@ -54,7 +54,11 @@ export class SpeakerChain implements Speaker {
   private gen = 0;
   private log: SpeakerLog = () => {};
 
-  constructor(private readonly links: readonly ChainLink[]) {
+  /**
+   * `onChosen`: called once when an attempt produced audio and is kept, with the failures before it ("<model> <mode>:
+   * <reason>", in order); the realtime + ElevenLabs speaker logs its fallback line from it.
+   */
+  constructor(private readonly links: readonly ChainLink[], private readonly opts: { onChosen?(link: ChainLink, failures: readonly string[]): void } = {}) {
     if (!links.length) throw new Error("SpeakerChain needs at least one speak attempt");
     this.voice = links[0].speaker.voice;
   }
@@ -129,6 +133,7 @@ export class SpeakerChain implements Speaker {
         }
         this.chosen = link;
         this.log("info", `pipeline speech using ${name}${failures.length ? ` (after ${failures.length} failed)` : ""}`);
+        this.opts.onChosen?.(link, failures);
         done(link);
         try {
           yield first.value;

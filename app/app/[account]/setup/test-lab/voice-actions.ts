@@ -15,15 +15,16 @@ import { isUuid } from "@/lib/security/ids";
 import { spendCapped, platformBudget } from "@/lib/ai/usage";
 import { usdRate } from "@/lib/ai/models";
 import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } from "@/lib/voice/service";
-import { maxCallSeconds, resolveVoiceSettings, sentCallVoice, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
+import { isOpenAiVoiceModel, maxCallSeconds, resolveVoiceSettings, sentCallVoice, storedSpeech, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
-import { isPipelineEngine, labEngineChoice, PIPELINE_ENGINE, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGatewayPipelineEngine, isPipelineEngine, isRetiredEngine, labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { speechFor } from "@/lib/voice-rt-eleven/rule";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
 import { pipelineModelsLabel, thinkModelLabel } from "@/lib/voice-pipeline/summary";
-import { pipelineTextModel } from "@/lib/voice-pipeline/gateway-llm";
-import { SCRIPTED_THINK_MODEL } from "@/lib/voice-pipeline";
+import { DEFAULT_ELEVEN_VOICE, elevenVoiceLabel } from "@/lib/voice-rt-eleven/catalog";
+import { pipelineThinkModelFor, SCRIPTED_THINK_MODEL } from "@/lib/voice-pipeline";
 import { minorPerUsd, voiceSocketUrl } from "./voice-server";
 import type { VoiceUnavailableReason } from "@/lib/voice/client/state";
 import type { VoiceSettingsFormState } from "@/components/sas/voice/voice-settings-form";
@@ -55,6 +56,9 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const gate = voiceLabAccess(a.user);
   if (gate === "not_admin") return { ok: false, reason: "not_allowed" };
   if (gate === "voice_off") return { ok: false, reason: "voice_off" };
+  // Retired engines (owner, 24 Nov 2026): the pipelines, the realtime + ElevenLabs engines and the silent probe. No new
+  // call starts on one (Call again on an old one too); ElevenLabs is a Voice settings choice now.
+  if (isRetiredEngine(input?.engine)) return { ok: false, reason: "not_allowed" };
   const mode = voiceMode();
   if (a.account.status === "paused") return { ok: false, reason: "account_paused" };
   // A live call is refused at the caps before anything is created (scripted calls cost nothing).
@@ -87,10 +91,15 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const callModel = engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings);
   const resolved = resolveVoiceSettings(conv.version.voiceSettings);
   // A pipeline engine: its three models (listening; thinking = Gemini 3.8 Flash on "pipeline" (VOICE_PIPELINE_TEXT_MODEL
-  // overrides it), the version's chat model on "pipeline_chat"; speaking) and its one voice.
+  // overrides it), Gemini 3.5 Flash-Lite on "pipeline_lite", the version's chat model on "pipeline_chat"; speaking) and its one voice.
   const pipeline = isPipelineEngine(engine);
-  const thinkModel = s.mode === "scripted" ? SCRIPTED_THINK_MODEL : engine === PIPELINE_ENGINE ? pipelineTextModel() : conv.version.model;
-  const voiceUsed: CallVoiceInfo = pipeline ? { voice: PIPELINE_VOICE_NAME, fillers: false } : { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
+  // Who speaks (the one rule, lib/voice-rt-eleven/rule.ts, as createVoiceSession stored it): the version's "Voice from"
+  // on its model; the engine is only the wiring (Classic: never ElevenLabs).
+  const eleven = speechFor({ wanted: resolveVoiceSettings(conv.version.voiceSettings, callModel).speech, modelId: callModel, engine, isTest: true }).speech === "elevenlabs";
+  const thinkModel = s.mode === "scripted" ? SCRIPTED_THINK_MODEL : isGatewayPipelineEngine(engine) ? pipelineThinkModelFor(engine, process.env) : conv.version.model;
+  // ElevenLabs: the version's voice (the call card's Voice row; after the call, what applied: lib/voice-rt-eleven/summary.ts).
+  const voiceUsed: CallVoiceInfo = pipeline ? { voice: PIPELINE_VOICE_NAME, fillers: false }
+    : eleven ? { voice: elevenVoiceLabel(resolved.elevenVoice ?? DEFAULT_ELEVEN_VOICE), fillers: false } : { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
     model: pipeline ? pipelineModelsLabel({ listenModel: PIPELINE_LISTEN_MODEL, thinkModel: thinkModelLabel(thinkModel), speakModel: PIPELINE_SPEAK_MODEL })
@@ -133,7 +142,13 @@ export async function saveVoiceSettingsAction(_prev: VoiceSettingsFormState, for
     fillers: caps.fillers ? form.get("fillers") === "on" : current.fillers,
     maxCallSec: str("maxCallSec"),
   };
-  const r = await saveDraftVoiceSettings(appDb, a.account.id, input);
+  // "Voice from": platform admins only, as the model picker (checked above; saveDraftVoiceSettings ignores it otherwise).
+  // Not in the form (a Gemini model): the model's own voice.
+  const speech = str("speech") || (isOpenAiVoiceModel(model) ? storedSpeech(draft.voiceSettings) : "model");
+  // ElevenLabs' speaking model, voice and steadiness (platform admins, as "Voice from"): not posted (the section is not
+  // shown) keeps the version's (saveDraftVoiceSettings).
+  const eleven = { elevenModel: str("elevenModel"), elevenVoice: str("elevenVoice"), elevenStability: str("elevenStability") };
+  const r = await saveDraftVoiceSettings(appDb, a.account.id, { ...input, speech, ...eleven }, process.env, { canPickSpeech: voiceLabAccess(a.user) === "ok" });
   if (!r.ok) return { errors: r.errors };
   revalidatePath(path(a.account.slug));
   redirect(`${path(a.account.slug)}?voice_saved=${draft.version}`);

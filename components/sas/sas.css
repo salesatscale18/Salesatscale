@@ -233,18 +233,33 @@
 .sas-nav__label { flex: 1; }
 .sas-nav__count { font-family: var(--font-sans); font-size: 12px; font-variant-numeric: tabular-nums; }
 .sas-nav__count--human { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 700 11px/20px var(--font-sans); text-align: center; }
+/* Setup progress: a thin bar in the side menu (Agent setup), the step line on setup pages, the Overview card. */
+.sas-progress { display: block; height: 6px; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+.sas-progress__fill { display: block; height: 100%; border-radius: inherit; background: var(--primary-accent, var(--primary)); transition: width 300ms ease-out; }
+.sas-nav__progress { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 8px; }
+.sas-nav__done { margin-inline-start: auto; display: inline-flex; color: var(--success); }
+.sas-nav__done .sas-ico { width: 16px; height: 16px; }
+.sas-nav__next { margin-inline-start: auto; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--primary-soft); color: var(--primary); font: 600 11px/16px var(--font-sans); }
+.sas-app a.sas-nav__item[aria-current="page"] .sas-nav__next { background: var(--surface-raised); }
+.sas-stepline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding-block-start: 4px; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-stepline__label { font-weight: 600; color: var(--ink); }
+.sas-stepline__done { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 600; }
+.sas-stepline__done .sas-ico { width: 14px; height: 14px; }
+.sas-stepline .sas-progress { width: 120px; }
+.sas-app a.sas-stepline__next { margin-inline-start: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--primary); font-weight: 600; text-decoration: none; }
+.sas-app a.sas-stepline__next:hover { text-decoration: underline; }
+.sas-stepline__next .sas-ico { width: 14px; height: 14px; }
+.sas-setup-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) 20px; padding: var(--space-4) 20px; }
+.sas-setup-card__text { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.sas-setup-card__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.sas-setup-card .sas-progress { max-width: 420px; }
+@media (prefers-reduced-motion: reduce) { .sas-progress__fill { transition: none; } }
+[dir="rtl"] .sas-stepline__next .sas-ico, [dir="rtl"] .sas-setup-card .sas-btn .sas-ico { transform: scaleX(-1); }
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
 .sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .sas-nav__user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Setup steps bar */
-.sas-steps { display: flex; gap: 4px; overflow-x: auto; padding-block: 14px; margin: 0; list-style: none; padding-inline: 0; }
-.sas-app a.sas-steps__step { display: flex; align-items: center; gap: var(--space-2); height: 36px; padding-inline: 6px 12px; border-radius: var(--radius-pill); white-space: nowrap; text-decoration: none; color: var(--ink-muted); font-weight: 500; }
-.sas-app a.sas-steps__step[aria-current="step"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
-.sas-steps__dot { width: 24px; height: 24px; border-radius: var(--radius-pill); display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--surface-sunken); color: var(--ink-muted); }
-.sas-steps__dot .sas-ico { width: 14px; height: 14px; }
-.sas-steps__step--done .sas-steps__dot { background: var(--success-soft); color: var(--success); }
-.sas-steps__step[aria-current="step"] .sas-steps__dot { background: var(--primary); color: var(--on-primary); }
 
 /* Visually hidden (screen-reader text) */
 .sas-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -413,23 +428,38 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox > * { min-width: 0; }
 .sas-inbox__list { overflow: hidden; }
 .sas-inbox__tools { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
-.sas-inbox__group { margin: 0; padding: 14px 16px 6px; }
-.sas-app a.sas-inbox__row { display: flex; gap: 10px; padding: 12px 16px; color: var(--ink); text-decoration: none; }
-.sas-app a.sas-inbox__row:hover { background: var(--surface-sunken); }
-.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
-.sas-inbox__row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.sas-inbox__row-top { display: flex; justify-content: space-between; gap: var(--space-2); align-items: baseline; }
-.sas-inbox__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.sas-inbox__row--unread .sas-inbox__name, .sas-inbox__row--unread .sas-inbox__preview { font-weight: 700; color: var(--ink); }
-.sas-inbox__preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sas-inbox__meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* ConvListV2: a views menu and a sort menu on one line, groups on a surface band, rows of two lines. */
+.sas-inbox__bar { display: flex; gap: var(--space-2); min-width: 0; }
+.sas-inbox__menu { min-width: 0; }
+.sas-inbox__menu--view { flex: 1 1 auto; }
+.sas-inbox__select { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink); font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; min-width: 0; }
+.sas-inbox__select:hover, .sas-inbox__menu[open] > .sas-inbox__select { background: var(--surface); }
+.sas-inbox__select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-inbox__select .sas-ico { width: 14px; height: 14px; flex: none; color: var(--ink-muted); }
+.sas-inbox__menu--view .sas-rowmenu__list { inset-inline-start: 0; inset-inline-end: auto; min-width: 240px; }
+.sas-app .sas-inbox__option { justify-content: space-between; gap: var(--space-4); }
+.sas-app .sas-inbox__option .sas-num { color: var(--ink-muted); font-size: 12px; }
+.sas-app .sas-inbox__option[aria-current="page"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.sas-app .sas-inbox__option[aria-current="page"] .sas-num { color: var(--primary); }
+.sas-inbox__group { margin: 0; padding: 10px 16px 6px; background: var(--surface); }
+.sas-inbox__list div + div > .sas-inbox__group, .sas-inbox__group + .sas-list { border-block-start: 1px solid var(--line); }
+.sas-app a.sas-inbox__row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; align-items: center; box-sizing: border-box; min-height: 60px; padding: 10px 16px; color: var(--ink); text-decoration: none; text-align: start; }
+.sas-app a.sas-inbox__row:hover { background: var(--surface); }
+.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft); }
+.sas-app a.sas-inbox__row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sas-inbox__row > .sas-av { grid-row: span 2; width: 36px; height: 36px; font-size: 12px; }
+.sas-inbox__row > .sas-av .sas-ico { width: 16px; height: 16px; }
+.sas-inbox__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; line-height: 20px; }
+.sas-inbox__name > bdi { font-weight: 600; }
+.sas-inbox__company { color: var(--ink-muted); }
+.sas-inbox__row > .sas-when { font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sas-inbox__row > .sas-inbox__preview { grid-column: 2 / 4; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-inbox__row--unread > .sas-inbox__preview { color: var(--ink); }
+.sas-inbox__row > .sas-inbox__preview--needs { color: var(--human); font-weight: 500; }
 /* O35: the hand-off reason, one line cut with "…" at any width (Needs you, Conversations row, lead banner).
    The reason is its own isolated run (dir="auto"), so a Hebrew reason is cut at its own end.
    In Needs you it has a line of its own under "Name needs a person", before company and time. */
 .sas-oneline { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
-.sas-inbox__meta > .sas-oneline { flex: 0 1 auto; }
-.sas-inbox__badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 600 11px/22px var(--font-sans); }
-.sas-inbox__badge .sas-ico { width: 12px; height: 12px; }
 .sas-inbox__thread { overflow: hidden; }
 .sas-inbox__thread-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
 .sas-inbox__back { display: none; }
@@ -479,10 +509,8 @@ h2.sas-group-label { margin: 0; }
   .sas-table--stack td[data-label=""] { justify-content: flex-end; }
 }
 
-/* Chip strip: setup steps and section lists scroll sideways on a phone, the current item scrolled into view. */
-.sas-steps { scrollbar-width: thin; }
+/* Chip strip: section lists scroll sideways on a phone, the current item scrolled into view. */
 @media (max-width: 767px) {
-  .sas-steps { padding-block: var(--space-2); }
   .sas-subnav { flex: 1 1 100%; max-width: none; flex-direction: row; gap: 4px; overflow-x: auto; padding-block-end: 4px; scrollbar-width: thin; }
   .sas-app a.sas-subnav__item { flex: none; height: 32px; border-radius: var(--radius-pill); white-space: nowrap; }
   .sas-app a.sas-subnav__item[aria-current="page"] { background: var(--primary-soft); color: var(--primary); box-shadow: none; }
@@ -851,13 +879,9 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-thread-note > .sas-ico { color: var(--human); }
 .sas-thread-note strong { color: var(--ink); font-weight: 600; }
 /* F1: the list preview is "Who: " plus the message, the message in its own direction, cut at its own end. */
-.sas-inbox__preview { display: flex; min-width: 0; gap: 4px; }
+.sas-inbox__preview { display: flex; min-width: 0; gap: 4px; overflow: hidden; white-space: nowrap; }
 .sas-inbox__preview-who { flex: none; }
 .sas-inbox__preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* D4: Conversations tabs wrap on a phone instead of scrolling out of sight. */
-@media (max-width: 767px) {
-  .sas-inbox__tools .sas-views { flex-wrap: wrap; overflow-x: visible; margin-inline: 0; padding-inline: 0; }
-}
 /* E7: table headings like "One-time" stay on one line. */
 .sas-th-nowrap { white-space: nowrap; }
 
@@ -1009,10 +1033,37 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vs-reset { margin-inline-start: auto; }
 .sas-vs-field { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .sas-vs-field legend { padding: 0; margin-block-end: 6px; }
-.sas-vs-row { display: flex; gap: var(--space-2); }
-.sas-vs-row .sas-select { flex: 1; min-width: 0; }
 .sas-vs-max { max-width: 200px; }
+/* "Voice from: ElevenLabs": "Test calls hear: ..." and "Buyers hear: ... Change" as two matching plain text lines (no
+   box: they are not fields); "Voice: the model's default" the same way. A control at a line's end stays on the line
+   (also at phone width): the value wraps instead. */
+.sas-vs-line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 36px; }
+.sas-vs-line__value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sas-vs-line > .sas-btn { flex: none; }
+.sas-vs-line output { font: inherit; color: inherit; }
+.sas-vs-sublabel { font-weight: 600; color: var(--ink); }
+[data-voice-test-hears], [data-voice-buyers-hear] { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--line); }
 .sas-vs-err { color: var(--danger); }
+/* The panel's three sections (Voice model, Voice, Conversation: design review, 24 Nov 2026). */
+.sas-vs-section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.sas-vs-section + .sas-vs-section { padding-block-start: 14px; border-block-start: 1px solid var(--line); }
+.sas-vs-section__title { margin: 0; font-size: 13px; line-height: 18px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink-muted); }
+.sas-vs-form .sas-small { overflow-wrap: anywhere; }
+.sas-vs-lang { color: var(--ink); }
+.sas-vs-warn { display: flex; gap: 6px; align-items: flex-start; color: var(--ink); }
+.sas-vs-warn .sas-ico { flex: none; color: var(--warning); margin-block-start: 1px; }
+.sas-vs-form [hidden] { display: none; }
+/* "Play sample": its own line under the voice's helper line, the buttons side by side (they wrap only when they do not
+   fit); the labels share one cell (no jump to "Stop"). */
+.sas-vs-samples { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.sas-vs-sample__labels { display: inline-grid; }
+.sas-vs-sample__labels > span { grid-area: 1 / 1; visibility: hidden; }
+.sas-vs-sample__labels > span[data-on] { visibility: visible; }
+.sas-vs-sample[data-phase="loading"] .sas-ico { animation: sas-vs-spin 1s linear infinite; }
+@keyframes sas-vs-spin { to { transform: rotate(360deg); } }
+@media (max-width: 480px) {
+  .sas-vs-max { max-width: none; }
+}
 .sas-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
 .sas-seg__opt { padding: 7px var(--space-2); text-align: center; font-weight: 600; cursor: pointer; color: var(--ink); }
 .sas-seg__opt + .sas-seg__opt { border-inline-start: 1px solid var(--line-strong); }
@@ -1759,3 +1810,124 @@ label.st-voice__row { cursor: pointer; }
 
 /* IDs keep normal digits wherever they sit, also inside a tabular .sas-num run (UX: IDs use normal digits). Keep last. */
 .sas-id, .sas-id--plain, .sas-num .sas-id, .sas-num .sas-id--plain { font-variant-numeric: normal; }
+
+/*
+ * Platform admin (/sadmin): green palette and a quieter, cleaner chrome.
+ * Only surfaces rendered with <SasRoot tone="admin"> (AdminShell) use it; the
+ * seller workspace and buyer pages keep Trust Blue. Contrast checked: primary
+ * text >= 5:1 on every surface in light, >= 8:1 in dark; muted text >= 5.6:1.
+ * Status colours (success, warning, danger, agent, human) are unchanged.
+ */
+.sas-app.sas-app--admin {
+  --surface: #f4f7f5; --surface-raised: #ffffff; --surface-sunken: #eaf0ec;
+  --line: #dfe7e2; --line-strong: #7b8a82;
+  --ink: #0e1712; --ink-muted: #52615a;
+  --primary: #13744a; --primary-fill: #13744a; --on-primary: #ffffff; --primary-soft: #e3f3ea;
+  --brand-blue: #2f9e6a; --brand-teal: #8fd9a8;
+  --shadow-card: 0 1px 2px rgba(14,23,18,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  .sas-app.sas-app--admin:not([data-theme="light"]) {
+    --surface: #0a0f0c; --surface-raised: #121a15; --surface-sunken: #0e1511;
+    --line: #223029; --line-strong: #56675e;
+    --ink: #e6efe9; --ink-muted: #98a89f;
+    --primary: #5fd39a; --primary-fill: #7ee0b0; --on-primary: #08110c; --primary-soft: #12281d;
+    --brand-blue: #3fb67e; --brand-teal: #a6e8bf;
+    --shadow-card: none;
+  }
+}
+.sas-app.sas-app--admin[data-theme="dark"] {
+  --surface: #0a0f0c; --surface-raised: #121a15; --surface-sunken: #0e1511;
+  --line: #223029; --line-strong: #56675e;
+  --ink: #e6efe9; --ink-muted: #98a89f;
+  --primary: #5fd39a; --primary-fill: #7ee0b0; --on-primary: #08110c; --primary-soft: #12281d;
+  --brand-blue: #3fb67e; --brand-teal: #a6e8bf;
+  --shadow-card: none;
+}
+.sas-app--admin { background: var(--surface); }
+.sas-shell--admin .sas-nav { background: var(--surface); border-inline-end-color: transparent; box-shadow: inset -1px 0 0 var(--line); }
+.sas-shell--admin .sas-shell__content { width: 100%; max-width: 1200px; margin-inline: auto; padding-block: var(--space-8); gap: var(--space-6); }
+.sas-shell--admin .sas-title { letter-spacing: -0.02em; }
+.sas-shell--admin .sas-panel,
+.sas-shell--admin .sas-metric { box-shadow: var(--shadow-card); }
+.sas-shell--admin .sas-metric { gap: 2px; padding: var(--space-4) 20px; }
+.sas-shell--admin .sas-metric__value { color: var(--ink); }
+.sas-shell--admin .sas-metric--accent .sas-metric__value { color: var(--primary); }
+.sas-shell--admin .sas-metrics { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.sas-shell--admin .sas-panel__head { padding: var(--space-4) 20px; }
+.sas-shell--admin .sas-table th { background: transparent; border-block-end: 1px solid var(--line); padding-inline: 20px; }
+.sas-shell--admin .sas-table td { padding-inline: 20px; }
+.sas-shell--admin .sas-table tbody tr:first-child td { border-block-start: 0; }
+.sas-shell--admin .sas-table tbody tr:hover td { background: var(--surface); }
+.sas-shell--admin a.sas-list__row { padding: 14px 20px; }
+.sas-shell--admin .sas-table-foot { padding-inline: 20px; }
+@media (max-width: 860px) {
+  .sas-shell--admin .sas-shell__content { padding: var(--space-4); }
+  .sas-shell--admin .sas-panel__head, .sas-shell--admin a.sas-list__row, .sas-shell--admin .sas-table-foot { padding-inline: var(--space-4); }
+  .sas-shell--admin .sas-table th, .sas-shell--admin .sas-table td { padding-inline: var(--space-4); }
+}
+
+/*
+ * Seller workspace (/app/<account>): warm orange palette with a livelier chrome.
+ * Only <SasRoot tone="seller"> (the account layout) uses it; buyer pages keep
+ * Trust Blue and /sadmin keeps its green. Contrast checked: orange text
+ * >= 4.8:1 on every light surface, >= 7.9:1 in dark; dark text on the light
+ * orange fill 7.3:1; muted text >= 6:1.
+ * Status colours (success, warning, danger, agent, human) are unchanged.
+ */
+.sas-app.sas-app--seller {
+  --surface: #fcfaf8; --surface-raised: #ffffff; --surface-sunken: #f6f1ec;
+  --line: #f0e8e1; --line-strong: #8a7f76;
+  --ink: #1c1410; --ink-muted: #5f5750;
+  /* --primary (deep orange) pairs with white --on-primary; the light --primary-fill
+     (buttons) pairs with dark --on-primary-fill. Orange text stays 4.8:1+. */
+  --primary: #bd400b; --on-primary: #ffffff; --primary-soft: #fff3ea;
+  --primary-fill: #fb8a3c; --on-primary-fill: #2a1406;
+  --primary-accent: #f97316;
+  --brand-blue: #fb923c; --brand-teal: #fcd34d;
+  --primary-glow: rgba(249, 115, 22, 0.25);
+  --shadow-card: 0 1px 2px rgba(60, 30, 10, 0.05), 0 1px 1px rgba(60, 30, 10, 0.03);
+}
+@media (prefers-color-scheme: dark) {
+  .sas-app.sas-app--seller:not([data-theme="light"]) {
+    --surface: #100c0a; --surface-raised: #1a1512; --surface-sunken: #15110e;
+    --line: #2e2520; --line-strong: #6b5e55;
+    --ink: #f3ebe5; --ink-muted: #ab9f96;
+    --primary: #ff9a5c; --primary-fill: #ffa66e; --on-primary: #140b05; --primary-soft: #2e1a0e; --primary-accent: #ff9a5c; --on-primary-fill: #140b05;
+    --brand-blue: #fb923c; --brand-teal: #fcd34d;
+    --primary-glow: rgba(255, 154, 92, 0.25);
+    --shadow-card: none;
+  }
+}
+.sas-app.sas-app--seller[data-theme="dark"] {
+  --surface: #100c0a; --surface-raised: #1a1512; --surface-sunken: #15110e;
+  --line: #2e2520; --line-strong: #6b5e55;
+  --ink: #f3ebe5; --ink-muted: #ab9f96;
+  --primary: #ff9a5c; --primary-fill: #ffa66e; --on-primary: #140b05; --primary-soft: #2e1a0e; --primary-accent: #ff9a5c; --on-primary-fill: #140b05;
+  --brand-blue: #fb923c; --brand-teal: #fcd34d;
+  --primary-glow: rgba(255, 154, 92, 0.25);
+  --shadow-card: none;
+}
+.sas-app--seller { background: var(--surface); }
+/* Active menu item: warm fill plus an accent bar on the leading edge. */
+.sas-shell--seller .sas-nav a.sas-nav__item[aria-current="page"] { box-shadow: inset 3px 0 0 var(--primary-accent); }
+[dir="rtl"] .sas-shell--seller .sas-nav a.sas-nav__item[aria-current="page"] { box-shadow: inset -3px 0 0 var(--primary-accent); }
+.sas-shell--seller .sas-btn--primary, .sas-app .sas-shell--seller a.sas-btn--primary,
+.sas-shell--seller .sas-outcome__opt input:checked + span, .sas-shell--seller .ls-btn--primary { color: var(--on-primary-fill); }
+.sas-shell--seller .sas-ov2-kpi { --kpi-accent: var(--primary-accent); }
+.sas-shell--seller .sas-ov2-kpi--money { --kpi-accent: var(--success); }
+.sas-shell--seller .sas-ov2-kpi--agent { --kpi-accent: var(--agent); }
+.sas-shell--seller .sas-nav a.sas-nav__item:hover .sas-ico { color: var(--primary); }
+.sas-shell--seller .sas-nav__mark { box-shadow: 0 2px 8px var(--primary-glow); }
+/* Buttons and cards respond to the pointer. */
+.sas-shell--seller .sas-btn { transition: background-color 120ms ease-out, box-shadow 160ms ease-out, transform 120ms ease-out; }
+.sas-shell--seller .sas-btn--primary { box-shadow: 0 1px 2px var(--primary-glow); }
+.sas-shell--seller .sas-btn--primary:hover { box-shadow: 0 4px 14px var(--primary-glow); transform: translateY(-1px); }
+.sas-shell--seller .sas-btn--primary:active { transform: none; box-shadow: 0 1px 2px var(--primary-glow); }
+.sas-shell--seller .sas-panel, .sas-shell--seller .sas-metric, .sas-shell--seller .sas-ov2-kpi { box-shadow: var(--shadow-card); }
+.sas-shell--seller a.sas-list__row { transition: background-color 120ms ease-out; }
+.sas-shell--seller a.sas-list__row:hover { background: var(--primary-soft); }
+@media (prefers-reduced-motion: reduce) {
+  .sas-shell--seller .sas-btn, .sas-shell--seller a.sas-list__row { transition: none; }
+  .sas-shell--seller .sas-btn--primary:hover { transform: none; }
+}

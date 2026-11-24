@@ -42,7 +42,7 @@ const { VoiceEngine } = await import("@/lib/voice/engine");
 const { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } = await import("@/lib/voice-guarded/profile");
 const { flushAsync, ManualClock } = await import("@/lib/voice/realtime");
 const { micPcm, ScriptedRealtime } = await import("@/lib/voice/scripted-realtime");
-const { saveDraftVoiceSettings } = await import("@/lib/voice/service");
+const { createVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } = await import("@/lib/voice/service");
 
 type Page = (p: { params: Promise<Record<string, string>>; searchParams: Promise<Record<string, string>> }) => Promise<ReactElement>;
 const pageElement = (sp: Record<string, string> = {}) => (TestLabPage as unknown as Page)({ params: Promise.resolve({ account: slug }), searchParams: Promise.resolve(sp) });
@@ -127,13 +127,11 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     save("guarded-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
-      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"],
-      ["pipeline", "Pipeline: Gemini Flash + ElevenLabs (testing)"], ["pipeline_chat", "Pipeline: chat model + ElevenLabs (testing)"],
-      ["classic", "Old baseline (20 Nov)"],
+      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["classic", "Old baseline (20 Nov)"],
     ]);
     expect(select).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
     // One helper line under the row for the selected engine (what it is based on, whether buyers get it).
-    expect(html).toMatch(/<p class="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">The engine every buyer call runs on: [^<]*Buyers get it\.<\/p>/);
+    expect(html).toMatch(/<p class="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">The engine every buyer call runs on: [^<]*Buyers get it\. The model and voice come from the version&#x27;s Voice settings\.<\/p>/);
     expect(html).toMatch(/<select[^>]*aria-describedby="lab-engine-help"/);
     // The Version select names each version's date: "v1 · Draft · 23 Nov".
     const ver = /<select[^>]*id="lab-ver"[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
@@ -144,9 +142,10 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     const { t } = await import("@/lib/i18n");
     const { ENGINE_ORDER, engineHelpKey } = await import("@/lib/voice-classic/engine-choice");
     const help = Object.fromEntries(ENGINE_ORDER.map((e) => [e, t(engineHelpKey(e))]));
-    expect(help.guarded).toBe("Newest engine code with the simpler speaking instructions, a server-written price sentence and plain objection notes. Test lab only.");
-    expect(help.current).toMatch(/Buyers get it\.$/);
-    for (const e of ["guarded", "guarded_silent", "pipeline", "pipeline_chat", "classic"] as const) expect(help[e]).toMatch(/Test lab only\.$/);
+    expect(help.guarded).toBe("Newest engine code with the simpler speaking instructions, a server-written price sentence and plain objection notes. Test lab only. The model and voice come from the version's Voice settings.");
+    expect(help.current).toMatch(/Buyers get it\. The model and voice come from the version's Voice settings\.$/);
+    expect(help.classic).toMatch(/with the model's own voice\. Test lab only\.$/);
+    expect(Object.keys(help)).toEqual(["current", "guarded", "classic"]);
   });
 
   it("never shows it to a seller, and the server ignores the field from one", async () => {
@@ -211,35 +210,29 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
 });
 
 describe("test lab: the voice engine selector, Classic + guards (silent probe)", () => {
-  it("a seller never gets it; an admin's choice is stored on the session, on the version's own model", async () => {
+  it("retired (24 Nov rewiring): not offered, and no new call starts on it, for a seller or an admin", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(seller);
     expect(await render()).not.toContain("silent probe");
     expect(await startVoiceCallAction({ slug, engine: "guarded_silent" })).toEqual({ ok: false, reason: "not_allowed" });
     expect(labEngineChoice(seller, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("current");
-    expect(labEngineChoice(admin, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("guarded_silent");
-    expect(labEngineChoice(admin, "guarded_silent", { VOICE_REALTIME: "off" })).toBe("current");
     expect(sessionEngine({ engine: "guarded_silent" })).toBe("guarded_silent");
     expect(sessionEngine({ engine: "guarded-silent" })).toBe("current");
     as(admin);
-    expect((await saveDraftVoiceSettings(db, account.id, { model: "openai/gpt-realtime-mini" })).ok).toBe(true);
-    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "guarded_silent" });
-    if (!r.ok) throw new Error(r.reason);
-    expect(r).toMatchObject({ engine: "guarded_silent", model: "GPT-Realtime mini" });
-    const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
-    expect(s.settings).toEqual({ engine: "guarded_silent" });
-    expect(s.model).toBe("openai/gpt-realtime-mini");
-    await endMyVoiceCallAction({ slug });
-    expect((await saveDraftVoiceSettings(db, account.id, { model: "google/gemini-3.8-live" })).ok).toBe(true);
+    expect(await render()).not.toContain("New + silent tools");
+    expect(await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "guarded_silent" })).toEqual({ ok: false, reason: "not_allowed" });
   });
 
-  it("a saved silent-probe call: Engine in the header and on This call, Call again keeps it", async () => {
+  it("an old saved silent-probe call still renders: Engine in the header and on This call; Call again on it is refused", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
-    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "guarded_silent" });
-    if (!r.ok) throw new Error(r.reason);
+    // An old call: its session as the start action stored it before the rewiring.
+    const c = (await startVoiceTestConversation(db, account.id, admin.id, { scenario: "ready_buyer" }))!;
+    const r0 = await createVoiceSession(db, { accountId: account.id, conversationId: c.conversationId, userId: admin.id, isTest: true }, { engine: "guarded_silent", env: { VOICE_REALTIME: "scripted" } });
+    if (!r0.ok) throw new Error(r0.reason);
+    const r = { ...r0, conversationId: c.conversationId };
     await runGuarded(r.sessionId, GUARDED_SILENT_PROFILE);
     const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
     expect(s.status).toBe("ended");
@@ -251,9 +244,7 @@ describe("test lab: the voice engine selector, Classic + guards (silent probe)",
     const [again] = findElements(await pageElement({ c: r.conversationId }), VoiceCallAgainBar);
     expect(again.props).toMatchObject({ engine: "guarded_silent" });
     const props = again.props as { versionId: string | null; scenario: string | null; engine: string | null };
-    const next = await startVoiceCallAction({ slug, versionId: props.versionId, scenario: props.scenario, engine: props.engine });
-    if (!next.ok) throw new Error(next.reason);
-    expect(next.engine).toBe("guarded_silent");
+    expect(await startVoiceCallAction({ slug, versionId: props.versionId, scenario: props.scenario, engine: props.engine })).toEqual({ ok: false, reason: "not_allowed" });
     await endMyVoiceCallAction({ slug });
   });
 });

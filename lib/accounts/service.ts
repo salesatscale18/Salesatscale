@@ -176,6 +176,7 @@ export async function listAccounts(db: Db) {
     .select({
       id: sellerAccounts.id, slug: sellerAccounts.slug, tradeName: sellerAccounts.tradeName, market: sellerAccounts.market,
       languages: sellerAccounts.languages, plan: sellerAccounts.plan, status: sellerAccounts.status,
+      createdAt: sellerAccounts.createdAt,
     })
     .from(sellerAccounts)
     .orderBy(asc(sellerAccounts.tradeName));

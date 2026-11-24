@@ -37,6 +37,16 @@ export type RealtimeSessionConfig = {
    * closed a session before it said anything): lib/voice/gateway-realtime.ts SETUP_RETRY_FIELDS.
    */
   safe?: boolean;
+  /**
+   * No tools are sent (no `tools` field at all): ElevenLabs Realtime's last retry after the provider refused the setup
+   * with them (lib/voice/engine.ts reconnect). The agent then cannot look anything up; the log and the call card say so.
+   */
+  withoutTools?: boolean;
+  /**
+   * "text" (the test lab's realtime + ElevenLabs engines, lib/voice-rt-eleven): the model answers in text only (no
+   * voice is sent, no audio comes back); its words are spoken by our speaker. Absent: "audio", as always.
+   */
+  outputModality?: "audio" | "text";
 };
 
 /** Normalized events the engine reads. Transcript texts are the whole turn so far, not deltas. */
@@ -61,6 +71,14 @@ export type RealtimeEvent =
   | { type: "tool-cancelled"; callIds: string[] }
   /** The model finished its response (possibly cut short by the buyer). */
   | { type: "turn-done"; interrupted?: boolean }
+  /**
+   * Text output only (`outputModality: "text"`): a response's whole text, once the response is complete (sent just
+   * before its turn-done). `toolCalls`: the tool calls the same response made (its text is then not spoken);
+   * `interrupted`: the response was cancelled or cut (its text is not spoken either).
+   */
+  | { type: "response-text"; text: string; toolCalls: number; interrupted?: boolean }
+  /** Text output only: the model started a response (so one is in flight until its response-text). */
+  | { type: "response-started" }
   /** A usage snapshot (replaces the previous one; never summed). */
   | { type: "usage"; usage: VoiceUsage }
   /** The provider will close the connection soon (Gemini goAway). */
@@ -72,6 +90,12 @@ export type RealtimeEvent =
   | { type: "closed"; error?: string; code?: number; reason?: string }
   /** A provider event we do not use (`unknown`) or an error event: logged once per type per call. */
   | { type: "provider-event"; kind: "unknown" | "error"; name: string; message?: string }
+  /**
+   * The provider's acknowledgement of the session setup (session-created / session-updated), summarized for the log
+   * (lib/voice/eleven-realtime.ts sessionAckSummary: the voice, tool count and turn detection it took; never content).
+   * Sent for ElevenLabs Realtime, whose answers to those are unknown until its first live calls.
+   */
+  | { type: "session-ack"; name: string; detail: string }
   /**
    * Something the relay fixed or hid, for the log only (never content): the agent's transcript had markers taken
    * out ("cleaned-transcript"), an audio piece had an odd byte count and its last byte was carried to the next

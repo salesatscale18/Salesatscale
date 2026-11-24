@@ -82,14 +82,17 @@ export function MetricTile({
   value,
   delta,
   trend,
+  accent,
 }: {
   label: string;
   value: ReactNode;
   delta?: string;
   trend?: "up" | "down";
+  /** The page's lead figure: its value in the primary colour (styled on admin pages). */
+  accent?: boolean;
 }) {
   return (
-    <div className="sas-metric">
+    <div className={accent ? "sas-metric sas-metric--accent" : "sas-metric"}>
       <span className="sas-metric__label">{label}</span>
       <span className="sas-metric__value">{value}</span>
       {delta ? <span className={trend ? `sas-metric__delta sas-metric__delta--${trend}` : "sas-metric__delta"}>{delta}</span> : null}
