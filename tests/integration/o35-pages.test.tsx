@@ -142,8 +142,8 @@ describe("O35 pages on the demo account", () => {
     const upset = await leadBy(STATE_LEADS.upset.n);
     const list = await render(ConversationsPage, { account: slug }, { filter: "needs_you" });
     save("conversations", list);
-    // ConvListV2: a Needs you row's second line is what waits, then the reason (one line, cut by CSS).
-    expect(list).toContain('data-handoff-why=""><span class="sas-inbox__preview-text" dir="auto" title="Hand-off requested · Upset: false night alarms, and wants a person now">Hand-off requested · Upset: false night alarms, and wants a person now</span>');
+    // conv-list-fixes C: a Needs you row's second line is what waits, then the SHORT label; the whole reason is the tooltip.
+    expect(list).toContain('data-handoff-why="" title="Hand-off requested · Upset · Upset: false night alarms, and wants a person now">Hand-off requested · Upset</span>');
     const lead = await render(LeadPage, { account: slug, leadId: upset.id });
     save("lead-upset", lead);
     // The banner: the same reason once, never cut, wrapping (no one-line class), no restated copy.
@@ -189,9 +189,9 @@ describe("O35 pages on the demo account", () => {
       return r.slice(0, r.indexOf("</tr>"));
     };
     const cases = [
-      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now", held: false },
-      { lead: STATE_LEADS.spendCap, why: "AI limit reached", held: false },
-      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON, held: true },
+      { lead: STATE_LEADS.upset, why: "Upset: false night alarms, and wants a person now", short: "Upset", held: false },
+      { lead: STATE_LEADS.spendCap, why: "AI limit reached", short: "AI limit reached", held: false },
+      { lead: STATE_LEADS.human, why: HUMAN_HANDOFF_REASON, short: null, held: true },
     ];
     for (const c of cases) {
       if (c.held) {
@@ -203,15 +203,17 @@ describe("O35 pages on the demo account", () => {
         // Leads > Needs you (L-3): "Asked for a person", then the reason as the one muted line, isolated, cut with "…" by CSS.
         expect(rowOf(needsList, c.lead.fullName)).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="\u2068${c.why}\u2069">\u2068${c.why}\u2069</span>`);
       }
-      // Conversations row (ConvListV2): a Needs you row's second line is the same reason after what waits; a chat a
-      // person holds (Human handling) shows its last message there instead, the reason stays in the open chat's brief.
-      const row = inbox.slice(inbox.indexOf(`<bdi>${c.lead.fullName}</bdi>`));
+      // Conversations row (ConvListV2, conv-list-fixes C): a Needs you row's second line is the SHORT label after what
+      // waits, the whole reason in its tooltip; a chat a person holds (Human handling) shows its last message there
+      // instead, the reason stays in the open chat's brief.
+      const row = inbox.slice(inbox.indexOf(`<bdi dir="auto" class="sas-inbox__person">${c.lead.fullName}</bdi>`));
       const line = row.slice(0, row.indexOf("</li>"));
       if (c.held) {
         expect(line).not.toContain("data-handoff-why");
         expect(line).toContain("data-preview");
       } else {
-        expect(line).toContain(`data-handoff-why=""><span class="sas-inbox__preview-text" dir="auto" title="Hand-off requested · ${c.why}">Hand-off requested · ${c.why}</span>`);
+        const title = c.why === c.short ? `Hand-off requested · ${c.short}` : `Hand-off requested · ${c.short} · ${c.why}`;
+        expect(line).toContain(`data-handoff-why="" title="${title}">Hand-off requested · ${c.short}</span>`);
       }
       // Lead page banner: the same reason once, wrapping, never cut.
       const lead = await render(LeadPage, { account: slug, leadId: (await leadBy(c.lead.n)).id });
@@ -236,8 +238,9 @@ describe("O35 pages on the demo account", () => {
       expect(lead).toContain(`data-handoff-why="" dir="auto">Upset: ${detail}</span>`);
       expect(lead.match(/data-handoff-why/g)).toHaveLength(1);
       expect(lead).not.toContain("sas-oneline\" data-handoff-why");
+      // conv-list-fixes C: the Conversations row says the short label; the long reason is only its tooltip.
       const list = await render(ConversationsPage, { account: slug }, { filter: "needs_you" });
-      expect(text(list)).toMatch(/Upset: the alarm went off .*…/);
+      expect(list).toContain(`title="Hand-off requested · Upset · Upset: ${detail}">Hand-off requested · Upset</span>`);
     } finally {
       await db.delete(leadEvents).where(eq(leadEvents.id, ev.id));
     }
