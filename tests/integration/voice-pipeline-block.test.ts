@@ -80,7 +80,7 @@ describe("pipeline proof and the one-agent block", () => {
     await clock.advance(3_000, settle);
     expect(llm.requests).toHaveLength(1);
     expect(lines.some((l) => l.includes("one-agent block"))).toBe(false);
-    expect(lines.some((l) => /pipeline turn=1 listen=-ms think=\d+ms tools=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
+    expect(lines.some((l) => /pipeline turn=1 listen=- think=\d+ms rounds=\S+ (?:roundsMs=\S+ other=\d+ms )?tools=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
     engine.onClientMessage({ t: "end" });
     await settle();
 

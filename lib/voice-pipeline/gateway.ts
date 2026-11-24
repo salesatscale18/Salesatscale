@@ -57,10 +57,17 @@ export class AudioPipe {
   private ended = false;
   private wake: (() => void) | null = null;
   dropped = 0;
+  /**
+   * When the SDK first read the audio (performance.now), null until then. The gateway transcription stream
+   * (@ai-sdk/gateway 4.0.150 createGatewayTranscriptionStream) takes its reader in the socket's onOpen, after the
+   * start frame: this is when the stream connected.
+   */
+  firstReadAt: number | null = null;
 
   constructor(private readonly maxBytes: number) {
     this.stream = new ReadableStream<Uint8Array>({
       pull: async (c) => {
+        this.firstReadAt ??= performance.now();
         for (;;) {
           const next = this.queue.shift();
           if (next) {
@@ -114,7 +121,7 @@ export class AudioPipe {
 }
 
 /** One Gateway transcription stream (one buyer utterance, or the rest of the call). */
-type ListenStream = { n: number; pipe: AudioPipe; abort: AbortController; retired: boolean; heard: boolean; deltas: Map<string, string> };
+type ListenStream = { n: number; pipe: AudioPipe; abort: AbortController; retired: boolean; heard: boolean; deltas: Map<string, string>; openedAt: number };
 
 /**
  * Streaming transcription, one Gateway stream per buyer utterance. The buyer's audio is resampled from 24 kHz to
@@ -145,6 +152,8 @@ export class GatewayListener extends ListenerBase implements Listener {
   private closed = false;
   /** Streams opened (the logs, tests). */
   streams = 0;
+  /** Connect time of the stream the last endUtterance retired (null: unknown, or it never connected). */
+  lastConnectMs: number | null = null;
 
   constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env) {
     super();
@@ -154,7 +163,7 @@ export class GatewayListener extends ListenerBase implements Listener {
   }
 
   private open(replay: Uint8Array[]): ListenStream {
-    const st: ListenStream = { n: ++this.seq, pipe: new AudioPipe(this.maxBytes), abort: new AbortController(), retired: false, heard: false, deltas: new Map() };
+    const st: ListenStream = { n: ++this.seq, pipe: new AudioPipe(this.maxBytes), abort: new AbortController(), retired: false, heard: false, deltas: new Map(), openedAt: performance.now() };
     for (const b of replay) st.pipe.push(b);
     this.streams++;
     void this.run(st);
@@ -221,6 +230,7 @@ export class GatewayListener extends ListenerBase implements Listener {
   endUtterance() {
     if (this.closed) return;
     const old = this.current;
+    this.lastConnectMs = old.pipe.firstReadAt === null ? null : Math.round(old.pipe.firstReadAt - old.openedAt);
     old.retired = true;
     old.pipe.end();
     const t = setTimeout(() => old.abort.abort(), RETIRED_STREAM_MS);

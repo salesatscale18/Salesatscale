@@ -11,6 +11,9 @@ export type PipelineCallInfo = {
   medianAnswerMs: number | null;
   /** Median thinking time of the answered turns, spoken or not (null while the call runs, or before any answer). */
   medianThinkMs: number | null;
+  /** Median model rounds per answered turn, and median time per round (null: not reported, e.g. an older call). */
+  medianRounds: number | null;
+  medianRoundMs: number | null;
 };
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -26,6 +29,7 @@ export function pipelineCallInfo(settings: unknown, usage: unknown): PipelineCal
     // Speaking: the model the call kept (usage, written at the end), else the first one tried (settings, at the start).
     listenModel: str(p.listenModel) || str(u.listenModel), thinkModel: str(p.thinkModel) || str(u.thinkModel), speakModel: str(u.speakModel) || str(p.speakModel),
     medianAnswerMs: num(u.medianAnswerMs), medianThinkMs: num(u.medianThinkMs),
+    medianRounds: num(u.medianRounds), medianRoundMs: num(u.medianRoundMs),
   };
 }
 

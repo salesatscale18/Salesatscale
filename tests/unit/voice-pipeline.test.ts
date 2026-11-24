@@ -6,7 +6,10 @@ import { describe, expect, it } from "vitest";
 import { spokenForm, splitSentences } from "@/lib/voice-pipeline/spoken";
 import { median, TurnTaking, type BuyerLine } from "@/lib/voice-pipeline/turns";
 import { PcmFramer, Resampler, resamplePcm16, toBytes, toSamples } from "@/lib/voice-pipeline/pcm";
-import { LISTEN_MICROS_PER_SEC, PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, pipelineCostMicros, SPEAK_MICROS_PER_CHAR } from "@/lib/voice-pipeline/models";
+import {
+  fillerTextFor, LISTEN_MICROS_PER_SEC, listenRateText, PIPELINE_CALL_CONTEXT_LINE, PIPELINE_FILLER, PIPELINE_LISTEN_MODEL, PIPELINE_LISTEN_MODELS, PIPELINE_SPEAK_MODEL, PIPELINE_TIMING,
+  pipelineCostMicros, pipelineListenModelChoice, SPEAK_MICROS_PER_CHAR,
+} from "@/lib/voice-pipeline/models";
 import { pipelineCallInfo, pipelineModelsLabel, thinkModelLabel } from "@/lib/voice-pipeline/summary";
 import { PIPELINE_TEXT_MODEL } from "@/lib/voice-pipeline/gateway-llm";
 import { ManualListener, ScriptedListener } from "@/lib/voice-pipeline/listener";
@@ -151,7 +154,7 @@ describe("cost, the card's reading, the fakes", () => {
 
   it("reads a pipeline session's models and median for the card; other engines get nothing", () => {
     const info = pipelineCallInfo({ engine: "pipeline", pipeline: { listenModel: "l", thinkModel: "t", speakModel: "s" } }, { pipeline: { medianAnswerMs: 1234 } });
-    expect(info).toEqual({ listenModel: "l", thinkModel: "t", speakModel: "s", medianAnswerMs: 1234, medianThinkMs: null });
+    expect(info).toEqual({ listenModel: "l", thinkModel: "t", speakModel: "s", medianAnswerMs: 1234, medianThinkMs: null, medianRounds: null, medianRoundMs: null });
     // Speaking: the model the call kept (usage, at the end) over the first one tried (settings, at the start).
     expect(pipelineCallInfo({ engine: "pipeline", pipeline: { speakModel: "first" } }, { pipeline: { speakModel: "kept", medianThinkMs: 3_500, medianAnswerMs: null } }))
       .toMatchObject({ speakModel: "kept", medianThinkMs: 3_500, medianAnswerMs: null });
@@ -200,5 +203,43 @@ describe("cost, the card's reading, the fakes", () => {
     }
     expect(chunks).toBe(2);
     expect(s.said).toEqual([{ text: "x".repeat(50), language: "en" }]);
+  });
+});
+
+describe("the speed settings (models.ts)", () => {
+  it("line wait 250 ms stable / 800 ms cap from the detector's report; the detector's end silence is 550 ms", () => {
+    expect(PIPELINE_TIMING.lineWait).toEqual({ stableMs: 250, capMs: 800 });
+    expect(PIPELINE_TIMING.vad.endSilenceMs).toBe(550);
+  });
+
+  it("the listening model: VOICE_PIPELINE_LISTEN_MODEL when it is a listed streaming model, else the default", () => {
+    expect(pipelineListenModelChoice({})).toEqual({ model: PIPELINE_LISTEN_MODEL, fromEnv: false });
+    expect(PIPELINE_LISTEN_MODEL).toBe("google/gemini-3.5-transcribe-live");
+    for (const m of ["openai/gpt-transcribe", "spacexai/grok-stt", "elevenlabs/scribe-v2-realtime"]) {
+      expect(pipelineListenModelChoice({ VOICE_PIPELINE_LISTEN_MODEL: ` ${m.toUpperCase()} ` })).toEqual({ model: m, fromEnv: true });
+    }
+    expect(pipelineListenModelChoice({ VOICE_PIPELINE_LISTEN_MODEL: "gpt-transcribe" })).toMatchObject({ model: PIPELINE_LISTEN_MODEL, fromEnv: false, invalid: "not a creator/model id" });
+    expect(pipelineListenModelChoice({ VOICE_PIPELINE_LISTEN_MODEL: "openai/gpt-5" }).invalid).toMatch(/not a streaming transcription model/);
+    expect(pipelineListenModelChoice({ VOICE_PIPELINE_LISTEN_MODEL: "x/y; rm -rf" }).model).toBe(PIPELINE_LISTEN_MODEL);
+    expect(PIPELINE_LISTEN_MODELS).toContain(PIPELINE_LISTEN_MODEL);
+  });
+
+  it("listening rates: gpt-transcribe 75, grok-stt 28 micros/s; scribe-v2-realtime unknown (counts 0)", () => {
+    expect(LISTEN_MICROS_PER_SEC["openai/gpt-transcribe"]).toBe(75);
+    expect(pipelineCostMicros("spacexai/grok-stt", 100, PIPELINE_SPEAK_MODEL, 0)).toEqual({ listen: 2_800, speak: 0, known: true });
+    expect(pipelineCostMicros("elevenlabs/scribe-v2-realtime", 100, PIPELINE_SPEAK_MODEL, 0)).toEqual({ listen: 0, speak: 0, known: false });
+    expect(listenRateText("elevenlabs/scribe-v2-realtime")).toBe("rate unknown (counts 0)");
+    expect(listenRateText("google/gemini-3.5-transcribe-live")).toBe("150 micros/s");
+  });
+
+  it("the filler: 2.5 s, one short line per language", () => {
+    expect(PIPELINE_FILLER.afterMs).toBe(2_500);
+    expect([fillerTextFor("en"), fillerTextFor("he"), fillerTextFor("iw-IL")]).toEqual(["One moment.", "רגע אחד.", "רגע אחד."]);
+  });
+
+  it("the call's context line (provisional): one line, under 600 characters", () => {
+    expect(PIPELINE_CALL_CONTEXT_LINE).not.toMatch(/[\r\n]/);
+    expect(PIPELINE_CALL_CONTEXT_LINE.length).toBeGreaterThan(0);
+    expect(PIPELINE_CALL_CONTEXT_LINE.length).toBeLessThan(600);
   });
 });

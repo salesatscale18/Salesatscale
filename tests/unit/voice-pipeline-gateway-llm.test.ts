@@ -9,8 +9,10 @@ import { isRetryableModelError, type Block, type LlmRequest } from "@/lib/agent/
 import { TOOL_DEFS } from "@/lib/agent/tools";
 import { geminiSchema } from "@/lib/voice/tool-schema";
 import {
-  GatewayLlm, GatewayLlmError, PIPELINE_TEXT_MODEL, PIPELINE_TEXT_PRICE, pipelineLlmFor, pipelineTextModel, reasoningForEffort, toGatewayLlmError,
+  GatewayLlm, GatewayLlmError, PIPELINE_TEXT_MODEL, PIPELINE_TEXT_PRICE, pipelineLlmFor, pipelineTextModel, reasoningForEffort, roundFrom, thinkRoundLine, toGatewayLlmError,
+  type GatewayRound,
 } from "@/lib/voice-pipeline/gateway-llm";
+import { PIPELINE_MAX_OUTPUT_TOKENS } from "@/lib/voice-pipeline/models";
 import { GATEWAY_META, GATEWAY_REASONING, toBlocks, toModelMessages, toStopReason, toUsage } from "@/lib/voice-pipeline/gateway-llm-map";
 import { estimateCostMicros } from "@/lib/ai/models";
 
@@ -80,7 +82,7 @@ describe("request mapping", () => {
     expect(all).not.toContain("additionalProperties");
     expect(all).not.toContain("\"null\"");
     expect(opts.maxOutputTokens).toBe(16000);
-    expect(opts.reasoning).toBe("minimal");
+    expect(opts.reasoning).toBe("none");
   });
 
   it("multi-round history: thinking dropped, tool calls and results paired in order, tool names looked up", () => {
@@ -146,7 +148,7 @@ describe("request mapping", () => {
   });
 
   it("effort → thinking, fastest by default", async () => {
-    expect(["low", "medium", undefined, "bogus"].map((e) => reasoningForEffort(e))).toEqual(["minimal", "minimal", "minimal", "minimal"]);
+    expect(["low", "medium", undefined, "bogus"].map((e) => reasoningForEffort(e))).toEqual(["none", "none", "none", "none"]);
     expect(["high", "xhigh", "max"].map((e) => reasoningForEffort(e))).toEqual(["low", "medium", "high"]);
     const model = mock(result([text("a")]), result([text("b")]));
     await new GatewayLlm({ model }).create(req({ effort: "max" }));
@@ -289,6 +291,74 @@ describe("pipelineLlmFor", () => {
     const model = mock(result([text("a")]));
     await pipelineLlmFor({ effort: "high" }, {}, { model }).create(req({ effort: "max" }));
     expect(model.doGenerateCalls[0].reasoning).toBe("low");
+  });
+
+  it("a live call: thinking off for low/medium (\"none\" reaches the model), each round capped at 700 output tokens", async () => {
+    expect(PIPELINE_MAX_OUTPUT_TOKENS).toBe(700);
+    const model = mock(result([text("a")]), result([text("b")]), result([text("c")]));
+    await pipelineLlmFor({ effort: "medium" }, {}, { model }).create(req());
+    await pipelineLlmFor({ effort: "low" }, {}, { model }).create(req({ maxTokens: 300 }));
+    await pipelineLlmFor({ effort: null }, {}, { model }).create(req({ maxTokens: 16_000 }));
+    expect(model.doGenerateCalls.map((c) => [c.reasoning, c.maxOutputTokens])).toEqual([["none", 700], ["none", 300], ["none", 700]]);
+    // Without the cap (GatewayLlm on its own) the request's maxTokens goes through.
+    const free = mock(result([text("x")]));
+    await new GatewayLlm({ model: free }).create(req());
+    expect(free.doGenerateCalls[0].maxOutputTokens).toBe(16_000);
+  });
+});
+
+describe("per-round measurement", () => {
+  const usageWithReasoning = { inputTokens: { total: 1_000, noCache: 200, cacheRead: 800, cacheWrite: undefined }, outputTokens: { total: 90, text: 60, reasoning: 30 } } as unknown as ReturnType<typeof usage>;
+
+  it("one line per round: ms, tokens (reasoning included), finish, tool names, text length; never the text", async () => {
+    let t = 0;
+    const rounds: GatewayRound[] = [];
+    const model = mock(
+      result([call("c1", "update_deal_state", { updates: [] }), call("c2", "search_catalog", { query: "secret words" })], "tool-calls", usageWithReasoning),
+      result([text("Two sites, noted.")], "stop", usage(1_200, 15, 0)),
+    );
+    const doGenerate = model.doGenerate.bind(model);
+    model.doGenerate = async (o) => {
+      t += 1_234;
+      return doGenerate(o);
+    };
+    const llm = new GatewayLlm({ model, now: () => t, onRound: (r) => rounds.push(r) });
+    await llm.create(req());
+    await llm.create(req());
+    expect(rounds).toEqual([
+      { call: 1, ms: 1_234, inputTokens: 1_000, cachedTokens: 800, outputTokens: 90, reasoningTokens: 30, finish: "tool-calls", tools: ["update_deal_state", "search_catalog"], textChars: 0 },
+      { call: 2, ms: 1_234, inputTokens: 1_200, cachedTokens: 0, outputTokens: 15, reasoningTokens: null, finish: "stop", tools: [], textChars: 17 },
+    ]);
+    const lines = rounds.map((r, i) => thinkRoundLine(r, i + 1));
+    expect(lines).toEqual([
+      "pipeline think round=1 ms=1234 in=1000 cached=800 out=90 reasoning=30 finish=tool-calls tools=[update_deal_state,search_catalog] textChars=0",
+      "pipeline think round=2 ms=1234 in=1200 cached=0 out=15 reasoning=- finish=stop tools=[] textChars=17",
+    ]);
+    expect(lines.join(" ")).not.toMatch(/secret|noted|STABLE|Hi/);
+  });
+
+  it("a round cut at the cap says so; a failed round is reported with its error kind; setOnRound swaps the sink", async () => {
+    const rounds: GatewayRound[] = [];
+    const llm = new GatewayLlm({ model: mock(result([text("Half a sen")], "length")) });
+    await llm.create(req());
+    expect(rounds).toHaveLength(0);
+    llm.setOnRound((r) => rounds.push(r));
+    const cut = new GatewayLlm({ model: mock(result([text("Half a sen")], "length")), onRound: (r) => rounds.push(r) });
+    await cut.create(req());
+    expect(thinkRoundLine(rounds[0])).toMatch(/finish=length tools=\[\] textChars=10 \(cut at the output-token cap\)$/);
+    const failing = new MockLanguageModelV4({ provider: "gateway", modelId: PIPELINE_TEXT_MODEL, doGenerate: async () => { throw Object.assign(new Error("busy"), { statusCode: 503 }); } });
+    const bad = new GatewayLlm({ model: failing, maxRetries: 0, onRound: (r) => rounds.push(r) });
+    await expect(bad.create(req())).rejects.toBeInstanceOf(GatewayLlmError);
+    expect(thinkRoundLine(rounds[1])).toMatch(/^pipeline think round=1 ms=\d+ in=- cached=- out=- reasoning=- finish=error tools=\[\] textChars=0 error=GatewayLlmError\/503$/);
+    // A sink that throws never breaks the turn.
+    const brittle = new GatewayLlm({ model: mock(result([text("ok")])), onRound: () => { throw new Error("log down"); } });
+    await expect(brittle.create(req())).resolves.toMatchObject({ stopReason: "end_turn" });
+  });
+
+  it("a reasoning warning (\"none\" mapped by the provider) is carried on the round line", () => {
+    const r = roundFrom(3, 10.4, { finishReason: "stop", usage: {}, content: [], warnings: [{ type: "compatibility", feature: "reasoning", details: 'reasoning "none" is not directly supported by this model. mapped to effort "minimal".' }, { type: "other", message: "x" }] });
+    expect(r.ms).toBe(10);
+    expect(thinkRoundLine(r)).toContain(`warning="compatibility: reasoning 'none' is not directly supported by this model. mapped to effort 'minimal'."`);
   });
 });
 

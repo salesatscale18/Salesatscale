@@ -23,6 +23,12 @@ export interface Listener {
    * (GatewayListener: audio-done on this stream, a fresh stream for the next utterance).
    */
   endUtterance?(): void;
+  /**
+   * Optional, read right after endUtterance: how long the stream that carried the utterance just ended took to
+   * connect (from its opening to the SDK's first read of its audio, i.e. the socket open); null when unknown or it
+   * never connected.
+   */
+  readonly lastConnectMs?: number | null;
   /** Seconds of audio sent to the model so far (the cost estimate). */
   readonly audioSec: number;
   close(): void;
@@ -52,6 +58,8 @@ export class ManualListener extends ListenerBase implements Listener {
   bytes = 0;
   /** endUtterance calls (the engine's speech ends). */
   utteranceEnds = 0;
+  /** What the engine reads as the ended utterance's stream connect time (a test sets it). */
+  lastConnectMs: number | null = null;
   constructor(modelId = "scripted") {
     super();
     this.modelId = modelId;

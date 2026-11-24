@@ -28,6 +28,7 @@ import type { LlmClient, LlmRequest, LlmResponse } from "@/lib/agent/llm";
 import type { ModelPrice } from "@/lib/ai/models";
 import { schemaFamilyOf } from "@/lib/voice/tool-schema";
 import { toBlocks, toInstructions, toModelMessages, toStopReason, toTools, toUsage, type ResultPart, type SchemaFlavour } from "./gateway-llm-map";
+import { PIPELINE_MAX_OUTPUT_TOKENS } from "./models";
 
 /** The pipeline's text model (owner decision: ElevenLabs + Gemini 3.8 Flash first). */
 export const PIPELINE_TEXT_MODEL = "google/gemini-3.8-flash";
@@ -47,22 +48,95 @@ export const PIPELINE_TEXT_PRICE: ModelPrice = { input: 0.75, output: 3.75, cach
 const GATEWAY_MODEL_ID = /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 export const isGatewayModelId = (id: string) => GATEWAY_MODEL_ID.test(id);
 
-/** The `ai` call option `reasoning` (the gateway maps it to the provider's thinking setting). */
+/**
+ * The `ai` call option `reasoning` (ai 7.0.177: LanguageModelV4CallOptions['reasoning'], which also allows
+ * "provider-default", "xhigh" and "max"). The gateway model (@ai-sdk/gateway 4.0.150 GatewayLanguageModel.getArgs)
+ * forwards the call options unchanged in the JSON body of POST …/language-model, so "none" goes as
+ * `"reasoning":"none"`; the gateway maps it to the provider's thinking setting. A provider that cannot turn thinking
+ * off maps "none" to its lowest level and says so in the call's warnings (@ai-sdk/provider-utils
+ * mapReasoningToProviderEffort): GatewayLlm logs such a warning on the round line.
+ */
 export type Reasoning = "none" | "minimal" | "low" | "medium" | "high";
 
 /**
- * The agent version's effort (a Claude scale, default "medium") as Gemini thinking, shifted toward speed:
- * the pipeline answers on a live call. low and medium (the default) → minimal, high → low, xhigh → medium,
- * max → high. Anything else → minimal.
+ * The agent version's effort (a Claude scale, default "medium") as Gemini thinking, for a live call: low and medium
+ * (the default) → none (thinking off: the fastest setting), high → low, xhigh → medium, max → high. Anything
+ * else → none.
  */
 export function reasoningForEffort(effort: string | null | undefined): Reasoning {
   switch (effort) {
     case "high": return "low";
     case "xhigh": return "medium";
     case "max": return "high";
-    default: return "minimal";
+    default: return "none";
   }
 }
+
+/**
+ * One model round (one create()) as measured by GatewayLlm: wall time, token usage, how it finished, the tools it
+ * called and how much text it wrote. Never the prompt or the reply text.
+ */
+export type GatewayRound = {
+  /** create() calls of this client so far (1-based). */
+  call: number;
+  ms: number;
+  /** Input tokens in total (cached included), cache reads, output tokens (thinking included); null when not reported. */
+  inputTokens: number | null;
+  cachedTokens: number | null;
+  outputTokens: number | null;
+  /** Thinking tokens when the usage reports them, else null. */
+  reasoningTokens: number | null;
+  /** The SDK finish reason ("stop", "tool-calls", "length", …); "error" when the call threw (`error` set). */
+  finish: string;
+  tools: string[];
+  textChars: number;
+  /** Reasoning-related call warnings (e.g. "none" not supported and mapped), clipped. */
+  warning?: string;
+  error?: string;
+};
+
+/**
+ * The round's log line (without the session prefix): `pipeline think round=N ms=… in=… cached=… out=… reasoning=…
+ * finish=… tools=[a,b] textChars=…`. `n` is the round number within the turn (the engine's), default the call count.
+ */
+export function thinkRoundLine(r: GatewayRound, n = r.call): string {
+  const v = (x: number | null) => (x === null ? "-" : String(x));
+  return `pipeline think round=${n} ms=${r.ms} in=${v(r.inputTokens)} cached=${v(r.cachedTokens)} out=${v(r.outputTokens)} reasoning=${v(r.reasoningTokens)} finish=${r.finish} tools=[${r.tools.join(",")}] textChars=${r.textChars}`
+    + (r.finish === "length" ? " (cut at the output-token cap)" : "")
+    + (r.warning ? ` warning="${r.warning}"` : "")
+    + (r.error ? ` error=${r.error}` : "");
+}
+
+const tokens = (x: unknown) => (typeof x === "number" && Number.isFinite(x) ? x : null);
+
+/** A round's figures from the SDK result (pure; exported for tests). */
+export function roundFrom(call: number, ms: number, result: { finishReason: string; usage?: unknown; content: readonly { type: string; toolName?: unknown; text?: unknown }[]; warnings?: readonly unknown[] }): GatewayRound {
+  const u = (result.usage ?? {}) as { inputTokens?: unknown; outputTokens?: unknown; reasoningTokens?: unknown; cachedInputTokens?: unknown; inputTokenDetails?: { cacheReadTokens?: unknown }; outputTokenDetails?: { reasoningTokens?: unknown } };
+  const tools: string[] = [];
+  let textChars = 0;
+  for (const p of result.content) {
+    if (p.type === "tool-call" && typeof p.toolName === "string") tools.push(p.toolName);
+    else if (p.type === "text" && typeof p.text === "string") textChars += p.text.length;
+  }
+  const warning = (result.warnings ?? [])
+    .map((w) => w as { feature?: unknown; details?: unknown; type?: unknown })
+    .filter((w) => w.feature === "reasoning")
+    .map((w) => `${String(w.type ?? "warning")}: ${String(w.details ?? "")}`.replace(/\s+/g, " ").replace(/"/g, "'").slice(0, 160))
+    .join(" | ");
+  return {
+    call, ms: Math.max(0, Math.round(ms)),
+    inputTokens: tokens(u.inputTokens),
+    cachedTokens: tokens(u.inputTokenDetails?.cacheReadTokens ?? u.cachedInputTokens),
+    outputTokens: tokens(u.outputTokens),
+    reasoningTokens: tokens(u.outputTokenDetails?.reasoningTokens ?? u.reasoningTokens),
+    finish: result.finishReason || "unknown",
+    tools, textChars,
+    ...(warning ? { warning } : {}),
+  };
+}
+
+/** Where GatewayLlm reports each round (the pipeline engine logs it and keeps the turn's figures). */
+export type GatewayRoundSink = (round: GatewayRound) => void;
 
 /** A model call that failed: only what the turn needs (status, retryable name), never the request or the key. */
 export class GatewayLlmError extends Error {
@@ -107,6 +181,12 @@ export type GatewayLlmOptions = {
   timeoutMs?: number;
   /** SDK retries of a retryable error inside one create(); default 1 (the turn adds one after a tool round). */
   maxRetries?: number;
+  /** Cap on each round's output tokens (the request's maxTokens is lowered to it); default none. */
+  maxOutputTokens?: number;
+  /** Each round's figures (setOnRound can set it later); default: nothing is reported. */
+  onRound?: GatewayRoundSink;
+  /** Clock of the round timings (tests); default performance.now. */
+  now?: () => number;
   env?: Record<string, string | undefined>;
 };
 
@@ -123,11 +203,28 @@ export class GatewayLlm implements LlmClient {
   private model: LanguageModel | null;
   private readonly schema: SchemaFlavour;
   private calls = 0;
+  private onRound: GatewayRoundSink | null;
+  private readonly now: () => number;
 
   constructor(private readonly opts: GatewayLlmOptions = {}) {
     this.modelId = opts.modelId ?? PIPELINE_TEXT_MODEL;
     this.model = opts.model ?? null;
     this.schema = opts.schema ?? (schemaFamilyOf(this.modelId) === "gemini" ? "gemini" : "json");
+    this.onRound = opts.onRound ?? null;
+    this.now = opts.now ?? (() => performance.now());
+  }
+
+  /** Where each round's figures go from now on (the pipeline engine sets it at the start of a call); null: nowhere. */
+  setOnRound(sink: GatewayRoundSink | null) {
+    this.onRound = sink;
+  }
+
+  private report(round: GatewayRound) {
+    try {
+      this.onRound?.(round);
+    } catch {
+      // A logging sink never breaks the turn.
+    }
   }
 
   async create(req: LlmRequest): Promise<LlmResponse> {
@@ -136,12 +233,16 @@ export class GatewayLlm implements LlmClient {
     const tools = req.tools.length ? toTools(req.tools, this.schema) : undefined;
     const call = ++this.calls;
     let result: Awaited<ReturnType<typeof generateText>>;
+    const t0 = this.now();
     try {
       this.model ??= gatewayModel(this.modelId, this.opts.env ?? process.env);
       result = await this.run({ model: this.model, instructions: toInstructions(req.system), messages, tools, req });
     } catch (e) {
-      throw toGatewayLlmError(e);
+      const err = toGatewayLlmError(e);
+      this.report({ call, ms: Math.max(0, Math.round(this.now() - t0)), inputTokens: null, cachedTokens: null, outputTokens: null, reasoningTokens: null, finish: "error", tools: [], textChars: 0, error: `${err.name}${err.status ? `/${err.status}` : ""}` });
+      throw err;
     }
+    this.report(roundFrom(call, this.now() - t0, result as unknown as Parameters<typeof roundFrom>[2]));
     if (result.finishReason === "error") throw new GatewayLlmError("Gateway model call failed (finish reason: error)", 502);
     const content = toBlocks(result.content as readonly ResultPart[], `gw${call}`);
     return {
@@ -161,7 +262,7 @@ export class GatewayLlm implements LlmClient {
       instructions: a.instructions,
       messages: a.messages,
       ...(a.tools ? { tools: a.tools } : {}),
-      maxOutputTokens: a.req.maxTokens ?? 16000,
+      maxOutputTokens: Math.min(a.req.maxTokens ?? 16000, this.opts.maxOutputTokens ?? Infinity),
       reasoning: this.opts.reasoning ?? reasoningForEffort(a.req.effort),
       maxRetries: this.opts.maxRetries ?? 1,
       timeout: this.opts.timeoutMs ?? 30_000,
@@ -178,11 +279,14 @@ export function pipelineTextModel(env: Record<string, string | undefined> = proc
   return PIPELINE_TEXT_MODEL;
 }
 
-/** The pipeline's LlmClient for an agent version: the gateway text model, thinking from the version's effort. */
+/**
+ * The pipeline's LlmClient for an agent version: the gateway text model, thinking from the version's effort
+ * (reasoningForEffort: off for low/medium), each round's output capped at PIPELINE_MAX_OUTPUT_TOKENS.
+ */
 export function pipelineLlmFor(
   version: { effort: string | null },
   env: Record<string, string | undefined> = process.env,
-  extra: Pick<GatewayLlmOptions, "model" | "timeoutMs" | "maxRetries"> = {},
+  extra: Pick<GatewayLlmOptions, "model" | "timeoutMs" | "maxRetries" | "onRound" | "now"> = {},
 ): GatewayLlm {
-  return new GatewayLlm({ modelId: pipelineTextModel(env), reasoning: reasoningForEffort(version.effort), env, ...extra });
+  return new GatewayLlm({ modelId: pipelineTextModel(env), reasoning: reasoningForEffort(version.effort), maxOutputTokens: PIPELINE_MAX_OUTPUT_TOKENS, env, ...extra });
 }

@@ -16,6 +16,38 @@
 export const PIPELINE_LISTEN_MODEL = "google/gemini-3.5-transcribe-live";
 
 /**
+ * The streaming transcription models a call may listen with (VOICE_PIPELINE_LISTEN_MODEL picks one without a code
+ * change; anything else is refused with a warning and the default is used). Each needs a rate in
+ * LISTEN_MICROS_PER_SEC, or it counts 0 and the call logs "rate unknown".
+ */
+export const PIPELINE_LISTEN_MODELS = [
+  PIPELINE_LISTEN_MODEL,
+  "openai/gpt-transcribe",
+  "openai/gpt-live-transcribe",
+  "openai/gpt-realtime-whisper",
+  "elevenlabs/scribe-v2-realtime",
+  "spacexai/grok-stt",
+  "microsoft/mai-transcribe-2-streaming",
+] as const;
+
+/** Env override of the listening model (test-lab experiments): one of PIPELINE_LISTEN_MODELS, `creator/model`. */
+export const PIPELINE_LISTEN_MODEL_ENV = "VOICE_PIPELINE_LISTEN_MODEL";
+
+/**
+ * The call's listening model: VOICE_PIPELINE_LISTEN_MODEL when it is one of PIPELINE_LISTEN_MODELS (case and
+ * whitespace ignored), else PIPELINE_LISTEN_MODEL (`invalid` says why, for the start log).
+ */
+export function pipelineListenModelChoice(env: Record<string, string | undefined> = process.env): { model: string; fromEnv: boolean; invalid?: string } {
+  const raw = env[PIPELINE_LISTEN_MODEL_ENV]?.trim().toLowerCase();
+  if (!raw) return { model: PIPELINE_LISTEN_MODEL, fromEnv: false };
+  if (!/^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._:-]*$/.test(raw)) return { model: PIPELINE_LISTEN_MODEL, fromEnv: false, invalid: "not a creator/model id" };
+  if (!(PIPELINE_LISTEN_MODELS as readonly string[]).includes(raw)) {
+    return { model: PIPELINE_LISTEN_MODEL, fromEnv: false, invalid: "not a streaming transcription model listed in lib/voice-pipeline/models.ts" };
+  }
+  return { model: raw, fromEnv: true };
+}
+
+/**
  * SPEAKING: the streaming speech models ("websocket-speech" on the Gateway), tried in this order the first time a
  * call needs speech; the first that produces audio is kept for the rest of the call (lib/voice-pipeline/speaker.ts
  * SpeakerChain, logged "pipeline speech using <model> <mode>"). A failed attempt is logged and the next one says the
@@ -72,11 +104,22 @@ export const SPEAK_MICROS_PER_CHAR: Readonly<Record<string, number>> = {
   "elevenlabs/eleven-flash-v2.5": 40,
   "elevenlabs/eleven-multilingual-v2": 80,
 };
-/** Transcription per second of audio sent: gemini-3.5-transcribe-live $0.00015/s, gpt-transcribe $0.000075/s. */
+/**
+ * Transcription per second of audio sent: gemini-3.5-transcribe-live $0.00015/s, gpt-transcribe $0.000075/s,
+ * grok-stt $0.000028/s. elevenlabs/scribe-v2-realtime (and the other listed models): rate unknown, counts 0 and
+ * the call logs "rate unknown".
+ */
 export const LISTEN_MICROS_PER_SEC: Readonly<Record<string, number>> = {
   "google/gemini-3.5-transcribe-live": 150,
   "openai/gpt-transcribe": 75,
+  "spacexai/grok-stt": 28,
 };
+
+/** "150 micros/s" or "rate unknown (counts 0)" (the start log). */
+export function listenRateText(model: string): string {
+  const r = LISTEN_MICROS_PER_SEC[model];
+  return r === undefined ? "rate unknown (counts 0)" : `${r} micros/s`;
+}
 
 // ---------------------------------------------------------------------------
 // Turn-taking (the proof's values)
@@ -84,13 +127,15 @@ export const LISTEN_MICROS_PER_SEC: Readonly<Record<string, number>> = {
 
 export const PIPELINE_TIMING = {
   /** The local speech detector (lib/voice/vad.ts, the standby detector's values): quiet this long ends the buyer's speech. */
-  vad: { threshold: 0.02, minSpeechMs: 250, endSilenceMs: 700, floorFactor: 3, floorRiseMs: 4_000, floorFallMs: 300 },
+  vad: { threshold: 0.02, minSpeechMs: 250, endSilenceMs: 550, floorFactor: 3, floorRiseMs: 4_000, floorFallMs: 300 },
   /**
    * After the local detector hears the buyer's speech end, the listener is asked to finalise the utterance
    * (Listener.endUtterance) and a final transcript is taken at once when it comes. Without one, the partial text is
    * the line once it has been unchanged for `stableMs` after the speech end, and in any case after `capMs`.
+   * Both run from the detector's report (after `vad.endSilenceMs` of quiet), not from the buyer's last word.
+   * Calls 1-2 (24 Nov) ran with 350 / 1,000 ms and an end silence of 700 ms.
    */
-  lineWait: { stableMs: 350, capMs: 1_000 },
+  lineWait: { stableMs: 250, capMs: 800 },
   /** Barge-in while the agent speaks: buyer speech this long (local detector), or a partial transcript of 2+ words. */
   bargeInSpeechMs: 300,
   bargeInWords: 2,
@@ -103,6 +148,29 @@ export const PIPELINE_TIMING = {
   /** The opening line waits at most this long for the browser's `ready`. */
   clientReadyMs: 3_000,
 } as const;
+
+/**
+ * THINKING on a call: the most output tokens one model round may produce (GatewayLlm's maxOutputTokens cap for the
+ * pipeline). A spoken reply is a few sentences and tool-call arguments fit; a round cut here finishes with "length"
+ * and is logged as a warning ("pipeline think round=… finish=length").
+ */
+export const PIPELINE_MAX_OUTPUT_TOKENS = 700;
+
+/**
+ * "One moment": when a turn has been thinking this long (from its final transcript) with no reply yet, the engine
+ * says ONE short filler in the call's language (at most once per turn, never while the buyer speaks); the reply
+ * follows once the filler has played. Not stored as a chat message; its characters count as speech.
+ */
+export const PIPELINE_FILLER = { afterMs: 2_500, text: { en: "One moment.", he: "רגע אחד." } } as const;
+export const fillerTextFor = (language: string) => (/^(he|iw)/i.test(language) ? PIPELINE_FILLER.text.he : PIPELINE_FILLER.text.en);
+
+/**
+ * The per-turn context line of a call turn (replyToBuyer's `callContextLine`, once the chat lane accepts it:
+ * lib/voice-pipeline/turn.ts PIPELINE-HOOK). The wording is PROVISIONAL (test lab only, awaiting the owner's
+ * confirmation). An empty string switches it off. One line, under 600 characters.
+ */
+export const PIPELINE_CALL_CONTEXT_LINE =
+  "This is a live call. When you only need to record what the buyer said (update_deal_state), write your spoken reply in the same response as that tool call; do not wait for its result.";
 
 /** Text-only usage of a pipeline call, stored under voice_sessions.usage.pipeline (no schema change). */
 export type PipelineUsage = {
@@ -126,6 +194,21 @@ export type PipelineUsage = {
   medianThinkMs: number | null;
   medianSpeakMs: number | null;
   bargeIns: number;
+  /** Thinking rounds (model calls) per answered turn, median; null when the thinking client reports no rounds. */
+  medianRounds?: number | null;
+  /** Answered turns whose rounds were reported, and those of them answered in ONE model round (the summary's oneRound=K/N). */
+  roundTurns?: number;
+  oneRoundTurns?: number;
+  /** Time per thinking round, median over every round of the call. */
+  medianRoundMs?: number | null;
+  /** Think time outside the model rounds per turn (tools, DB, overhead), median. */
+  medianOtherMs?: number | null;
+  /** Cached share of the input tokens per round, median, in percent. */
+  medianCachedPct?: number | null;
+  /** Speech synthesis start → its first audio chunk (every spoken text: replies, opener, fillers), median. */
+  medianSpeakFirstAudioMs?: number | null;
+  /** "One moment" fillers said. */
+  fillers?: number;
 };
 
 /** Estimated cost of what the pipeline itself used (listening + speaking); null rates count 0 and are logged. */
