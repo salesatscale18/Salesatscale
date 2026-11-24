@@ -99,7 +99,7 @@ describe("W5: UX follow-ups (demo account)", () => {
   beforeEach(() => { holder.cookies.clear(); as(account); });
 
   describe("Overview: Set up your account", () => {
-    it("not live: the setup row comes before Your markets (and after the KPI row)", async () => {
+    it("not live: one slim setup card first, before the KPI row and Your markets", async () => {
       as({ ...account, status: "setting_up" });
       const html = await page(OverviewPage, slug());
       save("overview-setup", html);
@@ -109,8 +109,11 @@ describe("W5: UX follow-ups (demo account)", () => {
       expect(setup).toBeGreaterThan(0);
       expect(marketsAt).toBeGreaterThan(0);
       expect(setup).toBeLessThan(marketsAt);
-      expect(kpis).toBeLessThan(setup);
-      expect(html).toContain(">Setup progress</h2>");
+      expect(setup).toBeLessThan(kpis);
+      expect(html).toContain(">Finish setting up your agent</h2>");
+      // One "Continue" link to the first open step instead of the full list of steps.
+      expect(html).toMatch(/data-setup-next="[a-z-]+"/);
+      expect(html).not.toMatch(/<ol class="sas-list">[\s\S]*?aria-current="step"/);
     });
     it("live: no setup row; Your markets still shows", async () => {
       as({ ...account, status: "live" });

@@ -6,6 +6,7 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import { SETUP_STEPS } from "@/components/sas/nav";
 import fs from "node:fs";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -266,10 +267,10 @@ describe("Polish-2+5: seller workspace", () => {
       expect(html).not.toMatch(/class="sas-chip" data-market/);
     });
 
-    it("Package 7.2: one step bar everywhere: same states, 'Price lists', no Follow-ups step, on sub-pages and Test lab too", async () => {
-      const bar = (html: string) => {
-        const nav = html.split('<ol class="sas-steps">')[1]?.split("</ol>")[0] ?? "";
-        return [...nav.matchAll(/<a class="([^"]+)" href="[^"]*\/setup\/([a-z-]+)"/g)].map((m) => `${m[2]}:${m[1].includes("--done") ? "done" : "open"}`);
+    it("Package 7.2: one step line everywhere: same progress, 'Price lists', no Follow-ups step, on sub-pages and Test lab too", async () => {
+      const line = (html: string) => {
+        const tag = html.match(/<nav class="sas-stepline"[^>]*>/)?.[0] ?? "";
+        return { step: tag.match(/data-step="([a-z-]+)"/)?.[1] ?? null, done: Number(tag.match(/data-done="(\d+)"/)?.[1] ?? -1) };
       };
       const [list] = await listPriceLists(db, acc);
       const pages = await Promise.all([
@@ -278,16 +279,18 @@ describe("Polish-2+5: seller workspace", () => {
         page(TestLabPage(props(account.slug))),
         page(PriceListPage(props(account.slug, {}, { lineageId: list.lineageId }) as never)),
       ]);
-      const states = pages.map(bar);
-      // Go live used to show numbers for steps the other pages showed as done.
-      for (const s of states) expect(s).toEqual(states[0]);
-      expect(states[0]).toHaveLength(8);
-      expect(states[0].join(",")).not.toContain("follow-ups");
-      expect(states[0]).toContain("catalog:done");
-      expect(pages[0]).toMatch(/\/setup\/price-lists"[^>]*><span class="sas-steps__dot">[^<]*(<svg[\s\S]*?<\/svg>)?<\/span>Price lists</);
+      const lines = pages.map(line);
+      // Go live used to show steps as open that the other pages showed as done.
+      for (const l of lines) expect(l.done).toBe(lines[0].done);
+      expect(lines[0].done).toBeGreaterThan(0);
+      expect(SETUP_STEPS).toHaveLength(8);
+      expect(SETUP_STEPS.map((s) => s.id)).not.toContain("follow-ups");
+      // Catalog is done here: its own line says so, and points on to Price lists.
+      expect(pages[0]).toMatch(/data-step="catalog" data-step-done=""/);
+      expect(pages[0]).toMatch(/href="[^"]*\/setup\/price-lists" data-next="prices">Next: Price lists/);
       // Sub-page marks its step; Test lab is no step.
-      expect(pages[3]).toMatch(/href="[^"]*\/setup\/price-lists" aria-current="step"/);
-      expect(pages[2]).not.toContain('aria-current="step"');
+      expect(lines[3].step).toBe("prices");
+      expect(lines[2].step).toBeNull();
       // Follow-ups is out of the nav (its placeholder route stays).
       holder.path = `/app/${account.slug}`;
       const nav = renderToStaticMarkup(<SideNavForPath mode="seller" basePath={`/app/${account.slug}`} accountName="P" user={{ name: "D", initials: "D" }} />);

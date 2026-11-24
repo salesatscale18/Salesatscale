@@ -74,7 +74,8 @@ describe("side nav: Overview matches only its own page", () => {
     expect(activeNavId(items, base, base, "seller")).toBe("overview");
     expect(activeNavId(items, base, `${base}/leads/123`, "seller")).toBe("leads");
     expect(activeNavId(items, base, `${base}/setup/price-lists/abc`, "seller")).toBe("price-lists");
-    expect(activeNavId(items, base, `${base}/setup/company`, "seller")).toBe("");
+    // Company has its own item under Agent setup since the step bar moved into the menu.
+    expect(activeNavId(items, base, `${base}/setup/company`, "seller")).toBe("company");
     expect(activeNavId(items, base, `${base}/marketsx`, "seller")).toBe("");
   });
 });

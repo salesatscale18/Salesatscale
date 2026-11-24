@@ -78,7 +78,7 @@ describe("UAT round 2 fixes", () => {
 
   it("1. Company page ticks the Company step when it is done (was always empty)", async () => {
     const html = renderToStaticMarkup(await CompanyPage(props(acc.slug)));
-    expect(html).toMatch(/class="sas-steps__step sas-steps__step--done" href="\/app\/[^"]+\/setup\/company"/);
+    expect(html).toMatch(/class="sas-stepline"[^>]*data-step="company" data-step-done=""/);
   });
 
   it("2. Copy and adjust defaults to the source list's currency, VAT setting and rate", async () => {

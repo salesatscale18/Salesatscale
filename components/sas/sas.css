@@ -233,18 +233,33 @@
 .sas-nav__label { flex: 1; }
 .sas-nav__count { font-family: var(--font-sans); font-size: 12px; font-variant-numeric: tabular-nums; }
 .sas-nav__count--human { min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 700 11px/20px var(--font-sans); text-align: center; }
+/* Setup progress: a thin bar in the side menu (Agent setup), the step line on setup pages, the Overview card. */
+.sas-progress { display: block; height: 6px; border-radius: var(--radius-pill); background: var(--surface-sunken); overflow: hidden; }
+.sas-progress__fill { display: block; height: 100%; border-radius: inherit; background: var(--primary-accent, var(--primary)); transition: width 300ms ease-out; }
+.sas-nav__progress { display: flex; flex-direction: column; gap: 6px; padding: 0 10px 8px; }
+.sas-nav__done { margin-inline-start: auto; display: inline-flex; color: var(--success); }
+.sas-nav__done .sas-ico { width: 16px; height: 16px; }
+.sas-nav__next { margin-inline-start: auto; padding: 2px 8px; border-radius: var(--radius-pill); background: var(--primary-soft); color: var(--primary); font: 600 11px/16px var(--font-sans); }
+.sas-app a.sas-nav__item[aria-current="page"] .sas-nav__next { background: var(--surface-raised); }
+.sas-stepline { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding-block-start: 4px; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-stepline__label { font-weight: 600; color: var(--ink); }
+.sas-stepline__done { display: inline-flex; align-items: center; gap: 4px; color: var(--success); font-weight: 600; }
+.sas-stepline__done .sas-ico { width: 14px; height: 14px; }
+.sas-stepline .sas-progress { width: 120px; }
+.sas-app a.sas-stepline__next { margin-inline-start: auto; display: inline-flex; align-items: center; gap: 6px; color: var(--primary); font-weight: 600; text-decoration: none; }
+.sas-app a.sas-stepline__next:hover { text-decoration: underline; }
+.sas-stepline__next .sas-ico { width: 14px; height: 14px; }
+.sas-setup-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3) 20px; padding: var(--space-4) 20px; }
+.sas-setup-card__text { flex: 1 1 260px; min-width: 0; display: flex; flex-direction: column; gap: var(--space-2); }
+.sas-setup-card__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
+.sas-setup-card .sas-progress { max-width: 420px; }
+@media (prefers-reduced-motion: reduce) { .sas-progress__fill { transition: none; } }
+[dir="rtl"] .sas-stepline__next .sas-ico, [dir="rtl"] .sas-setup-card .sas-btn .sas-ico { transform: scaleX(-1); }
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
 .sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .sas-nav__user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* Setup steps bar */
-.sas-steps { display: flex; gap: 4px; overflow-x: auto; padding-block: 14px; margin: 0; list-style: none; padding-inline: 0; }
-.sas-app a.sas-steps__step { display: flex; align-items: center; gap: var(--space-2); height: 36px; padding-inline: 6px 12px; border-radius: var(--radius-pill); white-space: nowrap; text-decoration: none; color: var(--ink-muted); font-weight: 500; }
-.sas-app a.sas-steps__step[aria-current="step"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
-.sas-steps__dot { width: 24px; height: 24px; border-radius: var(--radius-pill); display: inline-grid; place-items: center; font-size: 12px; font-weight: 700; background: var(--surface-sunken); color: var(--ink-muted); }
-.sas-steps__dot .sas-ico { width: 14px; height: 14px; }
-.sas-steps__step--done .sas-steps__dot { background: var(--success-soft); color: var(--success); }
-.sas-steps__step[aria-current="step"] .sas-steps__dot { background: var(--primary); color: var(--on-primary); }
 
 /* Visually hidden (screen-reader text) */
 .sas-sr { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
@@ -479,10 +494,8 @@ h2.sas-group-label { margin: 0; }
   .sas-table--stack td[data-label=""] { justify-content: flex-end; }
 }
 
-/* Chip strip: setup steps and section lists scroll sideways on a phone, the current item scrolled into view. */
-.sas-steps { scrollbar-width: thin; }
+/* Chip strip: section lists scroll sideways on a phone, the current item scrolled into view. */
 @media (max-width: 767px) {
-  .sas-steps { padding-block: var(--space-2); }
   .sas-subnav { flex: 1 1 100%; max-width: none; flex-direction: row; gap: 4px; overflow-x: auto; padding-block-end: 4px; scrollbar-width: thin; }
   .sas-app a.sas-subnav__item { flex: none; height: 32px; border-radius: var(--radius-pill); white-space: nowrap; }
   .sas-app a.sas-subnav__item[aria-current="page"] { background: var(--primary-soft); color: var(--primary); box-shadow: none; }

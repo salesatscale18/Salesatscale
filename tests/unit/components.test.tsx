@@ -55,4 +55,20 @@ describe("design system components", () => {
     expect(out).not.toContain('href="/app/acme/meetings"');
     expect(out).not.toContain('href="/app/acme/reports"');
   });
+
+  it("side nav shows setup progress under Agent setup: bar, checks on done steps, Next on the first open one", () => {
+    const out = html(
+      <SideNav mode="seller" basePath="/app/acme" active="leads" accountName="Acme" user={{ name: "D L", initials: "DL" }} setup={{ done: ["company", "sources", "prices"] }} />,
+    );
+    expect(out).toContain('data-setup-done="3"');
+    expect(out).toContain("3 of 8 done");
+    expect(out).toContain('data-step-done="company"');
+    expect(out).toContain('data-step-done="prices"');
+    expect(out).toContain('data-step-next="knowledge"');
+    expect(out).not.toContain('data-step-done="markets"');
+    // Live accounts pass no setup: no progress in the menu.
+    const live = html(<SideNav mode="seller" basePath="/app/acme" active="leads" accountName="Acme" user={{ name: "D L", initials: "DL" }} />);
+    expect(live).not.toContain("sas-nav__progress");
+    expect(live).not.toContain("data-step-");
+  });
 });

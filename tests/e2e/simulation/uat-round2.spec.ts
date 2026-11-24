@@ -212,11 +212,11 @@ test("B1 Company", async () => {
   await expect(page.getByText("Company details saved.")).toBeVisible();
 });
 
-test("B1 Company step shows a check in the steps bar", async () => {
-  // Fixed (Lane F): the Company page passes the real setup progress to its steps bar.
+test("B1 Company step shows a check in the step line", async () => {
+  // Fixed (Lane F): the Company page passes the real setup progress to its step line.
   need(S.appBase);
   await page.goto(`${S.appBase}/setup/company`);
-  await expect(page.locator('a.sas-steps__step--done[href$="/setup/company"]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('.sas-stepline[data-step="company"][data-step-done]')).toBeVisible({ timeout: 5000 });
 });
 
 test("B2 Catalog without prices", async ({ browser }) => {
@@ -344,7 +344,7 @@ test("B2b Price list", async ({ browser }) => {
   await expect(row.getByText("Live", { exact: true })).toBeVisible();
   await expect(row.getByText(`Used by ${HOME}`)).toBeVisible();
   await expect(row.getByText(/missing price/)).toHaveCount(0);
-  await expect(page.locator('a.sas-steps__step--done[href$="/setup/price-lists"]')).toBeVisible();
+  await expect(page.locator('.sas-stepline[data-step="prices"][data-step-done]')).toBeVisible();
   await noHorizontalScroll(page);
   await shot(page, "B2b-list");
   await phoneCheck(browser, page.url());

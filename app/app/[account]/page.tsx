@@ -4,7 +4,7 @@ import { Banner, Timeline, type TimelineItem } from "@/components/sas/record";
 import { SidePanel } from "@/components/sas/list-kit";
 import { MenuEnhancer } from "@/components/sas/list-kit-client";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
-import { SETUP_STEPS } from "@/components/sas/nav";
+import { ProgressBar, SETUP_STEPS } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
 import { liveVersion } from "@/lib/agent/service";
@@ -226,34 +226,31 @@ export default async function OverviewPage({ params, searchParams }: { params: P
       {sim ? (
         <Banner kind="test"><strong>{t("overview.sim_banner_lead")}</strong> {t("overview.sim_banner", { leads: sim.leads, quotes: sim.quotes, orders: sim.paid })}</Banner>
       ) : null}
+      {/* Not live yet: one slim card with the next step; the full list with checks is in the side menu. */}
+      {account.status !== "live" ? (() => {
+        const doneCount = SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length;
+        const next = SETUP_STEPS.find((s) => s.id === firstOpen);
+        return (
+          <section className="sas-panel sas-setup-card" aria-labelledby="setup-h" data-setup-card="">
+            <div className="sas-setup-card__text">
+              <div className="sas-setup-card__title">
+                <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
+                <span className="sas-small">{t("overview.setup.count", { done: doneCount, total: SETUP_STEPS.length })}</span>
+              </div>
+              <ProgressBar done={doneCount} total={SETUP_STEPS.length} />
+            </div>
+            {next ? (
+              <a className={buttonClass("primary", "sm")} href={`${base}${next.path}`} data-setup-next={next.id}>
+                {t("overview.setup.continue", { step: t(next.label) })}
+                <Icon name="arrow-right" />
+              </a>
+            ) : null}
+          </section>
+        );
+      })() : null}
       <section aria-label={t("overview.kpis")} className="sas-ov2-kpis">
         {cards.map((c) => <KpiCardView key={c.id} card={c} />)}
       </section>
-
-      {/* Not live yet: setting up is the first thing to act on, so it comes before "Your markets". */}
-      {account.status !== "live" ? (
-        <section className="sas-panel" aria-labelledby="setup-h" style={{ minWidth: 0, overflow: "hidden" }}>
-          <div className="sas-panel__head">
-            <h2 id="setup-h" className="sas-heading">{t("overview.setup.title")}</h2>
-            <span className="sas-small">{t("overview.setup.count", { done: SETUP_STEPS.filter((s) => (done as ReadonlySet<string>).has(s.id)).length, total: SETUP_STEPS.length })}</span>
-          </div>
-          <ol className="sas-list">
-            {SETUP_STEPS.map((s, i) => {
-              const complete = (done as ReadonlySet<string>).has(s.id);
-              return (
-                <li key={s.id}>
-                  <a className="sas-list__row" href={`${base}${s.path}`} aria-current={s.id === firstOpen ? "step" : undefined}>
-                    <span className="sas-av" style={complete ? { background: "var(--success-soft)", color: "var(--success)" } : undefined}>
-                      {complete ? <Icon name="check" label="Done" /> : i + 1}
-                    </span>
-                    <span className="sas-list__main" style={complete ? undefined : { fontWeight: s.id === firstOpen ? 600 : undefined }}>{t(s.label)}</span>
-                  </a>
-                </li>
-              );
-            })}
-          </ol>
-        </section>
-      ) : null}
 
       {/* Phone (sas.css): this row dissolves so "Needs you" can come first, under the greeting. */}
       <div className="sas-ov__row sas-ovn-row">
