@@ -29,15 +29,19 @@ export type RowCtx = { tradeName: string; timezone: string; now: Date; viewerZon
  * One cell: a title with an optional icon and one muted detail line. `titleId` /
  * `detailId`: an order or quote ID inside the text (code font, TextWithId).
  */
-export type StepCell = { title: string; detail: string | null; icon: IconName | null; titleId?: string; detailId?: string };
+export type StepCell = { title: string; detail: string | null; icon: IconName | null; titleId?: string; detailId?: string; detailTitle?: string };
 
 /** The What's needed cell for one item: group icon, a short title and one detail line (UX L-3 examples). */
 export function needCell(it: NeedsYouItem, ctx: RowCtx): StepCell {
   const icon = NEEDS_GROUP_ICON[NEEDS_GROUP_OF[it.kind]];
   const when = (at: Date, tz: string) => isolate(viewerTime(at, ctx.viewerZone, tz));
   switch (it.kind) {
-    case "human_handling":
-      return { icon, title: t("leads.need.human_handling"), detail: it.why ? isolate(it.why) : t("overview.needs.human_handling.detail", { when: timeAgo(it.at, ctx.now, ctx.timezone) }) };
+    case "human_handling": {
+      // The SHORT label ("AI limit reached", "Upset"); none: the plain "Handed to a person · when". The whole reason
+      // is the detail's tooltip (overview-short-reasons).
+      const detail = it.why ? isolate(it.why) : t("overview.needs.human_handling.detail", { when: timeAgo(it.at, ctx.now, ctx.timezone) });
+      return { icon, title: t("leads.need.human_handling"), detail, ...(it.whyWhole && it.whyWhole !== it.why ? { detailTitle: it.whyWhole } : {}) };
+    }
     case "call_finished":
       // "Log the call" · "Team call Mon 23 Nov 15:30 · Anyone on your team" (reach boards: who calls).
       return { icon, title: t("leads.need.call_finished"), detail: t("leads.need.call_finished.detail", { time: when(it.callAt, it.timezone), who: t("team_call.who_anyone") }) };

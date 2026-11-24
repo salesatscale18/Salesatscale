@@ -520,7 +520,7 @@ describe("demo account review states", () => {
     const whys = await handoffWhyByLead(db, accountId, [upset.id, cap.id]);
     expect(whys.get(upset.id)).toBe("Upset: false night alarms, and wants a person now");
     expect(whys.get(cap.id)).toBe("AI limit reached");
-    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === upset.id)).toMatchObject({ kind: "human_handling", why: "Upset: false night alarms, and wants a person now" });
+    expect((await needsYou(db, accountId, NOW)).find((i) => i.leadId === upset.id)).toMatchObject({ kind: "human_handling", why: "Upset", whyWhole: "Upset: false night alarms, and wants a person now" });
     expect((await handoffWhyByLead(db, otherId, [upset.id])).size).toBe(0);
   });
 

@@ -236,7 +236,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
         {cell.icon ? <span className="sas-lstep__icon"><Icon name={cell.icon} /></span> : null}
         <TextWithId text={cell.title} id={cell.titleId ?? ""} plain />
       </span>
-      {cell.detail ? <span className="sas-lstep__detail" title={cell.detail}><TextWithId text={cell.detail} id={cell.detailId ?? ""} plain /></span> : null}
+      {cell.detail ? <span className="sas-lstep__detail" title={cell.detailTitle ?? cell.detail}><TextWithId text={cell.detail} id={cell.detailId ?? ""} plain /></span> : null}
     </span>
   );
 
