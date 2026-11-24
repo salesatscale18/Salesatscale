@@ -15,8 +15,9 @@
  * "Voice call ended" line. The platform/spend gates run at the start of a live call (createVoiceSession ran them too).
  *
  * Rows: the buyer's line is stored here (voice_session_id, spoken_at_ms, typed_in_call, card numbers masked) before
- * the chat turn runs with buyerMessageStored; the chat turn stores its reply row (and any cards) itself; this engine
- * then marks the reply row as spoken (voice_session_id, spoken_at_ms, answer_ms). The chat thread after the call
+ * the chat turn runs with buyerMessageStored and this call's callSessionId; the chat turn stores its reply row (stamped
+ * with voice_session_id) and any cards (not stamped) itself; this engine sets the reply's spoken_at_ms and answer_ms
+ * at its first audio (or spoken_at_ms alone, when it is never spoken). The chat thread after the call
  * reads as a normal chat with the call markers.
  *
  * Proof limits: not recorded (recording_state "off"); a barge-in cuts the audio but the reply row stays whole; no
@@ -24,7 +25,7 @@
  * progress messages (the chat turn runs its tools inside one call); the order-form context is not used.
  */
 import { randomUUID } from "node:crypto";
-import { and, eq, ne, sql } from "drizzle-orm";
+import { and, eq, isNull, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
   agentVersions, conversations, leads, messages, sellerAccounts, voiceSessions,
@@ -584,17 +585,17 @@ export class PipelineVoiceEngine {
       if (next) this.runTurn(next);
       return;
     }
-    // The chat turn stored its reply row (and any cards): mark it as said on this call.
-    await this.db.update(messages).set({ voiceSessionId: this.sessionId, spokenAtMs: this.offsetMs() })
-      .where(and(eq(messages.id, result.messageId), eq(messages.accountId, account.id)));
+    // The chat turn stored its reply row (stamped with this call's session: callSessionId) and any cards (not
+    // stamped). spokenAtMs is set here when its first audio goes out (a line with a session and no spokenAtMs is
+    // hidden from the call block), or, if it is never spoken, when it would have been (markUnspoken).
     this.send({ t: "transcript", id: result.messageId, role: "agent", text: result.text, final: true, atMs: this.offsetMs() });
     this.send({ t: "message", messageId: result.messageId });
     // An opt-out closes the conversation, a hand-off gives it to the team: the reply is said, then the call ends.
     const [after] = await this.db.select({ status: conversations.status }).from(conversations).where(eq(conversations.id, conv.id));
     const endAfter: VoiceEndReason | null = after?.status === "closed" ? "opt_out" : after?.status === "human" ? "handoff" : null;
-    if (this.ended) return;
+    if (this.ended) return this.markUnspoken(result.messageId, "the call ended while thinking");
     this.trace(`turn=${n} reply len=${result.text.length} print=${textPrint(result.text)} think=${thinkMs}ms tools=${result.calls}`);
-    if (this.turns.replied(true) !== null) return;
+    if (this.turns.replied(true) !== null) return this.markUnspoken(result.messageId, "not in a thinking turn");
     await this.speakTurn(result.text, { messageId: result.messageId, n, speechEndAt: line.speechEndAt, finalAt: line.finalAt, replyAt, listenMs, thinkMs, tools: result.calls, endAfter });
   }
 
@@ -610,6 +611,7 @@ export class PipelineVoiceEngine {
     this.setState("speaking");
     this.framer.reset();
     let firstAudio = false;
+    let speechFailed = false;
     let chars = 0;
     // Prefetch: each sentence's audio is collected as soon as its synthesis starts.
     const starts: Prefetch[] = [];
@@ -643,8 +645,14 @@ export class PipelineVoiceEngine {
       this.lastError = clip(e instanceof Error ? e.message : e);
       this.log.warn(voiceLine(this.sessionId, `pipeline speech failed (model ${this.speaker.modelId}, voice ${this.speaker.voice}): ${this.lastError}; if the voice is refused, set PIPELINE_VOICE in lib/voice-pipeline/models.ts`));
       this.speaker.cancel();
+      speechFailed = true;
     } finally {
       for (const s of starts) s?.stop();
+      // A reply never heard still gets its place in the call (spokenAtMs): never hidden from the call block.
+      if (!firstAudio && t.n !== null) {
+        const why = speechFailed ? "speech failed" : gen !== this.speakGen ? (this.ended ? "the call ended" : "barge-in before any audio") : "nothing to say after the spoken form";
+        await this.markUnspoken(t.messageId, why);
+      }
     }
     if (gen !== this.speakGen) return;
     if (!firstAudio) this.trace(`turn=${t.n ?? "opener"} said nothing (chars=${chars})`);
@@ -678,8 +686,19 @@ export class PipelineVoiceEngine {
     const totalMs = Math.max(0, Math.round(now - from));
     this.times.push({ listenMs: t.listenMs, thinkMs: t.thinkMs, speakMs, totalMs, tools: t.tools, chars });
     this.trace(`turn=${t.n} listen=${t.listenMs ?? "-"}ms think=${t.thinkMs}ms tools=${t.tools} speak=${speakMs}ms total=${totalMs}ms chars=${chars}`);
-    void this.db.update(messages).set({ answerMs: totalMs }).where(eq(messages.id, t.messageId))
-      .catch((e) => this.log.warn(voiceLine(this.sessionId, `answer time not stored: ${errorSummary(e)}`)));
+    void this.db.update(messages).set({ spokenAtMs: this.offsetMs(), answerMs: totalMs }).where(eq(messages.id, t.messageId))
+      .catch((e) => this.log.warn(voiceLine(this.sessionId, `spoken time not stored: ${errorSummary(e)}`)));
+  }
+
+  /** A reply that was never spoken: its spokenAtMs is when it would have been (now), so the call block shows it. */
+  private async markUnspoken(messageId: string, why: string) {
+    const at = this.offsetMs();
+    this.log.warn(voiceLine(this.sessionId, `pipeline reply not spoken (${why}): spoken_at_ms set to ${at} so the line shows in the call`));
+    try {
+      await this.db.update(messages).set({ spokenAtMs: at }).where(and(eq(messages.id, messageId), isNull(messages.spokenAtMs)));
+    } catch (e) {
+      this.log.warn(voiceLine(this.sessionId, `spoken time not stored: ${errorSummary(e)}`));
+    }
   }
 
   /** The buyer cut in while the agent spoke: stop the audio now, the browser drops what it queued, listen. */

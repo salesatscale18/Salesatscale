@@ -3,34 +3,16 @@
  * a hand-driven listener, the scripted speaker and a ScriptedLlm running the REAL chat turn (replyToBuyer →
  * runBuyerTurn, tools included). No network, nothing paid.
  *
- * One agent at a time: the agreed chat-lane change (replyToBuyer/runBuyerTurn `callSessionId` → textTurnBlocked
- * `exceptSessionId`) is not in main yet, so this file stands it in: textTurnBlocked lets a "pipeline call" turn pass
- * for its own pipeline session, and blocks every other trigger as before (checked below). Today's real behaviour
- * (the turn refused as in_call) is documented in tests/integration/voice-pipeline-block.test.ts.
+ * One agent at a time, with the real block (lib/voice/one-agent.ts): the call's own chat turns pass (callSessionId →
+ * exceptSessionId), every other trigger is still blocked while the call is live (checked below). The chat turn stamps
+ * its reply with the session; the engine sets spokenAtMs/answerMs; a quote message a tool writes stays unstamped.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { and, asc, eq } from "drizzle-orm";
 import { messages, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
-
-vi.mock("@/lib/voice/one-agent", async (importOriginal) => {
-  const real = await importOriginal<typeof import("@/lib/voice/one-agent")>();
-  const { voiceSessions: vs } = await import("@/db/schema");
-  const { eq: eqq } = await import("drizzle-orm");
-  return {
-    ...real,
-    // The future `exceptSessionId`: the pipeline call's own chat turns pass; every other trigger is blocked as before.
-    textTurnBlocked: async (db: import("@/db/types").Db, accountId: string, conversationId: string, trigger: string, now?: Date) => {
-      if (trigger === "pipeline call") {
-        const active = await real.activeCallOn(db, accountId, conversationId, now);
-        const [s] = active ? await db.select({ settings: vs.settings }).from(vs).where(eqq(vs.id, active)) : [];
-        if ((s?.settings as { engine?: string } | null)?.engine === "pipeline") return false;
-      }
-      return real.textTurnBlocked(db, accountId, conversationId, trigger, now);
-    },
-  };
-});
+import { seedCatalog, seedPricing } from "../helpers/pricing";
 
 const { parseCreateAccount } = await import("@/lib/accounts/rules");
 const { createAccount } = await import("@/lib/accounts/service");
@@ -59,6 +41,12 @@ beforeAll(async () => {
   const p = parseCreateAccount({ tradeName: "Acme", market: "IL", languages: ["en"], timezone: "Asia/Jerusalem", currency: "ILS", plan: "pilot", monthlySpendCap: "100", ownerName: "O", ownerEmail: "p-acme@x.test" });
   if (!p.ok) throw new Error();
   acc = (await createAccount(db, { userId: me.id, actingAs: false }, p.value)).account.id;
+  await seedCatalog(db, acc, [
+    { sku: "SNS-200", name: "Wireless fridge sensor", unit: "device" },
+    { sku: "GW-10", name: "Site gateway", unit: "site" },
+    { sku: "PLAN-M", name: "Monitoring plan", unit: "site", kind: "service" },
+  ], [{ kind: "requires", sku: "SNS-200", oneOf: ["GW-10"], perSite: true }]);
+  await seedPricing(db, acc, [{ sku: "SNS-200", oneTime: 59_000 }, { sku: "GW-10", oneTime: 66_000 }, { sku: "PLAN-M", recurring: 9_000 }], { userId: me.id });
   await ensureDraftVersion(db, acc);
 });
 afterAll(async () => t.close());
@@ -94,7 +82,8 @@ describe("pipeline proof: listen, think, speak", () => {
     const speaker = new ScriptedSpeaker("scripted", { msPerChar: 4, maxMs: 600, chunkMs: 100 });
     const use = (id: string, name: string, input: unknown) => ({ type: "tool_use" as const, id, name, input });
     const llm = new ScriptedLlm([
-      () => ({ content: [use("t1", "update_deal_state", { updates: [], next_step: null, objection: null })] }),
+      () => ({ content: [use("t1", "update_deal_state", { updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "2", provenance: "buyer" }], next_step: "quote", objection: null })] }),
+      () => ({ content: [use("t2", "create_quote", { lines: [{ sku: "SNS-200", qty: 6 }, { sku: "GW-10", qty: 2 }, { sku: "PLAN-M", qty: 2 }], discount_percent: 0, sites: 2 })] }),
       () => ({ content: [{ type: "text", text: REPLY_1 }] }),
       () => ({ content: [{ type: "text", text: REPLY_2 }] }),
     ]);
@@ -148,12 +137,18 @@ describe("pipeline proof: listen, think, speak", () => {
     await clock.advance(100, settle);
     await done;
 
-    // Rows: each line once, in order, all marked as said on this call; the end line last.
+    // Rows: each line once, in order, marked as said on this call (the chat turn stamps the session, the engine the
+    // spoken time); the quote message the tool wrote is the app's, not stamped; the end line last.
     const rows = await db.select().from(messages).where(eq(messages.conversationId, conv.conversationId)).orderBy(asc(messages.createdAt));
-    const talk = rows.filter((m) => m.actor !== "system");
-    expect(talk.map((m) => [m.actor, m.voiceSessionId === s.sessionId])).toEqual([
-      ["agent", true], ["buyer", true], ["agent", true], ["buyer", true], ["agent", true],
+    const all = rows.filter((m) => m.actor !== "system");
+    expect(all.map((m) => [m.actor, m.voiceSessionId === s.sessionId])).toEqual([
+      ["agent", true], ["buyer", true], ["agent", false], ["agent", true], ["buyer", true], ["agent", true],
     ]);
+    const quoteMsg = all[2];
+    expect(quoteMsg).toMatchObject({ voiceSessionId: null, spokenAtMs: null });
+    expect(quoteMsg.body).toMatch(/Q-\d+/);
+    const talk = all.filter((m) => m !== quoteMsg);
+    for (const m of talk) expect(m.spokenAtMs).not.toBeNull();
     expect(talk[1]).toMatchObject({ body: "We have two sites.", typedInCall: false });
     expect(talk[3]).toMatchObject({ body: "How much is it?", typedInCall: true });
     // The chat rows keep the chat's own text (the link too); what was spoken is the spoken form (no URL).
@@ -170,8 +165,8 @@ describe("pipeline proof: listen, think, speak", () => {
     expect(rows[rows.length - 1].body).toMatch(/^Voice call ended · \d+:\d{2}$/);
     // The tool round was the chat turn's own (stored on the reply).
     const calls = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, conv.conversationId)));
-    expect(calls.map((c) => [c.name, c.messageId])).toEqual([["update_deal_state", talk[2].id]]);
-    expect(llm.requests).toHaveLength(3);
+    expect(calls.map((c) => [c.name, c.messageId])).toEqual([["update_deal_state", talk[2].id], ["create_quote", talk[2].id]]);
+    expect(llm.requests).toHaveLength(4);
 
     // Audio went out as PCM frames of at most 100 ms; the browser was told the states.
     expect(ws.audio().length).toBeGreaterThan(5);
@@ -180,7 +175,7 @@ describe("pipeline proof: listen, think, speak", () => {
     expect(states).toEqual(expect.arrayContaining(["listening", "checking", "speaking", "ended"]));
 
     // The trace: per-turn timings (listen, think, speak, total), then the medians.
-    const turn1 = lines.find((l) => /pipeline turn=1 listen=\d+ms think=\d+ms tools=1 speak=\d+ms total=\d+ms chars=\d+/.test(l));
+    const turn1 = lines.find((l) => /pipeline turn=1 listen=\d+ms think=\d+ms tools=2 speak=\d+ms total=\d+ms chars=\d+/.test(l));
     expect(turn1).toBeDefined();
     expect(Number(/listen=(\d+)ms/.exec(turn1!)![1])).toBeGreaterThanOrEqual(200);
     expect(lines.some((l) => /pipeline turn=2 listen=-ms think=\d+ms tools=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);

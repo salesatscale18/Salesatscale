@@ -4,9 +4,8 @@
  * then one reply, its rows and cards stored by the chat turn, its model usage recorded by the chat turn).
  *
  * The only call into the chat lane, isolated here. One agent at a time (lib/voice/one-agent.ts): while this call's
- * session is live, runBuyerTurn's textTurnBlocked refuses every chat turn on the conversation (status "in_call"),
- * this call's own turns too. The agreed fix (chat lane, not in main yet): replyToBuyer / runBuyerTurn take an
- * optional `callSessionId`, passed through as textTurnBlocked's `exceptSessionId`, so only this call's own turns pass.
+ * session is live, textTurnBlocked refuses every chat turn on the conversation (status "in_call") except this call's
+ * own: replyToBuyer / runBuyerTurn take `callSessionId`, passed through as textTurnBlocked's `exceptSessionId`.
  */
 import type { Db } from "@/db/types";
 import type { LlmClient } from "@/lib/agent/llm";
@@ -26,8 +25,9 @@ export const PIPELINE_TURN_TRIGGER = "pipeline call";
  * Transport null: a test-lab conversation sends nothing anywhere; the reply is the chat row it stores.
  */
 export const runCallTurn: CallTurnFn = async (db, llm, a) => {
+  // Transport null: nothing is delivered anywhere. callSessionId: this call's own turn passes the one-agent block, and
+  // the chat turn stamps its reply with the session (never spokenAtMs/answerMs: the engine sets those when it speaks).
   const out = await replyToBuyer(db, llm, null, { accountId: a.accountId, conversationId: a.conversationId, leadId: a.leadId, text: a.text },
-    // PIPELINE-HOOK: pass callSessionId once replyToBuyer accepts it
-    { trigger: PIPELINE_TURN_TRIGGER });
+    { trigger: PIPELINE_TURN_TRIGGER, callSessionId: a.callSessionId });
   return out.turn;
 };
