@@ -1355,9 +1355,9 @@ label.st-voice__row { cursor: pointer; }
 .lqq-state--danger, .lqq-state--danger .sas-ico { color: var(--danger); }
 .sas-table td.lqq-soon { color: var(--warning); font-weight: 600; }
 .sas-table td.lqq-past, .lqq-none { color: var(--ink-muted); }
-/* Wide screens: the page head and the card stop at 1200px (left-aligned with the title), so the
+/* Wide screens: the page head and the card stop at 1120px (left-aligned with the title; UX, 24 Nov: no detail line is cut at that width), so the
    market switcher ends where the card ends. */
-.lqq-head, .lqq-card { width: 100%; max-width: 1200px; }
+.lqq-head, .lqq-card { width: 100%; max-width: 1120px; }
 .lqq-card { container-type: inline-size; }
 /* The tables (both tabs, from 768px; phones keep their stacked cards): real column widths instead of
    equal shares. Fixed columns (padding included); Lead takes a share of what is left (200-300px) and
@@ -1373,16 +1373,20 @@ label.st-voice__row { cursor: pointer; }
   .sas-table.lqq-table td { padding: 9px 12px; vertical-align: baseline; }
   .sas-table.lqq-table th.lqq-c-ref { width: 110px; }
   /* Lead: a plain width first (any browser; with table-layout: fixed, Where it is / Payment take the rest),
-     then, where container query units work, 45% of what the fixed columns leave, kept within 200-300px. */
+     then, where container query units work, 45% of what the fixed columns leave, kept within 160-300px. */
   .sas-table.lqq-table th.lqq-c-lead { width: 240px; }
   @supports (width: clamp(1px, 1cqi, 2px)) {
-    .sas-table.lqq-table th.lqq-c-lead { width: clamp(200px, calc((100cqi - var(--lqq-fixed)) * .45), 300px); }
+    .sas-table.lqq-table th.lqq-c-lead { width: clamp(160px, calc((100cqi - var(--lqq-fixed)) * .45), 300px); }
   }
   .sas-table.lqq-table td.lqq-c-lead { overflow: hidden; }
   .sas-table.lqq-table th.lqq-c-market { width: 110px; }
   .sas-table.lqq-table td.lqq-c-market { white-space: normal; overflow-wrap: anywhere; }
   .sas-table.lqq-table th.lqq-c-total { width: 130px; }
   .sas-table.lqq-table .lqq-c-total { text-align: end; }
+  /* Right-aligned heading: the sort arrow before the word ("⇅ TOTAL"), so the word ends on the amounts' edge.
+     Only the visual order changes: the link, its target and aria-sort stay as they are. */
+  .sas-table.lqq-table th.lqq-c-total a.sas-sort { flex-direction: row-reverse; align-items: baseline; }
+  .sas-table.lqq-table th.lqq-c-total .sas-sort__icon { align-self: center; }
   .sas-table.lqq-table .lqq-c-state { padding-inline-start: 36px; }
   .sas-table.lqq-table td.lqq-c-state { overflow: hidden; }
   .sas-table.lqq-table th.lqq-c-date { width: 96px; }
@@ -1406,6 +1410,32 @@ label.st-voice__row { cursor: pointer; }
   .sas-with-panel .lqq-table--quotes { --lqq-fixed: 240px; }
   .sas-with-panel .lqq-table--orders { --lqq-fixed: 336px; }
 }
+/* The table never runs wider than its card (side panel open, or a narrow desktop window). Where the card is
+   a size container: no fixed minimum width; below 926px the minor columns hide (as with the side panel:
+   Market, Created, Valid until, Est. delivery); below 696px the rows become stacked cards, as on a phone.
+   Browsers without container queries keep the minimum width above and scroll inside the card. */
+@media (min-width: 768px) {
+  @supports (container-type: inline-size) {
+    .lqq-table { min-width: 0; }
+  }
+  @container (min-width: 696px) and (max-width: 925px) {
+    .sas-table--panel-aware.lqq-table .sas-col-minor { display: none; }
+    .lqq-table--quotes, .lqq-table--quotes.lqq-table--market { --lqq-fixed: 240px; }
+    .lqq-table--orders, .lqq-table--orders.lqq-table--market { --lqq-fixed: 336px; }
+  }
+  @container (max-width: 695px) {
+    .sas-table.lqq-table { display: block; min-width: 0 !important; }
+    .lqq-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    .lqq-table tbody, .lqq-table tr { display: block; }
+    .lqq-table tr { padding: var(--space-3) var(--space-4); border-block-start: 1px solid var(--line); }
+    .sas-table.lqq-table td { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 4px 12px; padding: 4px 0 !important; border: 0; white-space: normal; text-align: start !important; min-height: 28px; overflow: visible !important; }
+    .lqq-table td[data-label]::before { content: attr(data-label); font-size: 13px; line-height: 18px; color: var(--ink-muted); font-family: var(--font-sans); font-weight: 400; }
+    .sas-table.lqq-table td:not([data-label]) { display: block; }
+    .lqq-table .lqq-lead { align-items: flex-end; text-align: end; max-width: 70%; }
+    .lqq-table .lqq-where { align-items: flex-end; max-width: 70%; }
+    .lqq-table .lqq-where__detail { white-space: normal; overflow: visible; text-align: end; }
+  }
+}
 /* Phone: chips scroll sideways, search and period take the next row; Where it is and Total sit at the card's end. */
 @media (max-width: 767px) {
   .lqq-tabs { padding-inline: var(--space-4); }
@@ -1415,7 +1445,8 @@ label.st-voice__row { cursor: pointer; }
   .sas-search.lqq-search:focus-within, .sas-search.lqq-search--open { width: auto; flex: 1 1 auto; }
   .lqq-period { margin-inline-start: auto; }
   .lqq-where { align-items: flex-end; max-width: 70%; }
-  .lqq-where__detail { max-width: 100%; }
+  /* The line under the status wraps (up to two lines in practice) instead of being cut. */
+  .lqq-where__detail { max-width: 100%; white-space: normal; overflow: visible; text-align: end; }
   .lqq-lead { align-items: flex-end; text-align: end; }
 }
 /* Overview market cards: a pill on the coloured map panel gets a white ground, same text and icon colours
