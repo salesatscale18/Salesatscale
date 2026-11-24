@@ -1819,3 +1819,68 @@ label.st-voice__row { cursor: pointer; }
   .sas-shell--admin .sas-panel__head, .sas-shell--admin a.sas-list__row, .sas-shell--admin .sas-table-foot { padding-inline: var(--space-4); }
   .sas-shell--admin .sas-table th, .sas-shell--admin .sas-table td { padding-inline: var(--space-4); }
 }
+
+/*
+ * Seller workspace (/app/<account>): warm orange palette with a livelier chrome.
+ * Only <SasRoot tone="seller"> (the account layout) uses it; buyer pages keep
+ * Trust Blue and /sadmin keeps its green. Contrast checked: orange text
+ * >= 4.8:1 on every light surface, >= 7.9:1 in dark; dark text on the light
+ * orange fill 7.3:1; muted text >= 6:1.
+ * Status colours (success, warning, danger, agent, human) are unchanged.
+ */
+.sas-app.sas-app--seller {
+  --surface: #fcfaf8; --surface-raised: #ffffff; --surface-sunken: #f6f1ec;
+  --line: #f0e8e1; --line-strong: #8a7f76;
+  --ink: #1c1410; --ink-muted: #5f5750;
+  /* --primary (deep orange) pairs with white --on-primary; the light --primary-fill
+     (buttons) pairs with dark --on-primary-fill. Orange text stays 4.8:1+. */
+  --primary: #bd400b; --on-primary: #ffffff; --primary-soft: #fff3ea;
+  --primary-fill: #fb8a3c; --on-primary-fill: #2a1406;
+  --primary-accent: #f97316;
+  --brand-blue: #fb923c; --brand-teal: #fcd34d;
+  --primary-glow: rgba(249, 115, 22, 0.25);
+  --shadow-card: 0 1px 2px rgba(60, 30, 10, 0.05), 0 1px 1px rgba(60, 30, 10, 0.03);
+}
+@media (prefers-color-scheme: dark) {
+  .sas-app.sas-app--seller:not([data-theme="light"]) {
+    --surface: #100c0a; --surface-raised: #1a1512; --surface-sunken: #15110e;
+    --line: #2e2520; --line-strong: #6b5e55;
+    --ink: #f3ebe5; --ink-muted: #ab9f96;
+    --primary: #ff9a5c; --primary-fill: #ffa66e; --on-primary: #140b05; --primary-soft: #2e1a0e; --primary-accent: #ff9a5c; --on-primary-fill: #140b05;
+    --brand-blue: #fb923c; --brand-teal: #fcd34d;
+    --primary-glow: rgba(255, 154, 92, 0.25);
+    --shadow-card: none;
+  }
+}
+.sas-app.sas-app--seller[data-theme="dark"] {
+  --surface: #100c0a; --surface-raised: #1a1512; --surface-sunken: #15110e;
+  --line: #2e2520; --line-strong: #6b5e55;
+  --ink: #f3ebe5; --ink-muted: #ab9f96;
+  --primary: #ff9a5c; --primary-fill: #ffa66e; --on-primary: #140b05; --primary-soft: #2e1a0e; --primary-accent: #ff9a5c; --on-primary-fill: #140b05;
+  --brand-blue: #fb923c; --brand-teal: #fcd34d;
+  --primary-glow: rgba(255, 154, 92, 0.25);
+  --shadow-card: none;
+}
+.sas-app--seller { background: var(--surface); }
+/* Active menu item: warm fill plus an accent bar on the leading edge. */
+.sas-shell--seller .sas-nav a.sas-nav__item[aria-current="page"] { box-shadow: inset 3px 0 0 var(--primary-accent); }
+[dir="rtl"] .sas-shell--seller .sas-nav a.sas-nav__item[aria-current="page"] { box-shadow: inset -3px 0 0 var(--primary-accent); }
+.sas-shell--seller .sas-btn--primary, .sas-app .sas-shell--seller a.sas-btn--primary,
+.sas-shell--seller .sas-outcome__opt input:checked + span, .sas-shell--seller .ls-btn--primary { color: var(--on-primary-fill); }
+.sas-shell--seller .sas-ov2-kpi { --kpi-accent: var(--primary-accent); }
+.sas-shell--seller .sas-ov2-kpi--money { --kpi-accent: var(--success); }
+.sas-shell--seller .sas-ov2-kpi--agent { --kpi-accent: var(--agent); }
+.sas-shell--seller .sas-nav a.sas-nav__item:hover .sas-ico { color: var(--primary); }
+.sas-shell--seller .sas-nav__mark { box-shadow: 0 2px 8px var(--primary-glow); }
+/* Buttons and cards respond to the pointer. */
+.sas-shell--seller .sas-btn { transition: background-color 120ms ease-out, box-shadow 160ms ease-out, transform 120ms ease-out; }
+.sas-shell--seller .sas-btn--primary { box-shadow: 0 1px 2px var(--primary-glow); }
+.sas-shell--seller .sas-btn--primary:hover { box-shadow: 0 4px 14px var(--primary-glow); transform: translateY(-1px); }
+.sas-shell--seller .sas-btn--primary:active { transform: none; box-shadow: 0 1px 2px var(--primary-glow); }
+.sas-shell--seller .sas-panel, .sas-shell--seller .sas-metric, .sas-shell--seller .sas-ov2-kpi { box-shadow: var(--shadow-card); }
+.sas-shell--seller a.sas-list__row { transition: background-color 120ms ease-out; }
+.sas-shell--seller a.sas-list__row:hover { background: var(--primary-soft); }
+@media (prefers-reduced-motion: reduce) {
+  .sas-shell--seller .sas-btn, .sas-shell--seller a.sas-list__row { transition: none; }
+  .sas-shell--seller .sas-btn--primary:hover { transform: none; }
+}

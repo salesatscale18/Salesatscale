@@ -27,10 +27,10 @@ export default async function AccountLayout({ children, params }: { children: Re
   const spendText = spendAlert ? spendTexts(spendAlert) : null;
 
   return (
-    <SasRoot>
+    <SasRoot tone="seller">
       {/* The viewer's own time zone, for scheduled moments on seller pages (lib/viewer-zone.ts). */}
       <ViewerZoneCookie />
-      <div className="sas-shell">
+      <div className="sas-shell sas-shell--seller">
         <SideNavForPath
           mode="seller"
           basePath={`/app/${account.slug}`}

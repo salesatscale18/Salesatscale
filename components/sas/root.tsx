@@ -9,9 +9,10 @@ const jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], weight: ["500"], vari
  * Root of every workspace, admin and buyer surface that uses the design
  * system. Scopes tokens and component styles (see sas.css) and loads the
  * Hebrew and mono faces. Inter comes from the root layout.
- * `tone="admin"`: the platform admin's green palette (sas.css, `.sas-app--admin`).
+ * `tone`: "admin" = the platform admin's green palette, "seller" = the seller
+ * workspace's orange palette (sas.css, `.sas-app--admin` / `.sas-app--seller`).
  */
-export function SasRoot({ children, theme, tone }: { children: ReactNode; theme?: "light" | "dark"; tone?: "admin" }) {
+export function SasRoot({ children, theme, tone }: { children: ReactNode; theme?: "light" | "dark"; tone?: "admin" | "seller" }) {
   return (
     <div className={`sas-app${tone ? ` sas-app--${tone}` : ""} ${notoHebrew.variable} ${jetbrainsMono.variable}`} data-theme={theme} dir="ltr">
       {children}
