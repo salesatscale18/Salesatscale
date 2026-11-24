@@ -10,7 +10,7 @@ import { failedFollowUps, failedFollowUpWhere } from "@/lib/follow-ups/schedule"
 import { finishedCallbacks } from "@/lib/callbacks/service";
 import { callEndsAt } from "@/lib/callbacks/rules";
 import { openTeamQuestions } from "@/lib/team-questions/service";
-import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
+import { handoffShortByLead } from "@/lib/leads/handoff-reason";
 import { HIDDEN_LEAD_EVENTS } from "@/lib/leads/event-icons";
 import { marketKey, marketWhere } from "@/lib/markets/selection";
 import { priceListVersions } from "@/lib/pricing/price-lists";
@@ -29,8 +29,11 @@ type LeadRef = { leadId: string; leadName: string; company: string | null; marke
 /** One thing a person on the seller's team should act on. `at` is when it started needing them. */
 export type NeedsYouItem = LeadRef & { id: string; at: Date } & (
   | { kind: "quote_approval"; quoteId: string; quoteNumber: number; version: number; reasons: ApprovalReason[] }
-  /** `why`: the hand-off reason in one line ("Upset: false night alarms", lib/leads/handoff-reason.ts), or null. */
-  | { kind: "human_handling"; why: string | null }
+  /**
+   * `why`: the hand-off's SHORT label ("Upset", "AI limit reached", lib/leads/handoff-reason.ts handoffShort), or null
+   * when it has none. `whyWhole`: the label and the agent's whole reason, for a tooltip, or null.
+   */
+  | { kind: "human_handling"; why: string | null; whyWhole?: string | null }
   | { kind: "bank_transfer"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   | { kind: "payment_failed"; quoteId: string; orderId: string; orderNumber: number; amountMinor: number; currency: string }
   /**
@@ -155,8 +158,9 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
   // A team call to log (lib/callbacks), and questions sent to the team (lib/team-questions, O4).
   const [finished, questions, whys, reminded] = await Promise.all([
     finishedCallbacks(db, accountId, now), openTeamQuestions(db, accountId, now, { realOnly: true }),
-    // Why each handed lead needs a person (O35): the latest hand-off's reason line.
-    handoffWhyByLead(db, accountId, handed.map((r) => r.leadId)),
+    // Why each handed lead needs a person (O35): the latest hand-off's SHORT label, and its whole reason for a tooltip
+    // (overview-short-reasons: the same short words as the Conversations list).
+    handoffShortByLead(db, accountId, handed.map((r) => r.leadId)),
     // How many reminders each flagged order's buyer got.
     unpaidRows.length
       ? db.select({ orderId: sql<string>`${leadEvents.data}->>'orderId'`, n: count() }).from(leadEvents)
@@ -175,7 +179,10 @@ export async function needsYou(db: Db, accountId: string, now: Date): Promise<Ne
       quoteId: r.quote.id, quoteNumber: r.quote.number, version: r.version.version, reasons: r.version.approvalReasons,
     });
   }
-  for (const r of handed) items.push({ ...ref(r), kind: "human_handling", id: `lead:${r.leadId}`, at: r.at, why: whys.get(r.leadId) ?? null });
+  for (const r of handed) {
+    const why = whys.get(r.leadId);
+    items.push({ ...ref(r), kind: "human_handling", id: `lead:${r.leadId}`, at: r.at, why: why?.short ?? null, whyWhole: why?.whole ?? null });
+  }
   for (const r of orderRows) {
     const o = r.order;
     const kind = o.paymentStatus === "failed" ? "payment_failed" : "bank_transfer";

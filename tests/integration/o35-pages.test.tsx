@@ -131,7 +131,9 @@ describe("O35 pages on the demo account", () => {
     expect(groups).toContain("calls");
     const leadsHtml = await render(LeadsPage, { account: slug }, { view: "needs_you" });
     save("leads-needs", leadsHtml);
-    expect(text(leadsHtml)).toContain("Asked for a person\u2068Upset: false night alarms, and wants a person now\u2069");
+    // overview-short-reasons: the short label on the row, the whole reason in its tooltip.
+    expect(text(leadsHtml)).toContain("Asked for a person\u2068Upset\u2069");
+    expect(leadsHtml).toContain('<span class="sas-lstep__detail" title="Upset: false night alarms, and wants a person now">\u2068Upset\u2069</span>');
     expect(text(leadsHtml)).toContain("\u2068AI limit reached\u2069");
     // Calls: "Log the call" (reach boards); "Calls to confirm" is gone.
     expect(text(leadsHtml)).toContain("Log the call");
@@ -201,7 +203,9 @@ describe("O35 pages on the demo account", () => {
         expect(rowOf(team, c.lead.fullName)).not.toContain(">Asked for a person<");
       } else {
         // Leads > Needs you (L-3): "Asked for a person", then the reason as the one muted line, isolated, cut with "…" by CSS.
-        expect(rowOf(needsList, c.lead.fullName)).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="\u2068${c.why}\u2069">\u2068${c.why}\u2069</span>`);
+        // overview-short-reasons: the SHORT label; the whole reason is the tooltip when it says more.
+        const title = c.why === c.short ? `\u2068${c.short}\u2069` : c.why;
+        expect(rowOf(needsList, c.lead.fullName)).toContain(`>Asked for a person</span><span class="sas-lstep__detail" title="${title}">\u2068${c.short}\u2069</span>`);
       }
       // Conversations row (ConvListV2, conv-list-fixes C): a Needs you row's second line is the SHORT label after what
       // waits, the whole reason in its tooltip; a chat a person holds (Human handling) shows its last message there
