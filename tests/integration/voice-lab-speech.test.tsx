@@ -183,7 +183,7 @@ describe("Voice from: saving", () => {
     const panel = await render({ panel: "voice" });
     save("settings-page-panel-eleven", panel);
     expect(panel).toMatch(/<option value="elevenlabs" selected="">ElevenLabs \(testing\)<\/option>/);
-    expect(panel).toContain("Rachel (ElevenLabs)");
+    expect(panel).toContain("Rachel · v4 Turbo");
     expect(panel).toContain("Buyers hear");
     // Back to Gemini (the form posts the model's own voice there): ElevenLabs is gone.
     const back = await saveVoiceSettingsAction({}, form({ model: GEMINI, speech: "model", maxCallSec: "300" })).catch((e: { url?: string }) => e);
@@ -223,6 +223,27 @@ describe("the one rule through the start action and the relay", () => {
     expect(keys.indexOf("Model")).toBeLessThan(keys.indexOf("Voice"));
     expect(keys.indexOf("Voice")).toBeLessThan(keys.indexOf("Engine"));
     expect(Object.fromEntries(rows)).toMatchObject({ Model: "GPT-Realtime mini · scripted stand-in", Voice: "Rachel (ElevenLabs)", Speaking: "scripted", Engine: "Live for buyers (22 Nov)" });
+    await endMyVoiceCallAction({ slug });
+  });
+
+  it("a chosen ElevenLabs model and voice (Sarah · Flash v2.5): the start's voice, what applied stored after the call, the card", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    as(admin);
+    await setDraft({ model: MINI, speech: "elevenlabs", elevenModel: "elevenlabs/eleven-flash-v2.5", elevenVoice: "EXAVITQu4vr4xnSDxMaL", maxCallSec: 300 });
+    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "current" });
+    if (!r.ok) throw new Error(r.reason);
+    expect(r.voiceUsed).toEqual({ voice: "Sarah (ElevenLabs)", fillers: false });
+    await relay(r);
+    const s = await sessionRow(r.sessionId);
+    // Stored by the socket once the engine stored the call (a scripted call: nothing sent to ElevenLabs).
+    expect((s.settings as Record<string, unknown>).elevenApplied).toEqual({
+      chosen: { model: "elevenlabs/eleven-flash-v2.5", voice: "EXAVITQu4vr4xnSDxMaL", stability: 1 },
+      model: null, voice: "EXAVITQu4vr4xnSDxMaL", stability: null, fallback: null, substituted: [], scripted: true,
+    });
+    const html = await render({ c: r.conversationId });
+    save("panel-call-card", html);
+    expect(Object.fromEntries(cardRows(html))).toMatchObject({ Voice: "Sarah (ElevenLabs)", Speaking: "scripted" });
     await endMyVoiceCallAction({ slug });
   });
 

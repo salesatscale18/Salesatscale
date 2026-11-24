@@ -615,7 +615,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         >
           <VoiceSettingsForm
             action={saveVoiceSettingsAction} slug={account.slug} models={voiceModelChoices()} platformModel={voiceModelId()} initial={resolveVoiceSettings(draft.voiceSettings, versionModelId(draft.voiceSettings))}
-            elevenForBuyers={ELEVEN_FOR_BUYER_CALLS}
+            elevenForBuyers={ELEVEN_FOR_BUYER_CALLS} languages={account.languages}
             version={draft.version} closeHref={conv ? `${lab}?c=${conv.id}` : lab} deploymentLimitSec={callLimit}
           />
         </SidePanel>

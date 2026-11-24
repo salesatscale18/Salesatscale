@@ -261,7 +261,7 @@ describe("cost", () => {
   it("the call card's info from the session JSON; medians", () => {
     expect(rtElevenCallInfo({ engine: "guarded" }, {})).toBeNull();
     expect(rtElevenCallInfo({ engine: "rt_eleven", rtEleven: { realtimeModel: "openai/gpt-realtime-2.1", speakModel: "elevenlabs/eleven-v4-turbo" } }, null))
-      .toEqual({ realtimeModel: "openai/gpt-realtime-2.1", speakModel: "elevenlabs/eleven-v4-turbo", medianAnswerMs: null, medianThinkMs: null });
+      .toEqual({ realtimeModel: "openai/gpt-realtime-2.1", speakModel: "elevenlabs/eleven-v4-turbo", medianAnswerMs: null, medianThinkMs: null, voice: "Rachel (ElevenLabs)", chosen: { model: "elevenlabs/eleven-v4-turbo", voice: "21m00Tcm4TlvDq8ikWAM", stability: 1 }, fallback: null, substituted: [] });
     expect(rtElevenCallInfo({ engine: "rt_eleven_mini", rtEleven: { speakModel: "a" } }, { rtEleven: { speakModel: "b", medianAnswerMs: 900 } }))
       .toMatchObject({ speakModel: "b", medianAnswerMs: 900 });
     expect(medianOf([])).toBeNull();

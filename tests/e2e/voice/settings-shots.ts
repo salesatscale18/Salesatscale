@@ -42,8 +42,8 @@ async function main() {
       const p = await formPage(b, h.url);
       await p.selectOption("#vs-model", MINI);
       await p.selectOption("#vs-speech", "elevenlabs");
-      check((await p.locator("[data-voice-test-voice]").innerText()) === "Rachel (ElevenLabs)", "mini + ElevenLabs: Test calls hear: Rachel (ElevenLabs)");
-      check((await p.locator("[data-voice-buyers-label]").innerText()) === "Buyers hear", "mini + ElevenLabs: the model's voice under Buyers hear");
+      check((await p.locator("[data-voice-test-voice]").innerText()) === "Rachel · v4 Turbo", "mini + ElevenLabs: Test calls hear: Rachel · v4 Turbo");
+      check((await p.locator("[data-voice-buyers-summary]").innerText()).startsWith("Buyers hear: "), "mini + ElevenLabs: the model's voice under Buyers hear (collapsed, with its value)");
       check(await p.locator("#vs-voice").isEnabled(), "the buyers' voice stays editable");
       check((await p.locator("[data-voice-speech-hint]").innerText()) === "Used in test calls only for now. Buyers hear the model's own voice.", "the helper under the select");
       await panel(p).screenshot({ path: path.join(dir, "settings-gpt-mini-elevenlabs.png") });

@@ -104,13 +104,15 @@ export const SPEAK_OUTPUT_RATE = 24_000;
 
 /**
  * Speech per character: $0.04 per 1,000 characters (eleven-v4-turbo, eleven-v3-conversational, eleven-flash-v2.5)
- * = 40 micros; $0.08 per 1,000 (eleven-multilingual-v2) = 80 micros. Charged on the model the call kept.
+ * = 40 micros; $0.08 per 1,000 (eleven-multilingual-v2, eleven-v4) = 80 micros. Charged on the model the call kept.
+ * Every model of the panel's catalog (lib/voice-rt-eleven/catalog.ts ELEVEN_MODELS) has its rate here.
  */
 export const SPEAK_MICROS_PER_CHAR: Readonly<Record<string, number>> = {
   "elevenlabs/eleven-v4-turbo": 40,
   "elevenlabs/eleven-v3-conversational": 40,
   "elevenlabs/eleven-flash-v2.5": 40,
   "elevenlabs/eleven-multilingual-v2": 80,
+  "elevenlabs/eleven-v4": 80,
 };
 /**
  * Transcription per second of audio sent: gemini-3.5-transcribe-live $0.00015/s, gpt-transcribe $0.000075/s,

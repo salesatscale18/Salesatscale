@@ -3,7 +3,8 @@ import { answerSpeedText, callClock } from "@/lib/voice/lab";
 import { costText, endReasonText, errorText, type CostFormat } from "@/lib/voice/client/view";
 import { voiceModelLabel, type CallVoiceInfo } from "@/lib/voice/settings";
 import { thinkModelLabel, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
-import type { RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
+import { rtSpeakText, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
+import { languageName } from "@/lib/voice-rt-eleven/catalog";
 
 /** "Puck" / "Model default" / "Not recorded" (an older call). */
 export function callVoiceText(voice: CallVoiceInfo["voice"]): string {
@@ -106,7 +107,16 @@ export function VoiceCallStats({
         {model && !pipeline && !rtEleven ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
         {voiceUsed ? <><dt>{t("voice.stats.voice")}</dt><dd data-voice-used="">{callVoiceText(voiceUsed.voice)}</dd></> : null}
         {toolsOff ? <><dt>{t("voice.stats.tools")}</dt><dd data-voice-tools-off="">{t("voice.stats.tools_off")}</dd></> : null}
-        {rtEleven ? <><dt>{t("voice.stats.pipeline_speak")}</dt><dd data-voice-rt-speak="">{rtEleven.speakModel || "—"}</dd></> : null}
+        {rtEleven ? (
+          <>
+            <dt>{t("voice.stats.pipeline_speak")}</dt>
+            <dd data-voice-rt-speak="" title={rtEleven.speakModel || undefined}>
+              {rtEleven.speakModel ? rtSpeakText(rtEleven) : "—"}
+              {rtEleven.fallback ? <span className="sas-small" style={{ display: "block", overflowWrap: "anywhere" }} data-voice-rt-fallback="">{t("voice.stats.rt_fallback", { reason: rtEleven.fallback })}</span> : null}
+              {rtEleven.substituted.length ? <span className="sas-small" style={{ display: "block" }} data-voice-rt-substituted="">{t("voice.stats.rt_substituted", { languages: rtEleven.substituted.map(languageName).join(", ") })}</span> : null}
+            </dd>
+          </>
+        ) : null}
         {engine ? <><dt>{t("voice.stats.engine")}</dt><dd data-voice-engine="">{engine}</dd></> : null}
         {voiceUsed ? <><dt>{t("voice.stats.fillers")}</dt><dd data-voice-fillers="">{callFillersText(voiceUsed.fillers)}</dd></> : null}
         {rtEleven ? (

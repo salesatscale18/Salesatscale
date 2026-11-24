@@ -103,7 +103,7 @@ describe("the Voice settings form (design review, 24 Nov 2026)", () => {
       initial={{ ...DEFAULT_VOICE_SETTINGS, model: model as never, speech }} version={3} closeHref="#" deploymentLimitSec={null} elevenForBuyers={o.elevenForBuyers} />,
   );
 
-  it("GPT mini + ElevenLabs: \"Voice from\" under the model, the helper, \"Test calls hear: Rachel (ElevenLabs)\", the model's voice editable under \"Buyers hear\"", () => {
+  it("GPT mini + ElevenLabs: \"Voice from\" under the model, the helper, \"Test calls hear: Rachel · v4 Turbo\", the model's voice editable under \"Buyers hear\"", () => {
     const h = render(MINI, "elevenlabs");
     const at = (s: string) => h.indexOf(s);
     expect(at('name="model"')).toBeLessThan(at('name="speech"'));
@@ -111,16 +111,18 @@ describe("the Voice settings form (design review, 24 Nov 2026)", () => {
     expect(h).toContain('<label class="sas-input-label" for="vs-speech">Voice from</label>');
     expect(h).toMatch(/<option value="model">The model&#x27;s own voice<\/option><option value="elevenlabs" selected="">ElevenLabs \(testing\)<\/option>/);
     expect(h).toContain("Used in test calls only for now. Buyers hear the model&#x27;s own voice.");
-    expect(h).toMatch(/Test calls hear<\/span>.*data-voice-test-voice="">Rachel \(ElevenLabs\)<\/output>/);
-    expect(h).toContain('data-voice-buyers-label="">Buyers hear</span>');
-    // Kept visible and editable (no disabled field anywhere).
+    expect(h).toMatch(/Test calls hear<\/span>.*data-voice-test-voice="">Rachel · v4 Turbo<\/output>/);
+    // "Buyers hear" (redesign, 24 Nov): collapsed, its value on the row, a Change control; the picker still posts.
+    expect(h).toContain('data-voice-buyers-summary="">Buyers hear: Alloy · fillers on</span>');
+    expect(h).toMatch(/aria-expanded="false" aria-controls="vs-buyers-body" data-voice-buyers-toggle="">Change<\/button>/);
+    expect(h).toMatch(/<div class="sas-stack-2" id="vs-buyers-body" hidden="">/);
     expect(h).toMatch(/<select class="sas-select" id="vs-voice" name="voice"/);
     expect(h).not.toContain("disabled");
-    // The fillers (the model's own voice only) are in the "Buyers hear" group; pace and style stay where they are.
+    // The fillers (the model's own voice only) are in the "Buyers hear" group; pace and style in Conversation.
     expect(at("data-voice-buyers-hear")).toBeLessThan(at('name="fillers"'));
     expect(at('name="fillers"')).toBeLessThan(at('name="pace"'));
     expect(h).toContain('name="style"');
-    expect(voiceSettingsSummary(resolveVoiceSettings({ model: MINI, speech: "elevenlabs" } as never), MINI)).toMatch(/^GPT-Realtime mini · Rachel \(ElevenLabs\) · /);
+    expect(voiceSettingsSummary(resolveVoiceSettings({ model: MINI, speech: "elevenlabs" } as never), MINI)).toMatch(/^GPT-Realtime mini · Rachel · ElevenLabs v4 Turbo · /);
   });
 
   it("GPT + the model's own voice: the select, no helper, no test/buyer rows; the voice picker as before", () => {

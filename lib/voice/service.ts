@@ -18,11 +18,11 @@ import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-marker
 import { isGuardedEngine, isPipelineEngine, isRtElevenEngine, RT_ELEVEN_MODELS, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
-import { rtElevenCallInfo, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
+import { rtElevenCallInfo, rtElevenVoiceUsed, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
 import { speechFor } from "@/lib/voice-rt-eleven/rule";
 import { callModelFor, callToolsOff, sessionCostMicros } from "./eleven-realtime";
 import { consoleVoiceLog, voiceLine } from "./log";
-import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, resolveVoiceSettings, storedSpeech, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
+import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, resolveVoiceSettings, storedEleven, storedSpeech, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
 
@@ -255,7 +255,7 @@ export async function saveDraftVoiceSettings(
 ): Promise<{ ok: true; settings: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors }> {
   const draft = await ensureDraftVersion(db, accountId);
   // Checked against the model the draft uses now; a model change in the input re-checks the rest for the new one.
-  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env), { canPickSpeech: opts.canPickSpeech === true, storedSpeech: storedSpeech(draft.voiceSettings) });
+  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env), { canPickSpeech: opts.canPickSpeech === true, storedSpeech: storedSpeech(draft.voiceSettings), storedEleven: storedEleven(draft.voiceSettings) });
   if (!v.ok) return v;
   await db.update(agentVersions).set({ voiceSettings: v.value })
     .where(and(eq(agentVersions.id, draft.id), eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));
@@ -388,7 +388,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     wakes: s.usage?.wakes ?? 0,
     endDetail: s.usage?.endDetail ?? null,
     engine: sessionEngine(s.settings),
-    voiceUsed: callVoiceInfo(s.settings),
+    voiceUsed: rtElevenVoiceUsed(s.settings, s.usage) ?? callVoiceInfo(s.settings),
     toolsOff: callToolsOff(s.settings),
     pipeline: pipelineCallInfo(s.settings, s.usage),
     rtEleven: rtElevenCallInfo(s.settings, s.usage),

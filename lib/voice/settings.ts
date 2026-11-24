@@ -5,13 +5,36 @@
  */
 import type { VoiceSettings as StoredVoiceSettings } from "@/db/schema";
 import { CALL_RULES } from "./call-rules";
+import {
+  DEFAULT_ELEVEN_MODEL, DEFAULT_ELEVEN_STABILITY, DEFAULT_ELEVEN_VOICE, isElevenModel, isElevenStability, isElevenVoice,
+  type ElevenModelId, type ElevenStability, type ElevenVoiceId,
+} from "@/lib/voice-rt-eleven/catalog";
 
 /**
  * A version's voice settings (agent_versions.voice_settings JSON) with `speech` ("Voice from", see VOICE_SPEECH).
  * `speech` lives in the JSON only (no column, no migration); it is not in db/schema.ts's VoiceSettings because the
  * frozen Classic engine's settings type is derived from that one (every key there is required in its resolution).
  */
-export type VoiceSettings = StoredVoiceSettings & { speech?: "model" | "elevenlabs" };
+export type VoiceSettings = StoredVoiceSettings & {
+  speech?: "model" | "elevenlabs";
+  /**
+   * With "Voice from: ElevenLabs" (platform admins only, as `speech`; JSON only, no migration): the speaking model, the
+   * voice id and the steadiness (stability, sent to dialogue-mode models only). Catalog: lib/voice-rt-eleven/catalog.ts.
+   */
+  elevenModel?: string;
+  elevenVoice?: string;
+  elevenStability?: number;
+};
+
+/** The valid ElevenLabs fields of a version's settings JSON (anything not in the catalog is left out). */
+export function storedEleven(s: StoredVoiceSettings | null | undefined): Pick<VoiceSettings, "elevenModel" | "elevenVoice" | "elevenStability"> {
+  const v = (s ?? {}) as VoiceSettings;
+  return {
+    ...(isElevenModel(v.elevenModel) ? { elevenModel: v.elevenModel } : {}),
+    ...(isElevenVoice(v.elevenVoice) ? { elevenVoice: v.elevenVoice } : {}),
+    ...(isElevenStability(v.elevenStability) ? { elevenStability: v.elevenStability } : {}),
+  };
+}
 
 /** The stored "Voice from" of a version's settings JSON (unvalidated: resolveVoiceSettings checks it). */
 export function storedSpeech(s: StoredVoiceSettings | null | undefined): VoiceSettings["speech"] {
@@ -216,14 +239,19 @@ export function callVoiceInfo(settings: unknown): CallVoiceInfo {
  * `model` null: the platform default (VOICE_MODEL, else Gemini). `pauseMs` / `interrupt` null: the style's values.
  * `speech`: "elevenlabs" only with a GPT-Realtime model (else "model").
  */
-export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt" | "speech">> & {
+export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt" | "speech" | "elevenModel" | "elevenVoice" | "elevenStability">> & {
   voice: string | null; model: VoiceModelId | null; pauseMs: number | null; interrupt: NonNullable<VoiceSettings["interrupt"]> | null;
   /** Always set by resolveVoiceSettings; optional in the type so the frozen Classic settings (lib/voice-classic) still build. */
   speech?: VoiceSpeech;
+  /** ElevenLabs' speaking model, voice and steadiness (defaults: v4 Turbo, Rachel, 1). Optional for the same reason. */
+  elevenModel?: ElevenModelId;
+  elevenVoice?: ElevenVoiceId;
+  elevenStability?: ElevenStability;
 };
 
 export const DEFAULT_VOICE_SETTINGS: ResolvedVoiceSettings = {
   voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: DEFAULT_MAX_CALL_SEC, model: null, pauseMs: null, interrupt: null, speech: "model",
+  elevenModel: DEFAULT_ELEVEN_MODEL, elevenVoice: DEFAULT_ELEVEN_VOICE, elevenStability: DEFAULT_ELEVEN_STABILITY,
 };
 
 /** The silence before answering a seller may set, in ms (models with tunable turn detection). */
@@ -257,6 +285,9 @@ export function resolveVoiceSettings(s: VoiceSettings | null | undefined, modelI
     pauseMs: pause,
     interrupt: s?.interrupt && (INTERRUPT_LEVELS as readonly string[]).includes(s.interrupt) ? s.interrupt : null,
     speech: s?.speech === "elevenlabs" && isOpenAiVoiceModel(isVoiceModel(s?.model) ? s.model : modelId) ? "elevenlabs" : "model",
+    elevenModel: isElevenModel(s?.elevenModel) ? s.elevenModel : DEFAULT_ELEVEN_MODEL,
+    elevenVoice: isElevenVoice(s?.elevenVoice) ? s.elevenVoice : DEFAULT_ELEVEN_VOICE,
+    elevenStability: isElevenStability(s?.elevenStability) ? s.elevenStability : DEFAULT_ELEVEN_STABILITY,
   };
 }
 
@@ -270,10 +301,15 @@ export type VoiceSettingsErrors = Partial<Record<keyof VoiceSettings, string>>;
  * `speech` ("Voice from"): the same access rule as the model picker (platform admins). With `canPickSpeech` the
  * posted value is checked ("elevenlabs" with a model that is not GPT-Realtime is an error); without it the posted
  * value is ignored and `storedSpeech` (the version's) is kept, while the model still allows it.
+ * `elevenModel` / `elevenVoice` / `elevenStability` (ElevenLabs' speaking model, voice, steadiness): the same access
+ * rule. With `canPickSpeech` a posted value is checked (an id not in the catalog is an error) and a default value is
+ * not stored (no key = the default); a field not posted keeps the version's (`storedEleven`). Without it the posted
+ * values are ignored and the version's are kept.
  * Returns the clean settings or the errors per key.
  */
 export function validateVoiceSettings(
-  input: unknown, modelId: string = DEFAULT_VOICE_MODEL, opts: { canPickSpeech?: boolean; storedSpeech?: VoiceSettings["speech"] } = {},
+  input: unknown, modelId: string = DEFAULT_VOICE_MODEL,
+  opts: { canPickSpeech?: boolean; storedSpeech?: VoiceSettings["speech"]; storedEleven?: Pick<VoiceSettings, "elevenModel" | "elevenVoice" | "elevenStability"> } = {},
 ): { ok: true; value: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors } {
   const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const errors: VoiceSettingsErrors = {};
@@ -330,6 +366,22 @@ export function validateVoiceSettings(
     // Not the caller's to change: the version's own value stays (a model it does not work with drops it).
     value.speech = "elevenlabs";
   }
+  const kept = storedEleven(opts.storedEleven as StoredVoiceSettings | undefined);
+  const posted = (x: unknown) => x !== undefined && x !== null && x !== "";
+  if (opts.canPickSpeech && posted(o.elevenModel)) {
+    if (!isElevenModel(o.elevenModel)) errors.elevenModel = "Pick one of the ElevenLabs models offered.";
+    else if (o.elevenModel !== DEFAULT_ELEVEN_MODEL) value.elevenModel = o.elevenModel;
+  } else if (kept.elevenModel) value.elevenModel = kept.elevenModel;
+  if (opts.canPickSpeech && posted(o.elevenVoice)) {
+    if (!isElevenVoice(o.elevenVoice)) errors.elevenVoice = "Pick one of the ElevenLabs voices offered.";
+    else if (o.elevenVoice !== DEFAULT_ELEVEN_VOICE) value.elevenVoice = o.elevenVoice;
+  } else if (kept.elevenVoice) value.elevenVoice = kept.elevenVoice;
+  if (opts.canPickSpeech && posted(o.elevenStability)) {
+    const raw = o.elevenStability;
+    const n = typeof raw === "number" ? raw : typeof raw === "string" && ["0", "0.5", "1"].includes(raw.trim()) ? Number(raw) : NaN;
+    if (!isElevenStability(n)) errors.elevenStability = "Steadiness is Expressive, Natural or Steady.";
+    else if (n !== DEFAULT_ELEVEN_STABILITY) value.elevenStability = n;
+  } else if (kept.elevenStability !== undefined) value.elevenStability = kept.elevenStability;
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, value };
 }
 

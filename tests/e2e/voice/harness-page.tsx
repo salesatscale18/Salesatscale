@@ -28,7 +28,7 @@ import type { VoiceModelChoice } from "@/lib/voice/model-choices";
 type Config = {
   versionLabel: string; version: number; models: VoiceModelChoice[]; platformModel: string; settings: ResolvedVoiceSettings; summary: string;
   scenarios: Record<string, { title: string; expected: string }>;
-  fx: CostFormat; maxSec: number; cap: number;
+  fx: CostFormat; maxSec: number; cap: number; languages: string[];
 };
 
 const params = new URLSearchParams(location.search);
@@ -162,7 +162,7 @@ function SettingsView({ cfg }: { cfg: Config }) {
             <a className="sas-sp__close" aria-label={t("kit.close")} href="?view=call"><Icon name="x" /></a>
           </header>
           <div className="sas-sp__body">
-            <VoiceSettingsForm action={action} slug="harness" models={cfg.models} platformModel={cfg.platformModel} initial={cfg.settings} version={cfg.version} closeHref="?view=call" deploymentLimitSec={cfg.cap} />
+            <VoiceSettingsForm action={action} slug="harness" models={cfg.models} platformModel={cfg.platformModel} initial={cfg.settings} version={cfg.version} closeHref="?view=call" deploymentLimitSec={cfg.cap} languages={cfg.languages} />
           </div>
         </section>
       </div>

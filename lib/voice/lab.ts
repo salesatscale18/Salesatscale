@@ -6,6 +6,7 @@
  */
 import { DEFAULT_VOICE_SETTINGS, isOpenAiVoiceModel, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, voiceModelLabel, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
 import { PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
+import { DEFAULT_ELEVEN_MODEL, DEFAULT_ELEVEN_VOICE, elevenChoiceText } from "@/lib/voice-rt-eleven/catalog";
 
 export type VoiceLabAccess = "ok" | "not_admin" | "voice_off";
 
@@ -148,8 +149,8 @@ export function elevenChosen(s: Pick<ResolvedVoiceSettings, "speech">, modelId: 
 
 /**
  * The read-only line under "Call the agent": "Gemini 3.8 Live · Puck · upbeat, lively · Normal pace" (only what the
- * model supports). "Voice from: ElevenLabs" (the test lab's calls are test calls): "GPT-Realtime mini · Rachel
- * (ElevenLabs) · …", the voice test calls hear.
+ * model supports). "Voice from: ElevenLabs" (the test lab's calls are test calls): "GPT-Realtime mini · Sarah ·
+ * ElevenLabs Flash v2.5 · …", the voice and speaking model test calls hear.
  */
 export function voiceSettingsSummary(s: ResolvedVoiceSettings, modelId: string): string {
   const caps = voiceCapabilities(modelId);
@@ -157,7 +158,7 @@ export function voiceSettingsSummary(s: ResolvedVoiceSettings, modelId: string):
   const model = voiceModelLabel(modelId);
   if (model && model !== modelId) parts.push(model);
   const voice = s.voice ?? defaultVoiceOf(caps);
-  if (elevenChosen(s, modelId)) parts.push(ELEVEN_VOICE_LABEL);
+  if (elevenChosen(s, modelId)) parts.push(elevenChoiceText({ model: s.elevenModel ?? DEFAULT_ELEVEN_MODEL, voice: s.elevenVoice ?? DEFAULT_ELEVEN_VOICE }));
   else if (caps.voices.length && voice) parts.push(voiceLabel(voice));
   if (caps.pace) parts.push(PACE_WORD[s.pace]);
   if (caps.style) parts.push(STYLE_WORD[s.style]);

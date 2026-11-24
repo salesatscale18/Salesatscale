@@ -33,6 +33,9 @@ import { PipelineVoiceEngine, pipelinePartsFor, type PipelineOverrides, type Pip
 import type { Speaker } from "@/lib/voice-pipeline/speaker";
 import { rtElevenProfile, rtElevenSpeakerFor } from "@/lib/voice-rt-eleven";
 import { speechFor, speechIgnoredLine } from "@/lib/voice-rt-eleven/rule";
+import { elevenAppliedOf } from "@/lib/voice-rt-eleven/speaker";
+import { storeElevenApplied } from "@/lib/voice-rt-eleven/applied-store";
+import { DEFAULT_ELEVEN_CHOICE, type ElevenChoice } from "@/lib/voice-rt-eleven/catalog";
 
 /**
  * What the relay needs from an engine: today's VoiceEngine, the Classic (20 Nov) one a test-lab call picked, or the
@@ -144,6 +147,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   let clientClose: { code: number | null; reason: string; idle?: boolean } | null = null;
   let phase: "auth" | "checking" | "live" | "closed" = "auth";
   let engine: RelayEngine | null = null;
+  /** A call where ElevenLabs speaks: stores what its speech used, once the engine has stored the call. */
+  let storeSpeech: (() => Promise<void>) | null = null;
   let early: ClientMessage[] = [];
   let lastSeen = clock.now();
   let audioBudget = { at: clock.now(), tokens: MAX_CLIENT_AUDIO_BYTES * MAX_AUDIO_RATE };
@@ -198,6 +203,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     }
     // The engine ends the call now ("connection_lost" unless it already ended for another reason).
     const work = e.onClientGone(clientClose ?? undefined).catch((err) => log.warn(voiceLine(sessionId, `engine stop failed: ${errorSummary(err)}`)))
+      // ElevenLabs spoke: what it used (model, voice, a fallback), merged into the stored settings (the call card).
+      .then(() => storeSpeech?.())
+      .catch((err) => log.warn(voiceLine(sessionId, `rt speech record failed: ${errorSummary(err)}`)))
       // The call is stored: an unanswered last buyer turn may be answered in the chat now.
       .then(() => opts.afterCall?.(e.sessionId))
       .catch((err) => log.warn(voiceLine(sessionId, `after-call hook failed: ${errorSummary(err)}`)))
@@ -345,7 +353,13 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // Who speaks (lib/voice-rt-eleven/rule.ts, the one rule): the version's "Voice from" decides, the engine select only
     // the wiring. ElevenLabs runs when the session was created with it (createVoiceSession) and the rule still holds
     // here (a test call, a GPT-Realtime model, not Classic); the retired rt_eleven ids (older sessions) keep their path.
-    const wanted = resolveVoiceSettings(version?.voiceSettings, session.model).speech;
+    const resolved = resolveVoiceSettings(version?.voiceSettings, session.model);
+    const wanted = resolved.speech;
+    // ElevenLabs' speaking model, voice and steadiness (Voice settings › Voice; the defaults on a retired rt_eleven call).
+    const choice: ElevenChoice = {
+      model: resolved.elevenModel ?? DEFAULT_ELEVEN_CHOICE.model, voice: resolved.elevenVoice ?? DEFAULT_ELEVEN_CHOICE.voice,
+      stability: resolved.elevenStability ?? DEFAULT_ELEVEN_CHOICE.stability,
+    };
     const speech = speechFor({ wanted, modelId: session.model, engine: stored, isTest: session.isTest });
     if (speech.ignored) log.info(voiceLine(session.id, speechIgnoredLine(speech.ignored)));
     const storedSpeech = (session.settings as { speech?: unknown } | null)?.speech;
@@ -354,7 +368,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     let speaker: Speaker | null = null;
     if (eleven) {
       try {
-        speaker = await rtElevenSpeakerFor(model.mode, env, opts.rtSpeaker);
+        speaker = await rtElevenSpeakerFor(model.mode, env, opts.rtSpeaker, choice);
+        const sp = speaker;
+        storeSpeech = () => storeElevenApplied(opts.db, session.id, elevenAppliedOf(sp, choice));
       } catch (e) {
         log.warn(voiceLine(session.id, `rt speaker unavailable (engine=${stored} speech=elevenlabs): ${errorSummary(e)}`));
         await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));

@@ -277,8 +277,8 @@ export function speakProviderOptions(voice: string, stability: number = PIPELINE
  * What a speak attempt adds to the speech stream's start: the dialogue options (with the stability) in dialogue mode;
  * nothing for a text-to-speech attempt (the provider refuses the dialogue option there, and nothing new is sent).
  */
-export function speakRequestOptions(voice: string, dialogue: boolean): { providerOptions?: ReturnType<typeof speakProviderOptions> } {
-  return dialogue ? { providerOptions: speakProviderOptions(voice) } : {};
+export function speakRequestOptions(voice: string, dialogue: boolean, stability: number = PIPELINE_VOICE_STABILITY): { providerOptions?: ReturnType<typeof speakProviderOptions> } {
+  return dialogue ? { providerOptions: speakProviderOptions(voice, stability) } : {};
 }
 
 /**
@@ -293,12 +293,15 @@ export class GatewaySpeaker implements Speaker {
 
   /** Streams through ElevenLabs Text-to-Dialogue (one voice) instead of text-to-speech: see speakProviderOptions. */
   readonly dialogue: boolean;
+  /** The stability sent in dialogue mode (the version's "Steadiness" on the realtime path; else PIPELINE_VOICE_STABILITY). */
+  readonly stability: number;
 
-  constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env, voice: string = PIPELINE_VOICE, opts: { dialogue?: boolean } = {}) {
+  constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env, voice: string = PIPELINE_VOICE, opts: { dialogue?: boolean; stability?: number } = {}) {
     assertLiveAllowed(env);
     this.apiKey = env.AI_GATEWAY_API_KEY!.trim();
     this.voice = voice;
     this.dialogue = opts.dialogue === true;
+    this.stability = opts.stability ?? PIPELINE_VOICE_STABILITY;
   }
 
   async *speak(text: string, opts: { language: string }): AsyncIterable<Uint8Array> {
@@ -315,7 +318,7 @@ export class GatewaySpeaker implements Speaker {
         voice: this.voice,
         outputFormat: { type: "audio/pcm", rate: SPEAK_OUTPUT_RATE },
         language: opts.language,
-        ...speakRequestOptions(this.voice, this.dialogue),
+        ...speakRequestOptions(this.voice, this.dialogue, this.stability),
         abortSignal: abort.signal,
         onError: ({ error }) => void (speechError = error),
       });
