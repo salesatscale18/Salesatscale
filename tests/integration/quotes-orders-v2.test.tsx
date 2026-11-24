@@ -11,6 +11,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import { randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import type { ReactElement } from "react";
 import { eq, inArray } from "drizzle-orm";
 import { catalogVersions, leadEvents, leads, markets, orderForms, orders, quotes, quoteVersions, users, type ApprovalReason, type QuoteStatus, type SellerAccount, type User } from "@/db/schema";
@@ -228,6 +229,39 @@ describe("Quotes and orders V2", () => {
     expect(rowOf(html, "data-quote-row", ids.sent)).toMatch(/class="[^"]*lqq-soon" data-label="Valid until" data-valid-soon="" title="1 day left">/);
     expect(rowOf(html, "data-quote-row", ids.expired)).toMatch(/class="[^"]*lqq-past" data-label="Valid until">/);
     expect(rowOf(html, "data-quote-row", ids.unopened)).not.toMatch(/data-label="Valid until"[^>]*title=/);
+  });
+
+  it("Orders: Payment is quiet too (no pill); Paid success, failed danger, bank transfer warning, the rest plain", async () => {
+    const tone = (html: string, id: string) => rowOf(html, "data-order-row", id).match(/<span class="lqq-state lqq-state--(\w+)" data-status="payment\.(\w+)" data-tone="\w+">/)?.slice(1);
+    const html = await page(OrdersPage(props(account.slug, { tab: "orders" })));
+    expect(html.slice(html.indexOf("<table"), html.indexOf("</table>"))).not.toContain("sas-pill");
+    expect(tone(html, ids.ordered_order)).toEqual(["warning", "bank_transfer_expected"]);
+    expect(tone(html, ids.paid_order)).toEqual(["success", "paid"]);
+    expect(rowOf(html, "data-order-row", ids.paid_order)).toContain(">Paid</span>");
+    const expected = { failed: "danger", pending: "plain", not_started: "plain", refunded: "plain" } as const;
+    try {
+      for (const [state, want] of Object.entries(expected)) {
+        await db.update(orders).set({ paymentStatus: state as keyof typeof expected }).where(eq(orders.id, ids.ordered_order));
+        const h = await page(OrdersPage(props(account.slug, { tab: "orders" })));
+        expect(tone(h, ids.ordered_order)).toEqual([want, state]);
+      }
+    } finally {
+      await db.update(orders).set({ paymentStatus: "bank_transfer_expected" }).where(eq(orders.id, ids.ordered_order));
+    }
+    // The side panel keeps its payment pill.
+    expect(readFileSync("app/app/[account]/orders/page.tsx", "utf8")).toContain("{signed ? <StatusPill object=\"payment\" state={signed.order.paymentStatus} /> : null}");
+  });
+
+  it("CSS: the Lead width has a plain fallback before the container-query clamp in @supports", () => {
+    const css = readFileSync("components/sas/sas.css", "utf8");
+    const fallback = css.indexOf(".sas-table.lqq-table th.lqq-c-lead { width: 240px; }");
+    const supports = css.indexOf("@supports (width: clamp(1px, 1cqi, 2px)) {");
+    const clamp = css.indexOf(".sas-table.lqq-table th.lqq-c-lead { width: clamp(200px, calc((100cqi");
+    expect(fallback).toBeGreaterThan(-1);
+    expect(supports).toBeGreaterThan(fallback);
+    expect(clamp).toBeGreaterThan(supports);
+    // The clamp is declared only inside that block.
+    expect(css.match(/th\.lqq-c-lead \{ width: clamp/g)).toHaveLength(1);
   });
 
   it("the n days left text counts whole days, rounded up", async () => {

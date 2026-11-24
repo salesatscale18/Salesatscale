@@ -1,6 +1,6 @@
 import { Button, StatusPill, buttonClass, Chip } from "@/components/sas/primitives";
 import { TextWithId, quoteRef } from "@/components/sas/id-text";
-import { Icon } from "@/components/sas/icon";
+import { Icon, type IconName } from "@/components/sas/icon";
 import { AutoSubmit } from "@/components/sas/auto-submit";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { personName } from "@/lib/auth/display";
@@ -26,6 +26,7 @@ import { isolate } from "@/lib/leads/bidi";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { MARKET_PARAM, marketSelection, marketWhere, switcherReturnTo } from "@/lib/markets/selection";
 import type { DocMarketFilter } from "@/lib/quotes/service";
+type PaymentStatus = (typeof orders.$inferSelect)["paymentStatus"];
 import { exceptionNotice } from "@/lib/quotes/exception-notice";
 import { customPricesOf } from "@/lib/quotes/pricing";
 
@@ -86,12 +87,29 @@ function LeadCell({ lead }: { lead: Pick<Lead, "fullName" | "company" | "languag
 function WhereState({ where }: { where: QuoteWhere }) {
   const def = statusDef("quote_where", where);
   const tone = def.tone === "success" || def.tone === "warning" ? def.tone : "plain";
+  return <QuietState status={`quote_where.${where}`} icon={def.icon} tone={tone} label={t(`status.quote_where.${where}`)} />;
+}
+
+/** Plain text with its small icon, no pill; colour only for `tone` (plain: muted icon, ink text). */
+function QuietState({ status, icon, tone, label }: { status: string; icon: IconName; tone: "plain" | "success" | "warning" | "danger"; label: string }) {
   return (
-    <span className={`lqq-state lqq-state--${tone}`} data-status={`quote_where.${where}`} data-tone={tone}>
-      <Icon name={def.icon} />
-      {t(`status.quote_where.${where}`)}
+    <span className={`lqq-state lqq-state--${tone}`} data-status={status} data-tone={tone}>
+      <Icon name={icon} />
+      {label}
     </span>
   );
+}
+
+/**
+ * Payment in the Orders table, quiet like Where it is: Paid in success (a win);
+ * the states that need the seller keep today's colour (payment failed: danger;
+ * bank transfer to confirm: warning); the rest plain. Side panel and lead page keep their pills.
+ */
+const NEEDS_SELLER: readonly PaymentStatus[] = ["failed", "bank_transfer_expected"];
+function PaymentState({ state }: { state: PaymentStatus }) {
+  const def = statusDef("payment", state);
+  const tone = state === "paid" ? "success" : NEEDS_SELLER.includes(state) && (def.tone === "warning" || def.tone === "danger") ? def.tone : "plain";
+  return <QuietState status={`payment.${state}`} icon={def.icon} tone={tone} label={t(`status.payment.${state}`)} />;
 }
 
 /** Quotes and orders V2 (Q-1, Q-2; canvas: QuotesOrdersV2). */
@@ -427,7 +445,7 @@ export default async function OrdersPage({ params, searchParams }: { params: Pro
                           <td className="lqq-c-lead" data-label={t("orders.col.lead")}><LeadCell lead={lead} /></td>
                           {orderMarketCol ? marketCell(rowMarket) : null}
                           <td className="sas-num lqq-c-total" data-label={t("orders.col.total")}>{totalCell(order.currency, order.amountDueMinor, order.recurringMinor, null)}</td>
-                          <td className="lqq-c-state" data-label={t("orders.col.payment")}><StatusPill object="payment" state={order.paymentStatus} /></td>
+                          <td className="lqq-c-state" data-label={t("orders.col.payment")}><PaymentState state={order.paymentStatus} /></td>
                           <td className="sas-small sas-num lqq-c-date" data-label={t("orders.col.signed")} title={atFull(order.createdAt)}>{day(order.createdAt)}</td>
                           <td className="sas-small sas-num sas-col-minor lqq-c-delivery" data-label={t("orders.col.delivery")} data-order-delivery={order.id}>{deliveries.get(order.orderFormId) ?? <span className="lqq-none">—</span>}</td>
                         </tr>
