@@ -32,6 +32,20 @@ export function routeDeadlineSec(deadline: Date | undefined, now = new Date()): 
   return Math.max(1, Math.min(cap, left));
 }
 
+/** At the time limit, an agent mid-response may finish it for at most this long before the call ends. */
+export const LIMIT_FINISH_MAX_SEC = 8;
+
+/**
+ * How long an agent mid-response may go on past the call's time limit (`maxSec`): LIMIT_FINISH_MAX_SEC, but never
+ * so long that less than ROUTE_MIN_STORE_SEC is left before the function's end (the deadline plus ROUTE_END_MARGIN_SEC)
+ * to store the call. `deadlineSec` null (the local dev server): no function deadline.
+ */
+export function limitFinishSec(maxSec: number, deadlineSec: number | null | undefined): number {
+  if (deadlineSec === null || deadlineSec === undefined) return LIMIT_FINISH_MAX_SEC;
+  const room = deadlineSec + ROUTE_END_MARGIN_SEC - ROUTE_MIN_STORE_SEC - maxSec;
+  return Math.max(0, Math.min(LIMIT_FINISH_MAX_SEC, room));
+}
+
 /** The longest test call this deployment allows: the route's limit, or none with the local dev server (VOICE_WS_URL). */
 export function deploymentCallLimitSec(env: Record<string, string | undefined> = process.env): number | null {
   return env.VOICE_WS_URL?.trim() ? null : DEPLOYMENT_CALL_CAP_SEC;

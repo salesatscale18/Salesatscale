@@ -486,9 +486,13 @@ async function turnAppMessages(db: Db, accountId: string, conversationId: string
 export async function replyToBuyer(
   db: Db, llm: LlmClient, transport: TwilioTransport | null,
   m: { accountId: string; conversationId: string; leadId: string; text: string },
-  opts: { statusCallback?: string | null; trigger?: string } = {},
+  opts: { statusCallback?: string | null; trigger?: string; callSessionId?: string } = {},
 ) {
-  const turn = await runBuyerTurn(db, llm, { accountId: m.accountId, conversationId: m.conversationId, text: m.text, buyerMessageStored: true, trigger: opts.trigger ?? "chat reply" });
+  const turn = await runBuyerTurn(db, llm, {
+    accountId: m.accountId, conversationId: m.conversationId, text: m.text, buyerMessageStored: true, trigger: opts.trigger ?? "chat reply",
+    // A call running this turn itself (the voice pipeline): see runBuyerTurn.
+    ...(opts.callSessionId ? { callSessionId: opts.callSessionId } : {}),
+  });
   if (turn.status !== "replied") return { turn, delivery: null };
   // The lead was not opted out when the message arrived (receiveInbound), so an
   // opted-out lead now means this reply is the opt-out confirmation.

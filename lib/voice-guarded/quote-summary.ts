@@ -4,7 +4,9 @@
  * subscription listed on its own), then the two totals (today and per month, VAT included), then the delivery
  * phrase: about 15 seconds of speech. Items are named by their catalog plain_name when they have one ("kitchen hubs"),
  * else by their name. Every amount and count is written out in words by the server, in the call's
- * language, so the model reads it instead of converting digits.
+ * language, so the model reads it instead of converting digits. Amounts are said in whole shekels (rounded, half up)
+ * and the summary ends by saying the exact figures are in the chat (owner, 23 Nov 2026). A line at no charge is
+ * "free", never an amount of zero.
  */
 import { and, asc, eq, inArray } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -13,10 +15,13 @@ import { estimateDelivery } from "@/lib/delivery/eta";
 import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { resolveMarket } from "@/lib/markets/service";
 import { deliveryByPhrase } from "@/lib/agent/quote-message";
-import { moneyWords, quantityWords, type WordsLanguage } from "./money-words";
+import { quantityWords, wholeMoneyWords, type WordsLanguage } from "./money-words";
 
-/** `plainName`: the catalog item's plain_name (what to call it on the call), spoken instead of `name` when set. */
-export type SummaryLine = { sku: string; name: string; plainName?: string | null; qty: number; recurring: boolean };
+/**
+ * `plainName`: the catalog item's plain_name (what to call it on the call), spoken instead of `name` when set.
+ * `free`: the line is at no charge (its total is zero).
+ */
+export type SummaryLine = { sku: string; name: string; plainName?: string | null; qty: number; recurring: boolean; free?: boolean };
 
 /** What the summary calls an item: its plain_name, else its name. */
 const spokenName = (l: { name: string; plainName?: string | null }) => l.plainName?.trim() || l.name;
@@ -68,14 +73,20 @@ function merged(lines: readonly SummaryLine[]): SummaryLine[] {
   for (const l of lines) {
     const key = `${l.sku}|${l.recurring}`;
     const had = out.get(key);
-    out.set(key, had ? { ...had, qty: had.qty + l.qty } : { ...l });
+    out.set(key, had ? { ...had, qty: had.qty + l.qty, free: !!had.free && !!l.free } : { ...l });
   }
   return [...out.values()];
 }
 
 const capFirst = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
-/** The spoken summary (pure): "Six wireless fridge sensors and two kitchen hubs, with installation. That's … today and … a month, including VAT. Delivery by about …". */
+/** The closing clause: the exact amounts are in the chat (the summary says whole shekels). */
+export const EXACT_IN_CHAT: Readonly<Record<WordsLanguage, string>> = { en: "The exact figures are in the chat.", he: "הסכומים המדויקים מופיעים בצ'אט." };
+
+/**
+ * The spoken summary (pure): "Six wireless fridge sensors and two kitchen hubs, with installation. That's … today and
+ * … a month, including VAT. Delivery by about …. The exact figures are in the chat."
+ */
 export function quoteSummaryText(q: SummaryInput): string {
   const lang = q.language;
   const requested = new Set(q.requested.map((s) => s.trim().toUpperCase()));
@@ -86,24 +97,31 @@ export function quoteSummaryText(q: SummaryInput): string {
   if (!main.length) main = all.filter((l) => requested.has(l.sku.toUpperCase()));
   if (!main.length) main = oneTime.length ? oneTime : all;
   const mainSkus = new Set(main.map((l) => l.sku));
-  const added = [...new Set(oneTime.filter((l) => !mainSkus.has(l.sku)).map(spokenName))];
+  const addedLines = oneTime.filter((l) => !mainSkus.has(l.sku));
+  const added = [...new Set(addedLines.filter((l) => !l.free).map(spokenName))];
+  // An added line at no charge is named as free ("with installation free"), never with an amount.
+  const addedFree = [...new Set(addedLines.filter((l) => l.free).map(spokenName))].filter((n) => !added.includes(n));
   const items = list(main.map((l) => itemWords(l, lang)), lang);
   const vat = q.taxRateBp > 0;
-  const today = moneyWords(q.oneTimeTotalMinor, q.currency, lang);
-  const recurring = q.recurringTotalMinor > 0 ? moneyWords(q.recurringTotalMinor, q.currency, lang) : null;
+  const today = wholeMoneyWords(q.oneTimeTotalMinor, q.currency, lang);
+  const recurring = q.recurringTotalMinor > 0 ? wholeMoneyWords(q.recurringTotalMinor, q.currency, lang) : null;
+  // Nothing to pay at all: free of charge, never an amount of zero (and no exact figures to point to).
+  const nothingToPay = q.oneTimeTotalMinor === 0 && !recurring;
   if (lang === "he") {
-    const what = `${items}${added.length ? `, כולל ${list(added, lang)}` : ""}.`;
+    const free = addedFree.length ? `${added.length ? ", ו" : ", כולל "}${list(addedFree, lang)} בחינם` : "";
+    const what = `${items}${added.length ? `, כולל ${list(added, lang)}` : ""}${free}.`;
     const per = q.period === "year" ? "לשנה" : "לחודש";
     const parts = [q.oneTimeTotalMinor > 0 || !recurring ? `${today} היום` : "", recurring ? `${recurring} ${per}` : ""].filter(Boolean);
-    const totals = `זה ${parts.join(" ו")}${vat ? ", כולל מע״מ" : ""}.`;
-    return [what, totals, q.deliveryBy ? `אספקה ${q.deliveryBy}.` : ""].filter(Boolean).join(" ");
+    const totals = nothingToPay ? "זה ללא עלות." : `זה ${parts.join(" ו")}${vat ? ", כולל מע״מ" : ""}.`;
+    return [what, totals, q.deliveryBy ? `אספקה ${q.deliveryBy}.` : "", nothingToPay ? "" : EXACT_IN_CHAT.he].filter(Boolean).join(" ");
   }
-  const what = `${capFirst(items)}${added.length ? `, with ${list(added, lang)}` : ""}.`;
+  const free = addedFree.length ? `${added.length ? ", and" : ","} with ${list(addedFree, lang)} free` : "";
+  const what = `${capFirst(items)}${added.length ? `, with ${list(added, lang)}` : ""}${free}.`;
   const per = q.period === "year" ? "a year" : "a month";
   // Nothing to pay today (subscriptions only): only the recurring total.
   const parts = [q.oneTimeTotalMinor > 0 || !recurring ? `${today} today` : "", recurring ? `${recurring} ${per}` : ""].filter(Boolean);
-  const totals = `That's ${parts.join(" and ")}${vat ? ", including VAT" : ""}.`;
-  return [what, totals, q.deliveryBy ? `Delivery ${q.deliveryBy}.` : ""].filter(Boolean).join(" ");
+  const totals = nothingToPay ? "That's free of charge." : `That's ${parts.join(" and ")}${vat ? ", including VAT" : ""}.`;
+  return [what, totals, q.deliveryBy ? `Delivery ${q.deliveryBy}.` : "", nothingToPay ? "" : EXACT_IN_CHAT.en].filter(Boolean).join(" ");
 }
 
 /**
@@ -135,6 +153,7 @@ export async function loadQuoteSummary(
   return quoteSummaryText({
     lines: rows.map((l) => ({
       sku: l.sku, name: l.name, plainName: l.catalogItemId ? plainOf.get(l.catalogItemId) ?? null : null, qty: l.qty, recurring: l.chargeType !== "one_time",
+      free: l.lineTotalMinor === 0,
     })),
     requested: a.requested, currency: v.currency, oneTimeTotalMinor: v.oneTimeTotalMinor, recurringTotalMinor: v.recurringTotalMinor,
     period: v.recurringPeriod === "year" ? "year" : "month", taxRateBp: v.taxRateBp, deliveryBy, language: a.language,

@@ -86,7 +86,8 @@ async function run(engine: "guarded" | "guarded_silent", modelId: string) {
   const conn = () => model.conns.at(-1)!;
   const tool = async (callId: string, name: string, args: unknown) => {
     conn().emit({ type: "tool-call", callId, name, args });
-    await advance(500);
+    // 6 s apart: u1 and u2 are the same call on purpose (the objection repeated), beyond the silent probe's run-once window.
+    await advance(6_000);
   };
   conn().emit({ type: "audio", pcm: new Uint8Array(480) });
   conn().emit({ type: "agent-transcript", text: "For one location the total is in the quote. Shall I send the order form?", final: true });

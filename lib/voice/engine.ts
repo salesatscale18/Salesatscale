@@ -20,6 +20,7 @@ import {
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
 import { formatMoney } from "@/lib/domain/money";
+import { isLocale } from "@/lib/i18n";
 import { writtenByAgent } from "@/lib/agent/core/stage";
 import { latestBookingOffer } from "@/lib/team-calls/service";
 import { voiceCallEndedLine } from "@/lib/agent/thread-markers";
@@ -32,16 +33,17 @@ import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from ".
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
-import { callVoice, isProvenVoiceModel, maxCallSeconds, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
+import { callVoice, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
-import { orderFormAgreed } from "./form-agreement";
+import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
-import { cleanTranscript } from "./transcript-clean";
+import { cleanTranscript, transcriptWords } from "./transcript-clean";
 import { clip, consoleVoiceLog, errorSummary, textPrint, voiceLine, type VoiceLog } from "./log";
 import { CallRecorder, recordingPrefix, recordingStoreFor, type RecordingStore } from "./recording";
+import { limitFinishSec } from "./socket-limits";
 import { recordingNoticeText, resolveRecordingSettings, withRecordingNotice } from "./recording-settings";
 
 /** Timings of a call. Defaults are the product's; tests shorten them. */
@@ -77,6 +79,15 @@ export type VoiceLimits = {
   /** The longest the opening line waits for the browser's `ready`. */
   clientReadyMs?: number;
 };
+
+/** A call of at least this long is warned LIMIT_WARN_LONG_SEC before its time limit (owner, 23 Nov 2026). */
+export const LIMIT_WARN_LONG_FROM_SEC = 120;
+export const LIMIT_WARN_LONG_SEC = 60;
+
+/** Seconds before the time limit the call is warned: 60 on a call of two minutes or more, else `shortWarnSec` (45). */
+export function limitWarnSecFor(maxSec: number, shortWarnSec: number): number {
+  return maxSec >= LIMIT_WARN_LONG_FROM_SEC ? LIMIT_WARN_LONG_SEC : shortWarnSec;
+}
 
 /** end_call after the goodbye was spoken: the call ends this long after the result, unless the turn ends first. */
 const END_AFTER_GOODBYE_MS = 2_500;
@@ -157,6 +168,11 @@ export type VoiceProfile = {
   toolBehavior?(family: SchemaFamily): RealtimeSessionConfig["toolBehavior"];
   /** A tool result's last shaping before it goes to the model (guarded: plain objection notes; the silent probe: scheduling). */
   shapeResult?(name: string, forModel: Record<string, unknown>, o: { family: SchemaFamily }): Record<string, unknown>;
+  /**
+   * The run-once guard (the silent probe): a tool call identical to one received this many ms before in the same call
+   * is not run again (VoiceEngine duplicateOf). Absent: every call runs.
+   */
+  dedupeToolCallsMs?: number;
 };
 
 export type { VoiceEndBy, VoiceEndDetail };
@@ -177,6 +193,19 @@ const BY_REASON: Record<VoiceEndReason, VoiceEndBy> = {
 };
 
 type ToolRun = { name: string; input: unknown; r: ToolResult };
+
+/** A tool call the run-once guard remembers: its id, tool and canonical arguments, when it came, its result once sent. */
+type RecentToolCall = { id: string; key: string; at: number; result: Record<string, unknown> | null };
+
+/** A value as JSON with object keys sorted at every level (the same arguments in another key order are the same). */
+export function canonicalJson(v: unknown): string {
+  if (Array.isArray(v)) return `[${v.map(canonicalJson).join(",")}]`;
+  if (v && typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    return `{${Object.keys(o).filter((k) => o[k] !== undefined).sort().map((k) => `${JSON.stringify(k)}:${canonicalJson(o[k])}`).join(",")}}`;
+  }
+  return JSON.stringify(v ?? null);
+}
 
 type AgentTurn = {
   id: string;
@@ -314,6 +343,12 @@ export const removalNotAsked = (removing: readonly string[]) => ({
   message: `The buyer did not ask to remove ${removing.join(", ")}. The quote stays as it is. If it helps, offer that option in one short sentence and make the new quote only when the buyer agrees.`,
 });
 
+/** The smaller-quote guard's hold (smallerQuoteAgreed): ask that one question first. */
+export const smallerQuoteNotAsked = (what: string) => ({
+  rule: "Smaller quote not asked",
+  message: `No quote was made: the buyer has not asked for a quote for ${what}. The current quote stays as it is. If a smaller start may help, first ask in one short question whether to prepare a quote for ${what}, and make it only when the buyer says yes.`,
+});
+
 /** What update_deal_state's result says when a lowered number was kept as the buyer said (holdLoweredNumbers). */
 export const keptMessage = (kept: readonly { label: string; value: string }[]) =>
   `Not changed: ${kept.map((k) => `${k.label} stays ${k.value}`).join("; ")}, as the buyer said. Change it only when the buyer says the new number; an offer of a smaller start becomes the quote only after they accept it in so many words.`;
@@ -328,6 +363,63 @@ export function formNotSentMessage(result: Record<string, unknown>): string {
   return `The order form was NOT sent (${why}). Do not say the order form or its link is in the chat. ${typeof result.message === "string" ? `${result.message} ` : ""}Tell the buyer in one short sentence what happens next.`;
 }
 
+/**
+ * A quote held for the team's approval (create_quote: status awaiting_seller_approval / quote_held). A call once
+ * said a total from an earlier check_fit for such a quote, said "the quote is in your chat" and offered the order
+ * form (23 Nov 2026): the result the model gets says the held state first, in a sentence the server writes in the
+ * call's language, and carries no figure of that quote.
+ */
+export const isHeldQuoteResult = (result: Record<string, unknown>) => result.status === "awaiting_seller_approval" || result.quote_held === true;
+
+/** What the agent says when create_quote holds the quote for approval (no amount, no "the quote is in the chat"). */
+export const HELD_QUOTE_SAY: Readonly<Record<"en" | "he", string>> = {
+  en: "I've asked the team to approve this price. You'll see their answer here in the chat, and I'm staying on the line.",
+  he: "ביקשתי מהצוות לאשר את המחיר הזה. התשובה שלהם תופיע כאן בצ'אט, ואני נשאר כאן על הקו.",
+};
+
+export const HELD_QUOTE_MESSAGE = "The quote is NOT final and was NOT sent: the team must approve it first. Say say_this now, as written. Do not say any total or price for it (not from check_fit either), do not say the quote is in the chat, and do not offer the order form until the app says it was approved.";
+
+/**
+ * check_fit on a call (any engine but the frozen Classic): no money figure reaches the model. Two calls (23 Nov 2026)
+ * said a price taken from check_fit's totals (once for a quote held for approval, once with no quote at all). The
+ * agent has a price to say only from a ready create_quote. The stored row and the test lab keep the full result.
+ */
+export const FIT_PRICES_FOR_CALL = "not shown here: call create_quote, then say the price it gives you";
+const FIT_LINE_MONEY = ["total", "total_before_vat", "total_including_vat", "unit_price"] as const;
+
+export function fitForCall(forModel: Record<string, unknown>): Record<string, unknown> {
+  const { totals: _t, price_basis: _b, currency: _c, prices_include_tax: _i, headline: _h, ...rest } = forModel;
+  void [_t, _b, _c, _i, _h];
+  const lines = Array.isArray(rest.lines)
+    ? rest.lines.map((l) => {
+      if (!l || typeof l !== "object") return l;
+      const out = { ...(l as Record<string, unknown>) };
+      for (const k of FIT_LINE_MONEY) delete out[k];
+      return out;
+    })
+    : undefined;
+  return { ...rest, ...(lines ? { lines } : {}), prices: FIT_PRICES_FOR_CALL };
+}
+
+/** send_order_form while the conversation's latest quote waits for the team's approval. */
+export const HELD_FORM_RULE = "Quote waits for the seller's approval";
+export const HELD_FORM_MESSAGE = "The order form was not sent: the quote is waiting for the team's approval. Tell the buyer the team is checking the price.";
+
+/** Fields of a held create_quote result the model may see: ids and status, never a figure of the quote. */
+const HELD_QUOTE_KEEP = ["ok", "status", "quote", "quote_id", "quote_version", "removed_at_buyer_request", "cannot_remove", "cannot_remove_message", "duplicate_of", "scheduling"] as const;
+
+/**
+ * A held create_quote result as the model gets it on a call (any engine): say_this first, then ids and status, then
+ * the message. Totals, lines_for_call, headline, price basis, delivery and approval reasons are left out.
+ */
+export function heldQuoteForModel(forModel: Record<string, unknown>, language: "en" | "he", sayIn: string | null): Record<string, unknown> {
+  const out: Record<string, unknown> = { say_this: HELD_QUOTE_SAY[language] };
+  for (const k of HELD_QUOTE_KEEP) if (forModel[k] !== undefined) out[k] = forModel[k];
+  out.quote_held = true;
+  out.message = sayIn ? `${HELD_QUOTE_MESSAGE} ${sayIn}` : HELD_QUOTE_MESSAGE;
+  return out;
+}
+
 /** After hand_off_to_human on a call (owner, 22 Nov 2026): the team gets back to the buyer and the call goes on. */
 export const HANDOFF_RESULT_MESSAGE = "Done: the team will get back to the buyer. Say so in one short sentence (to confirm the time, if a call was requested), then ask if there is anything else you can help with. Do not continue selling. The call goes on until the buyer says goodbye: then say a short goodbye and call end_call.";
 
@@ -336,6 +428,9 @@ export const ORDER_FORM_IN_CHAT_MESSAGE = "The order form link is in the chat. S
 
 /** After end_call: the goodbye, then the call ends. */
 export const END_CALL_RESULT_MESSAGE = "The call ends now. If you have not said goodbye yet, say one short goodbye; say nothing else.";
+
+/** A quote line at no charge, as lines_for_call gives it (in the language the call speaks; else English). */
+export const FREE_WORD: Readonly<Record<string, string>> = { en: "free", he: "חינם" };
 
 /** How a call presents a ready quote (create_quote's result on a call, with `lines_for_call`). */
 export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four short spoken sentences: what they need and what each part costs, from lines_for_call (for example \"For your two locations you need twelve seats at 59 shekels each, and setup at 200 per location\"), then the total today and the monthly amount, once each, then that the quote is in the chat now. Then ask if it looks right.";
@@ -385,6 +480,16 @@ export function lineLanguage(text: string, conversationLanguage: string | null):
   return conv;
 }
 
+/** A final buyer transcript this soon after the last one, that is that line grown, revises it (see grownFrom). */
+export const BUYER_LINE_REVISE_MS = 15_000;
+
+/** `next` is `prev` with more words after it (a running transcript of one utterance), not the same line again. */
+export function grownFrom(next: string, prev: string): boolean {
+  const a = transcriptWords(next);
+  const b = transcriptWords(prev);
+  return !!b && a.length > b.length && a.startsWith(`${b} `);
+}
+
 /** A line the buyer cut short, as stored: the words actually said, ending with "…". */
 export const cutLine = (s: string) => `${s.trim().replace(/[\s,;:–—-]+$/u, "")}…`;
 
@@ -414,6 +519,12 @@ export class VoiceEngine {
   private endedAtMs: number | null = null;
   /** This call is recorded: its instructions carry the one recording rule (lib/voice/instructions.ts RECORDED_CALL_RULE). */
   private recorded = false;
+  /**
+   * The conversation's latest quote on this call waits for the team's approval (create_quote held it): the order
+   * form is refused until a later create_quote returns a ready quote, or the quote is no longer awaiting approval.
+   * `id` is null when the result named no quote id.
+   */
+  private heldQuote: { id: string | null } | null = null;
   /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
   private handedOffHere = false;
   /** Counts of the relay's diagnostics (RealtimeEvent "diagnostic"), logged when the call ends. */
@@ -465,6 +576,8 @@ export class VoiceEngine {
   private lines: TranscriptLine[] = [];
   /** The last agent line stored in this call (see finalizeAgentTurn). */
   private lastLine: StoredLine | null = null;
+  /** The buyer's last spoken line stored in THIS call (its row), while a later transcript of it may still come. */
+  private lastBuyerLine: { messageId: string; turnId: string; text: string; startMs: number; at: number } | null = null;
   /** The stage the voice model last saw (stageKey of its instructions or of the last full update_deal_state result). */
   private stageDelivered: string | null = null;
   /** The browser said it can play the agent (`{t:"ready"}`). */
@@ -1006,9 +1119,10 @@ export class VoiceEngine {
         ...(recording.on ? { recordingChunks: 0, recordingBytes: 0, recordingSec: 0 } : {}),
       })
       .where(and(eq(voiceSessions.id, this.sessionId), eq(voiceSessions.status, "pending")));
-    // Limits: an announcement before the end, then the end.
-    if (this.maxSec > this.limits.limitWarnSec) this.timer("warn", (this.maxSec - this.limits.limitWarnSec) * 1000, () => this.warnLimit());
-    this.timer("limit", this.maxSec * 1000, () => void this.stop("limit", undefined, "limit"));
+    // Limits: an announcement before the end (60 s before on a call of two minutes or more), then the end.
+    const warnSec = limitWarnSecFor(this.maxSec, this.limits.limitWarnSec);
+    if (this.maxSec > warnSec) this.timer("warn", (this.maxSec - warnSec) * 1000, () => this.warnLimit());
+    this.timer("limit", this.maxSec * 1000, () => this.atLimit());
     this.statsLoop();
     this.heartbeatLoop();
     this.setState("listening");
@@ -1065,8 +1179,9 @@ export class VoiceEngine {
       .where(and(eq(quoteVersions.accountId, accountId), eq(quoteVersions.quoteId, quoteId), eq(quoteVersions.version, version)));
     if (!v) return [];
     const rows = await this.db.select().from(quoteLines).where(and(eq(quoteLines.accountId, accountId), eq(quoteLines.quoteVersionId, v.id))).orderBy(asc(quoteLines.sortOrder));
+    // A line at no charge is "free", never "₪0.00" (said aloud: "zero shekels").
     const money = (minor: number | null, period: string | null) =>
-      minor === null ? null : formatMoney(minor, v.currency, period === "month" || period === "year" ? { period } : {});
+      minor === null ? null : minor === 0 ? FREE_WORD[this.spokenLanguage] ?? FREE_WORD.en : formatMoney(minor, v.currency, period === "month" || period === "year" ? { period } : {});
     return rows.map((l) => ({ item: l.name, qty: l.qty, unit: l.unit, unit_price: money(l.unitPriceMinor, l.period), line_total: money(l.lineTotalMinor, l.period) }));
   }
 
@@ -1149,10 +1264,11 @@ export class VoiceEngine {
   /** The session's settings snapshot: the version's settings, the voice actually in effect ("model default" when none is sent) and the limit. */
   private settingsSnapshot() {
     const version = this.loaded!.version;
-    const voice = this.voiceInEffect() ?? (callVoice(null, this.model.modelId) ? "model default" : undefined);
+    // No voice sent: the model's own default (the test lab's "This call" card shows it, as the fillers setting).
+    const voice = this.voiceInEffect() ?? MODEL_DEFAULT_VOICE;
     // The model in the snapshot: the one this call ran on (live), or its version's (a scripted stand-in).
     return {
-      ...version.voiceSettings, voice, maxCallSec: this.maxSec, model: this.model.mode === "live" ? this.model.modelId : versionModelId(version.voiceSettings),
+      ...version.voiceSettings, voice, fillers: resolveVoiceSettings(version.voiceSettings).fillers, maxCallSec: this.maxSec, model: this.model.mode === "live" ? this.model.modelId : versionModelId(version.voiceSettings),
       // Another engine's model side: its name stays on the session (the test lab shows it; Call again keeps it).
       ...(this.profile ? { engine: this.profile.engine } : {}),
     };
@@ -1212,9 +1328,43 @@ export class VoiceEngine {
     }
   }
 
+  /**
+   * The agent is in the middle of a response: speaking, or between a tool call and the words after its result (the
+   * buyer did not cut it).
+   */
+  private agentMidResponse(): boolean {
+    const turn = this.agentTurn;
+    return this.agentSpeaking || (!!turn && !turn.interrupted && (turn.heardAudio || turn.awaitingContinuation));
+  }
+
+  /**
+   * The time limit: the call ends now, or, when the agent is mid-response, once that response is done (its
+   * turn-done), at most limitFinishSec later (lib/voice/socket-limits.ts: 8 s, less when the function's deadline is
+   * near). The announcement came before (warnLimit).
+   */
+  private atLimit() {
+    const finishSec = limitFinishSec(this.maxSec, this.limits.deadlineSec);
+    if (this.pendingEnd || finishSec <= 0 || !this.agentMidResponse()) {
+      void this.stop("limit", undefined, "limit");
+      return;
+    }
+    this.log.info(voiceLine(this.sessionId, `time limit: the agent finishes its response first (at most ${finishSec}s)`));
+    this.warnHeld = false;
+    this.endSoon("limit", finishSec * 1000);
+  }
+
+  /** The time-limit announcement waits for the agent's response to end (it never cuts the agent mid-sentence). */
+  private warnHeld = false;
+
   private warnLimit() {
     // On standby (or waking) nobody is listening: the limit just ends the call.
     if (!this.conn || this.reconnecting) return;
+    // The agent is mid-response: the announcement goes when that response is done (handleTurnDone).
+    if (this.agentMidResponse()) {
+      this.warnHeld = true;
+      return;
+    }
+    this.warnHeld = false;
     this.send({ t: "notice", kind: "limit_soon" });
     this.noteSent("time limit", true);
     this.conn?.requestResponse(this.profile
@@ -1287,8 +1437,8 @@ export class VoiceEngine {
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
         if (e.final) {
           // The buyer's words never go to the log: their length only.
-          this.trace(`buyer said len=${heard.trim().length}`);
-          void this.enqueue(() => this.handleBuyerFinal(heard, false));
+          this.trace(`buyer said len=${heard.trim().length}${e.revises ? " revises=yes" : ""}`);
+          void this.enqueue(() => this.handleBuyerFinal(heard, false, !!e.revises));
         } else {
           this.send({ t: "transcript", id: this.buyerTurn.id, role: "buyer", text: maskPartialDigits(heard), final: false, atMs: this.buyerTurn.startMs });
         }
@@ -1314,7 +1464,13 @@ export class VoiceEngine {
         // Whether the agent's audio of the current response had already gone out when the model called the tool.
         const r = this.traceResp && !this.traceResp.closedBy ? this.traceResp : null;
         this.traceCallAt.set(e.callId, this.clock.now());
-        this.trace(`tool call received name=${clip(e.name, 40)} id=${clip(e.callId, 200).slice(-8)} r=${r ? r.n : "-"} afterSpeech=${r ? `yes sinceAudioMs=${Math.round(this.clock.now() - r.at)}` : "no"}`);
+        const dup = this.duplicateOf(e.callId, e.name, e.args);
+        this.trace(`tool call received name=${clip(e.name, 40)} id=${clip(e.callId, 200).slice(-8)} r=${r ? r.n : "-"} afterSpeech=${r ? `yes sinceAudioMs=${Math.round(this.clock.now() - r.at)}` : "no"}${dup ? " dup=yes" : ""}`);
+        if (dup) {
+          this.log.info(voiceLine(this.sessionId, `tool ${clip(e.name, 40)} duplicate of ${clip(dup.id, 200).slice(-8)}: not run again`));
+          void this.enqueue(async () => this.answerDuplicate(e.callId, e.name, dup));
+          return;
+        }
         void this.enqueue(() => this.handleTool(e.callId, e.name, e.args));
         return;
       }
@@ -1393,6 +1549,42 @@ export class VoiceEngine {
         this.trace(clip(e.what, 80));
         return;
     }
+  }
+
+  /** Tool calls received in this call, for the run-once guard (a profile with dedupeToolCallsMs): newest last. */
+  private recentCalls: RecentToolCall[] = [];
+
+  /**
+   * The run-once guard for identical tool calls (Google's client-side dedupe for non-blocking tools; the silent probe
+   * only): a call with the same tool and the same arguments (canonical JSON) as one received within the profile's
+   * window in this call, in flight or done, is that call again. Returns the first one; else records this one.
+   */
+  private duplicateOf(callId: string, name: string, args: unknown): RecentToolCall | null {
+    const windowMs = this.profile?.dedupeToolCallsMs;
+    if (!windowMs) return null;
+    const now = this.clock.now();
+    this.recentCalls = this.recentCalls.filter((c) => now - c.at <= windowMs);
+    const key = `${name}\n${canonicalJson(args)}`;
+    const first = this.recentCalls.find((c) => c.key === key);
+    if (first) return first;
+    this.recentCalls.push({ id: callId, key, at: now, result: null });
+    return null;
+  }
+
+  /**
+   * A duplicate call's answer (never run again): the first call's result as data (its words to say and guidance
+   * left out), marked not to start speech (scheduling SILENT on Gemini) and naming the call it duplicates.
+   */
+  private answerDuplicate(callId: string, name: string, first: RecentToolCall) {
+    if (this.cancelledCalls.has(callId)) return;
+    const { say_this: _say, message: _msg, scheduling: _sch, ...data } = first.result ?? { ok: true };
+    void _say;
+    void _msg;
+    void _sch;
+    const result = { ...data, duplicate_of: first.id, ...(schemaFamilyOf(this.model.modelId) === "gemini" ? { scheduling: "SILENT" } : {}) };
+    if (this.conn) this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=0ms chars=${JSON.stringify(result).length} dup=yes`);
+    this.traceCallAt.delete(callId);
+    this.conn?.sendToolResult(callId, name, result);
   }
 
   /**
@@ -1620,19 +1812,35 @@ export class VoiceEngine {
     return {
       db: this.db, accountId: account.id, conversationId: conv.id, leadId: conv.leadId, playbook: version.playbook, currency: account.currency,
       // The model's call id, scoped to this call: the idempotency key for writes.
-      callId: `voice:${this.sessionId}:${callId}`, language: conv.language, memo, agentMessages: this.effectiveAgentMessages(),
+      callId: `voice:${this.sessionId}:${callId}`, language: this.toolLanguage(), memo, agentMessages: this.effectiveAgentMessages(),
     };
+  }
+
+  /**
+   * The language the tools write in on a call (quote cards, fixed texts): the language being spoken (owner, 23 Nov
+   * 2026: an English call on a Hebrew lead got a Hebrew quote card), when the app has texts in it; else the
+   * conversation's.
+   */
+  private toolLanguage(): string {
+    return isLocale(this.spokenLanguage) ? this.spokenLanguage : this.loaded!.conv.language;
   }
 
   // -------------------------------------------------------------------------
   // Turns
   // -------------------------------------------------------------------------
 
-  private async handleBuyerFinal(raw: string, typed: boolean) {
+  private async handleBuyerFinal(raw: string, typed: boolean, revises = false) {
     if (this.ended || !this.loaded) return;
     const { conv, account } = this.loaded;
     const masked = maskCardNumbers(raw.replace(/\s+/g, " ").trim().slice(0, 4000));
     if (!masked.text) return;
+    // A later transcript of the buyer's last spoken line of THIS call (the same utterance) updates its row: one row per
+    // buyer turn. The provider says so (`revises`), or the text is that line grown (a running transcript) shortly after.
+    const prev = this.lastBuyerLine;
+    if (!typed && prev && (revises || (this.clock.now() - prev.at <= BUYER_LINE_REVISE_MS && grownFrom(masked.text, prev.text)))) {
+      await this.reviseBuyerLine(prev, masked.text);
+      return;
+    }
     // Typed while the agent speaks: like a barge-in, the browser drops the queued agent audio.
     if (typed && this.agentSpeaking) {
       if (this.agentTurn) this.agentTurn.interrupted = true;
@@ -1649,10 +1857,13 @@ export class VoiceEngine {
     // What the agent said before this buyer turn is stored first, so the thread keeps its order.
     if (!answering) await this.finalizeAgentTurn("buyer");
     this.buyerTurn = null;
+    const buyerMessageId = randomUUID();
     await this.db.insert(messages).values({
-      accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: lineLanguage(masked.text, conv.language),
+      id: buyerMessageId, accountId: account.id, conversationId: conv.id, actor: "buyer", body: masked.text, language: lineLanguage(masked.text, conv.language),
       voiceSessionId: this.sessionId, spokenAtMs: turn.startMs, typedInCall: typed, createdAt: await this.stamp(),
     });
+    // A spoken line may still be revised (a later transcript of it); a typed one never is, and closes the last one.
+    this.lastBuyerLine = typed ? null : { messageId: buyerMessageId, turnId: turn.id, text: masked.text, startMs: turn.startMs, at: this.clock.now() };
     this.trackSpokenLanguage(masked.text);
     const moved = late ? await this.moveAgentLinesAfterBuyer(turn.startMs) : 0;
     this.lines.splice(this.lines.length - moved, 0, { role: "buyer", text: masked.text });
@@ -1703,6 +1914,29 @@ export class VoiceEngine {
       this.noteSent("typed line", schemaFamilyOf(this.model.modelId) !== "gemini");
       this.conn.sendText(masked.text);
     }
+  }
+
+  /**
+   * A later transcript of the buyer's last spoken line (this call's own row): the row, the recap line and the
+   * browser's line are updated in place; no new row and no new answer (the model already has the audio). The same
+   * text: nothing to do.
+   */
+  private async reviseBuyerLine(prev: NonNullable<VoiceEngine["lastBuyerLine"]>, text: string) {
+    this.buyerTurn = null;
+    this.buyerActivity();
+    this.markHeard();
+    if (text === prev.text) return;
+    const { conv, account } = this.loaded!;
+    await this.db.update(messages).set({ body: text, language: lineLanguage(text, conv.language) })
+      .where(and(eq(messages.id, prev.messageId), eq(messages.accountId, account.id), eq(messages.voiceSessionId, this.sessionId)));
+    const i = this.lines.findLastIndex((l) => l.role === "buyer" && l.text === prev.text);
+    if (i >= 0) this.lines[i] = { role: "buyer", text };
+    this.lastBuyerLine = { ...prev, text };
+    this.log.info(voiceLine(this.sessionId, "buyer line revised: a later transcript of the same line updated its row"));
+    this.trackSpokenLanguage(text);
+    this.send({ t: "transcript", id: prev.turnId, role: "buyer", text, final: true, atMs: prev.startMs });
+    // An opt-out said in the rest of the line counts as if it came whole (spoken: the model answers it).
+    if (!this.profile && isSpokenOptOut(text)) await this.codeOptOut(text, false);
   }
 
   /**
@@ -1771,6 +2005,54 @@ export class VoiceEngine {
       return false;
     });
     return kept;
+  }
+
+  /**
+   * A create_quote that covers FEWER sites than the buyer stated (deal state, provenance buyer) or fewer units of an
+   * item than the buyer's latest quote: the new numbers (to find in the lines) and the smaller set in words. Null when
+   * it is not smaller (or there is nothing to compare with).
+   */
+  private async smallerQuote(args: unknown): Promise<{ numbers: number[]; what: string } | null> {
+    if (!this.loaded || !args || typeof args !== "object") return null;
+    const { account, conv } = this.loaded;
+    const a = args as { lines?: unknown; sites?: unknown };
+    const sites = typeof a.sites === "number" && Number.isInteger(a.sites) && a.sites > 0 ? a.sites : null;
+    let statedSites: number | null = null;
+    if (sites !== null) {
+      const deal = await readDealState(this.db, account.id, conv.leadId);
+      const stated = (deal?.fields as Record<string, { value?: string; provenance?: string } | undefined> | undefined)?.sites;
+      const before = Number(String(stated?.value ?? "").trim());
+      if (stated?.provenance === "buyer" && Number.isFinite(before)) statedSites = before;
+    }
+    const asked = (Array.isArray(a.lines) ? a.lines : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
+    let latest: { sku: string; name: string; qty: number; recurring: boolean }[] = [];
+    if (asked.length) {
+      // The latest quote, whatever its status (held, declined or cancelled included): compared by its quantities.
+      const [q] = await this.db.select({ id: quotes.id, version: quotes.currentVersion }).from(quotes)
+        .where(and(eq(quotes.accountId, account.id), eq(quotes.leadId, conv.leadId))).orderBy(desc(quotes.createdAt), desc(quotes.number)).limit(1);
+      const [v] = q ? await this.db.select({ id: quoteVersions.id }).from(quoteVersions)
+        .where(and(eq(quoteVersions.accountId, account.id), eq(quoteVersions.quoteId, q.id), eq(quoteVersions.version, q.version))) : [];
+      const rows = v ? await this.db.select({ sku: quoteLines.sku, name: quoteLines.name, qty: quoteLines.qty, chargeType: quoteLines.chargeType }).from(quoteLines)
+        .where(and(eq(quoteLines.accountId, account.id), eq(quoteLines.quoteVersionId, v.id))) : [];
+      latest = rows.map((r) => ({ sku: r.sku, name: r.name, qty: r.qty, recurring: r.chargeType !== "one_time" }));
+    }
+    return smallerQuoteParts({ sites, statedSites, asked, latest });
+  }
+
+  /**
+   * Whether the quote create_quote held on this call still waits for the team's approval. Once the team approved
+   * (or declined) it, the hold is lifted and the tool decides (it refuses a quote that is not ready).
+   */
+  private async quoteStillHeld(): Promise<boolean> {
+    if (!this.heldQuote) return false;
+    if (!this.heldQuote.id || !this.loaded) return true;
+    const [q] = await this.db.select({ status: quotes.status }).from(quotes)
+      .where(and(eq(quotes.accountId, this.loaded.account.id), eq(quotes.id, this.heldQuote.id)));
+    if (q && q.status !== "awaiting_approval") {
+      this.heldQuote = null;
+      return false;
+    }
+    return true;
   }
 
   /** A tool call the engine refuses on a call without running it, recorded like any other (the steps view shows it). */
@@ -1865,15 +2147,34 @@ export class VoiceEngine {
     // The order form on a call goes only after the buyer agreed to it (or asked for it): see orderFormAgreed.
     // A number the buyer stated (sites, quantities) is not lowered unless their last line says the new number.
     const kept = name === "update_deal_state" ? await this.holdLoweredNumbers(args).catch(() => []) : [];
-    const formGate = name === "send_order_form" ? orderFormAgreed(this.lines) : "yes";
+    // The order form never goes for a quote waiting for the team's approval, even after the buyer's yes.
+    const quoteHeld = name === "send_order_form" ? await this.quoteStillHeld().catch(() => true) : false;
+    const formGate = name === "send_order_form" && !quoteHeld ? orderFormAgreed(this.lines) : "yes";
     // A line the app adds to a quote (installation, setup) comes off only when the buyer asked: see removalAsked.
     const removing = name === "create_quote" ? removedAutoAdded(args) : [];
     const removeGate = removing.length ? removalAsked(this.lines) : "yes";
-    const r = formGate === "no"
-      ? await this.refuseRecorded(turn, callId, name, args, FORM_NOT_AGREED)
-      : removeGate === "no"
-        ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
-        : await this.runRecorded(turn, callId, name, args);
+    // A quote for fewer units or sites than before goes only when the buyer asked for it (or said yes to the offer).
+    const smaller = name === "create_quote" && removeGate !== "no" ? await this.smallerQuote(args).catch(() => null) : null;
+    const smallerGate = smaller ? smallerQuoteAgreed(this.lines, (line) => smaller.numbers.some((n) => lineSaysNumber(line, n))) : "yes";
+    const r = quoteHeld
+      ? await this.refuseRecorded(turn, callId, name, args, { rule: HELD_FORM_RULE, message: HELD_FORM_MESSAGE })
+      : formGate === "no"
+        ? await this.refuseRecorded(turn, callId, name, args, FORM_NOT_AGREED)
+        : removeGate === "no"
+          ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
+          : smallerGate === "no" && smaller
+            ? await this.refuseRecorded(turn, callId, name, args, smallerQuoteNotAsked(smaller.what))
+            : await this.runRecorded(turn, callId, name, args);
+    if (quoteHeld) this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the quote waits for the team's approval"));
+    // The conversation's latest quote: held for approval (the order form waits), or ready (the hold is lifted).
+    const heldNow = name === "create_quote" && r.outcome === "ok" && isHeldQuoteResult(r.result);
+    if (heldNow) {
+      this.heldQuote = { id: typeof r.result.quote_id === "string" ? r.result.quote_id : null };
+      this.log.info(voiceLine(this.sessionId, "tool create_quote held for approval: totals withheld from the model"));
+    } else if (name === "create_quote" && r.outcome === "ok" && r.result.status === "ready") {
+      this.heldQuote = null;
+    }
+    if (smallerGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: a smaller quote the buyer did not ask for"));
     if (formGate === "no") this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the buyer has not agreed to it yet"));
     if (kept.length) {
       this.log.info(voiceLine(this.sessionId, `tool update_deal_state: ${kept.length} lowered number(s) kept as the buyer said`));
@@ -1882,14 +2183,28 @@ export class VoiceEngine {
     if (removeGate === "no") this.log.info(voiceLine(this.sessionId, "tool create_quote held: removes a line the buyer did not ask to remove"));
     // One line per tool call: its name, outcome and time (never its arguments or result).
     this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} ${r.outcome} ${Math.round(this.clock.now() - t0)}ms`));
-    const forModel = this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r);
+    let forModel = this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r);
+    // Held for approval: the held state first, in the call's language, and no figure of the quote (any engine).
+    const sayIn = this.spokenLanguage !== "en" ? this.sayIn() : null;
+    const noTotals = name === "check_fit";
+    if (noTotals) forModel = fitForCall(forModel);
+    if (heldNow) forModel = heldQuoteForModel(forModel, this.spokenLanguage === "he" ? "he" : "en", sayIn);
+    if (quoteHeld) {
+      forModel = {
+        ok: false, rule: HELD_FORM_RULE, ...(typeof forModel.scheduling === "string" ? { scheduling: forModel.scheduling } : {}),
+        message: sayIn ? `${HELD_FORM_MESSAGE} ${sayIn}` : HELD_FORM_MESSAGE,
+      };
+    }
+    // The run-once guard answers a duplicate of this call with this result.
+    const recent = this.recentCalls.find((c) => c.id === callId);
+    if (recent) recent.result = forModel;
     // A call the model cancelled (the buyer cut in): its result would start an answer to a question no longer asked.
     if (this.cancelledCalls.has(callId)) {
       this.log.info(voiceLine(this.sessionId, `tool ${clip(name, 40)} result not sent: the model cancelled the call`));
     } else {
       if (this.conn) {
         const at = this.traceCallAt.get(callId);
-        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}`);
+        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}${heldNow || quoteHeld ? " held=yes" : ""}${noTotals ? " nototals=yes" : ""}`);
         // The model's audio from here on is its next response (Gemini continues by itself after a result).
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }
@@ -2120,6 +2435,8 @@ export class VoiceEngine {
       return;
     }
     this.setState("listening");
+    // The time-limit announcement held while the agent spoke goes now.
+    if (this.warnHeld) this.warnLimit();
     this.startQuiet();
   }
 

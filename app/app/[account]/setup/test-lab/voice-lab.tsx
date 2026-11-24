@@ -17,6 +17,7 @@ import { buttonClass } from "@/components/sas/primitives";
 import { VoiceCall, useNow, useVoiceSnapshot } from "@/components/sas/voice/voice-call";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
 import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
+import type { CallVoiceInfo } from "@/lib/voice/settings";
 import { t, translator } from "@/lib/i18n";
 import { useBackGuard } from "@/lib/voice/client/back-guard";
 import { LeaveSheet } from "@/components/sas/voice/leave-sheet";
@@ -25,10 +26,10 @@ import { barView, type BarAction, type BarView, type CostFormat } from "@/lib/vo
 import { elapsedSec, isIdlePhase } from "@/lib/voice/client/state";
 import { endMyVoiceCallAction, startVoiceCallAction } from "./voice-actions";
 import { startChatAction } from "./actions";
-import { engineLabelKey, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { ENGINE_ORDER, engineHelpKey, engineLabelKey, engineLabelVars, otherEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 
-/** "Current" / "Classic (20 Nov)" / "Classic + guards". */
-const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engineLabelKey(engine));
+/** "Live for buyers (22 Nov)" / "New (23 Nov)" / "New + silent tools (23 Nov, testing)" / "Old baseline (20 Nov)". */
+const engineLabel = (engine: VoiceEngineName | null | undefined) => t(engineLabelKey(engine), engineLabelVars(engine));
 /** The select's value as an engine (anything else: Current; the server checks again). */
 const engineOf = (v: string): VoiceEngineName => otherEngine(v) ?? "current";
 
@@ -38,6 +39,8 @@ const engineOf = (v: string): VoiceEngineName => otherEngine(v) ?? "current";
 
 type LabCall = {
   conversationId: string; fx: CostFormat; versionId: string | null; scenario: string | null; handedOff: boolean; model?: string | null;
+  /** The voice and fillers the call was started with (the saved call's card reads the session's). */
+  voiceUsed?: CallVoiceInfo | null;
   /** The voice engine the call runs on (the server's answer: Current unless a platform admin picked another). */
   engine?: VoiceEngineName;
 } | null;
@@ -125,7 +128,7 @@ function useStartCall() {
         c.unavailable(r.reason, { retryAt: r.retryAt, ownCall: r.ownCall });
         return;
       }
-      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model, engine: r.engine });
+      setCall({ conversationId: r.conversationId, fx: r.fx, versionId: input.versionId, scenario: input.scenario, handedOff: false, model: r.model, engine: r.engine, voiceUsed: r.voiceUsed });
       c.start({ wsUrl: r.wsUrl, sessionId: r.sessionId, ticket: r.ticket, maxSec: r.maxSec, mode: r.mode });
       router.push(`${input.lab}?c=${r.conversationId}`, { scroll: false });
     })();
@@ -222,21 +225,21 @@ export function VoiceLabChoices({
             {languages.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
-        <div className="sas-input-group">
+        <div className="sas-input-group lab-choices__ver">
           <label className="sas-input-label" htmlFor="lab-ver">{t("lab.version_label")}</label>
           <select className="sas-select" id="lab-ver" name="versionId" value={versionId} onChange={(e) => setVersionId(e.target.value)}>
             {versions.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
         </div>
         {engines ? (
-          <div className="sas-input-group">
+          <div className="sas-input-group lab-choices__engine">
             <label className="sas-input-label" htmlFor="lab-engine">{t("lab.voice.engine")}</label>
             {/* Not a form field: "Start chat" ignores it; only "Start call" sends it. */}
-            <select className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(engineOf(e.target.value))} data-voice-engine-select="">
-              <option value="current">{engineLabel("current")}</option>
-              <option value="classic">{engineLabel("classic")}</option>
-              <option value="guarded">{engineLabel("guarded")}</option>
-              <option value="guarded_silent">{engineLabel("guarded_silent")}</option>
+            <select
+              className="sas-select" id="lab-engine" value={engine} onChange={(e) => setEngine(engineOf(e.target.value))} data-voice-engine-select=""
+              aria-describedby="lab-engine-help"
+            >
+              {ENGINE_ORDER.map((e) => <option key={e} value={e}>{engineLabel(e)}</option>)}
             </select>
           </div>
         ) : null}
@@ -248,6 +251,8 @@ export function VoiceLabChoices({
             <Icon name="phone-call" />{t("lab.voice.start_call")}
           </button>
         </div>
+        {/* Under the row: what the chosen engine is based on and whether buyers get it. */}
+        {engines ? <p className="sas-small lab-choices__why lab-choices__help" id="lab-engine-help" data-voice-engine-help="">{t(engineHelpKey(engine))}</p> : null}
       </form>
       {own ? (
         <div className="lab-call__bar">
@@ -349,7 +354,7 @@ export function VoiceLabStats({ conversationId, children }: { conversationId: st
     <VoiceCallStats
       durationSec={elapsedSec(s, now)} maxSec={s.maxSec} costMicros={s.costMicros} scripted={s.mode === "scripted"} fx={mine.fx}
       answerMsAvg={s.answerMsAvg} live={s.phase !== "ended"} endReason={s.phase === "ended" ? s.endReason : null} errorCode={s.errorCode}
-      model={mine.model ?? null} engine={engineLabel(mine.engine)}
+      model={mine.model ?? null} engine={engineLabel(mine.engine)} voiceUsed={mine.voiceUsed ?? null}
     />
   );
 }

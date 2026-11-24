@@ -853,14 +853,14 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     await hangUp(c);
   });
 
-  it("time limit: announced 45 s before, then the call ends with limit", async () => {
+  it("time limit: announced 60 s before (a call of two minutes or more), then the call ends with limit", async () => {
     const c = await newCall(null, { limits: { ...QUIET, deadlineSec: 120 } });
-    await c.run(70_000);
+    await c.run(50_000);
     expect(c.json().some((m) => m.t === "notice" && m.kind === "limit_soon")).toBe(false);
-    await c.run(10_000); // 80 s > 120 - 45
+    await c.run(10_000); // 60 s = 120 - 60
     expect(c.json().filter((m) => m.t === "notice" && m.kind === "limit_soon")).toHaveLength(1);
     expect(c.conn().sent.responses.at(-1)).toMatch(/time limit/);
-    await c.run(45_000);
+    await c.run(65_000);
     expect(c.engine.isEnded).toBe(true);
     const s = await sessionRow(c.sessionId);
     expect(s.endReason).toBe("limit");

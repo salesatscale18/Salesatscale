@@ -49,7 +49,11 @@ export type RealtimeEvent =
    * guaranteed order relative to the end of the turn): the whole late text of that response, final.
    */
   | { type: "agent-transcript"; text: string; final: boolean; late?: boolean }
-  | { type: "buyer-transcript"; text: string; final: boolean }
+  /**
+   * `revises`: a later transcript of the buyer line already sent final (the same utterance: a running transcript sent
+   * again, or the whole line after a part was closed early): it updates that line, never a new one.
+   */
+  | { type: "buyer-transcript"; text: string; final: boolean; revises?: boolean }
   /** The buyer started talking (barge-in when the agent is speaking). */
   | { type: "speech-started" }
   | { type: "tool-call"; callId: string; name: string; args: unknown }

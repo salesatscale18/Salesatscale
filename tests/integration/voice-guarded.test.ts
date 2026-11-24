@@ -12,13 +12,13 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventEmitter } from "node:events";
 import { and, asc, eq } from "drizzle-orm";
-import { conversations, messages, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
+import { conversations, messages, quotes, rateLimits, toolCalls, users, voiceSessions, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, readDealState } from "@/lib/agent/service";
 import { ClassicVoiceEngine } from "@/lib/voice-classic/engine";
-import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, refusedQuoteMessage, VoiceEngine, type VoiceLimits } from "@/lib/voice/engine";
-import { GUARDED_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
+import { formNotSentMessage, HANDOFF_RESULT_MESSAGE, HELD_FORM_MESSAGE, HELD_FORM_RULE, HELD_QUOTE_MESSAGE, HELD_QUOTE_SAY, refusedQuoteMessage, smallerQuoteNotAsked, VoiceEngine, type VoiceLimits, type VoiceProfile } from "@/lib/voice/engine";
+import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE, guardedQuoteMessage } from "@/lib/voice-guarded/profile";
 import { guardedInstructions } from "@/lib/voice-guarded/instructions";
 import { realtimeTools as currentTools } from "@/lib/voice/tool-schema";
 import { flushAsync, ManualClock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig } from "@/lib/voice/realtime";
@@ -189,15 +189,16 @@ describe("Classic + guards", () => {
   });
 
   describe("(c) the guards", () => {
-    async function fakeCall(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = [], limits: VoiceLimits = {}) {
+    async function fakeCall(lines: { actor: "agent" | "buyer"; body: string; ageMs: number }[] = [], limits: VoiceLimits = {}, profile: VoiceProfile | null = GUARDED_PROFILE) {
       const c = (await startVoiceTestConversation(db, acc, me.id, { scenario: null }))!;
       for (const l of lines) await db.insert(messages).values({ accountId: acc, conversationId: c.conversationId, actor: l.actor, body: l.body, language: "en", createdAt: new Date(Date.now() - l.ageMs) });
-      const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: "guarded" });
+      const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, ...(profile ? { engine: profile.engine as "guarded" | "guarded_silent" } : {}) });
       if (!s.ok) throw new Error(s.reason);
       const clock = new ManualClock();
       const model = new FakeModel();
       const { lines: logs, log } = memLog();
-      const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: () => undefined, log, limits: { ...QUIET, ...limits }, recording: { store: null, reason: "test" }, profile: GUARDED_PROFILE });
+      const sent: unknown[] = [];
+      const engine = new VoiceEngine({ db, model, sessionId: s.sessionId, clock, send: (m) => void sent.push(m), log, limits: { ...QUIET, ...limits }, recording: { store: null, reason: "test" }, ...(profile ? { profile } : {}) });
       const settle = async () => {
         for (let i = 0; i < 4; i++) {
           await flushAsync();
@@ -206,7 +207,7 @@ describe("Classic + guards", () => {
       };
       const run = (ms: number) => clock.advance(ms, settle);
       return {
-        ...s, conversationId: c.conversationId, leadId: c.leadId, clock, model, engine, logs, settle, run,
+        ...s, conversationId: c.conversationId, leadId: c.leadId, clock, model, engine, logs, sent, settle, run,
         startNow: async () => { await engine.start(); await settle(); },
         emit: (e: RealtimeEvent) => model.conns.at(-1)!.emit(e),
         said: async (text: string) => {
@@ -245,6 +246,90 @@ describe("Classic + guards", () => {
       // Both calls are recorded with the call's line; the held one as refused.
       const rows = await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId)).orderBy(asc(toolCalls.createdAt), asc(toolCalls.sequence));
       expect(rows.filter((x) => x.name === "send_order_form").map((x) => x.outcome)[0]).toBe("refused");
+    });
+
+    it("a quote held for approval: say_this first, no figure of the quote, the order form refused until a ready quote (Current, guarded, silent; English and Hebrew)", async () => {
+      for (const profile of [null, GUARDED_PROFILE, GUARDED_SILENT_PROFILE]) {
+        for (const he of [false, true]) {
+          const c = await fakeCall([], {}, profile);
+          await c.startNow();
+          await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+          await c.buyer(he ? "אפשר עשרה אחוז הנחה על שישה חיישנים?" : "Can you do ten percent off six sensors?");
+          const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { discount_percent: 10 }));
+          expect(Object.keys(q)[0]).toBe("say_this");
+          expect(q.say_this).toBe(HELD_QUOTE_SAY[he ? "he" : "en"]);
+          expect(q).toMatchObject({ ok: true, status: "awaiting_seller_approval", quote_held: true });
+          expect(String(q.message).startsWith(HELD_QUOTE_MESSAGE)).toBe(true);
+          if (he) expect(String(q.message)).toContain("Hebrew");
+          for (const k of ["totals", "lines_for_call", "headline", "price_basis", "delivery", "delivery_by", "approval_reasons", "valid_until"]) expect(q[k]).toBeUndefined();
+          // No figure of the quote anywhere: only its reference, version and ids carry digits.
+          const rest = JSON.stringify({ ...q, quote: undefined, quote_version: undefined, quote_id: undefined, quote_message_id: undefined });
+          expect(rest).not.toMatch(/\d/);
+          expect(c.logs.some((l) => l.endsWith("tool create_quote held for approval: totals withheld from the model"))).toBe(true);
+          expect(c.logs.some((l) => / tool result sent name=create_quote .* held=yes$/.test(l))).toBe(true);
+          // The buyer says yes to the form: refused while the quote waits for the team.
+          await c.buyer(he ? "כן, תשלח לי את טופס ההזמנה" : "Yes, send me the order form please.");
+          const f = await c.tool("f1", "send_order_form", { quote: String(q.quote) });
+          expect(f).toMatchObject({ ok: false, rule: HELD_FORM_RULE });
+          expect(String(f.message).startsWith(HELD_FORM_MESSAGE)).toBe(true);
+          expect(c.logs.some((l) => l.endsWith("tool send_order_form held: the quote waits for the team's approval"))).toBe(true);
+          expect((await thread(c.conversationId)).some((m) => /order form:/i.test(m.body))).toBe(false);
+          // A later ready quote lifts the hold.
+          await c.buyer(he ? "בסדר, בלי הנחה" : "OK, without the discount then.");
+          const ready = await c.tool("q2", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }]));
+          expect(ready, JSON.stringify(ready)).toMatchObject({ ok: true, status: "ready" });
+          expect(ready.say_this).not.toBe(HELD_QUOTE_SAY[he ? "he" : "en"]);
+          await c.buyer(he ? "כן, תשלח לי את טופס ההזמנה" : "Yes, send me the order form please.");
+          const f2 = await c.tool("f2", "send_order_form", { quote: String(ready.quote) });
+          expect(f2.rule).not.toBe(HELD_FORM_RULE);
+          await c.end();
+        }
+      }
+    });
+
+    it("check_fit on a call: no money figure reaches the model (Current, guarded, silent); the stored row keeps the totals", async () => {
+      for (const profile of [null, GUARDED_PROFILE, GUARDED_SILENT_PROFILE]) {
+        const c = await fakeCall([], {}, profile);
+        await c.startNow();
+        await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+        await c.buyer("How much for six sensors and a gateway?");
+        // A quote exists: the tool itself opens prices, so its stored result carries totals and line amounts.
+        await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }, { sku: "GATEWAY", qty: 1 }]));
+        const fit = await c.tool("c1", "check_fit", { lines: [{ sku: "SENSOR", qty: 6 }, { sku: "GATEWAY", qty: 1 }], sites: 1 });
+        // Tool-call rows are written when the call's turn is stored (at the latest, at the end of the call).
+        await c.end();
+        const [row] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, c.conversationId), eq(toolCalls.name, "check_fit")));
+        const stored = row.result as { totals?: Record<string, unknown>; lines?: Record<string, unknown>[] };
+        expect(stored.totals, JSON.stringify(row.result)).toBeTruthy();
+        const amounts = [...Object.values(stored.totals!), ...stored.lines!.flatMap((l) => Object.entries(l).filter(([k]) => k.startsWith("total")).map(([, v]) => v))]
+          .filter((v): v is string => typeof v === "string" && /\d/.test(v));
+        expect(amounts.length).toBeGreaterThan(0);
+        const json = JSON.stringify(fit);
+        expect(json).not.toMatch(/[₪$€£]|\b(ILS|NIS|USD|EUR)\b|shekel|\d[\d,]*\.\d{2}\b/i);
+        for (const a of amounts) expect(json).not.toContain(a);
+        for (const k of ["totals", "price_basis"]) expect(fit[k]).toBeUndefined();
+        expect(fit.prices).toBe("not shown here: call create_quote, then say the price it gives you");
+        const lines = fit.lines as Record<string, unknown>[];
+        expect(lines.map((l) => [l.sku, l.qty])).toEqual(expect.arrayContaining([["SENSOR", 6], ["GATEWAY", 1]]));
+        for (const l of lines) expect(Object.keys(l).filter((k) => k.startsWith("total"))).toEqual([]);
+        expect(c.logs.some((l) => / tool result sent name=check_fit .* nototals=yes$/.test(l))).toBe(true);
+        expect(c.logs.some((l) => / tool result sent name=create_quote .*nototals/.test(l))).toBe(false);
+      }
+    });
+
+    it("a held quote the team approves during the call: the order form is no longer refused for it", async () => {
+      const c = await fakeCall([], {}, null);
+      await c.startNow();
+      await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+      await c.buyer("Can you do ten percent off six sensors?");
+      const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }], { discount_percent: 10 }));
+      expect(q).toMatchObject({ status: "awaiting_seller_approval" });
+      const [row] = await db.select().from(quotes).where(eq(quotes.leadId, c.leadId));
+      await db.update(quotes).set({ status: "sent" }).where(eq(quotes.id, row.id));
+      await c.buyer("Yes, send me the order form please.");
+      const f = await c.tool("f1", "send_order_form", { quote: String(q.quote) });
+      expect(f.rule).not.toBe(HELD_FORM_RULE);
+      await c.end();
     });
 
     it("K2: a number the buyer stated is not lowered on an ambiguous yes; it is when the buyer says it; silent otherwise", async () => {
@@ -309,14 +394,90 @@ describe("Classic + guards", () => {
         const say = String(q.say_this);
         // Named by the catalog plain_name when there is one (the gateway), else by the name (the sensor).
         if (!he) {
-          expect(say).toMatch(/^Six Temperature sensors and two kitchen hubs\. That's four thousand five hundred shekels today and one hundred and six shekels and twenty agorot a month, including VAT\./);
+          // G1: whole shekels (106.20 → one hundred and six), the exact figures in the chat.
+          expect(say).toMatch(/^Six Temperature sensors and two kitchen hubs\. That's four thousand five hundred shekels today and one hundred and six shekels a month, including VAT\./);
+          expect(say).toMatch(/ The exact figures are in the chat\.$/);
           expect(say).not.toContain("forty");
+          expect(say).not.toContain("agor");
         } else {
-          expect(say).toMatch(/^שש יחידות Temperature sensor ושתי יחידות kitchen hub\. זה ארבעת אלפים וחמש מאות שקלים היום ומאה ושישה שקלים ועשרים אגורות לחודש, כולל מע״מ\./);
+          expect(say).toMatch(/^שש יחידות Temperature sensor ושתי יחידות kitchen hub\. זה ארבעת אלפים וחמש מאות שקלים היום ומאה ושישה שקלים לחודש, כולל מע״מ\./);
+          expect(say).toMatch(/ הסכומים המדויקים מופיעים בצ'אט\.$/);
         }
         expect(say.replace(/\d+ (December|January|בדצמבר|בינואר)/g, "")).not.toMatch(/\d/);
         await c.end();
       }
+    });
+
+    it("S5: a quote for fewer sites is held until the buyer asks for it (English and Hebrew), in the guarded result's words", async () => {
+      for (const he of [false, true]) {
+        const c = await fakeCall();
+        await c.startNow();
+        await c.buyer(he ? "מסעדה עם שני סניפים" : "A restaurant with two sites.");
+        await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "2", provenance: "buyer" }] });
+        await c.said(he ? "יעזור להתחיל עם סניף אחד?" : "Would starting with one site help?");
+        await c.buyer(he ? "כן, נראה לי. אני צריך פתרון." : "Yeah, I guess so. I need a solution.");
+        const held = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }));
+        expect(held).toMatchObject({ ok: false, rule: "Smaller quote not asked", message: smallerQuoteNotAsked("1 site").message });
+        expect(c.logs.some((l) => l.endsWith("tool create_quote held: a smaller quote the buyer did not ask for"))).toBe(true);
+        await c.said(he ? "להכין הצעת מחיר לסניף אחד?" : "Shall I prepare a quote for one site?");
+        await c.buyer(he ? "כן בבקשה" : "yes please");
+        expect(await c.tool("q2", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 1 }], { sites: 1 }))).toMatchObject({ ok: true, status: "ready" });
+        await c.end();
+      }
+    });
+
+    it("P1 (silent probe): an identical create_quote 400 ms later is not run again: one quote, one card, one spoken summary", async () => {
+      const c = await fakeCall([], {}, GUARDED_SILENT_PROFILE);
+      await c.startNow();
+      await c.buyer("A restaurant with one site. Two seats please.");
+      await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+      const args = quoteArgs([{ sku: "SEAT-M", qty: 2 }]);
+      c.emit({ type: "tool-call", callId: "q1", name: "create_quote", args });
+      await c.run(400);
+      // The same arguments in another key order: the same call.
+      c.emit({ type: "tool-call", callId: "q2", name: "create_quote", args: Object.fromEntries(Object.entries(args).reverse()) });
+      await c.run(500);
+      const results = c.model.conns.at(-1)!.results.filter((r) => r.name === "create_quote").map((r) => r.result);
+      expect(results).toHaveLength(2);
+      expect(results.filter((r) => typeof r.say_this === "string")).toHaveLength(1);
+      expect(results[0]).toMatchObject({ ok: true, status: "ready", scheduling: "WHEN_IDLE" });
+      expect(results[1]).toMatchObject({ ok: true, status: "ready", duplicate_of: "q1", scheduling: "SILENT", quote: results[0].quote });
+      expect(results[1]).not.toHaveProperty("message");
+      const cards = (await thread(c.conversationId)).filter((m) => m.actor === "agent" && !m.voiceSessionId);
+      expect(cards).toHaveLength(1);
+      expect(c.sent.filter((m) => (m as { t?: string }).t === "message")).toHaveLength(1);
+      expect(c.logs.some((l) => / tool create_quote duplicate of q1: not run again$/.test(l))).toBe(true);
+      expect(c.logs.some((l) => / tool call received name=create_quote id=q2 .* dup=yes$/.test(l))).toBe(true);
+      expect(c.logs.filter((l) => / dup=yes$/.test(l) && / tool call received name=create_quote id=q1 /.test(l))).toHaveLength(0);
+      await c.end();
+      // One quote and one recorded create_quote (the duplicate is not a tool run).
+      expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, c.conversationId))).filter((r) => r.name === "create_quote")).toHaveLength(1);
+      expect(await db.select().from(quotes).where(eq(quotes.leadId, c.leadId))).toHaveLength(1);
+    });
+
+    it("P1: different arguments both run; the same arguments 6 s apart both run; guarded (no probe) never dedupes", async () => {
+      const c = await fakeCall([], {}, GUARDED_SILENT_PROFILE);
+      await c.startNow();
+      await c.buyer("A restaurant with one site.");
+      await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+      c.emit({ type: "tool-call", callId: "q1", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 2 }]) });
+      await c.run(400);
+      c.emit({ type: "tool-call", callId: "q2", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 3 }]) });
+      await c.run(6_000);
+      c.emit({ type: "tool-call", callId: "q3", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 3 }]) });
+      await c.run(500);
+      const results = c.model.conns.at(-1)!.results.filter((r) => r.name === "create_quote").map((r) => r.result);
+      expect(results.map((r) => r.duplicate_of)).toEqual([undefined, undefined, undefined]);
+      expect(results.filter((r) => typeof r.say_this === "string")).toHaveLength(3);
+      expect(c.logs.some((l) => /duplicate of/.test(l))).toBe(false);
+      await c.end();
+      const g = await fakeCall();
+      await g.startNow();
+      await g.tool("u1", "update_deal_state", noUpdate);
+      await g.tool("u2", "update_deal_state", noUpdate);
+      expect(g.model.conns.at(-1)!.results.filter((r) => r.name === "update_deal_state").every((r) => r.result.duplicate_of === undefined)).toBe(true);
+      await g.end();
+      expect((await db.select().from(toolCalls).where(eq(toolCalls.conversationId, g.conversationId))).filter((r) => r.name === "update_deal_state")).toHaveLength(2);
     });
 
     it("K7: the hand-off keeps the call (Current's result); Classic's 'the call ends there' is not in the instructions", async () => {

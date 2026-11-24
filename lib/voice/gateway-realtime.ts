@@ -21,7 +21,7 @@ import type { VoiceUsage } from "@/db/schema";
 import { VOICE_SAMPLE_RATE } from "./protocol";
 import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionConfig } from "./realtime";
 import { schemaFamilyOf } from "./tool-schema";
-import { cleanTranscript, joinTranscript, markerKinds } from "./transcript-clean";
+import { cleanTranscript, joinTranscript, markerKinds, sameUtterance } from "./transcript-clean";
 import { voiceModelId } from "./settings";
 
 type SdkTool = NonNullable<SdkSessionConfig["tools"]>[number];
@@ -243,9 +243,19 @@ export class ServerEventMapper {
       case "input-transcription-completed": {
         const text = this.clean((e.transcript || this.buyerText).trim());
         this.buyerText = "";
+        // The same utterance again: its item came before (a running transcript, sent again longer), or its first
+        // part was already closed from the streamed pieces when the agent started (closeBuyerTurn) and this is its
+        // whole line. It revises the line already sent, never a new one (live call, 23 Nov 2026: one buyer line
+        // stored twice, the partial at 17:46:43 and the whole line at 17:46:49).
+        const itemId = typeof e.itemId === "string" && e.itemId ? e.itemId : null;
+        const sameItem = !!itemId && itemId === this.lastBuyerItem;
+        const early = this.buyerClosedEarly;
+        const revises = sameItem || (!!early && !!text && sameUtterance(text, early));
+        this.buyerClosedEarly = null;
+        if (itemId) this.lastBuyerItem = itemId;
         // An empty transcription (noise, the echo of the agent's own voice) still closes the buyer's turn: the
         // engine then knows nobody spoke (no line, no answer due).
-        return [{ type: "buyer-transcript", text, final: true }];
+        return [{ type: "buyer-transcript", text, final: true, ...(revises && text ? { revises: true } : {}) }];
       }
       case "speech-started":
         return this.interrupt();
@@ -422,8 +432,14 @@ export class ServerEventMapper {
     const text = this.clean(this.buyerText.trim());
     this.buyerText = "";
     if (!text) return [];
+    // A completed transcription of this utterance may still come (with the whole line): it revises this one.
+    this.buyerClosedEarly = text;
     return [{ type: "buyer-transcript", text, final: true }];
   }
+  /** The buyer line closeBuyerTurn sent from streamed pieces, until the next completed transcription. */
+  private buyerClosedEarly: string | null = null;
+  /** The provider item of the last completed buyer transcription. */
+  private lastBuyerItem: string | null = null;
 }
 
 /**

@@ -3,7 +3,7 @@
  * writes every amount the agent says after a quote, so ₪106.20 is never read as "…and forty agorot" again.
  */
 import { describe, expect, it } from "vitest";
-import { englishNumber, hebrewNumber, moneyWords, quantityWords } from "@/lib/voice-guarded/money-words";
+import { englishNumber, hebrewNumber, moneyWords, quantityWords, wholeMoneyWords } from "@/lib/voice-guarded/money-words";
 import { pluralName, quoteSummaryText, type SummaryInput } from "@/lib/voice-guarded/quote-summary";
 
 describe("amounts in words", () => {
@@ -35,6 +35,16 @@ describe("amounts in words", () => {
   it("106.20 keeps its own cents (the 23 Nov Current call said \"forty agorot\", from 212.40)", () => {
     expect(moneyWords(10620, "ILS", "en")).not.toContain("forty");
     expect(moneyWords(10620, "ILS", "he")).not.toContain("ארבעים");
+  });
+
+  it("whole amounts (G1): rounded half up, no minor units", () => {
+    expect(wholeMoneyWords(10620, "ILS", "en")).toBe("one hundred and six shekels");
+    expect(wholeMoneyWords(562860, "ILS", "en")).toBe("five thousand six hundred and twenty-nine shekels");
+    expect(wholeMoneyWords(10620, "ILS", "he")).toBe("מאה ושישה שקלים");
+    expect(wholeMoneyWords(562860, "ILS", "he")).toBe("חמשת אלפים שש מאות עשרים ותשעה שקלים");
+    expect(wholeMoneyWords(150, "ILS", "en")).toBe("two shekels");
+    expect(wholeMoneyWords(149, "ILS", "he")).toBe("שקל אחד");
+    expect(wholeMoneyWords(20000, "ILS", "en")).toBe("two hundred shekels");
   });
 
   it("other currencies and numbers", () => {
@@ -82,7 +92,9 @@ describe("the quote's spoken summary", () => {
 
   it("English: items with quantities, the two totals in words, the delivery phrase; no digits, no unit prices", () => {
     const s = quoteSummaryText(quote("en", "by about Thursday, 3 December"));
-    expect(s).toBe("Six Temperature sensors and two Gateways, with Installation. That's five thousand six hundred and twenty-eight shekels and sixty agorot today and two hundred and twelve shekels and forty agorot a month, including VAT. Delivery by about Thursday, 3 December.");
+    // G1 (owner, 23 Nov 2026): whole shekels (5628.60 → 5629, 212.40 → 212), the exact figures in the chat.
+    expect(s).toBe("Six Temperature sensors and two Gateways, with Installation. That's five thousand six hundred and twenty-nine shekels today and two hundred and twelve shekels a month, including VAT. Delivery by about Thursday, 3 December. The exact figures are in the chat.");
+    expect(s).not.toMatch(/agor/);
     expect(s.replace(/3 December/, "")).not.toMatch(/\d/);
     // About 15 seconds of speech at a normal pace (2.6 words a second).
     expect(words(s) / 2.6).toBeLessThan(16);
@@ -90,14 +102,45 @@ describe("the quote's spoken summary", () => {
 
   it("Hebrew", () => {
     const s = quoteSummaryText(quote("he", "עד בערך יום חמישי, 3 בדצמבר"));
-    expect(s).toBe("שש יחידות Temperature sensor ושתי יחידות Gateway, כולל Installation. זה חמשת אלפים שש מאות עשרים ושמונה שקלים ושישים אגורות היום ומאתיים ושנים עשר שקלים וארבעים אגורות לחודש, כולל מע״מ. אספקה עד בערך יום חמישי, 3 בדצמבר.");
+    expect(s).toBe("שש יחידות Temperature sensor ושתי יחידות Gateway, כולל Installation. זה חמשת אלפים שש מאות עשרים ותשעה שקלים היום ומאתיים ושנים עשר שקלים לחודש, כולל מע״מ. אספקה עד בערך יום חמישי, 3 בדצמבר. הסכומים המדויקים מופיעים בצ'אט.");
+    expect(s).not.toMatch(/אגור/);
     expect(words(s) / 2.6).toBeLessThan(16);
   });
 
   it("no monthly part without a subscription, no delivery sentence without a plan, no VAT words without VAT", () => {
     const q = quote("en", null);
     const s = quoteSummaryText({ ...q, lines: q.lines.filter((l) => !l.recurring), recurringTotalMinor: 0, taxRateBp: 0, oneTimeTotalMinor: 10620 });
-    expect(s).toBe("Six Temperature sensors and two Gateways, with Installation. That's one hundred and six shekels and twenty agorot today.");
+    expect(s).toBe("Six Temperature sensors and two Gateways, with Installation. That's one hundred and six shekels today. The exact figures are in the chat.");
+  });
+
+  it("G1: each spoken total in whole shekels, rounded half up, never zero for an amount above zero", () => {
+    const q = quote("en", null);
+    const one = (oneTimeTotalMinor: number, language: "en" | "he" = "en") =>
+      quoteSummaryText({ ...q, language, lines: q.lines.filter((l) => !l.recurring), recurringTotalMinor: 0, taxRateBp: 0, oneTimeTotalMinor });
+    expect(one(10620)).toContain("one hundred and six shekels today");
+    expect(one(10650)).toContain("one hundred and seven shekels today");
+    expect(one(10649)).toContain("one hundred and six shekels today");
+    expect(one(562860)).toContain("five thousand six hundred and twenty-nine shekels today");
+    expect(one(10620, "he")).toContain("מאה ושישה שקלים היום");
+    expect(one(562860, "he")).toContain("חמשת אלפים שש מאות עשרים ותשעה שקלים היום");
+    expect(one(40)).toContain("less than one shekel today");
+    expect(one(40, "he")).toContain("פחות משקל אחד היום");
+  });
+
+  it("S2: a line at no charge is free, never zero shekels", () => {
+    const q = quote("en", null);
+    const free = { ...q, lines: q.lines.map((l) => (l.sku === "INSTALL" ? { ...l, free: true } : l)) };
+    expect(quoteSummaryText(free)).toMatch(/^Six Temperature sensors and two Gateways, with Installation free\. That's/);
+    expect(quoteSummaryText({ ...free, language: "he" })).toMatch(/^שש יחידות Temperature sensor ושתי יחידות Gateway, כולל Installation בחינם\. זה/);
+    // With a charged added line too.
+    const both = { ...free, lines: [...free.lines, { sku: "SETUP", name: "Setup", qty: 1, recurring: false }] };
+    expect(quoteSummaryText(both)).toMatch(/, with Setup, and with Installation free\./);
+    // A free main item stays in the list with no price; nothing to pay at all is "free of charge".
+    const nothing = quoteSummaryText({ ...q, lines: [{ sku: "SENSOR", name: "Temperature sensor", qty: 1, recurring: false, free: true }], oneTimeTotalMinor: 0, recurringTotalMinor: 0 });
+    expect(nothing).toBe("One Temperature sensor. That's free of charge.");
+    expect(quoteSummaryText({ ...q, language: "he", lines: [{ sku: "SENSOR", name: "Temperature sensor", qty: 1, recurring: false, free: true }], oneTimeTotalMinor: 0, recurringTotalMinor: 0 }))
+      .toBe("Temperature sensor. זה ללא עלות.");
+    for (const s of [quoteSummaryText(free), nothing]) expect(s).not.toMatch(/zero/i);
   });
 
   it("a quote of subscriptions only names them, with a yearly total", () => {
@@ -105,14 +148,38 @@ describe("the quote's spoken summary", () => {
       lines: [{ sku: "SEAT", name: "User seat", qty: 12, recurring: true }], requested: ["SEAT"], currency: "ILS",
       oneTimeTotalMinor: 0, recurringTotalMinor: 708000, period: "year", taxRateBp: 1800, deliveryBy: null, language: "en",
     });
-    expect(s).toBe("Twelve User seats. That's seven thousand and eighty shekels a year, including VAT.");
+    expect(s).toBe("Twelve User seats. That's seven thousand and eighty shekels a year, including VAT. The exact figures are in the chat.");
+  });
+
+  it("names the items before any amount, in every branch (owner: the total straight away is alarming)", () => {
+    const q = quote("en", null);
+    const freeInstall = q.lines.map((l) => (l.sku === "INSTALL" ? { ...l, free: true } : l));
+    const branches: [string, SummaryInput, string[]][] = [
+      ["single item", { ...q, lines: [{ sku: "GATEWAY", name: "Gateway", qty: 1, recurring: false }], requested: ["GATEWAY"], recurringTotalMinor: 0, oneTimeTotalMinor: 90000 }, ["Gateway"]],
+      ["items the app added", q, ["Temperature sensors", "Gateways", "Installation"]],
+      ["free items", { ...q, lines: freeInstall }, ["Temperature sensors", "Gateways", "Installation free"]],
+      ["monthly only", { ...q, lines: [{ sku: "SEAT", name: "User seat", qty: 12, recurring: true }], requested: ["SEAT"], oneTimeTotalMinor: 0, recurringTotalMinor: 70800 }, ["User seats"]],
+      ["nothing to pay", { ...q, lines: [{ sku: "SENSOR", name: "Temperature sensor", qty: 1, recurring: false, free: true }], oneTimeTotalMinor: 0, recurringTotalMinor: 0 }, ["Temperature sensor"]],
+    ];
+    for (const [what, input, items] of branches) {
+      for (const language of ["en", "he"] as const) {
+        const s = quoteSummaryText({ ...input, language });
+        const firstAmount = s.search(language === "en" ? /shekel|free of charge/ : /שקל|ללא עלות/);
+        expect(firstAmount, `${what} (${language}): ${s}`).toBeGreaterThan(0);
+        // The first sentence is the item list, with no amount; the totals sentence comes after it.
+        const firstSentence = s.slice(0, s.indexOf(". ") + 1);
+        expect(firstAmount, `${what} (${language}): ${s}`).toBeGreaterThan(firstSentence.length - 1);
+        expect(s.slice(firstSentence.length).trimStart(), `${what} (${language})`).toMatch(language === "en" ? /^That's / : /^זה /);
+        if (language === "en") for (const item of items) expect(s.indexOf(item), `${what}: ${item}`).toBeLessThan(firstAmount);
+      }
+    }
   });
 
   it("names items by their catalog plain_name when they have one (main items and the ones the app added)", () => {
     const q = quote("en", "by about Thursday, 3 December");
     const plain: Record<string, string> = { SENSOR: "wireless fridge sensor", GATEWAY: "kitchen hub", INSTALL: "installation visit" };
     const s = quoteSummaryText({ ...q, lines: q.lines.map((l) => ({ ...l, plainName: plain[l.sku] })) });
-    expect(s).toBe("Six wireless fridge sensors and two kitchen hubs, with installation visit. That's five thousand six hundred and twenty-eight shekels and sixty agorot today and two hundred and twelve shekels and forty agorot a month, including VAT. Delivery by about Thursday, 3 December.");
+    expect(s).toBe("Six wireless fridge sensors and two kitchen hubs, with installation visit. That's five thousand six hundred and twenty-nine shekels today and two hundred and twelve shekels a month, including VAT. Delivery by about Thursday, 3 December. The exact figures are in the chat.");
     // A blank plain_name falls back to the name.
     const blank = quoteSummaryText({ ...q, lines: q.lines.map((l) => ({ ...l, plainName: l.sku === "GATEWAY" ? " " : null })) });
     expect(blank).toBe(quoteSummaryText(q));

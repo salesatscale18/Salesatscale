@@ -21,7 +21,7 @@ import { conversationView } from "@/lib/agent/conversation";
 import { nextBuyerText, SCENARIOS, scenarioById } from "@/lib/agent/scenarios";
 import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
-import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
+import { formatDayMonthIn, formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { readViewerZone } from "@/lib/viewer-zone-server";
 import { dir, isLocale, t, type MessageKey } from "@/lib/i18n";
 import { describeCall } from "@/lib/agent/trace";
@@ -53,7 +53,7 @@ import { ResultChip } from "./result-chip";
 import { countChanges } from "@/lib/agent/version-compare";
 import { statusDef } from "@/lib/domain/status";
 import { classicModelId } from "@/lib/voice-classic/settings";
-import { engineLabelKey, sessionEngine } from "@/lib/voice-classic/engine-choice";
+import { engineLabelKey, engineLabelVars, sessionEngine } from "@/lib/voice-classic/engine-choice";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
@@ -155,7 +155,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const liveVersion = versions.find((v) => v.status === "live");
   const callVersions = [
     ...(draft ? [] : [{ value: "", label: t("lab.new_draft"), settings: liveVersion?.voiceSettings ?? null, version: (versions[0]?.version ?? 0) + 1, status: "draft" as const }]),
-    ...versions.map((v) => ({ value: v.id, label: versionLabel(v), settings: v.voiceSettings, version: v.version, status: v.status })),
+    // "v2 · Draft · 23 Nov": the version's date (published, else last changed) from the row already loaded.
+    ...versions.map((v) => ({ value: v.id, label: `${versionLabel(v)} · ${formatDayMonthIn(v.publishedAt ?? v.updatedAt ?? v.createdAt, tz)}`, settings: v.voiceSettings, version: v.version, status: v.status })),
   ];
   const callMax = Object.fromEntries(callVersions.map((v) => [v.value, maxCallSeconds({ settings: v.settings, deadlineSec: callLimit })]));
   // One source for the limit: the same maxCallSeconds the relay reports in `{t:'call', maxSec}` (lib/voice/socket.ts).
@@ -165,7 +166,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
     const id = versionModelId(v.settings);
     return classicModelId(id) === id ? [] : [[v.value, voiceModelLabel(id)]];
   }));
-  const engineText = (engine: string | null | undefined) => t(engineLabelKey(sessionEngine({ engine })));
+  const engineText = (engine: string | null | undefined) => {
+    const e = sessionEngine({ engine });
+    return t(engineLabelKey(e), engineLabelVars(e));
+  };
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
@@ -496,7 +500,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               <VoiceCallStats
                 durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
                 answerMsAvg={savedEnded.answerMsAvg} live={false} costEstimated={savedEnded.costEstimated} endReason={savedEnded.endReason} errorCode={savedEnded.errorCode}
-                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null} model={voiceModelLabel(savedEnded.model) || null} engine={voice ? engineText(savedEnded.engine) : null}
+                technical={isAdmin ? endDetailText(savedEnded.endDetail) : null} model={voiceModelLabel(savedEnded.model) || null} engine={voice ? engineText(savedEnded.engine) : null} voiceUsed={savedEnded.voiceUsed}
                 standby={savedEnded.standbySec !== null && savedEnded.activeSec !== null ? { activeSec: savedEnded.activeSec, standbySec: savedEnded.standbySec } : null}
               />
             ) : null;

@@ -38,6 +38,7 @@ export const MAX_TOOL_ROUNDS = 8;
 /** Wait before the one retry of a model call that failed after a tool round. */
 export const MODEL_RETRY_DELAY_MS = 500;
 const HISTORY = 40;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export type TurnResult =
   | { status: "replied"; messageId: string; text: string; calls: number }
@@ -53,13 +54,24 @@ const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
  * One agent at a time: while a call on the conversation is pending or live, no chat turn runs (in_call): the
  * model is not called, nothing is sent, and the buyer's text is not stored here (one already stored stays stored).
  * `trigger`: a short name for that log line ("test lab", "whatsapp", …).
+ * `callSessionId`: the voice session of a call that runs this turn itself (the voice pipeline): that call does not
+ * block it (every other pending or live call still does), and the messages this turn writes (the buyer's message
+ * when stored here, the agent's reply) carry its id as `voiceSessionId`, so they group under the call. Only a
+ * session of this conversation stamps (and only one can lift a block); without it, nothing changes.
  */
 export async function runBuyerTurn(
-  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string },
+  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string; callSessionId?: string },
 ): Promise<TurnResult> {
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
-  if (await textTurnBlocked(db, args.accountId, conv.id, args.trigger ?? "chat turn")) return { status: "in_call" };
+  if (await textTurnBlocked(db, args.accountId, conv.id, args.trigger ?? "chat turn", new Date(), { exceptSessionId: args.callSessionId })) return { status: "in_call" };
+  // The call's own lines: stamped only with a session of this conversation (the id is a foreign key).
+  const callStamp = args.callSessionId && UUID_RE.test(args.callSessionId)
+    && (await db.select({ id: voiceSessions.id }).from(voiceSessions).where(and(
+      eq(voiceSessions.id, args.callSessionId), eq(voiceSessions.accountId, args.accountId), eq(voiceSessions.conversationId, conv.id),
+    ))).length > 0
+    ? { voiceSessionId: args.callSessionId }
+    : {};
   const masked = maskCardNumbers(args.text.slice(0, 4000));
 
   // One round trip: lead, its market, version, account and deal state.
@@ -83,14 +95,14 @@ export async function runBuyerTurn(
   await Promise.all([
     args.buyerMessageStored
       ? Promise.resolve()
-      : db.insert(messages).values({ id: randomUUID(), accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang }),
+      : db.insert(messages).values({ id: randomUUID(), accountId: args.accountId, conversationId: conv.id, actor: "buyer", body: masked.text, language: lang, ...callStamp }),
     lang === conv.language
       ? Promise.resolve()
       : db.update(conversations).set({ language: lang }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, args.accountId))),
   ]);
 
   const say = async (body: string) => {
-    const [m] = await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "agent", body, language: lang, agentVersionId: version.id }).returning();
+    const [m] = await db.insert(messages).values({ accountId: args.accountId, conversationId: conv.id, actor: "agent", body, language: lang, agentVersionId: version.id, ...callStamp }).returning();
     return m;
   };
 
@@ -280,7 +292,7 @@ export async function runBuyerTurn(
   const now = new Date();
   await atomic(db, (q) => [
     q.insert(messages).values({
-      id: messageId, accountId: args.accountId, conversationId: conv.id, actor: "agent", body: text, language: lang, agentVersionId: version.id, usage,
+      id: messageId, accountId: args.accountId, conversationId: conv.id, actor: "agent", body: text, language: lang, agentVersionId: version.id, usage, ...callStamp,
     }),
     ...(pending.length ? [q.insert(toolCalls).values(toolCallRows(pending, messageId))] : []),
     q.update(conversations).set({ updatedAt: now }).where(and(eq(conversations.id, conv.id), eq(conversations.accountId, args.accountId))),

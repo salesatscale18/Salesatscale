@@ -24,6 +24,23 @@ export const engineLabelKey = (engine: VoiceEngineName | null | undefined) =>
       : engine === GUARDED_SILENT_ENGINE ? "lab.voice.engine.guarded_silent"
         : "lab.voice.engine.current";
 
+/**
+ * The date each engine's label names ("Live for buyers (22 Nov)"): when that engine's code was set, written here by
+ * hand (never computed). Change it together with the engine.
+ */
+export const ENGINE_DATES: Readonly<Record<VoiceEngineName, string>> = {
+  current: "22 Nov", guarded: "23 Nov", guarded_silent: "23 Nov", classic: "20 Nov",
+};
+
+/** The order of the test lab's "Voice engine" list: live for buyers first, the old baseline last. */
+export const ENGINE_ORDER: readonly VoiceEngineName[] = ["current", "guarded", "guarded_silent", "classic"];
+
+/** An engine's label's values ({date}). */
+export const engineLabelVars = (engine: VoiceEngineName | null | undefined) => ({ date: ENGINE_DATES[engine ?? "current"] ?? ENGINE_DATES.current });
+
+/** The i18n key of the one helper line under the engine row: what the engine is based on and whether buyers get it. */
+export const engineHelpKey = (engine: VoiceEngineName) => `lab.voice.engine_help.${engine}` as const;
+
 /** An engine other than Current, as stored or posted ("classic", "guarded", "guarded_silent"); null for anything else. */
 export const otherEngine = (v: unknown): Exclude<VoiceEngineName, "current"> | null =>
   (v === CLASSIC_ENGINE || v === GUARDED_ENGINE || v === GUARDED_SILENT_ENGINE ? v : null);

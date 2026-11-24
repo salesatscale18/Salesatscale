@@ -1,6 +1,17 @@
 import { t } from "@/lib/i18n";
 import { answerSpeedText, callClock } from "@/lib/voice/lab";
 import { costText, endReasonText, errorText, type CostFormat } from "@/lib/voice/client/view";
+import type { CallVoiceInfo } from "@/lib/voice/settings";
+
+/** "Puck" / "Model default" / "Not recorded" (an older call). */
+export function callVoiceText(voice: CallVoiceInfo["voice"]): string {
+  return voice === null ? t("voice.stats.not_recorded") : voice === "default" ? t("voice.stats.voice_default") : voice;
+}
+
+/** "On (short filler phrases)" / "Off" / "Not recorded" (an older call). */
+export function callFillersText(fillers: CallVoiceInfo["fillers"]): string {
+  return fillers === null ? t("voice.stats.not_recorded") : fillers ? t("voice.stats.fillers_on") : t("voice.stats.fillers_off");
+}
 
 /**
  * The "This call" card (board VoiceLab): length against the limit, the
@@ -25,6 +36,7 @@ export function VoiceCallStats({
   headingId = "voice-stats-h",
   model = null,
   engine = null,
+  voiceUsed = null,
 }: {
   durationSec: number;
   maxSec: number | null;
@@ -46,6 +58,8 @@ export function VoiceCallStats({
   model?: string | null;
   /** Test lab: the voice engine's label ("Classic (20 Nov)"), when the page shows it. */
   engine?: string | null;
+  /** The voice and fillers the call ran with (the session's, or the call being started's), next to the model. */
+  voiceUsed?: CallVoiceInfo | null;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
   const money = costText(costMicros, fx);
@@ -58,6 +72,12 @@ export function VoiceCallStats({
       <dl className="sas-vstats__kv">
         {engine ? <><dt>{t("voice.stats.engine")}</dt><dd data-voice-engine="">{engine}</dd></> : null}
         {model ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
+        {voiceUsed ? (
+          <>
+            <dt>{t("voice.stats.voice")}</dt><dd data-voice-used="">{callVoiceText(voiceUsed.voice)}</dd>
+            <dt>{t("voice.stats.fillers")}</dt><dd data-voice-fillers="">{callFillersText(voiceUsed.fillers)}</dd>
+          </>
+        ) : null}
         <dt>{t("voice.stats.length")}</dt><dd className="sas-num" data-voice-length="">{length}</dd>
         <dt>{t("voice.stats.cost")}</dt><dd className="sas-num" data-voice-cost="">{cost}</dd>
         <dt>{t("voice.stats.answer")}</dt>

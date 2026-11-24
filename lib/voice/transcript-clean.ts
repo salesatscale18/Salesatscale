@@ -66,6 +66,16 @@ export function joinTranscript(prev: string, piece: string, boundary = false): s
   return boundary || /[.!?…:;]["'”’)]?$/.test(prev) ? `${prev} ${piece}` : prev + piece;
 }
 
+/** Words of a line for comparing transcripts: lower case, no punctuation, single spaces. */
+export const transcriptWords = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim();
+
+/** Two transcripts of one utterance: the same words, or one is the start of the other (a partial and its whole). */
+export function sameUtterance(a: string, b: string): boolean {
+  const x = transcriptWords(a);
+  const y = transcriptWords(b);
+  return !!x && !!y && (x.startsWith(y) || y.startsWith(x));
+}
+
 /** True when the transcript has no words once its markers are taken out. */
 export function isMarkerOnly(text: string): boolean {
   return !!text.trim() && !cleanTranscript(text).trim();

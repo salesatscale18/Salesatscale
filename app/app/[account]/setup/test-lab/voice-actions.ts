@@ -15,7 +15,7 @@ import { isUuid } from "@/lib/security/ids";
 import { spendCapped, platformBudget } from "@/lib/ai/usage";
 import { usdRate } from "@/lib/ai/models";
 import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } from "@/lib/voice/service";
-import { maxCallSeconds, resolveVoiceSettings, versionModelId, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
+import { maxCallSeconds, resolveVoiceSettings, sentCallVoice, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
@@ -35,6 +35,8 @@ export type StartVoiceCallResult =
       engine: VoiceEngineName;
       /** A Classic call on a version set to a non-Gemini model: it runs on Gemini instead (the page says so). */
       classicOnGemini?: boolean;
+      /** The voice and fillers this call starts with ("default": no voice sent, the model's own). */
+      voiceUsed: CallVoiceInfo;
       fx: { currency: string; minorPerUsd: number | null };
     }
   /**
@@ -78,10 +80,14 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   }
   revalidatePath(path(a.account.slug));
   const maxSec = maxCallSeconds({ settings: conv.version.voiceSettings, deadlineSec: deploymentCallLimitSec() });
+  const callModel = engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings);
+  const resolved = resolveVoiceSettings(conv.version.voiceSettings);
+  const voiceUsed: CallVoiceInfo = { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
     model: voiceModelLabel(engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings)),
     engine, ...(engine === "classic" && classicModelId(versionModelId(conv.version.voiceSettings)) !== versionModelId(conv.version.voiceSettings) ? { classicOnGemini: true } : {}),
+    voiceUsed,
     fx: { currency: a.account.currency, minorPerUsd: minorPerUsd(usdRate(a.account.currency)) },
   };
 }

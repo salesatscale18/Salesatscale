@@ -201,6 +201,9 @@ describe("voice diagnostics (fake logger, fake and scripted models)", () => {
     const c = await engineCall(model);
     expect("voice" in model.conns[0].cfg).toBe(false);
     expect((await row(c.sessionId)).settings?.voice).toBe("model default");
+    // The test lab's "This call" card: the voice and fillers this call ran with, stored at go-live.
+    expect((await row(c.sessionId)).settings?.fillers).toBe(true);
+    expect((await voiceSessionSummary(db, acc, c.conversationId))?.voiceUsed).toEqual({ voice: "default", fillers: true });
     model.conns[0].emit({ type: "audio", pcm: new Uint8Array(480) });
     await c.run(1_000);
     model.conns[0].emit({ type: "closed", code: 1011, reason: "" });

@@ -108,6 +108,32 @@ export function callVoice(chosen: string | null | undefined, modelId: string): s
   return null;
 }
 
+/**
+ * The voice a call sends the model: the version's choice, else the family default for OpenAI; Gemini with no choice
+ * gets no voice field (null: the model's own default). As VoiceEngine.voiceInEffect on a first connection.
+ */
+export function sentCallVoice(chosen: string | null | undefined, modelId: string): string | null {
+  if (typeof chosen === "string" && chosen.trim()) return chosen.trim();
+  if (/^google\/|gemini/i.test(modelId)) return null;
+  return callVoice(null, modelId);
+}
+
+/** The session snapshot's word for "no voice sent: the model's own default" (voice_sessions.settings.voice). */
+export const MODEL_DEFAULT_VOICE = "model default";
+
+/**
+ * The voice and fillers a call ran with, from its session snapshot (voice_sessions.settings, written at go-live):
+ * `voice` the preset name, "default" (none sent), or null when the call did not record it (older calls); `fillers`
+ * on/off, or null when not recorded.
+ */
+export type CallVoiceInfo = { voice: string | "default" | null; fillers: boolean | null };
+
+export function callVoiceInfo(settings: unknown): CallVoiceInfo {
+  const s = settings && typeof settings === "object" ? (settings as { voice?: unknown; fillers?: unknown }) : {};
+  const voice = typeof s.voice === "string" && s.voice.trim() ? (s.voice.trim() === MODEL_DEFAULT_VOICE ? "default" : s.voice.trim().slice(0, 40)) : null;
+  return { voice, fillers: typeof s.fillers === "boolean" ? s.fillers : null };
+}
+
 /** `model` null: the platform default (VOICE_MODEL, else Gemini). `pauseMs` / `interrupt` null: the style's values. */
 export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt">> & {
   voice: string | null; model: VoiceModelId | null; pauseMs: number | null; interrupt: NonNullable<VoiceSettings["interrupt"]> | null;
