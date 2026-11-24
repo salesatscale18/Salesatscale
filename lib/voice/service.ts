@@ -19,7 +19,8 @@ import { isGuardedEngine, isPipelineEngine, isRtElevenEngine, RT_ELEVEN_MODELS, 
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
 import { rtElevenCallInfo, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
-import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
+import { speechFor } from "@/lib/voice-rt-eleven/rule";
+import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, resolveVoiceSettings, storedSpeech, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
 
@@ -96,17 +97,26 @@ export async function createVoiceSession(
   // too (the scripted model stands in for it; `mode` says so), so the test lab shows which model was being tried.
   const [version] = await db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
     .where(and(eq(agentVersions.id, conv.agentVersionId), eq(agentVersions.accountId, a.accountId)));
+  // Who speaks (lib/voice-rt-eleven/rule.ts, the one rule): the version's "Voice from" on the version's model, on the
+  // wiring picked (Classic never; buyer calls not while ELEVEN_FOR_BUYER_CALLS is off). Stored on the session; the
+  // socket applies it. The retired realtime + ElevenLabs engines (old stored ids) keep their own path.
+  const versionModel = versionModelId(version?.voiceSettings, opts.env);
+  const wiring = opts.engine && a.isTest ? opts.engine : "current";
+  const speech = isRtElevenEngine(wiring) || isPipelineEngine(wiring) ? null
+    : speechFor({ wanted: resolveVoiceSettings(version?.voiceSettings, versionModel).speech, modelId: versionModel, engine: wiring, isTest: a.isTest });
+  const speechSettings = speech?.speech === "elevenlabs" ? { speech: "elevenlabs" as const } : {};
   const [row] = await db.insert(voiceSessions).values({
     accountId: a.accountId, conversationId: conv.id, agentVersionId: conv.agentVersionId, startedByUserId: a.userId, isTest: a.isTest,
-    status: "pending", createdAt: now, model: versionModelId(version?.voiceSettings, opts.env), mode,
+    status: "pending", createdAt: now, model: versionModel, mode,
     ticketHash: sha256(ticket),
+    ...(speech?.speech === "elevenlabs" ? { settings: speechSettings as Record<string, unknown> as VoiceSettings } : {}),
     // A test-lab call on the Classic (20 Nov) engine: stored on the session, which the socket reads; Gemini only.
     ...(opts.engine === "classic" && a.isTest
       ? { settings: { engine: "classic" } as VoiceSettings, model: classicModelId(versionModelId(version?.voiceSettings, opts.env)) }
       : {}),
     // A test-lab call on "Classic + guards" or its silent probe (lib/voice-guarded): stored on the session; any voice
     // model, as Current.
-    ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
+    ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine, ...speechSettings } as Record<string, unknown> as VoiceSettings } : {}),
     // A test-lab call on a pipeline engine (lib/voice-pipeline: listen, think, speak; Gemini Flash or the chat model
     // thinking): stored on the session.
     ...(opts.engine && isPipelineEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
@@ -234,10 +244,12 @@ export async function realtimeModelFor(
  */
 export async function saveDraftVoiceSettings(
   db: Db, accountId: string, input: unknown, env: Record<string, string | undefined> = process.env,
+  /** `canPickSpeech`: the caller is a platform admin (the model picker's rule); anyone else's "Voice from" is ignored. */
+  opts: { canPickSpeech?: boolean } = {},
 ): Promise<{ ok: true; settings: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors }> {
   const draft = await ensureDraftVersion(db, accountId);
   // Checked against the model the draft uses now; a model change in the input re-checks the rest for the new one.
-  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env));
+  const v = validateVoiceSettings(input, versionModelId(draft.voiceSettings, env), { canPickSpeech: opts.canPickSpeech === true, storedSpeech: storedSpeech(draft.voiceSettings) });
   if (!v.ok) return v;
   await db.update(agentVersions).set({ voiceSettings: v.value })
     .where(and(eq(agentVersions.id, draft.id), eq(agentVersions.accountId, accountId), eq(agentVersions.status, "draft")));

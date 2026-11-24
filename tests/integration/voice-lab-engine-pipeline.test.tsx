@@ -140,7 +140,7 @@ describe("test lab: the retired pipeline engines", () => {
     save("pipeline-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     const options = [...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => m[1]);
-    expect(options).toEqual(["current", "guarded", "guarded_silent", "rt_eleven", "rt_eleven_mini", "classic"]);
+    expect(options).toEqual(["current", "guarded", "classic"]);
     expect(html).not.toContain("Pipeline:");
     expect(ENGINE_ORDER).not.toContain("pipeline");
     for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {

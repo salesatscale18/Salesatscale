@@ -3,10 +3,21 @@
  * server code and client code alike (no server imports): the call screen and
  * the settings UI read the same defaults, capabilities and validation.
  */
-import type { VoiceSettings } from "@/db/schema";
+import type { VoiceSettings as StoredVoiceSettings } from "@/db/schema";
 import { CALL_RULES } from "./call-rules";
 
-export type { VoiceSettings };
+/**
+ * A version's voice settings (agent_versions.voice_settings JSON) with `speech` ("Voice from", see VOICE_SPEECH).
+ * `speech` lives in the JSON only (no column, no migration); it is not in db/schema.ts's VoiceSettings because the
+ * frozen Classic engine's settings type is derived from that one (every key there is required in its resolution).
+ */
+export type VoiceSettings = StoredVoiceSettings & { speech?: "model" | "elevenlabs" };
+
+/** The stored "Voice from" of a version's settings JSON (unvalidated: resolveVoiceSettings checks it). */
+export function storedSpeech(s: StoredVoiceSettings | null | undefined): VoiceSettings["speech"] {
+  const v = (s as VoiceSettings | null | undefined)?.speech;
+  return v === "elevenlabs" || v === "model" ? v : undefined;
+}
 
 /** The platform's longest call. A version's setting can only lower it. */
 export const PLATFORM_MAX_CALL_SEC: number = CALL_RULES.platformMaxCallSec;
@@ -34,6 +45,22 @@ export const VOICE_MODELS = [
 ] as const satisfies readonly { id: string; label: string; family: "gemini" | "openai"; proven: boolean; note: string }[];
 
 export type VoiceModelId = (typeof VOICE_MODELS)[number]["id"];
+
+/**
+ * Who speaks on a call (Voice settings › "Voice from"): "model" (default) the realtime model with its own voice;
+ * "elevenlabs" the model answers in TEXT and ElevenLabs speaks (lib/voice-rt-eleven). ElevenLabs only with an OpenAI
+ * (GPT-Realtime) model: Gemini Live has no text-output path here. The engine select (test lab) decides only the wiring.
+ */
+export const VOICE_SPEECH = ["model", "elevenlabs"] as const;
+export type VoiceSpeech = (typeof VOICE_SPEECH)[number];
+
+/** True for a GPT-Realtime model (the only ones "elevenlabs" speech works with). */
+export function isOpenAiVoiceModel(id: string | null | undefined): boolean {
+  return typeof id === "string" && /^openai\/|gpt-realtime/i.test(id);
+}
+
+/** The message a save gets for ElevenLabs with a model it does not work with. */
+export const SPEECH_NEEDS_OPENAI = "ElevenLabs works with the GPT-Realtime models only. Pick GPT-Realtime 2.1 or mini, or the model's own voice.";
 export type VoiceModelInfo = (typeof VOICE_MODELS)[number];
 
 /** True for a model a version may pick. */
@@ -134,13 +161,18 @@ export function callVoiceInfo(settings: unknown): CallVoiceInfo {
   return { voice, fillers: typeof s.fillers === "boolean" ? s.fillers : null };
 }
 
-/** `model` null: the platform default (VOICE_MODEL, else Gemini). `pauseMs` / `interrupt` null: the style's values. */
-export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt">> & {
+/**
+ * `model` null: the platform default (VOICE_MODEL, else Gemini). `pauseMs` / `interrupt` null: the style's values.
+ * `speech`: "elevenlabs" only with a GPT-Realtime model (else "model").
+ */
+export type ResolvedVoiceSettings = Required<Omit<VoiceSettings, "voice" | "model" | "pauseMs" | "interrupt" | "speech">> & {
   voice: string | null; model: VoiceModelId | null; pauseMs: number | null; interrupt: NonNullable<VoiceSettings["interrupt"]> | null;
+  /** Always set by resolveVoiceSettings; optional in the type so the frozen Classic settings (lib/voice-classic) still build. */
+  speech?: VoiceSpeech;
 };
 
 export const DEFAULT_VOICE_SETTINGS: ResolvedVoiceSettings = {
-  voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: DEFAULT_MAX_CALL_SEC, model: null, pauseMs: null, interrupt: null,
+  voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: DEFAULT_MAX_CALL_SEC, model: null, pauseMs: null, interrupt: null, speech: "model",
 };
 
 /** The silence before answering a seller may set, in ms (models with tunable turn detection). */
@@ -154,8 +186,12 @@ export function versionModelId(s: VoiceSettings | null | undefined, env: Record<
   return isVoiceModel(s?.model) ? s.model : voiceModelId(env);
 }
 
-/** A version's stored settings with the defaults filled in (anything invalid falls back to the default). */
-export function resolveVoiceSettings(s: VoiceSettings | null | undefined): ResolvedVoiceSettings {
+/**
+ * A version's stored settings with the defaults filled in (anything invalid falls back to the default). `modelId`:
+ * the model the version runs on when it stores none (the platform default; default Gemini): "elevenlabs" speech
+ * with a model that is not GPT-Realtime falls back to "model".
+ */
+export function resolveVoiceSettings(s: VoiceSettings | null | undefined, modelId: string = DEFAULT_VOICE_MODEL): ResolvedVoiceSettings {
   const pace = s?.pace && (VOICE_PACES as readonly string[]).includes(s.pace) ? s.pace : DEFAULT_VOICE_SETTINGS.pace;
   const style = s?.style && (VOICE_STYLES as readonly string[]).includes(s.style) ? s.style : DEFAULT_VOICE_SETTINGS.style;
   const max = typeof s?.maxCallSec === "number" && Number.isFinite(s.maxCallSec)
@@ -169,6 +205,7 @@ export function resolveVoiceSettings(s: VoiceSettings | null | undefined): Resol
     model: isVoiceModel(s?.model) ? s.model : null,
     pauseMs: pause,
     interrupt: s?.interrupt && (INTERRUPT_LEVELS as readonly string[]).includes(s.interrupt) ? s.interrupt : null,
+    speech: s?.speech === "elevenlabs" && isOpenAiVoiceModel(isVoiceModel(s?.model) ? s.model : modelId) ? "elevenlabs" : "model",
   };
 }
 
@@ -179,9 +216,14 @@ export type VoiceSettingsErrors = Partial<Record<keyof VoiceSettings, string>>;
  * `model` (one of VOICE_MODELS) switches it, and the rest is checked against the new model. A voice the new
  * model does not have is dropped when the model changes (the call then uses that model's default voice), and is
  * an error otherwise. Turn-taking values are kept only for a model that takes them.
+ * `speech` ("Voice from"): the same access rule as the model picker (platform admins). With `canPickSpeech` the
+ * posted value is checked ("elevenlabs" with a model that is not GPT-Realtime is an error); without it the posted
+ * value is ignored and `storedSpeech` (the version's) is kept, while the model still allows it.
  * Returns the clean settings or the errors per key.
  */
-export function validateVoiceSettings(input: unknown, modelId: string = DEFAULT_VOICE_MODEL): { ok: true; value: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors } {
+export function validateVoiceSettings(
+  input: unknown, modelId: string = DEFAULT_VOICE_MODEL, opts: { canPickSpeech?: boolean; storedSpeech?: VoiceSettings["speech"] } = {},
+): { ok: true; value: VoiceSettings } | { ok: false; errors: VoiceSettingsErrors } {
   const o = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const errors: VoiceSettingsErrors = {};
   const value: VoiceSettings = {};
@@ -225,6 +267,17 @@ export function validateVoiceSettings(input: unknown, modelId: string = DEFAULT_
     const n = Number(o.maxCallSec);
     if (!Number.isInteger(n) || n < MIN_CALL_SEC || n > PLATFORM_MAX_CALL_SEC) errors.maxCallSec = `Between ${MIN_CALL_SEC} and ${PLATFORM_MAX_CALL_SEC} seconds.`;
     else value.maxCallSec = n;
+  }
+  if (opts.canPickSpeech) {
+    if (o.speech !== undefined && o.speech !== null && o.speech !== "") {
+      if (!(VOICE_SPEECH as readonly unknown[]).includes(o.speech)) errors.speech = "Voice from is the model's own voice or ElevenLabs.";
+      else if (o.speech === "elevenlabs" && !isOpenAiVoiceModel(target)) errors.speech = SPEECH_NEEDS_OPENAI;
+      // Only ElevenLabs is stored: no key is the model's own voice (the default).
+      else if (o.speech === "elevenlabs") value.speech = "elevenlabs";
+    }
+  } else if (opts.storedSpeech === "elevenlabs" && isOpenAiVoiceModel(target)) {
+    // Not the caller's to change: the version's own value stays (a model it does not work with drops it).
+    value.speech = "elevenlabs";
   }
   return Object.keys(errors).length ? { ok: false, errors } : { ok: true, value };
 }

@@ -4,7 +4,8 @@
  * plain labels and the time texts. No server imports: client components use
  * them too, and constants live here, never in a "use client" file.
  */
-import { DEFAULT_VOICE_SETTINGS, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, voiceModelLabel, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
+import { DEFAULT_VOICE_SETTINGS, isOpenAiVoiceModel, MIN_CALL_SEC, PLATFORM_MAX_CALL_SEC, voiceCapabilities, voiceMode, voiceModelLabel, type ResolvedVoiceSettings, type VoiceCapabilities } from "./settings";
+import { PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
 
 export type VoiceLabAccess = "ok" | "not_admin" | "voice_off";
 
@@ -128,14 +129,36 @@ export function answerSpeedText(ms: number): string {
 const PACE_WORD: Record<ResolvedVoiceSettings["pace"], string> = { slower: "Slower pace", normal: "Normal pace", faster: "Faster pace" };
 const STYLE_WORD: Record<ResolvedVoiceSettings["style"], string> = { patient: "Patient", balanced: "Balanced", quick: "Quick" };
 
-/** The read-only line under "Call the agent": "Gemini 3.8 Live · Puck · upbeat, lively · Normal pace" (only what the model supports). */
+/** "Rachel (ElevenLabs)": the ElevenLabs voice test calls hear ("Voice from: ElevenLabs"). */
+export const ELEVEN_VOICE_LABEL = PIPELINE_VOICE_NAME;
+
+/**
+ * "Voice from" after a model change: ElevenLabs on a model it does not work with (Gemini) goes back to the model's own
+ * voice, and `reset` says so (the form shows one line: never a silent change). Anything else is kept.
+ */
+export function speechAfterModelSwitch(speech: ResolvedVoiceSettings["speech"], nextModelId: string): { speech: NonNullable<ResolvedVoiceSettings["speech"]>; reset: boolean } {
+  if (speech === "elevenlabs" && !isOpenAiVoiceModel(nextModelId)) return { speech: "model", reset: true };
+  return { speech: speech ?? "model", reset: false };
+}
+
+/** True when the settings have ElevenLabs speak on this model (GPT-Realtime only). */
+export function elevenChosen(s: Pick<ResolvedVoiceSettings, "speech">, modelId: string): boolean {
+  return s.speech === "elevenlabs" && isOpenAiVoiceModel(modelId);
+}
+
+/**
+ * The read-only line under "Call the agent": "Gemini 3.8 Live · Puck · upbeat, lively · Normal pace" (only what the
+ * model supports). "Voice from: ElevenLabs" (the test lab's calls are test calls): "GPT-Realtime mini · Rachel
+ * (ElevenLabs) · …", the voice test calls hear.
+ */
 export function voiceSettingsSummary(s: ResolvedVoiceSettings, modelId: string): string {
   const caps = voiceCapabilities(modelId);
   const parts: string[] = [];
   const model = voiceModelLabel(modelId);
   if (model && model !== modelId) parts.push(model);
   const voice = s.voice ?? defaultVoiceOf(caps);
-  if (caps.voices.length && voice) parts.push(voiceLabel(voice));
+  if (elevenChosen(s, modelId)) parts.push(ELEVEN_VOICE_LABEL);
+  else if (caps.voices.length && voice) parts.push(voiceLabel(voice));
   if (caps.pace) parts.push(PACE_WORD[s.pace]);
   if (caps.style) parts.push(STYLE_WORD[s.style]);
   if (!parts.length) parts.push(PACE_WORD[DEFAULT_VOICE_SETTINGS.pace]);

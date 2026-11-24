@@ -85,6 +85,14 @@ export const PIPELINE_VOICE = "21m00Tcm4TlvDq8ikWAM";
 /** The voice's name for people (the "This call" card). */
 export const PIPELINE_VOICE_NAME = "Rachel (ElevenLabs)";
 
+/**
+ * The voice's stability, sent in dialogue mode only (providerOptions.elevenlabs.dialogue.voiceSettings.stability,
+ * lib/voice-pipeline/gateway.ts speakProviderOptions; text-to-speech attempts get nothing new). ElevenLabs v3/v4
+ * dialogue accepts 0, 0.5 and 1: 0 = most expressive, 0.5 = natural, 1 = most stable. Default 1 (owner, 24 Nov: the
+ * voice changed mid-answer).
+ */
+export const PIPELINE_VOICE_STABILITY = 1;
+
 /** What the listener is sent: PCM16 mono at this rate (the browser's 24 kHz mic audio is resampled on the server). */
 export const LISTEN_INPUT_RATE = 16_000;
 /** What the speaker is asked for: raw PCM16 mono 24 kHz, what the browser plays (anything else is converted or refused). */

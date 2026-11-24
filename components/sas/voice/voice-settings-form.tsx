@@ -4,8 +4,8 @@ import { useActionState, useState } from "react";
 import { Icon } from "@/components/sas/icon";
 import { buttonClass } from "@/components/sas/primitives";
 import { t } from "@/lib/i18n";
-import { callLimitShort, defaultVoiceOf, hasAdvancedTuning, limitOptions, voiceChangeOnModel, voiceOptions } from "@/lib/voice/lab";
-import { DEFAULT_VOICE_SETTINGS, INTERRUPT_LEVELS, PAUSE_MS_RANGE, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceSettingsErrors } from "@/lib/voice/settings";
+import { callLimitShort, defaultVoiceOf, ELEVEN_VOICE_LABEL, hasAdvancedTuning, limitOptions, speechAfterModelSwitch, voiceChangeOnModel, voiceOptions } from "@/lib/voice/lab";
+import { DEFAULT_VOICE_SETTINGS, INTERRUPT_LEVELS, isOpenAiVoiceModel, PAUSE_MS_RANGE, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceSettingsErrors, type VoiceSpeech } from "@/lib/voice/settings";
 import type { VoiceModelChoice } from "@/lib/voice/model-choices";
 
 export type VoiceSettingsFormState = { ok?: boolean; errors?: VoiceSettingsErrors; failed?: boolean };
@@ -38,6 +38,15 @@ function Segmented<T extends string>({ name, label, value, options, onChange, de
  * phrases" and "Longest call" is left of the advanced settings, there is no
  * "Advanced" fold. The footer stays at the bottom of the panel. `action` saves
  * to the draft on the server and checks the role there.
+ *
+ * "Voice from" (design review, 24 Nov 2026), directly under the model, for a GPT-Realtime model only: the model's own
+ * voice, or ElevenLabs (the model answers in text, ElevenLabs speaks). With ElevenLabs, a read-only row says what test
+ * calls hear (Rachel) and the model's own voice stays editable under "Buyers hear" (buyers keep the model's own voice
+ * while ElevenLabs is test-only), with the filler phrases (only the model's own voice says them). When buyer calls
+ * get ElevenLabs too (`elevenForBuyers`, the server's lib/voice-rt-eleven/rule.ts ELEVEN_FOR_BUYER_CALLS), the
+ * "Buyers hear" group is not rendered (its values are kept). Switching to Gemini with ElevenLabs chosen sets it back
+ * to the model's own voice and says so (never a silent change). Same access as the model picker: the whole panel is
+ * platform admins only, and the server ignores "Voice from" from anyone else.
  */
 export function VoiceSettingsForm({
   action,
@@ -49,6 +58,7 @@ export function VoiceSettingsForm({
   closeHref,
   deploymentLimitSec,
   sampleUrl,
+  elevenForBuyers = false,
 }: {
   action: (prev: VoiceSettingsFormState, form: FormData) => Promise<VoiceSettingsFormState>;
   slug: string;
@@ -63,6 +73,8 @@ export function VoiceSettingsForm({
   deploymentLimitSec: number | null;
   /** A short sample of a voice, where one exists. Without it the Listen button is not shown. */
   sampleUrl?: (voice: string) => string | null;
+  /** Buyer calls hear ElevenLabs too (server constant ELEVEN_FOR_BUYER_CALLS): no "Buyers hear" group. */
+  elevenForBuyers?: boolean;
 }) {
   const [state, formAction, pending] = useActionState(action, {});
   const cap = deploymentLimitSec && deploymentLimitSec < PLATFORM_MAX_CALL_SEC ? deploymentLimitSec : null;
@@ -77,12 +89,20 @@ export function VoiceSettingsForm({
   /** Another model: its own voices (a voice it does not have goes back to its default), the rest as it supports. */
   // The voice a model change replaced (one line under Voice until the voice or the model changes again).
   const [voiceNote, setVoiceNote] = useState<{ from: string; to: string } | null>(null);
+  // "Voice from" was set back to the model's own voice by a switch to a model ElevenLabs does not work with.
+  const [speechReset, setSpeechReset] = useState(false);
   const pickModel = (id: string) => {
     const next = models.find((m) => m.id === id);
     if (!next) return;
     setVoiceNote(voiceChangeOnModel(v.voice, next.caps));
-    setV((x) => ({ ...x, model: next.id as ResolvedVoiceSettings["model"], voice: x.voice && next.caps.voices.includes(x.voice) ? x.voice : null }));
+    const sp = speechAfterModelSwitch(v.speech, next.id);
+    setSpeechReset(sp.reset);
+    setV((x) => ({ ...x, model: next.id as ResolvedVoiceSettings["model"], voice: x.voice && next.caps.voices.includes(x.voice) ? x.voice : null, speech: sp.speech }));
   };
+  const speechOffered = isOpenAiVoiceModel(model.id);
+  const eleven = speechOffered && v.speech === "elevenlabs";
+  // ElevenLabs for buyers too: the model's own voice (and its fillers) is heard by nobody, so its group is not shown.
+  const buyersGroup = !(eleven && elevenForBuyers);
   const options = voiceOptions(caps);
   const voiceValue = v.voice && options.some((o) => o.value === v.voice) ? v.voice : "";
   const heard = voiceValue || defaultVoiceOf(caps);
@@ -131,9 +151,31 @@ export function VoiceSettingsForm({
           </span>
           <span className="sas-small sas-muted" data-voice-model-cost="">{model.costHint}</span>
           {e.model ? <span className="sas-small sas-vs-err" role="alert">{e.model}</span> : null}
+          {speechReset ? <span className="sas-small" role="status" data-voice-speech-reset="">{t("voice.settings.speech_reset")}</span> : null}
         </div>
-        {caps.voices.length ? (
-          <div className="sas-input-group">
+        {speechOffered ? (
+          <div className="sas-input-group" data-voice-speech-field="">
+            <label className="sas-input-label" htmlFor="vs-speech">{t("voice.settings.speech")}</label>
+            <select className="sas-select" id="vs-speech" name="speech" value={eleven ? "elevenlabs" : "model"}
+              onChange={(ev) => { setSpeechReset(false); set("speech", ev.target.value as VoiceSpeech); }}
+              aria-describedby={eleven ? "vs-speech-hint" : undefined} aria-invalid={e.speech ? true : undefined}>
+              <option value="model">{t("voice.settings.speech.model")}</option>
+              <option value="elevenlabs">{t("voice.settings.speech.elevenlabs")}</option>
+            </select>
+            {eleven ? <span className="sas-small" id="vs-speech-hint" data-voice-speech-hint="">{t(elevenForBuyers ? "voice.settings.speech_hint_all" : "voice.settings.speech_hint")}</span> : null}
+            {e.speech ? <span className="sas-small sas-vs-err" role="alert">{e.speech}</span> : null}
+          </div>
+        ) : <input type="hidden" name="speech" value="model" />}
+        {eleven ? (
+          <div className="sas-input-group" data-voice-test-hears="">
+            <span className="sas-input-label">{t(elevenForBuyers ? "voice.settings.all_hear" : "voice.settings.test_hears")}</span>
+            <span className="sas-vs-row"><output className="sas-select sas-vs-readonly" aria-readonly="true" data-voice-test-voice="">{ELEVEN_VOICE_LABEL}</output></span>
+          </div>
+        ) : null}
+        {caps.voices.length && !buyersGroup ? <input type="hidden" name="voice" value={voiceValue} /> : null}
+        {caps.voices.length && buyersGroup ? (
+          <div className="sas-input-group" data-voice-name-field="" data-voice-buyers-hear={eleven ? "" : undefined}>
+            {eleven ? <span className="sas-small sas-vs-sublabel" data-voice-buyers-label="">{t("voice.settings.buyers_hear")}</span> : null}
             <label className="sas-input-label" htmlFor="vs-voice">{t("voice.settings.voice")}</label>
             <span className="sas-vs-row">
               <select className="sas-select" id="vs-voice" name="voice" aria-describedby={sample ? undefined : "vs-voice-hint"} value={voiceValue} onChange={(ev) => { setVoiceNote(null); set("voice", ev.target.value || null); }} aria-invalid={e.voice ? true : undefined}>
@@ -146,10 +188,13 @@ export function VoiceSettingsForm({
               ) : null}
             </span>
             {voiceNote ? <span className="sas-small" role="status" data-voice-changed="">{t("voice.settings.voice_changed", voiceNote)}</span> : null}
-            {sample ? null : <span className="sas-small" id="vs-voice-hint">{t("voice.settings.voice_hint")}</span>}
+            {sample ? null : <span className="sas-small" id="vs-voice-hint">{t(eleven ? "voice.settings.voice_hint_buyers" : "voice.settings.voice_hint")}</span>}
             {e.voice ? <span className="sas-small sas-vs-err" role="alert">{e.voice}</span> : null}
+            {/* Fillers are said only by the model's own voice: with ElevenLabs chosen they stay with the buyers' voice. */}
+            {eleven && caps.fillers ? fillers : null}
           </div>
         ) : null}
+        {eleven && !buyersGroup && caps.fillers && v.fillers ? <input type="hidden" name="fillers" value="on" /> : null}
         {caps.pace ? (
           <Segmented name="pace" label={t("voice.settings.pace")} value={v.pace} onChange={(x) => set("pace", x)}
             options={VOICE_PACES.map((p) => ({ value: p, label: t(`voice.settings.pace.${p}`) }))} />
@@ -187,13 +232,13 @@ export function VoiceSettingsForm({
                   {e.interrupt ? <span className="sas-small sas-vs-err" role="alert">{e.interrupt}</span> : null}
                 </div>
               ) : null}
-              {caps.fillers ? fillers : null}
+              {caps.fillers && !eleven ? fillers : null}
               {longest}
             </div>
           </details>
         ) : (
           <>
-            {caps.fillers ? fillers : null}
+            {caps.fillers && !eleven ? fillers : null}
             {longest}
           </>
         )}

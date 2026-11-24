@@ -21,7 +21,7 @@
 import { assertLiveAllowed } from "@/lib/voice/gateway-realtime";
 import { ListenerBase, type Listener } from "./listener";
 import type { Speaker } from "./speaker";
-import { LISTEN_INPUT_RATE, PIPELINE_VOICE, SPEAK_OUTPUT_RATE } from "./models";
+import { LISTEN_INPUT_RATE, PIPELINE_VOICE, PIPELINE_VOICE_STABILITY, SPEAK_OUTPUT_RATE } from "./models";
 import { Resampler } from "./pcm";
 import { VOICE_SAMPLE_RATE } from "@/lib/voice/protocol";
 
@@ -260,19 +260,29 @@ export class GatewayListener extends ListenerBase implements Listener {
 }
 
 /**
- * The provider options of an ElevenLabs speak attempt in dialogue mode: `{ elevenlabs: { dialogue: { voices: [voice] } } }`.
+ * The provider options of an ElevenLabs speak attempt in dialogue mode:
+ * `{ elevenlabs: { dialogue: { voices: [voice], voiceSettings: { stability } } } }` (stability: models.ts
+ * PIPELINE_VOICE_STABILITY, 24 Nov: the expressive v4 model changed its delivery within a reply).
  * The shape is @ai-sdk/elevenlabs's (3.0.88, elevenlabs-speech-model-options.ts: `dialogue: { voices: string[1..10],
  * voiceSettings?: { stability } }`); the Gateway passes `providerOptions` through verbatim in the
  * `speech-stream.start` frame (@ai-sdk/gateway gateway-speech-model.ts doStream). In dialogue mode the call's `voice`
  * must be one of `voices` (else the provider refuses it), each text part is spoken by `voice`, and `language` still
  * goes as the stream's `language_code`.
  */
-export function speakProviderOptions(voice: string): { elevenlabs: { dialogue: { voices: string[] } } } {
-  return { elevenlabs: { dialogue: { voices: [voice] } } };
+export function speakProviderOptions(voice: string, stability: number = PIPELINE_VOICE_STABILITY): { elevenlabs: { dialogue: { voices: string[]; voiceSettings: { stability: number } } } } {
+  return { elevenlabs: { dialogue: { voices: [voice], voiceSettings: { stability } } } };
 }
 
 /**
- * Streaming speech, one Gateway stream per text (a sentence): raw PCM 24 kHz is asked for; PCM at another rate is
+ * What a speak attempt adds to the speech stream's start: the dialogue options (with the stability) in dialogue mode;
+ * nothing for a text-to-speech attempt (the provider refuses the dialogue option there, and nothing new is sent).
+ */
+export function speakRequestOptions(voice: string, dialogue: boolean): { providerOptions?: ReturnType<typeof speakProviderOptions> } {
+  return dialogue ? { providerOptions: speakProviderOptions(voice) } : {};
+}
+
+/**
+ * Streaming speech, one Gateway stream per text (the realtime path: a whole reply): raw PCM 24 kHz is asked for; PCM at another rate is
  * resampled; any other format fails with a clear error (the engine logs it). `cancel` aborts every stream in progress.
  */
 export class GatewaySpeaker implements Speaker {
@@ -305,7 +315,7 @@ export class GatewaySpeaker implements Speaker {
         voice: this.voice,
         outputFormat: { type: "audio/pcm", rate: SPEAK_OUTPUT_RATE },
         language: opts.language,
-        ...(this.dialogue ? { providerOptions: speakProviderOptions(this.voice) } : {}),
+        ...speakRequestOptions(this.voice, this.dialogue),
         abortSignal: abort.signal,
         onError: ({ error }) => void (speechError = error),
       });

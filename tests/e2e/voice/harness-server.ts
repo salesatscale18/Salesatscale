@@ -272,8 +272,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const d = (await listVersions(db, acc)).find((v) => v.status === "draft")!;
         const model = url.searchParams.get("model") ?? DEFAULT_VOICE_MODEL;
         return send(200, "application/json", JSON.stringify({
-          version: d.version, versionLabel: `v${d.version} Draft`, models: voiceModelChoices(), platformModel: model, settings: resolveVoiceSettings(d.voiceSettings), scenarios,
-          summary: voiceSettingsSummary(resolveVoiceSettings(d.voiceSettings), versionModelId(d.voiceSettings, { VOICE_MODEL: model })),
+          version: d.version, versionLabel: `v${d.version} Draft`, models: voiceModelChoices(), platformModel: model, settings: resolveVoiceSettings(d.voiceSettings, versionModelId(d.voiceSettings, { VOICE_MODEL: model })), scenarios,
+          summary: voiceSettingsSummary(resolveVoiceSettings(d.voiceSettings, versionModelId(d.voiceSettings, { VOICE_MODEL: model })), versionModelId(d.voiceSettings, { VOICE_MODEL: model })),
           fx: { currency: "ILS", minorPerUsd: 370 }, maxSec: maxCallSeconds({ settings: d.voiceSettings, deadlineSec: CAP, env: ENV }), cap: CAP,
         }));
       }
@@ -298,7 +298,8 @@ export async function startVoiceHarness(o: { port?: number } = {}): Promise<Harn
         const r = await saveDraftVoiceSettings(db, acc, {
           model: f.get("model") ?? "", voice: f.get("voice") ?? "", pace: f.get("pace") ?? "", style: f.get("style") ?? "",
           pauseMs: f.get("pauseMs") ?? "", interrupt: f.get("interrupt") ?? "", fillers: f.get("fillers") === "on", maxCallSec: f.get("maxCallSec") ?? "",
-        }, ENV);
+          speech: f.get("speech") ?? "",
+        }, ENV, { canPickSpeech: true });
         return send(200, "application/json", JSON.stringify(r.ok ? { ok: true } : { ok: false, errors: r.errors }));
       }
       send(404, "text/plain", "not found");

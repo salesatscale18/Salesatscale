@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { ServerEventMapper, toSdkSessionConfig } from "@/lib/voice/gateway-realtime";
 import { ManualClock, flushAsync, type RealtimeSessionConfig } from "@/lib/voice/realtime";
-import { SpeechPlayer } from "@/lib/voice-rt-eleven/player";
+import { FALLBACK_CHARS_PER_SEC, heardEstimate, SpeechPlayer } from "@/lib/voice-rt-eleven/player";
 import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { rtElevenCallInfo, medianOf } from "@/lib/voice-rt-eleven/summary";
 import { rtElevenProfile } from "@/lib/voice-rt-eleven/profile";
@@ -103,9 +103,9 @@ describe("text output: the event mapping", () => {
 });
 
 describe("the speech player", () => {
-  const setup = (o: { msPerChar?: number } = {}) => {
+  const setup = (o: { msPerChar?: number; maxMs?: number } = {}) => {
     const clock = new ManualClock(0);
-    const speaker = new ScriptedSpeaker("elevenlabs/eleven-v4-turbo", { msPerChar: o.msPerChar ?? 20, maxMs: 2_000 });
+    const speaker = new ScriptedSpeaker("elevenlabs/eleven-v4-turbo", { msPerChar: o.msPerChar ?? 20, maxMs: o.maxMs ?? 2_000 });
     const frames: { at: number; bytes: number; job: number }[] = [];
     let idle = 0;
     let chars = 0;
@@ -119,55 +119,105 @@ describe("the speech player", () => {
     return { clock, speaker, frames, player, run, idle: () => idle, chars: () => chars, firsts };
   };
 
-  it("speaks sentence by sentence in 100 ms frames, at most a second ahead of real time; idle once played out", async () => {
+  it("one speech stream per reply (multi-sentence), in 100 ms frames, at most a second ahead of real time; idle once played out", async () => {
     const p = setup();
-    const job = p.player.play("a1", ["First sentence here.", "Second sentence is longer than that."], "en");
+    const text = "First sentence here. Second sentence is longer than that. And a third one to finish.";
+    const job = p.player.play("a1", text, "en");
     await p.run(0);
-    expect(p.speaker.said.map((x) => x.text)).toEqual(["First sentence here.", "Second sentence is longer than that."]);
+    // ONE request for the whole reply (the fake speaker counts them).
+    expect(p.speaker.said.map((x) => x.text)).toEqual([text]);
+    expect(p.player.streams).toBe(1);
     expect(p.frames.every((f) => f.bytes <= 4_800)).toBe(true);
     // Only about a second's worth goes out at once.
     expect(p.frames.length).toBeLessThanOrEqual(11);
     expect(p.player.active).toBe(true);
     await p.run(5_000);
     expect(job.state).toBe("done");
-    expect(job.sent).toBe(2);
-    expect(p.chars()).toBe("First sentence here.".length + "Second sentence is longer than that.".length);
+    expect(job.allSent).toBe(true);
+    expect(job.synthDone).toBe(true);
+    expect(job.sentMs).toBe(job.receivedMs);
+    expect(p.chars()).toBe(text.length);
     expect(p.firsts).toEqual([job.id]);
     expect(p.idle()).toBe(1);
     expect(p.player.active).toBe(false);
+    // Two replies: two streams, never one per sentence.
+    p.player.play("a2", "One. Two. Three.", "en");
+    p.player.play("a3", "Four, five. Six.", "en");
+    await p.run(5_000);
+    expect(p.speaker.said.map((x) => x.text)).toEqual([text, "One. Two. Three.", "Four, five. Six."]);
+    expect(p.player.measuredCharsPerSec).toBeGreaterThan(0);
   });
 
-  it("replies play one after the other; cancel stops at once, drops the queue and reports how far it got", async () => {
-    const p = setup({ msPerChar: 40 });
-    const a = p.player.play("a1", ["One two three four five six seven.", "Eight nine ten eleven twelve."], "en");
-    const b = p.player.play("a2", ["Next reply."], "en");
-    await p.run(500);
+  it("replies play one after the other; cancel mid-stream stops at once, drops the queue and estimates what was heard", async () => {
+    const p = setup({ msPerChar: 40, maxMs: 10_000 });
+    const text = "One two three four five six seven. Eight nine ten eleven twelve.";
+    const a = p.player.play("a1", text, "en");
+    const b = p.player.play("a2", "Next reply.", "en");
+    await p.run(1_000);
     expect(p.frames.every((f) => f.job === a.id)).toBe(true);
     const cut = p.player.cancel();
     expect(cut).toBe(a);
     expect(a.state).toBe("cut");
     expect(b.state).toBe("cut");
-    expect(a.started).toBeGreaterThanOrEqual(1);
-    expect(a.sent).toBeLessThan(2);
+    // About 2.1 s sent at 1 s: the lead (1 s, plus at most one frame) was not played.
+    expect(a.sentMs).toBeGreaterThan(2_000);
+    expect(a.unplayedMs).toBeGreaterThan(900);
+    expect(a.unplayedMs).toBeLessThanOrEqual(1_100);
+    const heard = a.heard!;
+    expect(heard.playedMs).toBe(Math.round(a.sentMs - a.unplayedMs!));
+    expect(text.startsWith(heard.text)).toBe(true);
+    expect(heard.text.length).toBeGreaterThan(0);
+    expect(heard.text.length).toBeLessThan(text.length);
+    // Ends at a word boundary: the next character of the reply is a space.
+    expect(text[heard.text.length]).toBe(" ");
     const n = p.frames.length;
     await p.run(5_000);
     expect(p.frames.length).toBe(n);
     expect(p.idle()).toBe(0);
     expect(p.speaker.cancels).toBe(1);
     expect(p.player.active).toBe(false);
+    expect(p.speaker.said).toHaveLength(1);
+  });
+
+  it("the heard-text estimate: share of the whole audio when known, else characters per second (measured, fallback 15)", () => {
+    const text = "Our sensors check the fridge every minute.";
+    // Whole audio known (3 s): 1 s played = a third of the characters (14: "Our sensors ch"), cut back to a word.
+    expect(heardEstimate(text, 1_000, { totalMs: 3_000, charsPerSec: 99 })).toEqual({ text: "Our sensors", playedMs: 1_000, basis: "total", charsPerSec: null });
+    // Unknown total: 15 characters a second, 1 s = 15 characters = "Our sensors che" → "Our sensors".
+    expect(heardEstimate(text, 1_000, { totalMs: null, charsPerSec: FALLBACK_CHARS_PER_SEC })).toMatchObject({ text: "Our sensors", basis: "rate", charsPerSec: 15 });
+    // A cut right after a word keeps it; none played: nothing heard; all played: the whole text.
+    expect(heardEstimate("Hello there friend", 1_000, { totalMs: null, charsPerSec: 11 }).text).toBe("Hello there");
+    expect(heardEstimate(text, 0, { totalMs: null, charsPerSec: 15 }).text).toBe("");
+    expect(heardEstimate(text, 10_000, { totalMs: 4_000, charsPerSec: 15 }).text).toBe(text);
+    expect(heardEstimate("Supercalifragilistic word", 500, { totalMs: null, charsPerSec: 15 }).text).toBe("");
+  });
+
+  it("a barge-in while the last lead plays out (all frames sent): the unplayed lead is not counted as heard", async () => {
+    const p = setup({ msPerChar: 20 });
+    const text = "A short reply that ends here.";
+    const a = p.player.play("a1", text, "en");
+    // 29 chars × 20 ms = 580 ms of audio, all sent at once (under the lead), none played yet.
+    await p.run(100);
+    expect(a.allSent).toBe(true);
+    const cut = p.player.cancel();
+    expect(cut).toBe(a);
+    expect(a.heard!.basis).toBe("total");
+    expect(a.heard!.text.length).toBeLessThan(text.length);
+    expect(p.idle()).toBe(0);
   });
 });
 
 describe("the engine list", () => {
-  it("six options in the owner's order; the pipelines retired but still labelled; rt engines have their own model", () => {
-    expect(ENGINE_ORDER).toEqual(["current", "guarded", "guarded_silent", "rt_eleven", "rt_eleven_mini", "classic"]);
+  it("the select is wiring only (three options); the rt engines retired (ElevenLabs is a Voice settings choice) but still labelled", () => {
+    expect(ENGINE_ORDER).toEqual(["current", "guarded", "classic"]);
     expect(t(engineLabelKey("rt_eleven"))).toBe("GPT-Realtime 2.1 + ElevenLabs (testing)");
     expect(t(engineLabelKey("rt_eleven_mini"))).toBe("GPT-Realtime mini + ElevenLabs (testing)");
     expect(t("lab.voice.engine_help.rt_eleven")).toBe("GPT-Realtime 2.1 listens and decides and answers in text; ElevenLabs speaks. Test lab only.");
     expect(t(engineLabelKey("pipeline"))).toBe("Pipeline: Gemini Flash + ElevenLabs (testing)");
     expect(RT_ELEVEN_MODELS).toEqual({ rt_eleven: "openai/gpt-realtime-2.1", rt_eleven_mini: "openai/gpt-realtime-mini" });
     for (const e of ["pipeline", "pipeline_lite", "pipeline_chat"]) expect(isRetiredEngine(e)).toBe(true);
-    for (const e of ["current", "guarded", "rt_eleven", "rt_eleven_mini", "classic"]) expect(isRetiredEngine(e)).toBe(false);
+    for (const e of ["rt_eleven", "rt_eleven_mini", "guarded_silent"]) expect(isRetiredEngine(e)).toBe(true);
+    for (const e of ["current", "guarded", "classic"]) expect(isRetiredEngine(e)).toBe(false);
     expect(isRtElevenEngine("rt_eleven_mini")).toBe(true);
     expect(otherEngine("rt_eleven")).toBe("rt_eleven");
     expect(sessionEngine({ engine: "rt_eleven_mini" })).toBe("rt_eleven_mini");

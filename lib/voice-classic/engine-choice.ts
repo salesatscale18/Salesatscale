@@ -43,10 +43,12 @@ export const RT_ELEVEN_MODELS: Readonly<Record<RtElevenEngineName, string>> = {
 };
 
 /**
- * Engines no new call may start on (the start action refuses them): the pipelines, replaced by the realtime +
- * ElevenLabs engines (owner, 24 Nov 2026). Their code and labels stay (old calls' cards).
+ * Engines no new call may start on (the start action refuses them; their code and labels stay for old calls' cards):
+ * the pipelines (owner, 24 Nov 2026), and since the rewiring of 24 Nov the realtime + ElevenLabs engines and the
+ * silent probe. ElevenLabs is now a Voice settings choice ("Voice from", lib/voice-rt-eleven/rule.ts): the select
+ * picks only the wiring.
  */
-export const isRetiredEngine = (e: unknown): boolean => isPipelineEngine(e);
+export const isRetiredEngine = (e: unknown): boolean => isPipelineEngine(e) || isRtElevenEngine(e) || e === GUARDED_SILENT_ENGINE;
 
 /** The engines that run today's engine with the guarded profile (lib/voice-guarded/profile.ts). */
 export const isGuardedEngine = (e: VoiceEngineName): e is typeof GUARDED_ENGINE | typeof GUARDED_SILENT_ENGINE => e === GUARDED_ENGINE || e === GUARDED_SILENT_ENGINE;
@@ -73,10 +75,11 @@ export const ENGINE_DATES: Readonly<Record<VoiceEngineName, string>> = {
 };
 
 /**
- * The order of the test lab's "Voice engine" list: live for buyers first, the old baseline last. The pipelines are
- * not offered any more (isRetiredEngine).
+ * The test lab's "Voice engine" list: the WIRING only (owner, 24 Nov 2026: one rule; the version's Voice settings
+ * decide the model and the voice). Live for buyers first, the old baseline last. The retired ids are not offered
+ * (isRetiredEngine).
  */
-export const ENGINE_ORDER: readonly VoiceEngineName[] = ["current", "guarded", "guarded_silent", "rt_eleven", "rt_eleven_mini", "classic"];
+export const ENGINE_ORDER: readonly VoiceEngineName[] = ["current", "guarded", "classic"];
 
 /** An engine's label's values ({date}). */
 export const engineLabelVars = (engine: VoiceEngineName | null | undefined) => ({ date: ENGINE_DATES[engine ?? "current"] ?? ENGINE_DATES.current });

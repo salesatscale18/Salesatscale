@@ -49,6 +49,7 @@ import type { Speaker } from "@/lib/voice-pipeline/speaker";
 import { PIPELINE_TIMING, PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
 import { spokenForm, splitSentences } from "@/lib/voice-pipeline/spoken";
 import { SpeechPlayer, type SpeechJob } from "@/lib/voice-rt-eleven/player";
+import { RT_SPEECH_STREAM_LINE } from "@/lib/voice-rt-eleven/speech-line";
 import { rtRealtimeCost, rtSpeakCost } from "@/lib/voice-rt-eleven/cost";
 import { medianOf, type RtElevenUsage } from "@/lib/voice-rt-eleven/summary";
 
@@ -555,6 +556,8 @@ export class VoiceEngine {
     toolRounds: 0,
     /** A response is in flight (started, not yet complete). */
     responseOpen: false,
+    /** The tools the model called since the last response's text (named, so an end_call response's goodbye is spoken). */
+    responseTools: [] as string[],
     dropped: 0,
     bargeIns: 0,
     chars: 0,
@@ -1141,14 +1144,18 @@ export class VoiceEngine {
     // A profile counts as Classic did: every agent message.
     this.agentMessages = this.profile ? agentRows.length : agentRows.filter(writtenByAgent).length;
     if (this.profile) this.log.info(voiceLine(this.sessionId, `engine=${this.profile.engine}`));
-    if (this.speaker) this.log.info(voiceLine(this.sessionId, `rt output=text model=${this.model.modelId} speak=${this.speaker.modelId} voice=${PIPELINE_VOICE_NAME}`));
+    if (this.speaker) {
+      this.log.info(voiceLine(this.sessionId, `rt output=text model=${this.model.modelId} speak=${this.speaker.modelId} voice=${PIPELINE_VOICE_NAME}`));
+      // Once per call: one speech stream per reply, and the stability sent (dialogue mode only).
+      this.log.info(voiceLine(this.sessionId, RT_SPEECH_STREAM_LINE));
+    }
 
     // Recording is decided before the instructions are built: a recorded call's voice block has one rule about it.
     const recording = await this.startRecording(account);
     this.recorded = recording.on;
     const ctx = this.profile
       ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded })
-      : await loadVoiceInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded });
+      : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded });
     this.continuingCall = ctx.continuing;
     // The count the stage uses for this call's tools (effectiveAgentMessages; nothing of this call is stored yet).
     this.log.info(voiceLine(this.sessionId, inheritedSummary(this.effectiveAgentMessages(), ctx.continuing, dealNow?.fields ?? null, ctx.instructions)));
@@ -1342,6 +1349,17 @@ export class VoiceEngine {
     return this.safeConfig ? null : callVoice(null, this.model.modelId);
   }
 
+  /**
+   * The version Current's instructions are built from. Text output (ElevenLabs speaks): the filler-phrase lines are
+   * left out (fillers off), the ONE instruction difference from audio output. A filler is said just before a tool
+   * call, and a response with a tool call is never spoken in text mode (its text is dropped), so the lines would only
+   * produce dropped text. Audio output: the version as stored (instructions unchanged).
+   */
+  private instructionVersion(version: AgentVersion): AgentVersion {
+    if (!this.speaker || this.profile) return version;
+    return { ...version, voiceSettings: { ...(version.voiceSettings ?? {}), fillers: false } };
+  }
+
   /** The session's settings snapshot: the version's settings, the voice actually in effect ("model default" when none is sent) and the limit. */
   private settingsSnapshot() {
     const version = this.loaded!.version;
@@ -1356,6 +1374,9 @@ export class VoiceEngine {
       // Another engine's model side: its name stays on the session (the test lab shows it; Call again keeps it).
       ...(this.profile ? { engine: this.profile.engine } : {}),
       ...(this.speaker ? { rtEleven: { realtimeModel: rtModel, speakModel: this.speaker.modelId, voice: PIPELINE_VOICE_NAME } } : {}),
+      // Who spoke on this call (lib/voice-rt-eleven/rule.ts): what applied, never just what the version asked for (a
+      // buyer call, or the Old baseline, ignores "elevenlabs").
+      speech: this.speaker ? "elevenlabs" : "model",
     };
   }
 
@@ -1556,6 +1577,7 @@ export class VoiceEngine {
         // Whether the agent's audio of the current response had already gone out when the model called the tool.
         const r = this.traceResp && !this.traceResp.closedBy ? this.traceResp : null;
         this.traceCallAt.set(e.callId, this.clock.now());
+        if (this.speaker) this.rt.responseTools.push(e.name);
         const dup = this.duplicateOf(e.callId, e.name, e.args);
         this.trace(`tool call received name=${clip(e.name, 40)} id=${clip(e.callId, 200).slice(-8)} r=${r ? r.n : "-"} afterSpeech=${r ? `yes sinceAudioMs=${Math.round(this.clock.now() - r.at)}` : "no"}${dup ? " dup=yes" : ""}`);
         if (dup) {
@@ -1670,8 +1692,17 @@ export class VoiceEngine {
     // The model answered: its session setup was accepted (as agent audio shows for the audio models).
     this.connAudio = true;
     const text = e.text.trim();
+    const tools = this.rt.responseTools;
+    this.rt.responseTools = [];
     if (e.toolCalls > 0) {
       this.rt.toolRounds++;
+      // end_call: the goodbye written with it is the call's last words. A response with a tool call is otherwise not
+      // spoken, so the buyer heard nothing before the call ended: that response's text is spoken (end_call only).
+      if (text && !e.interrupted && tools.includes("end_call")) {
+        this.trace(`rt response with end_call len=${text.length}: its goodbye is spoken`);
+        this.startSpeech(this.clean(text));
+        return;
+      }
       if (text) {
         this.rt.dropped++;
         this.log.info(voiceLine(this.sessionId, `rt text before tool dropped len=${text.length} tools=${e.toolCalls}`));
@@ -1687,15 +1718,15 @@ export class VoiceEngine {
     this.startSpeech(this.clean(text));
   }
 
-  /** Hands a reply to the speaker: its spoken form, sentence by sentence. The turn's line is exactly that text. */
+  /** Hands a reply to the speaker: its spoken form, as ONE speech stream. The turn's line is exactly that text. */
   private startSpeech(text: string) {
     const language = lineLanguage(text, this.spokenLanguage);
-    const sentences = splitSentences(spokenForm(maskCardNumbers(text).text, language));
-    if (!sentences.length) {
+    // The spoken form with its whitespace evened out (the sentences joined: the stored line as before).
+    const said = splitSentences(spokenForm(maskCardNumbers(text).text, language)).join(" ");
+    if (!said) {
       this.log.info(voiceLine(this.sessionId, `rt reply has nothing to say after the spoken form (len=${text.length})`));
       return;
     }
-    const said = sentences.join(" ");
     const turn = this.ensureAgentTurn();
     turn.text = said;
     turn.finalText = true;
@@ -1705,11 +1736,11 @@ export class VoiceEngine {
     const toolRounds = this.rt.toolRounds;
     this.rt.heardAt = null;
     this.rt.toolRounds = 0;
-    const job = this.player!.play(turn.id, sentences, language);
+    const job = this.player!.play(turn.id, said, language);
     this.rtReplies.set(job.id, { job, turn, said, messageId: null, from, doneAt: now, toolRounds });
     this.agentSpeaking = true;
     this.clearQuiet();
-    this.trace(`rt response complete len=${said.length} sentences=${sentences.length} think=${from === null ? "-" : `${Math.round(now - from)}ms`} toolRounds=${toolRounds}`);
+    this.trace(`rt response complete len=${said.length} think=${from === null ? "-" : `${Math.round(now - from)}ms`} toolRounds=${toolRounds}`);
   }
 
   /** A frame of the speaker's audio: to the browser and the recording's agent channel, as agent audio always goes. */
@@ -1751,8 +1782,8 @@ export class VoiceEngine {
   }
 
   private onSpeechJobEnd(job: SpeechJob) {
-    if (job.state === "failed") this.trace(`rt speech failed after ${job.sent}/${job.sentences.length} sentences${job.firstAudioAt === null ? " (nothing heard)" : ""}`);
-    else this.trace(`rt speech done sentences=${job.sentences.length} chars=${job.chars}`);
+    if (job.state === "failed") this.trace(`rt speech failed after sentMs=${Math.round(job.sentMs)}${job.firstAudioAt === null ? " (nothing heard)" : ""}`);
+    else this.trace(`rt speech done streams=1 chars=${job.chars} audioMs=${Math.round(job.receivedMs)}`);
   }
 
   /** Every reply was spoken and played out: the agent is quiet (what turn-done does for the audio models). */
@@ -1770,9 +1801,11 @@ export class VoiceEngine {
   }
 
   /**
-   * The buyer cut in while our speaker spoke (their speech, or a typed line): its audio stops at once, the browser
-   * drops what it queued (flush), the recording too. The model believes it said the whole reply: one note tells it
-   * what the buyer heard (the sentences sent whole before the cut). The stored line keeps what started playing,
+   * The buyer cut in while our speaker spoke (their speech, or a typed line): the speech stream is cancelled, no
+   * frame goes out after this, and the browser drops what it queued (flush), the recording too. The model believes it
+   * said the whole reply: one note tells it what the buyer heard. What was heard is ESTIMATED (the speech stream gives
+   * no word timings, lib/voice-rt-eleven/player.ts heardEstimate): the share of the reply's audio sent to the browser
+   * minus the lead still unplayed, as characters, cut back to the last word boundary. The stored line keeps that,
    * ending with "…".
    */
   private cutSpeech(by: "barge-in" | "typed") {
@@ -1783,21 +1816,21 @@ export class VoiceEngine {
     this.recorder?.cut(this.offsetMs());
     this.setState("listening");
     if (!job) return;
-    const n = job.sentences.length;
-    this.trace(`rt ${by}: speech stopped sentences sent=${job.sent}/${n} started=${job.started}/${n}`);
-    if (job.sent >= n) return;
-    const heard = job.sentences.slice(0, job.sent).join(" ");
+    const est = job.heard;
+    const heard = est?.text ?? "";
+    this.trace(`rt ${by}: speech stopped sentMs=${Math.round(job.sentMs)} unplayedMs=${Math.round(job.unplayedMs ?? 0)} heard=${heard.length}/${job.text.length} chars basis=${est?.basis ?? "-"}${est?.charsPerSec ? ` rate=${est.charsPerSec.toFixed(1)}cps` : ""}`);
+    if (heard.length >= job.text.length) return;
     if (this.conn?.sendNote && this.notesMidCall() && !this.reconnecting && !this.waking && this.standbySince === null) {
       this.noteSent("barge-in");
       this.conn.sendNote(`(Note from the system, not from the buyer: the buyer interrupted you, so they did not hear all of your last reply. ${heard ? `They heard only: "${heard}"` : "They heard none of it."} Do not answer this note.)`);
     }
     const r = this.rtReplies.get(job.id);
     if (!r) return;
-    if (!job.started) {
+    if (!job.sentMs) {
       this.log.info(voiceLine(this.sessionId, "rt reply cut before any audio: its line is kept as written"));
       return;
     }
-    const body = cutLine(job.sentences.slice(0, job.started).join(" "));
+    const body = cutLine(heard);
     // Not stored yet: the row is written with the cut line. Stored: it is updated (queued after its insert).
     r.turn.text = body;
     void this.enqueue(async () => {
@@ -2052,7 +2085,7 @@ export class VoiceEngine {
         ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
           ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, recorded: this.recorded,
         })
-        : await loadVoiceInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
+        : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal, now: new Date(this.clock.now()) }, {
           ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES), agentMessages: this.effectiveAgentMessages() } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
         });
       openerPrompt = ctx.openerPrompt;
@@ -2264,7 +2297,16 @@ export class VoiceEngine {
   private endSoon(reason: VoiceEndReason, graceMs = this.limits.endGraceMs) {
     this.pendingEnd = reason;
     this.clearQuiet();
-    this.timer("grace", graceMs, () => void this.stop(reason));
+    this.timer("grace", graceMs, () => {
+      // Text output: our speaker paces its audio (about a second ahead), so stopping now would cut the goodbye. The
+      // call ends when the speech has played out (afterSpeech), at most one more grace period from now.
+      if (this.player?.active) {
+        this.trace("end waits for the speech to play out");
+        this.timer("grace", this.limits.endGraceMs, () => void this.stop(reason));
+        return;
+      }
+      void this.stop(reason);
+    });
   }
 
   /**
@@ -2849,7 +2891,7 @@ export class VoiceEngine {
     if (!this.player?.active) this.agentSpeaking = false;
     const fresh = early && !this.openerDone && !this.lastLine;
     // Our pinned default voice has never been proven on every account: the retry leaves it out (the model's own default).
-    const droppedVoice = early && !resolveVoiceSettings(this.loaded.version.voiceSettings).voice && schemaFamilyOf(this.model.modelId) !== "gemini" && !!callVoice(null, this.model.modelId);
+    const droppedVoice = early && !this.speaker && !resolveVoiceSettings(this.loaded.version.voiceSettings).voice && schemaFamilyOf(this.model.modelId) !== "gemini" && !!callVoice(null, this.model.modelId);
     const what = early ? (droppedVoice ? "retry without pinned default voice" : "retry after early close") : "reconnect";
     const opened = await this.openModel({ resumed: !fresh }, this.limits.reconnectMs, what);
     if (!opened || this.ended) {

@@ -1,8 +1,16 @@
 /**
- * The realtime + ElevenLabs engines (test lab only, platform admins; owner 24 Nov 2026): today's engine
- * (lib/voice/engine.ts) with the guarded profile (./profile.ts), an OpenAI realtime model (GPT-Realtime 2.1 or mini,
- * lib/voice-classic/engine-choice.ts RT_ELEVEN_MODELS) listening and deciding with TEXT output, and ElevenLabs
- * speaking the replies (./player.ts, through lib/voice-pipeline's speaker chain).
+ * Text output + ElevenLabs (test calls only for now; owner 24 Nov 2026): today's engine (lib/voice/engine.ts) on the
+ * wiring the test lab picked (Current, or New = the guarded profile), an OpenAI realtime model (the version's
+ * GPT-Realtime 2.1 or mini) listening and deciding with TEXT output, and ElevenLabs speaking the replies (./player.ts,
+ * one speech stream per reply, through lib/voice-pipeline's speaker chain). Whether it applies: ./rule.ts (the
+ * version's Voice settings "Voice from"). The retired engine ids "rt_eleven"/"rt_eleven_mini" (./profile.ts) still
+ * run their old sessions.
+ *
+ * Word timings: the installed SDK's speech stream parts (@ai-sdk/provider SpeechModelV4StreamPart: stream-start,
+ * audio {audio, audioFormat, providerMetadata?}, response-metadata, finish {usage?, providerMetadata?}, raw, error;
+ * the Gateway's speech-stream envelope in @ai-sdk/provider-utils carries exactly these) have NO alignment or
+ * timestamp fields. ElevenLabs' own alignment could only arrive inside the untyped `providerMetadata`; nothing
+ * reads it. What the buyer heard after a barge-in is therefore estimated (player.ts heardEstimate).
  *
  * The speaker of a call:
  * - live (VOICE_REALTIME=live): the pipeline's speak attempts in order (lib/voice-pipeline/models.ts

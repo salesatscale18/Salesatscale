@@ -86,20 +86,22 @@ const agentRows = async (conversationId: string) => (await db.select().from(mess
 const sessionRow = async (id: string) => (await db.select().from(voiceSessions).where(eq(voiceSessions.id, id)))[0];
 const isFrame = (m: unknown): m is Uint8Array => m instanceof Uint8Array;
 
-async function rtCall(o: { engine?: "rt_eleven" | "rt_eleven_mini"; mode?: "scripted" | "live"; store?: MemoryRecordingStore | null; speaker?: ScriptedSpeaker } = {}) {
+async function rtCall(o: { engine?: "rt_eleven" | "rt_eleven_mini"; mode?: "scripted" | "live"; store?: MemoryRecordingStore | null; speaker?: ScriptedSpeaker | null; current?: boolean } = {}) {
   const engineName = o.engine ?? "rt_eleven";
   const c = (await startVoiceTestConversation(db, acc, me.id, { scenario: null, language: "en" }))!;
   const s = await createVoiceSession(db, { accountId: acc, conversationId: c.conversationId, userId: me.id, isTest: true }, { env: SCRIPTED, engine: engineName });
   if (!s.ok) throw new Error(s.reason);
   const clock = new ManualClock(Date.UTC(2026, 10, 24, 10, 0, 0));
   const model = new FakeTextModel(engineName === "rt_eleven" ? "openai/gpt-realtime-2.1" : "openai/gpt-realtime-mini", o.mode ?? "scripted");
-  const speaker = o.speaker ?? new ScriptedSpeaker("elevenlabs/eleven-v4-turbo");
+  const speaker = o.speaker === null ? null : o.speaker ?? new ScriptedSpeaker("elevenlabs/eleven-v4-turbo");
   const { lines: logs, log } = memLog();
   const sent: unknown[] = [];
   const store = o.store ?? null;
   const engine = new VoiceEngine({
     db, model, sessionId: s.sessionId, clock, send: (m) => void sent.push(m), log, limits: { ...QUIET, waitForClientAudio: true },
-    recording: { store, reason: store ? "test store" : "no store (test)" }, profile: rtElevenProfile(engineName), speaker,
+    recording: { store, reason: store ? "test store" : "no store (test)" },
+    // `current`: Current's wiring (no profile) with ElevenLabs output; else the retired rt engine (the guarded profile).
+    ...(o.current ? {} : { profile: rtElevenProfile(engineName) }), ...(speaker ? { speaker } : {}),
   });
   const settle = async () => {
     for (let i = 0; i < 4; i++) {
@@ -131,7 +133,7 @@ async function rtCall(o: { engine?: "rt_eleven" | "rt_eleven_mini"; mode?: "scri
   await engine.start();
   await settle();
   return {
-    ...s, conversationId: c.conversationId, engine, clock, model, speaker, logs, sent, settle, run, conn, respond, buyerSays, tool,
+    ...s, conversationId: c.conversationId, engine, clock, model, speaker: speaker!, logs, sent, settle, run, conn, respond, buyerSays, tool,
     frames: () => sent.filter(isFrame),
     end: async () => { engine.onClientMessage({ t: "end" }); await settle(); },
   };
@@ -152,7 +154,8 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     await c.run(10);
     expect(c.conn().responses).toHaveLength(1);
     await c.respond("Hi, this is Ava from Acme. How can I help you today?");
-    expect(c.speaker.said.map((x) => x.text)).toEqual(["Hi, this is Ava from Acme.", "How can I help you today?"]);
+    // One speech stream for the whole reply (never one request per sentence).
+    expect(c.speaker.said.map((x) => x.text)).toEqual(["Hi, this is Ava from Acme. How can I help you today?"]);
     await c.run(3_000);
     expect(c.frames().length).toBeGreaterThan(0);
     // A plain turn: spoken once, the row is the exact text, with its answer time (speech stopped → first audio).
@@ -169,6 +172,8 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     expect(c.speaker.said.filter((x) => x.text.startsWith("A sensor"))).toHaveLength(1);
     expect(c.logs.some((l) => /trace t=\d+ rt turn think=\d+ms toolRounds=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
     expect(c.logs.some((l) => / rt output=text model=openai\/gpt-realtime-2\.1 speak=elevenlabs\/eleven-v4-turbo voice=Rachel \(ElevenLabs\)$/.test(l))).toBe(true);
+    // Once per call: one stream per reply and the stability sent.
+    expect(c.logs.filter((l) => l.endsWith(" rt speech one stream per reply stability=1 (dialogue mode only)"))).toHaveLength(1);
     await c.end();
     const row = await sessionRow(c.sessionId);
     expect(row.settings).toMatchObject({ engine: "rt_eleven", voice: PIPELINE_VOICE_NAME, fillers: false, model: "openai/gpt-realtime-2.1", rtEleven: { realtimeModel: "openai/gpt-realtime-2.1", voice: PIPELINE_VOICE_NAME } });
@@ -220,13 +225,15 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     await c.end();
   });
 
-  it("barge-in mid-speech: audio stops at once, flush, one note to the model; the stored line keeps what played", async () => {
-    const c = await rtCall({ speaker: new ScriptedSpeaker("elevenlabs/eleven-v4-turbo", { maxMs: 1_500, msPerChar: 25 }) });
+  it("barge-in mid-stream: frames stop at once, flush, one note with the estimated heard text (a prefix ending at a word); the row ends with …", async () => {
+    // 182 characters × 25 ms = 4.6 s of audio in ONE stream.
+    const c = await rtCall({ speaker: new ScriptedSpeaker("elevenlabs/eleven-v4-turbo", { maxMs: 10_000, msPerChar: 25 }) });
     c.engine.onClientMessage({ t: "ready" } as never);
     await c.run(10);
     const reply = "Our sensors check the fridge temperature every minute of the day. They send an alert to your phone when something is wrong. Most kitchens need one sensor for each fridge and freezer.";
     await c.respond(reply, 0, 0);
     await c.run(1_500);
+    expect(c.speaker.said.map((x) => x.text)).toEqual([reply]);
     const before = c.frames().length;
     expect(before).toBeGreaterThan(0);
     c.conn().emit({ type: "speech-started" });
@@ -237,15 +244,72 @@ describe("realtime + ElevenLabs (rt_eleven)", () => {
     await c.run(5_000);
     expect(c.frames().length).toBe(at);
     expect(c.conn().notes).toHaveLength(1);
-    expect(c.conn().notes[0]).toMatch(/^\(Note from the system, not from the buyer: the buyer interrupted you, so they did not hear all of your last reply\. They heard only: "Our sensors check the fridge temperature every minute of the day\."/);
+    const m = /^\(Note from the system, not from the buyer: the buyer interrupted you, so they did not hear all of your last reply\. They heard only: "([^"]+)" Do not answer this note\.\)$/.exec(c.conn().notes[0]);
+    expect(m).not.toBeNull();
+    const heard = m![1];
+    // A prefix of the reply ending at a word boundary, about the 1.5 s played of 4.6 s (the unplayed lead is not counted).
+    expect(reply.startsWith(heard)).toBe(true);
+    expect(reply[heard.length]).toBe(" ");
+    expect(heard.length).toBeGreaterThan(40);
+    expect(heard.length).toBeLessThan(80);
     const rows = await agentRows(c.conversationId);
     expect(rows).toHaveLength(1);
-    expect(rows[0].body.endsWith("…")).toBe(true);
-    expect(reply.startsWith(rows[0].body.slice(0, -1))).toBe(true);
-    expect(rows[0].body.length).toBeLessThan(reply.length);
-    expect(c.logs.some((l) => /rt barge-in: speech stopped sentences sent=1\/3 started=2\/3/.test(l))).toBe(true);
+    expect(rows[0].body).toBe(`${heard}…`);
+    expect(c.logs.some((l) => /rt barge-in: speech stopped sentMs=\d+ unplayedMs=\d+ heard=\d+\/182 chars basis=total$/.test(l))).toBe(true);
     await c.end();
     expect((await sessionRow(c.sessionId)).usage).toMatchObject({ rtEleven: { bargeIns: 1 } });
+  });
+
+  for (const wiring of ["rt_eleven (guarded profile)", "Current (no profile)"] as const) {
+    it(`end_call with its goodbye in the same response (${wiring}): the goodbye is spoken, then the call ends once it played`, async () => {
+      const c = await rtCall({ current: wiring.startsWith("Current") });
+      c.engine.onClientMessage({ t: "ready" } as never);
+      await c.run(10);
+      await c.respond("Hello!");
+      await c.run(2_000);
+      await c.buyerSays("That's all, thanks, bye.");
+      const goodbye = "Thanks for your time, have a great day. Goodbye!";
+      c.conn().emit({ type: "tool-call", callId: "e1", name: "end_call", args: {} });
+      await c.respond(goodbye, 1, 300);
+      // Spoken (not dropped), as ONE stream.
+      expect(c.speaker.said.map((x) => x.text)).toContain(goodbye);
+      expect(c.logs.some((l) => l.includes("rt text before tool dropped"))).toBe(false);
+      expect(c.logs.some((l) => /rt response with end_call len=\d+: its goodbye is spoken/.test(l))).toBe(true);
+      // The call ends after the goodbye played (not cut by the 2.5 s goodbye timer while frames still go out).
+      await c.run(10_000);
+      expect(c.engine.isEnded).toBe(true);
+      const total = c.frames().reduce((n, f) => n + f.byteLength, 0);
+      expect(total).toBeGreaterThan(0);
+      const rows = await agentRows(c.conversationId);
+      expect(rows.at(-1)?.body).toBe(goodbye);
+      expect((await sessionRow(c.sessionId)).endReason).toBe("agent_closed");
+    });
+  }
+
+  it("Current (no profile) with text output: Current's instructions and tools; the ONE difference from audio output is the filler lines", async () => {
+    const instructionsOf = async (o: { speaker: boolean; fillers: boolean }) => {
+      const { ensureDraftVersion: draft } = await import("@/lib/agent/service");
+      const d = await draft(db, acc);
+      const { agentVersions } = await import("@/db/schema");
+      await db.update(agentVersions).set({ voiceSettings: { model: "openai/gpt-realtime-2.1", fillers: o.fillers } }).where(eq(agentVersions.id, d.id));
+      const c = await rtCall({ current: true, ...(o.speaker ? {} : { speaker: null }) });
+      const cfg = c.conn().cfg;
+      await c.end();
+      await db.update(agentVersions).set({ voiceSettings: null }).where(eq(agentVersions.id, d.id));
+      return cfg;
+    };
+    const text = await instructionsOf({ speaker: true, fillers: true });
+    const audioNoFillers = await instructionsOf({ speaker: false, fillers: false });
+    const audio = await instructionsOf({ speaker: false, fillers: true });
+    expect(text.outputModality).toBe("text");
+    expect(audio.outputModality).toBeUndefined();
+    // Same tools as Current's audio call (not guarded's).
+    expect(text.tools).toEqual(audio.tools);
+    expect(text.tools).not.toEqual(guardedTools("openai"));
+    // Text output = Current's instructions with fillers off; audio output is unchanged (it keeps the filler lines).
+    const norm = (x: string) => x.replace(/\d{4}-\d{2}-\d{2}[^\n]*/g, "");
+    expect(norm(text.instructions)).toBe(norm(audioNoFillers.instructions));
+    expect(norm(text.instructions)).not.toBe(norm(audio.instructions));
   });
 
   it("the recording's agent channel holds the spoken audio (fed from what was sent to the browser)", async () => {

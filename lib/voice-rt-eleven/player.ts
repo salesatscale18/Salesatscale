@@ -1,35 +1,89 @@
 /**
- * The speech player of the realtime + ElevenLabs engines (lib/voice-rt-eleven): a complete reply's text, already in
- * its spoken form and split into sentences, is spoken by a Speaker (lib/voice-pipeline/speaker.ts: SpeakerChain on a
- * live call, ScriptedSpeaker otherwise) sentence by sentence, the next sentence synthesizing while the current one
- * plays (lib/voice-pipeline/prefetch.ts), and its PCM16 24 kHz audio goes out in 100 ms frames paced to real time
- * (never more than `leadMs` ahead of what the browser plays), exactly as the pipeline engines send it. Replies play
- * one after the other, never over each other. `cancel` (a barge-in, the end of the call) stops everything at once and
- * says how far the reply in progress got. No network of its own; the clock is injectable (tests move it by hand).
+ * The speech player of the text-output + ElevenLabs path (lib/voice-rt-eleven): a complete reply's text, already in
+ * its spoken form, is spoken by a Speaker (lib/voice-pipeline/speaker.ts: SpeakerChain on a live call,
+ * ScriptedSpeaker otherwise) as ONE speech stream for the whole reply (one `speech-stream.start`, the reply's full
+ * text, one stream of audio). Until 24 Nov each sentence was its own request, and the expressive v4 model chose tone
+ * and delivery anew for every sentence: the voice changed mid-answer (owner, live test).
+ *
+ * The stream is read into a buffer as fast as the provider sends it (so the reply's total audio length is known as
+ * soon as synthesis ends), and its PCM16 24 kHz audio goes out in 100 ms frames paced to real time (never more than
+ * `leadMs` ahead of what the browser plays). Replies play one after the other, never over each other; no reply is
+ * synthesized before its turn (no prefetch: the realtime path has no fillers). `cancel` (a barge-in, the end of the
+ * call) stops everything at once and estimates what the buyer heard of the reply in progress (heardEstimate).
+ * No network of its own; the clock is injectable (tests move it by hand).
  */
 import { VOICE_SAMPLE_RATE } from "@/lib/voice/protocol";
 import type { Clock } from "@/lib/voice/realtime";
 import type { Speaker } from "@/lib/voice-pipeline/speaker";
 import { PcmFramer, pcmMs } from "@/lib/voice-pipeline/pcm";
-import { prefetch, type Prefetch } from "@/lib/voice-pipeline/prefetch";
 
-/** One reply to speak. `started`/`sent`: sentences whose audio started going out / went out whole. */
+/**
+ * Characters per second of speech when nothing was measured yet on the call (ElevenLabs conversational English is
+ * about 14-16 characters a second). Only for the heard-text estimate after a barge-in.
+ */
+export const FALLBACK_CHARS_PER_SEC = 15;
+
+/** One reply to speak. */
 export type SpeechJob = {
   readonly id: number;
   /** The engine's agent turn this reply is (its stored line). */
   readonly turnId: string;
-  readonly sentences: readonly string[];
+  /** The whole reply (its spoken form): one speech stream. */
+  readonly text: string;
   readonly language: string;
   /** When the reply was handed to the player (the response was complete). */
   readonly queuedAt: number;
-  started: number;
-  sent: number;
-  /** Characters whose synthesis produced audio (what the speech model bills). */
+  /** Characters whose synthesis produced audio (what the speech model bills): the reply's length, once audio came. */
   chars: number;
   firstAudioAt: number | null;
+  /** Audio received from the speech stream so far, ms. */
+  receivedMs: number;
+  /** The speech stream ended normally: receivedMs is the reply's whole audio. */
+  synthDone: boolean;
+  /** Audio sent to the browser, ms. */
+  sentMs: number;
+  /** Every frame of the reply was sent (the browser may still be playing the last lead). */
+  allSent: boolean;
+  /** After a cancel: the audio sent but not yet played (the lead the browser drops), and the estimate of what was heard. */
+  unplayedMs?: number;
+  heard?: HeardEstimate;
   state: "queued" | "playing" | "done" | "cut" | "failed";
   error?: string;
 };
+
+export type HeardEstimate = {
+  /** The reply's text the buyer heard: a prefix of it ending at a word boundary ("" when none). */
+  text: string;
+  /** Audio the buyer heard (sent minus the unplayed lead), ms. */
+  playedMs: number;
+  /** "total": the stream's whole audio was known (share of it); "rate": a characters-per-second rate. */
+  basis: "total" | "rate";
+  /** The rate used (basis "rate"): measured on this call's finished streams, else FALLBACK_CHARS_PER_SEC. */
+  charsPerSec: number | null;
+};
+
+/**
+ * What the buyer heard of a reply cut after `playedMs` of its audio: characters × the played share, cut back to the
+ * last word boundary. The share is exact-ish when the stream's whole audio length is known (`totalMs`: synthesis had
+ * finished); otherwise the characters said so far are `playedMs` × `charsPerSec`. The SDK's speech stream parts carry
+ * no alignment or timestamps (see the report in lib/voice-rt-eleven/index.ts), so this is an estimate.
+ */
+export function heardEstimate(text: string, playedMs: number, o: { totalMs: number | null; charsPerSec: number }): HeardEstimate {
+  const played = Math.max(0, playedMs);
+  const basis = o.totalMs !== null && o.totalMs > 0 ? "total" as const : "rate" as const;
+  const chars = basis === "total" ? (text.length * Math.min(1, played / o.totalMs!)) : (played / 1000) * o.charsPerSec;
+  const n = Math.min(text.length, Math.floor(chars));
+  let heard: string;
+  if (n >= text.length) heard = text;
+  else if (n <= 0) heard = "";
+  // The cut lands on a boundary (the next character is a space): the words up to it were heard.
+  else if (/\s/.test(text[n])) heard = text.slice(0, n).trimEnd();
+  else {
+    const cut = text.slice(0, n).search(/\s\S*$/);
+    heard = cut < 0 ? "" : text.slice(0, cut).trimEnd();
+  }
+  return { text: heard, playedMs: Math.round(played), basis, charsPerSec: basis === "rate" ? o.charsPerSec : null };
+}
 
 export type SpeechPlayerOptions = {
   speaker: Speaker;
@@ -42,7 +96,7 @@ export type SpeechPlayerOptions = {
   send(frame: Uint8Array, job: SpeechJob): void;
   /** The reply's first audio went out. */
   onFirstAudio?(job: SpeechJob): void;
-  /** Characters of a sentence whose synthesis produced audio (counted once per sentence). */
+  /** Characters of a reply whose synthesis produced audio (counted once per reply). */
   onChars?(chars: number, job: SpeechJob): void;
   /** The reply finished (all sent, or speech failed): not called for a cut. */
   onJobEnd?(job: SpeechJob): void;
@@ -57,6 +111,8 @@ export class SpeechPlayer {
   private readonly framer: PcmFramer;
   private queue: SpeechJob[] = [];
   private current: SpeechJob | null = null;
+  /** The last reply whose frames were all sent while the browser still plays its lead (null once played out). */
+  private tail: SpeechJob | null = null;
   /** The run loop's generation (a cancel starts a new one). */
   private gen = 0;
   private running: number | null = null;
@@ -64,6 +120,10 @@ export class SpeechPlayer {
   private playheadAt = 0;
   private waits = new Set<() => void>();
   private seq = 0;
+  /** This call's finished streams: characters and audio ms (the measured speaking rate). */
+  private measured = { chars: 0, ms: 0 };
+  /** Speech streams opened (one per reply; tests and the logs). */
+  streams = 0;
 
   constructor(private readonly o: SpeechPlayerOptions) {
     this.framer = new PcmFramer(o.frameBytes);
@@ -79,28 +139,46 @@ export class SpeechPlayer {
     return this.current;
   }
 
-  /** Queues a reply (spoken after the ones before it). */
-  play(turnId: string, sentences: readonly string[], language: string): SpeechJob {
-    const job: SpeechJob = { id: ++this.seq, turnId, sentences, language, queuedAt: this.o.clock.now(), started: 0, sent: 0, chars: 0, firstAudioAt: null, state: "queued" };
+  /** Characters per second measured on this call's finished streams; null before the first one finished. */
+  get measuredCharsPerSec(): number | null {
+    return this.measured.ms > 0 ? (this.measured.chars / this.measured.ms) * 1000 : null;
+  }
+
+  /** Queues a reply (spoken after the ones before it) as one speech stream. */
+  play(turnId: string, text: string, language: string): SpeechJob {
+    const job: SpeechJob = {
+      id: ++this.seq, turnId, text, language, queuedAt: this.o.clock.now(), chars: 0, firstAudioAt: null,
+      receivedMs: 0, synthDone: false, sentMs: 0, allSent: false, state: "queued",
+    };
     this.queue.push(job);
     if (this.running === null) void this.run(this.gen);
     return job;
   }
 
   /**
-   * Stops now: the speaker is cancelled, waits end, queued replies are dropped. Returns the reply that was playing
-   * (or the next one, not started yet) as it stood, marked cut; null when nothing was queued or playing.
+   * Stops now: the speaker is cancelled, waits end, queued replies are dropped, no frame goes out after this. Returns
+   * the reply that was playing (or still playing out its lead in the browser, or the next one, not started yet), with
+   * `unplayedMs` and `heard` set; null when nothing was queued or playing. A reply cut mid-stream is marked cut.
    */
   cancel(): SpeechJob | null {
-    const cut = this.current ?? this.queue[0] ?? null;
+    const now = this.o.clock.now();
+    // The reply the buyer is hearing: the one sending, else the last one still playing out its lead (the next reply
+    // may already be synthesizing, with nothing sent yet), else the next one.
+    const cut = (this.current && this.current.sentMs > 0 ? this.current : null) ?? this.tail ?? this.current ?? this.queue[0] ?? null;
+    if (cut) {
+      cut.unplayedMs = Math.max(0, Math.min(cut.sentMs, this.playheadAt - now));
+      const rate = this.measuredCharsPerSec ?? FALLBACK_CHARS_PER_SEC;
+      cut.heard = heardEstimate(cut.text, cut.sentMs - cut.unplayedMs, { totalMs: cut.synthDone ? cut.receivedMs : null, charsPerSec: rate });
+    }
     for (const j of [this.current, ...this.queue]) if (j && (j.state === "queued" || j.state === "playing")) j.state = "cut";
     this.gen++;
     this.running = null;
     this.current = null;
+    this.tail = null;
     this.queue = [];
     this.o.speaker.cancel();
     this.framer.reset();
-    this.playheadAt = this.o.clock.now();
+    this.playheadAt = now;
     for (const w of [...this.waits]) w();
     this.waits.clear();
     return cut;
@@ -111,9 +189,11 @@ export class SpeechPlayer {
     while (gen === this.gen && this.queue.length) {
       const job = this.queue.shift()!;
       this.current = job;
+      this.tail = null;
       await this.playJob(job, gen);
       if (gen !== this.gen) return;
       this.current = null;
+      if (job.allSent) this.tail = job;
       if (job.state !== "cut") this.o.onJobEnd?.(job);
     }
     if (gen !== this.gen) return;
@@ -123,43 +203,84 @@ export class SpeechPlayer {
     if (gen !== this.gen) return;
     // A reply queued while the last one played out: play it now.
     if (this.queue.length) return void this.run(gen);
+    this.tail = null;
     this.running = null;
     this.o.onIdle?.();
   }
 
+  /** One reply: ONE speech stream, read into a buffer as it comes, its frames paced out to the browser. */
   private async playJob(job: SpeechJob, gen: number) {
     job.state = "playing";
     this.framer.reset();
-    const starts: Prefetch[] = [];
-    const startSentence = (i: number) => {
-      if (i >= job.sentences.length || starts[i]) return;
-      starts[i] = prefetch(this.o.speaker.speak(job.sentences[i], { language: job.language }), () => {
-        job.chars += job.sentences[i].length;
-        this.o.onChars?.(job.sentences[i].length, job);
-      });
+    this.streams++;
+    const buf: Uint8Array[] = [];
+    let ended = false;
+    let error: unknown = null;
+    let wake: (() => void) | null = null;
+    const notify = () => {
+      const w = wake;
+      wake = null;
+      w?.();
     };
-    try {
-      for (let i = 0; i < job.sentences.length; i++) {
-        startSentence(i);
-        startSentence(i + 1);
-        for await (const chunk of starts[i].chunks()) {
+    // The reader: the whole reply's audio, as fast as the provider sends it.
+    void (async () => {
+      try {
+        for await (const chunk of this.o.speaker.speak(job.text, { language: job.language })) {
           if (gen !== this.gen) return;
+          if (!chunk.byteLength) continue;
+          if (!job.chars) {
+            job.chars = job.text.length;
+            this.o.onChars?.(job.chars, job);
+          }
+          job.receivedMs += pcmMs(chunk.byteLength, VOICE_SAMPLE_RATE);
+          buf.push(chunk);
+          notify();
+        }
+        if (gen === this.gen && job.receivedMs > 0) {
+          job.synthDone = true;
+          this.measured.chars += job.text.length;
+          this.measured.ms += job.receivedMs;
+        }
+      } catch (e) {
+        error = e;
+      } finally {
+        ended = true;
+        notify();
+      }
+    })();
+    try {
+      for (;;) {
+        if (gen !== this.gen) return;
+        const chunk = buf.shift();
+        if (chunk) {
           for (const frame of this.framer.push(chunk)) {
             await this.pace();
             if (gen !== this.gen) return;
             const now = this.o.clock.now();
-            if (job.started <= i) job.started = i + 1;
+            const ms = pcmMs(frame.byteLength, VOICE_SAMPLE_RATE);
             this.o.send(frame, job);
-            this.playheadAt = Math.max(this.playheadAt, now) + pcmMs(frame.byteLength, VOICE_SAMPLE_RATE);
+            job.sentMs += ms;
+            this.playheadAt = Math.max(this.playheadAt, now) + ms;
             if (job.firstAudioAt === null) {
               job.firstAudioAt = now;
               this.o.onFirstAudio?.(job);
             }
           }
+          continue;
         }
-        if (gen !== this.gen) return;
-        job.sent = i + 1;
+        if (ended) break;
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            this.waits.delete(done);
+            resolve();
+          };
+          wake = done;
+          this.waits.add(done);
+        });
       }
+      if (gen !== this.gen) return;
+      if (error) throw error;
+      job.allSent = true;
       job.state = "done";
     } catch (e) {
       if (gen !== this.gen) return;
@@ -168,8 +289,6 @@ export class SpeechPlayer {
       // A speaker chain logs its own failures (each attempt, and once when none works).
       if (!(e as { alreadyLogged?: boolean })?.alreadyLogged) this.o.log?.("warn", `rt speech failed: ${job.error}`);
       this.o.speaker.cancel();
-    } finally {
-      for (const s of starts) s?.stop();
     }
   }
 

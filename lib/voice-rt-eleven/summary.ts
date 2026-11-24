@@ -1,5 +1,5 @@
 /**
- * What the test lab shows about a realtime + ElevenLabs call ("This call": the listening-and-thinking model, the
+ * What the test lab shows about a call where ElevenLabs spoke (text output) ("This call": the listening-and-thinking model, the
  * speaking model, the median answer time), read from the session's settings and usage JSON
  * (voice_sessions.settings.rtEleven, usage.rtEleven; no schema change). Pure and import-safe from client code.
  */
@@ -38,10 +38,14 @@ export type RtElevenCallInfo = { realtimeModel: string; speakModel: string; medi
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : null);
 
-/** The realtime + ElevenLabs info of a session (its settings and usage JSON), or null for any other engine. */
+/**
+ * The text-output + ElevenLabs info of a session (its settings and usage JSON): a call on a retired rt_eleven engine,
+ * or any call where ElevenLabs actually spoke (settings.speech "elevenlabs" / settings.rtEleven, written at go-live
+ * from what applied). Null for every other call.
+ */
 export function rtElevenCallInfo(settings: unknown, usage: unknown): RtElevenCallInfo | null {
-  const s = settings && typeof settings === "object" ? (settings as { engine?: unknown; rtEleven?: Record<string, unknown> }) : null;
-  if (!isRtElevenEngine(s?.engine)) return null;
+  const s = settings && typeof settings === "object" ? (settings as { engine?: unknown; speech?: unknown; rtEleven?: Record<string, unknown> }) : null;
+  if (!isRtElevenEngine(s?.engine) && s?.speech !== "elevenlabs" && !(s?.rtEleven && typeof s.rtEleven === "object")) return null;
   const p = s?.rtEleven ?? {};
   const u = usage && typeof usage === "object" ? ((usage as { rtEleven?: Record<string, unknown> }).rtEleven ?? {}) : {};
   return {

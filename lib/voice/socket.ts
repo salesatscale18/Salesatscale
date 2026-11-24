@@ -24,7 +24,7 @@ import {
 } from "./protocol";
 import { systemClock, type Clock, type RealtimeModel, type TimerHandle } from "./realtime";
 import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from "./service";
-import { maxCallSeconds, voiceMode, type VoiceMode } from "./settings";
+import { maxCallSeconds, resolveVoiceSettings, voiceMode, type VoiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
@@ -32,6 +32,7 @@ import { GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEng
 import { PipelineVoiceEngine, pipelinePartsFor, type PipelineOverrides, type PipelineParts } from "@/lib/voice-pipeline";
 import type { Speaker } from "@/lib/voice-pipeline/speaker";
 import { rtElevenProfile, rtElevenSpeakerFor } from "@/lib/voice-rt-eleven";
+import { speechFor, speechIgnoredLine } from "@/lib/voice-rt-eleven/rule";
 
 /**
  * What the relay needs from an engine: today's VoiceEngine, the Classic (20 Nov) one a test-lab call picked, or the
@@ -78,7 +79,7 @@ export type VoiceSocketOptions = {
   limits?: Omit<VoiceLimits, "deadlineSec" | "env">;
   /** Tests: the pipeline engines' fakes (listener, speaker, chat model, chat turn, gateway client factory). */
   pipeline?: PipelineOverrides;
-  /** Tests: the realtime + ElevenLabs engines' speaker (default: ScriptedSpeaker when scripted, the Gateway chain when live). */
+  /** Tests: the ElevenLabs speaker of a text-output call (default: ScriptedSpeaker when scripted, the Gateway chain when live). */
   rtSpeaker?: Speaker;
   /**
    * Runs once the call is stored, before the handler resolves (so the function stays alive for it):
@@ -341,20 +342,28 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       return;
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
-    // The speaker of a realtime + ElevenLabs call: free and local when scripted; the Gateway chain (paid) when live.
+    // Who speaks (lib/voice-rt-eleven/rule.ts, the one rule): the version's "Voice from" decides, the engine select only
+    // the wiring. ElevenLabs runs when the session was created with it (createVoiceSession) and the rule still holds
+    // here (a test call, a GPT-Realtime model, not Classic); the retired rt_eleven ids (older sessions) keep their path.
+    const wanted = resolveVoiceSettings(version?.voiceSettings, session.model).speech;
+    const speech = speechFor({ wanted, modelId: session.model, engine: stored, isTest: session.isTest });
+    if (speech.ignored) log.info(voiceLine(session.id, speechIgnoredLine(speech.ignored)));
+    const storedSpeech = (session.settings as { speech?: unknown } | null)?.speech;
+    const eleven = rtEleven || (speech.speech === "elevenlabs" && storedSpeech === "elevenlabs" && !classic);
+    // The speaker of a text-output call: free and local when scripted; the Gateway chain (paid) when live.
     let speaker: Speaker | null = null;
-    if (rtEleven) {
+    if (eleven) {
       try {
         speaker = await rtElevenSpeakerFor(model.mode, env, opts.rtSpeaker);
       } catch (e) {
-        log.warn(voiceLine(session.id, `rt speaker unavailable (engine=${stored}): ${errorSummary(e)}`));
+        log.warn(voiceLine(session.id, `rt speaker unavailable (engine=${stored} speech=elevenlabs): ${errorSummary(e)}`));
         await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
         return refuse("model_unavailable");
       }
     }
     sessionId = session.id;
     // A scripted stand-in also names the version's model it stands in for.
-    log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
+    log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}${speaker ? " speech=elevenlabs" : ""}`));
     sendJson({ t: "call", maxSec, mode: model.mode });
     const deps = {
       db: opts.db, model, sessionId: session.id, clock, log, onEnding: keepAlive,
@@ -378,9 +387,13 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);
       },
     };
+    // The wiring (the engine select) × who speaks (the version): Classic is model-voice only; Current and New run
+    // with the model's own voice, or with text output + the ElevenLabs player (`speaker`).
+    const withSpeaker = speaker ? { speaker } : {};
     engine = classic ? new ClassicVoiceEngine(deps)
       : rtEngine && speaker ? new VoiceEngine({ ...deps, profile: rtElevenProfile(rtEngine), speaker })
-        : guarded ? new VoiceEngine({ ...deps, profile: stored === GUARDED_SILENT_ENGINE ? GUARDED_SILENT_PROFILE : GUARDED_PROFILE }) : new VoiceEngine(deps);
+        : guarded ? new VoiceEngine({ ...deps, profile: stored === GUARDED_SILENT_ENGINE ? GUARDED_SILENT_PROFILE : GUARDED_PROFILE, ...withSpeaker })
+          : new VoiceEngine({ ...deps, ...withSpeaker });
     phase = "live";
     // A last guard beyond the engine's own limit: the socket never outlives the call by much.
     timers.hard = clock.setTimeout(() => {

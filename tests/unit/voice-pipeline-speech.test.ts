@@ -59,7 +59,7 @@ describe("the speak attempts", () => {
   });
 
   it("dialogue mode: providerOptions.elevenlabs.dialogue.voices holds the call's one voice (@ai-sdk/elevenlabs shape)", () => {
-    expect(speakProviderOptions("21m00Tcm4TlvDq8ikWAM")).toEqual({ elevenlabs: { dialogue: { voices: ["21m00Tcm4TlvDq8ikWAM"] } } });
+    expect(speakProviderOptions("21m00Tcm4TlvDq8ikWAM")).toEqual({ elevenlabs: { dialogue: { voices: ["21m00Tcm4TlvDq8ikWAM"], voiceSettings: { stability: 1 } } } });
   });
 
   it("the retry line after a failed turn, in the call's language", () => {

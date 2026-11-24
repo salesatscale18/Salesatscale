@@ -42,6 +42,7 @@ import { SidePanel } from "@/components/sas/list-kit";
 import { VoiceCallBar } from "@/components/sas/voice/voice-call-bar";
 import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
 import { VoiceSettingsForm } from "@/components/sas/voice/voice-settings-form";
+import { ELEVEN_FOR_BUYER_CALLS } from "@/lib/voice-rt-eleven/rule";
 import { usdRate } from "@/lib/ai/models";
 import { INITIAL_SNAPSHOT } from "@/lib/voice/client/state";
 import { barView, endDetailText } from "@/lib/voice/client/view";
@@ -165,16 +166,19 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // One source for the limit: the same maxCallSeconds the relay reports in `{t:'call', maxSec}` (lib/voice/socket.ts).
   const limitLines = Object.fromEntries(callVersions.map((v) => [v.value, t("voice.settings.limit_line", { limit: callLimitShort(callMax[v.value]) })]));
   // Classic (20 Nov) runs on Gemini only: the versions whose own model it would not use, with that model's label.
+  // ElevenLabs ("Voice from") is not used there either (lib/voice-rt-eleven/rule.ts): the note says so.
   const classicModelNotes = Object.fromEntries(callVersions.flatMap((v) => {
     const id = versionModelId(v.settings);
-    return classicModelId(id) === id ? [] : [[v.value, voiceModelLabel(id)]];
+    if (classicModelId(id) === id) return [];
+    const eleven = resolveVoiceSettings(v.settings, id).speech === "elevenlabs";
+    return [[v.value, eleven ? t("lab.voice.engine_gemini_note_eleven", { model: voiceModelLabel(id) }) : t("lab.voice.engine_gemini_note", { model: voiceModelLabel(id) })]];
   }));
   const engineText = (engine: string | null | undefined) => {
     const e = sessionEngine({ engine });
     return t(engineLabelKey(e), engineLabelVars(e));
   };
   const settingsVersion = draft ?? liveVersion;
-  const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings), versionModelId(settingsVersion.voiceSettings)) }) : null;
+  const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings, versionModelId(settingsVersion.voiceSettings)), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
   const settingsHref = draft ? `${lab}?${keep}panel=voice` : null;
   const voicePanel = voice && draft && one(sp.panel) === "voice";
@@ -610,7 +614,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           closeHref={conv ? `${lab}?c=${conv.id}` : lab}
         >
           <VoiceSettingsForm
-            action={saveVoiceSettingsAction} slug={account.slug} models={voiceModelChoices()} platformModel={voiceModelId()} initial={resolveVoiceSettings(draft.voiceSettings)}
+            action={saveVoiceSettingsAction} slug={account.slug} models={voiceModelChoices()} platformModel={voiceModelId()} initial={resolveVoiceSettings(draft.voiceSettings, versionModelId(draft.voiceSettings))}
+            elevenForBuyers={ELEVEN_FOR_BUYER_CALLS}
             version={draft.version} closeHref={conv ? `${lab}?c=${conv.id}` : lab} deploymentLimitSec={callLimit}
           />
         </SidePanel>

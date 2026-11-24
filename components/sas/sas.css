@@ -1012,6 +1012,10 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vs-row { display: flex; gap: var(--space-2); }
 .sas-vs-row .sas-select { flex: 1; min-width: 0; }
 .sas-vs-max { max-width: 200px; }
+/* "Voice from: ElevenLabs": the read-only "Test calls hear" value, a field without a picker, and the "Buyers hear" group. */
+.sas-vs-readonly { display: flex; align-items: center; background-image: none; background-color: var(--surface); cursor: default; }
+.sas-vs-sublabel { font-weight: 600; color: var(--ink); }
+[data-voice-buyers-hear] { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--line); }
 .sas-vs-err { color: var(--danger); }
 .sas-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
 .sas-seg__opt { padding: 7px var(--space-2); text-align: center; font-weight: 600; cursor: pointer; color: var(--ink); }
