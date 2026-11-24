@@ -175,10 +175,10 @@ describe("pipeline proof: listen, think, speak", () => {
     expect(states).toEqual(expect.arrayContaining(["listening", "checking", "speaking", "ended"]));
 
     // The trace: per-turn timings (listen, think, speak, total), then the medians.
-    const turn1 = lines.find((l) => /pipeline turn=1 listen=\d+ms think=\d+ms tools=2 speak=\d+ms total=\d+ms chars=\d+/.test(l));
+    const turn1 = lines.find((l) => /pipeline turn=1 listen=\d+ms vadSilence=550ms sinceLastWord≈listen\+vadSilence=\d+ms think=\d+ms rounds=- tools=2 speak=\d+ms total=\d+ms chars=\d+/.test(l));
     expect(turn1).toBeDefined();
     expect(Number(/listen=(\d+)ms/.exec(turn1!)![1])).toBeGreaterThanOrEqual(200);
-    expect(lines.some((l) => /pipeline turn=2 listen=-ms think=\d+ms tools=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
+    expect(lines.some((l) => /pipeline turn=2 listen=- think=\d+ms rounds=\S+ (?:roundsMs=\S+ other=\d+ms )?tools=0 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
     expect(lines.some((l) => /pipeline summary turns=2 spoken=2 median answer=\d+ms listen=\d+ms think=\d+ms speak=\d+ms/.test(l))).toBe(true);
     // The speech end asked the listener to finalise the utterance; the final came a few hundred ms later and was used at once.
     expect(listener.utteranceEnds).toBeGreaterThanOrEqual(1);

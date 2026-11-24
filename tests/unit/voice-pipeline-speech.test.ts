@@ -165,4 +165,15 @@ describe("AudioPipe (one transcription stream's audio)", () => {
     pipe.push(chunk(9));
     expect(pipe.queuedBytes).toBe(0);
   });
+
+  it("marks its connect time: the first read by the SDK (the socket open), not the pushes before it", async () => {
+    const pipe = new AudioPipe(64_000);
+    pipe.push(new Uint8Array(100).fill(1));
+    await new Promise((r) => setTimeout(r, 5));
+    expect(pipe.firstReadAt).toBeNull();
+    const reader = pipe.stream.getReader();
+    await reader.read();
+    expect(pipe.firstReadAt).toEqual(expect.any(Number));
+    reader.releaseLock();
+  });
 });

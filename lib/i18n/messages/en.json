@@ -3011,6 +3011,8 @@
   "voice.stats.pipeline_speak": "Speaking",
   "voice.stats.pipeline_median": "Median answer time",
   "voice.stats.pipeline_think_median": "Median thinking time",
+  "voice.stats.pipeline_rounds_median": "Median thinking rounds",
+  "voice.stats.pipeline_round_ms_median": "Median time per round",
   "voice.stats.voice": "Voice",
   "voice.stats.voice_default": "Model default",
   "voice.stats.fillers": "Fillers",

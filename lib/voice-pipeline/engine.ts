@@ -23,7 +23,8 @@
  *
  * Proof limits: not recorded (recording_state "off"); a barge-in cuts the audio but the reply row stays whole; no
  * standby (the listener runs for the whole call); no spoken time-limit announcement (the notice only); no tool
- * progress messages (the chat turn runs its tools inside one call); the order-form context is not used.
+ * progress messages (the chat turn runs its tools inside one call; a turn thinking longer than PIPELINE_FILLER.afterMs
+ * says one short "One moment." filler instead); the order-form context is not used.
  */
 import { randomUUID } from "node:crypto";
 import { and, eq, isNull, ne, sql } from "drizzle-orm";
@@ -47,7 +48,8 @@ import { maskCardNumbers } from "@/lib/voice/safety";
 import { lineLanguage, limitWarnSecFor } from "@/lib/voice/engine";
 import { clip, consoleVoiceLog, errorSummary, textPrint, voiceLine, type VoiceLog } from "@/lib/voice/log";
 import { PIPELINE_ENGINE, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
-import { PIPELINE_TIMING, pipelineCostMicros, type PipelineUsage } from "./models";
+import { fillerTextFor, listenRateText, PIPELINE_FILLER, PIPELINE_TIMING, pipelineCostMicros, type PipelineUsage } from "./models";
+import { thinkRoundLine, type GatewayRound, type GatewayRoundSink } from "./gateway-llm";
 import type { Listener } from "./listener";
 import type { Speaker } from "./speaker";
 import { PcmFramer, pcmMs } from "./pcm";
@@ -115,7 +117,16 @@ type Loaded = { conv: Conversation; lead: Lead; version: AgentVersion; account: 
  * One answered turn's timings (ms) for the trace and the call's medians: listen and think for every turn that got a
  * reply; speak and total only when its audio was sent (null when speech failed or was cut before any audio).
  */
-type TurnTimes = { n: number; listenMs: number | null; thinkMs: number; speakMs: number | null; totalMs: number | null; tools: number; chars: number };
+type TurnTimes = {
+  n: number; listenMs: number | null; thinkMs: number; speakMs: number | null; totalMs: number | null; tools: number; chars: number;
+  /** Each model round's ms (null: the thinking client reports no rounds); `otherMs`: think minus the rounds. */
+  roundsMs: number[] | null; otherMs: number | null;
+  /** A "one moment" filler was said while this turn thought. */
+  filler: boolean;
+};
+
+/** The local detector's end silence: quiet this long before the speech end is reported (dead air before listen=). */
+const VAD_SILENCE_MS = PIPELINE_TIMING.vad.endSilenceMs;
 
 /**
  * What a spoken line needs to measure itself: when its buyer line ended and when the reply text came. `n` null: not
@@ -165,8 +176,8 @@ export class PipelineVoiceEngine {
   private lastError: string | undefined;
   private lastStamp = 0;
   private language = "en";
-  private timers: Record<"warn" | "limit" | "stats" | "heartbeat" | "ready" | "finalWait" | "played", TimerHandle | null> = {
-    warn: null, limit: null, stats: null, heartbeat: null, ready: null, finalWait: null, played: null,
+  private timers: Record<"warn" | "limit" | "stats" | "heartbeat" | "ready" | "finalWait" | "played" | "filler", TimerHandle | null> = {
+    warn: null, limit: null, stats: null, heartbeat: null, ready: null, finalWait: null, played: null, filler: null,
   };
 
   // Listening
@@ -185,6 +196,8 @@ export class PipelineVoiceEngine {
   private dropLateFinal = false;
   private buyerSeq = 0;
   private buyerLineId = "";
+  /** The connect time of the stream that carried the utterance just ended (listener.lastConnectMs at the speech end). */
+  private utteranceConnectMs: number | null = null;
 
   // Thinking / speaking
   private readonly turns = new TurnTaking(PIPELINE_TIMING.minTurnChars);
@@ -194,8 +207,19 @@ export class PipelineVoiceEngine {
   private waits = new Set<() => void>();
   private readonly framer = new PcmFramer(PIPELINE_TIMING.frameBytes);
   private turnSeq = 0;
+  /** The thinking client reports its model rounds (GatewayLlm.setOnRound). */
+  private readonly roundsReported: boolean;
+  /** The rounds of the turn thinking now (null between turns). */
+  private turnRounds: GatewayRound[] | null = null;
+  /** The "one moment" filler playing (or being synthesized) now; the reply waits for it. */
+  private filler: Promise<void> | null = null;
+  private fillerPlaying = false;
 
   // Figures
+  private rounds: GatewayRound[] = [];
+  /** Speech synthesis start → first audio chunk, per spoken text. */
+  private firstAudioMs: number[] = [];
+  private fillers = 0;
   private times: TurnTimes[] = [];
   private spokenChars = 0;
   private bargeIns = 0;
@@ -216,6 +240,9 @@ export class PipelineVoiceEngine {
     this.onEnding = deps.onEnding;
     this.engineName = deps.engine ?? PIPELINE_ENGINE;
     this.thinkModelId = deps.thinkModel;
+    const roundable = this.llm as { setOnRound?: (sink: GatewayRoundSink | null) => void };
+    this.roundsReported = typeof roundable.setOnRound === "function";
+    if (this.roundsReported) roundable.setOnRound!((r) => this.onThinkRound(r));
   }
 
   // -------------------------------------------------------------------------
@@ -277,7 +304,7 @@ export class PipelineVoiceEngine {
     } else if (e === "end") {
       this.onSpeechEnd();
     }
-    if (this.turns.state === "speaking" && this.loudMs >= PIPELINE_TIMING.bargeInSpeechMs) this.bargeIn("speech");
+    if ((this.turns.state === "speaking" || this.fillerPlaying) && this.loudMs >= PIPELINE_TIMING.bargeInSpeechMs) this.bargeIn("speech");
   }
 
   onClientGone(close?: { code?: number | null; reason?: string; idle?: boolean }): Promise<void> {
@@ -437,7 +464,7 @@ export class PipelineVoiceEngine {
     this.callStart = this.clock.now();
     const agentRows = await this.db.select({ id: messages.id }).from(messages)
       .where(and(eq(messages.accountId, accountId), eq(messages.conversationId, conv.id), eq(messages.actor, "agent"))).limit(1);
-    this.log.info(voiceLine(this.sessionId, `engine=${this.engineName} mode=${this.mode} listen=${listener.modelId} think=${this.thinkModel}/${version.effort} speak=${this.speaker.modelId} voice=${this.speaker.voice}`));
+    this.log.info(voiceLine(this.sessionId, `engine=${this.engineName} mode=${this.mode} listen=${listener.modelId} think=${this.thinkModel}/${version.effort} speak=${this.speaker.modelId} voice=${this.speaker.voice} listenRate=${listenRateText(listener.modelId)}`));
     await this.db.update(voiceSessions)
       .set({
         status: "live", connectedAt: new Date(this.callStart), mode: this.mode, ...(this.mode === "live" ? { model: listener.modelId } : {}),
@@ -507,7 +534,7 @@ export class PipelineVoiceEngine {
     this.partial = t;
     this.buyerLineId ||= `b${++this.buyerSeq}`;
     this.send({ t: "transcript", id: this.buyerLineId, role: "buyer", text: [...this.finals, this.partial].join(" "), final: false, atMs: this.offsetMs() });
-    if (this.turns.state === "speaking" && this.partial.split(/\s+/).filter(Boolean).length >= PIPELINE_TIMING.bargeInWords) this.bargeIn("partial");
+    if ((this.turns.state === "speaking" || this.fillerPlaying) && this.partial.split(/\s+/).filter(Boolean).length >= PIPELINE_TIMING.bargeInWords) this.bargeIn("partial");
     if (this.endHeardAt !== null) this.lineWait();
   }
 
@@ -527,7 +554,7 @@ export class PipelineVoiceEngine {
     // The buyer is still speaking: more of the line may come; it is committed when the speech ends.
     if (this.vad.inSpeech) return;
     if (this.endHeardAt !== null) this.trace(`transcript final after ${Math.round(this.clock.now() - this.endHeardAt)}ms`);
-    this.commitBuyer(null, false);
+    this.commitBuyer(null, false, "final");
   }
 
   /**
@@ -537,7 +564,7 @@ export class PipelineVoiceEngine {
    */
   private onSpeechEnd() {
     const now = this.clock.now();
-    this.speechEndAt = now - PIPELINE_TIMING.vad.endSilenceMs;
+    this.speechEndAt = now - VAD_SILENCE_MS;
     this.endHeardAt = now;
     this.trace("buyer speech end");
     try {
@@ -545,9 +572,10 @@ export class PipelineVoiceEngine {
     } catch (e) {
       this.log.warn(voiceLine(this.sessionId, `pipeline listener endUtterance failed: ${errorSummary(e)}`));
     }
+    this.utteranceConnectMs = this.listener?.lastConnectMs ?? null;
     if (this.finals.length) {
       this.trace("transcript final after 0ms");
-      return this.commitBuyer(null, false);
+      return this.commitBuyer(null, false, "final");
     }
     this.lineWait();
   }
@@ -562,9 +590,10 @@ export class PipelineVoiceEngine {
     if (this.partial && (stableLeft <= 0 || capLeft <= 0)) {
       this.trace(`partial used after ${waited}ms${stableLeft > 0 ? " (cap)" : ""}`);
       this.dropLateFinal = true;
-      return this.commitBuyer(null, false);
+      return this.commitBuyer(null, false, stableLeft > 0 ? "cap" : "partial");
     }
     if (capLeft <= 0) {
+      this.listenTrace("cap", " (no text: noise)");
       this.trace(`speech without a transcript (noise) after ${waited}ms`);
       this.speechEndAt = null;
       this.endHeardAt = null;
@@ -573,8 +602,24 @@ export class PipelineVoiceEngine {
     this.timer("finalWait", Math.max(1, Math.ceil(this.partial ? Math.min(stableLeft, capLeft) : capLeft)), () => this.lineWait());
   }
 
-  /** A buyer line is complete: `typed` text, or what the listener heard (`text` null). */
-  private commitBuyer(typedText: string | null, typed: boolean) {
+  /**
+   * One heard utterance's listening figures, all from the detector's speech-end report (endHeardAt, which comes
+   * VAD_SILENCE_MS after the buyer's last word): when the partial text last changed (negative: before the report),
+   * whether a final came and when (or how long was waited without one), how long the utterance's transcription stream
+   * took to connect, and what the line was taken from.
+   */
+  private listenTrace(used: "final" | "partial" | "cap", note = "") {
+    const end = this.endHeardAt;
+    const now = this.clock.now();
+    const rel = (at: number | null) => (end === null || at === null ? "-" : `${Math.round(at - end)}ms`);
+    const final = this.lastFinalAt !== null ? `final=yes after ${rel(this.lastFinalAt)}` : `final=no after ${rel(now)}`;
+    const connect = this.utteranceConnectMs === null ? "-" : `${this.utteranceConnectMs}ms`;
+    this.trace(`listen: speechEnd→lastPartialChange=${rel(this.partialAt)} ${final} newStreamConnect=${connect} used=${used}${note}`);
+  }
+
+  /** A buyer line is complete: `typed` text, or what the listener heard (`text` null; `used`: what it was taken from). */
+  private commitBuyer(typedText: string | null, typed: boolean, used: "final" | "partial" | "cap" = "final") {
+    if (!typed) this.listenTrace(used);
     const text = (typed ? typedText ?? "" : [...this.finals].join(" ") || this.partial).trim();
     const line: BuyerLine = {
       text, typed, speechEndAt: typed ? this.clock.now() : this.speechEndAt, finalAt: typed ? this.clock.now() : this.lastFinalAt ?? this.clock.now(),
@@ -652,12 +697,27 @@ export class PipelineVoiceEngine {
     });
     if (this.ended) return;
     this.setState("checking");
-    const listenMs = line.typed || line.speechEndAt === null ? null : Math.max(0, Math.round(line.finalAt - line.speechEndAt));
+    // listen = the detector's speech-end report → the line (final, stable partial or cap). It EXCLUDES the detector's
+    // end silence (VAD_SILENCE_MS of quiet before that report): the buyer's last word was ≈ listen + vadSilence ago.
+    const listenMs = line.typed || line.speechEndAt === null ? null : Math.max(0, Math.round(line.finalAt - line.speechEndAt) - VAD_SILENCE_MS);
     this.trace(`turn=${n} think start len=${masked.text.length}${line.typed ? " typed" : ""}`);
-    const result = await this.turnFn(this.db, this.llm, { accountId: account.id, conversationId: conv.id, leadId: lead.id, text: masked.text, callSessionId: this.sessionId });
+    this.turnRounds = this.roundsReported ? [] : null;
+    const fillersBefore = this.fillers;
+    this.timer("filler", Math.max(0, PIPELINE_FILLER.afterMs - (this.clock.now() - line.finalAt)), () => this.sayFiller(n, line.finalAt));
+    let result: Awaited<ReturnType<CallTurnFn>>;
+    try {
+      result = await this.turnFn(this.db, this.llm, { accountId: account.id, conversationId: conv.id, leadId: lead.id, text: masked.text, callSessionId: this.sessionId });
+    } finally {
+      this.clearTimer("filler");
+    }
     const replyAt = this.clock.now();
     const thinkMs = Math.max(0, Math.round(replyAt - line.finalAt));
+    const rounds = this.turnRounds;
+    this.turnRounds = null;
+    const roundsMs = rounds ? rounds.map((r) => r.ms) : null;
+    const otherMs = roundsMs ? Math.max(0, thinkMs - roundsMs.reduce((a, b) => a + b, 0)) : null;
     if (result.status !== "replied") {
+      while (this.filler) await this.filler;
       this.trace(`turn=${n} no reply status=${result.status} think=${thinkMs}ms`);
       if (result.status === "in_call") {
         this.log.warn(voiceLine(this.sessionId, "pipeline turn refused by the one-agent block (in_call): the chat turn needs this call's callSessionId (lib/voice-pipeline/turn.ts PIPELINE-HOOK)"));
@@ -689,7 +749,7 @@ export class PipelineVoiceEngine {
     this.trace(`turn=${n} reply len=${result.text.length} print=${textPrint(result.text)} think=${thinkMs}ms tools=${result.calls} model=${this.thinkModel}`);
     if (this.turns.replied(true) !== null) return this.markUnspoken(result.messageId, "not in a thinking turn");
     // The turn counts from here (listen, think), spoken or not; speak and total are set at its first audio.
-    const times: TurnTimes = { n, listenMs, thinkMs, speakMs: null, totalMs: null, tools: result.calls, chars: 0 };
+    const times: TurnTimes = { n, listenMs, thinkMs, speakMs: null, totalMs: null, tools: result.calls, chars: 0, roundsMs, otherMs, filler: this.fillers > fillersBefore };
     this.times.push(times);
     await this.speakTurn(result.text, { messageId: result.messageId, n, speechEndAt: line.speechEndAt, finalAt: line.finalAt, replyAt, listenMs, thinkMs, tools: result.calls, endAfter, times });
   }
@@ -698,8 +758,65 @@ export class PipelineVoiceEngine {
   // Speaking
   // -------------------------------------------------------------------------
 
+  /**
+   * The turn has thought PIPELINE_FILLER.afterMs with no reply: one short filler ("One moment.") through the same
+   * speaker, unless the turn is over or the buyer is speaking. The reply waits for it (speakTurn).
+   */
+  private sayFiller(n: number, from: number) {
+    if (this.ended || this.turns.state !== "thinking" || this.filler) return;
+    if (this.vad.inSpeech) {
+      this.trace(`turn=${n} filler skipped: the buyer is speaking`);
+      return;
+    }
+    const text = fillerTextFor(this.language);
+    this.fillers++;
+    this.trace(`filler spoken at ${Math.round(this.clock.now() - from)}ms of thinking turn=${n} len=${text.length}`);
+    const p: Promise<void> = this.playFiller(text)
+      .catch((e) => this.log.warn(voiceLine(this.sessionId, `pipeline filler failed: ${errorSummary(e)}`)))
+      .finally(() => {
+        if (this.filler === p) this.filler = null;
+      });
+    this.filler = p;
+  }
+
+  /** Plays the filler to its end (paced like a reply), or until a barge-in or the end cuts it. Not stored as a message. */
+  private async playFiller(text: string) {
+    const gen = ++this.speakGen;
+    this.fillerPlaying = true;
+    this.setState("speaking");
+    this.framer.reset();
+    const startedAt = this.clock.now();
+    let heard = false;
+    try {
+      for await (const chunk of this.speaker.speak(text, { language: lineLanguage(text, this.language) })) {
+        if (gen !== this.speakGen) return;
+        if (!heard && chunk.byteLength) {
+          heard = true;
+          this.spokenChars += text.length;
+          this.firstAudioMs.push(Math.max(0, Math.round(this.clock.now() - startedAt)));
+        }
+        for (const frame of this.framer.push(chunk)) {
+          await this.pace();
+          if (gen !== this.speakGen) return;
+          this.send(frame);
+          this.playheadAt = Math.max(this.playheadAt, this.clock.now()) + pcmMs(frame.byteLength, VOICE_SAMPLE_RATE);
+        }
+      }
+      const left = Math.max(0, this.playheadAt - this.clock.now());
+      if (left > 0) await this.wait(left);
+    } catch (e) {
+      if (!(e as { alreadyLogged?: boolean })?.alreadyLogged) this.log.warn(voiceLine(this.sessionId, `pipeline filler not spoken: ${clip(e instanceof Error ? e.message : e)}`));
+      this.speaker.cancel();
+    } finally {
+      this.fillerPlaying = false;
+      if (!this.ended && gen === this.speakGen && this.turns.state === "thinking") this.setState("checking");
+    }
+  }
+
   /** Says a reply sentence by sentence (the next one is synthesized while the current one plays), paced to real time. */
   private async speakTurn(chatText: string, t: SpeakTurn) {
+    // A "one moment" filler still playing finishes first: no overlap, no cut.
+    while (this.filler) await this.filler;
     const gen = ++this.speakGen;
     const language = lineLanguage(chatText, this.language);
     const sentences = splitSentences(spokenForm(chatText, language));
@@ -713,9 +830,11 @@ export class PipelineVoiceEngine {
     // A sentence's characters count (cost, figures) once its synthesis produced audio: a failed attempt costs nothing.
     const startSentence = (i: number) => {
       if (i >= sentences.length || starts[i]) return;
+      const at = this.clock.now();
       starts[i] = prefetch(this.speaker.speak(sentences[i], { language }), () => {
         chars += sentences[i].length;
         this.spokenChars += sentences[i].length;
+        if (i === 0) this.firstAudioMs.push(Math.max(0, Math.round(this.clock.now() - at)));
       });
     };
     try {
@@ -756,7 +875,7 @@ export class PipelineVoiceEngine {
     }
     if (!firstAudio && t.times) {
       // The turn still counts (listen, think): its speak and total stay empty.
-      this.trace(`turn=${t.n} listen=${t.listenMs ?? "-"}ms think=${t.thinkMs}ms tools=${t.tools} speak=- total=- chars=0 model=${this.thinkModel}`);
+      this.turnTrace(t.times, "-", "-", 0);
     }
     if (gen !== this.speakGen) return;
     if (!firstAudio) this.trace(`${t.label ?? `turn=${t.n ?? "opener"}`} said nothing (chars=${chars})`);
@@ -789,9 +908,29 @@ export class PipelineVoiceEngine {
     const from = t.speechEndAt ?? t.finalAt;
     const totalMs = Math.max(0, Math.round(now - from));
     Object.assign(t.times, { speakMs, totalMs, chars });
-    this.trace(`turn=${t.n} listen=${t.listenMs ?? "-"}ms think=${t.thinkMs}ms tools=${t.tools} speak=${speakMs}ms total=${totalMs}ms chars=${chars} model=${this.thinkModel}`);
+    this.turnTrace(t.times, `${speakMs}ms`, `${totalMs}ms`, chars);
     void this.db.update(messages).set({ spokenAtMs: this.offsetMs(), answerMs: totalMs }).where(eq(messages.id, t.messageId))
       .catch((e) => this.log.warn(voiceLine(this.sessionId, `spoken time not stored: ${errorSummary(e)}`)));
+  }
+
+  /**
+   * The turn's trace line: `listen=` runs from the detector's speech-end report (it excludes the detector's end
+   * silence: the buyer's last word was ≈ listen + vadSilence before the line); `rounds`/`roundsMs`: the model rounds
+   * of the turn; `other`: think minus the rounds (tools, DB, overhead); total runs from the last word.
+   */
+  private turnTrace(t: TurnTimes, speak: string, total: string, chars: number) {
+    const listen = t.listenMs === null ? "listen=-" : `listen=${t.listenMs}ms vadSilence=${VAD_SILENCE_MS}ms sinceLastWord≈listen+vadSilence=${t.listenMs + VAD_SILENCE_MS}ms`;
+    const rounds = t.roundsMs === null ? "rounds=-" : `rounds=${t.roundsMs.length} roundsMs=${t.roundsMs.join("+") || "0"} other=${t.otherMs}ms`;
+    this.trace(`turn=${t.n} ${listen} think=${t.thinkMs}ms ${rounds} tools=${t.tools} speak=${speak} total=${total} chars=${chars}${t.filler ? " filler=yes" : ""} model=${this.thinkModel}`);
+  }
+
+  /** One model round of the turn thinking now (GatewayLlm): logged (a warning when cut at the cap or failed) and kept. */
+  private onThinkRound(r: GatewayRound) {
+    const list = this.turnRounds;
+    list?.push(r);
+    this.rounds.push(r);
+    const line = voiceLine(this.sessionId, `trace t=${this.offsetMs()} ${thinkRoundLine(r, list ? list.length : r.call)}`);
+    (r.finish === "length" || r.finish === "error" ? this.log.warn : this.log.info).call(this.log, line);
   }
 
   /** A reply that was never spoken: its spokenAtMs is when it would have been (now), so the call block shows it. */
@@ -807,6 +946,13 @@ export class PipelineVoiceEngine {
 
   /** The buyer cut in while the agent spoke: stop the audio now, the browser drops what it queued, listen. */
   private bargeIn(by: "speech" | "partial") {
+    if (this.fillerPlaying) {
+      // The filler is cut like any reply; the turn keeps thinking (the buyer's line queues behind it).
+      this.fillerPlaying = false;
+      this.cutSpeech(`${by} (filler)`);
+      this.setState("checking");
+      return;
+    }
     if (!this.turns.bargeIn()) return;
     this.cutSpeech(by);
     this.setState("listening");
@@ -842,6 +988,14 @@ export class PipelineVoiceEngine {
       medianThinkMs: median(this.times.map((x) => x.thinkMs)),
       medianSpeakMs: median(this.times.flatMap((x) => (x.speakMs === null ? [] : [x.speakMs]))),
       bargeIns: this.bargeIns,
+      oneRoundTurns: this.times.filter((x) => x.roundsMs !== null && x.roundsMs.length === 1).length,
+      roundTurns: this.times.filter((x) => x.roundsMs !== null).length,
+      medianRounds: median(this.times.flatMap((x) => (x.roundsMs === null ? [] : [x.roundsMs.length]))),
+      medianRoundMs: median(this.rounds.map((r) => r.ms)),
+      medianOtherMs: median(this.times.flatMap((x) => (x.otherMs === null ? [] : [x.otherMs]))),
+      medianCachedPct: median(this.rounds.flatMap((r) => (r.inputTokens && r.cachedTokens !== null ? [(100 * r.cachedTokens) / r.inputTokens] : []))),
+      medianSpeakFirstAudioMs: median(this.firstAudioMs),
+      fillers: this.fillers,
     };
   }
 
@@ -892,6 +1046,7 @@ export class PipelineVoiceEngine {
   }
 
   private async finish(reason: VoiceEndReason) {
+    (this.llm as { setOnRound?: (sink: GatewayRoundSink | null) => void }).setOnRound?.(null);
     // A chat turn still running stores its reply first (it is not spoken), so the end line comes after it.
     if (this.running) {
       try {
@@ -908,7 +1063,7 @@ export class PipelineVoiceEngine {
     const f = this.figures(endDetail);
     const p = (f.usage as VoiceUsage & { pipeline: PipelineUsage }).pipeline;
     const ms = (v: number | null) => (v === null ? "-" : `${v}ms`);
-    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} pipeline summary turns=${p.turns} spoken=${p.spokenTurns ?? p.turns} median answer=${ms(p.medianAnswerMs)} listen=${ms(p.medianListenMs)} think=${ms(p.medianThinkMs)} speak=${ms(p.medianSpeakMs)} chars=${p.spokenChars} listenSec=${p.listenSec} bargeIns=${p.bargeIns} speakModel=${p.speakModel || "-"} costMicros=${f.costMicros} (listen ${p.listenCostMicros} + speak ${p.speakCostMicros}; thinking is on the chat rows) think=${p.thinkModel || "-"}`));
+    this.log.info(voiceLine(this.sessionId, `trace t=${this.offsetMs()} pipeline summary turns=${p.turns} spoken=${p.spokenTurns ?? p.turns} median answer=${ms(p.medianAnswerMs)} listen=${ms(p.medianListenMs)} think=${ms(p.medianThinkMs)} speak=${ms(p.medianSpeakMs)} speakFirstAudio=${ms(p.medianSpeakFirstAudioMs ?? null)} rounds/turn=${p.medianRounds ?? "-"} oneRound=${p.roundTurns ? `${p.oneRoundTurns ?? 0}/${p.roundTurns}` : "-"} ms/round=${ms(p.medianRoundMs ?? null)} other/turn=${ms(p.medianOtherMs ?? null)} cachedIn=${p.medianCachedPct == null ? "-" : `${p.medianCachedPct}%`} fillers=${p.fillers ?? 0} chars=${p.spokenChars} listenSec=${p.listenSec} bargeIns=${p.bargeIns} speakModel=${p.speakModel || "-"} costMicros=${f.costMicros} (listen ${p.listenCostMicros} + speak ${p.speakCostMicros}; thinking is on the chat rows) think=${p.thinkModel || "-"}`));
     this.log.info(voiceLine(this.sessionId, `ended reason=${reason} code=${this.errorCode ?? "-"} durationSec=${f.durationSec} by=${endDetail.by}${this.clientClose ? ` client=${this.clientClose.code ?? "-"}/"${this.clientClose.reason}"` : ""} engine=${this.engineName}`));
     const set = { status: "ended" as const, endedAt: new Date(this.clock.now()), endReason: reason, errorCode: this.errorCode, durationSec: f.durationSec, usage: f.usage, costMicros: f.costMicros, answerMsAvg: f.answerMsAvg };
     const where = this.endedExternally

@@ -35,7 +35,9 @@ const { spokenForm } = await import("@/lib/voice-pipeline/spoken");
 const { GatewayLlm, PIPELINE_TEXT_MODEL, pipelineLlmFor } = await import("@/lib/voice-pipeline/gateway-llm");
 const { liveGatewayLlm, pipelinePartsFor, PipelineThinkingUnavailable, SCRIPTED_PIPELINE_REPLY, PIPELINE_THINK_TIMEOUT_MS } = await import("@/lib/voice-pipeline");
 const { RETRY_LINE } = await import("@/lib/voice-pipeline/engine");
-const { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, LISTEN_MICROS_PER_SEC, SPEAK_MICROS_PER_CHAR, pipelineCostMicros } = await import("@/lib/voice-pipeline/models");
+const { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, LISTEN_MICROS_PER_SEC, SPEAK_MICROS_PER_CHAR, pipelineCostMicros, PIPELINE_CALL_CONTEXT_LINE } = await import("@/lib/voice-pipeline/models");
+const { callTurnOptions, makeCallTurn } = await import("@/lib/voice-pipeline/turn");
+type CallTurnFn = import("@/lib/voice-pipeline/turn").CallTurnFn;
 
 const LIVE = { VOICE_REALTIME: "live", AI_GATEWAY_API_KEY: "test-key-never-sent" };
 
@@ -132,7 +134,7 @@ describe("pipeline parts: which thinking client", () => {
 });
 
 describe("pipeline engine on Gemini Flash (fake gateway model)", () => {
-  async function startCall(engine: "pipeline" | "pipeline_chat", gatewayLlm: (v: { model: string; effort: string | null }, env: Record<string, string | undefined>) => InstanceType<typeof GatewayLlm>) {
+  async function startCall(engine: "pipeline" | "pipeline_chat", gatewayLlm: (v: { model: string; effort: string | null }, env: Record<string, string | undefined>) => InstanceType<typeof GatewayLlm>, turn?: CallTurnFn) {
     const conv = (await startVoiceTestConversation(db, acc, me.id, { scenario: null }))!;
     const s = await createVoiceSession(db, { accountId: acc, conversationId: conv.conversationId, userId: me.id, isTest: true }, { env: LIVE, engine });
     if (!s.ok) throw new Error(s.reason);
@@ -144,7 +146,7 @@ describe("pipeline engine on Gemini Flash (fake gateway model)", () => {
     const lines: string[] = [];
     const log = { info: (l: string) => lines.push(l), warn: (l: string) => lines.push(l), error: (l: string) => lines.push(l) };
     const factory = vi.fn(gatewayLlm);
-    const done = handleVoiceSocket(ws, { db, deadlineSec: null, env: LIVE, clock, log, pipeline: { listener: () => listener, speaker, gatewayLlm: factory } });
+    const done = handleVoiceSocket(ws, { db, deadlineSec: null, env: LIVE, clock, log, pipeline: { listener: () => listener, speaker, gatewayLlm: factory, ...(turn ? { turn } : {}) } });
     ws.emit("message", Buffer.from(JSON.stringify({ t: "auth", sessionId: s.sessionId, ticket: s.ticket })), false);
     await settle();
     await clock.advance(1_500, settle);
@@ -209,13 +211,26 @@ describe("pipeline engine on Gemini Flash (fake gateway model)", () => {
     const summary = await voiceSessionSummary(db, acc, c.conv.conversationId);
     expect(summary?.engine).toBe("pipeline");
     expect(summary?.pipeline?.thinkModel).toBe(PIPELINE_TEXT_MODEL);
+    // The card's round medians (one turn of two rounds).
+    expect(summary?.pipeline?.medianRounds).toBe(2);
+    expect(summary?.pipeline?.medianRoundMs).toEqual(expect.any(Number));
+    expect(c.lines.some((l) => l.includes("listenRate=150 micros/s"))).toBe(true);
 
     // The trace: the thinking model at the start and in the summary; per-turn timings with the tool count.
     expect(c.lines.some((l) => l.includes(`socket accepted mode=live engine=pipeline think=${PIPELINE_TEXT_MODEL}`))).toBe(true);
     expect(c.lines.some((l) => l.includes(`engine=pipeline mode=live listen=${PIPELINE_LISTEN_MODEL} think=${PIPELINE_TEXT_MODEL}/`))).toBe(true);
-    expect(c.lines.some((l) => /pipeline turn=1 listen=-ms think=\d+ms tools=1 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=\d+ms rounds=\S+ (?:roundsMs=\S+ other=\d+ms )?tools=1 speak=\d+ms total=\d+ms/.test(l))).toBe(true);
     expect(c.lines.some((l) => /pipeline summary turns=1 spoken=1 .*thinking is on the chat rows\) think=google\/gemini-3\.8-flash$/.test(l))).toBe(true);
-    expect(c.lines.some((l) => /pipeline turn=1 listen=-ms think=\d+ms tools=1 speak=\d+ms total=\d+ms chars=\d+ model=google\/gemini-3\.8-flash/.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=\d+ms rounds=\S+ (?:roundsMs=\S+ other=\d+ms )?tools=1 speak=\d+ms total=\d+ms chars=\d+ model=google\/gemini-3\.8-flash/.test(l))).toBe(true);
+    // Per round: one line each (never the text), capped at 700 output tokens; the turn line sums them up; the summary's medians.
+    expect(model.doGenerateCalls.map((x) => x.maxOutputTokens)).toEqual([700, 700]);
+    const roundLines = c.lines.filter((l) => / pipeline think round=/.test(l));
+    expect(roundLines).toHaveLength(2);
+    expect(roundLines[0]).toMatch(/pipeline think round=1 ms=\d+ in=\d+ cached=\d+ out=\d+ reasoning=\S+ finish=tool-calls tools=\[update_deal_state\] textChars=0$/);
+    expect(roundLines[1]).toMatch(new RegExp(`pipeline think round=2 ms=\\d+ in=\\d+ cached=\\d+ out=\\d+ reasoning=\\S+ finish=stop tools=\\[\\] textChars=${REPLY.length}$`));
+    expect(roundLines.join(" ")).not.toContain("kitchens");
+    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=\d+ms rounds=2 roundsMs=\d+\+\d+ other=\d+ms tools=1 /.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline summary .* speakFirstAudio=\d+ms rounds\/turn=2 oneRound=0\/1 ms\/round=\d+ms other\/turn=\d+ms cachedIn=\d+% fillers=0 /.test(l))).toBe(true);
   });
 
   it("a failing turn (model error): the error is never spoken, the neutral retry line is, the engine listens again, the next turn answers", async () => {
@@ -251,6 +266,50 @@ describe("pipeline engine on Gemini Flash (fake gateway model)", () => {
     expect(rows.some((m) => m.body === RETRY_LINE.en)).toBe(false);
     const [row] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, c.s.sessionId));
     expect((row.usage as unknown as { endDetail: { lastError?: string } }).endDetail.lastError).toBe("pipeline turn failed: GatewayLlmError");
+  });
+
+  /** A fake Gemini model answering with the reply text AND update_deal_state in one response (the one-round case). */
+  const oneRoundModel = (reply: string) => new MockLanguageModelV4({
+    provider: "gateway", modelId: PIPELINE_TEXT_MODEL,
+    doGenerate: [result([
+      { type: "text", text: reply },
+      toolCall("g1", "update_deal_state", { updates: [{ key: "business_type", value: "Cafe", provenance: "buyer" }], next_step: null, objection: null, recommendation_confirmed: null, price_asked: null, asked: null }),
+    ], "tool-calls")],
+  });
+  const systemOf = (model: InstanceType<typeof MockLanguageModelV4>) => JSON.stringify(model.doGenerateCalls[0].prompt.filter((m) => m.role === "system"));
+
+  it("text + update_deal_state in one response: one model call, the reply spoken, the tool row stored; rounds=1, oneRound=1/1", async () => {
+    const REPLY = "A cafe, great. How many sites do you run?";
+    const model = oneRoundModel(REPLY);
+    const c = await startCall("pipeline", (v, env) => pipelineLlmFor(v, env, { model, timeoutMs: 15_000, maxRetries: 1 }));
+    const openerSaid = c.speaker.said.length;
+    await c.type("We run a cafe.");
+    await c.end();
+    expect(model.doGenerateCalls).toHaveLength(1);
+    // The call's context line (models.ts) reached the model on this call turn.
+    expect(systemOf(model)).toContain(PIPELINE_CALL_CONTEXT_LINE);
+    expect(c.speaker.said.slice(openerSaid).map((x) => x.text).join(" ")).toBe(spokenForm(REPLY));
+    const rows = await db.select().from(messages).where(eq(messages.conversationId, c.conv.conversationId)).orderBy(asc(messages.createdAt));
+    const reply = rows.find((m) => m.body === REPLY)!;
+    expect(reply).toMatchObject({ actor: "agent", voiceSessionId: c.s.sessionId });
+    const calls = await db.select().from(toolCalls).where(eq(toolCalls.messageId, reply.id));
+    expect(calls.map((x) => [x.name, x.outcome])).toEqual([["update_deal_state", "ok"]]);
+    expect(c.lines.some((l) => /pipeline turn=1 listen=- think=\d+ms rounds=1 roundsMs=\d+ other=\d+ms tools=1 /.test(l))).toBe(true);
+    expect(c.lines.some((l) => /pipeline summary .* rounds\/turn=1 oneRound=1\/1 /.test(l))).toBe(true);
+    const [row] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, c.s.sessionId));
+    expect((row.usage as unknown as { pipeline: Record<string, unknown> }).pipeline).toMatchObject({ roundTurns: 1, oneRoundTurns: 1, medianRounds: 1 });
+  });
+
+  it("the call's context line empty: the property is not passed and nothing reaches the model", async () => {
+    expect(callTurnOptions("sess", "")).toEqual({ trigger: "pipeline call", callSessionId: "sess" });
+    expect("callContextLine" in callTurnOptions("sess", "  ")).toBe(false);
+    expect(callTurnOptions("sess", PIPELINE_CALL_CONTEXT_LINE)).toEqual({ trigger: "pipeline call", callSessionId: "sess", callContextLine: PIPELINE_CALL_CONTEXT_LINE });
+    const model = oneRoundModel("A cafe, noted. How many sites?");
+    const c = await startCall("pipeline", (v, env) => pipelineLlmFor(v, env, { model, timeoutMs: 15_000, maxRetries: 1 }), makeCallTurn(""));
+    await c.type("We run a cafe.");
+    await c.end();
+    expect(model.doGenerateCalls).toHaveLength(1);
+    expect(systemOf(model)).not.toContain("This is a live call.");
   });
 
   it("a thinking client that cannot be built refuses the call (model_unavailable), never falls back to the chat model", async () => {

@@ -33,7 +33,7 @@ import { supportedTurnLanguages, turnLanguage } from "@/lib/conversations/turn-l
 import { storedBuyerZone } from "@/lib/team-calls/zone";
 import { textTurnBlocked } from "@/lib/voice/one-agent";
 import { deriveStage, writtenByAgent } from "./core/stage";
-import { BOOKKEEPING_TOOLS, bookkeepingNeedsRound, callContextLineOf } from "./call-reply";
+import { BOOKKEEPING_TOOLS, bookkeepingNeedsRound, callContextLineOf, callReplyArgDescriptionOf, splitSpokenReply, toolDefsWithSpokenReply } from "./call-reply";
 
 export const MAX_TOOL_ROUNDS = 8;
 /** Wait before the one retry of a model call that failed after a tool round. */
@@ -62,10 +62,13 @@ const pick = (map: Record<string, string>, lang: string) => map[lang] ?? map.en;
  * A valid call turn also (lib/agent/call-reply.ts): a response with reply text and only bookkeeping tool calls
  * finishes the turn once the tools ran and their results add nothing the reply must reflect (one model round);
  * and `callContextLine`, the caller's own line for the model, is added to the per-turn context (one line,
- * trimmed, capped). Without a valid call session both are off: a chat turn is unchanged.
+ * trimmed, capped). With `callReplyArgDescription` (the caller's opt-in and wording), update_deal_state gets an
+ * optional `spoken_reply` argument for the turn, and a response of update_deal_state calls only, with no text,
+ * finishes the turn with that reply on the same guards. Without a valid call session all of this is off: a chat
+ * turn is unchanged.
  */
 export async function runBuyerTurn(
-  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string; callSessionId?: string; callContextLine?: string },
+  db: Db, llm: LlmClient, args: { accountId: string; conversationId: string; text: string; buyerMessageStored?: boolean; trigger?: string; callSessionId?: string; callContextLine?: string; callReplyArgDescription?: string },
 ): Promise<TurnResult> {
   const [conv] = await db.select().from(conversations).where(and(eq(conversations.id, args.conversationId), eq(conversations.accountId, args.accountId)));
   if (!conv) return { status: "not_found" };
@@ -80,6 +83,8 @@ export async function runBuyerTurn(
   const callTurn = !!callStamp.voiceSessionId;
   // The caller's line for the model (the voice pipeline's own wording), on a valid call turn only.
   const callLine = callTurn ? callContextLineOf(args.callContextLine) : "";
+  // The caller's description of update_deal_state's spoken_reply argument: the opt-in, on a valid call turn only.
+  const spokenArgDescription = callTurn ? callReplyArgDescriptionOf(args.callReplyArgDescription) : "";
   const masked = maskCardNumbers(args.text.slice(0, 4000));
 
   // One round trip: lead, its market, version, account and deal state.
@@ -213,6 +218,9 @@ export async function runBuyerTurn(
   // The tools' strict mode of this turn's first call, sent again on every later round: the
   // model's thinking blocks are bound to the exact tool list they were made with.
   let strictTools: boolean | undefined;
+  // The tool list, the same for every round of the turn: TOOL_DEFS, or on a call turn whose caller describes it,
+  // TOOL_DEFS with update_deal_state's spoken_reply argument (lib/agent/call-reply.ts).
+  const tools = spokenArgDescription ? toolDefsWithSpokenReply(TOOL_DEFS, spokenArgDescription) : TOOL_DEFS;
   // Call turns: the stage block the model last read (the per-turn context's, then each update_deal_state result's),
   // for the "reply with bookkeeping" check (lib/agent/call-reply.ts). Same inputs as turnContext's stage.
   let seenStage = callTurn
@@ -234,7 +242,7 @@ export async function runBuyerTurn(
   try {
     for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
       const res = await callModel({
-        model: version.model, effort: version.effort, system, tools: TOOL_DEFS, messages: withHistoryCacheBreakpoint(history),
+        model: version.model, effort: version.effort, system, tools, messages: withHistoryCacheBreakpoint(history),
         ...(strictTools === undefined ? {} : { strictTools }),
       }, round > 0);
       strictTools ??= res.strictTools;
@@ -257,23 +265,33 @@ export async function runBuyerTurn(
         break;
       }
       // Call turns: reply text written next to bookkeeping calls only may finish the turn after the tools run.
-      const replyNow = callTurn && uses.every((u) => BOOKKEEPING_TOOLS.has(u.name))
+      const textNow = callTurn && uses.every((u) => BOOKKEEPING_TOOLS.has(u.name))
         ? plainChatText(res.content.filter((b): b is { type: "text"; text: string } => b.type === "text").map((b) => b.text).join("\n"))
         : "";
+      // Call turns: update_deal_state's spoken_reply is always taken off its input (the handler never sees it, the
+      // stored call row has none). With the caller's opt-in, a response of update_deal_state calls only and no text
+      // may finish the turn with it (the last non-empty one), on the same guards.
+      const split = new Map(callTurn ? uses.filter((u) => u.name === "update_deal_state").map((u) => [u.id, splitSpokenReply(u.input)] as const) : []);
+      const spokenNow = spokenArgDescription && !textNow.trim() && uses.every((u) => u.name === "update_deal_state")
+        ? uses.map((u) => plainChatText(split.get(u.id)?.spoken ?? "")).filter((s) => s.trim())
+        : [];
+      if (spokenNow.length > 1) console.warn(`[agent] ${spokenNow.length} update_deal_state calls carry spoken_reply; the last one is the reply`);
+      const replyNow = textNow.trim() ? textNow : spokenNow.at(-1) ?? "";
       let needsRound = !replyNow.trim();
       // Every result of this response is checked against the block the model read before writing it.
       const stageBefore = seenStage;
       const results: Anthropic.Beta.BetaToolResultBlockParam[] = [];
       for (const u of uses) {
+        const input = split.get(u.id)?.input ?? u.input;
         let r: ToolResult;
         try {
-          r = await runTool(u.name, u.input, ctx(u.id));
+          r = await runTool(u.name, input, ctx(u.id));
           if (u.name === "record_opt_out" && r.outcome === "ok") optedOut = true;
         } catch (e) {
           r = { outcome: "failed", result: { ok: false, error: "The tool failed. Tell the buyer you will check and get back to them." } };
           console.error(`[agent] tool ${u.name} failed`, e);
         }
-        pending.push({ name: u.name, input: u.input, r });
+        pending.push({ name: u.name, input, r });
         if (callTurn) {
           if (!needsRound && bookkeepingNeedsRound(u.name, r, stageBefore)) needsRound = true;
           if (u.name === "update_deal_state" && typeof r.result.stage === "string") seenStage = r.result.stage;

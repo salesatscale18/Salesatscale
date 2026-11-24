@@ -17,7 +17,7 @@ import { PIPELINE_ENGINE, type PipelineEngineName } from "@/lib/voice-classic/en
 import type { Listener } from "./listener";
 import { ScriptedListener } from "./listener";
 import { ScriptedSpeaker, SpeakerChain, type Speaker } from "./speaker";
-import { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_ATTEMPTS, PIPELINE_VOICE } from "./models";
+import { PIPELINE_LISTEN_MODEL_ENV, PIPELINE_SPEAK_ATTEMPTS, PIPELINE_VOICE, pipelineListenModelChoice } from "./models";
 import { pipelineLlmFor, pipelineTextModel } from "./gateway-llm";
 import type { CallTurnFn } from "./turn";
 
@@ -118,8 +118,11 @@ export async function pipelinePartsFor(
   } else llm = { create: (req) => new AnthropicLlm().create(req) };
   const thinkModel = overrides.thinkModel ?? modelIdOf(llm) ?? (call.version.model || undefined);
   const { GatewayListener, GatewaySpeaker } = await import("./gateway");
+  // The listening model: VOICE_PIPELINE_LISTEN_MODEL when valid (the start log names it and its rate), else the default.
+  const listen = pipelineListenModelChoice(env);
+  if (listen.invalid) console.warn(`[voice-pipeline] ${PIPELINE_LISTEN_MODEL_ENV} ignored (${listen.invalid}); listening with ${listen.model}`);
   return {
-    listener: overrides.listener ?? (() => new GatewayListener(PIPELINE_LISTEN_MODEL, env)),
+    listener: overrides.listener ?? (() => new GatewayListener(listen.model, env)),
     // The speak attempts in order (models.ts PIPELINE_SPEAK_ATTEMPTS): the first that produces audio is kept.
     speaker: overrides.speaker ?? new SpeakerChain(PIPELINE_SPEAK_ATTEMPTS.map((a) => ({ ...a, speaker: new GatewaySpeaker(a.model, env, PIPELINE_VOICE, { dialogue: a.dialogue }) }))),
     llm,

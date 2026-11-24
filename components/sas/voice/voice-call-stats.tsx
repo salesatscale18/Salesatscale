@@ -85,6 +85,8 @@ export function VoiceCallStats({
             {/* Thinking counts every answered turn, also those whose speech failed (no answer time then). */}
             <dt>{t("voice.stats.pipeline_think_median")}</dt>
             <dd className="sas-num" data-voice-pipeline-think-median="">{pipeline.medianThinkMs == null ? "—" : answerSpeedText(pipeline.medianThinkMs)}</dd>
+            <dt>{t("voice.stats.pipeline_rounds_median")}</dt><dd className="sas-num" data-voice-pipeline-rounds="">{pipeline.medianRounds ?? "—"}</dd>
+            <dt>{t("voice.stats.pipeline_round_ms_median")}</dt><dd className="sas-num" data-voice-pipeline-round-ms="">{pipeline.medianRoundMs == null ? "—" : answerSpeedText(pipeline.medianRoundMs)}</dd>
           </>
         ) : null}
         {model && !pipeline ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
