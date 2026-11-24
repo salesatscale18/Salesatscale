@@ -2,6 +2,7 @@ import { t } from "@/lib/i18n";
 import { answerSpeedText, callClock } from "@/lib/voice/lab";
 import { costText, endReasonText, errorText, type CostFormat } from "@/lib/voice/client/view";
 import type { CallVoiceInfo } from "@/lib/voice/settings";
+import type { PipelineCallInfo } from "@/lib/voice-pipeline/summary";
 
 /** "Puck" / "Model default" / "Not recorded" (an older call). */
 export function callVoiceText(voice: CallVoiceInfo["voice"]): string {
@@ -37,6 +38,7 @@ export function VoiceCallStats({
   model = null,
   engine = null,
   voiceUsed = null,
+  pipeline = null,
 }: {
   durationSec: number;
   maxSec: number | null;
@@ -60,6 +62,8 @@ export function VoiceCallStats({
   engine?: string | null;
   /** The voice and fillers the call ran with (the session's, or the call being started's), next to the model. */
   voiceUsed?: CallVoiceInfo | null;
+  /** Test lab, a pipeline-proof call: its three models (listening, thinking, speaking) and its median answer time. */
+  pipeline?: PipelineCallInfo | null;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
   const money = costText(costMicros, fx);
@@ -71,7 +75,16 @@ export function VoiceCallStats({
       <h2 id={headingId} className="sas-heading">{t("voice.stats.title")}</h2>
       <dl className="sas-vstats__kv">
         {engine ? <><dt>{t("voice.stats.engine")}</dt><dd data-voice-engine="">{engine}</dd></> : null}
-        {model ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
+        {pipeline ? (
+          <>
+            <dt>{t("voice.stats.pipeline_listen")}</dt><dd data-voice-pipeline-listen="">{pipeline.listenModel || "—"}</dd>
+            <dt>{t("voice.stats.pipeline_think")}</dt><dd data-voice-pipeline-think="">{pipeline.thinkModel || "—"}</dd>
+            <dt>{t("voice.stats.pipeline_speak")}</dt><dd data-voice-pipeline-speak="">{pipeline.speakModel || "—"}</dd>
+            <dt>{t("voice.stats.pipeline_median")}</dt>
+            <dd className="sas-num" data-voice-pipeline-median="">{pipeline.medianAnswerMs === null ? "—" : answerSpeedText(pipeline.medianAnswerMs)}</dd>
+          </>
+        ) : null}
+        {model && !pipeline ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
         {voiceUsed ? (
           <>
             <dt>{t("voice.stats.voice")}</dt><dd data-voice-used="">{callVoiceText(voiceUsed.voice)}</dd>

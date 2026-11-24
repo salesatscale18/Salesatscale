@@ -94,7 +94,9 @@ describe("Polish-7b: plain terms", () => {
     const html = await render(MarketsPage, account.slug);
     save("markets", html);
     const s = text(html);
-    expect(s).toMatch(/Israel time · Asia\/Jerusalem \(GMT\+[23]\)/);
+    // The time zone row drops the IANA name; the editor's list keeps it (below).
+    expect(s).toMatch(/Israel time \(GMT\+[23]\)/);
+    expect(s).not.toContain("Asia/Jerusalem");
     expect(s).toContain("ILS · Israeli shekel (₪)");
     expect(s).toContain("Lead form: country is Israel (IL)");
     expect(html).toMatch(/<span class="sas-pill"[^>]*data-home-market="">Home market</);
