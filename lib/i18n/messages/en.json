@@ -4127,5 +4127,7 @@
   "inbox.preview.len_sec": "{s} s",
   "inbox.sort": "Sort",
   "inbox.sort.newest": "Newest first",
-  "inbox.sort.oldest": "Oldest first"
+  "inbox.sort.oldest": "Oldest first",
+  "orders.valid.day_left": "1 day left",
+  "orders.valid.days_left": "{days} days left"
 }

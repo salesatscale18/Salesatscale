@@ -1,6 +1,6 @@
 /**
  * Quotes and orders V2 (Q-1, Q-2; board QuotesOrdersV2). On a demo account with
- * its own quotes replaced by one per state: the Where it is pill and its detail
+ * its own quotes replaced by one per state: the Where it is state and its detail
  * line, the chips with counts, the old Awaiting approval tab as a chip, the
  * Created / Signed period (tab counts follow it; the approval chip ignores it),
  * Declined (a cancelled quote with a quote.declined event), the amber Valid
@@ -12,8 +12,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import { renderToStaticMarkup } from "react-dom/server";
 import { randomUUID } from "node:crypto";
 import type { ReactElement } from "react";
-import { eq } from "drizzle-orm";
-import { catalogVersions, leadEvents, leads, orderForms, orders, quotes, quoteVersions, users, type ApprovalReason, type QuoteStatus, type SellerAccount, type User } from "@/db/schema";
+import { eq, inArray } from "drizzle-orm";
+import { catalogVersions, leadEvents, leads, markets, orderForms, orders, quotes, quoteVersions, users, type ApprovalReason, type QuoteStatus, type SellerAccount, type User } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown }));
@@ -150,8 +150,10 @@ describe("Quotes and orders V2", () => {
     expect(tabs).toContain('title="Signed in the last 30 days"');
     // Older than 30 days, a test lead's quote and another account's: not listed.
     for (const k of ["old", "oldPaid", "approvalOld", "testLead", "foreign"]) expect(html).not.toContain(`data-quote-row="${ids[k]}"`);
-    // The columns, in board order; Created sorts newest first by default.
-    expect(html).toMatch(/>Quote<[\s\S]*>Lead<[\s\S]*>Market<[\s\S]*>Total<[\s\S]*>Where it is<\/th>[\s\S]*data-sort-col="created"[\s\S]*>Valid until</);
+    // The columns, in board order; Created sorts newest first by default. Every row is in the home
+    // market, so no Market column (quote table polish; the market test below shows it).
+    expect(html).toMatch(/>Quote<[\s\S]*>Lead<[\s\S]*>Total<[\s\S]*>Where it is<\/th>[\s\S]*data-sort-col="created"[\s\S]*>Valid until</);
+    expect(html).not.toContain('data-sort-col="market"');
     expect(html).not.toContain(">Order form</th>");
     expect(html).not.toContain(">Payment<");
   });
@@ -191,12 +193,82 @@ describe("Quotes and orders V2", () => {
     // Ends within 2 days: amber; ordered: a dash.
     expect(sent).toContain("lqq-soon");
     expect(rowOf(html, "data-quote-row", ids.unopened)).not.toContain("lqq-soon");
-    expect(rowOf(html, "data-quote-row", ids.ordered)).toMatch(/data-label="Valid until">—<\/td>/);
+    const dash = /data-label="Valid until"><span class="lqq-none">—<\/span><\/td>/;
+    expect(rowOf(html, "data-quote-row", ids.ordered)).toMatch(dash);
     // Declined and cancelled: a dash too, as ordered; open and expired quotes keep their date.
-    expect(rowOf(html, "data-quote-row", ids.declined)).toMatch(/data-label="Valid until">—<\/td>/);
-    expect(rowOf(html, "data-quote-row", ids.cancelled)).toMatch(/data-label="Valid until">—<\/td>/);
+    expect(rowOf(html, "data-quote-row", ids.declined)).toMatch(dash);
+    expect(rowOf(html, "data-quote-row", ids.cancelled)).toMatch(dash);
     expect(rowOf(html, "data-quote-row", ids.expired)).toMatch(/data-label="Valid until">\d+ \w+<\/td>/);
     expect(sent).toMatch(/data-label="Valid until"[^>]*>\d+ \w+<\/td>/);
+  });
+
+  it("table polish: quiet Where it is (no pill), tone per state; Total and its header right-aligned; quote id markup", async () => {
+    const html = await page(OrdersPage(props(account.slug)));
+    const table = html.slice(html.indexOf("<table"), html.indexOf("</table>"));
+    // No pill anywhere in the Quotes table (the filter chips above it are not pills either way).
+    expect(table).not.toContain("sas-pill");
+    const state = (k: string) => rowOf(html, "data-quote-row", ids[k]).match(/<span class="lqq-state lqq-state--(\w+)" data-status="quote_where\.(\w+)" data-tone="(\w+)">/)?.slice(1);
+    expect(state("unopened")).toEqual(["plain", "form_sent", "plain"]);
+    expect(state("sent")).toEqual(["plain", "quote_sent", "plain"]);
+    expect(state("expired")).toEqual(["plain", "expired", "plain"]);
+    expect(state("declined")).toEqual(["plain", "declined", "plain"]);
+    expect(state("ordered")).toEqual(["success", "ordered", "success"]);
+    expect(state("approval")).toEqual(["warning", "awaiting_approval", "warning"]);
+    // Ordered keeps the order link on its second line.
+    expect(rowOf(html, "data-quote-row", ids.ordered)).toMatch(/lqq-state--success[\s\S]*Ordered<\/span><span class="lqq-where__detail" data-where-detail=""><a href=/);
+    // Total: header and cell share the right-aligned column class, the cell in tabular digits.
+    expect(table).toMatch(/<th scope="col" aria-sort="none" class="lqq-c-total" data-sort-col="one_time">/);
+    expect(rowOf(html, "data-quote-row", ids.sent)).toContain('<td class="sas-num lqq-c-total" data-label="Total">');
+    expect(table).not.toMatch(/style="[^"]*text-align/);
+    // Quote id: the link, the version muted after it, ID digits (no tabular .sas-num on the cell).
+    const ref = rowOf(html, "data-quote-row", ids.sent).match(/^<tr[^>]*>(<td[^>]*>[\s\S]*?<\/td>)/)?.[1] ?? "";
+    expect(ref).toBe(`<td class="lqq-c-ref"><a class="lqq-ref" href="/app/${account.slug}/orders?quote=${ids.sent}"><span class="sas-id sas-id--plain">Q-${numbers.sent}</span></a> <span class="lqq-ver">· v1</span></td>`);
+    expect(ref).not.toContain("sas-num");
+    // Valid until ends within the amber window: "1 day left" on hover; an expired date muted, no hover text.
+    expect(rowOf(html, "data-quote-row", ids.sent)).toMatch(/class="[^"]*lqq-soon" data-label="Valid until" data-valid-soon="" title="1 day left">/);
+    expect(rowOf(html, "data-quote-row", ids.expired)).toMatch(/class="[^"]*lqq-past" data-label="Valid until">/);
+    expect(rowOf(html, "data-quote-row", ids.unopened)).not.toMatch(/data-label="Valid until"[^>]*title=/);
+  });
+
+  it("the n days left text counts whole days, rounded up", async () => {
+    const id = await mk("soon2", { validUntil: new Date(Date.now() + 1.5 * DAY) });
+    try {
+      const html = await page(OrdersPage(props(account.slug)));
+      expect(rowOf(html, "data-quote-row", id)).toContain('title="2 days left"');
+    } finally {
+      await db.delete(quotes).where(eq(quotes.id, id));
+    }
+  });
+
+  it("Market column: hidden when every row in view is in one market, shown when they differ (both tabs)", async () => {
+    const all = await db.select().from(markets).where(eq(markets.accountId, account.id));
+    const home = all.find((m) => m.isHome)!;
+    const away = all.find((m) => !m.isHome)!;
+    expect(away).toBeTruthy();
+    // A row with the home market set explicitly is still the home market: hidden.
+    await db.update(quotes).set({ marketId: home.id }).where(eq(quotes.id, ids.unopened));
+    expect(await page(OrdersPage(props(account.slug)))).not.toContain('data-sort-col="market"');
+    await db.update(quotes).set({ marketId: away.id }).where(eq(quotes.id, ids.sent));
+    await db.update(orders).set({ marketId: away.id }).where(eq(orders.id, ids.ordered_order));
+    try {
+      const q = await page(OrdersPage(props(account.slug)));
+      expect(q).toContain('data-sort-col="market"');
+      expect(q).toContain("lqq-table--market");
+      expect(rowOf(q, "data-quote-row", ids.sent)).toContain(`data-market="${away.id}"`);
+      // A chip whose rows share one market: hidden again.
+      const form = await page(OrdersPage(props(account.slug, { where: "form_sent" })));
+      expect(form).not.toContain('data-sort-col="market"');
+      expect(form).not.toContain("lqq-table--market");
+      const o = await page(OrdersPage(props(account.slug, { tab: "orders" })));
+      expect(o).toContain('data-sort-col="market"');
+      expect(rowOf(o, "data-order-row", ids.ordered_order)).toContain(`data-market="${away.id}"`);
+      // Orders: only the paid one (home market) in view: hidden.
+      expect(await page(OrdersPage(props(account.slug, { tab: "orders", pay: "paid" })))).not.toContain('data-sort-col="market"');
+    } finally {
+      await db.update(quotes).set({ marketId: null }).where(inArray(quotes.id, [ids.sent, ids.unopened]));
+      await db.update(orders).set({ marketId: null }).where(eq(orders.id, ids.ordered_order));
+    }
+    expect(await page(OrdersPage(props(account.slug, { tab: "orders" })))).not.toContain('data-sort-col="market"');
   });
 
   it("a chip filters the list and keeps its counts; the old tab=approval link opens the chip", async () => {

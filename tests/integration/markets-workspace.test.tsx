@@ -208,7 +208,9 @@ describe("W2: markets across the workspace", () => {
       const ord = await page(OrdersPage(props(account.slug, { market: uk.id, tab: "orders" })));
       expect(ord).toContain("£1,200.00");
       expect(ord).not.toContain("₪3,500.00");
-      expect(ord).toContain('data-sort-col="market"');
+      // One market in view: no Market column (quote table polish; it shows when the rows differ).
+      expect(ord).not.toContain('data-sort-col="market"');
+      expect(await page(OrdersPage(props(account.slug, { tab: "orders" })))).toContain('data-sort-col="market"');
     });
 
     it("the cookie filters when the URL has no market (home includes quotes without a market id)", async () => {

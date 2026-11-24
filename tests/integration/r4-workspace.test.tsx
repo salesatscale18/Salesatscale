@@ -239,7 +239,9 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
     expect(css).toContain(".sas-av--success { background: var(--success); color: var(--on-agent); }");
     const orders = await page(OrdersPage(props(account.slug, { tab: "orders" })));
     expect(orders).toMatch(/data-label="Signed"[^>]*>(just now|\d+ (min|h) ago|\d+ \w+)</);
-    expect(orders).toMatch(/style="[^"]*white-space:nowrap[^"]*" data-sort-col="one_time"/);
+    // The table's headings never wrap (quote table polish: one CSS rule instead of an inline style).
+    expect(orders).toContain('class="lqq-c-total" data-sort-col="one_time"');
+    expect(css).toContain(".sas-table.lqq-table th { padding: var(--space-2) 12px; white-space: nowrap;");
   });
 
   it("C1: trace chips use plain labels; platform admins get the internal name as a tooltip", async () => {

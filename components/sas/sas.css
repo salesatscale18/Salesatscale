@@ -1331,10 +1331,10 @@ label.st-voice__row { cursor: pointer; }
 /* Cells */
 .sas-app a.lqq-ref { color: var(--primary); text-decoration: none; }
 .sas-app a.lqq-ref:hover { text-decoration: underline; }
-.lqq-ver { color: var(--ink-muted); font-size: 13px; }
+.lqq-ver { color: var(--ink-muted); font-size: 13px; white-space: nowrap; }
 .lqq-lead { display: inline-flex; flex-direction: column; align-items: flex-start; min-width: 0; }
 .lqq-lead__name { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ink); }
-.lqq-lang { font: 600 10px/14px var(--font-sans); padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-muted); letter-spacing: .04em; }
+.lqq-lang { flex: none; font: 600 10px/14px var(--font-sans); padding: 0 4px; border: 1px solid var(--line); border-radius: 4px; color: var(--ink-muted); letter-spacing: .04em; }
 .lqq-lead__company { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 .lqq-total { display: inline-flex; flex-direction: column; align-items: flex-end; }
 .lqq-total__rec { font-size: 13px; line-height: 18px; color: var(--ink-muted); }
@@ -1342,7 +1342,63 @@ label.st-voice__row { cursor: pointer; }
 .lqq-where__detail { display: block; max-width: 340px; font-size: 13px; line-height: 18px; color: var(--ink-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sas-app .lqq-where__detail a { color: var(--primary); text-decoration: none; }
 .sas-app .lqq-where__detail a:hover { text-decoration: underline; }
+/* "Where it is", quiet (owner review, 24 Nov): plain text with a small muted icon, no pill. Ordered: success
+   on icon and word (a win); Awaiting your approval: warning on text and icon (it needs the seller). */
+.lqq-state { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; font-weight: 500; color: var(--ink); white-space: nowrap; }
+.lqq-state .sas-ico { width: 14px; height: 14px; color: var(--ink-muted); align-self: center; }
+.lqq-state--success, .lqq-state--success .sas-ico { color: var(--success); }
+.lqq-state--warning, .lqq-state--warning .sas-ico { color: var(--warning); }
 .sas-table td.lqq-soon { color: var(--warning); font-weight: 600; }
+.sas-table td.lqq-past, .lqq-none { color: var(--ink-muted); }
+/* Wide screens: the page head and the card stop at 1200px (left-aligned with the title), so the
+   market switcher ends where the card ends. */
+.lqq-head, .lqq-card { width: 100%; max-width: 1200px; }
+.lqq-card { container-type: inline-size; }
+/* The tables (both tabs, from 768px; phones keep their stacked cards): real column widths instead of
+   equal shares. Fixed columns (padding included); Lead takes a share of what is left (200-300px) and
+   Where it is / Payment the rest. Every cell sits on the first line's baseline, 12px apart, with 24px more
+   between the right-aligned Total and the next column. --lqq-fixed is the sum of the fixed columns in
+   view (the Market column only when the rows differ; with the side panel open the minor ones hide). */
+@media (min-width: 768px) {
+  .lqq-table { table-layout: fixed; --lqq-fixed: 440px; min-width: calc(var(--lqq-fixed) + 440px); }
+  .lqq-table--quotes.lqq-table--market { --lqq-fixed: 550px; }
+  .lqq-table--orders { --lqq-fixed: 456px; }
+  .lqq-table--orders.lqq-table--market { --lqq-fixed: 566px; }
+  .sas-table.lqq-table th { padding: var(--space-2) 12px; white-space: nowrap; vertical-align: bottom; }
+  .sas-table.lqq-table td { padding: 9px 12px; vertical-align: baseline; }
+  .sas-table.lqq-table th.lqq-c-ref { width: 110px; }
+  .sas-table.lqq-table th.lqq-c-lead { width: clamp(200px, calc((100cqi - var(--lqq-fixed)) * .45), 300px); }
+  .sas-table.lqq-table td.lqq-c-lead { overflow: hidden; }
+  .sas-table.lqq-table th.lqq-c-market { width: 110px; }
+  .sas-table.lqq-table td.lqq-c-market { white-space: normal; overflow-wrap: anywhere; }
+  .sas-table.lqq-table th.lqq-c-total { width: 130px; }
+  .sas-table.lqq-table .lqq-c-total { text-align: end; }
+  .sas-table.lqq-table .lqq-c-state { padding-inline-start: 36px; }
+  .sas-table.lqq-table td.lqq-c-state { overflow: hidden; }
+  /* Payment (Orders tab) keeps its pill; its word sits on the row's baseline too. */
+  .sas-table.lqq-table td.lqq-c-state > .sas-pill { align-items: baseline; }
+  .sas-table.lqq-table td.lqq-c-state > .sas-pill > .sas-ico { align-self: center; }
+  .sas-table.lqq-table th.lqq-c-date { width: 96px; }
+  .sas-table.lqq-table th.lqq-c-valid { width: 104px; }
+  .sas-table.lqq-table th.lqq-c-delivery { width: 120px; }
+  /* Dates in ink; the amber one stays amber, an expired one and the dash muted. */
+  .sas-table.lqq-table td.lqq-c-date, .sas-table.lqq-table td.lqq-c-delivery { color: var(--ink); }
+  .sas-table.lqq-table td.lqq-c-date.lqq-soon { color: var(--warning); }
+  .sas-table.lqq-table td.lqq-c-date.lqq-past, .sas-table.lqq-table td .lqq-none { color: var(--ink-muted); }
+  /* Two-line cells: the second line tighter, long names cut with an ellipsis (whole name on the lead page). */
+  .lqq-table .lqq-lead { display: flex; max-width: 100%; }
+  .lqq-table .lqq-lead__name { display: flex; max-width: 100%; }
+  .lqq-table .lqq-lead__name > bdi { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lqq-table .lqq-lead__company { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .lqq-table .lqq-lead__company, .lqq-table .lqq-total__rec, .lqq-table .lqq-where__detail { line-height: 16px; }
+  .lqq-table .lqq-total__rec { font-weight: 400; }
+  .lqq-table .lqq-where { gap: 0; }
+  .lqq-table .lqq-where__detail { max-width: 100%; }
+}
+@media (min-width: 1101px) {
+  .sas-with-panel .lqq-table--quotes { --lqq-fixed: 240px; }
+  .sas-with-panel .lqq-table--orders { --lqq-fixed: 336px; }
+}
 /* Phone: chips scroll sideways, search and period take the next row; Where it is and Total sit at the card's end. */
 @media (max-width: 767px) {
   .lqq-tabs { padding-inline: var(--space-4); }

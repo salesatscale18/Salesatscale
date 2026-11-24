@@ -245,7 +245,7 @@ describe("Polish-2+5: seller workspace", () => {
     it("quotes: Where it is column, chat name first, no zero discount, Sent pill inline", async () => {
       const list = await page(OrdersPage(props(account.slug)));
       // Quotes and orders V2: Status and Order form are one column, Where it is (not sortable), then Created.
-      expect(list).toMatch(/<th scope="col">Where it is<\/th><th scope="col" aria-sort="descending" class="sas-col-minor" data-sort-col="created">/);
+      expect(list).toMatch(/<th scope="col" class="lqq-c-state">Where it is<\/th><th scope="col" aria-sort="descending" class="sas-col-minor lqq-c-date" data-sort-col="created">/);
       const detail = await page(OrdersPage(props(account.slug, { quote: ids.quote })));
       expect(detail).toMatch(/1 × Kitchen hub<div class="sas-small" data-line-sub="">Site gateway <span class="sas-id">GW-10<\/span>/);
       expect(detail).not.toMatch(/>Discount</);
