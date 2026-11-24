@@ -7,11 +7,11 @@ import { spokenForm, splitSentences } from "@/lib/voice-pipeline/spoken";
 import { median, TurnTaking, type BuyerLine } from "@/lib/voice-pipeline/turns";
 import { PcmFramer, Resampler, resamplePcm16, toBytes, toSamples } from "@/lib/voice-pipeline/pcm";
 import {
-  fillerTextFor, LISTEN_MICROS_PER_SEC, listenRateText, PIPELINE_CALL_CONTEXT_LINE, PIPELINE_FILLER, PIPELINE_LISTEN_MODEL, PIPELINE_LISTEN_MODELS, PIPELINE_SPEAK_MODEL, PIPELINE_TIMING,
+  fillerTextFor, LISTEN_MICROS_PER_SEC, listenRateText, PIPELINE_CALL_CONTEXT_LINE, PIPELINE_CALL_REPLY_ARG_DESCRIPTION, PIPELINE_FILLER, PIPELINE_LISTEN_MODEL, PIPELINE_LISTEN_MODELS, PIPELINE_SPEAK_MODEL, PIPELINE_TIMING,
   pipelineCostMicros, pipelineListenModelChoice, SPEAK_MICROS_PER_CHAR,
 } from "@/lib/voice-pipeline/models";
 import { pipelineCallInfo, pipelineModelsLabel, thinkModelLabel } from "@/lib/voice-pipeline/summary";
-import { PIPELINE_TEXT_MODEL } from "@/lib/voice-pipeline/gateway-llm";
+import { PIPELINE_TEXT_MODEL, PIPELINE_TEXT_MODEL_LITE } from "@/lib/voice-pipeline/gateway-llm";
 import { ManualListener, ScriptedListener } from "@/lib/voice-pipeline/listener";
 import { ScriptedSpeaker } from "@/lib/voice-pipeline/speaker";
 import { micPcm } from "@/lib/voice/scripted-realtime";
@@ -162,10 +162,13 @@ describe("cost, the card's reading, the fakes", () => {
     expect(pipelineCallInfo(null, null)).toBeNull();
     expect(pipelineModelsLabel(info!)).toBe("Listen l · think t · speak s");
     expect(pipelineCallInfo({ engine: "pipeline_chat", pipeline: { thinkModel: "claude-sonnet-5-5" } }, null)?.thinkModel).toBe("claude-sonnet-5-5");
+    expect(pipelineCallInfo({ engine: "pipeline_lite", pipeline: { thinkModel: PIPELINE_TEXT_MODEL_LITE } }, null)?.thinkModel).toBe("google/gemini-3.5-flash-lite");
   });
 
   it("the thinking model's label: Gemini Flash and the chat models, as people read them", () => {
     expect(thinkModelLabel("google/gemini-3.8-flash")).toBe("Gemini 3.8 Flash");
+    expect(thinkModelLabel(PIPELINE_TEXT_MODEL_LITE)).toBe("Gemini 3.5 Flash-Lite");
+    expect(thinkModelLabel("google/gemini-3.5-flash-lite")).toBe("Gemini 3.5 Flash-Lite");
     expect(thinkModelLabel("claude-sonnet-5-5")).toBe("Claude Sonnet 5.5");
     expect(thinkModelLabel("claude-opus-5-5")).toBe("Claude Opus 5.5");
     expect(thinkModelLabel("scripted")).toBe("Scripted");
@@ -232,8 +235,9 @@ describe("the speed settings (models.ts)", () => {
     expect(listenRateText("google/gemini-3.5-transcribe-live")).toBe("150 micros/s");
   });
 
-  it("the filler: 2.5 s, one short line per language", () => {
-    expect(PIPELINE_FILLER.afterMs).toBe(2_500);
+  it("the filler: 3 s (6 s after a turn that had one), one short line per language", () => {
+    expect(PIPELINE_FILLER.afterMs).toBe(3_000);
+    expect(PIPELINE_FILLER.afterPreviousMs).toBe(6_000);
     expect([fillerTextFor("en"), fillerTextFor("he"), fillerTextFor("iw-IL")]).toEqual(["One moment.", "רגע אחד.", "רגע אחד."]);
   });
 
@@ -241,5 +245,11 @@ describe("the speed settings (models.ts)", () => {
     expect(PIPELINE_CALL_CONTEXT_LINE).not.toMatch(/[\r\n]/);
     expect(PIPELINE_CALL_CONTEXT_LINE.length).toBeGreaterThan(0);
     expect(PIPELINE_CALL_CONTEXT_LINE.length).toBeLessThan(600);
+    expect(PIPELINE_CALL_CONTEXT_LINE).toBe("This is a live call. When recording what the buyer said is all you need to do this turn, call update_deal_state and put what you say to the buyer in its spoken_reply argument: one response, no second step. When you need another tool or its result first, leave spoken_reply null and answer after the results.");
+  });
+
+  it("the spoken_reply argument's description (provisional): one line, names when to leave it null", () => {
+    expect(PIPELINE_CALL_REPLY_ARG_DESCRIPTION).toBe("What you say to the buyer now, when recording is all you need to do this turn. Leave null when you need another tool or its result first.");
+    expect(PIPELINE_CALL_REPLY_ARG_DESCRIPTION).not.toMatch(/[\r\n]/);
   });
 });

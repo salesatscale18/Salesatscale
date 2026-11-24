@@ -22,7 +22,7 @@ const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : n
 /** The pipeline info of a session (its settings and usage JSON), or null when the call was not a pipeline call. */
 export function pipelineCallInfo(settings: unknown, usage: unknown): PipelineCallInfo | null {
   const s = settings && typeof settings === "object" ? (settings as { engine?: unknown; pipeline?: Record<string, unknown> }) : null;
-  if (s?.engine !== "pipeline" && s?.engine !== "pipeline_chat") return null;
+  if (s?.engine !== "pipeline" && s?.engine !== "pipeline_lite" && s?.engine !== "pipeline_chat") return null;
   const p = s.pipeline ?? {};
   const u = usage && typeof usage === "object" ? ((usage as { pipeline?: Record<string, unknown> }).pipeline ?? {}) : {};
   return {
@@ -39,9 +39,9 @@ export function pipelineModelsLabel(p: Pick<PipelineCallInfo, "listenModel" | "t
 }
 
 /**
- * A thinking model id as people read it: "google/gemini-3.8-flash" → "Gemini 3.8 Flash", "claude-sonnet-5-5" →
- * "Claude Sonnet 5.5". The creator prefix is dropped, words are capitalized and consecutive numbers joined by dots.
- * Empty stays empty.
+ * A thinking model id as people read it: "google/gemini-3.8-flash" → "Gemini 3.8 Flash", "google/gemini-3.5-flash-lite"
+ * → "Gemini 3.5 Flash-Lite", "claude-sonnet-5-5" → "Claude Sonnet 5.5". The creator prefix is dropped, words are
+ * capitalized, consecutive numbers joined by dots and "flash-lite" kept as one hyphenated name. Empty stays empty.
  */
 export function thinkModelLabel(id: string): string {
   const name = id.trim().replace(/^[^/]+\//, "");
@@ -50,6 +50,7 @@ export function thinkModelLabel(id: string): string {
   for (const part of name.split(/[-_]+/).filter(Boolean)) {
     const prev = out[out.length - 1];
     if (/^\d+(\.\d+)*$/.test(part) && prev && /^\d+(\.\d+)*$/.test(prev)) out[out.length - 1] = `${prev}.${part}`;
+    else if (part.toLowerCase() === "lite" && prev === "Flash") out[out.length - 1] = "Flash-Lite";
     else out.push(/^\d/.test(part) ? part : part[0].toUpperCase() + part.slice(1));
   }
   return out.join(" ");

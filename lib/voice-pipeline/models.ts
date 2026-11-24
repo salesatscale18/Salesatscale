@@ -157,11 +157,14 @@ export const PIPELINE_TIMING = {
 export const PIPELINE_MAX_OUTPUT_TOKENS = 700;
 
 /**
- * "One moment": when a turn has been thinking this long (from its final transcript) with no reply yet, the engine
+ * "One moment": when a turn has been thinking `afterMs` (from its final transcript) with no reply yet, the engine
  * says ONE short filler in the call's language (at most once per turn, never while the buyer speaks); the reply
- * follows once the filler has played. Not stored as a chat message; its characters count as speech.
+ * follows once the filler has played. Not on two answered turns in a row: when the previous answered turn had one,
+ * the filler waits for `afterPreviousMs` instead (logged "pipeline filler skipped (previous turn had one)" at
+ * `afterMs`). Not stored as a chat message; its characters count as speech. The call of 24 Nov ran with 2,500 ms and
+ * no consecutive rule: the filler fired on all four turns.
  */
-export const PIPELINE_FILLER = { afterMs: 2_500, text: { en: "One moment.", he: "רגע אחד." } } as const;
+export const PIPELINE_FILLER = { afterMs: 3_000, afterPreviousMs: 6_000, text: { en: "One moment.", he: "רגע אחד." } } as const;
 export const fillerTextFor = (language: string) => (/^(he|iw)/i.test(language) ? PIPELINE_FILLER.text.he : PIPELINE_FILLER.text.en);
 
 /**
@@ -170,7 +173,16 @@ export const fillerTextFor = (language: string) => (/^(he|iw)/i.test(language) ?
  * confirmation). An empty string switches it off. One line, under 600 characters.
  */
 export const PIPELINE_CALL_CONTEXT_LINE =
-  "This is a live call. When you only need to record what the buyer said (update_deal_state), write your spoken reply in the same response as that tool call; do not wait for its result.";
+  "This is a live call. When recording what the buyer said is all you need to do this turn, call update_deal_state and put what you say to the buyer in its spoken_reply argument: one response, no second step. When you need another tool or its result first, leave spoken_reply null and answer after the results.";
+
+/**
+ * The description of update_deal_state's optional `spoken_reply` argument on a call turn (replyToBuyer's
+ * `callReplyArgDescription`, once the chat lane accepts it: lib/voice-pipeline/turn.ts PIPELINE-HOOK). With it, a
+ * response that is only update_deal_state call(s) with a non-empty spoken_reply ends the turn in one round with that
+ * text. The wording is PROVISIONAL (test lab only, awaiting the owner's confirmation). An empty string switches it off.
+ */
+export const PIPELINE_CALL_REPLY_ARG_DESCRIPTION =
+  "What you say to the buyer now, when recording is all you need to do this turn. Leave null when you need another tool or its result first.";
 
 /** Text-only usage of a pipeline call, stored under voice_sessions.usage.pipeline (no schema change). */
 export type PipelineUsage = {

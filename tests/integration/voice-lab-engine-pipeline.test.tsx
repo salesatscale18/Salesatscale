@@ -1,7 +1,8 @@
 /**
- * The test lab's "Voice engine" selector with its two pipeline options (lib/voice-pipeline): "Pipeline: Gemini Flash +
- * ElevenLabs (testing)" (id "pipeline") and "Pipeline: chat model + ElevenLabs (testing)" (id "pipeline_chat"), on
- * PGlite in scripted mode: a platform admin sees six engines in order and can start a call on either (stored on the
+ * The test lab's "Voice engine" selector with its three pipeline options (lib/voice-pipeline): "Pipeline: Gemini Flash +
+ * ElevenLabs (testing)" (id "pipeline"), "Pipeline: Gemini Flash-Lite + ElevenLabs (testing)" (id "pipeline_lite") and
+ * "Pipeline: chat model + ElevenLabs (testing)" (id "pipeline_chat"), on
+ * PGlite in scripted mode: a platform admin sees seven engines in order and can start a call on any (stored on the
  * session); a seller never sees them and the server ignores the field from one; a saved pipeline call shows its
  * engine (header pill, "This call") with its three models, the recording line reads "Not recorded (pipeline test)",
  * and Call again keeps the engine. With VOICE_RENDER_DIR set, the pages are written as HTML for the screenshots
@@ -96,10 +97,10 @@ afterAll(async () => tdb.close());
 afterEach(() => vi.unstubAllEnvs());
 
 /** Runs a pipeline call's session to its end (scripted parts, the opener only): the relay's part, in process. */
-async function runPipeline(sessionId: string, name: "pipeline" | "pipeline_chat" = "pipeline") {
+async function runPipeline(sessionId: string, name: "pipeline" | "pipeline_lite" | "pipeline_chat" = "pipeline", thinkModel = "scripted") {
   const clock = new ManualClock();
   const engine = new PipelineVoiceEngine({
-    db, sessionId, mode: "scripted", engine: name, thinkModel: "scripted", send: () => {}, clock, log: { info: () => {}, warn: () => {} },
+    db, sessionId, mode: "scripted", engine: name, thinkModel, send: () => {}, clock, log: { info: () => {}, warn: () => {} },
     listener: () => new ManualListener(), speaker: new ScriptedSpeaker(), llm: scriptedPipelineLlm(), limits: { env: {} },
   });
   const settle = async () => {
@@ -117,11 +118,12 @@ async function runPipeline(sessionId: string, name: "pipeline" | "pipeline_chat"
 
 const LABELS = {
   pipeline: "Pipeline: Gemini Flash + ElevenLabs (testing)",
+  pipeline_lite: "Pipeline: Gemini Flash-Lite + ElevenLabs (testing)",
   pipeline_chat: "Pipeline: chat model + ElevenLabs (testing)",
 } as const;
 
-describe("test lab: the voice engine selector, the two pipeline options", () => {
-  it("a platform admin sees six engines in order, the two pipelines before the old baseline, each with its helper line", async () => {
+describe("test lab: the voice engine selector, the three pipeline options", () => {
+  it("a platform admin sees seven engines in order, the three pipelines before the old baseline, each with its helper line", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
@@ -131,9 +133,11 @@ describe("test lab: the voice engine selector, the two pipeline options", () => 
     const options = [...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]]);
     expect(options).toEqual([
       ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"],
-      ["pipeline", LABELS.pipeline], ["pipeline_chat", LABELS.pipeline_chat], ["classic", "Old baseline (20 Nov)"],
+      ["pipeline", LABELS.pipeline], ["pipeline_lite", LABELS.pipeline_lite], ["pipeline_chat", LABELS.pipeline_chat], ["classic", "Old baseline (20 Nov)"],
     ]);
-    expect(ENGINE_ORDER).toEqual(["current", "guarded", "guarded_silent", "pipeline", "pipeline_chat", "classic"]);
+    expect(options).toHaveLength(7);
+    expect(ENGINE_ORDER).toEqual(["current", "guarded", "guarded_silent", "pipeline", "pipeline_lite", "pipeline_chat", "classic"]);
+    expect(t(engineHelpKey("pipeline_lite"))).toBe("A transcription model listens, Gemini 3.5 Flash-Lite decides like the chat agent (faster, lighter), ElevenLabs speaks. Test lab only.");
     expect(t(engineHelpKey("pipeline"))).toBe("A transcription model listens, Gemini 3.8 Flash decides like the chat agent, ElevenLabs speaks. Test lab only.");
     expect(t(engineHelpKey("pipeline_chat"))).toBe("A transcription model listens, the chat agent's own model decides, ElevenLabs speaks. Test lab only.");
   });
@@ -143,7 +147,7 @@ describe("test lab: the voice engine selector, the two pipeline options", () => 
     as(seller);
     const html = await render();
     expect(html).not.toContain("Pipeline:");
-    for (const engine of ["pipeline", "pipeline_chat"] as const) {
+    for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {
       expect(await startVoiceCallAction({ slug, engine })).toEqual({ ok: false, reason: "not_allowed" });
       expect(labEngineChoice(seller, engine, { VOICE_REALTIME: "scripted" })).toBe("current");
       expect(labEngineChoice(admin, engine, { VOICE_REALTIME: "scripted" })).toBe(engine);
@@ -152,9 +156,10 @@ describe("test lab: the voice engine selector, the two pipeline options", () => 
     }
     expect(sessionEngine({ engine: "Pipeline" })).toBe("current");
     expect(sessionEngine({ engine: "pipeline-chat" })).toBe("current");
+    expect(sessionEngine({ engine: "pipeline-lite" })).toBe("current");
   });
 
-  for (const engine of ["pipeline", "pipeline_chat"] as const) {
+  for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {
     it(`an admin's ${engine} call: stored on the session, its models named; saved: Engine, the three models, not recorded (pipeline test), Call again keeps it`, async () => {
       vi.stubEnv("VOICE_REALTIME", "scripted");
       vi.stubEnv("VOICE_WS_URL", "");
@@ -198,4 +203,19 @@ describe("test lab: the voice engine selector, the two pipeline options", () => 
       expect(await render({ c: r.conversationId })).not.toContain("Pipeline:");
     });
   }
+
+  it("a pipeline_lite call that thought on Gemini 3.5 Flash-Lite: the Thinking row names it (the model id in its title)", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    as(admin);
+    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "pipeline_lite" });
+    if (!r.ok) throw new Error(r.reason);
+    await runPipeline(r.sessionId, "pipeline_lite", "google/gemini-3.5-flash-lite");
+    const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
+    expect(s.settings).toMatchObject({ engine: "pipeline_lite", pipeline: { thinkModel: "google/gemini-3.5-flash-lite" } });
+    const html = await render({ c: r.conversationId });
+    expect(html).toContain(`<dt>Engine</dt><dd data-voice-engine="">${LABELS.pipeline_lite}</dd>`);
+    expect(html).toMatch(/<dt>Thinking<\/dt><dd data-voice-pipeline-think="" title="google\/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite<\/dd>/);
+    await endMyVoiceCallAction({ slug });
+  });
 });

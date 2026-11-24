@@ -18,12 +18,11 @@ import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, 
 import { maxCallSeconds, resolveVoiceSettings, sentCallVoice, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
-import { isPipelineEngine, labEngineChoice, PIPELINE_ENGINE, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGatewayPipelineEngine, isPipelineEngine, labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
 import { pipelineModelsLabel, thinkModelLabel } from "@/lib/voice-pipeline/summary";
-import { pipelineTextModel } from "@/lib/voice-pipeline/gateway-llm";
-import { SCRIPTED_THINK_MODEL } from "@/lib/voice-pipeline";
+import { pipelineThinkModelFor, SCRIPTED_THINK_MODEL } from "@/lib/voice-pipeline";
 import { minorPerUsd, voiceSocketUrl } from "./voice-server";
 import type { VoiceUnavailableReason } from "@/lib/voice/client/state";
 import type { VoiceSettingsFormState } from "@/components/sas/voice/voice-settings-form";
@@ -87,9 +86,9 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const callModel = engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings);
   const resolved = resolveVoiceSettings(conv.version.voiceSettings);
   // A pipeline engine: its three models (listening; thinking = Gemini 3.8 Flash on "pipeline" (VOICE_PIPELINE_TEXT_MODEL
-  // overrides it), the version's chat model on "pipeline_chat"; speaking) and its one voice.
+  // overrides it), Gemini 3.5 Flash-Lite on "pipeline_lite", the version's chat model on "pipeline_chat"; speaking) and its one voice.
   const pipeline = isPipelineEngine(engine);
-  const thinkModel = s.mode === "scripted" ? SCRIPTED_THINK_MODEL : engine === PIPELINE_ENGINE ? pipelineTextModel() : conv.version.model;
+  const thinkModel = s.mode === "scripted" ? SCRIPTED_THINK_MODEL : isGatewayPipelineEngine(engine) ? pipelineThinkModelFor(engine, process.env) : conv.version.model;
   const voiceUsed: CallVoiceInfo = pipeline ? { voice: PIPELINE_VOICE_NAME, fillers: false } : { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,

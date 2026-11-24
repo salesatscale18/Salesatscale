@@ -5,6 +5,7 @@
  *   thinking client, by engine:
  *   - "pipeline": Gemini 3.8 Flash through the AI Gateway (./gateway-llm.ts pipelineLlmFor: the version's effort as
  *     Gemini thinking; VOICE_PIPELINE_TEXT_MODEL overrides the model), with a per-call timeout for speech;
+ *   - "pipeline_lite": the same on Gemini 3.5 Flash-Lite (PIPELINE_TEXT_MODEL_LITE; the env override does not apply);
  *   - "pipeline_chat": the chat's Anthropic client (the agent version's model and effort: the same paid chat turn as
  *     a typed message);
  *   A thinking client that cannot be built (no AI_GATEWAY_API_KEY) refuses the call (model_unavailable, logged by
@@ -13,12 +14,12 @@
  *   stand-in that answers every turn with a fixed line, for both engines. Free: no network, nothing paid.
  */
 import { AnthropicLlm, ScriptedLlm, type LlmClient } from "@/lib/agent/llm";
-import { PIPELINE_ENGINE, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGatewayPipelineEngine, PIPELINE_ENGINE, PIPELINE_LITE_ENGINE, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
 import type { Listener } from "./listener";
 import { ScriptedListener } from "./listener";
 import { ScriptedSpeaker, SpeakerChain, type Speaker } from "./speaker";
 import { PIPELINE_LISTEN_MODEL_ENV, PIPELINE_SPEAK_ATTEMPTS, PIPELINE_VOICE, pipelineListenModelChoice } from "./models";
-import { pipelineLlmFor, pipelineTextModel } from "./gateway-llm";
+import { PIPELINE_TEXT_MODEL_LITE, pipelineLlmFor, pipelineTextModel } from "./gateway-llm";
 import type { CallTurnFn } from "./turn";
 
 export { PipelineVoiceEngine, type PipelineEngineDeps, type PipelineLimits } from "./engine";
@@ -26,8 +27,12 @@ export { PipelineVoiceEngine, type PipelineEngineDeps, type PipelineLimits } fro
 /** What the thinking client is built for: the call's agent version (model for "pipeline_chat", effort for both). */
 export type PipelineVersion = { model: string; effort: string | null };
 
-/** Builds the "pipeline" engine's thinking client for a live call (default: liveGatewayLlm). */
-export type GatewayLlmFactory = (version: PipelineVersion, env: Record<string, string | undefined>) => LlmClient & { modelId?: string };
+/**
+ * Builds a gateway pipeline engine's thinking client for a live call (default: liveGatewayLlm), on `modelId`
+ * (pipelineThinkModelFor: the Flash model or its env override on "pipeline", Flash-Lite on "pipeline_lite"; unset:
+ * pipelineTextModel(env)).
+ */
+export type GatewayLlmFactory = (version: PipelineVersion, env: Record<string, string | undefined>, modelId?: string) => LlmClient & { modelId?: string };
 
 export type PipelineParts = {
   listener: () => Listener;
@@ -38,7 +43,7 @@ export type PipelineParts = {
   thinkModel?: string;
 };
 
-/** A test's fakes: any part, or the gateway client factory (called with the version, live "pipeline" calls only). */
+/** A test's fakes: any part, or the gateway client factory (called with the version and model id, live "pipeline" / "pipeline_lite" calls only). */
 export type PipelineOverrides = Partial<PipelineParts> & { gatewayLlm?: GatewayLlmFactory };
 
 /** Per-call timeout of the gateway thinking call on a live call (speech cannot wait long), and its SDK retries. */
@@ -68,14 +73,21 @@ export class PipelineThinkingUnavailable extends Error {
 }
 
 /**
- * The "pipeline" engine's live thinking client: GatewayLlm on the pipeline text model, 15 s per call, 1 SDK retry.
+ * The gateway text model a gateway pipeline engine thinks on: "pipeline_lite" → PIPELINE_TEXT_MODEL_LITE (no env
+ * override); "pipeline" → pipelineTextModel(env) (VOICE_PIPELINE_TEXT_MODEL, else Gemini 3.8 Flash).
+ */
+export const pipelineThinkModelFor = (engine: PipelineEngineName, env: Record<string, string | undefined>): string =>
+  engine === PIPELINE_LITE_ENGINE ? PIPELINE_TEXT_MODEL_LITE : pipelineTextModel(env);
+
+/**
+ * A gateway pipeline engine's live thinking client: GatewayLlm on `modelId`, 15 s per call, 1 SDK retry, thinking
+ * from the version's effort (the same for "pipeline" and "pipeline_lite").
  * Throws PipelineThinkingUnavailable without AI_GATEWAY_API_KEY (GatewayLlm itself would only fail at the first
  * turn, after the opener was spoken).
  */
-export const liveGatewayLlm: GatewayLlmFactory = (version, env) => {
-  const modelId = pipelineTextModel(env);
+export const liveGatewayLlm: GatewayLlmFactory = (version, env, modelId = pipelineTextModel(env)) => {
   if (!env.AI_GATEWAY_API_KEY?.trim()) throw new PipelineThinkingUnavailable(modelId, "AI_GATEWAY_API_KEY is not set");
-  return pipelineLlmFor(version, env, { timeoutMs: PIPELINE_THINK_TIMEOUT_MS, maxRetries: PIPELINE_THINK_MAX_RETRIES });
+  return pipelineLlmFor(version, env, { modelId, timeoutMs: PIPELINE_THINK_TIMEOUT_MS, maxRetries: PIPELINE_THINK_MAX_RETRIES });
 };
 
 const modelIdOf = (llm: LlmClient): string | undefined => {
@@ -108,12 +120,13 @@ export async function pipelinePartsFor(
   // The thinking client first: a call that cannot think is refused before anything paid starts.
   let llm: LlmClient;
   if (overrides.llm) llm = overrides.llm;
-  else if (call.engine === PIPELINE_ENGINE) {
+  else if (isGatewayPipelineEngine(call.engine)) {
+    const modelId = pipelineThinkModelFor(call.engine, env);
     try {
-      llm = (overrides.gatewayLlm ?? liveGatewayLlm)(call.version, env);
+      llm = (overrides.gatewayLlm ?? liveGatewayLlm)(call.version, env, modelId);
     } catch (e) {
       if (e instanceof PipelineThinkingUnavailable) throw e;
-      throw new PipelineThinkingUnavailable(pipelineTextModel(env), e instanceof Error ? e.message : String(e));
+      throw new PipelineThinkingUnavailable(modelId, e instanceof Error ? e.message : String(e));
     }
   } else llm = { create: (req) => new AnthropicLlm().create(req) };
   const thinkModel = overrides.thinkModel ?? modelIdOf(llm) ?? (call.version.model || undefined);

@@ -231,7 +231,7 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
   };
 
   /**
-   * Starts a test-lab call on a pipeline engine ("pipeline": Gemini Flash thinking; "pipeline_chat": the chat model).
+   * Starts a test-lab call on a pipeline engine ("pipeline": Gemini Flash thinking; "pipeline_lite": Gemini Flash-Lite; "pipeline_chat": the chat model).
    * Scripted mode: fakes and a scripted chat model, never paid. A thinking model that cannot be built refuses the call.
    */
   const startPipeline = async (session: VoiceSession, mode: VoiceMode, waitAudio: boolean, pipelineEngine: PipelineEngineName) => {

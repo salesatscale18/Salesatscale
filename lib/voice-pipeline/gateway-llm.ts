@@ -44,6 +44,17 @@ export const PIPELINE_TEXT_MODEL_ENV = "VOICE_PIPELINE_TEXT_MODEL";
  */
 export const PIPELINE_TEXT_PRICE: ModelPrice = { input: 0.75, output: 3.75, cacheRead: 0.075, cacheWrite5m: 0, cacheWrite1h: 0 };
 
+/**
+ * The "pipeline_lite" engine's text model: Gemini 3.5 Flash-Lite (gateway p50 latency about 0.5 s, against 1.9-3.0 s
+ * for Gemini 3.8 Flash). Its reasoning efforts on the gateway are minimal/low/medium/high (no "none"): "none" is
+ * still sent and the gateway maps it to the lowest, with a warning that GatewayLlm logs on the round line.
+ * VOICE_PIPELINE_TEXT_MODEL does not apply to it.
+ */
+export const PIPELINE_TEXT_MODEL_LITE = "google/gemini-3.5-flash-lite";
+
+/** Gemini 3.5 Flash-Lite prices (USD per million tokens), the same line as lib/ai/models.ts DEFAULT_PRICES (tests keep them equal). */
+export const PIPELINE_TEXT_PRICE_LITE: ModelPrice = { input: 0.3, output: 2.5, cacheRead: 0.03, cacheWrite5m: 0, cacheWrite1h: 0 };
+
 /** Gateway ids: `creator/model`, e.g. google/gemini-3.8-flash. */
 const GATEWAY_MODEL_ID = /^[a-z0-9][a-z0-9-]*\/[a-z0-9][a-z0-9._:-]*$/i;
 export const isGatewayModelId = (id: string) => GATEWAY_MODEL_ID.test(id);
@@ -280,13 +291,14 @@ export function pipelineTextModel(env: Record<string, string | undefined> = proc
 }
 
 /**
- * The pipeline's LlmClient for an agent version: the gateway text model, thinking from the version's effort
+ * The pipeline's LlmClient for an agent version: the gateway text model (`extra.modelId`, default
+ * pipelineTextModel(env); "pipeline_lite" passes PIPELINE_TEXT_MODEL_LITE), thinking from the version's effort
  * (reasoningForEffort: off for low/medium), each round's output capped at PIPELINE_MAX_OUTPUT_TOKENS.
  */
 export function pipelineLlmFor(
   version: { effort: string | null },
   env: Record<string, string | undefined> = process.env,
-  extra: Pick<GatewayLlmOptions, "model" | "timeoutMs" | "maxRetries" | "onRound" | "now"> = {},
+  extra: Pick<GatewayLlmOptions, "modelId" | "model" | "timeoutMs" | "maxRetries" | "onRound" | "now"> = {},
 ): GatewayLlm {
-  return new GatewayLlm({ modelId: pipelineTextModel(env), reasoning: reasoningForEffort(version.effort), maxOutputTokens: PIPELINE_MAX_OUTPUT_TOKENS, env, ...extra });
+  return new GatewayLlm({ reasoning: reasoningForEffort(version.effort), maxOutputTokens: PIPELINE_MAX_OUTPUT_TOKENS, env, ...extra, modelId: extra.modelId ?? pipelineTextModel(env) });
 }

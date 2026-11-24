@@ -128,7 +128,8 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
       ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"],
-      ["pipeline", "Pipeline: Gemini Flash + ElevenLabs (testing)"], ["pipeline_chat", "Pipeline: chat model + ElevenLabs (testing)"],
+      ["pipeline", "Pipeline: Gemini Flash + ElevenLabs (testing)"], ["pipeline_lite", "Pipeline: Gemini Flash-Lite + ElevenLabs (testing)"],
+      ["pipeline_chat", "Pipeline: chat model + ElevenLabs (testing)"],
       ["classic", "Old baseline (20 Nov)"],
     ]);
     expect(select).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
@@ -146,7 +147,7 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     const help = Object.fromEntries(ENGINE_ORDER.map((e) => [e, t(engineHelpKey(e))]));
     expect(help.guarded).toBe("Newest engine code with the simpler speaking instructions, a server-written price sentence and plain objection notes. Test lab only.");
     expect(help.current).toMatch(/Buyers get it\.$/);
-    for (const e of ["guarded", "guarded_silent", "pipeline", "pipeline_chat", "classic"] as const) expect(help[e]).toMatch(/Test lab only\.$/);
+    for (const e of ["guarded", "guarded_silent", "pipeline", "pipeline_lite", "pipeline_chat", "classic"] as const) expect(help[e]).toMatch(/Test lab only\.$/);
   });
 
   it("never shows it to a seller, and the server ignores the field from one", async () => {
