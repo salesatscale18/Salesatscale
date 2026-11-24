@@ -80,13 +80,15 @@ export function SideNav({
         <span className="sas-nav__mark" aria-hidden="true" />
         Sales at Scale
       </div>
-      <div className="sas-nav__account">
-        <span className="sas-nav__account-text">
-          <span className="sas-nav__account-name">{mode === "admin" ? t("nav.all_accounts") : accountName}</span>
-          <span className="sas-nav__sub">{mode === "admin" ? t("nav.platform_admin_view") : t("nav.seller_account")}</span>
-        </span>
-        <Icon name="chevrons-up-down" />
-      </div>
+      {mode === "admin" ? null : (
+        <div className="sas-nav__account">
+          <span className="sas-nav__account-text">
+            <span className="sas-nav__account-name">{accountName}</span>
+            <span className="sas-nav__sub">{t("nav.seller_account")}</span>
+          </span>
+          <Icon name="chevrons-up-down" />
+        </div>
+      )}
       {groups.map((g, gi) => (
         <div key={gi}>
           {g.label ? <div className="sas-label sas-nav__group-label">{t(g.label)}</div> : null}

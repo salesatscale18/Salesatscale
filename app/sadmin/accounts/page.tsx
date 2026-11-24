@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Button, Chip, StatusPill } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
+import { MetricTile } from "@/components/sas/record";
 import { buttonClass } from "@/components/sas/primitives";
 import { appDb, requireSuperAdmin } from "@/lib/auth/account";
 import { listAccounts } from "@/lib/accounts/service";
@@ -14,17 +15,24 @@ export const dynamic = "force-dynamic";
 export const metadata: Metadata = { title: "Accounts — Sales at Scale", robots: { index: false, follow: false } };
 
 const regionName = new Intl.DisplayNames(["en"], { type: "region" });
+const MONTH_MS = 30 * 24 * 60 * 60 * 1000;
 
 export default async function AccountsPage({ searchParams }: { searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const me = await requireSuperAdmin();
   const sp = (await searchParams) ?? {};
   const accounts = await listAccounts(appDb);
   const demos = await demoAccountMarks(appDb, accounts.map((a) => a.id));
+  const since = Date.now() - MONTH_MS;
+  const addedThisMonth = accounts.filter((a) => a.createdAt.getTime() >= since).length;
+  const byStatus = (status: string) => accounts.filter((a) => a.status === status).length;
   return (
     <AdminShell me={me}>
       <main className="sas-shell__content">
         <header className="sas-page-head">
-          <h1 className="sas-title">{t("admin.accounts.title")}</h1>
+          <div className="sas-stack-2" style={{ gap: 2 }}>
+            <h1 className="sas-title">{t("admin.accounts.title")}</h1>
+            <span className="sas-small">{t("admin.demo.create_hint")}</span>
+          </div>
           <div className="sas-page-head__actions">
             <form action={createDemoAccountAction}>
               <Button type="submit" size="sm" icon="sparkles">{t("admin.demo.create")}</Button>
@@ -35,7 +43,15 @@ export default async function AccountsPage({ searchParams }: { searchParams?: Pr
             </a>
           </div>
         </header>
-        <p className="sas-small" style={{ margin: 0 }}>{t("admin.demo.create_hint")}</p>
+        <section className="sas-metrics" aria-label={t("admin.accounts.total")}>
+          <MetricTile
+            accent
+            label={t("admin.accounts.total")}
+            value={accounts.length}
+            delta={t("admin.accounts.total_delta", { live: byStatus("live"), setup: byStatus("setting_up"), paused: byStatus("paused") })}
+          />
+          <MetricTile label={t("admin.accounts.added_month")} value={addedThisMonth} delta={t("admin.accounts.added_month_delta")} />
+        </section>
         {sp.demo === "failed" ? (
           <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("admin.demo.failed")}</span></div>
         ) : null}

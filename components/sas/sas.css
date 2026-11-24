@@ -1763,3 +1763,59 @@ label.st-voice__row { cursor: pointer; }
 
 /* IDs keep normal digits wherever they sit, also inside a tabular .sas-num run (UX: IDs use normal digits). Keep last. */
 .sas-id, .sas-id--plain, .sas-num .sas-id, .sas-num .sas-id--plain { font-variant-numeric: normal; }
+
+/*
+ * Platform admin (/sadmin): green palette and a quieter, cleaner chrome.
+ * Only surfaces rendered with <SasRoot tone="admin"> (AdminShell) use it; the
+ * seller workspace and buyer pages keep Trust Blue. Contrast checked: primary
+ * text >= 5:1 on every surface in light, >= 8:1 in dark; muted text >= 5.6:1.
+ * Status colours (success, warning, danger, agent, human) are unchanged.
+ */
+.sas-app.sas-app--admin {
+  --surface: #f4f7f5; --surface-raised: #ffffff; --surface-sunken: #eaf0ec;
+  --line: #dfe7e2; --line-strong: #7b8a82;
+  --ink: #0e1712; --ink-muted: #52615a;
+  --primary: #13744a; --primary-fill: #13744a; --on-primary: #ffffff; --primary-soft: #e3f3ea;
+  --brand-blue: #2f9e6a; --brand-teal: #8fd9a8;
+  --shadow-card: 0 1px 2px rgba(14,23,18,0.04);
+}
+@media (prefers-color-scheme: dark) {
+  .sas-app.sas-app--admin:not([data-theme="light"]) {
+    --surface: #0a0f0c; --surface-raised: #121a15; --surface-sunken: #0e1511;
+    --line: #223029; --line-strong: #56675e;
+    --ink: #e6efe9; --ink-muted: #98a89f;
+    --primary: #5fd39a; --primary-fill: #7ee0b0; --on-primary: #08110c; --primary-soft: #12281d;
+    --brand-blue: #3fb67e; --brand-teal: #a6e8bf;
+    --shadow-card: none;
+  }
+}
+.sas-app.sas-app--admin[data-theme="dark"] {
+  --surface: #0a0f0c; --surface-raised: #121a15; --surface-sunken: #0e1511;
+  --line: #223029; --line-strong: #56675e;
+  --ink: #e6efe9; --ink-muted: #98a89f;
+  --primary: #5fd39a; --primary-fill: #7ee0b0; --on-primary: #08110c; --primary-soft: #12281d;
+  --brand-blue: #3fb67e; --brand-teal: #a6e8bf;
+  --shadow-card: none;
+}
+.sas-app--admin { background: var(--surface); }
+.sas-shell--admin .sas-nav { background: var(--surface); border-inline-end-color: transparent; box-shadow: inset -1px 0 0 var(--line); }
+.sas-shell--admin .sas-shell__content { width: 100%; max-width: 1200px; margin-inline: auto; padding-block: var(--space-8); gap: var(--space-6); }
+.sas-shell--admin .sas-title { letter-spacing: -0.02em; }
+.sas-shell--admin .sas-panel,
+.sas-shell--admin .sas-metric { box-shadow: var(--shadow-card); }
+.sas-shell--admin .sas-metric { gap: 2px; padding: var(--space-4) 20px; }
+.sas-shell--admin .sas-metric__value { color: var(--ink); }
+.sas-shell--admin .sas-metric--accent .sas-metric__value { color: var(--primary); }
+.sas-shell--admin .sas-metrics { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); }
+.sas-shell--admin .sas-panel__head { padding: var(--space-4) 20px; }
+.sas-shell--admin .sas-table th { background: transparent; border-block-end: 1px solid var(--line); padding-inline: 20px; }
+.sas-shell--admin .sas-table td { padding-inline: 20px; }
+.sas-shell--admin .sas-table tbody tr:first-child td { border-block-start: 0; }
+.sas-shell--admin .sas-table tbody tr:hover td { background: var(--surface); }
+.sas-shell--admin a.sas-list__row { padding: 14px 20px; }
+.sas-shell--admin .sas-table-foot { padding-inline: 20px; }
+@media (max-width: 860px) {
+  .sas-shell--admin .sas-shell__content { padding: var(--space-4); }
+  .sas-shell--admin .sas-panel__head, .sas-shell--admin a.sas-list__row, .sas-shell--admin .sas-table-foot { padding-inline: var(--space-4); }
+  .sas-shell--admin .sas-table th, .sas-shell--admin .sas-table td { padding-inline: var(--space-4); }
+}
