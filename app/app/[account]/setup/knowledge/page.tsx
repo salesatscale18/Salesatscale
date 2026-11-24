@@ -686,7 +686,8 @@ function AskedBy({ asks, base, question }: { asks: QuestionAsk[]; base: string; 
           <ChatLine isTest={a.isTest} leadId={a.leadId} leadName={a.leadName} base={base} />
           {a.mustHave === true ? <span className="sas-chip sas-chip--plain" data-must-have="yes">{t("team_question.must_have")}</span> : null}
           {a.mustHave === false ? <span className="sas-chip sas-chip--plain" data-must-have="no">{t("team_question.good_to_know")}</span> : null}
-          {a.buyerWords && !(question && sameWords(a.buyerWords, question)) ? <span dir="auto" style={{ overflowWrap: "anywhere" }} data-buyer-words=""><span aria-hidden="true">· </span>“{a.buyerWords}”</span> : null}
+          {/* The line keeps the page's direction (dot, then the quote); only the buyer's words are isolated, so Hebrew sits inside the quote marks. */}
+          {a.buyerWords && !(question && sameWords(a.buyerWords, question)) ? <span style={{ overflowWrap: "anywhere" }} data-buyer-words=""><span aria-hidden="true">· </span>“<bdi>{a.buyerWords}</bdi>”</span> : null}
         </span>
       ))}
       {asks.length > ASKS_SHOWN ? <span className="sas-small">{t("knowledge.questions.more_asks", { n: asks.length - ASKS_SHOWN })}</span> : null}

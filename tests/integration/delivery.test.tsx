@@ -183,7 +183,8 @@ describe("delivery ETA", () => {
     const [m] = await db.select().from(markets).where(eq(markets.id, id));
     expect(m.overrides.leadTime).toEqual({ minDays: 2, maxDays: 3, businessDays: false });
     html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: id })));
-    expect(html).toMatch(/data-setting="leadTime"[^]*2–3 days[^]*data-source="market"[^]*Reset/);
+    // "Different here" sits under the label, before the value.
+    expect(html).toMatch(/data-setting="leadTime"[^]*Lead time[^]*data-source="market"[^]*2–3 days[^]*Reset/);
     // The override form shows the market's weekend.
     html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: id, override: "leadTime" })));
     expect(html).toContain("Weekend here: Saturday, Sunday.");

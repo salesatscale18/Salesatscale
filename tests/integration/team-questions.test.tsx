@@ -191,9 +191,25 @@ describe("Park and continue: questions to the team (O4)", () => {
     const k = await page(KnowledgePage, { account: acc.slug }, { panel: "answer", question: "Can it run on 110V?" });
     expect(k).toContain("data-asked-by");
     expect(k).toContain(`href="/app/${acc.slug}/leads/${c.leadId}"`);
-    expect(k).toContain("“will it work on 110 volt”");
+    expect(k).toContain("“<bdi>will it work on 110 volt</bdi>”");
     expect(k).toContain("Test lab chat");
     expect(k).toContain("Your answer also goes back to the chats that asked.");
+  });
+
+  it("Hebrew buyer words: the context line keeps its direction and isolates only the quoted words (list and Answer panel)", async () => {
+    const test = (await startTestConversation(db, acc.id, me.id, { language: "he" }))!;
+    const q = "Is there a satellite link option?";
+    await runTool("ask_team", { question: q, buyer_words: "חיבור ללווייני", must_have: null }, await ctxFor(acc, test));
+    const words = '<span style="overflow-wrap:anywhere" data-buyer-words=""><span aria-hidden="true">· </span>“<bdi>חיבור ללווייני</bdi>”</span>';
+    const views: Record<string, string>[] = [{ view: "questions" }, { view: "questions", panel: "answer", question: q }];
+    for (const sp of views) {
+      const html = await page(KnowledgePage, { account: acc.slug }, sp);
+      const line = html.split(words)[0].split('data-ask=""').pop() ?? "";
+      expect(html, JSON.stringify(sp)).toContain(words);
+      // The quote follows "Test lab chat" on the same line; the line itself is not dir="auto".
+      expect(line).toContain("Test lab chat");
+      expect(html).not.toMatch(/dir="auto"[^>]*data-buyer-words/);
+    }
   });
 
   it("answering in Knowledge puts the answer into that conversation's turn context while the buyer is active", async () => {

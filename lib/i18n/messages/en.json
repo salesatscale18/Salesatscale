@@ -4041,5 +4041,20 @@
   "knowledge.questions.show_more": "Show {n} more",
   "knowledge.questions.chat_with": "Chat with",
   "knowledge.questions.pointer_before": "Questions the agent couldn't answer are in ",
-  "knowledge.summary_no_gaps": "{total} facts · {approved} approved · {suggested} to review."
+  "knowledge.summary_no_gaps": "{total} facts · {approved} approved · {suggested} to review.",
+  "markets.check_fail.where": "No leads can reach it",
+  "markets.check_fail.where_fix": "Set where",
+  "markets.check_fail.countries": "No countries yet",
+  "markets.check_fail.countries_fix": "Add countries",
+  "markets.check_fail.price_list_none": "No price list",
+  "markets.check_fail.price_list_none_fix": "Choose one",
+  "markets.check_fail.price_list_not_live": "Price list not live",
+  "markets.check_fail.price_list_not_live_fix": "Publish the price list",
+  "markets.check_fail.legal_texts": "Legal texts missing in {languages}",
+  "markets.check_fail.legal_texts_any": "Legal texts missing in a language",
+  "markets.check_fail.legal_texts_fix": "Add texts",
+  "markets.check_fail.payment_none": "No payment method",
+  "markets.check_fail.payment_none_fix": "Add one",
+  "markets.check_fail.bank_details": "No bank details for bank transfer",
+  "markets.check_fail.bank_details_fix": "Add them"
 }

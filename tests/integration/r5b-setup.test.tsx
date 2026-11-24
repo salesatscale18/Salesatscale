@@ -201,7 +201,8 @@ describe("pages (demo account)", () => {
     expect(tx).not.toContain("United Kingdom, United Kingdom (UK)");
     expect(tx).toMatch(/Mon–Thu 09:00–17:30 · Fri 09:00–16:00 · Sat–Sun off/);
     expect(html).toContain('<span class="sas-nowrap">Fri 09:00–16:00</span>');
-    expect(tx).toMatch(/Europe\/London \(GMT[+-]\d\)/);
+    expect(tx).toMatch(/United Kingdom time \(GMT[+-]\d\)/);
+    expect(tx).not.toContain("Europe/London");
     expect(tx).not.toContain("(UTC)");
     // MarketsV2: "Different here" in the Trust Blue soft tint; on a phone the label sits on its own line above value and action.
     expect(html).toContain('<span class="mk-diff" data-source="market">Different here</span>');

@@ -32,7 +32,8 @@ const { overrideSettingAction, setPriceListAction } = await import("@/app/app/[a
 const { createMarket, ensureHomeMarket } = await import("@/lib/markets/service");
 const { getOrderFormSettings, saveLegalSection, saveOrderFormSettings } = await import("@/lib/orders/settings");
 const { saveMarketLegalSection } = await import("@/lib/markets/legal");
-const { listPriceLists } = await import("@/lib/pricing/price-lists");
+const { createPriceList, listPriceLists } = await import("@/lib/pricing/price-lists");
+const { setMarketPriceList } = await import("@/lib/markets/service");
 
 const props = (account: string, sp: Record<string, string> = {}) => ({ params: Promise.resolve({ account }), searchParams: Promise.resolve(sp) });
 const run = async <T,>(p: Promise<T>) => {
@@ -107,7 +108,9 @@ describe("Settings › Markets (MarketsV2)", () => {
       const row = rowOf(html, k);
       // Two actions: in a narrow card (about 1280 wide) they drop under the value.
       expect(row, k).toContain('class="mk-row mk-row--two"');
-      expect(row, k).toMatch(/class="mk-row__value"><span>[^<]+<\/span> <span class="mk-diff" data-source="market">Different here<\/span>/);
+      // "Different here" under the label; the value column holds only the value.
+      expect(row, k).toMatch(/<span class="mk-row__label">[^<]+<span class="mk-row__tag"><span class="mk-diff" data-source="market">Different here<\/span><\/span><\/span><span class="mk-row__value"><span>/);
+      expect(row.split('class="mk-row__value"')[1], k).not.toContain("Different here");
       expect(actOf(row), k).toMatch(new RegExp(`^<form[^>]*>.*<button type="submit" class="mk-act" data-reset-setting="${k}">Reset</button></form><a class="mk-act" [^>]*data-edit-setting="${k}">Change</a>$`));
     }
     // An inheriting row on the same market: only Change, kept beside the value.
@@ -158,7 +161,9 @@ describe("Settings › Markets (MarketsV2)", () => {
     const pl = checkOf(uk, "price_list");
     expect(pl).toContain('class="mk-ck mk-ck--fail"');
     expect(pl).toContain('data-check-icon="fail"');
-    expect(pl).toMatch(/<a class="mk-act" href="[^"]*\?m=[^"]*&amp;edit=price_list#set-price_list" data-check-fix="price_list">Choose a price list\.<\/a>/);
+    // No positive label on a failing check: what is wrong, then the fix link.
+    expect(pl).not.toContain("Price list is live");
+    expect(pl).toMatch(/<span>No price list<\/span>.*<span aria-hidden="true">·<\/span><a class="mk-act" href="[^"]*\?m=[^"]*&amp;edit=price_list#set-price_list" data-check-fix="price_list" title="Choose a price list\.">Choose one<\/a>/);
     // Go live stays disabled while a check fails.
     expect(uk.match(/<button[^>]*value="live"[^>]*>/)?.[0]).toContain('disabled=""');
     expect(home.match(/<button[^>]*value="live"[^>]*>/)?.[0]).not.toContain("disabled");
@@ -216,5 +221,93 @@ describe("Settings › Markets (MarketsV2)", () => {
     expect(css).toMatch(/@container mkcard \(max-width: 420px\) \{\s*\.mk-row--two \{ grid-template-columns: var\(--mk-label\) minmax\(0, 1fr\); \}\s*\.mk-row--two \.mk-row__act \{ grid-column: 2; \}/);
     // No unnamed container queries: each one names the box it measures.
     expect(css).not.toMatch(/@container \(/);
+  });
+
+  it("polish (25 Nov): a failing check says what is wrong, then its fix link; passing checks keep their labels", async () => {
+    const actor = { userId: me.id, actingAs: false };
+    /** The failing check's visible words: "Label · Fix". */
+    const failLine = (html: string, key: string) => {
+      const li = checkOf(html, key);
+      expect(li, key).toContain('class="mk-ck mk-ck--fail"');
+      return text(li.replace(/<span class="sas-sr">[^<]*<\/span>/, "")).replace(/·/g, " · ").replace(/\s+/g, " ").trim();
+    };
+    const mk = async (name: string, input: Record<string, string[]>) => {
+      const r = await createMarket(db, actor, acc.id, { name, ...input });
+      if (!r.ok) throw new Error(JSON.stringify(r.errors));
+      return r.market.id;
+    };
+    // No routing at all: nobody reaches it.
+    const nowhere = await mk("Nowhere", { countries: [] });
+    let html = await page({ m: nowhere });
+    expect(failLine(html, "where")).toBe("No leads can reach it · Set where");
+    expect(checkOf(html, "where")).toMatch(/href="[^"]*&amp;edit=where#where" data-check-fix="where"/);
+    // No price list assigned.
+    expect(failLine(html, "price_list")).toBe("No price list · Choose one");
+    expect(html).not.toMatch(/mk-ck--fail[^]*?<span>(Leads can reach it|Price list is live)<\/span>/);
+
+    // A phone prefix but no countries: the more specific reason.
+    const noCountries = await mk("Prefix only", { countries: [], phonePrefixes: ["+33"] });
+    html = await page({ m: noCountries });
+    expect(failLine(html, "where")).toBe("No countries yet · Add countries");
+
+    // A price list assigned but not live (a draft).
+    const draft = await createPriceList(db, actor, acc.id, { name: "Draft list", currency: "EUR", pricesIncludeTax: true, taxRateBp: 2000 });
+    if (!draft.ok) throw new Error(draft.error);
+    await setMarketPriceList(db, actor, acc.id, noCountries, draft.list.lineageId);
+    html = await page({ m: noCountries });
+    expect(failLine(html, "price_list")).toBe("Price list not live · Publish the price list");
+    expect(checkOf(html, "price_list")).toMatch(/href="\/app\/polar\/setup\/price-lists" data-check-fix="price_list"/);
+
+    // Legal texts missing in Hebrew for this market (its Hebrew text removed).
+    await saveMarketLegalSection(db, actor, acc.id, noCountries, { sectionKey: "sales_terms", title: "Sales terms", language: "he", body: "", active: false });
+    html = await page({ m: noCountries });
+    expect(failLine(html, "legal_texts")).toBe("Legal texts missing in Hebrew · Add texts");
+    expect(checkOf(html, "legal_texts")).toMatch(/order-form\?market=[^"]*" data-check-fix="legal_texts"/);
+
+    // Bank transfer without bank details.
+    await db.update(markets).set({ overrides: { bankDetails: null } }).where(eq(markets.id, noCountries));
+    html = await page({ m: noCountries });
+    expect(failLine(html, "payment_methods")).toBe("No bank details for bank transfer · Add them");
+    expect(checkOf(html, "payment_methods")).toMatch(/override=bankDetails#set-bankDetails" data-check-fix="payment_methods"/);
+
+    // No payment method at all (the account's order form has none turned on).
+    const of = await getOrderFormSettings(db, acc.id);
+    await saveOrderFormSettings(db, acc.id, { fields: of.fields, card: false, bankTransfer: false, bankDetails: of.bankDetails, linkValidDays: 7 });
+    try {
+      html = await page({ m: nowhere });
+      expect(failLine(html, "payment_methods")).toBe("No payment method · Add one");
+      expect(checkOf(html, "payment_methods")).toMatch(/override=paymentMethods#set-paymentMethods" data-check-fix="payment_methods"/);
+    } finally {
+      await saveOrderFormSettings(db, acc.id, { fields: of.fields, card: of.card, bankTransfer: of.bankTransfer, bankDetails: of.bankDetails, linkValidDays: 7 });
+    }
+  });
+
+  it("polish (25 Nov): the time zone row drops the IANA name (the editor keeps it); contact hours break per group", async () => {
+    let html = await page({ m: ukId });
+    const tz = text(rowOf(html, "timezone"));
+    expect(tz).toMatch(/United Kingdom time \(GMT[+-]\d\)/);
+    expect(tz).not.toContain("Europe/London");
+    const editor = await page({ m: ukId, override: "timezone" });
+    expect(editor).toMatch(/<option value="Europe\/London" selected="">United Kingdom time · Europe\/London \(GMT[+-]\d\)<\/option>/);
+
+    // Mon–Thu / Fri / Sat–Sun: three groups, each unbreakable; the separator is its own element the CSS hides when stacked.
+    await run(overrideSettingAction(form({
+      slug: acc.slug, marketId: ukId, key: "contactHours",
+      mon_on: "on", mon_from: "09:00", mon_to: "17:30", tue_on: "on", tue_from: "09:00", tue_to: "17:30",
+      wed_on: "on", wed_from: "09:00", wed_to: "17:30", thu_on: "on", thu_from: "09:00", thu_to: "17:30",
+      fri_on: "on", fri_from: "09:00", fri_to: "16:00", sat_from: "09:00", sat_to: "13:00", sun_from: "09:00", sun_to: "13:00",
+    })));
+    html = await page({ m: ukId });
+    const hours = rowOf(html, "contactHours");
+    expect(hours).toContain(
+      '<span class="mk-hours" data-fits="400"><span class="mk-hours__g"><span class="sas-nowrap">Mon–Thu 09:00–17:30</span></span>'
+      + '<span class="mk-hours__g"><span class="mk-hours__sep"> · </span><span class="sas-nowrap">Fri 09:00–16:00</span></span>'
+      + '<span class="mk-hours__g"><span class="mk-hours__sep"> · </span><span class="sas-nowrap">Sat–Sun off</span></span></span>',
+    );
+    const fs = await import("node:fs");
+    const css = fs.readFileSync("app/app/[account]/markets/markets.css", "utf8");
+    expect(css).toContain(".mk-row__value { container: mkvalue / inline-size; }");
+    expect(css).toContain('@container mkvalue (max-width: 399px) { .mk-hours[data-fits="400"] .mk-hours__g { display: block; } .mk-hours[data-fits="400"] .mk-hours__sep { display: none; } }');
+    expect(css).toContain(".mk-row__tag { display: block; margin-block-start: 4px; }");
   });
 });

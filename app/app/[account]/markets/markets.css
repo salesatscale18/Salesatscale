@@ -52,6 +52,22 @@
 .mk-row__label { color: var(--ink-muted); font-weight: 500; }
 .mk-row__value { min-width: 0; overflow-wrap: anywhere; }
 .mk-row__act { display: inline-flex; align-items: baseline; gap: 12px; white-space: nowrap; }
+/* "Different here" under the label: the value column holds only the value. */
+.mk-row__tag { display: block; margin-block-start: 4px; }
+.mk-row__value { container: mkvalue / inline-size; }
+/* Contact hours: one line when it fits, else one group per line without the dots (data-fits: the width it needs). */
+.mk-hours[data-fits="max"] .mk-hours__g { display: block; }
+.mk-hours[data-fits="max"] .mk-hours__sep { display: none; }
+@container mkvalue (max-width: 159px) { .mk-hours[data-fits="160"] .mk-hours__g { display: block; } .mk-hours[data-fits="160"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 199px) { .mk-hours[data-fits="200"] .mk-hours__g { display: block; } .mk-hours[data-fits="200"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 239px) { .mk-hours[data-fits="240"] .mk-hours__g { display: block; } .mk-hours[data-fits="240"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 279px) { .mk-hours[data-fits="280"] .mk-hours__g { display: block; } .mk-hours[data-fits="280"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 319px) { .mk-hours[data-fits="320"] .mk-hours__g { display: block; } .mk-hours[data-fits="320"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 359px) { .mk-hours[data-fits="360"] .mk-hours__g { display: block; } .mk-hours[data-fits="360"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 399px) { .mk-hours[data-fits="400"] .mk-hours__g { display: block; } .mk-hours[data-fits="400"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 439px) { .mk-hours[data-fits="440"] .mk-hours__g { display: block; } .mk-hours[data-fits="440"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 479px) { .mk-hours[data-fits="480"] .mk-hours__g { display: block; } .mk-hours[data-fits="480"] .mk-hours__sep { display: none; } }
+@container mkvalue (max-width: 519px) { .mk-hours[data-fits="520"] .mk-hours__g { display: block; } .mk-hours[data-fits="520"] .mk-hours__sep { display: none; } }
 .mk-row__note { font-size: 12px; color: var(--ink-muted); }
 /* About 1280 wide (two narrower columns): a narrower label column. */
 @container mkdetail (max-width: 820px) { .mk-row { --mk-label: 112px; } }

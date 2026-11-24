@@ -48,11 +48,21 @@ const DAY_SHORT = ["sun", "mon", "tue", "wed", "thu", "fri", "sat"] as const;
 /** "Friday, Saturday": the weekend business days skip in a market. */
 const weekendText = (days: number[]) => [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7)).map((d) => t(`settings.hours.day.${DAY_SHORT[d]}` as MessageKey)).join(", ");
 
+/**
+ * "United Kingdom time (GMT+0)": the row drops the IANA name (the editor's list keeps it).
+ * A zone without a plain name keeps its full label ("Europe/Kyiv (GMT+2)"); UTC stays "UTC".
+ */
+function zoneShort(timezone: string): string {
+  const label = timezoneLabel(timezone);
+  const i = label.indexOf(" · ");
+  return i < 0 ? label : `${label.slice(0, i)}${label.slice(label.lastIndexOf(" ("))}`;
+}
+
 /** One setting's effective value in words. */
 function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): string {
   switch (key) {
     case "languages": return langNames(value as string[]);
-    case "timezone": return timezoneLabel(value as string);
+    case "timezone": return zoneShort(value as string);
     case "contactHours": return summarizeContactHours(value as AccountDefaults["contactHours"]);
     case "paymentMethods": {
       const pm = value as AccountDefaults["paymentMethods"];
@@ -68,9 +78,28 @@ function describe<K extends SettingKey>(key: K, value: AccountDefaults[K]): stri
   return "";
 }
 
-/** "Mon–Thu 09:00–17:30 · Fri 09:00–16:00": each part on one line, breaking only at " · " (R5-7). */
-function KeepParts({ text }: { text: string }) {
-  return <>{text.split(" · ").map((p, i) => <span key={i}>{i > 0 ? " · " : null}<span className="sas-nowrap">{p}</span></span>)}</>;
+/** Width buckets (px) for the contact hours line: the CSS stacks the groups when the value is narrower (markets.css). */
+const HOURS_FITS = [160, 200, 240, 280, 320, 360, 400, 440, 480, 520] as const;
+
+/**
+ * "Mon–Thu 09:00–17:30 · Fri 09:00–16:00 · Sat–Sun off" on one line when it fits, else one group per
+ * line without the dots ("Mon–Thu 09:00–17:30" / "Fri 09:00–16:00" / "Sat–Sun off"); never broken inside a group.
+ * The width it needs is estimated from its length (about 7.4px a character at 14px), rounded up to a bucket.
+ */
+function HoursGroups({ text }: { text: string }) {
+  const parts = text.split(" · ");
+  const need = Math.ceil(text.length * 7.4);
+  const fit = HOURS_FITS.find((w) => w >= need) ?? "max";
+  return (
+    <span className="mk-hours" data-fits={fit}>
+      {parts.map((p, i) => (
+        <span key={i} className="mk-hours__g">
+          {i > 0 ? <span className="mk-hours__sep"> · </span> : null}
+          <span className="sas-nowrap">{p}</span>
+        </span>
+      ))}
+    </span>
+  );
 }
 
 /** "Different here": the market has its own value (Trust Blue soft tint, R5-10). Shown only on rows that differ. */
@@ -78,16 +107,16 @@ const DiffTag = () => <span className="mk-diff" data-source="market">{t("markets
 
 /**
  * One row of a settings card (canvas: MarketsV2): label (muted, 132px) · value · action, close together.
- * `tag` follows the value ("Different here"); `note` is a small line under it.
+ * `tag` sits under the label ("Different here"); `note` is a small line under it.
  */
 function Row({ label, value, tag, note, action, muted, id, twoActions }: { label: string; value: ReactNode; tag?: ReactNode; note?: ReactNode; action?: ReactNode; muted?: boolean; id?: string; twoActions?: boolean }) {
   return (
     // twoActions: Reset and Change; in a narrow card they drop under the value (markets.css).
     <div id={id} className={twoActions ? "mk-row mk-row--two" : "mk-row"}>
-      <span className="mk-row__label">{label}</span>
+      {/* "Different here" sits under the label, so the value column holds only the value. */}
+      <span className="mk-row__label">{label}{tag ? <span className="mk-row__tag">{tag}</span> : null}</span>
       <span className="mk-row__value">
         <span style={muted ? { color: "var(--ink-muted)" } : undefined}>{value}</span>
-        {tag ? <>{" "}{tag}</> : null}
         {note ? <span className="sas-small" style={{ display: "block", marginBlockStart: 2 }}>{note}</span> : null}
       </span>
       <span className="mk-row__act" data-row-end="">{action}</span>
@@ -301,7 +330,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
         <Row
           id={`set-${k}`}
           label={t(`markets.setting.${k}` as MessageKey)}
-          value={k === "contactHours" ? <KeepParts text={text} /> : text}
+          value={k === "contactHours" ? <HoursGroups text={text} /> : text}
           tag={own ? <DiffTag /> : null}
           twoActions={own && overriding !== k}
           action={
@@ -322,6 +351,40 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
         {overriding === k ? <OverrideForm slug={account.slug} market={selected} settingKey={k} settings={view.settings} timezones={timezones} weekend={weekendFor(selected.countries, account.market)} /> : null}
       </div>
     );
+  };
+
+  /**
+   * A failing check in words (never its passing label): what is wrong, and the fix link's text.
+   * Where a check fails for two reasons, the more specific one is said.
+   */
+  const failText = (key: GoLiveCheckKey): { label: string; fix: string } | null => {
+    if (!selected || !view) return null;
+    switch (key) {
+      case "where": {
+        const routed = selected.isHome || selected.phonePrefixes.length > 0 || selected.formCountryValues.length > 0 || selected.intakeKeyIds.length > 0;
+        return routed
+          ? { label: t("markets.check_fail.countries"), fix: t("markets.check_fail.countries_fix") }
+          : { label: t("markets.check_fail.where"), fix: t("markets.check_fail.where_fix") };
+      }
+      case "price_list":
+        return selected.priceListLineageId
+          ? { label: t("markets.check_fail.price_list_not_live"), fix: t("markets.check_fail.price_list_not_live_fix") }
+          : { label: t("markets.check_fail.price_list_none"), fix: t("markets.check_fail.price_list_none_fix") };
+      case "legal_texts": {
+        const missing = view.settings.languages.value.filter((l) => !allLegal.some((x) => x.language === l));
+        return {
+          label: missing.length ? t("markets.check_fail.legal_texts", { languages: langNames(missing) }) : t("markets.check_fail.legal_texts_any"),
+          fix: t("markets.check_fail.legal_texts_fix"),
+        };
+      }
+      case "payment_methods": {
+        const pm = view.settings.paymentMethods.value;
+        return pm.card || pm.bankTransfer
+          ? { label: t("markets.check_fail.bank_details"), fix: t("markets.check_fail.bank_details_fix") }
+          : { label: t("markets.check_fail.payment_none"), fix: t("markets.check_fail.payment_none_fix") };
+      }
+      case "whatsapp": return null;
+    }
   };
 
   /** Where each failing check is fixed (the strip's fix link). */
@@ -451,12 +514,14 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
                           </li>
                         );
                       }
+                      // A failing check says what is wrong ("Price list not live · Publish the price list"), never its passing label.
+                      const fail = state === "fail" ? failText(c.key) : null;
                       return (
                         <li key={c.key} className={`mk-ck mk-ck--${state}`} data-check={c.key} data-ok={c.ok}>
                           <span className={`mk-ck__icon mk-ck__icon--${state}`} data-check-icon={state} aria-hidden="true"><Icon name={state === "pass" ? "check" : "alert-triangle"} /></span>
-                          <span>{t(CHECK_SHORT[c.key])}</span>
+                          <span>{fail ? fail.label : t(CHECK_SHORT[c.key])}</span>
                           <span className="sas-sr"> · {checkStateWord(state)}</span>
-                          {href ? <a className="mk-act" href={href} data-check-fix={c.key}>{c.detail ?? t(CHECK_SHORT[c.key])}</a> : null}
+                          {href ? <><span aria-hidden="true">·</span><a className="mk-act" href={href} data-check-fix={c.key} title={c.detail ?? undefined}>{fail?.fix ?? c.detail ?? t(CHECK_SHORT[c.key])}</a></> : null}
                         </li>
                       );
                     })}

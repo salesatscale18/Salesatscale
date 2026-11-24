@@ -177,7 +177,7 @@ describe("KnowledgeV2: Questions to answer", () => {
     const row = html.slice(html.lastIndexOf("<li", at), html.indexOf("</li>", at));
     expect(row).toContain("data-asked-by");
     expect(text(row)).toMatch(/Test lab chat|Chat with/);
-    expect(row).toContain("“on-site training in our city”");
+    expect(row).toContain("“<bdi>on-site training in our city</bdi>”");
     expect(row).toContain("data-question-when");
     const gapAt = html.indexOf(GAPS[0]);
     const gapRow = html.slice(html.lastIndexOf("<li", gapAt), html.indexOf("</li>", gapAt));
