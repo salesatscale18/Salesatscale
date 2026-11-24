@@ -28,8 +28,10 @@ import { maxCallSeconds, voiceMode, type VoiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
-import { GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
+import { GUARDED_SILENT_ENGINE, isGuardedEngine, isPipelineEngine, isRtElevenEngine, type PipelineEngineName } from "@/lib/voice-classic/engine-choice";
 import { PipelineVoiceEngine, pipelinePartsFor, type PipelineOverrides, type PipelineParts } from "@/lib/voice-pipeline";
+import type { Speaker } from "@/lib/voice-pipeline/speaker";
+import { rtElevenProfile, rtElevenSpeakerFor } from "@/lib/voice-rt-eleven";
 
 /**
  * What the relay needs from an engine: today's VoiceEngine, the Classic (20 Nov) one a test-lab call picked, or the
@@ -76,6 +78,8 @@ export type VoiceSocketOptions = {
   limits?: Omit<VoiceLimits, "deadlineSec" | "env">;
   /** Tests: the pipeline engines' fakes (listener, speaker, chat model, chat turn, gateway client factory). */
   pipeline?: PipelineOverrides;
+  /** Tests: the realtime + ElevenLabs engines' speaker (default: ScriptedSpeaker when scripted, the Gateway chain when live). */
+  rtSpeaker?: Speaker;
   /**
    * Runs once the call is stored, before the handler resolves (so the function stays alive for it):
    * the route answers a buyer turn the call left unanswered (lib/voice/after-call.ts). Never awaited past its own errors.
@@ -318,7 +322,10 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // The pipeline engines (lib/voice-pipeline): no realtime model; a listener, the chat turn and a speaker.
     if (isPipelineEngine(stored)) return startPipeline(session, mode, auth.waitAudio === true, stored);
     const classic = stored === "classic";
-    const guarded = isGuardedEngine(stored);
+    // The realtime + ElevenLabs engines (lib/voice-rt-eleven): the guarded profile, text output, our speaker.
+    const rtEngine = isRtElevenEngine(stored) ? stored : null;
+    const rtEleven = rtEngine !== null;
+    const guarded = isGuardedEngine(stored) || rtEleven;
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;
     const model = opts.model ?? (mode === session.mode ? await modelFor(mode, { clock, env, modelId: session.model, ...(guarded ? { rawTranscripts: true } : {}) }) : null);
     if (!model) {
@@ -334,6 +341,17 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       return;
     }
     const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
+    // The speaker of a realtime + ElevenLabs call: free and local when scripted; the Gateway chain (paid) when live.
+    let speaker: Speaker | null = null;
+    if (rtEleven) {
+      try {
+        speaker = await rtElevenSpeakerFor(model.mode, env, opts.rtSpeaker);
+      } catch (e) {
+        log.warn(voiceLine(session.id, `rt speaker unavailable (engine=${stored}): ${errorSummary(e)}`));
+        await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+        return refuse("model_unavailable");
+      }
+    }
     sessionId = session.id;
     // A scripted stand-in also names the version's model it stands in for.
     log.info(voiceLine(session.id, `socket accepted mode=${model.mode} model=${model.modelId}${session.model && session.model !== model.modelId ? ` for=${session.model}` : ""} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
@@ -360,7 +378,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
         if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);
       },
     };
-    engine = classic ? new ClassicVoiceEngine(deps) : guarded ? new VoiceEngine({ ...deps, profile: stored === GUARDED_SILENT_ENGINE ? GUARDED_SILENT_PROFILE : GUARDED_PROFILE }) : new VoiceEngine(deps);
+    engine = classic ? new ClassicVoiceEngine(deps)
+      : rtEngine && speaker ? new VoiceEngine({ ...deps, profile: rtElevenProfile(rtEngine), speaker })
+        : guarded ? new VoiceEngine({ ...deps, profile: stored === GUARDED_SILENT_ENGINE ? GUARDED_SILENT_PROFILE : GUARDED_PROFILE }) : new VoiceEngine(deps);
     phase = "live";
     // A last guard beyond the engine's own limit: the socket never outlives the call by much.
     timers.hard = clock.setTimeout(() => {

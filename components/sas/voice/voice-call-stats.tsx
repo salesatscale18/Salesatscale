@@ -1,8 +1,9 @@
 import { t } from "@/lib/i18n";
 import { answerSpeedText, callClock } from "@/lib/voice/lab";
 import { costText, endReasonText, errorText, type CostFormat } from "@/lib/voice/client/view";
-import type { CallVoiceInfo } from "@/lib/voice/settings";
+import { voiceModelLabel, type CallVoiceInfo } from "@/lib/voice/settings";
 import { thinkModelLabel, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
+import type { RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
 
 /** "Puck" / "Model default" / "Not recorded" (an older call). */
 export function callVoiceText(voice: CallVoiceInfo["voice"]): string {
@@ -39,6 +40,7 @@ export function VoiceCallStats({
   engine = null,
   voiceUsed = null,
   pipeline = null,
+  rtEleven = null,
 }: {
   durationSec: number;
   maxSec: number | null;
@@ -64,6 +66,8 @@ export function VoiceCallStats({
   voiceUsed?: CallVoiceInfo | null;
   /** Test lab, a pipeline-proof call: its three models (listening, thinking, speaking) and its median answer time. */
   pipeline?: PipelineCallInfo | null;
+  /** Test lab, a realtime + ElevenLabs call: the listening-and-thinking model, the speaking model, the median answer time. */
+  rtEleven?: RtElevenCallInfo | null;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
   const money = costText(costMicros, fx);
@@ -89,7 +93,16 @@ export function VoiceCallStats({
             <dt>{t("voice.stats.pipeline_round_ms_median")}</dt><dd className="sas-num" data-voice-pipeline-round-ms="">{pipeline.medianRoundMs == null ? "—" : answerSpeedText(pipeline.medianRoundMs)}</dd>
           </>
         ) : null}
-        {model && !pipeline ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
+        {rtEleven ? (
+          <>
+            <dt>{t("voice.stats.rt_listen_think")}</dt>
+            <dd data-voice-rt-model="" title={rtEleven.realtimeModel || undefined}>{voiceModelLabel(rtEleven.realtimeModel) || "—"}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd>
+            <dt>{t("voice.stats.pipeline_speak")}</dt><dd data-voice-rt-speak="">{rtEleven.speakModel || "—"}</dd>
+            <dt>{t("voice.stats.pipeline_median")}</dt>
+            <dd className="sas-num" data-voice-rt-median="">{rtEleven.medianAnswerMs === null ? "—" : answerSpeedText(rtEleven.medianAnswerMs)}</dd>
+          </>
+        ) : null}
+        {model && !pipeline && !rtEleven ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
         {voiceUsed ? (
           <>
             <dt>{t("voice.stats.voice")}</dt><dd data-voice-used="">{callVoiceText(voiceUsed.voice)}</dd>

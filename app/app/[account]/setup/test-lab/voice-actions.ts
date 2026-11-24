@@ -18,7 +18,7 @@ import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, 
 import { maxCallSeconds, resolveVoiceSettings, sentCallVoice, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
-import { isGatewayPipelineEngine, isPipelineEngine, labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGatewayPipelineEngine, isPipelineEngine, isRetiredEngine, isRtElevenEngine, labEngineChoice, RT_ELEVEN_MODELS, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
 import { pipelineModelsLabel, thinkModelLabel } from "@/lib/voice-pipeline/summary";
@@ -54,6 +54,8 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const gate = voiceLabAccess(a.user);
   if (gate === "not_admin") return { ok: false, reason: "not_allowed" };
   if (gate === "voice_off") return { ok: false, reason: "voice_off" };
+  // The pipeline engines are retired (owner, 24 Nov 2026): no new call starts on one (Call again on an old one too).
+  if (isRetiredEngine(input?.engine)) return { ok: false, reason: "not_allowed" };
   const mode = voiceMode();
   if (a.account.status === "paused") return { ok: false, reason: "account_paused" };
   // A live call is refused at the caps before anything is created (scripted calls cost nothing).
@@ -88,11 +90,14 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   // A pipeline engine: its three models (listening; thinking = Gemini 3.8 Flash on "pipeline" (VOICE_PIPELINE_TEXT_MODEL
   // overrides it), Gemini 3.5 Flash-Lite on "pipeline_lite", the version's chat model on "pipeline_chat"; speaking) and its one voice.
   const pipeline = isPipelineEngine(engine);
+  // A realtime + ElevenLabs engine: its realtime model (fixed per engine) and ElevenLabs' voice; the version's voice does not apply.
+  const rt = isRtElevenEngine(engine) ? RT_ELEVEN_MODELS[engine] : null;
   const thinkModel = s.mode === "scripted" ? SCRIPTED_THINK_MODEL : isGatewayPipelineEngine(engine) ? pipelineThinkModelFor(engine, process.env) : conv.version.model;
-  const voiceUsed: CallVoiceInfo = pipeline ? { voice: PIPELINE_VOICE_NAME, fillers: false } : { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
+  const voiceUsed: CallVoiceInfo = pipeline || rt ? { voice: PIPELINE_VOICE_NAME, fillers: false } : { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
     model: pipeline ? pipelineModelsLabel({ listenModel: PIPELINE_LISTEN_MODEL, thinkModel: thinkModelLabel(thinkModel), speakModel: PIPELINE_SPEAK_MODEL })
+      : rt ? `${voiceModelLabel(rt)} · speak ${PIPELINE_SPEAK_MODEL}`
       : voiceModelLabel(engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings)),
     engine, ...(engine === "classic" && classicModelId(versionModelId(conv.version.voiceSettings)) !== versionModelId(conv.version.voiceSettings) ? { classicOnGemini: true } : {}),
     voiceUsed,

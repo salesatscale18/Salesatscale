@@ -1,12 +1,11 @@
 /**
- * The test lab's "Voice engine" selector with its three pipeline options (lib/voice-pipeline): "Pipeline: Gemini Flash +
- * ElevenLabs (testing)" (id "pipeline"), "Pipeline: Gemini Flash-Lite + ElevenLabs (testing)" (id "pipeline_lite") and
- * "Pipeline: chat model + ElevenLabs (testing)" (id "pipeline_chat"), on
- * PGlite in scripted mode: a platform admin sees seven engines in order and can start a call on any (stored on the
- * session); a seller never sees them and the server ignores the field from one; a saved pipeline call shows its
- * engine (header pill, "This call") with its three models, the recording line reads "Not recorded (pipeline test)",
- * and Call again keeps the engine. With VOICE_RENDER_DIR set, the pages are written as HTML for the screenshots
- * (tests/e2e/voice/pipeline-shots.ts).
+ * The pipeline engines (lib/voice-pipeline) after their retirement (owner, 24 Nov 2026: replaced in the selector by
+ * the realtime + ElevenLabs engines): "Pipeline: Gemini Flash + ElevenLabs (testing)" (id "pipeline"), "Pipeline:
+ * Gemini Flash-Lite + ElevenLabs (testing)" (id "pipeline_lite") and "Pipeline: chat model + ElevenLabs (testing)"
+ * (id "pipeline_chat"), on PGlite in scripted mode: the select no longer offers them and the server refuses to start a
+ * new call on one (also Call again on an old one); a saved pipeline call (made before) still shows its engine (header
+ * pill, "This call") with its three models and "Not recorded (pipeline test)". With VOICE_RENDER_DIR set, the pages
+ * are written as HTML for the screenshots (tests/e2e/voice/pipeline-shots.ts).
  */
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -40,7 +39,8 @@ const { ensureDraftVersion } = await import("@/lib/agent/service");
 const { endMyVoiceCallAction, startVoiceCallAction } = await import("@/app/app/[account]/setup/test-lab/voice-actions");
 const { default: TestLabPage } = await import("@/app/app/[account]/setup/test-lab/page");
 const { VoiceCallAgainBar } = await import("@/app/app/[account]/setup/test-lab/voice-lab");
-const { ENGINE_ORDER, engineHelpKey, labEngineChoice, sessionEngine } = await import("@/lib/voice-classic/engine-choice");
+const { ENGINE_ORDER, engineHelpKey, engineLabelKey, labEngineChoice, sessionEngine } = await import("@/lib/voice-classic/engine-choice");
+const { createVoiceSession, startVoiceTestConversation } = await import("@/lib/voice/service");
 const { t } = await import("@/lib/i18n");
 const { flushAsync, ManualClock } = await import("@/lib/voice/realtime");
 const { PipelineVoiceEngine } = await import("@/lib/voice-pipeline/engine");
@@ -122,100 +122,88 @@ const LABELS = {
   pipeline_chat: "Pipeline: chat model + ElevenLabs (testing)",
 } as const;
 
-describe("test lab: the voice engine selector, the three pipeline options", () => {
-  it("a platform admin sees seven engines in order, the three pipelines before the old baseline, each with its helper line", async () => {
+/** An old pipeline call: its session as the start action created it before the retirement (createVoiceSession). */
+async function oldPipelineCall(engine: "pipeline" | "pipeline_lite" | "pipeline_chat") {
+  const conv = await startVoiceTestConversation(db, account.id, admin.id, { scenario: "ready_buyer", language: "en" });
+  if (!conv) throw new Error("no conversation");
+  const s = await createVoiceSession(db, { accountId: account.id, conversationId: conv.conversationId, userId: admin.id, isTest: true }, { env: { VOICE_REALTIME: "scripted" }, engine });
+  if (!s.ok) throw new Error(s.reason);
+  return { conversationId: conv.conversationId, sessionId: s.sessionId };
+}
+
+describe("test lab: the retired pipeline engines", () => {
+  it("the select no longer offers them; their labels and helper lines stay (old calls' cards)", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
     const html = await render();
     save("pipeline-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
-    const options = [...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]]);
-    expect(options).toEqual([
-      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"],
-      ["pipeline", LABELS.pipeline], ["pipeline_lite", LABELS.pipeline_lite], ["pipeline_chat", LABELS.pipeline_chat], ["classic", "Old baseline (20 Nov)"],
-    ]);
-    expect(options).toHaveLength(7);
-    expect(ENGINE_ORDER).toEqual(["current", "guarded", "guarded_silent", "pipeline", "pipeline_lite", "pipeline_chat", "classic"]);
-    expect(t(engineHelpKey("pipeline_lite"))).toBe("A transcription model listens, Gemini 3.5 Flash-Lite decides like the chat agent (faster, lighter), ElevenLabs speaks. Test lab only.");
-    expect(t(engineHelpKey("pipeline"))).toBe("A transcription model listens, Gemini 3.8 Flash decides like the chat agent, ElevenLabs speaks. Test lab only.");
-    expect(t(engineHelpKey("pipeline_chat"))).toBe("A transcription model listens, the chat agent's own model decides, ElevenLabs speaks. Test lab only.");
-  });
-
-  it("never shows them to a seller, and the server ignores the field from one", async () => {
-    vi.stubEnv("VOICE_REALTIME", "scripted");
-    as(seller);
-    const html = await render();
+    const options = [...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => m[1]);
+    expect(options).toEqual(["current", "guarded", "guarded_silent", "rt_eleven", "rt_eleven_mini", "classic"]);
     expect(html).not.toContain("Pipeline:");
+    expect(ENGINE_ORDER).not.toContain("pipeline");
     for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {
-      expect(await startVoiceCallAction({ slug, engine })).toEqual({ ok: false, reason: "not_allowed" });
-      expect(labEngineChoice(seller, engine, { VOICE_REALTIME: "scripted" })).toBe("current");
-      expect(labEngineChoice(admin, engine, { VOICE_REALTIME: "scripted" })).toBe(engine);
-      expect(labEngineChoice(admin, engine, { VOICE_REALTIME: "off" })).toBe("current");
+      expect(t(engineLabelKey(engine))).toBe(LABELS[engine]);
       expect(sessionEngine({ engine })).toBe(engine);
     }
+    expect(t(engineHelpKey("pipeline_lite"))).toBe("A transcription model listens, Gemini 3.5 Flash-Lite decides like the chat agent (faster, lighter), ElevenLabs speaks. Test lab only.");
+  });
+
+  it("the server refuses to start a new call on one, for an admin and a seller alike; nothing is created", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    vi.stubEnv("VOICE_WS_URL", "");
+    const before = (await db.select().from(voiceSessions)).length;
+    for (const user of [admin, seller]) {
+      as(user);
+      for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {
+        expect(await startVoiceCallAction({ slug, scenario: "ready_buyer", engine })).toEqual({ ok: false, reason: "not_allowed" });
+      }
+    }
+    expect((await db.select().from(voiceSessions)).length).toBe(before);
+    expect(labEngineChoice(seller, "pipeline", { VOICE_REALTIME: "scripted" })).toBe("current");
     expect(sessionEngine({ engine: "Pipeline" })).toBe("current");
     expect(sessionEngine({ engine: "pipeline-chat" })).toBe("current");
-    expect(sessionEngine({ engine: "pipeline-lite" })).toBe("current");
   });
 
   for (const engine of ["pipeline", "pipeline_lite", "pipeline_chat"] as const) {
-    it(`an admin's ${engine} call: stored on the session, its models named; saved: Engine, the three models, not recorded (pipeline test), Call again keeps it`, async () => {
+    it(`an old ${engine} call still shows: Engine, the three models, not recorded (pipeline test); Call again on it is refused`, async () => {
       vi.stubEnv("VOICE_REALTIME", "scripted");
       vi.stubEnv("VOICE_WS_URL", "");
       as(admin);
-      const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine });
-      if (!r.ok) throw new Error(r.reason);
-      expect(r.engine).toBe(engine);
-      expect(r.model).toContain(`Listen ${PIPELINE_LISTEN_MODEL}`);
-      expect(r.model).toContain(`speak ${PIPELINE_SPEAK_MODEL}`);
-      // Scripted: the stand-in thinks, whichever engine (a live call names Gemini 3.8 Flash or the chat model).
-      expect(r.model).toContain("think Scripted");
-      const [s0] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
-      expect(s0.settings).toEqual({ engine });
+      const r = await oldPipelineCall(engine);
       await runPipeline(r.sessionId, engine);
       const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
       expect(s.status).toBe("ended");
       expect(s.settings).toMatchObject({ engine });
-      expect(s.recordingState).toBe("off");
       const html = await render({ c: r.conversationId });
       if (engine === "pipeline") save("pipeline-page-call", html);
       expect(html).toContain('data-voice-engine-pill=""');
       expect(html).toContain(`Engine: ${LABELS[engine]}`);
       expect(html).toContain(`<dt>Engine</dt><dd data-voice-engine="">${LABELS[engine]}</dd>`);
       expect(html).toMatch(/<dt>Listening<\/dt><dd data-voice-pipeline-listen="">scripted<\/dd>/);
-      expect(html).toMatch(/<dt>Thinking<\/dt><dd data-voice-pipeline-think=""[^>]*>Scripted<\/dd>/);
       expect(html).toMatch(/<dt>Speaking<\/dt><dd data-voice-pipeline-speak="">scripted<\/dd>/);
       expect(html).toContain("Median answer time");
-      expect(html).toMatch(/<dt>Median thinking time<\/dt><dd class="sas-num" data-voice-pipeline-think-median="">/);
-      // The call block: a pipeline call is never recorded, and says why (not a recording failure).
       expect(html).toContain("Not recorded (pipeline test)");
       const [again] = findElements(await pageElement({ c: r.conversationId }), VoiceCallAgainBar);
       expect(again.props).toMatchObject({ engine });
       const props = again.props as { versionId: string | null; scenario: string | null; engine: string | null };
-      const next = await startVoiceCallAction({ slug, versionId: props.versionId, scenario: props.scenario, engine: props.engine });
-      if (!next.ok) throw new Error(next.reason);
-      expect(next.engine).toBe(engine);
-      const [s1] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, next.sessionId));
-      expect(s1.settings).toEqual({ engine });
-      await endMyVoiceCallAction({ slug });
+      expect(await startVoiceCallAction({ slug, versionId: props.versionId, scenario: props.scenario, engine: props.engine })).toEqual({ ok: false, reason: "not_allowed" });
       as(seller);
       expect(await render({ c: r.conversationId })).not.toContain("Pipeline:");
     });
   }
 
-  it("a pipeline_lite call that thought on Gemini 3.5 Flash-Lite: the Thinking row names it (the model id in its title)", async () => {
+  it("an old pipeline_lite call that thought on Gemini 3.5 Flash-Lite: the Thinking row names it (the model id in its title)", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
-    const r = await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "pipeline_lite" });
-    if (!r.ok) throw new Error(r.reason);
+    const r = await oldPipelineCall("pipeline_lite");
     await runPipeline(r.sessionId, "pipeline_lite", "google/gemini-3.5-flash-lite");
     const [s] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, r.sessionId));
     expect(s.settings).toMatchObject({ engine: "pipeline_lite", pipeline: { thinkModel: "google/gemini-3.5-flash-lite" } });
     const html = await render({ c: r.conversationId });
     expect(html).toContain(`<dt>Engine</dt><dd data-voice-engine="">${LABELS.pipeline_lite}</dd>`);
     expect(html).toMatch(/<dt>Thinking<\/dt><dd data-voice-pipeline-think="" title="google\/gemini-3.5-flash-lite">Gemini 3.5 Flash-Lite<\/dd>/);
-    await endMyVoiceCallAction({ slug });
   });
 });

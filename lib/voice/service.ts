@@ -15,9 +15,10 @@ import { rateLimit } from "@/lib/security/rate-limit";
 import type { Clock, RealtimeModel } from "./realtime";
 import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
-import { isGuardedEngine, isPipelineEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
+import { isGuardedEngine, isPipelineEngine, isRtElevenEngine, RT_ELEVEN_MODELS, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
 import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
+import { rtElevenCallInfo, type RtElevenCallInfo } from "@/lib/voice-rt-eleven/summary";
 import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
@@ -109,6 +110,9 @@ export async function createVoiceSession(
     // A test-lab call on a pipeline engine (lib/voice-pipeline: listen, think, speak; Gemini Flash or the chat model
     // thinking): stored on the session.
     ...(opts.engine && isPipelineEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
+    // A test-lab call on a realtime + ElevenLabs engine (lib/voice-rt-eleven): stored on the session, with the
+    // engine's own realtime model (GPT-Realtime 2.1 or mini, whatever the version's model is).
+    ...(opts.engine && isRtElevenEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings, model: RT_ELEVEN_MODELS[opts.engine] } : {}),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }
@@ -334,6 +338,8 @@ export type VoiceSessionSummary = {
   voiceUsed: CallVoiceInfo;
   /** A pipeline-proof call (lib/voice-pipeline): its three models and median answer time; null for the other engines. */
   pipeline: PipelineCallInfo | null;
+  /** A realtime + ElevenLabs call (lib/voice-rt-eleven): its realtime and speech models and median answer time; null otherwise. */
+  rtEleven: RtElevenCallInfo | null;
   wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
@@ -364,6 +370,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     engine: sessionEngine(s.settings),
     voiceUsed: callVoiceInfo(s.settings),
     pipeline: pipelineCallInfo(s.settings, s.usage),
+    rtEleven: rtElevenCallInfo(s.settings, s.usage),
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }

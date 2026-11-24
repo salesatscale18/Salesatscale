@@ -37,6 +37,11 @@ export type RealtimeSessionConfig = {
    * closed a session before it said anything): lib/voice/gateway-realtime.ts SETUP_RETRY_FIELDS.
    */
   safe?: boolean;
+  /**
+   * "text" (the test lab's realtime + ElevenLabs engines, lib/voice-rt-eleven): the model answers in text only (no
+   * voice is sent, no audio comes back); its words are spoken by our speaker. Absent: "audio", as always.
+   */
+  outputModality?: "audio" | "text";
 };
 
 /** Normalized events the engine reads. Transcript texts are the whole turn so far, not deltas. */
@@ -61,6 +66,14 @@ export type RealtimeEvent =
   | { type: "tool-cancelled"; callIds: string[] }
   /** The model finished its response (possibly cut short by the buyer). */
   | { type: "turn-done"; interrupted?: boolean }
+  /**
+   * Text output only (`outputModality: "text"`): a response's whole text, once the response is complete (sent just
+   * before its turn-done). `toolCalls`: the tool calls the same response made (its text is then not spoken);
+   * `interrupted`: the response was cancelled or cut (its text is not spoken either).
+   */
+  | { type: "response-text"; text: string; toolCalls: number; interrupted?: boolean }
+  /** Text output only: the model started a response (so one is in flight until its response-text). */
+  | { type: "response-started" }
   /** A usage snapshot (replaces the previous one; never summed). */
   | { type: "usage"; usage: VoiceUsage }
   /** The provider will close the connection soon (Gemini goAway). */

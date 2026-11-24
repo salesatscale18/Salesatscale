@@ -78,12 +78,15 @@ export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string):
 function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
   const gemini = schemaFamilyOf(modelId) === "gemini";
   const tt = cfg.turnTaking;
+  // Text output (the realtime + ElevenLabs engines, OpenAI only): the model answers in text, so no voice, no output
+  // audio format and no output transcription are sent; it still hears the buyer (input audio and its transcription).
+  const text = cfg.outputModality === "text";
   return {
     instructions: cfg.instructions,
-    ...(cfg.voice ? { voice: cfg.voice } : {}),
-    outputModalities: ["audio"],
+    ...(cfg.voice && !text ? { voice: cfg.voice } : {}),
+    outputModalities: [text ? "text" : "audio"],
     inputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
-    outputAudioFormat: { type: "audio/pcm", rate: VOICE_SAMPLE_RATE },
+    ...(text ? {} : { outputAudioFormat: { type: "audio/pcm" as const, rate: VOICE_SAMPLE_RATE } }),
     // Input transcription on, with no hints, for every model. A hint is not safe on either family:
     // - Gemini Live: on 21 Nov 2026 a language/prompt hint here made live calls end 0.3 s after connecting.
     // - OpenAI (GPT-Realtime 2.1 and mini, 22 Nov 2026): a `prompt` here was rejected ("invalid_value: The
@@ -92,7 +95,7 @@ function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkS
     //   and whether it takes a language, cannot be seen from here.
     // The expected languages reach every model through the instructions (lib/voice/instructions.ts).
     inputAudioTranscription: {},
-    outputAudioTranscription: {},
+    ...(text ? {} : { outputAudioTranscription: {} }),
     // Gemini Live: server voice activity detection is always on and not tunable here.
     turnDetection: gemini || !tt
       ? { type: "server-vad" }
@@ -220,7 +223,23 @@ export class ServerEventMapper {
   responseDone = false;
   lastError: string | null = null;
 
+  /**
+   * Text output (`textOutput`): the text of the response in progress, per output item (text-delta pieces, replaced
+   * by the item's whole text at text-done), and the tool calls the same response made.
+   */
+  private responseItems = new Map<string, string>();
+  private responseTools = 0;
+
+  /** The response's whole text so far (its items in order, one space between them). */
+  private responseText(): string {
+    return [...this.responseItems.values()].map((t) => t.trim()).filter(Boolean).join(" ");
+  }
+
   map(e: SdkServerEvent): RealtimeEvent[] {
+    if (this.o.textOutput) {
+      const out = this.mapText(e);
+      if (out) return out;
+    }
     switch (e.type) {
       case "session-created":
       case "session-started":
@@ -314,6 +333,57 @@ export class ServerEventMapper {
   }
 
   /**
+   * Text output only (null: the event is mapped as for audio output). The model's text never becomes an agent
+   * transcript here: the whole text of a response goes out once, at its response-done (`response-text`), with the
+   * number of tool calls it made, and the engine decides whether to speak it.
+   * SDK events (ai 7.0.177 / @ai-sdk/provider RealtimeModelV4ServerEvent): `text-delta` {responseId, itemId, delta},
+   * `text-done` {responseId, itemId, text?}, `response-created`, `function-call-arguments-done`, `response-done`
+   * {status, usage}. The AI SDK's own reducer (ai realtime-event-reducer) reads text-delta/text-done the same way.
+   */
+  private mapText(e: SdkServerEvent): RealtimeEvent[] | null {
+    switch (e.type) {
+      // Defensive: should the Gateway name the text of a text-only response as a transcript, it is read the same way
+      // (never as a spoken transcript: nothing here was spoken). Only a live call shows which names come.
+      case "audio-transcript-delta":
+      case "text-delta": {
+        const id = e.itemId || "item";
+        this.responseItems.set(id, `${this.responseItems.get(id) ?? ""}${e.delta ?? ""}`);
+        // The model is answering: the buyer's turn (streamed pieces without a final) is final now.
+        return this.closeBuyerTurn();
+      }
+      case "text-done":
+        if (typeof e.text === "string" && e.text) this.responseItems.set(e.itemId || "item", e.text);
+        return [];
+      case "audio-transcript-done":
+        if (typeof e.transcript === "string" && e.transcript) this.responseItems.set(e.itemId || "item", e.transcript);
+        return [];
+      case "response-created":
+        this.responseItems.clear();
+        this.responseTools = 0;
+        this.responseDone = false;
+        return [{ type: "response-started" }];
+      case "function-call-arguments-done": {
+        this.responseTools++;
+        return null;
+      }
+      case "response-done": {
+        this.responseDone = true;
+        const text = this.clean(this.responseText());
+        const interrupted = e.status === "cancelled" || e.status === "incomplete" || e.status === "failed";
+        const tools = this.responseTools;
+        this.responseItems.clear();
+        this.responseTools = 0;
+        const out: RealtimeEvent[] = [...this.closeBuyerTurn(), { type: "response-text", text, toolCalls: tools, ...(interrupted ? { interrupted: true } : {}) }];
+        out.push({ type: "turn-done", ...(interrupted ? { interrupted: true } : {}) });
+        if (e.usage) out.push({ type: "usage", usage: toVoiceUsage(e.usage) });
+        return out;
+      }
+      default:
+        return null;
+    }
+  }
+
+  /**
    * The buyer cut in: what the agent said so far is final, and its next words belong to a new
    * response. Without this, a response that never gets its response-done would carry the cut
    * line into the next answer's transcript.
@@ -335,8 +405,9 @@ export class ServerEventMapper {
    * Gateway are not known to change per response).
    * `rawTranscripts` ("Classic + guards", lib/voice-guarded): transcripts go out as the provider sent them, markers
    * included (no cleaner); default: cleaned (lib/voice/transcript-clean.ts).
+   * `textOutput` (the session's outputModality "text"): the model answers in text (mapText).
    */
-  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean } = {}) {}
+  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean; textOutput?: boolean } = {}) {}
   private clean(text: string): string {
     return this.o.rawTranscripts ? text : cleanTranscript(text);
   }
@@ -544,7 +615,10 @@ export class GatewayRealtime implements RealtimeModel {
     if (!model.getServerWebSocketConfig) throw new Error("This realtime model has no server-owned connection");
     const { url, headers, protocols } = await model.getServerWebSocketConfig({ intent: "conversation" });
     const parse = model.createServerEventParser?.() ?? ((raw: unknown) => model.parseServerEvent(raw));
-    const mapper = new ServerEventMapper({ dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}) });
+    const mapper = new ServerEventMapper({
+      dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}),
+      ...(cfg.outputModality === "text" ? { textOutput: true } : {}),
+    });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;
     let open = false;

@@ -814,6 +814,8 @@ export class ScriptedConnection implements RealtimeConnection {
         const callId = `call_${++this.callSeq}_${this.position}`;
         this.turnOpen = true;
         this.emit({ type: "tool-call", callId, name: step.name, args });
+        // Text output: a tool call ends the model's response (its text with it), as on OpenAI realtime.
+        if (this.textOutput) this.endTextResponse(1);
         await this.until(() => this.toolResults.has(callId));
         if (this.closed) return;
         const r = this.toolResults.get(callId);
@@ -869,6 +871,7 @@ export class ScriptedConnection implements RealtimeConnection {
     const callId = `call_${++this.callSeq}_end`;
     this.turnOpen = true;
     this.emit({ type: "tool-call", callId, name: "end_call", args: {} });
+    if (this.textOutput) this.endTextResponse(1);
     await this.until(() => this.toolResults.has(callId));
     this.endTurn();
     return true;
@@ -900,9 +903,38 @@ export class ScriptedConnection implements RealtimeConnection {
     }
   }
 
+  /**
+   * Text output (`cfg.outputModality` "text", the realtime + ElevenLabs engines): the model writes its words (no
+   * audio, no transcript), quickly, and the text goes out whole at the end of the response (`response-text`). The
+   * agent is never "speaking" here: our speaker is (a barge-in is the engine's).
+   */
+  private get textOutput(): boolean {
+    return this.cfg.outputModality === "text";
+  }
+  /** The text of the response in progress (text output). */
+  private responseText = "";
+
+  /** Text output: the response ends (with `toolCalls` tool calls): its text, its end and a usage snapshot. */
+  private endTextResponse(toolCalls: number, interrupted = false) {
+    if (this.closed) return;
+    const text = this.responseText.trim();
+    this.responseText = "";
+    this.emit({ type: "response-text", text, toolCalls, ...(interrupted ? { interrupted: true } : {}) });
+    this.emit({ type: "turn-done", ...(interrupted ? { interrupted: true } : {}) });
+    this.emitUsage();
+  }
+
   /** Speaks a line word by word. Returns true when the buyer cut it short. */
   private async speak(text: string): Promise<boolean> {
     if (this.closed || !text) return false;
+    if (this.textOutput) {
+      this.turnOpen = true;
+      await this.sleep(TEXT_MS);
+      if (this.closed) return false;
+      this.responseText = this.responseText ? `${this.responseText} ${text}` : text;
+      this.usage.textOutTokens += text.split(/\s+/).filter(Boolean).length * 1.3;
+      return false;
+    }
     this.turnOpen = true;
     this.agentSpeaking = true;
     this.interrupted = false;
@@ -934,9 +966,18 @@ export class ScriptedConnection implements RealtimeConnection {
   private endTurn(interrupted = false) {
     if (!this.turnOpen || this.closed) return;
     this.turnOpen = false;
+    if (this.textOutput) {
+      // A response that only called tools already ended at its call: nothing more to send.
+      if (this.responseText) this.endTextResponse(0, interrupted);
+      return;
+    }
     if (this.turnText) this.emit({ type: "agent-transcript", text: this.turnText, final: true });
     this.turnText = "";
     this.emit({ type: "turn-done", ...(interrupted ? { interrupted: true } : {}) });
+    this.emitUsage();
+  }
+
+  private emitUsage() {
     const u = this.usage;
     this.emit({
       type: "usage",
@@ -952,6 +993,9 @@ export class ScriptedConnection implements RealtimeConnection {
     return this.started;
   }
 }
+
+/** Text output: how long the scripted model takes to write one line (text is much faster than speech). */
+export const TEXT_MS = 50;
 
 /** `ms` of PCM16 mono 24 kHz: a soft 220 Hz tone, or silence. */
 export function speechPcm(ms: number, tone = true): Uint8Array {
