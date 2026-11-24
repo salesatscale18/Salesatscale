@@ -207,7 +207,7 @@ describe("pages (demo account)", () => {
     expect(html).toContain('<span class="mk-diff" data-source="market">Different here</span>');
     expect(html).not.toContain("sas-pill--agent");
     expect(css).toMatch(/\.mk-diff \{[^}]*background: var\(--primary-soft\); color: var\(--primary\);/);
-    expect(css).toMatch(/@container \(max-width: 480px\) \{\s*\.mk-row \{ grid-template-columns: minmax\(0, 1fr\) auto; \}\s*\.mk-row__label \{ grid-column: 1 \/ -1; \}/);
+    expect(css).toMatch(/@container mkdetail \(max-width: 480px\) \{\s*\.mk-row \{ grid-template-columns: minmax\(0, 1fr\) auto; \}\s*\.mk-row__label \{ grid-column: 1 \/ -1; \}/);
     // Legal texts in the same order as Israel's English line.
     const ilHtml = await render(MarketsPage, { account: slug }, { m: il.id });
     const line = (h: string) => text(h.split('data-legal-lang="en">')[1].split("</span></span>")[0] + "</span>");

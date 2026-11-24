@@ -105,10 +105,13 @@ describe("Settings › Markets (MarketsV2)", () => {
     expect(text(html)).not.toContain("Follows your account defaults in everything");
     for (const k of ["languages", "timezone"]) {
       const row = rowOf(html, k);
+      // Two actions: in a narrow card (about 1280 wide) they drop under the value.
+      expect(row, k).toContain('class="mk-row mk-row--two"');
       expect(row, k).toMatch(/class="mk-row__value"><span>[^<]+<\/span> <span class="mk-diff" data-source="market">Different here<\/span>/);
       expect(actOf(row), k).toMatch(new RegExp(`^<form[^>]*>.*<button type="submit" class="mk-act" data-reset-setting="${k}">Reset</button></form><a class="mk-act" [^>]*data-edit-setting="${k}">Change</a>$`));
     }
-    // An inheriting row on the same market: only Change.
+    // An inheriting row on the same market: only Change, kept beside the value.
+    expect(rowOf(html, "paymentMethods")).toContain('class="mk-row"');
     expect(rowOf(html, "paymentMethods")).not.toContain("Different here");
     expect(actOf(rowOf(html, "paymentMethods"))).not.toContain("Reset");
     // A market's own legal text also differs: tagged and counted.
@@ -202,5 +205,16 @@ describe("Settings › Markets (MarketsV2)", () => {
     expect(html).toContain(`<option value="${ukId}">United Kingdom · Setting up</option>`);
     // Never a full email for a person on this page.
     expect(html).not.toContain("o@polar.test");
+  });
+
+  it("about 1280 wide: two columns stay (narrower list and label), they stack only under 640px; squeezed rows drop their actions", async () => {
+    const fs = await import("node:fs");
+    const css = fs.readFileSync("app/app/[account]/markets/markets.css", "utf8");
+    expect(css).toMatch(/@media \(max-width: 1379px\) \{ \.mk-list \{ width: 200px; \} \}/);
+    expect(css).toMatch(/@container mkdetail \(max-width: 639px\) \{ \.mk-cols \{ grid-template-columns: minmax\(0, 1fr\); \} \}/);
+    expect(css).toMatch(/@container mkdetail \(max-width: 820px\) \{ \.mk-row \{ --mk-label: 112px; \} \}/);
+    expect(css).toMatch(/@container mkcard \(max-width: 420px\) \{\s*\.mk-row--two \{ grid-template-columns: var\(--mk-label\) minmax\(0, 1fr\); \}\s*\.mk-row--two \.mk-row__act \{ grid-column: 2; \}/);
+    // No unnamed container queries: each one names the box it measures.
+    expect(css).not.toMatch(/@container \(/);
   });
 });

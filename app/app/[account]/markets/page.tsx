@@ -80,9 +80,10 @@ const DiffTag = () => <span className="mk-diff" data-source="market">{t("markets
  * One row of a settings card (canvas: MarketsV2): label (muted, 132px) · value · action, close together.
  * `tag` follows the value ("Different here"); `note` is a small line under it.
  */
-function Row({ label, value, tag, note, action, muted, id }: { label: string; value: ReactNode; tag?: ReactNode; note?: ReactNode; action?: ReactNode; muted?: boolean; id?: string }) {
+function Row({ label, value, tag, note, action, muted, id, twoActions }: { label: string; value: ReactNode; tag?: ReactNode; note?: ReactNode; action?: ReactNode; muted?: boolean; id?: string; twoActions?: boolean }) {
   return (
-    <div id={id} className="mk-row">
+    // twoActions: Reset and Change; in a narrow card they drop under the value (markets.css).
+    <div id={id} className={twoActions ? "mk-row mk-row--two" : "mk-row"}>
       <span className="mk-row__label">{label}</span>
       <span className="mk-row__value">
         <span style={muted ? { color: "var(--ink-muted)" } : undefined}>{value}</span>
@@ -302,6 +303,7 @@ export default async function MarketsPage({ params, searchParams }: { params: Pr
           label={t(`markets.setting.${k}` as MessageKey)}
           value={k === "contactHours" ? <KeepParts text={text} /> : text}
           tag={own ? <DiffTag /> : null}
+          twoActions={own && overriding !== k}
           action={
             <>
               {own ? (
