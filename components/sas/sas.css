@@ -1343,11 +1343,13 @@ label.st-voice__row { cursor: pointer; }
 .sas-app .lqq-where__detail a { color: var(--primary); text-decoration: none; }
 .sas-app .lqq-where__detail a:hover { text-decoration: underline; }
 /* "Where it is", quiet (owner review, 24 Nov): plain text with a small muted icon, no pill. Ordered: success
-   on icon and word (a win); Awaiting your approval: warning on text and icon (it needs the seller). */
+   on icon and word (a win); Awaiting your approval: warning on text and icon (it needs the seller).
+   Payment on the Orders tab the same way: Paid success, payment failed danger, bank transfer warning. */
 .lqq-state { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; font-weight: 500; color: var(--ink); white-space: nowrap; }
 .lqq-state .sas-ico { width: 14px; height: 14px; color: var(--ink-muted); align-self: center; }
 .lqq-state--success, .lqq-state--success .sas-ico { color: var(--success); }
 .lqq-state--warning, .lqq-state--warning .sas-ico { color: var(--warning); }
+.lqq-state--danger, .lqq-state--danger .sas-ico { color: var(--danger); }
 .sas-table td.lqq-soon { color: var(--warning); font-weight: 600; }
 .sas-table td.lqq-past, .lqq-none { color: var(--ink-muted); }
 /* Wide screens: the page head and the card stop at 1200px (left-aligned with the title), so the
@@ -1367,7 +1369,12 @@ label.st-voice__row { cursor: pointer; }
   .sas-table.lqq-table th { padding: var(--space-2) 12px; white-space: nowrap; vertical-align: bottom; }
   .sas-table.lqq-table td { padding: 9px 12px; vertical-align: baseline; }
   .sas-table.lqq-table th.lqq-c-ref { width: 110px; }
-  .sas-table.lqq-table th.lqq-c-lead { width: clamp(200px, calc((100cqi - var(--lqq-fixed)) * .45), 300px); }
+  /* Lead: a plain width first (any browser; with table-layout: fixed, Where it is / Payment take the rest),
+     then, where container query units work, 45% of what the fixed columns leave, kept within 200-300px. */
+  .sas-table.lqq-table th.lqq-c-lead { width: 240px; }
+  @supports (width: clamp(1px, 1cqi, 2px)) {
+    .sas-table.lqq-table th.lqq-c-lead { width: clamp(200px, calc((100cqi - var(--lqq-fixed)) * .45), 300px); }
+  }
   .sas-table.lqq-table td.lqq-c-lead { overflow: hidden; }
   .sas-table.lqq-table th.lqq-c-market { width: 110px; }
   .sas-table.lqq-table td.lqq-c-market { white-space: normal; overflow-wrap: anywhere; }
@@ -1375,9 +1382,6 @@ label.st-voice__row { cursor: pointer; }
   .sas-table.lqq-table .lqq-c-total { text-align: end; }
   .sas-table.lqq-table .lqq-c-state { padding-inline-start: 36px; }
   .sas-table.lqq-table td.lqq-c-state { overflow: hidden; }
-  /* Payment (Orders tab) keeps its pill; its word sits on the row's baseline too. */
-  .sas-table.lqq-table td.lqq-c-state > .sas-pill { align-items: baseline; }
-  .sas-table.lqq-table td.lqq-c-state > .sas-pill > .sas-ico { align-self: center; }
   .sas-table.lqq-table th.lqq-c-date { width: 96px; }
   .sas-table.lqq-table th.lqq-c-valid { width: 104px; }
   .sas-table.lqq-table th.lqq-c-delivery { width: 120px; }
