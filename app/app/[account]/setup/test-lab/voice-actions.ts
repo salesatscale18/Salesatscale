@@ -20,6 +20,8 @@ import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
+import { PIPELINE_LISTEN_MODEL, PIPELINE_SPEAK_MODEL, PIPELINE_VOICE_NAME } from "@/lib/voice-pipeline/models";
+import { pipelineModelsLabel } from "@/lib/voice-pipeline/summary";
 import { minorPerUsd, voiceSocketUrl } from "./voice-server";
 import type { VoiceUnavailableReason } from "@/lib/voice/client/state";
 import type { VoiceSettingsFormState } from "@/components/sas/voice/voice-settings-form";
@@ -82,10 +84,13 @@ export async function startVoiceCallAction(input: { slug: string; versionId?: st
   const maxSec = maxCallSeconds({ settings: conv.version.voiceSettings, deadlineSec: deploymentCallLimitSec() });
   const callModel = engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings);
   const resolved = resolveVoiceSettings(conv.version.voiceSettings);
-  const voiceUsed: CallVoiceInfo = { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
+  // The pipeline proof: its three models (listening, thinking = the version's chat model, speaking) and its one voice.
+  const pipeline = engine === "pipeline";
+  const voiceUsed: CallVoiceInfo = pipeline ? { voice: PIPELINE_VOICE_NAME, fillers: false } : { voice: sentCallVoice(resolved.voice, callModel) ?? "default", fillers: resolved.fillers };
   return {
     ok: true, conversationId: conv.conversationId, sessionId: s.sessionId, ticket: s.ticket, wsUrl: await voiceSocketUrl(), mode: s.mode, maxSec,
-    model: voiceModelLabel(engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings)),
+    model: pipeline ? pipelineModelsLabel({ listenModel: PIPELINE_LISTEN_MODEL, thinkModel: conv.version.model, speakModel: PIPELINE_SPEAK_MODEL })
+      : voiceModelLabel(engine === "classic" ? classicModelId(versionModelId(conv.version.voiceSettings)) : versionModelId(conv.version.voiceSettings)),
     engine, ...(engine === "classic" && classicModelId(versionModelId(conv.version.voiceSettings)) !== versionModelId(conv.version.voiceSettings) ? { classicOnGemini: true } : {}),
     voiceUsed,
     fx: { currency: a.account.currency, minorPerUsd: minorPerUsd(usdRate(a.account.currency)) },

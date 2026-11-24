@@ -16,7 +16,7 @@
  */
 import { and, eq } from "drizzle-orm";
 import type { Db } from "@/db/types";
-import { agentVersions } from "@/db/schema";
+import { agentVersions, type VoiceSession } from "@/db/schema";
 import { VoiceEngine, type VoiceLimits } from "./engine";
 import {
   AUTH_TIMEOUT_MS, MAX_CLIENT_AUDIO_BYTES, VOICE_CLOSE, VOICE_SAMPLE_RATE, parseAuthMessage, parseClientMessage, pcmDurationMs,
@@ -24,13 +24,17 @@ import {
 } from "./protocol";
 import { systemClock, type Clock, type RealtimeModel, type TimerHandle } from "./realtime";
 import { endUnstartedVoiceSession, realtimeModelFor, redeemVoiceTicket } from "./service";
-import { maxCallSeconds, voiceMode } from "./settings";
+import { maxCallSeconds, voiceMode, type VoiceMode } from "./settings";
 import { clip, consoleVoiceLog, errorSummary, voiceLine, type VoiceLog } from "./log";
 import { ClassicVoiceEngine, classicRealtimeModelFor, sessionEngine } from "@/lib/voice-classic";
 import { GUARDED_PROFILE, GUARDED_SILENT_PROFILE } from "@/lib/voice-guarded/profile";
-import { GUARDED_SILENT_ENGINE, isGuardedEngine } from "@/lib/voice-classic/engine-choice";
+import { GUARDED_SILENT_ENGINE, isGuardedEngine, PIPELINE_ENGINE } from "@/lib/voice-classic/engine-choice";
+import { PipelineVoiceEngine, pipelinePartsFor, type PipelineParts } from "@/lib/voice-pipeline";
 
-/** What the relay needs from an engine: today's VoiceEngine, or the Classic (20 Nov) one a test-lab call picked. */
+/**
+ * What the relay needs from an engine: today's VoiceEngine, the Classic (20 Nov) one a test-lab call picked, or the
+ * pipeline proof (lib/voice-pipeline/engine.ts PipelineVoiceEngine, which implements the same methods).
+ */
 type RelayEngine = Pick<VoiceEngine, "sessionId" | "start" | "onClientMessage" | "onClientAudio" | "onClientGone" | "stop">;
 
 /** The part of a `ws` WebSocket the relay uses (a `ws` socket satisfies it). */
@@ -70,6 +74,8 @@ export type VoiceSocketOptions = {
   model?: RealtimeModel;
   /** Tests: shorter engine timings. */
   limits?: Omit<VoiceLimits, "deadlineSec" | "env">;
+  /** Tests: the pipeline proof's fakes (listener, speaker, chat model, chat turn) for a "pipeline" session. */
+  pipeline?: Partial<PipelineParts>;
   /**
    * Runs once the call is stored, before the handler resolves (so the function stays alive for it):
    * the route answers a buyer turn the call left unanswered (lib/voice/after-call.ts). Never awaited past its own errors.
@@ -224,6 +230,64 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     return true;
   };
 
+  /** Starts a test-lab call on the pipeline proof (scripted mode: fakes and a scripted chat model, never paid). */
+  const startPipeline = async (session: VoiceSession, mode: VoiceMode, waitAudio: boolean) => {
+    const callMode = mode === session.mode && (mode === "live" || mode === "scripted") ? mode : null;
+    let parts: PipelineParts | null = null;
+    try {
+      parts = callMode ? await pipelinePartsFor(callMode, env, opts.pipeline) : null;
+    } catch (e) {
+      log.warn(voiceLine(session.id, `pipeline parts unavailable: ${errorSummary(e)}`));
+    }
+    if (!parts || !callMode) {
+      await endUnstartedVoiceSession(opts.db, session.id, "model_unavailable", new Date(clock.now()));
+      return refuse("model_unavailable");
+    }
+    const [version] = session.agentVersionId
+      ? await opts.db.select({ voiceSettings: agentVersions.voiceSettings }).from(agentVersions)
+        .where(and(eq(agentVersions.id, session.agentVersionId), eq(agentVersions.accountId, session.accountId)))
+      : [];
+    if (isClosed()) {
+      await endUnstartedVoiceSession(opts.db, session.id, "connection_lost", new Date(clock.now()));
+      return;
+    }
+    const maxSec = maxCallSeconds({ settings: version?.voiceSettings ?? null, deadlineSec: opts.deadlineSec, env });
+    sessionId = session.id;
+    log.info(voiceLine(session.id, `socket accepted mode=${callMode} engine=${PIPELINE_ENGINE} maxSec=${maxSec}${session.isTest ? " test" : ""}`));
+    sendJson({ t: "call", maxSec, mode: callMode });
+    engine = new PipelineVoiceEngine({
+      db: opts.db, sessionId: session.id, mode: callMode, clock, log, onEnding: keepAlive,
+      send: (msg: ServerMessage | Uint8Array) => {
+        if (msg instanceof Uint8Array) {
+          // Backpressure as for the other engines (the pipeline paces its audio, so this should not trigger).
+          if (ws.bufferedAmount > MAX_BUFFERED_AUDIO_BYTES) {
+            if (!droppedAgentBytes) log.warn(voiceLine(session.id, "agent audio dropped: the browser's socket is more than 3 s behind"));
+            droppedAgentBytes += msg.byteLength;
+            return;
+          }
+          safeSend(msg);
+          return;
+        }
+        sendJson(msg);
+        if (msg.t === "ended") clock.setTimeout(() => closeSocket(VOICE_CLOSE.normal, "ended"), 0);
+      },
+      listener: parts.listener, speaker: parts.speaker, llm: parts.llm, ...(parts.turn ? { turn: parts.turn } : {}),
+      limits: { deadlineSec: opts.deadlineSec, env, ...(waitAudio ? { waitForClientAudio: true } : {}) },
+    });
+    phase = "live";
+    // A last guard beyond the engine's own limit, as for the other engines.
+    timers.hard = clock.setTimeout(() => {
+      timers.hard = null;
+      log.warn(voiceLine(sessionId, "socket hard limit reached"));
+      void engine?.stop("limit", undefined, "deadline");
+      closeSocket(VOICE_CLOSE.normal, "limit");
+    }, (maxSec + 30) * 1000);
+    const queued = early;
+    early = [];
+    await engine.start();
+    for (const m of queued) engine.onClientMessage(m);
+  };
+
   const authenticate = async (raw: string) => {
     phase = "checking";
     clock.clearTimeout(timers.auth);
@@ -242,6 +306,8 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
     // guards" (today's engine with the Classic model side, lib/voice-guarded), its silent probe or Current. Buyer calls
     // always run on Current.
     const stored = session.isTest ? sessionEngine(session.settings) : "current";
+    // The pipeline proof (lib/voice-pipeline): no realtime model; a listener, the chat agent and a speaker.
+    if (stored === PIPELINE_ENGINE) return startPipeline(session, mode, auth.waitAudio === true);
     const classic = stored === "classic";
     const guarded = isGuardedEngine(stored);
     const modelFor = classic ? classicRealtimeModelFor : realtimeModelFor;

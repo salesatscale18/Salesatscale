@@ -127,7 +127,8 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     save("guarded-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
-      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"], ["classic", "Old baseline (20 Nov)"],
+      ["current", "Live for buyers (22 Nov)"], ["guarded", "New (23 Nov)"], ["guarded_silent", "New + silent tools (23 Nov, testing)"],
+      ["pipeline", "Pipeline: listen, think, speak (testing)"], ["classic", "Old baseline (20 Nov)"],
     ]);
     expect(select).toContain('<option value="current" selected="">Live for buyers (22 Nov)</option>');
     // One helper line under the row for the selected engine (what it is based on, whether buyers get it).

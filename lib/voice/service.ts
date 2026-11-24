@@ -17,6 +17,7 @@ import { ScriptedRealtime } from "./scripted-realtime";
 import { voiceCallEndedLine as CALL_ENDED_TEXT } from "@/lib/agent/thread-markers";
 import { isGuardedEngine, sessionEngine, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
 import { classicModelId } from "@/lib/voice-classic/settings";
+import { pipelineCallInfo, type PipelineCallInfo } from "@/lib/voice-pipeline/summary";
 import { callVoiceInfo, PLATFORM_MAX_CALL_SEC, validateVoiceSettings, type CallVoiceInfo, versionModelId, voiceMode, type VoiceMode, type VoiceSettingsErrors } from "./settings";
 
 export { voiceMode, type VoiceMode };
@@ -105,6 +106,8 @@ export async function createVoiceSession(
     // A test-lab call on "Classic + guards" or its silent probe (lib/voice-guarded): stored on the session; any voice
     // model, as Current.
     ...(opts.engine && isGuardedEngine(opts.engine) && a.isTest ? { settings: { engine: opts.engine } as VoiceSettings } : {}),
+    // A test-lab call on the pipeline proof (lib/voice-pipeline: listen, think, speak): stored on the session.
+    ...(opts.engine === "pipeline" && a.isTest ? { settings: { engine: "pipeline" } as VoiceSettings } : {}),
   }).returning({ id: voiceSessions.id });
   return { ok: true, sessionId: row.id, ticket, expiresAt: new Date(now.getTime() + TICKET_TTL_SEC * 1000), mode };
 }
@@ -328,6 +331,8 @@ export type VoiceSessionSummary = {
   engine: VoiceEngineName;
   /** The voice and fillers this call ran with (stored at go-live); null parts: not recorded (older calls). */
   voiceUsed: CallVoiceInfo;
+  /** A pipeline-proof call (lib/voice-pipeline): its three models and median answer time; null for the other engines. */
+  pipeline: PipelineCallInfo | null;
   wakes: number;
   /** Each spoken agent turn's answer time (null when the agent spoke first), in call order. */
   turns: { messageId: string; spokenAtMs: number | null; answerMs: number | null }[];
@@ -357,6 +362,7 @@ export async function voiceSessionSummaries(db: Db, accountId: string, conversat
     endDetail: s.usage?.endDetail ?? null,
     engine: sessionEngine(s.settings),
     voiceUsed: callVoiceInfo(s.settings),
+    pipeline: pipelineCallInfo(s.settings, s.usage),
     turns: turns.filter((t) => t.voiceSessionId === s.id).map((t) => ({ messageId: t.id, spokenAtMs: t.spokenAtMs, answerMs: t.answerMs })),
   }));
 }
