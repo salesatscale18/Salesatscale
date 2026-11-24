@@ -4120,5 +4120,12 @@
   "markets.check_fail.payment_none": "No payment method",
   "markets.check_fail.payment_none_fix": "Add one",
   "markets.check_fail.bank_details": "No bank details for bank transfer",
-  "markets.check_fail.bank_details_fix": "Add them"
+  "markets.check_fail.bank_details_fix": "Add them",
+  "inbox.preview.voice": "Voice call · {length}",
+  "inbox.preview.len_min_sec": "{m} min {s} s",
+  "inbox.preview.len_min": "{m} min",
+  "inbox.preview.len_sec": "{s} s",
+  "inbox.sort": "Sort",
+  "inbox.sort.newest": "Newest first",
+  "inbox.sort.oldest": "Oldest first"
 }

@@ -428,23 +428,38 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox > * { min-width: 0; }
 .sas-inbox__list { overflow: hidden; }
 .sas-inbox__tools { display: flex; flex-direction: column; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
-.sas-inbox__group { margin: 0; padding: 14px 16px 6px; }
-.sas-app a.sas-inbox__row { display: flex; gap: 10px; padding: 12px 16px; color: var(--ink); text-decoration: none; }
-.sas-app a.sas-inbox__row:hover { background: var(--surface-sunken); }
-.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft); box-shadow: inset 3px 0 0 var(--primary); }
-.sas-inbox__row-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
-.sas-inbox__row-top { display: flex; justify-content: space-between; gap: var(--space-2); align-items: baseline; }
-.sas-inbox__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.sas-inbox__row--unread .sas-inbox__name, .sas-inbox__row--unread .sas-inbox__preview { font-weight: 700; color: var(--ink); }
-.sas-inbox__preview { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sas-inbox__meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+/* ConvListV2: a views menu and a sort menu on one line, groups on a surface band, rows of two lines. */
+.sas-inbox__bar { display: flex; gap: var(--space-2); min-width: 0; }
+.sas-inbox__menu { min-width: 0; }
+.sas-inbox__menu--view { flex: 1 1 auto; }
+.sas-inbox__select { display: flex; align-items: center; justify-content: space-between; gap: 6px; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink); font-size: 13px; font-weight: 500; cursor: pointer; white-space: nowrap; min-width: 0; }
+.sas-inbox__select:hover, .sas-inbox__menu[open] > .sas-inbox__select { background: var(--surface); }
+.sas-inbox__select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-inbox__select .sas-ico { width: 14px; height: 14px; flex: none; color: var(--ink-muted); }
+.sas-inbox__menu--view .sas-rowmenu__list { inset-inline-start: 0; inset-inline-end: auto; min-width: 240px; }
+.sas-app .sas-inbox__option { justify-content: space-between; gap: var(--space-4); }
+.sas-app .sas-inbox__option .sas-num { color: var(--ink-muted); font-size: 12px; }
+.sas-app .sas-inbox__option[aria-current="page"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
+.sas-app .sas-inbox__option[aria-current="page"] .sas-num { color: var(--primary); }
+.sas-inbox__group { margin: 0; padding: 10px 16px 6px; background: var(--surface); }
+.sas-inbox__list div + div > .sas-inbox__group, .sas-inbox__group + .sas-list { border-block-start: 1px solid var(--line); }
+.sas-app a.sas-inbox__row { display: grid; grid-template-columns: 36px minmax(0, 1fr) auto; column-gap: 12px; row-gap: 2px; align-items: center; box-sizing: border-box; min-height: 60px; padding: 10px 16px; color: var(--ink); text-decoration: none; text-align: start; }
+.sas-app a.sas-inbox__row:hover { background: var(--surface); }
+.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft); }
+.sas-app a.sas-inbox__row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sas-inbox__row > .sas-av { grid-row: span 2; width: 36px; height: 36px; font-size: 12px; }
+.sas-inbox__row > .sas-av .sas-ico { width: 16px; height: 16px; }
+.sas-inbox__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; line-height: 20px; }
+.sas-inbox__name > bdi { font-weight: 600; }
+.sas-inbox__company { color: var(--ink-muted); }
+.sas-inbox__row > .sas-when { font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.sas-inbox__row > .sas-inbox__preview { grid-column: 2 / 4; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
+.sas-inbox__row--unread > .sas-inbox__preview { color: var(--ink); }
+.sas-inbox__row > .sas-inbox__preview--needs { color: var(--human); font-weight: 500; }
 /* O35: the hand-off reason, one line cut with "…" at any width (Needs you, Conversations row, lead banner).
    The reason is its own isolated run (dir="auto"), so a Hebrew reason is cut at its own end.
    In Needs you it has a line of its own under "Name needs a person", before company and time. */
 .sas-oneline { display: block; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; unicode-bidi: isolate; }
-.sas-inbox__meta > .sas-oneline { flex: 0 1 auto; }
-.sas-inbox__badge { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 8px; border-radius: var(--radius-pill); background: var(--human); color: var(--on-agent); font: 600 11px/22px var(--font-sans); }
-.sas-inbox__badge .sas-ico { width: 12px; height: 12px; }
 .sas-inbox__thread { overflow: hidden; }
 .sas-inbox__thread-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); padding: var(--space-3) var(--space-4); border-block-end: 1px solid var(--line); }
 .sas-inbox__back { display: none; }
@@ -864,13 +879,9 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-thread-note > .sas-ico { color: var(--human); }
 .sas-thread-note strong { color: var(--ink); font-weight: 600; }
 /* F1: the list preview is "Who: " plus the message, the message in its own direction, cut at its own end. */
-.sas-inbox__preview { display: flex; min-width: 0; gap: 4px; }
+.sas-inbox__preview { display: flex; min-width: 0; gap: 4px; overflow: hidden; white-space: nowrap; }
 .sas-inbox__preview-who { flex: none; }
 .sas-inbox__preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* D4: Conversations tabs wrap on a phone instead of scrolling out of sight. */
-@media (max-width: 767px) {
-  .sas-inbox__tools .sas-views { flex-wrap: wrap; overflow-x: visible; margin-inline: 0; padding-inline: 0; }
-}
 /* E7: table headings like "One-time" stay on one line. */
 .sas-th-nowrap { white-space: nowrap; }
 

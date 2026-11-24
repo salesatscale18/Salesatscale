@@ -1,6 +1,7 @@
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
-import { Banner, WindowTimer } from "@/components/sas/record";
+import { Banner } from "@/components/sas/record";
+import { MenuEnhancer } from "@/components/sas/list-kit-client";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { mayDeleteRecordings } from "@/lib/voice/recording-playback";
 import { nameInitials } from "@/lib/auth/display";
@@ -8,19 +9,19 @@ import { conversationView } from "@/lib/agent/conversation";
 import { approvedTemplates, conversationWindow } from "@/lib/channels/whatsapp";
 import { renderTemplate } from "@/lib/channels/rules";
 import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
-import { INBOX_FILTERS, inboxConversation, latestHandoff, listInbox, parseInboxFilter, type InboxGroup, type InboxList, type InboxRow } from "@/lib/conversations/inbox";
+import { INBOX_FILTERS, INBOX_SORTS, inboxConversation, latestHandoff, listInbox, parseInboxFilter, parseInboxSort, type InboxGroup, type InboxList } from "@/lib/conversations/inbox";
 import { formatDateTimeIn, relativeTime } from "@/lib/format";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
 import { MARKET_PARAM, marketSelection, switcherReturnTo } from "@/lib/markets/selection";
 import { messages as i18n, t, type MessageKey } from "@/lib/i18n";
-import { ConversationPanel, formNotes, windowTimerProps } from "../leads/[leadId]/conversation";
+import { ConversationPanel, formNotes } from "../leads/[leadId]/conversation";
 import { readViewerZone } from "@/lib/viewer-zone-server";
 import { linkFor, personSentForms } from "@/lib/orders/service";
 import { seesPlatformDetails } from "@/lib/auth/display";
 import { sendTemplateAction } from "./actions";
 import { AutoRefresh } from "./auto-refresh";
 import { ScrollThreadToEnd } from "./scroll-end";
-import { SimulatedChip, TestLabChip, WhatsAppChip } from "../leads/simulated-chip";
+import { SimulatedChip, TestLabChip } from "../leads/simulated-chip";
 import { loadDealPane, objectionLine } from "@/lib/leads/deal-pane";
 import { DealStatePane, ObjectionList } from "../leads/[leadId]/deal-pane";
 import { activeChatToken } from "@/lib/simulator/service";
@@ -28,7 +29,7 @@ import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
 import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
-import { previewText, type PreviewFacts } from "@/lib/conversations/preview";
+import { listPreview, needsYouLine, type PreviewFacts } from "@/lib/conversations/preview";
 import { previewFacts } from "@/lib/conversations/preview-data";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -38,21 +39,6 @@ const maybe = (key: string) => i18n.en[key as MessageKey] ?? null;
 
 const GROUP_ORDER: InboxGroup[] = ["needs_you", "human", "agent", "closed"];
 
-/**
- * "Buyer: …", "Agent: …", "You: …" before the last message. The message is a
- * separate part: it gets its own direction and is cut at its own end, so a
- * Hebrew preview shows the start of the sentence (round-4 review F1).
- */
-function preview(r: Pick<InboxRow, "lastBody" | "lastActor" | "lastUserId">, meId: string, facts?: PreviewFacts): { who: string | null; text: string } {
-  if (!r.lastBody) return { who: null, text: t("inbox.no_messages") };
-  const who = r.lastActor === "buyer" ? t("inbox.from.buyer")
-    : r.lastActor === "agent" ? t("inbox.from.agent")
-    : r.lastActor === "human" ? (r.lastUserId && r.lastUserId === meId ? t("inbox.from.you") : t("inbox.from.team"))
-    : t("inbox.from.system");
-  // Readable, never the raw body (RA3): no emphasis markers, a quote reads "Quote Q-1003", a form link its card title.
-  return { who, text: previewText(r.lastBody, facts) };
-}
-
 /** Conversations inbox (canvas: Inbox, P6.6). Filters, search and the selected chat live in the URL. */
 export default async function ConversationsPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Search> }) {
   const { account: slug } = await params;
@@ -61,7 +47,8 @@ export default async function ConversationsPage({ params, searchParams }: { para
   const { account, user: me } = access;
   const base = `/app/${account.slug}/conversations`;
   const filter = parseInboxFilter(one(sp.filter));
-  const q = one(sp.q).trim().slice(0, 100) || undefined;
+  const sort = parseInboxSort(one(sp.sort));
+  const q =one(sp.q).trim().slice(0, 100) || undefined;
   const page = Math.max(1, Math.floor(Number(one(sp.page)) || 1));
   const selectedId = UUID.test(one(sp.c)) ? one(sp.c) : null;
   const now = new Date();
@@ -79,7 +66,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
 
   const qs = (patch: Record<string, string | undefined>) => {
     const p = new URLSearchParams();
-    const cur: Record<string, string | undefined> = { filter: filter === "all" ? undefined : filter, q, page: page > 1 ? String(page) : undefined, c: selectedId ?? undefined, [MARKET_PARAM]: urlMarket };
+    const cur: Record<string, string | undefined> = { filter: filter === "all" ? undefined : filter, sort: sort === "newest" ? undefined : sort, q, page: page > 1 ? String(page) : undefined, c: selectedId ?? undefined, [MARKET_PARAM]: urlMarket };
     for (const [k, v] of Object.entries({ ...cur, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
     return s ? `${base}?${s}` : base;
@@ -90,19 +77,18 @@ export default async function ConversationsPage({ params, searchParams }: { para
   let selected: Awaited<ReturnType<typeof inboxConversation>> | null = null;
   try {
     [list, selected] = await Promise.all([
-      listInbox(appDb, account.id, { filter, q, page, now, simulateRules: account.simulateWhatsappRules, market }),
+      listInbox(appDb, account.id, { filter, sort, q, page, now, simulateRules: account.simulateWhatsappRules, market }),
       selectedId ? inboxConversation(appDb, account.id, selectedId) : Promise.resolve(null),
     ]);
   } catch (e) {
     console.error("[inbox] list failed", e);
   }
 
-  // O35: why each conversation a person handles needs one (one line, as in Needs you and on the lead page):
-  // a waiting hand-off, one a person took over (also while the buyer waits), and a lead in "Human handling".
-  const showsWhy = (r: InboxRow) => r.group !== "closed" && (r.status === "human" || r.lead.status === "human_handling");
+  // O35: why a Needs you conversation needs a person (one line, as in Needs you on Overview and on the lead page):
+  // its row's second line says it instead of the last message (ConvListV2).
   const [whys, facts] = list
     ? await Promise.all([
-      handoffWhyByLead(appDb, account.id, list.rows.filter(showsWhy).map((r) => r.lead.id)),
+      handoffWhyByLead(appDb, account.id, list.rows.filter((r) => r.group === "needs_you").map((r) => r.lead.id)),
       previewFacts(appDb, account.id, list.rows, now),
     ])
     : [new Map<string, string>(), new Map<string, PreviewFacts>()];
@@ -159,15 +145,41 @@ export default async function ConversationsPage({ params, searchParams }: { para
           <section className="sas-panel sas-inbox__list" aria-labelledby="inbox-list-h">
             <h2 id="inbox-list-h" className="sas-sr">{t("inbox.list")}</h2>
             <div className="sas-inbox__tools">
-              <nav aria-label={t("inbox.filters")} className="sas-views">
-                {INBOX_FILTERS.map((f) => (
-                  <a key={f} className="sas-view" href={qs({ filter: f === "all" ? undefined : f, page: undefined, c: undefined })} aria-current={f === filter ? "page" : undefined}>
-                    {t(`inbox.filter.${f}`)} <span className="sas-num">{list!.counts[f]}</span>
-                  </a>
-                ))}
-              </nav>
+              {/* ConvListV2: the six views in one menu with their counts, and the order next to it. Both are
+                  <details> menus of plain links (open without JS; MenuEnhancer adds Escape, arrow keys and click outside). */}
+              <div className="sas-inbox__bar">
+                <details className="sas-rowmenu sas-inbox__menu sas-inbox__menu--view" data-inbox-view="">
+                  <summary className="sas-inbox__select" aria-haspopup="true" title={t("inbox.filters")}>
+                    <span className="sas-oneline">{t(`inbox.filter.${filter}`)} · <span className="sas-num">{list.counts[filter]}</span></span>
+                    <Icon name="chevron-down" />
+                  </summary>
+                  <nav className="sas-rowmenu__list" aria-label={t("inbox.filters")}>
+                    {INBOX_FILTERS.map((f) => (
+                      <a key={f} className="sas-rowmenu__item sas-inbox__option" href={qs({ filter: f === "all" ? undefined : f, page: undefined, c: undefined })} aria-current={f === filter ? "page" : undefined} data-view={f}>
+                        {t(`inbox.filter.${f}`)} <span className="sas-num">{list!.counts[f]}</span>
+                      </a>
+                    ))}
+                  </nav>
+                  <MenuEnhancer />
+                </details>
+                <details className="sas-rowmenu sas-inbox__menu" data-inbox-sort="">
+                  <summary className="sas-inbox__select" aria-haspopup="true" title={t("inbox.sort")}>
+                    <span className="sas-sr">{t("inbox.sort")}: </span><span className="sas-oneline">{t(`inbox.sort.${sort}`)}</span>
+                    <Icon name="chevron-down" />
+                  </summary>
+                  <nav className="sas-rowmenu__list" aria-label={t("inbox.sort")}>
+                    {INBOX_SORTS.map((s) => (
+                      <a key={s} className="sas-rowmenu__item sas-inbox__option" href={qs({ sort: s === "newest" ? undefined : s, page: undefined })} aria-current={s === sort ? "page" : undefined} data-sort={s}>
+                        {t(`inbox.sort.${s}`)}
+                      </a>
+                    ))}
+                  </nav>
+                  <MenuEnhancer />
+                </details>
+              </div>
               <form method="get" action={base} className="sas-filters">
                 {filter !== "all" ? <input type="hidden" name="filter" value={filter} /> : null}
+                {sort !== "newest" ? <input type="hidden" name="sort" value={sort} /> : null}
                 {urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
                 <label className="sas-search">
                   <Icon name="search" />
@@ -203,38 +215,31 @@ export default async function ConversationsPage({ params, searchParams }: { para
                     {items.map((r) => {
                       const holding = r.group === "needs_you" || r.group === "human";
                       const ended = r.group === "closed";
+                      // ConvListV2: two lines, nothing else. The group (or the chosen view) says the status; the channel,
+                      // market, test or simulated chip and the WhatsApp window show in the open conversation.
+                      const needs = r.group === "needs_you" ? needsYouLine(!!r.takenOverByUserId, whys.get(r.lead.id)) : null;
+                      const p = needs ? null : listPreview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
                       return (
                         <li key={r.conversationId}>
                           <a
                             className={`sas-inbox__row${r.lastActor === "buyer" && !ended ? " sas-inbox__row--unread" : ""}`}
                             href={`${qs({ c: r.conversationId })}#thread`}
                             aria-current={r.conversationId === selectedId ? "page" : undefined}
+                            data-row=""
                           >
                             <Avatar actor={ended ? "buyer" : holding ? "human" : "agent"} initials={nameInitials(r.lead.fullName)} />
-                            <span className="sas-inbox__row-main">
-                              <span className="sas-inbox__row-top">
-                                <span className="sas-inbox__name"><bdi>{r.lead.fullName}</bdi>{r.lead.company ? <span className="sas-small"> · <bdi>{r.lead.company}</bdi></span> : null}</span>
-                                <span className="sas-small sas-when" title={formatDateTimeIn(r.lastAt, zone)}>{relativeTime(r.lastAt, now, zone)}</span>
+                            <span className="sas-inbox__name" data-line="1"><bdi>{r.lead.fullName}</bdi>{r.lead.company ? <span className="sas-inbox__company"> · <bdi>{r.lead.company}</bdi></span> : null}</span>
+                            <span className="sas-when" title={formatDateTimeIn(r.lastAt, zone)}>{relativeTime(r.lastAt, now, zone)}</span>
+                            {needs ? (
+                              <span className="sas-inbox__preview sas-inbox__preview--needs" data-line="2" data-handoff-why="">
+                                <span className="sas-inbox__preview-text" dir="auto" title={needs}>{needs}</span>
                               </span>
-                              {(() => {
-                                const p = preview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
-                                return (
-                                  <span className="sas-small sas-inbox__preview" data-preview="">
-                                    {p.who ? <span className="sas-inbox__preview-who">{p.who}:</span> : null}
-                                    <span className="sas-inbox__preview-text" dir="auto">{p.text}</span>
-                                  </span>
-                                );
-                              })()}
-                              <span className="sas-inbox__meta">
-                                {r.group === "needs_you" ? <span className="sas-inbox__badge"><Icon name="user" />{r.takenOverByUserId ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff")}</span> : null}
-                                {/* O35: why it needs a person, the same line as Needs you and the lead page. */}
-                                {showsWhy(r) && whys.get(r.lead.id) ? <span className="sas-small sas-oneline" data-handoff-why="" dir="auto" title={whys.get(r.lead.id)}>{whys.get(r.lead.id)}</span> : null}
-                                <StatusPill object="lead" state={r.lead.status} />
-                                {r.isTest ? <TestLabChip /> : r.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : r.channel === "whatsapp" ? <WhatsAppChip /> : <span className="sas-chip sas-chip--plain">{maybe(`conv.channel.${r.channel}`) ?? r.channel}</span>}
-                                {r.marketName || homeMarket ? <span className="sas-small" data-market="">{r.marketName || homeMarket}</span> : null}
-                                {r.window ? <WindowTimer {...windowTimerProps(r.window, now)} /> : null}
+                            ) : (
+                              <span className="sas-inbox__preview" data-line="2" data-preview="">
+                                {p!.who ? <span className="sas-inbox__preview-who">{p!.who}:</span> : null}
+                                <span className="sas-inbox__preview-text" dir="auto">{p!.text}</span>
                               </span>
-                            </span>
+                            )}
                           </a>
                         </li>
                       );

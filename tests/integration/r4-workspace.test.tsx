@@ -182,7 +182,8 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
   it("F1: the Conversations preview is the sender, then the message in its own direction", async () => {
     const conv = await page(ConversationsPage(props(account.slug)));
     save("conversations", conv);
-    expect(conv).toMatch(/<span class="sas-small sas-inbox__preview" data-preview=""><span class="sas-inbox__preview-who">(Agent|Buyer|System|You|Team):<\/span><span class="sas-inbox__preview-text" dir="auto">/);
+    expect(conv).toMatch(/<span class="sas-inbox__preview" data-line="2" data-preview=""><span class="sas-inbox__preview-who">(Agent|Buyer|You|Team):<\/span><span class="sas-inbox__preview-text" dir="auto">/);
+    expect(conv).not.toContain(">System:<");
     expect(css).toMatch(/\.sas-inbox__preview-text \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
   });
 
@@ -206,9 +207,10 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
 
   it("B9, E1: Conversations tabs 'All buyer chats' and 'Human handling'; the phone summary names order form details", async () => {
     const conv = await page(ConversationsPage(props(account.slug)));
-    expect(conv).toMatch(/class="sas-view"[^>]*>All buyer chats <span class="sas-num">/);
-    expect(conv).toMatch(/class="sas-view"[^>]*>Human handling <span class="sas-num">/);
-    expect(conv).toMatch(/class="sas-view"[^>]*>Test lab chats <span class="sas-num">/);
+    // ConvListV2: the views are the options of one menu.
+    expect(conv).toMatch(/class="sas-rowmenu__item sas-inbox__option"[^>]*>All buyer chats <span class="sas-num">/);
+    expect(conv).toMatch(/class="sas-rowmenu__item sas-inbox__option"[^>]*>Human handling <span class="sas-num">/);
+    expect(conv).toMatch(/class="sas-rowmenu__item sas-inbox__option"[^>]*>Test lab chats <span class="sas-num">/);
     const lead = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.tamarLead }) as never));
     expect(lead).toMatch(/data-testid="lead-summary"[\s\S]*?Order form details: (\d+ not known yet|all known)/);
   });
@@ -260,6 +262,7 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
     expect(css).toContain(".sas-id { font-family: var(--font-mono);");
     expect(css).toContain(".sas-nav__count { font-family: var(--font-sans);");
     expect(css).toMatch(/\.sas-shell__nav > \.sas-nav \{ position: sticky; top: 0; height: 100vh;/);
-    expect(css).toMatch(/\.sas-inbox__tools \.sas-views \{ flex-wrap: wrap;/);
+    // ConvListV2: the tabs became one views menu; it and the sort menu share one line at any width.
+    expect(css).toMatch(/\.sas-inbox__bar \{ display: flex; gap: var\(--space-2\); min-width: 0; \}/);
   });
 });

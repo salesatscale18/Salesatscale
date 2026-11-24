@@ -235,7 +235,9 @@ describe("Polish-2+5: seller workspace", () => {
     it("conversations: plain market, neutral Open lead card icon, selected row in primary-soft", async () => {
       const sel = await page(ConversationsPage(props(account.slug, { c: ids.conv })));
       expect(sel).toContain("lucide-arrow-up-right");
-      expect(sel).toContain('data-market="">Israel<');
+      // ConvListV2: the market left the rows; the open conversation's header line still names it.
+      expect(sel).not.toContain("data-market=");
+      expect(sel).toMatch(/<span class="sas-small">(?:[^<]* · )?Israel · /);
       expect(sel).not.toContain("testuser+clerk_test@");
       expect(css).toContain('.sas-app a.sas-inbox__row[aria-current="page"] { background: var(--primary-soft);');
     });
