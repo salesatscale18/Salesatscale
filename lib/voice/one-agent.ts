@@ -18,20 +18,22 @@ import { voiceLine } from "./log";
  * STALE_PENDING_SEC ago (its socket is still connecting). Test-lab calls count too: the test-lab composer must not
  * answer next to a test call either.
  */
-export async function activeCallOn(db: Db, accountId: string, conversationId: string, now = new Date()): Promise<string | null> {
+export async function activeCallOn(db: Db, accountId: string, conversationId: string, now = new Date(), exceptSessionId?: string): Promise<string | null> {
   const rows = await db.select({ id: voiceSessions.id, status: voiceSessions.status, createdAt: voiceSessions.createdAt }).from(voiceSessions)
     .where(and(eq(voiceSessions.accountId, accountId), eq(voiceSessions.conversationId, conversationId), inArray(voiceSessions.status, ["pending", "live"])))
     .orderBy(desc(voiceSessions.createdAt));
-  const active = rows.find((r) => r.status === "live" || r.createdAt.getTime() > now.getTime() - STALE_PENDING_SEC * 1000);
+  const active = rows.find((r) => r.id !== exceptSessionId && (r.status === "live" || r.createdAt.getTime() > now.getTime() - STALE_PENDING_SEC * 1000));
   return active?.id ?? null;
 }
 
 /**
  * For every chat-turn trigger: true (and one log line) when a call holds the conversation, so the trigger must not
  * start a chat turn now. `trigger`: a short name for the log ("typed message", "test lab", "whatsapp", …).
+ * `opts.exceptSessionId`: a call's own voice session does not block (a turn that call itself starts); every other
+ * pending or live call on the conversation still does.
  */
-export async function textTurnBlocked(db: Db, accountId: string, conversationId: string, trigger: string, now = new Date()): Promise<boolean> {
-  const active = await activeCallOn(db, accountId, conversationId, now);
+export async function textTurnBlocked(db: Db, accountId: string, conversationId: string, trigger: string, now = new Date(), opts?: { exceptSessionId?: string }): Promise<boolean> {
+  const active = await activeCallOn(db, accountId, conversationId, now, opts?.exceptSessionId);
   if (!active) return false;
   console.info(voiceLine(active, `text agent blocked: ${trigger}`));
   return true;

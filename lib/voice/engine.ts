@@ -379,6 +379,28 @@ export const HELD_QUOTE_SAY: Readonly<Record<"en" | "he", string>> = {
 
 export const HELD_QUOTE_MESSAGE = "The quote is NOT final and was NOT sent: the team must approve it first. Say say_this now, as written. Do not say any total or price for it (not from check_fit either), do not say the quote is in the chat, and do not offer the order form until the app says it was approved.";
 
+/**
+ * check_fit on a call (any engine but the frozen Classic): no money figure reaches the model. Two calls (23 Nov 2026)
+ * said a price taken from check_fit's totals (once for a quote held for approval, once with no quote at all). The
+ * agent has a price to say only from a ready create_quote. The stored row and the test lab keep the full result.
+ */
+export const FIT_PRICES_FOR_CALL = "not shown here: call create_quote, then say the price it gives you";
+const FIT_LINE_MONEY = ["total", "total_before_vat", "total_including_vat", "unit_price"] as const;
+
+export function fitForCall(forModel: Record<string, unknown>): Record<string, unknown> {
+  const { totals: _t, price_basis: _b, currency: _c, prices_include_tax: _i, headline: _h, ...rest } = forModel;
+  void [_t, _b, _c, _i, _h];
+  const lines = Array.isArray(rest.lines)
+    ? rest.lines.map((l) => {
+      if (!l || typeof l !== "object") return l;
+      const out = { ...(l as Record<string, unknown>) };
+      for (const k of FIT_LINE_MONEY) delete out[k];
+      return out;
+    })
+    : undefined;
+  return { ...rest, ...(lines ? { lines } : {}), prices: FIT_PRICES_FOR_CALL };
+}
+
 /** send_order_form while the conversation's latest quote waits for the team's approval. */
 export const HELD_FORM_RULE = "Quote waits for the seller's approval";
 export const HELD_FORM_MESSAGE = "The order form was not sent: the quote is waiting for the team's approval. Tell the buyer the team is checking the price.";
@@ -2164,6 +2186,8 @@ export class VoiceEngine {
     let forModel = this.profile ? await this.guardedToolResult(turn, name, args, r, formGate === "no") : await this.currentToolResult(turn, name, r);
     // Held for approval: the held state first, in the call's language, and no figure of the quote (any engine).
     const sayIn = this.spokenLanguage !== "en" ? this.sayIn() : null;
+    const noTotals = name === "check_fit";
+    if (noTotals) forModel = fitForCall(forModel);
     if (heldNow) forModel = heldQuoteForModel(forModel, this.spokenLanguage === "he" ? "he" : "en", sayIn);
     if (quoteHeld) {
       forModel = {
@@ -2180,7 +2204,7 @@ export class VoiceEngine {
     } else {
       if (this.conn) {
         const at = this.traceCallAt.get(callId);
-        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}${heldNow || quoteHeld ? " held=yes" : ""}`);
+        this.trace(`tool result sent name=${clip(name, 40)} id=${clip(callId, 200).slice(-8)} took=${at === undefined ? "?" : `${Math.round(this.clock.now() - at)}ms`} chars=${JSON.stringify(forModel)?.length ?? 0}${typeof forModel.scheduling === "string" ? ` sched=${clip(forModel.scheduling, 20)}` : ""}${heldNow || quoteHeld ? " held=yes" : ""}${noTotals ? " nototals=yes" : ""}`);
         // The model's audio from here on is its next response (Gemini continues by itself after a result).
         if (this.traceResp && !this.traceResp.closedBy) this.traceResp.closedBy = "tool-result";
       }

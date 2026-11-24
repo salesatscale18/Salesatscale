@@ -287,6 +287,36 @@ describe("Classic + guards", () => {
       }
     });
 
+    it("check_fit on a call: no money figure reaches the model (Current, guarded, silent); the stored row keeps the totals", async () => {
+      for (const profile of [null, GUARDED_PROFILE, GUARDED_SILENT_PROFILE]) {
+        const c = await fakeCall([], {}, profile);
+        await c.startNow();
+        await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
+        await c.buyer("How much for six sensors and a gateway?");
+        // A quote exists: the tool itself opens prices, so its stored result carries totals and line amounts.
+        await c.tool("q1", "create_quote", quoteArgs([{ sku: "SENSOR", qty: 6 }, { sku: "GATEWAY", qty: 1 }]));
+        const fit = await c.tool("c1", "check_fit", { lines: [{ sku: "SENSOR", qty: 6 }, { sku: "GATEWAY", qty: 1 }], sites: 1 });
+        // Tool-call rows are written when the call's turn is stored (at the latest, at the end of the call).
+        await c.end();
+        const [row] = await db.select().from(toolCalls).where(and(eq(toolCalls.conversationId, c.conversationId), eq(toolCalls.name, "check_fit")));
+        const stored = row.result as { totals?: Record<string, unknown>; lines?: Record<string, unknown>[] };
+        expect(stored.totals, JSON.stringify(row.result)).toBeTruthy();
+        const amounts = [...Object.values(stored.totals!), ...stored.lines!.flatMap((l) => Object.entries(l).filter(([k]) => k.startsWith("total")).map(([, v]) => v))]
+          .filter((v): v is string => typeof v === "string" && /\d/.test(v));
+        expect(amounts.length).toBeGreaterThan(0);
+        const json = JSON.stringify(fit);
+        expect(json).not.toMatch(/[₪$€£]|\b(ILS|NIS|USD|EUR)\b|shekel|\d[\d,]*\.\d{2}\b/i);
+        for (const a of amounts) expect(json).not.toContain(a);
+        for (const k of ["totals", "price_basis"]) expect(fit[k]).toBeUndefined();
+        expect(fit.prices).toBe("not shown here: call create_quote, then say the price it gives you");
+        const lines = fit.lines as Record<string, unknown>[];
+        expect(lines.map((l) => [l.sku, l.qty])).toEqual(expect.arrayContaining([["SENSOR", 6], ["GATEWAY", 1]]));
+        for (const l of lines) expect(Object.keys(l).filter((k) => k.startsWith("total"))).toEqual([]);
+        expect(c.logs.some((l) => / tool result sent name=check_fit .* nototals=yes$/.test(l))).toBe(true);
+        expect(c.logs.some((l) => / tool result sent name=create_quote .*nototals/.test(l))).toBe(false);
+      }
+    });
+
     it("a held quote the team approves during the call: the order form is no longer refused for it", async () => {
       const c = await fakeCall([], {}, null);
       await c.startNow();

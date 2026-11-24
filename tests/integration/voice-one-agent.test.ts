@@ -98,6 +98,28 @@ describe("one agent at a time", () => {
     expect(await textTurnBlocked(db, acc, conv, "typed message")).toBe(false);
   });
 
+  it("exceptSessionId: a live call's own session does not block; any other live call still does; no option as before", async () => {
+    const conv = await conversation();
+    const s = await createVoiceSession(db, { accountId: acc, conversationId: conv, userId: me.id, isTest: true }, { env: { VOICE_REALTIME: "scripted" } });
+    if (!s.ok) throw new Error(s.reason);
+    await db.update(voiceSessions).set({ status: "live" }).where(eq(voiceSessions.id, s.sessionId));
+    const info = vi.spyOn(console, "info").mockImplementation(() => undefined);
+    expect(await textTurnBlocked(db, acc, conv, "test")).toBe(true);
+    expect(await textTurnBlocked(db, acc, conv, "test", new Date(), { exceptSessionId: crypto.randomUUID() })).toBe(true);
+    expect(await textTurnBlocked(db, acc, conv, "test", new Date(), {})).toBe(true);
+    expect(await textTurnBlocked(db, acc, conv, "test", new Date(), { exceptSessionId: s.sessionId })).toBe(false);
+    // A second live session T on the conversation: excepting S still leaves T blocking (and the other way round).
+    const [row] = await db.select().from(voiceSessions).where(eq(voiceSessions.id, s.sessionId));
+    const { id: _id, ...copy } = row;
+    void _id;
+    const [tRow] = await db.insert(voiceSessions).values({ ...copy, status: "live" }).returning({ id: voiceSessions.id });
+    expect(await textTurnBlocked(db, acc, conv, "test", new Date(), { exceptSessionId: s.sessionId })).toBe(true);
+    expect(await textTurnBlocked(db, acc, conv, "test", new Date(), { exceptSessionId: tRow.id })).toBe(true);
+    info.mockRestore();
+    await db.update(voiceSessions).set({ status: "ended", endedAt: new Date(), endReason: "user_hangup" }).where(eq(voiceSessions.conversationId, conv));
+    expect(await textTurnBlocked(db, acc, conv, "test", new Date(), { exceptSessionId: s.sessionId })).toBe(false);
+  });
+
   it("the after-call reply of an earlier call is skipped while a new call on the conversation is pending", async () => {
     const conv = await conversation();
     // A buyer call (the after-call reply is for buyer calls only): a session made a buyer one.
