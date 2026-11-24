@@ -486,7 +486,7 @@ async function turnAppMessages(db: Db, accountId: string, conversationId: string
 export async function replyToBuyer(
   db: Db, llm: LlmClient, transport: TwilioTransport | null,
   m: { accountId: string; conversationId: string; leadId: string; text: string },
-  opts: { statusCallback?: string | null; trigger?: string; callSessionId?: string; callContextLine?: string } = {},
+  opts: { statusCallback?: string | null; trigger?: string; callSessionId?: string; callContextLine?: string; callReplyArgDescription?: string } = {},
 ) {
   const turn = await runBuyerTurn(db, llm, {
     accountId: m.accountId, conversationId: m.conversationId, text: m.text, buyerMessageStored: true, trigger: opts.trigger ?? "chat reply",
@@ -494,6 +494,8 @@ export async function replyToBuyer(
     ...(opts.callSessionId ? { callSessionId: opts.callSessionId } : {}),
     // The call's own line for the model, used only on a valid call turn: see runBuyerTurn.
     ...(opts.callSessionId && opts.callContextLine ? { callContextLine: opts.callContextLine } : {}),
+    // The call's opt-in to update_deal_state's spoken_reply argument, with its description: see runBuyerTurn.
+    ...(opts.callSessionId && opts.callReplyArgDescription ? { callReplyArgDescription: opts.callReplyArgDescription } : {}),
   });
   if (turn.status !== "replied") return { turn, delivery: null };
   // The lead was not opted out when the message arrived (receiveInbound), so an

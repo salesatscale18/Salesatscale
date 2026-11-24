@@ -4,6 +4,7 @@
  * finishes with that reply, with no second model round, unless a tool result says something the reply must
  * reflect. Chat turns never use any of this. Pure: unit-tested in tests/unit/call-reply.test.ts.
  */
+import type { ToolDef } from "./llm";
 import type { ToolResult } from "./tools";
 
 /**
@@ -62,4 +63,46 @@ export const CALL_CONTEXT_LINE_MAX = 600;
 export function callContextLineOf(line: string | undefined | null): string {
   if (typeof line !== "string") return "";
   return line.replace(/\s+/g, " ").trim().slice(0, CALL_CONTEXT_LINE_MAX).trim();
+}
+
+/**
+ * The spoken reply as a tool argument (call turns only, caller opt-in): some models (Gemini Flash through the
+ * gateway) never write text next to a tool call, so the reply can ride on update_deal_state itself. The argument
+ * exists only when the caller (the voice pipeline) supplies its description; the chat lane ships no wording.
+ */
+export const SPOKEN_REPLY_ARG = "spoken_reply";
+/** The longest caller-supplied description of that argument (runBuyerTurn callReplyArgDescription). */
+export const CALL_REPLY_ARG_DESCRIPTION_MAX = 400;
+
+/** The caller's argument description as one trimmed line, capped; empty when there is none (then no argument). */
+export function callReplyArgDescriptionOf(text: string | undefined | null): string {
+  if (typeof text !== "string") return "";
+  return text.replace(/\s+/g, " ").trim().slice(0, CALL_REPLY_ARG_DESCRIPTION_MAX).trim();
+}
+
+/**
+ * The tool list with update_deal_state's input extended by `spoken_reply`: a nullable string, listed in `required`
+ * like the tool's other nullable arguments (strict mode needs every property required; null = no reply here).
+ * Every other tool is the same object as given, and the given list is not changed.
+ */
+export function toolDefsWithSpokenReply(defs: readonly ToolDef[], description: string): ToolDef[] {
+  return defs.map((d) => {
+    if (d.name !== "update_deal_state") return d;
+    const schema = d.input_schema as { properties?: Record<string, unknown> | null; required?: string[] | null };
+    return {
+      ...d,
+      input_schema: {
+        ...d.input_schema,
+        properties: { ...(schema.properties ?? {}), [SPOKEN_REPLY_ARG]: { type: ["string", "null"], description } },
+        required: [...(schema.required ?? []), SPOKEN_REPLY_ARG],
+      },
+    };
+  });
+}
+
+/** update_deal_state's input without `spoken_reply` (the handler never sees it), and the spoken text when a string. */
+export function splitSpokenReply(input: unknown): { input: unknown; spoken: string | null } {
+  if (!input || typeof input !== "object" || Array.isArray(input) || !(SPOKEN_REPLY_ARG in input)) return { input, spoken: null };
+  const { [SPOKEN_REPLY_ARG]: spoken, ...rest } = input as Record<string, unknown>;
+  return { input: rest, spoken: typeof spoken === "string" ? spoken : null };
 }
