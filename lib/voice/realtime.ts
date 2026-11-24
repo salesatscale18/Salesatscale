@@ -38,6 +38,11 @@ export type RealtimeSessionConfig = {
    */
   safe?: boolean;
   /**
+   * No tools are sent (no `tools` field at all): ElevenLabs Realtime's last retry after the provider refused the setup
+   * with them (lib/voice/engine.ts reconnect). The agent then cannot look anything up; the log and the call card say so.
+   */
+  withoutTools?: boolean;
+  /**
    * "text" (the test lab's realtime + ElevenLabs engines, lib/voice-rt-eleven): the model answers in text only (no
    * voice is sent, no audio comes back); its words are spoken by our speaker. Absent: "audio", as always.
    */
@@ -85,6 +90,12 @@ export type RealtimeEvent =
   | { type: "closed"; error?: string; code?: number; reason?: string }
   /** A provider event we do not use (`unknown`) or an error event: logged once per type per call. */
   | { type: "provider-event"; kind: "unknown" | "error"; name: string; message?: string }
+  /**
+   * The provider's acknowledgement of the session setup (session-created / session-updated), summarized for the log
+   * (lib/voice/eleven-realtime.ts sessionAckSummary: the voice, tool count and turn detection it took; never content).
+   * Sent for ElevenLabs Realtime, whose answers to those are unknown until its first live calls.
+   */
+  | { type: "session-ack"; name: string; detail: string }
   /**
    * Something the relay fixed or hid, for the log only (never content): the agent's transcript had markers taken
    * out ("cleaned-transcript"), an audio piece had an odd byte count and its last byte was carried to the next

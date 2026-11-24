@@ -98,7 +98,8 @@ describe("stability (dialogue mode only) and the call's log line", () => {
 
 describe("the Voice settings form (design review, 24 Nov 2026)", () => {
   const render = (model: string | null, speech: "model" | "elevenlabs", o: { elevenForBuyers?: boolean } = {}) => renderToStaticMarkup(
-    <VoiceSettingsForm action={async () => ({})} slug="acme" models={voiceModelChoices()} platformModel={GEMINI}
+    // ElevenLabs Realtime (its own model, not "Voice from") is left out: these tests look for "ElevenLabs" as the speaker.
+    <VoiceSettingsForm action={async () => ({})} slug="acme" models={voiceModelChoices().filter((m) => !m.id.startsWith("elevenlabs/"))} platformModel={GEMINI}
       initial={{ ...DEFAULT_VOICE_SETTINGS, model: model as never, speech }} version={3} closeHref="#" deploymentLimitSec={null} elevenForBuyers={o.elevenForBuyers} />,
   );
 

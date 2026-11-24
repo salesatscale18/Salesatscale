@@ -41,6 +41,7 @@ export function VoiceCallStats({
   voiceUsed = null,
   pipeline = null,
   rtEleven = null,
+  toolsOff = false,
 }: {
   durationSec: number;
   maxSec: number | null;
@@ -68,6 +69,8 @@ export function VoiceCallStats({
   pipeline?: PipelineCallInfo | null;
   /** Test lab, a call where ElevenLabs spoke (text output): the model, the speaking model, the median answer time. */
   rtEleven?: RtElevenCallInfo | null;
+  /** The call ran without tools (ElevenLabs Realtime refused them): "Tools: not available on this model". */
+  toolsOff?: boolean;
 }) {
   const length = maxSec ? t("voice.stats.length_value", { time: callClock(durationSec), max: callClock(maxSec) }) : callClock(durationSec);
   const money = costText(costMicros, fx);
@@ -102,6 +105,7 @@ export function VoiceCallStats({
         ) : null}
         {model && !pipeline && !rtEleven ? <><dt>{t("voice.stats.model")}</dt><dd data-voice-model="">{model}{scripted ? <span className="sas-small"> · {t("voice.stats.model_scripted")}</span> : null}</dd></> : null}
         {voiceUsed ? <><dt>{t("voice.stats.voice")}</dt><dd data-voice-used="">{callVoiceText(voiceUsed.voice)}</dd></> : null}
+        {toolsOff ? <><dt>{t("voice.stats.tools")}</dt><dd data-voice-tools-off="">{t("voice.stats.tools_off")}</dd></> : null}
         {rtEleven ? <><dt>{t("voice.stats.pipeline_speak")}</dt><dd data-voice-rt-speak="">{rtEleven.speakModel || "—"}</dd></> : null}
         {engine ? <><dt>{t("voice.stats.engine")}</dt><dd data-voice-engine="">{engine}</dd></> : null}
         {voiceUsed ? <><dt>{t("voice.stats.fillers")}</dt><dd data-voice-fillers="">{callFillersText(voiceUsed.fillers)}</dd></> : null}

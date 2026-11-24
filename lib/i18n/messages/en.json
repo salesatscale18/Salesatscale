@@ -3032,6 +3032,8 @@
   "voice.stats.fillers": "Fillers",
   "voice.stats.fillers_on": "On (short filler phrases)",
   "voice.stats.fillers_off": "Off",
+  "voice.stats.tools": "Tools",
+  "voice.stats.tools_off": "Not available on this model",
   "voice.stats.not_recorded": "Not recorded",
   "voice.stats.length": "Length",
   "voice.stats.length_value": "{time} of {max}",

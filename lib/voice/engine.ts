@@ -28,12 +28,13 @@ import { runTool, type ToolContext, type ToolResult, type TurnMemo } from "@/lib
 import { CARD_REPLY, OPT_OUT_REPLY } from "@/lib/agent/safety";
 import { voiceStageText, voiceToolResultMessage } from "@/lib/agent/core/voice";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
-import { RealtimeUsageAccumulator, voiceCallCost, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
+import { RealtimeUsageAccumulator, type VoiceCallTimes, type VoiceCallUsageRecord } from "@/lib/ai/models";
+import { realtimeCallCost } from "./eleven-realtime";
 import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from "./protocol";
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
-import { callVoice, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
+import { callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
@@ -469,8 +470,12 @@ export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four sho
 
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
 export function configSummary(cfg: RealtimeSessionConfig): string {
+  if (cfg.withoutTools) return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=0 (without tools)`;
   return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
 }
+
+/** The log line when ElevenLabs Realtime's last retry leaves the tools out. */
+export const TOOLS_REJECTED_LINE = "tools rejected by the provider: running without tools";
 
 /**
  * The log line of a browser's `ready` (lib/voice/client/readiness.ts): how long its check took, its playback route,
@@ -595,6 +600,11 @@ export class VoiceEngine {
   /** The model closed a session before it said anything: one retry with proven session fields only. */
   private earlyRetryUsed = false;
   private safeConfig = false;
+  /**
+   * ElevenLabs Realtime only: its last retry runs without tools (the provider refused the setup with them, or refused
+   * the safe config too). Set for the rest of the call; the log, the snapshot and the call card say so.
+   */
+  private toolsDropped = false;
   private loaded: Loaded | null = null;
   private conn: RealtimeConnection | null = null;
   private gen = 0;
@@ -709,7 +719,8 @@ export class VoiceEngine {
   constructor(deps: VoiceEngineDeps) {
     this.db = deps.db;
     this.model = deps.model;
-    const openai = /^openai\/|gpt-realtime/i.test(this.model.modelId);
+    // ElevenLabs Realtime speaks the OpenAI-compatible protocol: usage per response, the buyer's transcription late.
+    const openai = /^openai\/|gpt-realtime/i.test(this.model.modelId) || isElevenRealtimeModel(this.model.modelId);
     this.usageAcc = new RealtimeUsageAccumulator(openai ? "per_response" : "auto");
     this.lateBuyerTranscript = openai;
     this.clock = deps.clock ?? systemClock;
@@ -1009,7 +1020,7 @@ export class VoiceEngine {
   private costSoFar(): number {
     if (this.model.mode === "scripted" || this.callStart === null) return 0;
     if (this.speaker) return this.callFigures().costMicros;
-    return voiceCallCost(this.model.modelId, this.usageAcc, this.activeSec()).costMicros;
+    return realtimeCallCost(this.model.modelId, this.usageAcc, this.activeSec()).costMicros;
   }
 
   private sendStats() {
@@ -1076,7 +1087,8 @@ export class VoiceEngine {
       return { connected, durationSec, activeSec, usage, costMicros };
     }
     if (this.model.mode === "live" && connected) {
-      ({ costMicros, usage } = voiceCallCost(this.model.modelId, this.usageAcc, activeSec));
+      // Tokens (usage, or the duration floor), plus the connected seconds for a session-priced model (ElevenLabs Realtime).
+      ({ costMicros, usage } = realtimeCallCost(this.model.modelId, this.usageAcc, activeSec));
       usage = { ...usage, ...times };
     } else if (this.usageAcc.events > 0 || connected) {
       const a = this.usageAcc;
@@ -1344,6 +1356,9 @@ export class VoiceEngine {
     // Text output: the model has no voice; ours is the speaker's.
     if (this.speaker) return null;
     const chosen = resolveVoiceSettings(this.loaded!.version.voiceSettings).voice;
+    // ElevenLabs Realtime: no voice unless the version stores one for it (which names it accepts is not known yet);
+    // never a default of ours, never another family's preset left from the version's earlier model.
+    if (isElevenRealtimeModel(this.model.modelId)) return elevenRealtimeVoice(chosen);
     if (chosen) return chosen;
     if (schemaFamilyOf(this.model.modelId) === "gemini") return null;
     return this.safeConfig ? null : callVoice(null, this.model.modelId);
@@ -1377,6 +1392,8 @@ export class VoiceEngine {
       // Who spoke on this call (lib/voice-rt-eleven/rule.ts): what applied, never just what the version asked for (a
       // buyer call, or the Old baseline, ignores "elevenlabs").
       speech: this.speaker ? "elevenlabs" : "model",
+      // ElevenLabs Realtime ran without tools (its last retry): the call card says "Tools: not available on this model".
+      ...(this.toolsDropped ? { toolsOff: true } : {}),
     };
   }
 
@@ -1384,7 +1401,9 @@ export class VoiceEngine {
     // A recorded call (and only one): how to answer if the buyer raises the recording; on every connection of the call.
     const cfg = this.fullSessionConfig(instructions, languages);
     // After an early close: only the session fields proven on this model family (lib/voice/gateway-realtime.ts).
-    return this.safeConfig ? { ...cfg, safe: true } : cfg;
+    // ElevenLabs Realtime's last retry: no tools either.
+    const safe = this.safeConfig ? { ...cfg, safe: true } : cfg;
+    return this.toolsDropped ? { ...safe, tools: [], withoutTools: true } : safe;
   }
 
   private fullSessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
@@ -1489,6 +1508,10 @@ export class VoiceEngine {
     switch (e.type) {
       case "session":
         this.providerSessionId = e.providerSessionId;
+        return;
+      case "session-ack":
+        // What the provider took from our setup (voice, tools, turn detection): every connection's, for the log.
+        this.log.info(voiceLine(this.sessionId, `provider ${clip(e.name, 40)}: ${clip(e.detail, 300)}`));
         return;
       case "audio": {
         const turn = this.ensureAgentTurn();
@@ -1646,7 +1669,7 @@ export class VoiceEngine {
           // An error before this connection said anything is the provider refusing (part of) the session setup:
           // never let it pass silently, and never run an agent without its playbook.
           if (!this.connAudio && gen === this.gen && !this.ended) {
-            const why = clip(e.message ?? e.name);
+            const why = clip(e.message ?? e.name, isElevenRealtimeModel(this.model.modelId) ? 300 : 200);
             void this.enqueue(() => this.afterSetupRejected(why, gen));
             return;
           }
@@ -1654,7 +1677,12 @@ export class VoiceEngine {
         const key = `${e.kind}:${e.name}`;
         if (this.providerSeen.has(key)) return;
         this.providerSeen.add(key);
-        const line = voiceLine(this.sessionId, `provider ${e.kind} event ${clip(e.name, 60)}${e.message ? `: ${clip(e.message)}` : ""}`);
+        // ElevenLabs Realtime (its first live calls): every event type the mapper does not read, named as such.
+        // ElevenLabs Realtime: up to 300 characters of a provider message (the other families: 200, as before).
+        const eleven = isElevenRealtimeModel(this.model.modelId);
+        const line = e.kind === "unknown" && eleven
+          ? voiceLine(this.sessionId, `unhandled event type=${clip(e.name, 60)}${e.message ? ` ${clip(e.message, 300)}` : ""}`)
+          : voiceLine(this.sessionId, `provider ${e.kind} event ${clip(e.name, 60)}${e.message ? `: ${clip(e.message, eleven ? 300 : 200)}` : ""}`);
         if (e.kind === "error") this.log.warn(line);
         else this.log.info(line);
         return;
@@ -2854,11 +2882,22 @@ export class VoiceEngine {
     // Queued: the refused connection is the current one now (its setup may race the error event).
     const sent = this.conn?.sessionFields?.join(",") ?? "?";
     (this.log.error ?? this.log.warn).call(this.log, voiceLine(this.sessionId, `provider rejected the session setup: ${why} sent=${sent}`));
-    if (this.earlyRetryUsed) {
+    // ElevenLabs Realtime: a refusal that names the tools goes straight to the retry without them.
+    const blamesTools = /\btools?\b|function/i.test(why);
+    if (this.earlyRetryUsed && !this.canDropTools()) {
       this.fail("error", "model_closed_early", "model_rejected_session");
       return;
     }
-    await this.reconnect(true);
+    await this.reconnect(true, { dropTools: blamesTools });
+  }
+
+  /**
+   * ElevenLabs Realtime only, once per call: a last retry without tools, so a provider that refuses our tools still
+   * gives a call that shows its voice and latency (the agent then cannot look anything up or quote; loud in the log and
+   * on the call card). Never for the other families: they run with their playbook and tools or not at all.
+   */
+  private canDropTools(): boolean {
+    return isElevenRealtimeModel(this.model.modelId) && !this.toolsDropped;
   }
 
   /**
@@ -2867,15 +2906,22 @@ export class VoiceEngine {
    * only the session fields proven on this model family; if that fails too, the call ends with model_closed_early.
    * A call whose opening line was never spoken starts again with the opener.
    */
-  private async reconnect(early = false) {
+  private async reconnect(early = false, o: { dropTools?: boolean } = {}) {
     if (this.ended || this.reconnecting || !this.loaded) return;
+    let droppingTools = false;
     if (early) {
-      if (this.earlyRetryUsed) {
+      // ElevenLabs Realtime: full → safe → safe without tools (or straight to it when the refusal named the tools).
+      droppingTools = this.canDropTools() && (this.earlyRetryUsed || o.dropTools === true);
+      if (this.earlyRetryUsed && !droppingTools) {
         this.fail("error", "model_closed_early", "model_closed_early");
         return;
       }
       this.earlyRetryUsed = true;
       this.safeConfig = true;
+      if (droppingTools) {
+        this.toolsDropped = true;
+        this.log.warn(voiceLine(this.sessionId, `${TOOLS_REJECTED_LINE} (${this.model.modelId}; the agent cannot look anything up or quote on this call)`));
+      }
     } else {
       if (this.reconnectUsed) {
         this.fail("connection_lost", "connection_lost", "model_closed");
@@ -2892,7 +2938,7 @@ export class VoiceEngine {
     const fresh = early && !this.openerDone && !this.lastLine;
     // Our pinned default voice has never been proven on every account: the retry leaves it out (the model's own default).
     const droppedVoice = early && !this.speaker && !resolveVoiceSettings(this.loaded.version.voiceSettings).voice && schemaFamilyOf(this.model.modelId) !== "gemini" && !!callVoice(null, this.model.modelId);
-    const what = early ? (droppedVoice ? "retry without pinned default voice" : "retry after early close") : "reconnect";
+    const what = early ? (droppingTools ? "retry without tools" : droppedVoice ? "retry without pinned default voice" : "retry after early close") : "reconnect";
     const opened = await this.openModel({ resumed: !fresh }, this.limits.reconnectMs, what);
     if (!opened || this.ended) {
       opened?.conn.close();
@@ -2904,7 +2950,8 @@ export class VoiceEngine {
     this.reconnecting = false;
     this.setState("listening");
     // The snapshot shows the voice now in effect ("model default" after the pinned one was dropped).
-    if (droppedVoice) await this.db.update(voiceSessions).set({ settings: this.settingsSnapshot() }).where(eq(voiceSessions.id, this.sessionId));
+    // Also after the tools were dropped: the snapshot's toolsOff (the call card's "Tools: not available on this model").
+    if (droppedVoice || droppingTools) await this.db.update(voiceSessions).set({ settings: this.settingsSnapshot() }).where(eq(voiceSessions.id, this.sessionId));
     // The opening line was never heard: the retried session says it.
     if (fresh) {
       // The retried session says the opening now; a first one still waiting for the browser is not sent as well.

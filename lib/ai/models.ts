@@ -179,6 +179,11 @@ export const DEFAULT_REALTIME_PRICES: Record<string, RealtimePrice> = {
   "openai/gpt-realtime-2": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
   "openai/gpt-realtime-2.1": { textIn: 4, textOut: 24, cachedIn: 0.4, audioIn: 32, audioOut: 64 },
   "openai/gpt-realtime-mini": { textIn: 0.6, textOut: 2.4, cachedIn: 0.06, audioIn: 10, audioOut: 20 },
+  // ElevenLabs Realtime (Vercel AI Gateway model page, 24 Nov 2026): one input and one output token price (no modality
+  // split, so text and audio carry the same), plus $0.0013334 per connected second, which this table cannot hold:
+  // lib/voice/eleven-realtime.ts adds that part to the call's cost.
+  "elevenlabs/eleven-realtime-v1-mini": { textIn: 0.2, textOut: 6, cachedIn: 0.02, audioIn: 0.2, audioOut: 6 },
+  "elevenlabs/eleven-realtime-v1-max": { textIn: 1.8, textOut: 9, cachedIn: 0.18, audioIn: 1.8, audioOut: 9 },
 };
 
 const REALTIME_PRICE_KEYS = ["textIn", "textOut", "audioIn", "audioOut", "cachedIn"] as const;

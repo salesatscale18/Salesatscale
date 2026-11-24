@@ -22,7 +22,8 @@ import { VOICE_SAMPLE_RATE } from "./protocol";
 import type { RealtimeConnection, RealtimeEvent, RealtimeModel, RealtimeSessionConfig } from "./realtime";
 import { schemaFamilyOf } from "./tool-schema";
 import { cleanTranscript, joinTranscript, markerKinds, sameUtterance } from "./transcript-clean";
-import { voiceModelId } from "./settings";
+import { isElevenRealtimeModel, voiceModelId } from "./settings";
+import { sessionAckSummary } from "./eleven-realtime";
 
 type SdkTool = NonNullable<SdkSessionConfig["tools"]>[number];
 
@@ -51,6 +52,15 @@ export const PROVEN_SESSION_FIELDS: Record<"gemini" | "openai", readonly (keyof 
 };
 
 /**
+ * What the FIRST connect of an ElevenLabs Realtime call sends (not tried live yet, so nothing is proven): OpenAI's
+ * proven fields with the OpenAI values, except turn detection, which is left out (the OpenAI safe config sends none:
+ * the provider's own turn-taking, which ElevenLabs tunes "as one system"), and the voice, which is sent only when the
+ * version stores one for this family (lib/voice/settings.ts elevenRealtimeVoice). Its retry sends OpenAI's
+ * SETUP_RETRY_FIELDS; a last retry leaves the tools out too (lib/voice/engine.ts reconnect).
+ */
+export const ELEVEN_FIRST_SESSION_FIELDS: readonly (keyof SdkSessionConfig)[] = PROVEN_SESSION_FIELDS.openai.filter((k) => k !== "turnDetection");
+
+/**
  * What the retry after a refused (or early-closed) session setup sends (`cfg.safe`), per family. Gemini: its proven
  * fields with the proven plain values (below). OpenAI: the smallest config that still carries the playbook and the
  * tools (the audio formats keep our PCM 24 kHz); voice, transcription and turn detection take the provider's
@@ -66,7 +76,21 @@ export const SESSION_FIELD_NAMES = ["instructions", "voice", "outputModalities",
 
 /** Our session config as the normalized AI SDK session config (`cfg.safe`: proven fields and values only). */
 export function toSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
+  const sdk = familySdkSessionConfig(cfg, modelId);
+  // ElevenLabs Realtime's last retry: no tools field at all.
+  if (!cfg.withoutTools) return sdk;
+  const { tools: _tools, ...rest } = sdk;
+  void _tools;
+  return rest;
+}
+
+function familySdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
   const full = fullSdkSessionConfig(cfg, modelId);
+  if (isElevenRealtimeModel(modelId)) {
+    // OpenAI-compatible: the OpenAI config's fields, ElevenLabs' first-connect subset (or OpenAI's retry subset).
+    const keep = new Set<string>(cfg.safe ? SETUP_RETRY_FIELDS.openai : ELEVEN_FIRST_SESSION_FIELDS);
+    return Object.fromEntries(Object.entries(full).filter(([k]) => keep.has(k))) as SdkSessionConfig;
+  }
   if (!cfg.safe) return full;
   const family = schemaFamilyOf(modelId);
   const keep = new Set<string>(SETUP_RETRY_FIELDS[family]);
@@ -141,7 +165,10 @@ export const KNOWN_IGNORED_EVENTS: ReadonlySet<string> = new Set([
   "custom:unnamed",
 ]);
 
-const unknownEvent = (name: string): RealtimeEvent[] => (KNOWN_IGNORED_EVENTS.has(name) ? [] : [{ type: "provider-event", kind: "unknown", name }]);
+const unknownEvent = (name: string, all = false): RealtimeEvent[] => (!all && KNOWN_IGNORED_EVENTS.has(name) ? [] : [{ type: "provider-event", kind: "unknown", name }]);
+
+/** How much of a provider error message the log keeps. */
+export const PROVIDER_ERROR_LOG_CHARS = 300;
 
 /**
  * A custom event's provider type. The SDK names it `rawType`; when the Gateway leaves that out (the live logs'
@@ -243,7 +270,18 @@ export class ServerEventMapper {
     switch (e.type) {
       case "session-created":
       case "session-started":
-        return e.sessionId ? [{ type: "session", providerSessionId: e.sessionId }] : [];
+        return [
+          ...(e.sessionId ? [{ type: "session" as const, providerSessionId: e.sessionId }] : []),
+          ...(this.o.verbose && e.type === "session-created" ? [{ type: "session-ack" as const, name: e.type, detail: sessionAckSummary(e.raw) }] : []),
+        ];
+      case "session-updated":
+        // Verbose (ElevenLabs Realtime): what the provider took from our setup, for the log. Otherwise nothing we read.
+        return this.o.verbose ? [{ type: "session-ack", name: e.type, detail: sessionAckSummary(e.raw) }] : unknownEvent(e.type);
+      case "session-usage":
+        // The provider's own count of connected seconds (cumulative): what a session-priced model bills. Log only.
+        return this.o.verbose
+          ? [{ type: "provider-event", kind: "unknown", name: e.type, message: `seconds=${Number.isFinite(e.usage?.seconds) ? e.usage.seconds : "?"}` }]
+          : unknownEvent(e.type);
       case "audio-delta":
       case "audio-chunk":
         this.late = null;
@@ -316,19 +354,23 @@ export class ServerEventMapper {
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
         if (/^interrupted$/i.test(rawType)) return this.interrupt();
         // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
-        return unknownEvent(`custom:${rawType}`);
+        return unknownEvent(`custom:${rawType}`, this.o.verbose);
       }
       case "session-closed": {
         // The provider ended the session (a clean close): its reason, when it gives one.
         const reason = (e as { reason?: unknown }).reason;
         return [{ type: "closed", ...(typeof reason === "string" && reason ? { reason: reason.slice(0, 200) } : {}), ...(this.lastError ? { error: this.lastError } : {}) }];
       }
-      case "error":
-        this.lastError = (e.code ? `${e.code}: ${e.message}` : String(e.message ?? "")).slice(0, 200);
-        return [{ type: "provider-event", kind: "error", name: e.code ? `error:${e.code}` : "error", message: this.lastError }];
+      case "error": {
+        const message = e.code ? `${e.code}: ${e.message}` : String(e.message ?? "");
+        this.lastError = message.slice(0, 200);
+        // Verbose (ElevenLabs Realtime): the log gets more of the message (an unknown provider's refusal reads long).
+        return [{ type: "provider-event", kind: "error", name: e.code ? `error:${e.code}` : "error", message: this.o.verbose ? message.slice(0, PROVIDER_ERROR_LOG_CHARS) : this.lastError }];
+      }
       default:
-        // Not used by us: reported once per type per call (the engine logs it), unless known and ignored.
-        return unknownEvent(String((e as { type?: unknown }).type ?? "?"));
+        // Not used by us: reported once per type per call (the engine logs it), unless known and ignored (verbose:
+        // every type, ignored or not).
+        return unknownEvent(String((e as { type?: unknown }).type ?? "?"), this.o.verbose);
     }
   }
 
@@ -406,8 +448,11 @@ export class ServerEventMapper {
    * `rawTranscripts` ("Classic + guards", lib/voice-guarded): transcripts go out as the provider sent them, markers
    * included (no cleaner); default: cleaned (lib/voice/transcript-clean.ts).
    * `textOutput` (the session's outputModality "text"): the model answers in text (mapText).
+   * `verbose` (ElevenLabs Realtime, not tried live): the session-created/updated acknowledgement is summarized for the
+   * log ("session-ack"), the provider's session seconds are reported, every event type the mapper does not read is
+   * reported once (the known-ignored ones too), and error messages keep up to 300 characters for the log.
    */
-  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean; textOutput?: boolean } = {}) {}
+  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean; textOutput?: boolean; verbose?: boolean } = {}) {}
   private clean(text: string): string {
     return this.o.rawTranscripts ? text : cleanTranscript(text);
   }
@@ -523,6 +568,7 @@ export class ServerEventMapper {
  *   src/realtime/google-realtime-event-mapper.ts serializeClientEvent: `case 'response-create': … return null`).
  *   Until 23 Nov 2026 a response-create still went out after a result on Gemini (three in 1.3 s on one buyer turn):
  *   a no-op if the Gateway maps it as the SDK does, a second answer to the same turn if it does not.
+ * - ElevenLabs Realtime (OpenAI-compatible): as OpenAI (its schema family is "openai").
  * Each completed batch is reported (diagnostic "tool-continuation"), once.
  */
 export class ToolResponseGate {
@@ -618,6 +664,7 @@ export class GatewayRealtime implements RealtimeModel {
     const mapper = new ServerEventMapper({
       dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}),
       ...(cfg.outputModality === "text" ? { textOutput: true } : {}),
+      ...(isElevenRealtimeModel(this.modelId) ? { verbose: true } : {}),
     });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;

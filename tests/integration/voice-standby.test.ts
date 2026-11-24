@@ -522,6 +522,111 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
     });
   });
 
+  describe("ElevenLabs Realtime (OpenAI-compatible, not tried live): the retry ladder ends without tools", () => {
+    const ELEVEN = "elevenlabs/eleven-realtime-v1-mini";
+    const TOOLS_ERR = "invalid_request_error: tools are not supported for this model";
+    type Sdk = ReturnType<typeof import("@/lib/voice/gateway-realtime").toSdkSessionConfig>;
+    /** Stands in for ElevenLabs Realtime through the Gateway (as rejectingModel above, with its id). */
+    async function elevenModel(clock: ManualClock, reject: (sdk: Sdk) => string | null) {
+      const { toSdkSessionConfig } = await import("@/lib/voice/gateway-realtime");
+      const inner = new ScriptedRealtime({ clock });
+      const sent: Sdk[] = [];
+      const cfgs: RealtimeSessionConfig[] = [];
+      const model = {
+        modelId: ELEVEN, mode: "scripted" as const, connections: inner.connections,
+        async connect(cfg: RealtimeSessionConfig, onEvent: (e: RealtimeEvent) => void) {
+          const sdk = toSdkSessionConfig(cfg, ELEVEN);
+          sent.push(sdk);
+          cfgs.push(cfg);
+          const conn = await inner.connect(cfg, onEvent);
+          const why = reject(sdk);
+          if (why) queueMicrotask(() => onEvent({ type: "provider-event", kind: "error", name: "error:invalid_request_error", message: why }));
+          return Object.assign(conn, { sessionFields: Object.keys(sdk) });
+        },
+      };
+      return { model, sent, cfgs };
+    }
+    const logs = () => {
+      const lines: { level: string; line: string }[] = [];
+      return { lines, log: { info: (line: string) => lines.push({ level: "info", line }), warn: (line: string) => lines.push({ level: "warn", line }), error: (line: string) => lines.push({ level: "error", line }) } };
+    };
+
+    it("accepted: one connection with OpenAI's fields, no voice, no turn detection, the tools; logged config=full", async () => {
+      const clock = new ManualClock();
+      const { model, sent } = await elevenModel(clock, () => null);
+      const l = logs();
+      const c = await newCall(null, { clock, model: model as never, log: l.log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(15_000);
+      expect(sent).toHaveLength(1);
+      expect(sent[0].voice).toBeUndefined();
+      expect(sent[0].turnDetection).toBeUndefined();
+      expect(sent[0].tools?.length).toBeGreaterThan(5);
+      expect(l.lines.some((x) => /model connected in \d+ms \(elevenlabs\/eleven-realtime-v1-mini\) config=full instructions=\d+ tools=\d+$/.test(x.line))).toBe(true);
+      expect(c.json().some((m) => m.t === "transcript" && m.role === "agent" && m.final)).toBe(true);
+      expect(c.engine.isEnded).toBe(false);
+    });
+
+    it("tools refused at every step: full → safe → safe without tools; loud in the log and on the session snapshot; the call goes on", async () => {
+      const clock = new ManualClock();
+      // Refuses any setup that carries tools (the refusal does not name them on the first two).
+      const { model, sent, cfgs } = await elevenModel(clock, (sdk) => (sdk.tools ? "invalid_value: unsupported session field" : null));
+      const l = logs();
+      const c = await newCall(null, { clock, model: model as never, log: l.log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(20_000);
+      expect(sent).toHaveLength(3);
+      expect(Object.keys(sent[1])).toEqual(["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat", "tools"]);
+      expect(Object.keys(sent[2])).toEqual(["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat"]);
+      expect(cfgs[2]).toMatchObject({ safe: true, withoutTools: true, tools: [] });
+      expect(sent[2].instructions).toBe(sent[0].instructions);
+      expect(l.lines.some((x) => x.level === "warn" && x.line.includes("tools rejected by the provider: running without tools"))).toBe(true);
+      expect(l.lines.some((x) => x.line.includes("retry without tools connected") && x.line.includes("tools=0 (without tools)"))).toBe(true);
+      expect(c.engine.isEnded).toBe(false);
+      expect(c.json().some((m) => m.t === "transcript" && m.role === "agent" && m.final)).toBe(true);
+      const row = await sessionRow(c.sessionId);
+      expect((row.settings as Record<string, unknown>).toolsOff).toBe(true);
+      expect((await voiceSessionSummary(db, acc, c.conversationId))?.toolsOff).toBe(true);
+    });
+
+    it("a refusal that names the tools goes straight to the retry without them; refused again, the call ends", async () => {
+      const clock = new ManualClock();
+      const { model, sent } = await elevenModel(clock, (sdk) => (sdk.tools ? TOOLS_ERR : null));
+      const l = logs();
+      const c = await newCall(null, { clock, model: model as never, log: l.log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(15_000);
+      expect(sent).toHaveLength(2);
+      expect("tools" in sent[1]).toBe(false);
+      expect(c.engine.isEnded).toBe(false);
+
+      const clock2 = new ManualClock();
+      const always = await elevenModel(clock2, () => TOOLS_ERR);
+      const c2 = await newCall(null, { clock: clock2, model: always.model as never, log: logs().log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c2.run(15_000);
+      expect(always.sent).toHaveLength(2);
+      expect(c2.engine.isEnded).toBe(true);
+      expect(await sessionRow(c2.sessionId)).toMatchObject({ endReason: "error", errorCode: "model_closed_early" });
+    });
+
+    it("GPT-Realtime never drops its tools: refused twice, the call ends (unchanged)", async () => {
+      const clock = new ManualClock();
+      const inner = new ScriptedRealtime({ clock });
+      const sent: RealtimeSessionConfig[] = [];
+      const model = {
+        modelId: "openai/gpt-realtime-mini", mode: "scripted" as const, connections: inner.connections,
+        async connect(cfg: RealtimeSessionConfig, onEvent: (e: RealtimeEvent) => void) {
+          sent.push(cfg);
+          const conn = await inner.connect(cfg, onEvent);
+          queueMicrotask(() => onEvent({ type: "provider-event", kind: "error", name: "error", message: TOOLS_ERR }));
+          return conn;
+        },
+      };
+      const c = await newCall(null, { clock, model: model as never, log: logs().log, limits: { standbyAfterQuietMs: 600_000 } });
+      await c.run(15_000);
+      expect(sent).toHaveLength(2);
+      expect(sent.every((x) => !x.withoutTools && x.tools.length > 0)).toBe(true);
+      expect(c.engine.isEnded).toBe(true);
+    });
+  });
+
   it("a wake whose model connection fails is retried once; two failures end the call (connection_lost)", async () => {
     const clock = new ManualClock();
     const inner = new ScriptedRealtime({ clock });

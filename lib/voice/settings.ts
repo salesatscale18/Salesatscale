@@ -29,6 +29,9 @@ export const MIN_CALL_SEC = 60;
 export const VOICE_PACES = ["slower", "normal", "faster"] as const;
 export const VOICE_STYLES = ["patient", "balanced", "quick"] as const;
 
+/** The model list's hint line for both ElevenLabs Realtime models. */
+const ELEVEN_REALTIME_NOTE = "ElevenLabs listens, decides and speaks as one system. Test calls only for now.";
+
 /** The default realtime model (VOICE_MODEL overrides it). */
 export const DEFAULT_VOICE_MODEL = "google/gemini-3.8-live";
 
@@ -42,9 +45,38 @@ export const VOICE_MODELS = [
   { id: "google/gemini-3.8-live", label: "Gemini 3.8 Live", family: "gemini", proven: true, note: "Its own turn detection (not tunable); Gemini voices." },
   { id: "openai/gpt-realtime-2.1", label: "GPT-Realtime 2.1", family: "openai", proven: true, note: "Tunable turn-taking (style, pause, interruptions); OpenAI voices." },
   { id: "openai/gpt-realtime-mini", label: "GPT-Realtime mini", family: "openai", proven: true, note: "The smaller OpenAI model: cheaper, tunable turn-taking; OpenAI voices." },
-] as const satisfies readonly { id: string; label: string; family: "gemini" | "openai"; proven: boolean; note: string }[];
+  // ElevenLabs end to end (speech to speech, no GPT in the middle), through the Gateway's OpenAI-compatible realtime
+  // protocol. Not tried live yet; test calls only (ELEVEN_REALTIME_FOR_BUYER_CALLS below; lib/voice/eleven-realtime.ts).
+  { id: "elevenlabs/eleven-realtime-v1-mini", label: "ElevenLabs Realtime mini (testing)", family: "elevenlabs", proven: false, note: ELEVEN_REALTIME_NOTE },
+  { id: "elevenlabs/eleven-realtime-v1-max", label: "ElevenLabs Realtime max (testing)", family: "elevenlabs", proven: false, note: ELEVEN_REALTIME_NOTE },
+] as const satisfies readonly { id: string; label: string; family: VoiceFamily; proven: boolean; note: string }[];
 
 export type VoiceModelId = (typeof VOICE_MODELS)[number]["id"];
+
+/**
+ * A realtime model's family: how the engine talks to it. "elevenlabs" (ElevenLabs Realtime through the Gateway) is
+ * OpenAI-COMPATIBLE: the same normalized session config, client events, tool schema and one response request per tool
+ * batch as "openai"; it differs in what its first connect sends (no voice unless the version stores one for it, no turn
+ * detection), in its retries (a last one without tools) and in its session-duration price (lib/voice/eleven-realtime.ts).
+ */
+export type VoiceFamily = "gemini" | "openai" | "elevenlabs";
+
+/** Ids that are ElevenLabs Realtime (the Gateway's elevenlabs/eleven-realtime-*). */
+export function isElevenRealtimeModel(id: string | null | undefined): boolean {
+  return typeof id === "string" && /^elevenlabs\/eleven-realtime/i.test(id);
+}
+
+/** The family of a model id ("scripted" and unknown ids: "openai", as the tool schema has always treated them). */
+export function voiceFamilyOf(id: string | null | undefined): VoiceFamily {
+  if (isElevenRealtimeModel(id)) return "elevenlabs";
+  return typeof id === "string" && /^google\/|gemini/i.test(id) ? "gemini" : "openai";
+}
+
+/**
+ * ElevenLabs Realtime on BUYER calls. Off: a version set to it runs its buyer calls on the platform default model
+ * (lib/voice/eleven-realtime.ts callModelFor, logged); test calls use it. Turn on once live test calls proved it.
+ */
+export const ELEVEN_REALTIME_FOR_BUYER_CALLS: boolean = false;
 
 /**
  * Who speaks on a call (Voice settings › "Voice from"): "model" (default) the realtime model with its own voice;
@@ -118,6 +150,11 @@ export function voiceCapabilities(modelId: string): VoiceCapabilities {
   if (/^openai\/|gpt-realtime/i.test(modelId)) {
     return { voices: [...OPENAI_VOICES], pace: true, style: true, pauseMs: true, interruptSensitivity: true, fillers: true };
   }
+  // ElevenLabs Realtime: no voice list known (none is sent unless the version stores one for it) and no turn-detection
+  // tuning sent (its own turn-taking, "tuned as one system"): only what the instructions carry.
+  if (isElevenRealtimeModel(modelId)) {
+    return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true };
+  }
   // The scripted model and unknown models: nothing provider-specific.
   return { voices: [], pace: true, style: false, pauseMs: false, interruptSensitivity: false, fillers: true };
 }
@@ -140,9 +177,23 @@ export function callVoice(chosen: string | null | undefined, modelId: string): s
  * gets no voice field (null: the model's own default). As VoiceEngine.voiceInEffect on a first connection.
  */
 export function sentCallVoice(chosen: string | null | undefined, modelId: string): string | null {
+  // ElevenLabs Realtime: only a voice stored for it (never another family's preset left from an earlier model).
+  if (isElevenRealtimeModel(modelId)) return elevenRealtimeVoice(chosen);
   if (typeof chosen === "string" && chosen.trim()) return chosen.trim();
   if (/^google\/|gemini/i.test(modelId)) return null;
   return callVoice(null, modelId);
+}
+
+/**
+ * The voice an ElevenLabs Realtime call sends: the version's stored voice when it is one for this family, else none
+ * (the provider's default; which voice names it accepts is unknown until a live call). A Gemini or OpenAI preset name
+ * (left from the version's earlier model) is not one.
+ */
+export function elevenRealtimeVoice(chosen: string | null | undefined): string | null {
+  const v = typeof chosen === "string" ? chosen.trim().slice(0, 40) : "";
+  if (!v) return null;
+  if ((GEMINI_VOICES as readonly string[]).includes(v) || (OPENAI_VOICES as readonly string[]).includes(v)) return null;
+  return v;
 }
 
 /** The session snapshot's word for "no voice sent: the model's own default" (voice_sessions.settings.voice). */
