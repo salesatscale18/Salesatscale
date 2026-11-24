@@ -288,7 +288,7 @@ describe("R3-1: lead page, Conversations, Quotes and orders, Leads", () => {
     // Sorting: lead name A–Z puts Cafe Noa first; aria-sort on the heading; links keep the search.
     const sorted = await page(OrdersPage(props(account.slug, { sort: "lead", dir: "asc" })));
     expect(sorted.indexOf("Cafe Noa")).toBeLessThan(sorted.indexOf("Shapiro Pizza"));
-    expect(sorted).toContain('aria-sort="ascending" data-sort-col="lead"');
+    expect(sorted).toContain('aria-sort="ascending" class="lqq-c-lead" data-sort-col="lead"');
     expect(sorted).toMatch(/data-sort-col="lead"><a class="sas-sort" href="\/app\/[^"]*\/orders\?sort=lead&amp;dir=desc"/);
     const desc = await page(OrdersPage(props(account.slug, { sort: "lead", dir: "desc" })));
     expect(desc.indexOf("Shapiro Pizza")).toBeLessThan(desc.indexOf("Cafe Noa"));
