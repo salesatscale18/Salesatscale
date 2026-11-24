@@ -256,12 +256,29 @@ describe("Quotes and orders V2", () => {
     const css = readFileSync("components/sas/sas.css", "utf8");
     const fallback = css.indexOf(".sas-table.lqq-table th.lqq-c-lead { width: 240px; }");
     const supports = css.indexOf("@supports (width: clamp(1px, 1cqi, 2px)) {");
-    const clamp = css.indexOf(".sas-table.lqq-table th.lqq-c-lead { width: clamp(200px, calc((100cqi");
+    const clamp = css.indexOf(".sas-table.lqq-table th.lqq-c-lead { width: clamp(160px, calc((100cqi");
     expect(fallback).toBeGreaterThan(-1);
     expect(supports).toBeGreaterThan(fallback);
     expect(clamp).toBeGreaterThan(supports);
     // The clamp is declared only inside that block.
     expect(css.match(/th\.lqq-c-lead \{ width: clamp/g)).toHaveLength(1);
+  });
+
+  it("CSS: Total's sort arrow before the word; phone detail line wraps; the table fits its card (no fixed minimum, minor columns, stacked)", async () => {
+    const css = readFileSync("components/sas/sas.css", "utf8");
+    // b. Right-aligned heading: the arrow shows first, by CSS only; markup, link and aria-sort as before (word, then icon).
+    expect(css).toContain(".sas-table.lqq-table th.lqq-c-total a.sas-sort { flex-direction: row-reverse; align-items: baseline; }");
+    const html = await page(OrdersPage(props(account.slug)));
+    expect(html).toMatch(/<th scope="col" aria-sort="none" class="lqq-c-total" data-sort-col="one_time"><a class="sas-sort" href="[^"]*sort=one_time&amp;dir=desc" title="[^"]*">Total<span class="sas-sort__icon"/);
+    // c. Phone: the line under the status wraps instead of being cut.
+    const phone = css.slice(css.indexOf("/* Phone: chips scroll sideways"), css.indexOf("/* Overview market cards"));
+    expect(phone).toContain(".lqq-where__detail { max-width: 100%; white-space: normal; overflow: visible; text-align: end; }");
+    // Fit: card capped at 1120px; no fixed minimum where the card is a size container; minor columns hide below 926px; stacked below 696px.
+    expect(css).toContain(".lqq-head, .lqq-card { width: 100%; max-width: 1120px; }");
+    const fit = css.slice(css.indexOf("/* The table never runs wider than its card"), css.indexOf("/* Phone: chips scroll sideways"));
+    expect(fit).toMatch(/@supports \(container-type: inline-size\) \{\s*\.lqq-table \{ min-width: 0; \}/);
+    expect(fit).toMatch(/@container \(min-width: 696px\) and \(max-width: 925px\) \{\s*\.sas-table--panel-aware\.lqq-table \.sas-col-minor \{ display: none; \}/);
+    expect(fit).toMatch(/@container \(max-width: 695px\) \{\s*\.sas-table\.lqq-table \{ display: block; min-width: 0 !important; \}/);
   });
 
   it("the n days left text counts whole days, rounded up", async () => {
