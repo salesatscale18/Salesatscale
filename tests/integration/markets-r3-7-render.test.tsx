@@ -56,23 +56,24 @@ describe("Settings › Markets (R3-7)", () => {
   });
   afterAll(async () => t.close());
 
-  it("a setting set for the market shows Edit next to Reset; Edit opens the same form prefilled", async () => {
+  it("a setting set for the market shows Different here, Reset and Change; Change opens the same form prefilled", async () => {
     // createMarket gave the UK market its own time zone.
     const html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: marketId })));
     const tz = rowOf(html, "timezone");
-    expect(tz).toContain(">Set for this market<");
-    expect(tz).toMatch(/<a [^>]*href="[^"]*override=timezone#set-timezone"[^>]*data-edit-setting="timezone"[^>]*>Edit<\/a>[^]*>Reset<\/button>/);
-    expect(html).toContain("Different from your account: 1. The rest follow your account defaults.");
+    expect(tz).toContain(">Different here<");
+    expect(tz).toMatch(/>Reset<\/button>[^]*<a [^>]*href="[^"]*override=timezone#set-timezone"[^>]*data-edit-setting="timezone"[^>]*>Change<\/a>/);
+    expect(html).toContain("Different from your account: 1.");
     expect(html).toContain("Change only what is different there.");
     expect(html.toLowerCase()).not.toContain("overrid".concat("den<"));
-    // An account-default row still offers "Change for this market".
-    expect(rowOf(html, "languages")).toMatch(/>Same as account default<[^]*>Change for this market<\/a>/);
+    // A row that follows the account offers only "Change".
+    expect(rowOf(html, "languages")).toMatch(/>Change<\/a>/);
+    expect(rowOf(html, "languages")).not.toContain("Different here");
 
     const editing = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: marketId, override: "timezone" })));
     expect(editing).toMatch(/data-override-form="timezone"[^]*<option value="Europe\/London" selected="">/);
     expect(editing).toMatch(/data-override-form="timezone"[^]*>Save<\/button>/);
-    // While the form is open, Edit is not shown again; Reset stays.
-    expect(rowOf(editing, "timezone")).not.toContain(">Edit<");
+    // While the form is open, Change is not shown again; Reset stays.
+    expect(rowOf(editing, "timezone")).not.toContain(">Change<");
     expect(rowOf(editing, "timezone")).toContain(">Reset<");
   });
 
@@ -116,14 +117,16 @@ describe("Settings › Markets (R3-7)", () => {
     expect(rowOf(renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: marketId }))), "holidays")).toContain(">None<");
   });
 
-  it("the line under the price list shows only when it says more than the dropdown; the Price lists link stays", async () => {
+  it("the line under the price list shows only when it says more than the value; the Price lists link stays in the picker", async () => {
     let html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: marketId })));
-    expect(html).toMatch(/data-price-list-note="none"[^>]*>Without a price list this market can&#x27;t quote\. <a [^>]*>Price lists<\/a>/);
+    expect(html).toMatch(/data-price-list-note="none"[^>]*>Without a price list this market can&#x27;t quote\.</);
     await seedPricing(db, acc.id, [{ sku: "KIT-1", oneTime: 100_000 }], { userId: me.id });
     const [list] = await listPriceLists(db, acc.id);
     await setMarketPriceList(db, { userId: me.id, actingAs: false }, acc.id, marketId, list.lineageId);
     html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: marketId })));
-    expect(html).toMatch(/data-price-list-note="link"[^>]*><a [^>]*>Price lists<\/a><\/span>/);
+    expect(html).not.toContain("data-price-list-note");
     expect(html).not.toContain("Selling from");
+    const picker = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: marketId, edit: "price_list" })));
+    expect(picker).toMatch(/data-price-list-form=""[^]*data-price-list-link=""><a [^>]*>Price lists<\/a>/);
   });
 });

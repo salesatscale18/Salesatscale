@@ -176,7 +176,7 @@ describe("Park and continue: questions to the team (O4)", () => {
     expect(items.some((i) => i.kind === "team_question" && i.leadId === test.leadId)).toBe(false);
     expect(items.some((i) => i.kind === "human_handling" && i.leadId === c.leadId)).toBe(false);
     expect(await needsYouCount(db, acc.id, new Date())).toBe(items.length);
-    expect(needsYouHref("/app/x", item!)).toBe("/app/x/setup/knowledge?panel=answer&question=Can+it+run+on+110V%3F");
+    expect(needsYouHref("/app/x", item!)).toBe("/app/x/setup/knowledge?view=questions&panel=answer&question=Can+it+run+on+110V%3F");
     expect((await needsYou(db, other.id, new Date())).some((i) => i.kind === "team_question")).toBe(false);
 
     const html = await page(OverviewPage, { account: acc.slug });
@@ -185,7 +185,7 @@ describe("Park and continue: questions to the team (O4)", () => {
     const list = await page(LeadsPage, { account: acc.slug }, { view: "needs_you", need: "questions" });
     expect(list).toContain(">Question to answer<");
     expect(list).toContain("Good to know");
-    expect(list).toContain(`/app/${acc.slug}/setup/knowledge?panel=answer&amp;question=Can+it+run+on+110V%3F`);
+    expect(list).toContain(`/app/${acc.slug}/setup/knowledge?view=questions&amp;panel=answer&amp;question=Can+it+run+on+110V%3F`);
 
     // Knowledge: the list and the answer panel show the lead, the flag and the words; the test chat says so.
     const k = await page(KnowledgePage, { account: acc.slug }, { panel: "answer", question: "Can it run on 110V?" });

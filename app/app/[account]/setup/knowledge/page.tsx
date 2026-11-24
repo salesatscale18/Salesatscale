@@ -1,5 +1,5 @@
 import { evidenceChipText } from "@/lib/pipeline/evidence-text";
-import type { CSSProperties } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 import type { KnowledgeFact } from "@/db/schema";
 import { Button, buttonClass } from "@/components/sas/primitives";
@@ -8,7 +8,7 @@ import { SetupSteps } from "@/components/sas/nav";
 import { ConfirmDelete, ListTable, ListToolbar, RowMenu, SidePanel, SortableTh, type RowMenuItem } from "@/components/sas/list-kit";
 import { setupProgress } from "@/lib/overview/setup";
 import { appDb, requireAccount } from "@/lib/auth/account";
-import { listFacts, listTopics, unansweredQuestions, type QuestionAsk } from "@/lib/agent/service";
+import { listFacts, listTopics, unansweredQuestions, type QuestionAsk, type QuestionChat } from "@/lib/agent/service";
 import { approvalInfo, locateEvidence, openContradictions, openFactConflicts, sourceGaps, type EvidenceLink } from "@/lib/pipeline/service";
 import { differingNumber } from "@/lib/pipeline/dedup";
 import { formatDayMonthIn, formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
@@ -45,6 +45,10 @@ const DROP = [...TRANSIENT_PARAMS, "question", "done", "error", "n", "edit"] as 
  * facts reach the agent. Facts found by "Analyze sources" arrive as suggested,
  * with a chip that links to the section of the source they came from.
  * Contradictions between sources are a choice per topic.
+ * KnowledgeV2: "Questions to answer" is its own entry above the topics
+ * (?view=questions) with two cards, "Buyers asked" (questions from chats,
+ * newest first) and "Missing from your sources" (gaps the analysis found that
+ * no buyer asked). Topic pages and All topics show only facts.
  */
 export default async function KnowledgePage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
@@ -68,8 +72,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   // Buyers' questions first, then questions the sources do not answer (same text once).
   const askedKeys = new Set(asked.map((q) => q.question.toLowerCase()));
   const questions = [
-    ...asked.map((q) => ({ question: q.question, times: q.times, lastAskedAt: q.lastAskedAt as Date | null, topic: null as string | null, asks: q.asks })),
-    ...gaps.filter((g) => !askedKeys.has(g.question.toLowerCase())).map((g) => ({ question: g.question, times: 0, lastAskedAt: null as Date | null, topic: g.topic, asks: [] as QuestionAsk[] })),
+    ...asked.map((q) => ({ question: q.question, times: q.times, lastAskedAt: q.lastAskedAt as Date | null, topic: null as string | null, asks: q.asks, chats: q.chats })),
+    ...gaps.filter((g) => !askedKeys.has(g.question.toLowerCase())).map((g) => ({ question: g.question, times: 0, lastAskedAt: null as Date | null, topic: g.topic, asks: [] as QuestionAsk[], chats: [] as QuestionChat[] })),
   ];
   const links = await locateEvidence(appDb, account.id, account.slug, allFacts.filter((f) => f.sourceId && f.sourceLocator).map((f) => ({ sourceId: f.sourceId!, locator: f.sourceLocator! })));
   // Facts in an open contradiction, or that differ from an approved fact, wait for the seller's choice: "Approve all" leaves them out.
@@ -97,8 +101,12 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
 
   const base = `/app/${account.slug}`;
   const page = `${base}/setup/knowledge`;
-  const link = (patch: Record<string, string | null> = {}) => hrefWith(page, sp, patch, DROP);
-  const listParams = new URLSearchParams(Object.fromEntries(LIST_KEYS.flatMap((k) => (firstParam(sp, k) ? [[k, firstParam(sp, k)!]] : [])))).toString();
+  // KnowledgeV2: ?view=questions is the "Questions to answer" view (Overview and Leads › Needs you link to it).
+  // The Answer panel always opens over it, so an older link (?panel=answer&question=…) lands there too; links and forms keep the view.
+  const questionsView = firstParam(sp, "view") === QUESTIONS_VIEW || panel === "answer";
+  const keepView: Record<string, string> = questionsView ? { view: QUESTIONS_VIEW } : {};
+  const link = (patch: Record<string, string | null> = {}) => hrefWith(page, sp, { ...keepView, ...patch }, DROP);
+  const listParams = new URLSearchParams({ ...Object.fromEntries(LIST_KEYS.flatMap((k) => (firstParam(sp, k) ? [[k, firstParam(sp, k)!]] : []))), ...keepView }).toString();
   const filter = current?.topic ?? "";
   const totals = topics.reduce((s, x) => ({ total: s.total + x.total, approved: s.approved + x.approved, suggested: s.suggested + x.suggested }), { total: 0, approved: 0, suggested: 0 });
   const topicNames = topics.map((x) => x.topic);
@@ -113,12 +121,18 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
     </>
   );
   const editing = panel && panel !== "new" && panel !== "answer" ? allFacts.find((f) => f.id === panel) ?? null : null;
-  const answering = panel === "answer" ? questions.find((q) => q.question === firstParam(sp, "question")) ?? (firstParam(sp, "question") ? { question: firstParam(sp, "question")!.slice(0, 300), times: 0, lastAskedAt: null, topic: null, asks: [] as QuestionAsk[] } : null) : null;
+  const answering = panel === "answer" ? questions.find((q) => q.question === firstParam(sp, "question")) ?? (firstParam(sp, "question") ? { question: firstParam(sp, "question")!.slice(0, 300), times: 0, lastAskedAt: null, topic: null, asks: [] as QuestionAsk[], chats: [] as QuestionChat[] } : null) : null;
   // "Save and answer next": the next open question after this one (wrapping round), while another remains.
   const answeringAt = answering ? questions.findIndex((q) => q.question === answering.question) : -1;
   const nextQuestion = answering
     ? (answeringAt >= 0 ? [...questions.slice(answeringAt + 1), ...questions.slice(0, answeringAt)] : questions).find((q) => q.question !== answering.question) ?? null
     : null;
+  const questionsHref = hrefWith(page, {}, { view: QUESTIONS_VIEW });
+  // Its two cards: what buyers asked (newest first) and what the analysis found missing in the sources (no buyer asked).
+  const buyerAsked = questions.filter((q) => q.times > 0);
+  const fromSources = questions.filter((q) => q.times === 0);
+  const showAllGaps = firstParam(sp, "more") === "gaps";
+  const gapsShown = showAllGaps ? fromSources : fromSources.slice(0, GAPS_SHOWN);
   const filtered = Boolean(filters.q || filters.source || (filters.status === "suggested" || filters.status === "approved"));
   const label = (f: KnowledgeFact) => f.statement.slice(0, 60);
   const sourceChip = (f: KnowledgeFact) => {
@@ -162,7 +176,8 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
         </div>
         <span className="sas-small">
           {t("knowledge.intro")}{" "}
-          {t(questions.length === 1 ? "knowledge.summary_one_gap" : "knowledge.summary", { total: totals.total, approved: totals.approved, suggested: totals.suggested, gaps: questions.length })}
+          {/* No open questions: the summary leaves the questions part out. */}
+          {t(questions.length === 0 ? "knowledge.summary_no_gaps" : questions.length === 1 ? "knowledge.summary_one_gap" : "knowledge.summary", { total: totals.total, approved: totals.approved, suggested: totals.suggested, gaps: questions.length })}
           {contradictions.length ? <> {t("knowledge.summary_contradictions", { n: contradictions.length })}</> : null}
         </span>
         <SetupSteps basePath={base} current="knowledge" completed={progress} />
@@ -172,12 +187,25 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 24, alignItems: "flex-start" }}>
         <nav aria-label={t("knowledge.topics")} className="sas-subnav" style={{ position: "relative" }}>
+          {/* KnowledgeV2: "Questions to answer" is its own entry above the topics (the first chip of the row on a phone); its count goes when none are open. */}
+          <Link
+            className="sas-subnav__item" href={questionsHref} scroll={false} data-questions-entry=""
+            aria-current={questionsView ? "page" : undefined}
+            style={{ justifyContent: "space-between", gap: 8, ...(questionsView ? { background: "var(--primary-soft)", color: "var(--primary)", boxShadow: "none" } : {}) }}
+          >
+            <span style={{ ...ellipsis, display: "inline-flex", alignItems: "center", gap: 8 }}><Icon name="book-open" />{t("knowledge.questions.entry")}</span>
+            {questions.length ? (
+              <span className="sas-pill sas-pill--warning" data-questions-count="">{questions.length}<span className="sas-sr"> {t("knowledge.questions.open_count", { n: questions.length })}</span></span>
+            ) : null}
+          </Link>
+          {/* Divider: a line in the column; in the phone's chip row it has no width, so it does not show. */}
+          <span aria-hidden="true" style={{ alignSelf: "stretch", flex: "none", borderBlockStart: "1px solid var(--line)", marginBlock: 8 }} />
           <span className="sas-group-label" style={{ paddingInline: 12 }}>{t("knowledge.topics")}</span>
           {[{ topic: null as string | null, label: t("knowledge.all_topics"), total: totals.total, suggested: 0 }, ...topics.map((x) => ({ topic: x.topic as string | null, label: x.topic, total: x.total, suggested: x.suggested }))].map((x) => {
-            const on = (current?.topic ?? null) === x.topic;
+            const on = !questionsView && (current?.topic ?? null) === x.topic;
             return (
               <Link
-                key={x.topic ?? "_all"} className="sas-subnav__item" href={link({ topic: x.topic, source: null })} scroll={false}
+                key={x.topic ?? "_all"} className="sas-subnav__item" href={link({ topic: x.topic, source: null, view: null, more: null })} scroll={false}
                 aria-current={on ? "page" : undefined}
                 style={{ justifyContent: "space-between", gap: 8, ...(on ? { background: "var(--primary-soft)", color: "var(--primary)", boxShadow: "none" } : {}) }}
               >
@@ -191,6 +219,51 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
         </nav>
 
         <div className="sas-stack-6" style={{ flex: "999 1 520px", minWidth: 0 }}>
+          {questionsView ? (
+            <section className="sas-stack-4" aria-labelledby="kq-h" data-questions-view="">
+              <div className="sas-stack-2" style={{ gap: 2 }}>
+                <h2 id="kq-h" className="sas-heading">{questions.length ? t("knowledge.questions.view_title", { count: questions.length }) : t("knowledge.questions.entry")}</h2>
+                <span className="sas-small">{t("knowledge.questions.view_sub")}</span>
+              </div>
+              {questions.length === 0 ? (
+                <div className="sas-panel" data-questions-empty="">
+                  <div className="sas-empty">
+                    <span className="sas-empty__icon sas-empty__icon--start"><Icon name="check-circle" /></span>
+                    <strong>{t("knowledge.questions.none")}</strong>
+                    <span className="sas-small">{t("knowledge.questions.empty")}</span>
+                  </div>
+                </div>
+              ) : null}
+              {buyerAsked.length ? (
+                <QuestionCard id="kq-asked" title={t("knowledge.questions.asked_title", { n: buyerAsked.length })} sub={t("knowledge.questions.asked_sub")} group="asked">
+                  {buyerAsked.map((q) => (
+                    <QuestionRow
+                      key={q.question} question={q.question} current={answering?.question === q.question} answerHref={link({ panel: "answer", question: q.question })}
+                      context={q.asks.length ? <AskedBy asks={q.asks} base={base} question={q.question} /> : q.chats.length ? <AskedIn chats={q.chats} base={base} /> : null}
+                      when={(
+                        <>
+                          {q.times > 1 ? `${t("knowledge.questions.times", { n: q.times })} · ` : null}
+                          {q.lastAskedAt ? <time dateTime={q.lastAskedAt.toISOString()} title={`${formatLocalDateTime(q.lastAskedAt, tz)} · ${zoneTitle(q.lastAskedAt, tz)}`}>{timeAgo(q.lastAskedAt, now, tz)}</time> : null}
+                        </>
+                      )}
+                    />
+                  ))}
+                </QuestionCard>
+              ) : null}
+              {fromSources.length ? (
+                <QuestionCard id="kq-sources" title={t("knowledge.questions.sources_title", { n: fromSources.length })} sub={t("knowledge.questions.sources_sub")} group="sources">
+                  {gapsShown.map((q) => (
+                    <QuestionRow key={q.question} question={q.question} current={answering?.question === q.question} answerHref={link({ panel: "answer", question: q.question })} context={null} when={null} />
+                  ))}
+                  {fromSources.length > gapsShown.length ? (
+                    <div style={{ padding: "10px 16px", borderBlockStart: "1px solid var(--line)" }}>
+                      <Link href={`${link({ more: "gaps" })}#kq-sources`} scroll={false} data-show-more="">{t("knowledge.questions.show_more", { n: fromSources.length - gapsShown.length })}</Link>
+                    </div>
+                  ) : null}
+                </QuestionCard>
+              ) : null}
+            </section>
+          ) : (<>
           {contradictions.filter((c) => !current || c.topic === current.topic || c.facts.some((f) => f.topic === current.topic)).map((c) => (
             <section key={`${c.runId}-${c.index}`} className="sas-panel" aria-labelledby={`kc-${c.runId}-${c.index}`} style={{ borderColor: "var(--warning)" }}>
               <form action={resolveContradictionAction} className="sas-panel__body sas-stack-4">
@@ -429,47 +502,14 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
               </ListTable>
             )}
           </section>
+          {questions.length ? (
+            // A topic page shows only its facts; one muted line points to the questions.
+            <span className="sas-small" data-questions-pointer="">
+              {t("knowledge.questions.pointer_before")}<Link href={questionsHref} scroll={false}>{t("knowledge.questions.view_title", { count: questions.length })}</Link>
+            </span>
+          ) : null}
+          </>)}
           <datalist id="kf-topics">{[...new Set(["General", ...topicNames])].map((x) => <option key={x} value={x} />)}</datalist>
-
-          {/* R5-11: on a phone the Answer button sits under the question, not over it (sas.css, lane R5b). */}
-          <section className="sas-stack-2 r5b-questions" aria-labelledby="kq-h" data-questions="">
-            <h2 id="kq-h" className="sas-heading">{t("knowledge.questions.title", { count: questions.length })}</h2>
-            <span className="sas-small">{t("knowledge.questions.intro")}</span>
-            {questions.length === 0 ? (
-              <div className="sas-panel sas-panel__body"><span className="sas-small">{t("knowledge.questions.empty")}</span></div>
-            ) : (
-              <ListTable caption={t("knowledge.questions.caption")}>
-                <thead>
-                  <tr>
-                    <th scope="col">{t("knowledge.questions.col")}</th>
-                    <th scope="col">{t("knowledge.questions.col_asked")}</th>
-                    <th scope="col"><span className="sas-sr">{t("knowledge.col.actions")}</span></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {questions.map((q) => (
-                    <tr key={q.question} data-current={answering?.question === q.question ? "" : undefined}>
-                      <td style={{ overflowWrap: "anywhere", whiteSpace: "normal" }}>
-                        <span dir="auto">{q.question}</span>
-                        {q.asks.length ? <AskedBy asks={q.asks} base={base} /> : null}
-                      </td>
-                      <td data-label={t("knowledge.questions.col_asked")} className="sas-small">
-                        {q.times === 0 ? t("knowledge.questions.from_sources") : (
-                          <>
-                            {q.times > 1 ? `${t("knowledge.questions.times", { n: q.times })} · ` : null}
-                            {q.lastAskedAt ? <time dateTime={q.lastAskedAt.toISOString()} title={`${formatLocalDateTime(q.lastAskedAt, tz)} · ${zoneTitle(q.lastAskedAt, tz)}`}>{timeAgo(q.lastAskedAt, now, tz)}</time> : null}
-                          </>
-                        )}
-                      </td>
-                      <td data-label="" className="sas-td-actions">
-                        <Link className={buttonClass("secondary", "sm")} href={link({ panel: "answer", question: q.question })} scroll={false} aria-label={`${t("knowledge.answer")}: ${q.question.slice(0, 60)}`}>{t("knowledge.answer")}</Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </ListTable>
-            )}
-          </section>
         </div>
       </div>
 
@@ -543,7 +583,7 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
               <strong dir="auto" style={{ overflowWrap: "anywhere" }} data-answer-question="">{answering.question}</strong>
               {answering.times > 1 ? <span className="sas-hint">{t("knowledge.questions.times", { n: answering.times })}</span> : null}
               {answering.times === 0 && answering.topic ? <span className="sas-hint">{t("knowledge.questions.from_sources")}</span> : null}
-              {answering.asks.length ? <AskedBy asks={answering.asks} base={base} /> : null}
+              {answering.asks.length ? <AskedBy asks={answering.asks} base={base} /> : answering.chats.length ? <AskedIn chats={answering.chats} base={base} /> : null}
             </div>
             {answering.asks.length ? <span className="sas-small">{t("knowledge.questions.answer_goes_back")}</span> : null}
             {/* R5-11: Topic starts empty (as in Add fact) unless the question or the side list gives one; "General" is not a real topic. */}
@@ -560,24 +600,93 @@ export default async function KnowledgePage({ params, searchParams }: { params: 
   );
 }
 
+/** The value of ?view= that opens "Questions to answer" (KnowledgeV2). */
+const QUESTIONS_VIEW = "questions";
+/** "Missing from your sources" shows this many before "Show n more". */
+const GAPS_SHOWN = 3;
+
+/** One card of the questions view: a heading with its count and a muted line, then the question rows. */
+function QuestionCard({ id, title, sub, group, children }: { id: string; title: string; sub: string; group: "asked" | "sources"; children: ReactNode }) {
+  return (
+    <section id={id} className="sas-panel" aria-labelledby={`${id}-h`} data-question-group={group} style={{ overflow: "hidden" }}>
+      <div style={{ display: "flex", flexWrap: "wrap", alignItems: "baseline", gap: "2px 8px", padding: "12px 16px" }}>
+        <h3 id={`${id}-h`} className="sas-heading" style={{ margin: 0 }}>{title}</h3>
+        <span className="sas-small">{sub}</span>
+      </div>
+      <ul style={{ listStyle: "none", margin: 0, padding: 0 }}>{children}</ul>
+    </section>
+  );
+}
+
+/** A question row: the question with its context line, when it was asked, and Answer (wraps under the text on a phone). */
+function QuestionRow({ question, context, when, answerHref, current }: { question: string; context: ReactNode; when: ReactNode; answerHref: string; current: boolean }) {
+  return (
+    <li
+      data-question="" data-current={current ? "" : undefined}
+      style={{ display: "flex", flexWrap: "wrap", alignItems: "center", gap: "6px 16px", padding: "11px 16px", borderBlockStart: "1px solid var(--line)", ...(current ? { background: "var(--primary-soft)" } : {}) }}
+    >
+      <span style={{ flex: "1 1 280px", minWidth: 0, overflowWrap: "anywhere" }}>
+        <strong dir="auto" style={{ display: "block", fontWeight: 600 }}>{question}</strong>
+        {context}
+      </span>
+      {when ? <span className="sas-small" style={{ flex: "none", fontVariantNumeric: "tabular-nums" }} data-question-when="">{when}</span> : null}
+      <Link className={buttonClass("secondary", "sm")} href={answerHref} scroll={false} aria-label={`${t("knowledge.answer")}: ${question.slice(0, 60)}`}>{t("knowledge.answer")}</Link>
+    </li>
+  );
+}
+
 /** How many buyers' lines a question shows before "+N more". */
 const ASKS_SHOWN = 2;
 
+/** A lead as a chat line names it: never a full email (only the part before "@"). */
+function leadLabel(name: string) {
+  const n = name.trim();
+  return n.includes("@") ? n.split("@")[0].split("+")[0] : n;
+}
+
+/** The chat it came from, linked to the lead (a test-lab chat says so). */
+function ChatLine({ isTest, leadId, leadName, base }: { isTest: boolean; leadId: string; leadName: string; base: string }) {
+  return isTest ? <span>{t("knowledge.questions.test_chat")}</span>
+    : <span>{t("knowledge.questions.chat_with")} <a href={`${base}/leads/${leadId}`} dir="auto">{leadLabel(leadName)}</a></span>;
+}
+
+/** A question the agent only looked up (it did not ask the team): the chats it came from. */
+function AskedIn({ chats, base }: { chats: QuestionChat[]; base: string }) {
+  const shown = chats.slice(0, ASKS_SHOWN);
+  return (
+    <span className="sas-stack-2" style={{ gap: 2, marginBlockStart: 4 }} data-asked-in="">
+      {shown.map((c) => (
+        <span key={c.conversationId} className="sas-small" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0 }} data-chat="">
+          <ChatLine isTest={c.isTest} leadId={c.leadId} leadName={c.leadName} base={base} />
+        </span>
+      ))}
+      {chats.length > ASKS_SHOWN ? <span className="sas-small">{t("knowledge.questions.more_asks", { n: chats.length - ASKS_SHOWN })}</span> : null}
+    </span>
+  );
+}
+
+/** Same words, ignoring case, spacing and punctuation: the buyer's words add nothing then. */
+function sameWords(a: string, b: string) {
+  const norm = (x: string) => x.toLowerCase().replace(/[\s\p{P}]+/gu, " ").trim();
+  return norm(a) === norm(b);
+}
+
 /**
- * O4: who sent the question to the team (ask_team): the lead (linked; a
- * test-lab chat says so), must-have or good to know, and the buyer's own
- * words. The chat was not paused; answering sends the answer back to it.
+ * O4: who sent the question to the team (ask_team): the chat it came from
+ * (the lead, linked; a test-lab chat says so), must-have or good to know, and
+ * the buyer's own words (in the questions list only when they differ from the
+ * question). The chat was not paused; answering sends the answer back to it.
  */
-function AskedBy({ asks, base }: { asks: QuestionAsk[]; base: string }) {
+function AskedBy({ asks, base, question }: { asks: QuestionAsk[]; base: string; question?: string }) {
   const shown = asks.slice(0, ASKS_SHOWN);
   return (
     <span className="sas-stack-2" style={{ gap: 2, marginBlockStart: 4 }} data-asked-by="">
       {shown.map((a) => (
         <span key={`${a.conversationId}`} className="sas-small" style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0 }} data-ask="">
-          {a.isTest ? <span>{t("knowledge.questions.test_chat")}</span> : <a href={`${base}/leads/${a.leadId}`}>{a.leadName}</a>}
+          <ChatLine isTest={a.isTest} leadId={a.leadId} leadName={a.leadName} base={base} />
           {a.mustHave === true ? <span className="sas-chip sas-chip--plain" data-must-have="yes">{t("team_question.must_have")}</span> : null}
           {a.mustHave === false ? <span className="sas-chip sas-chip--plain" data-must-have="no">{t("team_question.good_to_know")}</span> : null}
-          {a.buyerWords ? <span dir="auto" style={{ overflowWrap: "anywhere" }}>“{a.buyerWords}”</span> : null}
+          {a.buyerWords && !(question && sameWords(a.buyerWords, question)) ? <span dir="auto" style={{ overflowWrap: "anywhere" }} data-buyer-words=""><span aria-hidden="true">· </span>“{a.buyerWords}”</span> : null}
         </span>
       ))}
       {asks.length > ASKS_SHOWN ? <span className="sas-small">{t("knowledge.questions.more_asks", { n: asks.length - ASKS_SHOWN })}</span> : null}

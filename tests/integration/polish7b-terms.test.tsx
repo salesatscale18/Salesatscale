@@ -102,11 +102,13 @@ describe("Polish-7b: plain terms", () => {
     // R5-7: "v1" stays with its title (no-break space).
     expect(s).toMatch(/English · .+\u00a0v1/);
     expect(s).not.toMatch(/\bEN v1\b/);
-    // R4 D6: row actions all as ghost buttons; legal texts not changed for the market say "Change for this market";
-    // the price list button says what it saves.
+    // MarketsV2: row actions are small "Change" links; the legal texts row links to the order form.
     expect(html).not.toMatch(/<a class="sas-small" href="[^"]*(edit=where|order-form\?market)/);
-    expect(html).toMatch(/<a class="sas-btn sas-btn--ghost sas-btn--sm" href="[^"]*order-form\?market=[^"]*" data-row-action="" data-legal-action="">Change for this market<\/a>/);
-    expect(s).toContain("Save price list");
+    expect(html).toMatch(/<a class="mk-act" href="[^"]*order-form\?market=[^"]*" data-row-action="" data-legal-action="">Change<\/a>/);
+    // The price list is a normal row: Change opens the picker with its own Save.
+    expect(html).not.toContain("data-price-list-form");
+    const picker = await render(MarketsPage, account.slug, { edit: "price_list" });
+    expect(picker).toMatch(/data-price-list-form=""[^]*name="lineageId"[^]*>Save<\/button>/);
     // E8: legal texts listed in the selling-language order (English, then Hebrew).
     expect(html.indexOf('data-legal-lang="en"')).toBeLessThan(html.indexOf('data-legal-lang="he"'));
     // While the holidays editor is open the row shows no "None" above it.

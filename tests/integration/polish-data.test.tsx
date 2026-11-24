@@ -236,10 +236,11 @@ describe("Polish-1: wrong or contradicting data", () => {
     expect(golive).toMatch(/of 4 checks/);
     const markets = await page(MarketsPage({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({}) }));
     save("markets", markets);
-    expect(markets).toMatch(/of 4 checks/);
+    // MarketsV2: the readiness strip counts the 4 blocking checks; WhatsApp is muted "WhatsApp number · optional".
+    expect(markets).toMatch(/Ready to sell · \d of 4/);
     const mwa = markets.match(/<li[^>]*data-check="whatsapp"[\s\S]*?<\/li>/)?.[0] ?? "";
     expect(mwa).toContain('data-check-icon="optional"');
-    expect(mwa).toContain("Optional for now");
+    expect(mwa).toContain("WhatsApp number · optional");
 
     // Settings › WhatsApp: the same status (not a green "Twilio connected" with no icon).
     const env = { sid: process.env.TWILIO_ACCOUNT_SID, token: process.env.TWILIO_AUTH_TOKEN };

@@ -203,10 +203,11 @@ describe("pages (demo account)", () => {
     expect(html).toContain('<span class="sas-nowrap">Fri 09:00–16:00</span>');
     expect(tx).toMatch(/Europe\/London \(GMT[+-]\d\)/);
     expect(tx).not.toContain("(UTC)");
-    expect(html).toContain('class="sas-pill mk-pill--set" data-source="market"');
+    // MarketsV2: "Different here" in the Trust Blue soft tint; on a phone the label sits on its own line above value and action.
+    expect(html).toContain('<span class="mk-diff" data-source="market">Different here</span>');
     expect(html).not.toContain("sas-pill--agent");
-    expect(css).toMatch(/\.mk-pill--set \{ background: var\(--primary-soft\); color: var\(--primary\); \}/);
-    expect(css).toMatch(/\[data-market-detail\] \[data-row-end\] \{ justify-content: flex-start !important; \}/);
+    expect(css).toMatch(/\.mk-diff \{[^}]*background: var\(--primary-soft\); color: var\(--primary\);/);
+    expect(css).toMatch(/@container mkdetail \(max-width: 480px\) \{\s*\.mk-row \{ grid-template-columns: minmax\(0, 1fr\) auto; \}\s*\.mk-row__label \{ grid-column: 1 \/ -1; \}/);
     // Legal texts in the same order as Israel's English line.
     const ilHtml = await render(MarketsPage, { account: slug }, { m: il.id });
     const line = (h: string) => text(h.split('data-legal-lang="en">')[1].split("</span></span>")[0] + "</span>");
@@ -221,8 +222,9 @@ describe("pages (demo account)", () => {
   it("R5-11: Knowledge questions on a phone put Answer under the text; the Answer panel starts with an empty Topic and short footer labels", async () => {
     const html = await render(KnowledgePage, { account: slug }, { panel: "answer", question: OPEN_QUESTIONS[0] });
     save("r5b-knowledge-answer", html);
-    expect(html).toContain('class="sas-stack-2 r5b-questions"');
-    expect(css).toMatch(/\.r5b-questions \.sas-table--stack td\.sas-td-actions \{ position: static;/);
+    // KnowledgeV2: the panel opens over the Questions to answer view; each row wraps, so on a phone Answer sits under the text.
+    expect(html).toContain("data-questions-view");
+    expect(html).toMatch(/<li data-question=""[^>]*style="display:flex;flex-wrap:wrap/);
     const topic = html.match(/<input[^>]*id="kq-topic"[^>]*>/)?.[0] ?? "";
     expect(topic).toMatch(/value=""/);
     expect(topic).not.toContain('value="General"');

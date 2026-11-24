@@ -319,7 +319,9 @@ export type QuestionAsk = {
   leadId: string; leadName: string; company: string | null; conversationId: string; isTest: boolean;
   buyerWords: string; mustHave: boolean | null; askedAt: Date;
 };
-export type UnansweredQuestion = { question: string; lastAskedAt: Date; times: number; asks: QuestionAsk[] };
+/** The chat an empty knowledge lookup came from (the agent did not ask the team): Knowledge names it under the question. */
+export type QuestionChat = { conversationId: string; leadId: string; leadName: string; isTest: boolean };
+export type UnansweredQuestion = { question: string; lastAskedAt: Date; times: number; asks: QuestionAsk[]; chats: QuestionChat[] };
 
 /**
  * Questions the agent could not answer, newest first, one per question text:
@@ -327,14 +329,22 @@ export type UnansweredQuestion = { question: string; lastAskedAt: Date; times: n
  * words and must-have), and those it looked up and found no approved fact for
  * (tool calls `lookup_knowledge` with an empty result, test-lab conversations
  * included). An empty lookup that an ask_team of the same conversation stands
- * for is not listed twice. A question drops off once a fact exists whose
+ * for is not listed twice. A lookup carries the chat it ran in (`chats`: its
+ * conversation's lead, one per chat), read through the tool call's own
+ * conversation in this account. A question drops off once a fact exists whose
  * source is "Buyer question: <same text>" (answerQuestion).
  */
 export async function unansweredQuestions(db: Db, accountId: string, limit = 10, now = new Date()): Promise<UnansweredQuestion[]> {
   const [calls, asks] = await Promise.all([
+    // With the chat each lookup ran in (its conversation's lead), both kept to this account.
     db
-      .select({ input: toolCalls.input, createdAt: toolCalls.createdAt, conversationId: toolCalls.conversationId })
+      .select({
+        input: toolCalls.input, createdAt: toolCalls.createdAt, conversationId: toolCalls.conversationId,
+        leadId: leads.id, leadName: leads.fullName, isTest: sql<boolean>`coalesce(${conversations.isTest} or ${leads.isTest}, false)`,
+      })
       .from(toolCalls)
+      .leftJoin(conversations, and(eq(conversations.id, toolCalls.conversationId), eq(conversations.accountId, accountId)))
+      .leftJoin(leads, and(eq(leads.id, conversations.leadId), eq(leads.accountId, accountId)))
       .where(and(
         eq(toolCalls.accountId, accountId), eq(toolCalls.name, "lookup_knowledge"), eq(toolCalls.outcome, "ok"),
         sql`${toolCalls.result} -> 'facts' = '[]'::jsonb`,
@@ -351,15 +361,17 @@ export async function unansweredQuestions(db: Db, accountId: string, limit = 10,
       .filter((k): k is string => !!k),
   );
   const covered = new Set(asks.flatMap((a) => a.lookups.map((k) => `${a.conversationId}|${k}`)));
-  const items: { question: string; key: string; at: Date; ask: QuestionAsk | null }[] = [
+  const items: { question: string; key: string; at: Date; ask: QuestionAsk | null; chat: QuestionChat | null }[] = [
     ...asks.map((a) => ({
       question: a.question, key: a.key, at: a.askedAt,
       ask: { leadId: a.leadId, leadName: a.leadName, company: a.company, conversationId: a.conversationId, isTest: a.isTest, buyerWords: a.buyerWords, mustHave: a.mustHave, askedAt: a.askedAt },
+      chat: null,
     })),
     ...calls.flatMap((c) => {
       const question = typeof c.input?.query === "string" ? c.input.query.replace(/\s+/g, " ").trim() : "";
       const key = normalizeQuestion(question);
-      return key && !covered.has(`${c.conversationId}|${key}`) ? [{ question, key, at: c.createdAt, ask: null }] : [];
+      const chat = c.conversationId && c.leadId ? { conversationId: c.conversationId, leadId: c.leadId, leadName: c.leadName ?? "", isTest: !!c.isTest } : null;
+      return key && !covered.has(`${c.conversationId}|${key}`) ? [{ question, key, at: c.createdAt, ask: null, chat }] : [];
     }),
   ].sort((a, b) => b.at.getTime() - a.at.getTime());
   const out = new Map<string, UnansweredQuestion>();
@@ -369,7 +381,9 @@ export async function unansweredQuestions(db: Db, accountId: string, limit = 10,
     if (seen) {
       seen.times += 1;
       if (it.ask) seen.asks.push(it.ask);
-    } else out.set(it.key, { question: it.question.slice(0, 300), lastAskedAt: it.at, times: 1, asks: it.ask ? [it.ask] : [] });
+      // One line per chat (newest first): a chat that asked twice is named once.
+      if (it.chat && !seen.chats.some((c) => c.conversationId === it.chat!.conversationId)) seen.chats.push(it.chat);
+    } else out.set(it.key, { question: it.question.slice(0, 300), lastAskedAt: it.at, times: 1, asks: it.ask ? [it.ask] : [], chats: it.chat ? [it.chat] : [] });
   }
   return [...out.values()].slice(0, limit);
 }

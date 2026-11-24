@@ -1156,8 +1156,8 @@ test("F4 Question the agent can't answer", async () => {
   await newTestChat();
   await labSend("Do your sensors work at minus 40 degrees in a blast freezer?");
   await expect(page.locator(".sas-msg--agent").last()).toContainText(/check|team/i);
-  await page.goto(`${S.appBase}/setup/knowledge`);
-  await expect(page.getByText(/Questions we couldn't answer · [1-9]/)).toBeVisible();
+  await page.goto(`${S.appBase}/setup/knowledge?view=questions`);
+  await expect(page.getByRole("heading", { name: /Questions to answer · [1-9]/ })).toBeVisible();
 });
 
 // ───────────────────────── G. Day-to-day ─────────────────────────
