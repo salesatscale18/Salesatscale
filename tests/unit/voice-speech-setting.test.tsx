@@ -111,7 +111,7 @@ describe("the Voice settings form (design review, 24 Nov 2026)", () => {
     expect(h).toContain('<label class="sas-input-label" for="vs-speech">Voice from</label>');
     expect(h).toMatch(/<option value="model">The model&#x27;s own voice<\/option><option value="elevenlabs" selected="">ElevenLabs \(testing\)<\/option>/);
     expect(h).toContain("Used in test calls only for now. Buyers hear the model&#x27;s own voice.");
-    expect(h).toMatch(/Test calls hear<\/span>.*data-voice-test-voice="">Rachel · v4 Turbo<\/output>/);
+    expect(h).toContain('Test calls hear: <output data-voice-test-voice="">Rachel · v4 Turbo</output>');
     // "Buyers hear" (redesign, 24 Nov): collapsed, its value on the row, a Change control; the picker still posts.
     expect(h).toContain('data-voice-buyers-summary="">Buyers hear: Alloy · fillers on</span>');
     expect(h).toMatch(/aria-expanded="false" aria-controls="vs-buyers-body" data-voice-buyers-toggle="">Change<\/button>/);

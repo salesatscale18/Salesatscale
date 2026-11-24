@@ -13,7 +13,7 @@ import { voiceModelChoices, type VoiceModelChoice } from "@/lib/voice/model-choi
 import { VoiceSettingsForm } from "@/components/sas/voice/voice-settings-form";
 import { VoiceCallStats } from "@/components/sas/voice/voice-call-stats";
 import {
-  DEFAULT_ELEVEN_CHOICE, ELEVEN_MODELS, ELEVEN_VOICES, elevenLanguageLine, elevenModelOptionLabel, elevenModelSpeaks, elevenVoiceGroups, elevenVoiceLine,
+  DEFAULT_ELEVEN_CHOICE, ELEVEN_LANGUAGE_SUBSTITUTE, ELEVEN_MODELS, ELEVEN_VOICES, elevenLanguageLine, elevenModelOptionLabel, elevenModelSpeaks, elevenVoiceGroups, elevenVoiceLine,
 } from "@/lib/voice-rt-eleven/catalog";
 import { elevenAttempts, elevenAppliedOf, ElevenSpeaker, type ElevenLink } from "@/lib/voice-rt-eleven/speaker";
 import { rtElevenCallInfo, rtElevenVoiceUsed, rtSpeakText } from "@/lib/voice-rt-eleven/summary";
@@ -255,15 +255,20 @@ describe("the panel (three sections; design review, 24 Nov 2026)", () => {
     expect(h).toContain('<option value="elevenlabs/eleven-flash-v2.5">Flash v2.5 · English only</option>');
     expect(h).not.toMatch(/✓|✔/);
     expect(h).toContain('data-voice-eleven-lang="neutral">Speaks all your selling languages (English, Hebrew).</span>');
-    expect(h).toContain("Newest, most natural and expressive; delivery can vary within an answer.");
+    // The model note and its facts on ONE muted line; the language line on its own (UX review, 24 Nov).
+    expect(h).toContain('<span class="sas-small sas-muted" id="vs-eleven-model-note" data-voice-eleven-note="">Newest, most natural and expressive; delivery can vary within an answer. 70+ languages · $0.04 per 1,000 characters.</span>');
+    expect(h).not.toContain("data-voice-eleven-meta");
+    expect(h).toContain('<span class="sas-small sas-vs-lang" id="vs-eleven-model-lang" data-voice-eleven-lang="neutral">');
     expect(h).toMatch(/<optgroup label="Female"><option value="21m00Tcm4TlvDq8ikWAM">Rachel<\/option><option value="EXAVITQu4vr4xnSDxMaL" selected="">Sarah<\/option>/);
     expect(h).toContain('<optgroup label="Male">');
     expect(h).toContain('<optgroup label="Neutral"><option value="SAz9YHcvj6GT2YYXdXww">River</option></optgroup>');
     expect(h).toContain("English voice; speaks Hebrew with an English accent on v4 and v3 models.");
     expect(h).toContain('data-voice-eleven-stability=""');
     expect(h).toMatch(/<input type="radio" class="sas-sr" name="elevenStability" checked="" value="0.5"\/>Natural/);
-    expect(h).toContain('data-voice-test-voice="">Sarah · v4 Turbo</output>');
-    expect(h).toContain('data-voice-buyers-summary="">Buyers hear: Alloy · fillers on</span>');
+    // Two matching plain text lines (no read-only boxes): "Test calls hear: …" and "Buyers hear: … Change".
+    expect(h).toContain('<div class="sas-vs-line" data-voice-test-hears=""><span class="sas-vs-line__value">Test calls hear: <output data-voice-test-voice="">Sarah · v4 Turbo</output></span></div>');
+    expect(h).toContain('<span class="sas-vs-line"><span class="sas-vs-line__value" data-voice-buyers-summary="">Buyers hear: Alloy · fillers on</span>');
+    expect(h).not.toContain("sas-vs-readonly");
     expect(h.indexOf("data-voice-test-hears")).toBeLessThan(h.indexOf("data-voice-buyers-hear"));
     // "Play sample" (owner approved, 24 Nov): one button per sample language the model speaks.
     expect([...h.matchAll(/data-voice-sample="([a-z]+)"/g)].map((m) => m[1])).toEqual(["en", "he"]);
@@ -274,7 +279,15 @@ describe("the panel (three sections; design review, 24 Nov 2026)", () => {
     expect(h).not.toContain("elevenStability");
     expect(h).toMatch(/data-voice-eleven-lang="warning">.*<span>Hebrew is not supported by this model: Hebrew calls will use v4 Turbo\.<\/span>/);
     expect(h).toContain("Older, plain and steady; lowest delay; no Hebrew.");
-    expect(h).toContain('data-voice-test-voice="">Rachel · Flash v2.5</output>');
+    expect(h).toContain('data-voice-eleven-note="">Older, plain and steady; lowest delay; no Hebrew. 32 languages · $0.04 per 1,000 characters.</span>');
+    // Hebrew replies use the substitute model the speaker switches to (ELEVEN_LANGUAGE_SUBSTITUTE): shown on the row.
+    expect(ELEVEN_LANGUAGE_SUBSTITUTE).toBe("elevenlabs/eleven-v4-turbo");
+    expect(h).toContain('Test calls hear: <output data-voice-test-voice="">Rachel · Flash v2.5 (Hebrew: v4 Turbo)</output>');
+    // The voice line follows the model: no Hebrew sentence on a model without Hebrew.
+    expect(h).toContain('data-voice-eleven-voice-line="">English voice.</span>');
+    expect(h).not.toContain("speaks Hebrew with an English accent");
+    // Sample buttons: only the languages the model speaks.
+    expect([...h.matchAll(/data-voice-sample="([a-z]+)"/g)].map((m) => m[1])).toEqual(["en"]);
   });
 
   it("GPT + ElevenLabs Multilingual v2 on an English-only company: neutral line, no Hebrew clause, no Steadiness", () => {
@@ -296,7 +309,7 @@ describe("the panel (three sections; design review, 24 Nov 2026)", () => {
     const h = render({ model: id as never, speech: "elevenlabs" }, { models: [...voiceModelChoices(), fake] });
     expect(h).toContain('<option value="elevenlabs/eleven-realtime-mini" selected="">ElevenLabs Realtime mini (testing) · no price</option>');
     expect(h).toContain("Used in test calls only for now. Buyer calls use the platform&#x27;s default voice model.");
-    expect(h).toContain("Voice: the model&#x27;s default");
+    expect(h).toContain('<div class="sas-vs-line" data-voice-model-default=""><span class="sas-vs-line__value">Voice: the model&#x27;s default</span></div>');
     expect(h).not.toContain('id="vs-speech"');
     expect(h).not.toContain("Buyers hear");
     expect(h).not.toContain('name="voice"');

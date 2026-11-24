@@ -69,12 +69,16 @@ async function main() {
       await p.selectOption("#vs-eleven-voice", "EXAVITQu4vr4xnSDxMaL");
       check((await p.locator("[data-voice-eleven-stability]").count()) === 1, "v4 Turbo: Steadiness shown");
       check((await p.locator("[data-voice-test-voice]").innerText()) === "Sarah · v4 Turbo", "Test calls hear: Sarah · v4 Turbo");
+      check((await p.locator("[data-voice-test-hears]").innerText()).trim() === "Test calls hear: Sarah · v4 Turbo", "Test calls hear: a plain text line");
+      check((await p.locator("[data-voice-eleven-note]").innerText()).trim() === "Newest, most natural and expressive; delivery can vary within an answer. 70+ languages · $0.04 per 1,000 characters.", "model note and facts on one line");
       check((await p.locator("[data-voice-eleven-lang]").innerText()) === "Speaks all your selling languages (English, Hebrew).", "v4 Turbo: neutral language line");
       check((await p.locator("[data-voice-buyers-summary]").innerText()).startsWith("Buyers hear: Alloy · fillers on"), "Buyers hear collapsed with its value");
       check(!(await p.locator("#vs-voice").isVisible()), "the buyers' picker is collapsed");
       // "Play sample": two buttons (English, Hebrew) under the voice's helper line; while one plays it reads "Stop", same width.
       const samples = await p.locator("[data-voice-sample]").allInnerTexts();
       check(samples.length === 2 && samples[0].includes("Play sample · English") && samples[1].includes("Play sample · Hebrew"), `sample buttons: ${samples.join(" / ")}`);
+      const tops = await p.locator("[data-voice-sample]").evaluateAll((els) => els.map((e) => Math.round(e.getBoundingClientRect().top)));
+      check(tops[0] === tops[1], `sample buttons side by side (${tops.join(", ")})`);
       await p.locator("[data-voice-eleven-voice-field]").screenshot({ path: path.join(dir!, "panel-voice-play-sample.png") });
       const en = p.locator('[data-voice-sample="en"]');
       const w0 = (await en.boundingBox())!.width;
@@ -103,6 +107,8 @@ async function main() {
       await p.selectOption("#vs-eleven-model", FLASH);
       check((await p.locator("[data-voice-eleven-stability]").count()) === 0, "Flash v2.5: no Steadiness");
       check((await p.locator("[data-voice-eleven-lang]").innerText()) === "Hebrew is not supported by this model: Hebrew calls will use v4 Turbo.", "Flash v2.5 on a Hebrew+English company: the warning");
+      check((await p.locator("[data-voice-test-voice]").innerText()) === "Rachel · Flash v2.5 (Hebrew: v4 Turbo)", "Flash v2.5: Test calls hear: Rachel · Flash v2.5 (Hebrew: v4 Turbo)");
+      check((await p.locator("[data-voice-eleven-voice-line]").innerText()) === "English voice.", "Flash v2.5: English voice. (no Hebrew sentence)");
       const opts = await p.locator("#vs-eleven-model option").allInnerTexts();
       check(opts.includes("Flash v2.5 · English only") && opts.includes("v4 Turbo · English, Hebrew"), `model options: ${opts.join(" / ")}`);
       await fullPanel(p, "panel-gpt-eleven-flash-hebrew.png");
@@ -136,6 +142,9 @@ async function main() {
       check(overflow <= 0, `390 px: no horizontal scroll (${overflow})`);
       const widths = await p.locator(".sas-vs-section .sas-select:not(.sas-vs-adv .sas-select)").evaluateAll((els) => els.filter((e) => (e as HTMLElement).offsetParent).map((e) => Math.round((e as HTMLElement).getBoundingClientRect().width)));
       check(new Set(widths).size === 1, `390 px: selects full width outside the Advanced box (${[...new Set(widths)].join(", ")} px)`);
+      const sum = (await p.locator("[data-voice-buyers-summary]").boundingBox())!;
+      const chg = (await p.locator("[data-voice-buyers-toggle]").boundingBox())!;
+      check(chg.x > sum.x + sum.width - 1 && chg.y < sum.y + sum.height && chg.y + chg.height > sum.y, "390 px: Change stays on the Buyers hear line, at its end");
       await fullPanel(p, "panel-phone-390-eleven.png");
       await p.close();
     }

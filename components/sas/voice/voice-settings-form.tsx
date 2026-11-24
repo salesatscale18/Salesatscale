@@ -8,8 +8,8 @@ import { callLimitShort, defaultVoiceOf, hasAdvancedTuning, limitOptions, speech
 import { DEFAULT_VOICE_SETTINGS, INTERRUPT_LEVELS, isOpenAiVoiceModel, PAUSE_MS_RANGE, voiceFamilyOf, PLATFORM_MAX_CALL_SEC, VOICE_PACES, VOICE_STYLES, turnTakingFor, type ResolvedVoiceSettings, type VoiceSettingsErrors, type VoiceSpeech } from "@/lib/voice/settings";
 import type { VoiceModelChoice } from "@/lib/voice/model-choices";
 import {
-  DEFAULT_ELEVEN_MODEL, DEFAULT_ELEVEN_STABILITY, DEFAULT_ELEVEN_VOICE, ELEVEN_MODELS, ELEVEN_STABILITIES, elevenChoiceText, elevenLanguageLine, elevenModelInfo,
-  elevenModelOptionLabel, elevenVoiceGroups, elevenVoiceLine, languageName, sampleLanguagesFor, type ElevenModelId, type ElevenStability, type ElevenVoiceId, type SampleLanguage,
+  DEFAULT_ELEVEN_MODEL, DEFAULT_ELEVEN_STABILITY, DEFAULT_ELEVEN_VOICE, ELEVEN_LANGUAGE_SUBSTITUTE, ELEVEN_MODELS, ELEVEN_STABILITIES, elevenChoiceText, elevenLanguageLine,
+  elevenModelInfo, elevenModelLanguages, elevenModelOptionLabel, elevenModelSpeaks, elevenVoiceGroups, elevenVoiceLine, languageName, sampleLanguagesFor, type ElevenModelId, type ElevenStability, type ElevenVoiceId, type SampleLanguage,
 } from "@/lib/voice-rt-eleven/catalog";
 
 export type VoiceSettingsFormState = { ok?: boolean; errors?: VoiceSettingsErrors; failed?: boolean };
@@ -37,7 +37,7 @@ function Segmented<T extends string>({ name, label, value, options, onChange, de
 
 /**
  * "Play sample" (design review, 24 Nov): one button per sample language (the company's selling languages the model
- * speaks), on its own line under the voice's helper line. It plays the CURRENT (unsaved) model, voice and steadiness
+ * speaks), on its own line under the voice's helper line, side by side (small buttons; they wrap only when they do not fit). It plays the CURRENT (unsaved) model, voice and steadiness
  * through the server (app/app/[account]/voice-sample, platform admins only; generated once per combination, then
  * replayed from storage). While loading it is busy; while playing it reads "Stop" at the same width (the labels share
  * one grid cell); starting another sample stops the first; leaving the panel stops it. Errors: one quiet line.
@@ -98,7 +98,7 @@ function SampleButtons({ slug, model, voice, stability, languages }: { slug: str
           const label = langs.length > 1 ? t("voice.settings.sample_lang", { language: languageName(l) }) : t("voice.settings.sample");
           const phase = now?.lang === l ? now.phase : null;
           return (
-            <button key={l} type="button" className={`${buttonClass("secondary")} sas-vs-sample`} onClick={() => void play(l)}
+            <button key={l} type="button" className={`${buttonClass("secondary", "sm")} sas-vs-sample`} onClick={() => void play(l)}
               aria-busy={phase === "loading" ? true : undefined} data-voice-sample={l} data-phase={phase ?? "idle"}>
               <Icon name={phase === "playing" ? "pause" : phase === "loading" ? "loader" : "play"} />
               {/* All three labels share one grid cell: the button keeps its width when it reads "Stop". */}
@@ -134,9 +134,11 @@ function Section({ id, title, children }: { id: string; title: string; children:
  *    last row "Voice from" (the model's own voice, or ElevenLabs), for the GPT-Realtime models only.
  * 2. "Voice": with ElevenLabs, the speaking model (its note, and ONE line comparing it with the company's selling
  *    languages), the voice (grouped Female / Male / Neutral, one line under it), "Steadiness" (dialogue-mode models
- *    only), the read-only "Test calls hear" row and, while ElevenLabs is test-only, "Buyers hear: <voice> · fillers on"
- *    collapsed with a "Change" control (the model's own voice picker and the filler switch). With the model's own
- *    voice: its picker and the filler switch. A model without a voice list: a read-only "Voice: the model's default".
+ *    only), then two matching plain text lines (UX review, 24 Nov): "Test calls hear: <voice> · <model>" (with the
+ *    speaking model each unsupported selling language falls back to, e.g. "(Hebrew: v4 Turbo)") and, while ElevenLabs
+ *    is test-only, "Buyers hear: <voice> · fillers on" collapsed with a "Change" control at its end (the model's own
+ *    voice picker and the filler switch). With the model's own voice: its picker and the filler switch. A model
+ *    without a voice list: the plain line "Voice: the model's default".
  * 3. "Conversation": pace, style and the advanced options, each only where the model supports it.
  * Unsupported settings are hidden, never disabled. Changing the model resets only what no longer applies, with one
  * line (never a silent change). The whole panel is platform admins only, and the server ignores "Voice from" and the
@@ -217,6 +219,11 @@ export function VoiceSettingsForm({
   const elVoice: ElevenVoiceId = v.elevenVoice ?? DEFAULT_ELEVEN_VOICE;
   const elStability: ElevenStability = v.elevenStability ?? DEFAULT_ELEVEN_STABILITY;
   const langLine = elevenLanguageLine(elModel, languages);
+  // The selling languages the chosen model does not speak: a call speaks them with the substitute model (the speaker's
+  // chainFor in lib/voice-rt-eleven/speaker.ts switches exactly when elevenModelSpeaks(...) === false).
+  const substituted = elevenModelLanguages(elModel, languages).missing.filter((l) => elevenModelSpeaks(elModel, l) === false);
+  const testHears = elevenChoiceText({ model: elModel, voice: elVoice }, { short: true })
+    + (substituted.length ? ` (${substituted.map(languageName).join(", ")}: ${elevenModelInfo(ELEVEN_LANGUAGE_SUBSTITUTE)!.label})` : "");
 
   const fillers = (
     <label className="sas-switch-row">
@@ -258,11 +265,13 @@ export function VoiceSettingsForm({
           aria-describedby="vs-eleven-model-note vs-eleven-model-lang" aria-invalid={e.elevenModel ? true : undefined}>
           {ELEVEN_MODELS.map((m) => <option key={m.id} value={m.id}>{elevenModelOptionLabel(m.id, languages)}</option>)}
         </select>
-        <span className="sas-small" id="vs-eleven-model-note" data-voice-eleven-note="">{elInfo.note}</span>
-        <span className="sas-small sas-muted" data-voice-eleven-meta="">{t("voice.settings.eleven_model_meta", { languages: elInfo.languages.count, price: elInfo.usdPer1kChars.toFixed(2) })}</span>
+        {/* One muted line (the note and the facts); the language line under it is the one that stands out. */}
+        <span className="sas-small sas-muted" id="vs-eleven-model-note" data-voice-eleven-note="">
+          {`${elInfo.note} ${t("voice.settings.eleven_model_meta", { languages: elInfo.languages.count, price: elInfo.usdPer1kChars.toFixed(2) })}.`}
+        </span>
         {langLine.tone === "warning" ? (
           <span className="sas-small sas-vs-warn" id="vs-eleven-model-lang" role="status" data-voice-eleven-lang="warning"><Icon name="alert-triangle" /><span>{langLine.text}</span></span>
-        ) : <span className="sas-small" id="vs-eleven-model-lang" data-voice-eleven-lang="neutral">{langLine.text}</span>}
+        ) : <span className="sas-small sas-vs-lang" id="vs-eleven-model-lang" data-voice-eleven-lang="neutral">{langLine.text}</span>}
         {e.elevenModel ? <span className="sas-small sas-vs-err" role="alert">{e.elevenModel}</span> : null}
       </div>
       <div className="sas-input-group" data-voice-eleven-voice-field="">
@@ -275,7 +284,7 @@ export function VoiceSettingsForm({
             </optgroup>
           ))}
         </select>
-        <span className="sas-small" id="vs-eleven-voice-hint" data-voice-eleven-voice-line="">{elevenVoiceLine(languages)}</span>
+        <span className="sas-small" id="vs-eleven-voice-hint" data-voice-eleven-voice-line="">{elevenVoiceLine(elevenModelLanguages(elModel, languages).supported)}</span>
         <SampleButtons slug={slug} model={elModel} voice={elVoice} stability={elInfo.dialogue ? elStability : DEFAULT_ELEVEN_STABILITY} languages={languages} />
         {e.elevenVoice ? <span className="sas-small sas-vs-err" role="alert">{e.elevenVoice}</span> : null}
       </div>
@@ -288,14 +297,13 @@ export function VoiceSettingsForm({
           {e.elevenStability ? <span className="sas-small sas-vs-err" role="alert">{e.elevenStability}</span> : null}
         </div>
       ) : null}
-      <div className="sas-input-group" data-voice-test-hears="">
-        <span className="sas-input-label">{t(elevenForBuyers ? "voice.settings.all_hear" : "voice.settings.test_hears")}</span>
-        <span className="sas-vs-row"><output className="sas-select sas-vs-readonly" aria-readonly="true" data-voice-test-voice="">{elevenChoiceText({ model: elModel, voice: elVoice }, { short: true })}</output></span>
+      <div className="sas-vs-line" data-voice-test-hears="">
+        <span className="sas-vs-line__value">{`${t(elevenForBuyers ? "voice.settings.all_hear" : "voice.settings.test_hears")}: `}<output data-voice-test-voice="">{testHears}</output></span>
       </div>
       {caps.voices.length && buyersGroup ? (
         <div className="sas-input-group" data-voice-buyers-hear="" data-open={buyersOpen ? "" : undefined}>
-          <span className="sas-vs-collapsed">
-            <span className="sas-vs-collapsed__value" data-voice-buyers-summary="">
+          <span className="sas-vs-line">
+            <span className="sas-vs-line__value" data-voice-buyers-summary="">
               {t("voice.settings.buyers_hear_value", { voice: heard ? voiceLabel(heard).split(" · ")[0] : "—", fillers: t(`voice.settings.fillers_state.${caps.fillers && v.fillers ? "on" : "off"}`) })}
             </span>
             <button type="button" className={buttonClass("ghost")} aria-expanded={buyersOpen} aria-controls="vs-buyers-body" onClick={() => setBuyersOpen((o) => !o)} data-voice-buyers-toggle="">
@@ -356,8 +364,8 @@ export function VoiceSettingsForm({
             </>
           ) : (
             <>
-              <div className="sas-input-group" data-voice-model-default="">
-                <span className="sas-vs-row"><output className="sas-select sas-vs-readonly" aria-readonly="true">{t("voice.settings.model_default_voice")}</output></span>
+              <div className="sas-vs-line" data-voice-model-default="">
+                <span className="sas-vs-line__value">{t("voice.settings.model_default_voice")}</span>
               </div>
               {caps.fillers ? fillers : null}
             </>

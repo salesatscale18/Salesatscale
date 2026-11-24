@@ -1022,25 +1022,28 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vs-reset { margin-inline-start: auto; }
 .sas-vs-field { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
 .sas-vs-field legend { padding: 0; margin-block-end: 6px; }
-.sas-vs-row { display: flex; gap: var(--space-2); }
-.sas-vs-row .sas-select { flex: 1; min-width: 0; }
 .sas-vs-max { max-width: 200px; }
-/* "Voice from: ElevenLabs": the read-only "Test calls hear" value, a field without a picker, and the "Buyers hear" group. */
-.sas-vs-readonly { display: flex; align-items: center; background-image: none; background-color: var(--surface); cursor: default; }
+/* "Voice from: ElevenLabs": "Test calls hear: ..." and "Buyers hear: ... Change" as two matching plain text lines (no
+   box: they are not fields); "Voice: the model's default" the same way. A control at a line's end stays on the line
+   (also at phone width): the value wraps instead. */
+.sas-vs-line { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); min-height: 36px; }
+.sas-vs-line__value { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.sas-vs-line > .sas-btn { flex: none; }
+.sas-vs-line output { font: inherit; color: inherit; }
 .sas-vs-sublabel { font-weight: 600; color: var(--ink); }
-[data-voice-buyers-hear] { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--line); }
+[data-voice-test-hears], [data-voice-buyers-hear] { padding-inline-start: var(--space-3); border-inline-start: 2px solid var(--line); }
 .sas-vs-err { color: var(--danger); }
 /* The panel's three sections (Voice model, Voice, Conversation: design review, 24 Nov 2026). */
 .sas-vs-section { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 .sas-vs-section + .sas-vs-section { padding-block-start: 14px; border-block-start: 1px solid var(--line); }
 .sas-vs-section__title { margin: 0; font-size: 13px; line-height: 18px; font-weight: 700; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink-muted); }
 .sas-vs-form .sas-small { overflow-wrap: anywhere; }
+.sas-vs-lang { color: var(--ink); }
 .sas-vs-warn { display: flex; gap: 6px; align-items: flex-start; color: var(--ink); }
 .sas-vs-warn .sas-ico { flex: none; color: var(--warning); margin-block-start: 1px; }
-.sas-vs-collapsed { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-2); }
-.sas-vs-collapsed__value { min-width: 0; }
 .sas-vs-form [hidden] { display: none; }
-/* "Play sample": its own line under the voice's helper line; the labels share one cell (no jump to "Stop"). */
+/* "Play sample": its own line under the voice's helper line, the buttons side by side (they wrap only when they do not
+   fit); the labels share one cell (no jump to "Stop"). */
 .sas-vs-samples { display: flex; flex-wrap: wrap; gap: var(--space-2); }
 .sas-vs-sample__labels { display: inline-grid; }
 .sas-vs-sample__labels > span { grid-area: 1 / 1; visibility: hidden; }
@@ -1049,7 +1052,6 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 @keyframes sas-vs-spin { to { transform: rotate(360deg); } }
 @media (max-width: 480px) {
   .sas-vs-max { max-width: none; }
-  .sas-vs-collapsed { flex-direction: column; align-items: stretch; }
 }
 .sas-seg { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; width: 100%; border: 1px solid var(--line-strong); border-radius: var(--radius-md); overflow: hidden; }
 .sas-seg__opt { padding: 7px var(--space-2); text-align: center; font-weight: 600; cursor: pointer; color: var(--ink); }
