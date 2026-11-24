@@ -4129,5 +4129,13 @@
   "inbox.sort.newest": "Newest first",
   "inbox.sort.oldest": "Oldest first",
   "orders.valid.day_left": "1 day left",
-  "orders.valid.days_left": "{days} days left"
+  "orders.valid.days_left": "{days} days left",
+  "handoff.short.spend_cap": "AI limit reached",
+  "handoff.short.upset": "Upset",
+  "handoff.short.complaint": "Complaint",
+  "handoff.short.legal": "Legal",
+  "handoff.short.existing_customer": "Existing customer",
+  "handoff.short.insists": "Insists on a person",
+  "handoff.short.asked_person": "Buyer asked for a person",
+  "inbox.preview.voice_plain": "Voice call"
 }

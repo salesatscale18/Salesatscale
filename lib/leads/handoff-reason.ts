@@ -100,6 +100,49 @@ export function handoffWhyWhole(e: { type: string; data: Record<string, unknown>
   return handoffWhyCut(e, Infinity)?.why ?? null;
 }
 
+/** Short-label kinds that only lists use (conv-list-fixes C): the platform budget hand-off and a plain ask for a person. */
+export type HandoffShortKind = HandoffLabel | "asked_person";
+
+/** The agent's hand_off_to_human reason when the platform's monthly AI budget ran out (lib/agent/turn.ts). */
+const PLATFORM_BUDGET = /\bmonthly AI budget\b|\bAI budget is used up\b/i;
+const ASKED_PERSON = /\b(asks?|asked|asking|wants?|wanted|requests?|requested)\b[^.]{0,30}\b(a |to )?(person|human|someone|real person|team member)\b/i;
+
+/**
+ * The kind of a hand-off for the list's short label (conv-list-fixes C): the label kinds (spend cap, legal, existing
+ * customer, complaint, insists, upset), the platform budget reason read as the spend cap, and a plain ask for a
+ * person. Null when nothing matches. Pure.
+ */
+export function handoffShortKind(e: { type: string; data: Record<string, unknown> | null }): HandoffShortKind | null {
+  const reason = e.type === "handoff.requested" && typeof e.data?.reason === "string" ? e.data.reason : "";
+  if (reason && PLATFORM_BUDGET.test(reason)) return "spend_cap";
+  const label = handoffLabel(e);
+  if (label) return label;
+  return reason && ASKED_PERSON.test(reason) ? "asked_person" : null;
+}
+
+/** The short label words ("AI limit reached", "Upset", "Buyer asked for a person"), or null. Pure. */
+export function handoffShort(e: { type: string; data: Record<string, unknown> | null }): string | null {
+  const kind = handoffShortKind(e);
+  return kind ? t(`handoff.short.${kind}` as MessageKey) : null;
+}
+
+/**
+ * Each lead's latest hand-off (scoped by account) for a list row: the short label (null when it has none) and the
+ * whole line (label and the agent's whole reason, for a tooltip). Leads with no hand-off event are left out.
+ */
+export async function handoffShortByLead(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, { short: string | null; whole: string | null }>> {
+  const out = new Map<string, { short: string | null; whole: string | null }>();
+  if (!leadIds.length) return out;
+  const rows = await db.select({ leadId: leadEvents.leadId, type: leadEvents.type, data: leadEvents.data }).from(leadEvents)
+    .where(and(eq(leadEvents.accountId, accountId), inArray(leadEvents.leadId, [...new Set(leadIds)]), inArray(leadEvents.type, [...HANDOFF_WHY_EVENTS])))
+    .orderBy(desc(leadEvents.createdAt));
+  for (const r of rows) {
+    if (out.has(r.leadId)) continue;
+    out.set(r.leadId, { short: handoffShort(r), whole: handoffWhyWhole(r) });
+  }
+  return out;
+}
+
 /** The line for each lead's latest hand-off (scoped by account); leads with none are left out. */
 export async function handoffWhyByLead(db: Db, accountId: string, leadIds: readonly string[]): Promise<Map<string, string>> {
   const out = new Map<string, string>();

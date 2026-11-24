@@ -79,9 +79,18 @@ export function MenuEnhancer() {
         menu.style.right = `${Math.max(8, window.innerWidth - r.right)}px`;
         menu.style.left = "auto";
       }
+      // data-menu-match="trigger" (Conversations view and sort menus): the list is as wide as its button, starts at
+      // the button's edge and stays inside the screen with a 16px gutter.
+      if (details.dataset.menuMatch === "trigger") {
+        const w = Math.min(r.width, window.innerWidth - 32);
+        menu.style.width = `${w}px`;
+        menu.style.minWidth = "0";
+        menu.style.left = `${Math.min(Math.max(16, rtl ? r.right - w : r.left), window.innerWidth - 16 - w)}px`;
+        menu.style.right = "auto";
+      }
     };
     const reset = () => {
-      for (const p of ["position", "top", "left", "right", "insetInlineEnd", "insetBlockStart"] as const) menu.style[p] = "";
+      for (const p of ["position", "top", "left", "right", "insetInlineEnd", "insetBlockStart", "width", "minWidth"] as const) menu.style[p] = "";
     };
     const close = (focus: boolean) => {
       details.open = false;

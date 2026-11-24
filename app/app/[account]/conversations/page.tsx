@@ -8,7 +8,7 @@ import { nameInitials } from "@/lib/auth/display";
 import { conversationView } from "@/lib/agent/conversation";
 import { approvedTemplates, conversationWindow } from "@/lib/channels/whatsapp";
 import { renderTemplate } from "@/lib/channels/rules";
-import { handoffWhyByLead } from "@/lib/leads/handoff-reason";
+import { handoffShortByLead } from "@/lib/leads/handoff-reason";
 import { INBOX_FILTERS, INBOX_SORTS, inboxConversation, latestHandoff, listInbox, parseInboxFilter, parseInboxSort, type InboxGroup, type InboxList } from "@/lib/conversations/inbox";
 import { formatDateTimeIn, relativeTime } from "@/lib/format";
 import { MarketSwitcher } from "@/components/sas/market-switcher";
@@ -29,7 +29,7 @@ import { chatPath } from "@/lib/simulator/token";
 import { publicUrl } from "@/lib/orders/token";
 import { isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
 import { agentStepsFor } from "@/lib/conversations/agent-steps-server";
-import { listPreview, needsYouLine, type PreviewFacts } from "@/lib/conversations/preview";
+import { listLineText, listPreview, needsYouLine, type PreviewFacts } from "@/lib/conversations/preview";
 import { previewFacts } from "@/lib/conversations/preview-data";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -88,10 +88,10 @@ export default async function ConversationsPage({ params, searchParams }: { para
   // its row's second line says it instead of the last message (ConvListV2).
   const [whys, facts] = list
     ? await Promise.all([
-      handoffWhyByLead(appDb, account.id, list.rows.filter((r) => r.group === "needs_you").map((r) => r.lead.id)),
+      handoffShortByLead(appDb, account.id, list.rows.filter((r) => r.group === "needs_you").map((r) => r.lead.id)),
       previewFacts(appDb, account.id, list.rows, now),
     ])
-    : [new Map<string, string>(), new Map<string, PreviewFacts>()];
+    : [new Map<string, { short: string | null; whole: string | null }>(), new Map<string, PreviewFacts>()];
 
   // The selected thread's data, in a second parallel batch.
   const thread = selected
@@ -148,7 +148,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
               {/* ConvListV2: the six views in one menu with their counts, and the order next to it. Both are
                   <details> menus of plain links (open without JS; MenuEnhancer adds Escape, arrow keys and click outside). */}
               <div className="sas-inbox__bar">
-                <details className="sas-rowmenu sas-inbox__menu sas-inbox__menu--view" data-inbox-view="">
+                <details className="sas-rowmenu sas-inbox__menu sas-inbox__menu--view" data-inbox-view="" data-menu-match="trigger">
                   <summary className="sas-inbox__select" aria-haspopup="true" title={t("inbox.filters")}>
                     <span className="sas-oneline">{t(`inbox.filter.${filter}`)} · <span className="sas-num">{list.counts[filter]}</span></span>
                     <Icon name="chevron-down" />
@@ -162,7 +162,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   </nav>
                   <MenuEnhancer />
                 </details>
-                <details className="sas-rowmenu sas-inbox__menu" data-inbox-sort="">
+                <details className="sas-rowmenu sas-inbox__menu" data-inbox-sort="" data-menu-match="trigger">
                   <summary className="sas-inbox__select" aria-haspopup="true" title={t("inbox.sort")}>
                     <span className="sas-sr">{t("inbox.sort")}: </span><span className="sas-oneline">{t(`inbox.sort.${sort}`)}</span>
                     <Icon name="chevron-down" />
@@ -217,7 +217,9 @@ export default async function ConversationsPage({ params, searchParams }: { para
                       const ended = r.group === "closed";
                       // ConvListV2: two lines, nothing else. The group (or the chosen view) says the status; the channel,
                       // market, test or simulated chip and the WhatsApp window show in the open conversation.
-                      const needs = r.group === "needs_you" ? needsYouLine(!!r.takenOverByUserId, whys.get(r.lead.id)) : null;
+                      // Needs you: the SHORT label only; the whole reason is the tooltip and stays in the open chat.
+                      const why = r.group === "needs_you" ? whys.get(r.lead.id) : undefined;
+                      const needs = r.group === "needs_you" ? needsYouLine(!!r.takenOverByUserId, why?.short) : null;
                       const p = needs ? null : listPreview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
                       return (
                         <li key={r.conversationId}>
@@ -228,16 +230,18 @@ export default async function ConversationsPage({ params, searchParams }: { para
                             data-row=""
                           >
                             <Avatar actor={ended ? "buyer" : holding ? "human" : "agent"} initials={nameInitials(r.lead.fullName)} />
-                            <span className="sas-inbox__name" data-line="1"><bdi>{r.lead.fullName}</bdi>{r.lead.company ? <span className="sas-inbox__company"> · <bdi>{r.lead.company}</bdi></span> : null}</span>
+                            {/* Left to right whatever the script: name, separator, business, each isolated in its own direction. */}
+                            <span className="sas-inbox__name" dir="ltr" data-line="1"><bdi dir="auto" className="sas-inbox__person">{r.lead.fullName}</bdi>{r.lead.company ? <><span className="sas-inbox__sep"> · </span><bdi dir="auto" className="sas-inbox__company">{r.lead.company}</bdi></> : null}</span>
                             <span className="sas-when" title={formatDateTimeIn(r.lastAt, zone)}>{relativeTime(r.lastAt, now, zone)}</span>
                             {needs ? (
-                              <span className="sas-inbox__preview sas-inbox__preview--needs" data-line="2" data-handoff-why="">
-                                <span className="sas-inbox__preview-text" dir="auto" title={needs}>{needs}</span>
+                              <span className="sas-inbox__preview sas-inbox__preview--needs" dir="ltr" data-line="2" data-handoff-why="" title={why?.whole && why.whole !== why.short ? `${needs} · ${why.whole}` : needs}>
+                                {needs}
                               </span>
                             ) : (
-                              <span className="sas-inbox__preview" data-line="2" data-preview="">
-                                {p!.who ? <span className="sas-inbox__preview-who">{p!.who}:</span> : null}
-                                <span className="sas-inbox__preview-text" dir="auto">{p!.text}</span>
+                              // The speaker first, then the message isolated in its own direction (ruling B); the line is cut at its end.
+                              <span className="sas-inbox__preview" dir="ltr" data-line="2" data-preview="" title={p!.who ? `${p!.who}: ${p!.text}` : p!.text}>
+                                {p!.who ? <><span className="sas-inbox__preview-who">{p!.who}:</span> </> : null}
+                                <bdi className="sas-inbox__preview-text" dir="auto">{listLineText(p!.text)}</bdi>
                               </span>
                             )}
                           </a>
@@ -273,7 +277,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                   <span className="sas-stack-2" style={{ gap: 2, minWidth: 0, flex: "1 1 220px" }}>
                     <span style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                       {/* As on the lead page (R5-6): each part one isolated unit, breaking only at " · ". */}
-                      <strong data-thread-title="" style={{ minWidth: 0, maxWidth: "100%" }}><bdi className="sas-title-part">{selected.lead.fullName}</bdi>{selected.lead.company ? <> · <bdi className="sas-title-part">{selected.lead.company}</bdi></> : null}</strong>
+                      <strong data-thread-title="" dir="ltr" style={{ minWidth: 0, maxWidth: "100%" }}><bdi className="sas-title-part" dir="auto">{selected.lead.fullName}</bdi>{selected.lead.company ? <> · <bdi className="sas-title-part" dir="auto">{selected.lead.company}</bdi></> : null}</strong>
                       {selected.conv.channel === SIMULATOR_CHANNEL ? <SimulatedChip /> : selected.conv.isTest ? <TestLabChip /> : null}
                     </span>
                     <span className="sas-small">

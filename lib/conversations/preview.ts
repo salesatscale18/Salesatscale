@@ -63,7 +63,32 @@ export function callLength(sec: number): string {
 /** "Voice call · 4 min 12 s" when the body is the call-ended line, else null. Pure. */
 export function voiceCallPreview(body: string): string | null {
   const m = CALL_ENDED.exec(body.trim());
-  return m ? t("inbox.preview.voice", { length: callLength(Number(m[1]) * 60 + Number(m[2])) }) : null;
+  if (!m) return null;
+  const sec = Number(m[1]) * 60 + Number(m[2]);
+  // A call with no stored length (0:00) reads "Voice call", never "Voice call · 0 s".
+  return sec > 0 ? t("inbox.preview.voice", { length: callLength(sec) }) : t("inbox.preview.voice_plain");
+}
+
+/** Characters of a right-to-left message the list row keeps (it fits a phone row after "Agent: "). */
+export const RTL_LINE_MAX = 30;
+
+/** True when the text's first strong letter is right to left (as dir="auto" decides). Pure. */
+export function startsRtl(text: string): boolean {
+  const first = /\p{L}/u.exec(text);
+  return !!first && /[֐-ࣿיִ-﷿ﹰ-﻿]/.test(first[0]);
+}
+
+/**
+ * The message part of a row's second line (conv-list-fixes 3, UX ruling B). The line is left to right: the speaker,
+ * then the message isolated in its own direction. Left-to-right text is cut by CSS at the line's end with "…". A
+ * right-to-left message cut by CSS in a left-to-right line would lose its START, so it is cut here at a word, to a
+ * length that fits the row, without a "…" between the speaker and the text; the whole message is in the title. Pure.
+ */
+export function listLineText(text: string, max = RTL_LINE_MAX): string {
+  if (!startsRtl(text) || text.length <= max) return text;
+  const cut = text.slice(0, max + 1);
+  const at = cut.lastIndexOf(" ");
+  return (at > max / 2 ? cut.slice(0, at) : text.slice(0, max)).replace(/[,;:\s]+$/, "");
 }
 
 /**
@@ -91,6 +116,7 @@ export function listPreview(
  * the buyer wrote last), then why, from lib/leads/handoff-reason.ts ("Hand-off requested · AI limit reached"). Pure.
  */
 export function needsYouLine(takenOver: boolean, why: string | null | undefined): string {
+  // `why`: the SHORT label (lib/leads/handoff-reason.ts handoffShort); none: what waits, alone.
   const what = takenOver ? t("inbox.badge.buyer_waiting") : t("inbox.badge.handoff");
   return why ? `${what} · ${why}` : what;
 }

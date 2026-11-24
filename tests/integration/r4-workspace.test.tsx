@@ -182,9 +182,10 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
   it("F1: the Conversations preview is the sender, then the message in its own direction", async () => {
     const conv = await page(ConversationsPage(props(account.slug)));
     save("conversations", conv);
-    expect(conv).toMatch(/<span class="sas-inbox__preview" data-line="2" data-preview=""><span class="sas-inbox__preview-who">(Agent|Buyer|You|Team):<\/span><span class="sas-inbox__preview-text" dir="auto">/);
+    // conv-list-fixes 3: a left-to-right line, the speaker first, the message an isolated run in its own direction.
+    expect(conv).toMatch(/<span class="sas-inbox__preview" dir="ltr" data-line="2" data-preview="" title="[^"]*"><span class="sas-inbox__preview-who">(Agent|Buyer|You|Team):<\/span> <bdi class="sas-inbox__preview-text" dir="auto">/);
     expect(conv).not.toContain(">System:<");
-    expect(css).toMatch(/\.sas-inbox__preview-text \{ min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; \}/);
+    expect(css).toContain(".sas-inbox__preview-text { unicode-bidi: isolate; }");
   });
 
   it("B7: Monthly incl. VAT, and the monthly line of an item also bought once is '<name> · monthly service'", async () => {
@@ -226,7 +227,7 @@ describe("R4-1: lead page, Conversations, Quotes and orders", () => {
     expect(conv).toContain("This deal is won.");
     expect(conv).toContain('data-take-over="secondary"');
     // The thread header follows the lead page's title rule (R5-6): each Hebrew part one isolated unit, breaking only at " · ".
-    expect(conv).toMatch(/<strong data-thread-title="" style="[^"]*"><bdi class="sas-title-part">נועה כהן<\/bdi> · <bdi class="sas-title-part">קפה נועה<\/bdi><\/strong>/);
+    expect(conv).toMatch(/<strong data-thread-title="" dir="ltr" style="[^"]*"><bdi class="sas-title-part" dir="auto">נועה כהן<\/bdi> · <bdi class="sas-title-part" dir="auto">קפה נועה<\/bdi><\/strong>/);
     expect(lead).toContain('<bdi class="sas-title-part">נועה כהן</bdi> · <bdi class="sas-title-part">קפה נועה</bdi>');
     // An open deal keeps the primary Take over.
     const tamar = await page(LeadCardPage(props(account.slug, {}, { leadId: ids.tamarLead }) as never));

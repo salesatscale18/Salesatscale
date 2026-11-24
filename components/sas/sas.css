@@ -436,7 +436,9 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox__select:hover, .sas-inbox__menu[open] > .sas-inbox__select { background: var(--surface); }
 .sas-inbox__select:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 .sas-inbox__select .sas-ico { width: 14px; height: 14px; flex: none; color: var(--ink-muted); }
-.sas-inbox__menu--view .sas-rowmenu__list { inset-inline-start: 0; inset-inline-end: auto; min-width: 240px; }
+/* The menu list is as wide as its button and starts at its edge (MenuEnhancer keeps it in the screen, 16px gutter). */
+.sas-inbox__menu { position: relative; }
+.sas-inbox__menu .sas-rowmenu__list { inset-inline-start: 0; inset-inline-end: auto; min-width: 0; width: 100%; box-sizing: border-box; }
 .sas-app .sas-inbox__option { justify-content: space-between; gap: var(--space-4); }
 .sas-app .sas-inbox__option .sas-num { color: var(--ink-muted); font-size: 12px; }
 .sas-app .sas-inbox__option[aria-current="page"] { background: var(--primary-soft); color: var(--primary); font-weight: 600; }
@@ -450,8 +452,9 @@ h2.sas-group-label { margin: 0; }
 .sas-inbox__row > .sas-av { grid-row: span 2; width: 36px; height: 36px; font-size: 12px; }
 .sas-inbox__row > .sas-av .sas-ico { width: 16px; height: 16px; }
 .sas-inbox__name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 400; line-height: 20px; }
-.sas-inbox__name > bdi { font-weight: 600; }
-.sas-inbox__company { color: var(--ink-muted); }
+.sas-inbox__name bdi { unicode-bidi: isolate; }
+.sas-inbox__person { font-weight: 600; }
+.sas-inbox__sep, .sas-inbox__company { color: var(--ink-muted); }
 .sas-inbox__row > .sas-when { font-size: 12px; line-height: 16px; color: var(--ink-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .sas-inbox__row > .sas-inbox__preview { grid-column: 2 / 4; font-size: 13px; line-height: 18px; color: var(--ink-muted); }
 .sas-inbox__row--unread > .sas-inbox__preview { color: var(--ink); }
@@ -879,9 +882,9 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-thread-note > .sas-ico { color: var(--human); }
 .sas-thread-note strong { color: var(--ink); font-weight: 600; }
 /* F1: the list preview is "Who: " plus the message, the message in its own direction, cut at its own end. */
-.sas-inbox__preview { display: flex; min-width: 0; gap: 4px; overflow: hidden; white-space: nowrap; }
-.sas-inbox__preview-who { flex: none; }
-.sas-inbox__preview-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* conv-list-fixes: one left-to-right line, the speaker first, the message an isolated inline run; "…" at the line's end. */
+.sas-inbox__preview { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sas-inbox__preview-text { unicode-bidi: isolate; }
 /* E7: table headings like "One-time" stay on one line. */
 .sas-th-nowrap { white-space: nowrap; }
 
@@ -904,7 +907,7 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
   .sas-with-panel .sas-table--panel-aware .sas-col-minor { display: none; }
 }
 /* R5-6: a lead title "name · company" (lead page, Conversations thread header) breaks only between its parts. */
-.sas-title-part { display: inline-block; max-width: 100%; }
+.sas-title-part { display: inline-block; max-width: 100%; unicode-bidi: isolate; }
 /* S4: the phone back link in Conversations: a chevron, lined up with the header edge. */
 @media (max-width: 860px) {
   .sas-inbox__back { margin-inline-start: -6px; padding-inline-start: 2px; gap: 2px; }

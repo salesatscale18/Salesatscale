@@ -63,7 +63,8 @@ function save(name: string, html: string) {
 const NOW = new Date("2026-11-19T09:00:00Z");
 const LATER = new Date("2026-11-19T10:00:00Z");
 /** The preview texts of the Conversations list, in order. */
-const previews = (html: string) => [...html.matchAll(/<span class="sas-inbox__preview-text" dir="auto">([^<]*)<\/span>/g)].map((m) => m[1]);
+// conv-list-fixes 3: the message is an isolated <bdi> after the speaker.
+const previews = (html: string) => [...html.matchAll(/<bdi class="sas-inbox__preview-text" dir="auto">([^<]*)<\/bdi>/g)].map((m) => m[1]);
 
 describe("Reach RA3", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
