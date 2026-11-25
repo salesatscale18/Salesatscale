@@ -1,8 +1,9 @@
 /**
- * Reply figure check (offers plan §4, owner decisions of 23 Nov): pure code, no
- * model. Every money amount and percentage in a text-chat reply must come from
- * this turn's successful tool results, the buyer's own messages, or a quote the
- * app already showed in the chat. Bare integers (quantities, dates, times,
+ * Reply figure check (offers plan §4, owner decisions of 23 and 25 Nov): pure
+ * code, no model. Every money amount and percentage in a text-chat reply must
+ * come from this turn's successful tool results (approved knowledge facts from
+ * lookup_knowledge included), the buyer's own messages, a quote the app already
+ * showed in the chat, or the seller's approved play facts. Bare integers (quantities, dates, times,
  * sites) and numbers written in words are not checked.
  *
  * - Money: a number next to a currency sign or word (either side), or a number
