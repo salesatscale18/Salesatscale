@@ -110,8 +110,17 @@ export function smallerQuoteAgreed(lines: readonly { role: string; text: string 
   if (any(QUOTE_OR_PRICE, buyer) && any(SMALLER, buyer)) return "yes";
   const agentBefore = lines.slice(0, lastBuyerAt).findLast((l) => l.role === "agent")?.text ?? "";
   const askedFirst = /[?؟]/.test(agentBefore) && any(QUOTE_OR_PRICE, agentBefore) && saysNew(agentBefore);
-  const yes = (any(PLAIN_YES, buyer) || any(EXPLICIT_ASK, buyer)) && !formReservation(buyer) && !any(HEDGE, buyer);
-  return askedFirst && yes ? "yes" : "no";
+  return askedFirst && clearYes(buyer) ? "yes" : "no";
+}
+
+/**
+ * A clear yes in the buyer's line (English or Hebrew): a plain yes or an explicit go-ahead, with no reservation (the
+ * order form's: a contrast, a price remark, a question, a negation) and no hedge ("I guess so"). The yes of
+ * smallerQuoteAgreed, and of a number the agent proposed (lib/voice/quote-quantities.ts).
+ */
+export function clearYes(line: string): boolean {
+  if (!JUDGEABLE.test(line)) return false;
+  return (any(PLAIN_YES, line) || any(EXPLICIT_ASK, line)) && !formReservation(line) && !any(HEDGE, line);
 }
 
 export function orderFormAgreed(lines: readonly { role: string; text: string }[]): "yes" | "no" | "unknown" {

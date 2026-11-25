@@ -71,6 +71,36 @@ export const SETUP_RETRY_FIELDS: Record<"gemini" | "openai", readonly (keyof Sdk
   openai: ["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat", "tools"],
 };
 
+/**
+ * Several independent tools in one model response (OpenAI `parallel_tool_calls`, documented for the reasoning realtime
+ * models such as gpt-realtime-2 / 2.1) on BUYER calls. Off: test calls only. Turn on once test calls proved it.
+ */
+export const PARALLEL_TOOL_CALLS_FOR_BUYER_CALLS = false;
+
+/**
+ * The models it is sent for: GPT-Realtime 2.1 only. GPT-Realtime mini is left out: OpenAI documents the field for the
+ * reasoning realtime models, and nothing in the SDK says mini takes it.
+ */
+export const PARALLEL_TOOL_CALLS_MODELS: readonly string[] = ["openai/gpt-realtime-2.1"];
+
+/** Whether a call on this model asks for parallel tool calls (`isTest`: a test-lab call). */
+export function parallelToolCallsFor(modelId: string, isTest: boolean, forBuyers: boolean = PARALLEL_TOOL_CALLS_FOR_BUYER_CALLS): boolean {
+  return PARALLEL_TOOL_CALLS_MODELS.includes(modelId) && (isTest || forBuyers);
+}
+
+/**
+ * How `parallel_tool_calls` reaches OpenAI. The normalized session config (@ai-sdk/provider 4.0.39
+ * RealtimeModelV4SessionConfig) has no field for it; its `providerOptions` are "passed through to the provider". The
+ * Gateway's realtime model is an identity codec (@ai-sdk/gateway 4.0.150 dist/index.js GatewayRealtimeModel
+ * serializeClientEvent / buildSessionConfig return the event and config unchanged), and the OpenAI realtime mapping
+ * (@ai-sdk/openai 4.0.121, the version ai 7.0.177 is built against: src/realtime/openai-realtime-event-mapper.ts
+ * buildOpenAISessionConfig, `Object.assign(session, config.providerOptions)`) merges providerOptions into the
+ * session.update's `session` as they are: so the key is the wire name, at the top of providerOptions (not under
+ * `openai`, which would become `session.openai`). Whether the Gateway service applies the same mapping is not visible
+ * from the client: a refusal goes to the safe retry, which never carries providerOptions on OpenAI (SETUP_RETRY_FIELDS).
+ */
+export const PARALLEL_TOOL_CALLS_OPTION = "parallel_tool_calls";
+
 /** Every field our full session config can carry (the names a log line lists, never their values). */
 export const SESSION_FIELD_NAMES = ["instructions", "voice", "outputModalities", "inputAudioFormat", "outputAudioFormat", "inputAudioTranscription", "outputAudioTranscription", "turnDetection", "tools", "providerOptions"] as const;
 
@@ -132,6 +162,8 @@ function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkS
     tools: cfg.tools.map((t): SdkTool => ({ type: "function", name: t.name, description: t.description, parameters: t.parameters as SdkTool["parameters"] })),
     // Our tools run on our server and the model must wait for each result (the test lab's silent probe: NON_BLOCKING).
     ...(gemini ? { providerOptions: { google: { defaultToolBehavior: cfg.toolBehavior === "non_blocking" ? "NON_BLOCKING" : "BLOCKING" } } } : {}),
+    // OpenAI, test calls on GPT-Realtime 2.1: several independent tools in one response (PARALLEL_TOOL_CALLS_OPTION).
+    ...(!gemini && cfg.parallelToolCalls ? { providerOptions: { [PARALLEL_TOOL_CALLS_OPTION]: true } } : {}),
   };
 }
 
@@ -276,7 +308,8 @@ export class ServerEventMapper {
         ];
       case "session-updated":
         // Verbose (ElevenLabs Realtime): what the provider took from our setup, for the log. Otherwise nothing we read.
-        return this.o.verbose ? [{ type: "session-ack", name: e.type, detail: sessionAckSummary(e.raw) }] : unknownEvent(e.type);
+        // `ackSession` (GPT test calls): the same line, so a test call shows what runs (parallel tool calls, reasoning).
+        return this.o.verbose || this.o.ackSession ? [{ type: "session-ack", name: e.type, detail: sessionAckSummary(e.raw) }] : unknownEvent(e.type);
       case "session-usage":
         // The provider's own count of connected seconds (cumulative): what a session-priced model bills. Log only.
         return this.o.verbose
@@ -451,8 +484,10 @@ export class ServerEventMapper {
    * `verbose` (ElevenLabs Realtime, not tried live): the session-created/updated acknowledgement is summarized for the
    * log ("session-ack"), the provider's session seconds are reported, every event type the mapper does not read is
    * reported once (the known-ignored ones too), and error messages keep up to 300 characters for the log.
+   * `ackSession` (GPT test calls, the session's `logSessionAck`): the session-updated acknowledgement is summarized for
+   * the log too (with what the provider echoes for parallel tool calls and reasoning effort); nothing else changes.
    */
-  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean; textOutput?: boolean; verbose?: boolean } = {}) {}
+  constructor(private readonly o: { dropCutAudio?: boolean; rawTranscripts?: boolean; textOutput?: boolean; verbose?: boolean; ackSession?: boolean } = {}) {}
   private clean(text: string): string {
     return this.o.rawTranscripts ? text : cleanTranscript(text);
   }
@@ -665,6 +700,7 @@ export class GatewayRealtime implements RealtimeModel {
       dropCutAudio: schemaFamilyOf(this.modelId) !== "gemini", ...(this.opts.rawTranscripts ? { rawTranscripts: true } : {}),
       ...(cfg.outputModality === "text" ? { textOutput: true } : {}),
       ...(isElevenRealtimeModel(this.modelId) ? { verbose: true } : {}),
+      ...(cfg.logSessionAck ? { ackSession: true } : {}),
     });
     const ws = new WebSocket(url, protocols, { headers });
     let closedByUs = false;

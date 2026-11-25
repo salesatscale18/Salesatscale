@@ -47,6 +47,14 @@ export type RealtimeSessionConfig = {
    * voice is sent, no audio comes back); its words are spoken by our speaker. Absent: "audio", as always.
    */
   outputModality?: "audio" | "text";
+  /**
+   * The model may call several independent tools in one response (OpenAI `parallel_tool_calls`, sent through the
+   * Gateway's providerOptions: lib/voice/gateway-realtime.ts). Test calls on GPT-Realtime 2.1 only
+   * (PARALLEL_TOOL_CALLS_FOR_BUYER_CALLS); never in the safe retry. Absent: not sent (the provider's default).
+   */
+  parallelToolCalls?: boolean;
+  /** Log what the provider echoes in session-updated (GPT test calls): "provider session-updated: …". Log only. */
+  logSessionAck?: boolean;
 };
 
 /** Normalized events the engine reads. Transcript texts are the whole turn so far, not deltas. */

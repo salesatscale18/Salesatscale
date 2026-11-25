@@ -131,7 +131,8 @@ describe("S2: a line at no charge is free", () => {
   it("lines_for_call says free (Hebrew: חינם), never ₪0.00", async () => {
     for (const [he, word] of [[false, "free"], [true, "חינם"]] as const) {
       const c = await fakeCall({ language: he ? "he" : "en" });
-      await c.buyer(he ? "מסעדה עם שני סניפים" : "A restaurant with two sites.");
+      // The buyer gives every quantity (the quote-quantities guard of test calls stays silent).
+      await c.buyer(he ? "מסעדה עם שני סניפים, ומדריך הקמה אחד" : "A restaurant with two sites, and one setup guide.");
       await c.tool("u1", "update_deal_state", facts("2"));
       const q = await c.tool("q1", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 2 }, { sku: "GUIDE", qty: 1 }]));
       const lines = q.lines_for_call as { item: string; unit_price: string; line_total: string }[];

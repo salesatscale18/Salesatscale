@@ -495,9 +495,12 @@ describe("voice standby (scripted realtime model, fake clock)", () => {
       await c.run(15_000);
       const err = l.lines.find((x) => x.level === "error")!;
       expect(err.line).toContain(`provider rejected the session setup: ${PROMPT_ERR}`);
-      expect(err.line).toMatch(/sent=instructions,voice,outputModalities,inputAudioFormat,outputAudioFormat,inputAudioTranscription,outputAudioTranscription,turnDetection,tools$/);
+      // A test call on GPT-Realtime 2.1: the first connect also asks for parallel tool calls (providerOptions).
+      expect(err.line).toMatch(/sent=instructions,voice,outputModalities,inputAudioFormat,outputAudioFormat,inputAudioTranscription,outputAudioTranscription,turnDetection,tools,providerOptions$/);
+      expect(sent[0].providerOptions).toEqual({ parallel_tool_calls: true });
       expect(err.line).not.toContain("Be brief");
       expect(sent).toHaveLength(2);
+      // The retry never carries it: a refusal never costs the call.
       expect(Object.keys(sent[1])).toEqual(["instructions", "outputModalities", "inputAudioFormat", "outputAudioFormat", "tools"]);
       expect(sent[1].instructions).toBe(sent[0].instructions);
       expect(sent[1].tools).toEqual(sent[0].tools);

@@ -15,7 +15,7 @@ import { and, asc, desc, eq, exists, inArray, ne, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
-  agentVersions, conversations, leads, messages, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls, voiceSessions,
+  agentVersions, catalogItems, conversations, leads, messages, quoteLines, quotes, quoteVersions, sellerAccounts, toolCalls, voiceSessions,
   type AgentVersion, type Conversation, type Lead, type SellerAccount, type VoiceEndBy, type VoiceEndDetail, type VoiceEndReason, type VoiceSession,
 } from "@/db/schema";
 import { readDealState } from "@/lib/agent/service";
@@ -34,10 +34,12 @@ import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from ".
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
-import { callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
+import { callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
+import { lineSaysNumber, quantityLogLine, quantityNotGiven, quoteQuantityGuardOn, ungroundedQuoteLine } from "./quote-quantities";
+import { parallelToolCallsFor } from "./gateway-realtime";
 import { EnergyVad, PcmRing, type VadOptions } from "./vad";
 import { pcmDurationMs } from "./protocol";
 import { FormContextNotes, orderFormStatus } from "./form-context";
@@ -165,7 +167,8 @@ export type VoiceProfile = {
   engine: string;
   loadInstructions(
     db: Db, a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: Awaited<ReturnType<typeof readDealState>>; now: Date },
-    opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean },
+    /** `modelId`: the realtime model the call runs on (a scripted call: the version's model it stands in for); `isTest`: a test-lab call. */
+    opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean },
   ): Promise<VoiceCallContext>;
   tools(family: SchemaFamily): RealtimeToolDef[];
   /** A transcript as stored and shown (Current: cleanTranscript). */
@@ -352,17 +355,8 @@ export function notSavedYet(missing: readonly string[]): string {
   return `Not saved yet: ${missing.join(", ")}. If the buyer already told you, save it now with update_deal_state updates (this is not a cue to speak).`;
 }
 
-const NUMBER_WORDS: Record<number, RegExp> = {
-  0: /\b(zero|none)\b|אפס/i, 1: /\b(one|a single|single)\b|אחד|אחת/i, 2: /\b(two|both|a couple)\b|שתיים|שניים|שני|שתי/i,
-  3: /\bthree\b|שלוש|שלושה/i, 4: /\bfour\b|ארבע|ארבעה/i, 5: /\bfive\b|חמש|חמישה/i, 6: /\bsix\b|שש|שישה/i,
-  7: /\bseven\b|שבע|שבעה/i, 8: /\beight\b|שמונה/i, 9: /\bnine\b|תשע|תשעה/i, 10: /\bten\b|עשר|עשרה/i,
-};
-
-/** Whether a line says this number, in digits or in words (English, Hebrew; up to ten in words). */
-export function lineSaysNumber(line: string, n: number): boolean {
-  if (new RegExp(`(^|[^\\d])${n}([^\\d]|$)`).test(line)) return true;
-  return NUMBER_WORDS[n]?.test(line) ?? false;
-}
+/** Whether a line says this number, in digits or in words (English, Hebrew; up to ten in words): lib/voice/quote-quantities.ts. */
+export { lineSaysNumber };
 
 /** The order-form guard's refusal (orderFormAgreed): the rule and what the model is told. */
 export const FORM_NOT_AGREED = {
@@ -471,7 +465,8 @@ export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four sho
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
 export function configSummary(cfg: RealtimeSessionConfig): string {
   if (cfg.withoutTools) return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=0 (without tools)`;
-  return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}`;
+  // parallel tool calls asked for (GPT-Realtime 2.1 test calls); the safe retry never sends it.
+  return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}${cfg.parallelToolCalls && !cfg.safe ? " parallelTools=on" : ""}`;
 }
 
 /** The log line when ElevenLabs Realtime's last retry leaves the tools out. */
@@ -582,6 +577,8 @@ export class VoiceEngine {
    * `id` is null when the result named no quote id.
    */
   private heldQuote: { id: string | null } | null = null;
+  /** The quote-quantities guard last refused when the call had this many lines (null: never): its no-dead-lock path. */
+  private qtyRefusedAt: number | null = null;
   /** This call's agent handed the conversation to the team (hand_off_to_human): the call itself goes on. */
   private handedOffHere = false;
   /** Counts of the relay's diagnostics (RealtimeEvent "diagnostic"), logged when the call ends. */
@@ -1166,7 +1163,7 @@ export class VoiceEngine {
     const recording = await this.startRecording(account);
     this.recorded = recording.on;
     const ctx = this.profile
-      ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded })
+      ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded, ...this.callModel() })
       : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal: dealNow, now: new Date(this.clock.now()) }, { recorded: this.recorded });
     this.continuingCall = ctx.continuing;
     // The count the stage uses for this call's tools (effectiveAgentMessages; nothing of this call is stored yet).
@@ -1397,6 +1394,15 @@ export class VoiceEngine {
     };
   }
 
+  /**
+   * The realtime model this call runs on, for a profile's instructions (lib/voice-guarded: the GPT tool rules): the
+   * live model, or the version's model a scripted call stands in for (its session row); and whether it is a test call.
+   */
+  private callModel(): { modelId: string | null; isTest: boolean } {
+    const session = this.loaded!.session;
+    return { modelId: this.model.mode === "live" ? this.model.modelId : session.model ?? this.model.modelId, isTest: session.isTest };
+  }
+
   private sessionConfig(instructions: string, languages?: { language: string; expectedLanguages: string[] }): RealtimeSessionConfig {
     // A recorded call (and only one): how to answer if the buyer raises the recording; on every connection of the call.
     const cfg = this.fullSessionConfig(instructions, languages);
@@ -1425,6 +1431,10 @@ export class VoiceEngine {
       ...(tt ? { turnTaking: tt } : {}),
       // Text output: the model answers in text; our speaker says it.
       ...(this.speaker ? { outputModality: "text" as const } : {}),
+      // Test calls on GPT-Realtime 2.1 (PARALLEL_TOOL_CALLS_FOR_BUYER_CALLS): independent tools in one step. The
+      // safe retry never sends it (SETUP_RETRY_FIELDS). A GPT test call logs the provider's session-updated.
+      ...(parallelToolCallsFor(this.model.modelId, this.loaded!.session.isTest) ? { parallelToolCalls: true } : {}),
+      ...(this.loaded!.session.isTest && isOpenAiVoiceModel(this.model.modelId) ? { logSessionAck: true } : {}),
       scenario: this.loaded!.conv.scenario,
     };
   }
@@ -2111,7 +2121,7 @@ export class VoiceEngine {
       const deal = await readDealState(this.db, account.id, conv.leadId);
       const ctx = this.profile
         ? await this.profile.loadInstructions(this.db, { account, version, conv, lead, deal, now: new Date(this.clock.now()) }, {
-          ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, recorded: this.recorded,
+          ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES) } : {}), ...opts, recorded: this.recorded, ...this.callModel(),
         })
         : await loadVoiceInstructions(this.db, { account, version: this.instructionVersion(version), conv, lead, deal, now: new Date(this.clock.now()) }, {
           ...(opts.resumed ? { recap: this.lines.slice(-RECAP_LINES), agentMessages: this.effectiveAgentMessages() } : {}), ...opts, language: this.spokenLanguage, recorded: this.recorded,
@@ -2396,6 +2406,31 @@ export class VoiceEngine {
   }
 
   /**
+   * The quote-quantities guard (test calls): the first create_quote line whose quantity the buyer never gave
+   * (lib/voice/quote-quantities.ts), with the item's name as the agent says it; null `refused` when every one is
+   * grounded. Reads the conversation's buyer lines (the chat's and this call's stored ones) and the saved sites.
+   */
+  private async quoteQuantities(args: unknown): Promise<{ refused: { sku: string; qty: number } | null; item: string }> {
+    const { account, conv } = this.loaded!;
+    const raw = args && typeof args === "object" ? (args as { lines?: unknown }).lines : null;
+    const lines = (Array.isArray(raw) ? raw : []).map((l) => ({ sku: String((l as { sku?: unknown })?.sku ?? ""), qty: Number((l as { qty?: unknown })?.qty) }));
+    const [deal, stored] = await Promise.all([
+      readDealState(this.db, account.id, conv.leadId),
+      this.db.select({ body: messages.body }).from(messages)
+        .where(and(eq(messages.accountId, account.id), eq(messages.conversationId, conv.id), eq(messages.actor, "buyer"))),
+    ]);
+    const siteValue = Number(String((deal?.fields as Record<string, { value?: string } | undefined> | undefined)?.sites?.value ?? "").trim());
+    const sites = Number.isInteger(siteValue) && siteValue > 0 ? siteValue : null;
+    const buyerLines = [...stored.map((m) => m.body ?? ""), ...this.lines.filter((l) => l.role === "buyer").map((l) => l.text)];
+    const refused = ungroundedQuoteLine({ lines, buyerLines, callLines: this.lines, sites, refusedAt: this.qtyRefusedAt });
+    if (!refused) return { refused: null, item: "" };
+    this.qtyRefusedAt = this.lines.length;
+    const [item] = await this.db.select({ name: catalogItems.name, plainName: catalogItems.plainName }).from(catalogItems)
+      .where(and(eq(catalogItems.accountId, account.id), eq(catalogItems.sku, refused.sku))).limit(1);
+    return { refused, item: item?.plainName?.trim() || item?.name || refused.sku };
+  }
+
+  /**
    * Whether the quote create_quote held on this call still waits for the team's approval. Once the team approved
    * (or declined) it, the hold is lifted and the tool decides (it refuses a quote that is not ready).
    */
@@ -2512,6 +2547,12 @@ export class VoiceEngine {
     // A quote for fewer units or sites than before goes only when the buyer asked for it (or said yes to the offer).
     const smaller = name === "create_quote" && removeGate !== "no" ? await this.smallerQuote(args).catch(() => null) : null;
     const smallerGate = smaller ? smallerQuoteAgreed(this.lines, (line) => smaller.numbers.some((n) => lineSaysNumber(line, n))) : "yes";
+    // Test calls (QUOTE_QUANTITY_GUARD_FOR_BUYER_CALLS): a quote only with quantities the buyer gave
+    // (lib/voice/quote-quantities.ts), checked last, before the tool runs: one log line per decision.
+    const qtyCheck = name === "create_quote" && removeGate !== "no" && smallerGate !== "no" && quoteQuantityGuardOn(this.loaded!.session.isTest)
+      ? await this.quoteQuantities(args).catch(() => null) : null;
+    const qtyRefused = qtyCheck?.refused ?? null;
+    if (qtyCheck) this.log.info(voiceLine(this.sessionId, quantityLogLine(qtyRefused)));
     const r = quoteHeld
       ? await this.refuseRecorded(turn, callId, name, args, { rule: HELD_FORM_RULE, message: HELD_FORM_MESSAGE })
       : formGate === "no"
@@ -2520,7 +2561,9 @@ export class VoiceEngine {
           ? await this.refuseRecorded(turn, callId, name, args, removalNotAsked(removing))
           : smallerGate === "no" && smaller
             ? await this.refuseRecorded(turn, callId, name, args, smallerQuoteNotAsked(smaller.what))
-            : await this.runRecorded(turn, callId, name, args);
+            : qtyRefused && qtyCheck
+              ? await this.refuseRecorded(turn, callId, name, args, quantityNotGiven(qtyCheck.item, this.spokenLanguage === "he" ? "he" : "en"))
+              : await this.runRecorded(turn, callId, name, args);
     if (quoteHeld) this.log.info(voiceLine(this.sessionId, "tool send_order_form held: the quote waits for the team's approval"));
     // The conversation's latest quote: held for approval (the order form waits), or ready (the hold is lifted).
     const heldNow = name === "create_quote" && r.outcome === "ok" && isHeldQuoteResult(r.result);

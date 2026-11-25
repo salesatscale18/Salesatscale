@@ -10,13 +10,16 @@
  *   first"), which contradicts it, is always dropped: the line after it is Classic's "Do not announce your checks",
  *   whatever the version's fillers setting;
  * - Current's order_form_status line, where Current places it (before the order-form note line);
- * - a recorded call: Current's one recording rule, at the end of the voice block (where Current places it).
+ * - a recorded call: Current's one recording rule, at the end of the voice block (where Current places it);
+ * - a TEST call on a GPT-Realtime model (2.1 or mini): the short GPT tool rules at the very top (GPT_TOOL_RULES);
+ *   Gemini and ElevenLabs Realtime get the text above byte for byte.
  * tests/unit/voice-guarded-instructions.test.ts asserts the result is Classic's plus exactly these.
  */
 import type { Db } from "@/db/types";
 import type { AgentVersion, Conversation, DealState, Lead, SellerAccount } from "@/db/schema";
 import { voiceCallBlock as currentVoiceCallBlock } from "@/lib/agent/core/voice";
 import { recordedCallRule } from "@/lib/voice/recording-settings";
+import { isOpenAiVoiceModel, voiceFamilyOf } from "@/lib/voice/settings";
 import type { VoiceCallContext } from "@/lib/voice/instructions";
 import { loadVoiceInstructions as loadClassicInstructions, type TranscriptLine } from "@/lib/voice-classic/instructions";
 
@@ -76,8 +79,43 @@ function lineStarting(text: string, start: string): string {
   return text.slice(at + 1, end < 0 ? undefined : end);
 }
 
-/** The guarded instructions from Classic's (pure). `recorded`: the call is recorded (K8). */
-export function guardedInstructions(classic: string, o: { recorded?: boolean } = {}): string {
+/**
+ * The GPT tool rules on BUYER calls. Off: test calls only (a guarded engine runs on test calls only today; this keeps it
+ * so if that changes). Turn on once test calls proved it.
+ */
+export const GPT_TOOL_RULES_FOR_BUYER_CALLS = false;
+
+/**
+ * Short tool rules for the OpenAI realtime models (GPT-Realtime 2.1 and mini), at the very top of the instructions
+ * (owner, 25 Nov 2026). The long text was written for Gemini; a GPT-Realtime 2.1 test call quoted 1 sensor for 2 sites
+ * without asking how many fridges, and made each tool call a separate response. Plain imperatives, no examples.
+ * Gemini and ElevenLabs Realtime never get it.
+ */
+export const GPT_TOOL_RULES = [
+  "## Tool rules (read these first)",
+  "- Act: when the buyer states a new fact, save it with update_deal_state in the same turn. Look products up with search_catalog before you recommend them.",
+  "- Ask: never call create_quote before the buyer has given the quantity of every item on it, or said yes to a number you proposed aloud. Ask one question at a time.",
+  "- Confirm: call send_order_form only after the buyer's clear yes to it.",
+  "- Recover: a refused tool result is an instruction. Do what it says. Never repeat the same call unchanged, and never make a call that changes nothing.",
+  "- Batch: call tools that do not depend on each other together, in one step.",
+  "- Order: call dependent tools in order: first save the details with update_deal_state, then check_fit, then create_quote.",
+].join("\n");
+
+/** Whether a call's instructions start with the GPT tool rules: a GPT-Realtime model, on a test call. */
+export function gptToolRulesFor(modelId: string | null | undefined, isTest: boolean, forBuyers: boolean = GPT_TOOL_RULES_FOR_BUYER_CALLS): boolean {
+  return voiceFamilyOf(modelId) === "openai" && isOpenAiVoiceModel(modelId) && (isTest || forBuyers);
+}
+
+/**
+ * The guarded instructions from Classic's (pure). `recorded`: the call is recorded (K8). `gptToolRules`: the GPT tool
+ * rules go at the very top (gptToolRulesFor); everything else is unchanged, byte for byte.
+ */
+export function guardedInstructions(classic: string, o: { recorded?: boolean; gptToolRules?: boolean } = {}): string {
+  const out = guardedBody(classic, o);
+  return o.gptToolRules ? `${GPT_TOOL_RULES}\n\n${out}` : out;
+}
+
+function guardedBody(classic: string, o: { recorded?: boolean }): string {
   let out = replaceLine(classic, CLASSIC_HANDOFF_LINE, currentHandoffLines());
   out = replaceLine(out, CLASSIC_PRICES_LINE, [CLASSIC_PRICES_LINE, READ_AS_GIVEN_LINE, NO_INTERNALS_LINE]);
   const checks = CLASSIC_CHECKS_LINE_STARTS.map((s) => (out.includes(`\n${s}`) ? lineStarting(out, s) : null)).find((l) => l !== null);
@@ -118,11 +156,11 @@ export function guardedRemovedLines(o: { fillers?: boolean } = {}): string[] {
 export async function loadGuardedInstructions(
   db: Db,
   a: { account: SellerAccount; version: AgentVersion; conv: Conversation; lead: Lead; deal: DealState | null; now: Date },
-  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean } = {},
+  opts: { recap?: TranscriptLine[]; resumed?: boolean; woke?: boolean; recorded?: boolean; modelId?: string | null; isTest?: boolean } = {},
 ): Promise<VoiceCallContext> {
   const ctx = await loadClassicInstructions(db, a, { recap: opts.recap, resumed: opts.resumed, woke: opts.woke });
   return {
-    instructions: guardedInstructions(ctx.instructions, { recorded: opts.recorded }),
+    instructions: guardedInstructions(ctx.instructions, { recorded: opts.recorded, gptToolRules: gptToolRulesFor(opts.modelId, opts.isTest ?? false) }),
     opener: ctx.opener, openerPrompt: ctx.openerPrompt, language: ctx.language, expectedLanguages: ctx.expectedLanguages, continuing: ctx.continuing,
   };
 }

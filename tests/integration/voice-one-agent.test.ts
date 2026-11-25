@@ -371,7 +371,7 @@ describe("one agent at a time", () => {
       await c.run(500);
       return c.model.conns[0].results.filter((r) => r.name === "create_quote").at(-1)!.result;
     };
-    c.engine.onClientMessage({ t: "text", text: "A restaurant. How much does it cost?" });
+    c.engine.onClientMessage({ t: "text", text: "A restaurant. How much do two seats cost?" });
     await c.run(300);
     const refused = await quote("q1");
     expect(refused).toMatchObject({ ok: false, rule: "Before-quote fields missing" });

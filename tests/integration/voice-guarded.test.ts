@@ -358,7 +358,8 @@ describe("Classic + guards", () => {
     it("K3: create_quote removing an auto-added line is held unless the buyer asked; K4: a refused quote forbids a total", async () => {
       const c = await fakeCall();
       await c.startNow();
-      await c.buyer("A restaurant. How much does it cost?");
+      // The buyer gives the quantity (the quote-quantities guard of test calls stays silent).
+      await c.buyer("A restaurant. How much do two seats cost?");
       // K4: no quote yet (facts missing): what is missing, and no total (Current's message).
       const refused = await c.tool("q0", "create_quote", quoteArgs([{ sku: "SEAT-M", qty: 2 }]));
       expect(refused).toMatchObject({ ok: false, rule: "Before-quote fields missing" });
@@ -458,7 +459,7 @@ describe("Classic + guards", () => {
     it("P1: different arguments both run; the same arguments 6 s apart both run; guarded (no probe) never dedupes", async () => {
       const c = await fakeCall([], {}, GUARDED_SILENT_PROFILE);
       await c.startNow();
-      await c.buyer("A restaurant with one site.");
+      await c.buyer("A restaurant with one site. Two or three seats.");
       await c.tool("u1", "update_deal_state", { ...noUpdate, updates: [{ key: "business_type", value: "Restaurant", provenance: "buyer" }, { key: "sites", value: "1", provenance: "buyer" }] });
       c.emit({ type: "tool-call", callId: "q1", name: "create_quote", args: quoteArgs([{ sku: "SEAT-M", qty: 2 }]) });
       await c.run(400);

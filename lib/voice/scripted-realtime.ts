@@ -51,6 +51,8 @@ export type ScriptStep = (
   | { kind: "say"; text: string | ((ctx: ScriptCtx) => string) }
   | { kind: "tool"; name: string; args: unknown | ((ctx: ScriptCtx) => unknown) }
   | { kind: "expectBuyer"; line: string }
+  /** Several tool calls in ONE model response (parallel tool calls): all are emitted, then all results awaited. */
+  | { kind: "tools"; calls: { name: string; args: unknown | ((ctx: ScriptCtx) => unknown) }[] }
 ) & {
   /** The step runs only when this holds (a branch on an earlier tool result); otherwise it is skipped. */
   when?: (ctx: ScriptCtx) => boolean;
@@ -60,6 +62,8 @@ export type Script = ScriptStep[];
 export const say = (text: string | ((ctx: ScriptCtx) => string)): ScriptStep => ({ kind: "say", text });
 export const tool = (name: string, args: unknown | ((ctx: ScriptCtx) => unknown)): ScriptStep => ({ kind: "tool", name, args });
 export const expectBuyer = (line: string): ScriptStep => ({ kind: "expectBuyer", line });
+/** Several tool calls in one model response (their arguments are worked out before any of them runs). */
+export const tools = (...calls: { name: string; args: unknown | ((ctx: ScriptCtx) => unknown) }[]): ScriptStep => ({ kind: "tools", calls });
 /** A step that runs only when `when` holds. */
 export const onlyIf = (when: (ctx: ScriptCtx) => boolean, step: ScriptStep): ScriptStep => ({ ...step, when });
 
@@ -809,6 +813,23 @@ export class ScriptedConnection implements RealtimeConnection {
         const cut = await this.speak(text);
         this.position++;
         if (cut) await this.afterInterruption();
+      } else if (step.kind === "tools") {
+        // One response with several calls: every call goes out, then (text output) the response ends once, with all
+        // of them; the script goes on when every result is back.
+        const calls = step.calls.map((c, i) => ({
+          callId: `call_${++this.callSeq}_${this.position}_${i}`, name: c.name,
+          args: typeof c.args === "function" ? (c.args as (ctx: ScriptCtx) => unknown)(this.ctx) : c.args,
+        }));
+        this.turnOpen = true;
+        for (const c of calls) this.emit({ type: "tool-call", callId: c.callId, name: c.name, args: c.args });
+        if (this.textOutput) this.endTextResponse(calls.length);
+        await this.until(() => calls.every((c) => this.toolResults.has(c.callId)));
+        if (this.closed) return;
+        for (const c of calls) {
+          const r = this.toolResults.get(c.callId);
+          if (r && typeof r === "object") (this.ctx.results[c.name] ??= []).push(r as Record<string, unknown>);
+        }
+        this.position++;
       } else {
         const args = typeof step.args === "function" ? (step.args as (c: ScriptCtx) => unknown)(this.ctx) : step.args;
         const callId = `call_${++this.callSeq}_${this.position}`;

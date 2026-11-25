@@ -123,7 +123,8 @@ const pick = (o: Record<string, unknown>, ...paths: string[][]): unknown => {
  * characters; never the instructions, never a key that may hold a secret): the voice it took, how many tools, its turn
  * detection, modalities, audio formats and transcription, and the other field names it returned. Reads the OpenAI
  * shape (`{ session: { voice, tools, turn_detection, … } }`, GA `audio.output.voice` / `audio.input.turn_detection`)
- * and a flat one; anything missing reads "-".
+ * and a flat one; anything missing reads "-". It ends with what the provider echoes for parallel tool calls and
+ * reasoning effort (`parallel=true reasoning=low`, "-" when absent), never clipped away.
  */
 export function sessionAckSummary(raw: unknown): string {
   const r = raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {};
@@ -139,5 +140,15 @@ export function sessionAckSummary(raw: unknown): string {
     `model=${show(pick(s, ["model"]))}`,
     `fields=${Object.keys(s).filter((k) => !SECRETISH.test(k)).join(",") || "-"}`,
   ];
-  return clipText(parts.join(" "), 300);
+  // Always kept at the end, whatever is clipped before it: what runs for parallel tool calls and reasoning effort.
+  const tail = `parallel=${echoed(pick(s, ["parallel_tool_calls"], ["parallelToolCalls"]))} reasoning=${echoed(pick(s, ["reasoning", "effort"], ["reasoning_effort"], ["reasoningEffort"]))}`;
+  return `${clipText(parts.join(" "), 300 - tail.length - 1)} ${tail}`;
+}
+
+/** A scalar the provider echoed, as a bare value for the log ("true", "low"); "-" when absent, "?" when not a scalar. */
+function echoed(v: unknown): string {
+  if (v === undefined || v === null) return "-";
+  if (typeof v === "boolean" || typeof v === "number") return String(v);
+  if (typeof v === "string") return clipText(v, 20).replace(/\s+/g, "_") || "-";
+  return "?";
 }
