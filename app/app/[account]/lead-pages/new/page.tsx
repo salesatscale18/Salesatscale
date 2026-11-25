@@ -1,8 +1,11 @@
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { t } from "@/lib/i18n";
-import { publicUrl } from "@/lib/orders/token";
+import { leadPagePreviewData } from "@/lib/lead-pages/preview";
 import { formData } from "../form-data";
 import { LeadPageFormView } from "../page-form";
+// The buyer screens' styles, for the live preview (the same components as the real pages).
+import "@/app/chat/[token]/chat.css";
+import "@/app/p/[key]/lead-page.css";
 import "../lead-pages.css";
 
 /** Lead pages › Add a page (board: LeadPageConnect; phase 1: Our form on your page, or Button or link). */
@@ -10,6 +13,7 @@ export default async function NewLeadPage({ params }: { params: Promise<{ accoun
   const { account: slug } = await params;
   const { account } = await requireAccount(slug);
   const d = await formData(appDb, account);
+  const preview = await leadPagePreviewData(appDb, account, { page: null, topics: d.topics, markets: d.markets });
   const base = `/app/${account.slug}/lead-pages`;
   return (
     <main className="sas-shell__content lpg-page">
@@ -20,7 +24,7 @@ export default async function NewLeadPage({ params }: { params: Promise<{ accoun
       </header>
       <LeadPageFormView
         slug={account.slug} page={null} markets={d.markets} languages={account.languages} topics={d.topics} defaultTopic={d.defaultTopic}
-        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} hostedUrl={null} appBase={publicUrl("/")}
+        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} preview={preview}
       />
     </main>
   );

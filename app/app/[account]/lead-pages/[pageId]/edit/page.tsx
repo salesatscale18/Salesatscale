@@ -4,11 +4,14 @@ import { StatusPill } from "@/components/sas/primitives";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { t } from "@/lib/i18n";
 import { firstParam } from "@/lib/list-kit";
-import { publicUrl } from "@/lib/orders/token";
 import { getLeadPage } from "@/lib/lead-pages/service";
 import { BANNER_ERROR } from "@/lib/lead-pages/view";
+import { leadPagePreviewData } from "@/lib/lead-pages/preview";
 import { formData } from "../../form-data";
 import { LeadPageFormView } from "../../page-form";
+// The buyer screens' styles, for the live preview (the same components as the real pages).
+import "@/app/chat/[token]/chat.css";
+import "@/app/p/[key]/lead-page.css";
 import "../../lead-pages.css";
 
 /** Lead pages › one page › Edit (the same form as Add a page). */
@@ -22,6 +25,7 @@ export default async function EditLeadPage({ params, searchParams }: {
   const page = await getLeadPage(appDb, account.id, pageId);
   if (!page) notFound();
   const d = await formData(appDb, account);
+  const preview = await leadPagePreviewData(appDb, account, { page: page, topics: d.topics, markets: d.markets });
   const base = `/app/${account.slug}/lead-pages`;
   const bannerError = BANNER_ERROR[firstParam(sp, "banner_error") ?? ""];
   return (
@@ -46,7 +50,7 @@ export default async function EditLeadPage({ params, searchParams }: {
       ) : null}
       <LeadPageFormView
         slug={account.slug} page={page} markets={d.markets} languages={account.languages} topics={d.topics} defaultTopic={d.defaultTopic}
-        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} hostedUrl={publicUrl(`/p/${page.publicKey}`)} appBase={publicUrl("/")}
+        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} preview={preview}
       />
     </main>
   );

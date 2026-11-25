@@ -13,6 +13,7 @@ import { pageByKey, pageCountries, privacyNotice } from "@/lib/lead-pages/servic
 import { formTimingToken, previewTokenValid } from "@/lib/lead-pages/tokens";
 import { aboutLine, leadFormText } from "@/lib/lead-pages/form-text";
 import { LeadForm } from "./lead-form";
+import { HostedFormFrame, LeadFormHead } from "./lead-form-view";
 import { LeadPageHeader } from "./header";
 import "./lead-page.css";
 
@@ -54,12 +55,9 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   const names = await chatNames(appDb, account, lang);
   const banner = page.banner ? { src: bannerUrlPath(page.publicKey, page.banner), width: page.banner.width, height: page.banner.height } : null;
   const shell = (body: React.ReactNode) => (
-    <div className="lp-root lp-root--form" lang={lang} dir={dir} style={brandVars(brandColor)}>
-      <main className="lp-page">
-        <LeadPageHeader banner={banner} seller={names.seller} initials={initialsOf(names.seller)} />
-        <div className="lp-body">{body}</div>
-      </main>
-    </div>
+    <HostedFormFrame lang={lang} dir={dir} style={brandVars(brandColor)} header={<LeadPageHeader banner={banner} seller={names.seller} initials={initialsOf(names.seller)} />}>
+      {body}
+    </HostedFormFrame>
   );
   if (one(sp.sent) === "1") {
     return shell(<p className="lp-hand__sub" role="status" data-lp-thanks="">{tr("buyer.lp.handover.received_plain", { seller: names.seller })}</p>);
@@ -85,8 +83,7 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   const about = aboutLine(tr, page.openingTopic, lang);
   return shell(
     <>
-      {about ? <p className="lp-about" data-lp-about="">{about}</p> : null}
-      <h1 className="lp-title">{text.title}</h1>
+      <LeadFormHead about={about} title={text.title} />
       <LeadForm
         action={`/api/lp/${page.publicKey}/submit`}
         // A preview visit sends its token: it ticks "The form opened from the link" and is never counted.

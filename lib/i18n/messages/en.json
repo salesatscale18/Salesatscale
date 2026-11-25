@@ -4468,5 +4468,15 @@
   "lead_pages.form.banner_too_big": "This image is {size}. Choose one up to 2 MB.",
   "lead_pages.form.banner_again": "The image was not kept. Choose it again.",
   "lead_pages.form.banner_clear": "Don't use it",
-  "lead_pages.own.no_address": "Add your page's address so sends from it are accepted."
+  "lead_pages.own.no_address": "Add your page's address so sends from it are accepted.",
+  "lead_pages.preview.title": "Preview",
+  "lead_pages.preview.tab_form": "Form",
+  "lead_pages.preview.tab_handover": "Hand-over",
+  "lead_pages.preview.tab_first": "First message",
+  "lead_pages.preview.changed": "changed",
+  "lead_pages.preview.note_snippet": "On your page it takes your page's font.",
+  "lead_pages.preview.note_own": "Your own form stays as it is.",
+  "lead_pages.preview.sample": "Sample buyer Dana. Nothing here is sent.",
+  "lead_pages.preview.sample_name": "Dana",
+  "lead_pages.preview.sample_name_he": "דנה"
 }

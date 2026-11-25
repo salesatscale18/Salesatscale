@@ -2,18 +2,19 @@ import type { Metadata } from "next";
 import { cookies, headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
-import { isolateName, tg } from "@/lib/agent/core/names";
 import { translator, type Locale } from "@/lib/i18n";
 import { chatNames } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
 import { chatPath } from "@/lib/simulator/token";
 import { clientIp } from "@/lib/security/rate-limit";
 import { loadHandover } from "@/lib/lead-pages/handover";
-import { afterHebrewPrefix, bannerUrlPath, initialsOf } from "@/lib/lead-pages/rules";
+import { bannerUrlPath, initialsOf } from "@/lib/lead-pages/rules";
+import { handoverConnectingLine } from "@/lib/lead-pages/handover-text";
 import { LEAD_COOKIE } from "@/lib/lead-pages/tokens";
 import { loadBuyerChat } from "@/app/chat/[token]/load";
 import { LeadPageHeader } from "@/app/p/[key]/header";
-import { HandoverChat, HandoverRing } from "./handover-chat";
+import { HandoverChat } from "./handover-chat";
+import { HandoverByLine, HandoverFrame, HandoverRing, HandoverText } from "./handover-view";
 import "@/components/sas/sas.css";
 import "@/components/sas/voice/voice-bubble.css";
 import "@/app/chat/[token]/chat.css";
@@ -57,13 +58,10 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
       seller={names.seller} initials={initialsOf(names.seller)}
     />
   );
-  const byLine = <p className="lp-by">{tr("buyer.lp.handover.by_line")}</p>;
+  const byLine = <HandoverByLine text={tr("buyer.lp.handover.by_line")} />;
   const frame = (variant: string, body: React.ReactNode) => (
     <div className="c-root lp-root" lang={lang} dir="ltr" style={rootStyle}>
-      <main className="c-frame lp-handover" dir={dir} data-handover={variant}>
-        {top}
-        <div className="lp-hand"><div className="lp-hand__mid">{body}</div>{byLine}</div>
-      </main>
+      <HandoverFrame dir={dir} variant={variant} top={top} foot={byLine}>{body}</HandoverFrame>
     </div>
   );
 
@@ -109,10 +107,7 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
         }}
         top={top}
         text={(
-          <div className="lp-hand__text">
-            {thanks ? <h1 className="lp-hand__thanks">{thanks}</h1> : null}
-            <p className="lp-hand__sub">{tg("buyer.lp.handover.connecting", names.gender, { agent: afterHebrewPrefix(isolateName(names.agent, lang), names.agent, lang), seller: isolateName(names.seller, lang) }, lang)}</p>
-          </div>
+          <HandoverText thanks={thanks} connecting={handoverConnectingLine(names, lang)} />
         )}
         note={smsLine}
         foot={byLine}
