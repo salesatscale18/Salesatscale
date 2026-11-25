@@ -21,7 +21,8 @@ import { leadContactSettings } from "@/lib/markets/lead-settings";
 import { formatBuyerLocal, formatDueLocal, isoInZone, zonedInstant } from "@/lib/follow-ups/rules";
 import { conversationWindow, deliverText, publicBaseUrl, statusCallbackUrl } from "@/lib/channels/whatsapp";
 import { defaultTransport, type TwilioTransport } from "@/lib/channels/twilio";
-import { isSimulatedLead, isWebChat } from "@/lib/simulator/rules";
+import { isWebChat } from "@/lib/simulator/rules";
+import { hasDialablePhone } from "@/lib/leads/unverified";
 import { APP_MESSAGE_CALL } from "@/lib/agent/app-message";
 import { isLocale, t } from "@/lib/i18n";
 import { handBack, takeOver } from "@/lib/agent/conversation";
@@ -285,7 +286,7 @@ async function tellBuyer(
     await deliverText(db, transport, { accountId, conversationId: conv.id, messageId: id, body }, { statusCallback: statusCallbackUrl(publicBaseUrl()), now });
   }
   // A real buyer's web chat: a new time also goes out as the team_call SMS (board ReachSms), in the buyer's zone.
-  if (how !== "cancelled" && isWebChat(conv.channel) && !conv.isTest && !lead.isTest && !isSimulatedLead(lead)) {
+  if (how !== "cancelled" && isWebChat(conv.channel) && !conv.isTest && !lead.isTest && hasDialablePhone(lead)) {
     await nudgeBuyer(db, { userId: null, actingAs: false }, {
       accountId, leadId: lead.id, kind: "team_call", messageId: id, now,
       time: language === "he" ? buyerCallTime(at, buyerZone, "he") : formatDueLocal(at, buyerZone),

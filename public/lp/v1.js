@@ -230,7 +230,7 @@
       if (list.length) (list[0] === "name" ? inName : inPhone).focus();
     }
     function say(text) { alert.textContent = text || ""; alert.hidden = !text; }
-    var sending = false, retried = false;
+    var sending = false, retried = false, waited = false;
     function busy(on) { sending = on; btn.disabled = on; btn.textContent = on ? T.sending : T.send; if (on) btn.setAttribute("aria-busy", "true"); else btn.removeAttribute("aria-busy"); }
     function go(url) {
       var framed = true;
@@ -266,6 +266,11 @@
             if (r.b.handover && !cfg.preview && cfg.tracking && cfg.tracking.tellPagePixel) tellPixels(w, String(r.b.eventId || ""));
             go(url);
             return;
+          }
+          if (r.s === 403 && r.b.error === "timing" && r.b.retryAfterMs > 0 && !waited) {
+            // Sent within a second of the form loading (autofill and a quick tap): wait out the rest and send once more.
+            waited = true;
+            return new Promise(function (res) { w.setTimeout(res, Math.min(Number(r.b.retryAfterMs), 5000) + 150); }).then(attempt);
           }
           if (r.s === 403 && r.b.error === "timing" && !retried) {
             // The form-timing token was too old (a tab left open): fetch a fresh one and try once more.

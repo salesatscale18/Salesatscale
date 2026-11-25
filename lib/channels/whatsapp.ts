@@ -28,6 +28,7 @@ import { nextDeliveryStatus, openerRefusal, renderTemplate, templateVariables, w
 import { whatsappAddressToE164, type TwilioTransport } from "./twilio";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
 import { isSimulatedLead, isWebChat, SIMULATOR_CHANNEL } from "@/lib/simulator/rules";
+import { hasDialablePhone, isUnverifiedLead } from "@/lib/leads/unverified";
 import { SMS_EVENTS } from "@/lib/sms/rules";
 import { SPEND_CAP_HANDOFF_EVENT } from "@/lib/agent/thread-markers";
 import type { Conversation, Lead } from "@/db/schema";
@@ -100,6 +101,8 @@ export async function deliverText(
   if (tester ? !row.conv.channelAddress : row.lead.isTest || isFictionalDemoLead(row.lead)) return fail("test_lead");
   // A simulated buyer has no phone: never sent to the provider.
   if (!tester && isSimulatedLead(row.lead)) return fail("simulated_lead");
+  // An unverified returning lead (lead pages): the typed number is only a claim, never sent to.
+  if (!tester && isUnverifiedLead(row.lead)) return fail("no_phone");
   if (row.lead.status === "opted_out" && !opts.optOutConfirmation) return fail("opted_out");
   if (!transport) return fail("not_configured");
   const window = await conversationWindow(db, m.accountId, m.conversationId, now);
@@ -158,7 +161,7 @@ export async function sendTemplateMessage(
   const { conv, lead } = row;
   if (lead.status === "opted_out") return { ok: false, reason: "opted_out" };
   if (conv.status === "closed") return { ok: false, reason: "closed" };
-  if (!sim && (conv.isTest ? !conv.channelAddress : lead.isTest || isSimulatedLead(lead) || isFictionalDemoLead(lead))) return { ok: false, reason: "test_lead" };
+  if (!sim && (conv.isTest ? !conv.channelAddress : lead.isTest || !hasDialablePhone(lead) || isFictionalDemoLead(lead))) return { ok: false, reason: "test_lead" };
   if (!sim && !whatsappEnabled()) return { ok: false, reason: "not_configured" };
   const [template] = await db.select().from(messageTemplates)
     .where(and(eq(messageTemplates.id, templateId), eq(messageTemplates.accountId, accountId), eq(messageTemplates.status, "approved")));
@@ -230,7 +233,7 @@ export async function openerFacts(db: Db, transport: TwilioTransport | null, acc
     whatsappOff: !whatsappEnabled(),
     twilioConfigured: !!transport,
     // A demo lead's number is fictional (lib/demo/phones.ts): never contacted, like a test lead.
-    lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status, simulated: isSimulatedLead(lead) },
+    lead: { isTest: lead.isTest || isFictionalDemoLead(lead), status: lead.status, simulated: isSimulatedLead(lead), noPhone: isUnverifiedLead(lead) },
     hasConsent: !!consent,
     account: { status: account.status, contactHours: contact.contactHours, timezone: contact.timezone },
     hasConnection: !!connection,

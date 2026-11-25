@@ -17,7 +17,7 @@ const maybe = (key: string) => (t(key as MessageKey) as string | undefined) ?? n
  * link is offered then.
  */
 export function SimulatorPanel({
-  slug, leadId, simulated, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false, hoursHref, why: smsWhy,
+  slug, leadId, simulated, noPhone = false, url, expired = false, expiresAt = null, refusal, rules, notice, error, started = false, hoursHref, why: smsWhy,
 }: {
   /** Why "Send chat link" sent no SMS (a rule's reason or Twilio's code), with notice "sms_not_sent". */
   why?: string;
@@ -28,6 +28,8 @@ export function SimulatorPanel({
   slug: string;
   leadId: string;
   simulated: boolean;
+  /** An unverified returning lead (no phone of its own): no "Send chat link" by SMS. */
+  noPhone?: boolean;
   /** The chat link, or null when the lead has none yet. */
   url: string | null;
   /** The link went 14 days without messages (lib/simulator/rules chatLinkExpiresAt). */
@@ -65,7 +67,7 @@ export function SimulatorPanel({
           {hidden}
           <button type="submit" className={buttonClass("ghost", "sm")}>{t("sim.reset")}</button>
         </form>
-        {simulated ? null : (
+        {simulated || noPhone ? null : (
           <form action={sendChatLinkAction}>
             {hidden}
             <button type="submit" className={buttonClass("ghost", "sm")} data-send-chat-link=""><Icon name="message-square" />{t("chat.send_link")}</button>

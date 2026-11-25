@@ -11,7 +11,7 @@
  * Mock SMS or a fake transport only; no model calls, no network.
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, sql } from "drizzle-orm";
 import { consentRecords, leadEvents, leadPageSubmissions, leads, legalSections, sellerAccounts, users, type LeadPage, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
@@ -369,12 +369,16 @@ describe("lead pages (c): the seller's own form", () => {
     expect(sub.accountId).toBe(accB);
   });
 
-  it("an existing lead without consent never gets it back from the own form", async () => {
+  it("an existing lead without consent never gets it back from the own form: the number again makes a separate unverified lead", async () => {
     await send(own.publicKey, { name: "Lior Ben", phone: "+972547200030" });
     const lead = await leadOf("+972547200030");
+    // The seller's own form never carries our sas_lp cookie: the number again is a separate (unverified) lead with its own consent.
     expect((await send(own.publicKey, { name: "Lior Ben", phone: "+972547200030", consent: "yes" })).status).toBe(303);
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, lead.id))).toEqual([]);
-    expect((await db.select().from(leadEvents).where(and(eq(leadEvents.leadId, lead.id), eq(leadEvents.type, "lead_page.consent_not_restored")))).length).toBe(1);
+    expect((await leadOf("+972547200030"))).toMatchObject({ id: lead.id, updatedAt: lead.updatedAt, leadPageId: lead.leadPageId });
+    const [claim] = await db.select().from(leadEvents).where(and(eq(leadEvents.accountId, acc), eq(leadEvents.type, "lead_page.unverified_claim"), sql`${leadEvents.data}->>'sameAsLeadId' = ${lead.id}`));
+    expect(claim.data).toMatchObject({ claimedPhone: "+972547200030" });
+    expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, claim.leadId))).toHaveLength(1);
   });
 
   it("where they came from: Orders (after the submission only) and the top 8 sources, then Other", async () => {

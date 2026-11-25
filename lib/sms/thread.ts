@@ -33,7 +33,7 @@ export type SmsEntry = {
 };
 
 /** Refusals that are the normal case for a lead that never gets SMS: not shown in the thread. */
-const QUIET_REFUSALS: ReadonlySet<string> = new Set(["test_lead", "simulated_lead", "demo_number", "not_found", "message_not_found"]);
+const QUIET_REFUSALS: ReadonlySet<string> = new Set(["test_lead", "simulated_lead", "no_phone", "demo_number", "not_found", "message_not_found"]);
 const DELIVERED: ReadonlySet<string> = new Set(["delivered", "read"]);
 const FAILED: ReadonlySet<string> = new Set(["failed", "undelivered"]);
 

@@ -11,7 +11,8 @@
  * - Opener: off with the follow-up until the owner decides on a reply-capable
  *   number (lib/sms/rules agentSmsEnabled); the opener still posts in the chat.
  *
- * Only real leads get SMS; simulated buyers and test-lab chats never do.
+ * Only real leads with a phone get SMS; simulated buyers, unverified returning
+ * leads (lead pages) and test-lab chats never do.
  * Scoped by account id everywhere.
  */
 import { randomUUID } from "node:crypto";
@@ -22,10 +23,11 @@ import { agentVersions, conversations, leads, messages } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
 import { isSimulatedLead, WEB_CHAT_CHANNELS, webChatChannelOf } from "@/lib/simulator/rules";
 import { nudgeBuyer, type NudgeDeps, type NudgeResult } from "./service";
+import { isUnverifiedLead } from "@/lib/leads/unverified";
 import { ensureChatStarted } from "@/lib/chat/start";
 
 /** The SMS outcome when no SMS was tried (a simulated buyer, a test lead). */
-export type MaybeNudge = NudgeResult | { outcome: "skipped"; reason: "simulated_lead" | "test_lead" | "not_found" };
+export type MaybeNudge = NudgeResult | { outcome: "skipped"; reason: "simulated_lead" | "test_lead" | "no_phone" | "not_found" };
 
 async function realLead(db: Db, accountId: string, leadId: string) {
   const [lead] = await db.select().from(leads).where(and(eq(leads.id, leadId), eq(leads.accountId, accountId)));
@@ -35,7 +37,9 @@ async function realLead(db: Db, accountId: string, leadId: string) {
 const skip = (lead: { isTest: boolean; buyerRef?: string | null; phone: string } | null): MaybeNudge | null =>
   !lead ? { outcome: "skipped", reason: "not_found" }
     : lead.isTest ? { outcome: "skipped", reason: "test_lead" }
-      : isSimulatedLead(lead) ? { outcome: "skipped", reason: "simulated_lead" } : null;
+      : isSimulatedLead(lead) ? { outcome: "skipped", reason: "simulated_lead" }
+        // An unverified returning lead (lead pages): no phone of its own; the message is in the web chat.
+        : isUnverifiedLead(lead) ? { outcome: "skipped", reason: "no_phone" } : null;
 
 /** "Chat link" (hand-back, "Send chat link"): an SMS with the chat link, any hour. */
 export async function sendChatLink(db: Db, actor: Actor, accountId: string, leadId: string, deps: NudgeDeps & { now?: Date } = {}): Promise<MaybeNudge> {

@@ -31,8 +31,7 @@ export const metadata: Metadata = { title: "Chat", robots: { index: false, follo
  *   sas_lp cookie) and the chat started: "Thanks, {name}", "Connecting you with
  *   {agent}…", then "Talk now" + "Chat in writing" (or "Continue to the chat"
  *   when voice is not available), with the chat in the same document.
- * - "welcome_back": the phone was already a lead and the SMS really went out.
- * - "received": everything else ("{seller} received your details …"), no buttons.
+ * - "received": no consent, or the chat gates ("{seller} received your details …"), no buttons.
  * "We also sent this link to your phone." only when the SMS outcome is `sent`.
  */
 export default async function HandoverPage({ params }: { params: Promise<{ token: string }> }) {
@@ -72,14 +71,6 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
   const thanks = first ? tr("buyer.lp.handover.thanks", { name: first }) : null;
   const smsLine = state.sms === "sent" ? <p className="lp-note" data-sms-sent="">{tr("buyer.lp.handover.sms_sent")}</p> : null;
 
-  if (state.variant === "welcome_back") {
-    return frame("welcome_back", (
-      <>
-        <HandoverRing ready label="" />
-        <p className="lp-hand__msg" role="status">{tr("buyer.lp.handover.welcome_back", { name: first })}</p>
-      </>
-    ));
-  }
   if (state.variant === "received" || !state.chat) {
     return frame("received", (
       <>

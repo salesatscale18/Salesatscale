@@ -1,4 +1,6 @@
 import { notFound } from "next/navigation";
+import { hasDialablePhone, isUnverifiedLead, UNVERIFIED_EVENTS } from "@/lib/leads/unverified";
+import { leadNames, unverifiedClaims } from "@/lib/leads/unverified-claims";
 import { cookies } from "next/headers";
 import { quoteRef } from "@/components/sas/id-text";
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
@@ -116,6 +118,21 @@ export default async function LeadCardPage({
     : null;
   const { lead, owner, creator } = row;
   const simulated = isSimulatedLead(lead);
+  const unverified = isUnverifiedLead(lead);
+  // The claim of an unverified returning lead (the typed number and the lead that has it).
+  const claim = unverified ? (await unverifiedClaims(appDb, account.id, [lead.id])).get(lead.id) ?? null : null;
+  const leadHref = (id: string) => `/app/${account.slug}/leads/${id}`;
+  /** The other lead an unverified-returning event names, as a link (its live name; never an email). */
+  const otherLeadIds = events
+    .filter(({ event }) => event.type === UNVERIFIED_EVENTS.claim || event.type === UNVERIFIED_EVENTS.reused)
+    .map(({ event }) => String((event.data as { sameAsLeadId?: string; otherLeadId?: string } | null)?.sameAsLeadId ?? (event.data as { otherLeadId?: string } | null)?.otherLeadId ?? ""))
+    .filter((id) => UUID.test(id));
+  /** "same number as {lead}", the name a link to that lead. */
+  const sameAsLink = (id: string, name: string) => {
+    const [before, after = ""] = t("lead.unverified.same_as", { name: SOURCE_SLOT }).split(SOURCE_SLOT);
+    return <span data-same-as={id}>{before}<a href={leadHref(id)}><bdi>{name}</bdi></a>{after}</span>;
+  };
+  const otherLeads = new Map((otherLeadIds.length ? await leadNames(appDb, account.id, otherLeadIds) : []).map((l) => [l.id, l.fullName]));
   // A lead without a market belongs to the home market (listMarkets puts it first).
   const leadMarket = (row.market ? marketList.find((m) => m.id === row.market!.id) : null) ?? marketList[0];
   // "Fix hours" on an outside-contact-hours refusal: the lead's own market's hours when it sets them (the gates use the account's for a lead with no market).
@@ -194,6 +211,19 @@ export default async function LeadCardPage({
         : event.type.startsWith("callback.") || event.type === "team_call.logged"
         // O6: the call time, in the viewer's own zone (else the zone it was set in; "· your time" when they differ), and who acted.
         ? `${callTime(new Date(String((event.data as { at?: string } | null)?.at ?? event.createdAt.toISOString())), String((event.data as { timezone?: string } | null)?.timezone ?? account.timezone))}${user ? ` · ${who(user)}` : event.actor === "agent" ? " · Agent" : ""}`
+        : event.type === UNVERIFIED_EVENTS.claim
+        // "same number as {lead}" (link) on the unverified returning lead.
+        ? (() => {
+          const id = String((event.data as { sameAsLeadId?: string } | null)?.sameAsLeadId ?? "");
+          const name = otherLeads.get(id);
+          return name ? sameAsLink(id, name) : undefined;
+        })()
+        : event.type === UNVERIFIED_EVENTS.reused
+        // The existing lead: a link to the lead someone made with this number in another browser.
+        ? (() => {
+          const id = String((event.data as { otherLeadId?: string } | null)?.otherLeadId ?? "");
+          return otherLeads.has(id) ? <a href={leadHref(id)} data-other-lead={id}>{t("lead.unverified.open_other")}</a> : undefined;
+        })()
         : event.type === "consent.recorded"
         ? String((event.data as { source?: string } | null)?.source ?? "")
         : event.type === "lead.market_changed"
@@ -263,6 +293,9 @@ export default async function LeadCardPage({
               {/* A simulated buyer has a buyer ID, not a phone (the placeholder is never shown or formatted as one). */}
               {simulated
                 ? <span data-testid="buyer-ref">{t("sim.header", { id: "" })}<span className="sas-id" dir="ltr">{lead.buyerRef ?? lead.phone.replace(/^sim:/, "")}</span> · {t(`lang.${lead.language as "en" | "he"}`)} ·{" "}</span>
+                : unverified
+                // An unverified returning lead: the number the buyer typed, tagged "not verified" (never the placeholder).
+                ? <>{t(`lang.${lead.language as "en" | "he"}`)} · {claim?.claimedPhone ? <><span className="sas-num" dir="ltr" data-claimed-phone="">{maskPhone(claim.claimedPhone)}</span>{" "}</> : null}<span className="sas-chip" data-unverified="">{t("lead.unverified.not_verified")}</span> ·{" "}</>
                 : <>{t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}</>}
               {leadMarket ? <span data-testid="lead-market">{t("lead.card.market_line", { market: leadMarket.name })} · </span> : null}
               {(() => {
@@ -279,6 +312,13 @@ export default async function LeadCardPage({
                 );
               })()}
             </span>
+            {/* An unverified returning lead: "Came back from {page} · phone not verified · same number as {lead}". */}
+            {unverified ? (
+              <span className="sas-small" data-unverified-line="">
+                {t("lead.event.lead_page.unverified_claim", { page: claim?.pageName || pageSource?.name || "" })}
+                {claim?.sameAs ? <> · {sameAsLink(claim.sameAs.id, claim.sameAs.fullName)}</> : null}
+              </span>
+            ) : null}
             {/* The market can be changed here (the side panel that repeated it is gone). */}
             {marketList.length > 1 ? (
               <details className="sas-lead__market" data-testid="lead-market-change" open={!!(sp.market || sp.market_error) || undefined}>
@@ -337,7 +377,7 @@ export default async function LeadCardPage({
             ) : null}
             {lead.status !== "opted_out" || chatLink ? (
               <SimulatorPanel
-                slug={account.slug} leadId={lead.id} simulated={simulated}
+                slug={account.slug} leadId={lead.id} simulated={simulated} noPhone={unverified}
                 url={chatLink ? publicUrl(chatPath(chatLink.token)) : null}
                 expired={chatLink?.expired ?? false} expiresAt={chatLink && !chatLink.expired ? formatDueLocal(chatLink.expiresAt, tz) : null} refusal={simFacts?.refusal ?? null} rules={simulated && account.simulateWhatsappRules}
                 started={isWebChat(conversation?.conversation.channel) || simFacts?.refusal === "already_started"}
@@ -469,7 +509,7 @@ export default async function LeadCardPage({
             ) : (
               // Team call (reach boards): the booked call before it, then "Log the call" with the next steps.
               <TeamCallPanel
-                slug={account.slug} leadId={lead.id} call={teamCall} buyerName={lead.fullName} leadPhone={simulated ? null : lead.phone}
+                slug={account.slug} leadId={lead.id} call={teamCall} buyerName={lead.fullName} leadPhone={hasDialablePhone(lead) ? lead.phone : null}
                 canManage={mayManageCallbacks(access)} edit={sp.team_call === "edit"} now={now} viewerZone={viewerZone}
                 msg={{
                   notice: typeof sp.team_call_notice === "string" ? sp.team_call_notice : undefined,

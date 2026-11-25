@@ -4,6 +4,7 @@
  * queries, whatever the number of conversations: the last message and the
  * buyer's last message come from correlated subqueries, not one query per row.
  */
+import { phoneSearchSql } from "@/lib/leads/unverified-claims";
 import { and, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { conversations, leadEvents, leads, markets, messages, type DealObjection, type LeadStatus, type StoredObjection } from "@/db/schema";
@@ -78,7 +79,7 @@ function searchSql(q: string | undefined): SQL | undefined {
   const like = `%${escapeLike(s)}%`;
   const digits = s.replace(/\D/g, "");
   const conds = [ilike(leads.fullName, like), ilike(leads.company, like), ilike(leads.buyerRef, like)];
-  if (digits.length >= 3) conds.push(ilike(leads.phone, `%${digits}%`));
+  if (digits.length >= 3) conds.push(phoneSearchSql(digits));
   return or(...conds);
 }
 
@@ -88,7 +89,8 @@ export type InboxRow = {
   isTest: boolean;
   status: "open" | "human" | "closed";
   takenOverByUserId: string | null;
-  lead: { id: string; fullName: string; company: string | null; status: LeadStatus; language: string };
+  /** `phone`: only to tell an unverified returning lead (lib/leads/unverified.ts); never shown. */
+  lead: { id: string; fullName: string; company: string | null; status: LeadStatus; language: string; phone: string };
   marketName: string | null;
   lastActor: string | null;
   /** The person who wrote the last message, if a person did. */
@@ -131,7 +133,7 @@ export async function listInbox(
     db.select({
       conversationId: conversations.id, channel: conversations.channel, isTest: conversations.isTest, status: conversations.status,
       takenOverByUserId: conversations.takenOverByUserId, updatedAt: conversations.updatedAt,
-      lead: { id: leads.id, fullName: leads.fullName, company: leads.company, status: leads.status, language: leads.language },
+      lead: { id: leads.id, fullName: leads.fullName, company: leads.company, status: leads.status, language: leads.language, phone: leads.phone },
       marketName: markets.name,
       lastActor: sql<string | null>`${lastActor}`, lastUserId: sql<string | null>`${lastUserId}`, lastBody: sql<string | null>`${lastBody}`,
       lastMessageId: sql<string | null>`${lastMessageId}`,

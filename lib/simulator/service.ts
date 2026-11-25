@@ -311,7 +311,7 @@ export async function webChatChannelFor(db: Db, lead: Pick<Lead, "id" | "account
 // Start conversation (the agent's opening message)
 // ---------------------------------------------------------------------------
 
-export type SimOpenerRefusal = Exclude<OpenerRefusal, "not_configured" | "no_connection" | "simulated_lead"> | "simulated_disabled";
+export type SimOpenerRefusal = Exclude<OpenerRefusal, "not_configured" | "no_connection" | "simulated_lead" | "no_phone"> | "simulated_disabled";
 
 /**
  * Simulated buyers (buyer ID set) are tests: they work before go-live (lead

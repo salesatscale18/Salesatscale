@@ -119,6 +119,8 @@ export async function nudgeBuyer(db: Db, actor: Actor, input: NudgeInput, deps: 
     timezone: contact.timezone,
     recent: events.filter((e) => SMS_NUDGE_EVENTS.includes(e.type) && now.getTime() - e.createdAt.getTime() < DAY_MS).map((e) => e.createdAt),
   });
+  // No phone of its own (an unverified returning lead): nothing tried and nothing recorded, like a simulated buyer.
+  if (refusal === "no_phone") return { outcome: "refused", reason: refusal };
   if (refusal) return refuse(refusal);
 
   const link = await ensureChatLink(db, actor, accountId, leadId);
