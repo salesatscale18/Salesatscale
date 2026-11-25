@@ -109,8 +109,9 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect(page).toMatchObject({ status: "draft", connection: "link", address: null, language: "en" });
     expect(page.publicKey).toMatch(/^[0-9A-Za-z]{12}$/);
     expect((await audits("lead_page.created")).map((a) => a.targetId)).toContain(page.id);
-    // The own form comes in slice c.
-    expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "own_form", language: "en", address: "acme.com" })).toMatchObject({ ok: false, errors: { connection: expect.any(String) } });
+    // The hosted page comes later; the own form (slice c) needs its page's address.
+    expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "hosted", language: "en", address: "acme.com" })).toMatchObject({ ok: false, errors: { connection: expect.any(String) } });
+    expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "own_form", language: "en" })).toMatchObject({ ok: false, errors: { address: expect.any(String) } });
     // A market of another account is refused.
     const [otherMarket] = await db.insert(markets).values({ id: crypto.randomUUID(), accountId: other, name: "UK", countries: ["GB"] }).returning();
     expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "link", language: "en", marketId: otherMarket.id })).toMatchObject({ ok: false, errors: { marketId: expect.any(String) } });
@@ -381,8 +382,8 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect((await listTotals(db, other, rangeOfDays(30))).perPage.has(fp.id)).toBe(false);
     const sources = await bySource(db, acc, fp.id, rangeOfDays(30));
     expect(sources).toEqual([
-      { sourceKey: "facebook / spring", visits: 6, opens: 6, leads: 1 },
-      { sourceKey: "", visits: 4, opens: 4, leads: 1 },
+      { sourceKey: "facebook / spring", visits: 6, opens: 6, leads: 1, orders: 0 },
+      { sourceKey: "", visits: 4, opens: 4, leads: 1, orders: 0 },
     ]);
     fp = (await getLeadPage(db, acc, fp.id))!;
     expect((await leadPageReadiness(db, await account(), fp)).find((c) => c.key === "form_opens")?.done).toBe(true);

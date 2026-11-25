@@ -28,7 +28,7 @@ import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { chatNames } from "@/lib/simulator/service";
 import { checkOrigin, originOf } from "./origin";
 import {
-  consentSourceLeadPage, firstNameOf, formFieldsOf, readSubmission, sanitizeAd, sourceKeyOf, trackingOf, validateSubmission, withoutQuery,
+  consentSourceLeadPage, firstNameOf, formFieldsOf, OWN_FORM_ALL_FIELDS, ownFormConsentWording, readSubmission, sanitizeAd, sourceKeyOf, trackingOf, validateSubmission, withoutQuery,
   type LeadPageVia, type SubmissionError,
 } from "./rules";
 import { bumpDaily, pageCountry, pageByKey, recordRefusedOrigin } from "./service";
@@ -116,7 +116,8 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   }
 
   const country = await pageCountry(db, page, account);
-  const valid = validateSubmission(f, country, formFieldsOf(page.form));
+  // The seller's own form decides what the buyer fills in: every optional field it sends is read.
+  const valid = validateSubmission(f, country, via === "own_form" ? OWN_FORM_ALL_FIELDS : formFieldsOf(page.form));
   if (!valid.ok) return { kind: "invalid", errors: valid.errors };
   const v = valid.value;
 
@@ -140,9 +141,12 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   const snippetPage = f.pageUrl && originOf(f.pageUrl) === origin.origin ? withoutQuery(f.pageUrl) : null;
   const where = via === "link" ? publicUrl(`/p/${page.publicKey}`, env) : (snippetPage ?? withoutQuery(input.headers.get("referer") ?? "") ?? origin.origin);
   const consentSource = consentSourceLeadPage(page.name, where);
+  // The seller's own form: we cannot see its consent text, so the record says where the buyer ticked it
+  // (the seller is responsible for that text). Ours: the exact line the buyer saw.
+  const consentWording = via === "own_form" ? ownFormConsentWording(where) : leadPageConsentLine(lang, names.seller, names.agent);
   const parsed = parseLead({
     fullName: v.fullName, company: v.company ?? undefined, email: v.email ?? undefined, phone: v.phone, language: lang, sourceLabel: page.name,
-    consent: f.consent, consentSource, consentWording: leadPageConsentLine(lang, names.seller, names.agent), consentIp: input.ip,
+    consent: f.consent, consentSource, consentWording, consentIp: input.ip,
     consentPageUrl: withoutQuery(where) ?? undefined,
   }, country, { language: lang, now, consentNeedsTick: true, consentSource });
   if (!parsed.ok) return { kind: "invalid", errors: parsed.errors.fullName ? ["name"] : ["phone"] };

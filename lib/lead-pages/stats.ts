@@ -132,19 +132,29 @@ export async function listTotals(db: Db, accountId: string, range: StatsRange, f
 
 /** Rows of "Where they came from": the top 8 sources, then "Other". `sourceKey` "" is direct or unknown. */
 export const SOURCE_TOP = 8;
-export type SourceRow = { sourceKey: string; other?: boolean; visits: number; opens: number; leads: number };
+export type SourceRow = { sourceKey: string; other?: boolean; visits: number; opens: number; leads: number; orders: number };
 
-/** Submissions grouped by source key (distinct non-preview leads), with the counters of the same key. */
+/**
+ * Submissions grouped by source key (distinct non-preview leads), with the counters of the same key,
+ * and Orders: of those leads, the ones with an order created at or after their first submission
+ * from that source in the period (as the funnel's Ordered step).
+ */
 export async function bySource(db: Db, accountId: string, pageId: string, range: StatsRange): Promise<SourceRow[]> {
   const d = dayBounds(range);
   const [subs, daily] = await Promise.all([
     db.execute(sql`
-      select s.source_key as k, count(distinct s.lead_id)::int as leads
-      from lead_page_submissions s join leads l on l.id = s.lead_id and l.account_id = s.account_id
-      where s.account_id = ${accountId}::uuid and s.page_id = ${pageId}::uuid and s.preview = false
-        and s.created_at >= ${range.from.toISOString()}::timestamptz and s.created_at < ${range.to.toISOString()}::timestamptz
-        and l.is_test = false and l.buyer_ref is null
-      group by s.source_key`),
+      with c as (
+        select s.source_key as k, s.lead_id, min(s.created_at) as first_at
+        from lead_page_submissions s join leads l on l.id = s.lead_id and l.account_id = s.account_id
+        where s.account_id = ${accountId}::uuid and s.page_id = ${pageId}::uuid and s.preview = false
+          and s.created_at >= ${range.from.toISOString()}::timestamptz and s.created_at < ${range.to.toISOString()}::timestamptz
+          and l.is_test = false and l.buyer_ref is null
+        group by s.source_key, s.lead_id
+      )
+      select k, count(*)::int as leads,
+        count(*) filter (where exists (select 1 from orders o where o.account_id = ${accountId}::uuid and o.lead_id = c.lead_id
+                    and o.created_at >= c.first_at))::int as orders
+      from c group by k`),
     db.select({
       k: leadPageDaily.sourceKey,
       visits: sql<number>`coalesce(sum(${leadPageDaily.views}), 0)::int`,
@@ -154,13 +164,13 @@ export async function bySource(db: Db, accountId: string, pageId: string, range:
       .groupBy(leadPageDaily.sourceKey),
   ]);
   const map = new Map<string, SourceRow>();
-  const row = (k: string) => map.get(k) ?? map.set(k, { sourceKey: k, visits: 0, opens: 0, leads: 0 }).get(k)!;
+  const row = (k: string) => map.get(k) ?? map.set(k, { sourceKey: k, visits: 0, opens: 0, leads: 0, orders: 0 }).get(k)!;
   for (const r of daily) { const x = row(r.k); x.visits += n(r.visits); x.opens += n(r.opens); }
-  for (const r of rowsOf(subs)) row(String(r.k ?? "")).leads += n(r.leads);
+  for (const r of rowsOf(subs)) { const x = row(String(r.k ?? "")); x.leads += n(r.leads); x.orders += n(r.orders); }
   const sorted = [...map.values()].filter((r) => r.leads || r.visits || r.opens)
     .sort((a, b) => b.leads - a.leads || b.visits - a.visits || a.sourceKey.localeCompare(b.sourceKey));
   if (sorted.length <= SOURCE_TOP) return sorted;
-  const rest = sorted.slice(SOURCE_TOP).reduce((a, b) => ({ ...a, visits: a.visits + b.visits, opens: a.opens + b.opens, leads: a.leads + b.leads }),
-    { sourceKey: "", other: true, visits: 0, opens: 0, leads: 0 } as SourceRow);
+  const rest = sorted.slice(SOURCE_TOP).reduce((a, b) => ({ ...a, visits: a.visits + b.visits, opens: a.opens + b.opens, leads: a.leads + b.leads, orders: a.orders + b.orders }),
+    { sourceKey: "", other: true, visits: 0, opens: 0, leads: 0, orders: 0 } as SourceRow);
   return [...sorted.slice(0, SOURCE_TOP), rest];
 }

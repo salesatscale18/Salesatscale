@@ -1,7 +1,8 @@
 /*! Sales at Scale lead form v1. Install: <div data-sas-lead-form="KEY"></div><script async src="https://APP/lp/v1.js"></script>
  * Hand-written ES2019, no dependencies. Backward compatible forever; breaking changes ship as /lp/v2.js.
- * Mounts our form in a Shadow DOM on every placeholder (also ones added later). Sets no cookies, uses no
- * storage and never loads an ad script. The pure parts mirror lib/lead-pages/snippet-core.ts (keep in sync). */
+ * Mounts our form in a Shadow DOM on every placeholder (also ones added later). Sets no cookies and never
+ * loads an ad script. It keeps the visit's ad details in sessionStorage only when the page's consent banner
+ * says analytics is granted. The pure parts mirror lib/lead-pages/snippet-core.ts (keep in sync). */
 (function () {
   "use strict";
   var w = window, d = document;
@@ -23,6 +24,21 @@
     var m = /^https?:\/\/([^/?#:]+)/i.exec(referrer || ""), host = m ? m[1].toLowerCase() : "";
     if (host && host !== (pageHost || "").toLowerCase()) out.referrer = host;
     return out;
+  }
+  var STORE = "sas_lp_ad";
+  function parseKeptAd(raw) {
+    var out = {}, v, keys = [], i;
+    try { v = JSON.parse(raw || "null"); } catch (e) { return out; }
+    if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+    for (i = 0; i < UTM.length; i++) keys.push("utm_" + UTM[i]);
+    keys = keys.concat(CLICK, ["referrer"]);
+    for (i = 0; i < keys.length; i++) { var x = v[keys[i]]; if (typeof x === "string" && x.trim()) out[keys[i]] = x.trim().slice(0, MAX); }
+    return out;
+  }
+  function keepAd(cur, kept, c) {
+    if (c !== "granted") return { ad: cur, store: null, clear: c === "denied" };
+    if (Object.keys(cur).length) return { ad: cur, store: JSON.stringify(cur), clear: false };
+    return { ad: parseKeptAd(kept), store: null, clear: false };
   }
   function at(e, i) { return e && typeof e === "object" ? e[i] : undefined; }
   function readConsent(win, tc) {
@@ -72,7 +88,7 @@
     var p = typeof body.handover === "string" ? body.handover : typeof body.thanks === "string" ? body.thanks : null;
     return p && /^\/[hp]\/[A-Za-z0-9_.?=&/-]+$/.test(p) ? base + p : null;
   }
-  var core = { previewFromHash: previewFromHash, scriptBase: scriptBase, readAd: readAd, readConsent: readConsent, tellPixels: tellPixels, checkLocal: checkLocal, pageUrlOf: pageUrlOf, nextUrl: nextUrl };
+  var core = { previewFromHash: previewFromHash, scriptBase: scriptBase, readAd: readAd, parseKeptAd: parseKeptAd, keepAd: keepAd, readConsent: readConsent, tellPixels: tellPixels, checkLocal: checkLocal, pageUrlOf: pageUrlOf, nextUrl: nextUrl };
 
   // ---- where we are ----
   var me = d.currentScript;
@@ -125,7 +141,7 @@
     ".e{color:#c23a2b;font-size:13px;line-height:18px;font-weight:500}" +
     ".al{margin:0;padding:10px 12px;border-radius:10px;background:#fdecea;color:#c23a2b;font-size:14px;line-height:20px;font-weight:500}" +
     ".c{display:flex;gap:10px;align-items:flex-start;font-size:13px;line-height:18px;font-weight:400;margin:0}" +
-    ".c span{opacity:.8}" +
+    ".c span{opacity:.8}@supports (color:color-mix(in srgb,red 50%,blue)){.c span{opacity:1;color:color-mix(in srgb,currentColor 80%,transparent)}}" +
     ".c input{width:20px;height:20px;margin:0;flex:none;accent-color:var(--brand,#0f6b5a)}" +
     "a{color:inherit;text-decoration:underline}" +
     ".hp{position:absolute;left:0;top:0;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}" +
@@ -182,7 +198,17 @@
     var btn = el("button", { type: "submit", "class": "b", text: T.send });
     form.appendChild(btn);
 
-    var ad = cfg.tracking && cfg.tracking.carryAdDetails ? readAd(w.location.search, d.referrer, w.location.hostname) : {};
+    var carry = !!(cfg.tracking && cfg.tracking.carryAdDetails);
+    var ad = carry ? readAd(w.location.search, d.referrer, w.location.hostname) : {};
+    // Kept for the rest of the visit only when the page's consent banner says granted; otherwise this URL's details only.
+    var adReady = consent().then(function (c) {
+      if (!carry) return;
+      var ss = null, k;
+      try { ss = w.sessionStorage; } catch (e) { ss = null; }
+      try { k = keepAd(ad, ss ? ss.getItem(STORE) : null, c); } catch (e) { return; }
+      ad = k.ad;
+      try { if (ss && k.store) ss.setItem(STORE, k.store); else if (ss && k.clear) ss.removeItem(STORE); } catch (e) { /* storage is optional */ }
+    });
     var opened = false;
     function onOpen() {
       if (opened) return;
@@ -253,7 +279,7 @@
       attempt().catch(function () { busy(false); say(T.errGeneric); });
     });
 
-    consent().then(function (c) { if (c !== "denied") beacon(key, Object.assign({ t: "view" }, ad, cfg.preview ? { preview: PREVIEW } : {})); });
+    adReady.then(consent).then(function (c) { if (c !== "denied") beacon(key, Object.assign({ t: "view" }, ad, cfg.preview ? { preview: PREVIEW } : {})); });
   }
 
   function mount(host) {

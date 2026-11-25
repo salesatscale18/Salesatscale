@@ -5,7 +5,9 @@
  * runs v1.js in a node `vm` and checks that its `core` gives the same answers
  * as this file on the same inputs. Change both together.
  *
- * Nothing here stores anything (no cookies, no storage) or loads any script.
+ * Nothing here stores anything or loads any script. The one thing v1.js keeps is
+ * the visit's ad details in sessionStorage, and only when the page's consent
+ * banner says analytics is granted (`keepAd` decides; plan §3). No cookies.
  */
 
 /** A page key: 12 base62 characters (lib/lead-pages/tokens.ts PUBLIC_KEY_RE). */
@@ -49,6 +51,41 @@ export function readAd(search: string, referrer: string, pageHost: string): Reco
   const host = m ? m[1].toLowerCase() : "";
   if (host && host !== (pageHost || "").toLowerCase()) out.referrer = host;
   return out;
+}
+
+/** The sessionStorage key of the kept ad details (only with a "granted" consent signal). */
+export const AD_STORE_KEY = "sas_lp_ad";
+
+/** A kept value read back from sessionStorage: only the known ad keys, as capped strings; {} for anything else. */
+export function parseKeptAd(raw: string | null | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  let v: unknown;
+  try {
+    v = JSON.parse(raw || "null");
+  } catch {
+    return out;
+  }
+  if (!v || typeof v !== "object" || Array.isArray(v)) return out;
+  const keys = [...UTM_KEYS.map((k) => `utm_${k}`), ...CLICK_ID_KEYS, "referrer"];
+  for (const k of keys) {
+    const x = (v as Record<string, unknown>)[k];
+    if (typeof x === "string" && x.trim()) out[k] = x.trim().slice(0, AD_VALUE_MAX);
+  }
+  return out;
+}
+
+/**
+ * Which ad details a form sends, and what is kept for the rest of the visit:
+ * - "granted": this URL's details when it has any (and they are kept for the
+ *   session), else the ones kept earlier in the session;
+ * - "unknown" or "denied": this URL's details only, nothing kept; "denied" also
+ *   clears anything kept earlier.
+ * `store`: the value to write (null: write nothing); `clear`: remove the kept value.
+ */
+export function keepAd(current: Record<string, string>, kept: string | null | undefined, consent: ConsentSignal): { ad: Record<string, string>; store: string | null; clear: boolean } {
+  if (consent !== "granted") return { ad: current, store: null, clear: consent === "denied" };
+  if (Object.keys(current).length) return { ad: current, store: JSON.stringify(current), clear: false };
+  return { ad: parseKeptAd(kept), store: null, clear: false };
 }
 
 /** What the page's cookie banner says about analytics: denied means no view/open counts; the buyer's submission always goes through. */

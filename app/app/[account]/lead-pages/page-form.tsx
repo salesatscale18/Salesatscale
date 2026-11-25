@@ -4,7 +4,7 @@ import { Icon } from "@/components/sas/icon";
 import type { LeadPage, LeadPageTopic, Market } from "@/db/schema";
 import { t } from "@/lib/i18n";
 import { bannerUrlPath, trackingOf } from "@/lib/lead-pages/rules";
-import { CONNECTION_CARDS, seenOriginSuggestion, snippetCode, topicChoice } from "@/lib/lead-pages/view";
+import { CONNECTION_CARDS, ownFormAction, seenOriginSuggestion, snippetCode, topicChoice } from "@/lib/lead-pages/view";
 import { saveLeadPageAction } from "./actions";
 import { FieldError, LeadPageFormShell } from "./form-shell";
 
@@ -16,13 +16,14 @@ const FIELDS = [
 
 /**
  * The add/edit form (board: LeadPageConnect, with decisions.md): how the page
- * connects ("Our form on your page" or "Button or link"), the page, what the
+ * connects ("Our form on your page", "Your own form" or "Button or link"), the page, what the
  * buyer fills in, the hand-over banner, the opening topic and the ad tracking
  * switches. The parts that differ by connection are all rendered and the one
  * that does not apply is hidden by CSS from the checked card (no script).
- * The right column: for the snippet, the code with Copy, "Save and preview"
- * and the other addresses (with the "Seen on …, add it?" suggestion); for a
- * button or link, the page's link once it is saved.
+ * The right column: for the snippet, the code with Copy and "Save and preview";
+ * for the own form, the address it sends to with Copy and "Save and test"; for
+ * both, the other addresses (with the "Seen on …, add it?" suggestion) once the
+ * page is saved; for a button or link, the page's link once it is saved.
  */
 export function LeadPageFormView({
   slug, page, markets, languages, topics, defaultTopic, consentDefault, bannerUploads, hostedUrl, appBase,
@@ -65,8 +66,10 @@ export function LeadPageFormView({
                 <input type="radio" name="connection" value={c.id} defaultChecked={c.id === (page?.connection ?? "snippet")} disabled={!on} />
                 <span className="lpg-ccard__head">
                   <span className="lpg-ccard__icon"><Icon name={c.icon} /></span>
-                  <strong>{t(c.title)}</strong>
-                  {c.tag ? <span className="lpg-tag">{t(c.tag)}</span> : null}
+                  <span className="lpg-ccard__title">
+                    <strong>{t(c.title)}</strong>
+                    {c.tag ? <span className="lpg-tag">{t(c.tag)}</span> : null}
+                  </span>
                 </span>
                 <span className="sas-small">{t(c.line)}</span>
               </label>
@@ -90,9 +93,11 @@ export function LeadPageFormView({
               <label className="lpg-field">
                 <span className="lpg-field__label" data-for="link">{t("lead_pages.form.address")}</span>
                 <span className="lpg-field__label" data-for="snippet">{t("lead_pages.form.address_snippet")}</span>
+                <span className="lpg-field__label" data-for="own_form">{t("lead_pages.form.address_own")}</span>
                 <input className="sas-input" name="address" defaultValue={page?.address ?? ""} placeholder="https://" inputMode="url" autoComplete="off" dir="ltr" />
                 <span className="sas-small" data-for="link">{t("lead_pages.form.address_hint")}</span>
                 <span className="sas-small" data-for="snippet">{t("lead_pages.form.address_snippet_hint")}</span>
+                <span className="sas-small" data-for="own_form">{t("lead_pages.form.address_own_hint")}</span>
                 <FieldError name="address" />
               </label>
               <label className="lpg-field">
@@ -115,7 +120,7 @@ export function LeadPageFormView({
 
           <div className="lpg-sec">
             <h2 className="lpg-sec__h">{t("lead_pages.form.fills")}</h2>
-            <div className="lpg-pills" role="group" aria-label={t("lead_pages.form.fills")}>
+            <div className="lpg-pills" role="group" aria-label={t("lead_pages.form.fills")} data-for="snippet link">
               <span className="lpg-pill lpg-pill--on lpg-pill--fixed"><Icon name="lock" />{t("lead_pages.form.field.name")}</span>
               <span className="lpg-pill lpg-pill--on lpg-pill--fixed"><Icon name="lock" />{t("lead_pages.form.field.phone")}</span>
               {FIELDS.map((f) => (
@@ -125,8 +130,10 @@ export function LeadPageFormView({
                 </label>
               ))}
             </div>
-            <span className="sas-small">{t("lead_pages.form.fills_hint")}</span>
-            <label className="lpg-check">
+            <span className="sas-small" data-for="snippet link">{t("lead_pages.form.fills_hint")}</span>
+            <span className="sas-small" data-for="own_form" data-fills-own="">{t("lead_pages.form.fills_own")}</span>
+            <span className="sas-small" data-for="own_form" data-consent-own="">{t("lead_pages.form.consent_own")}</span>
+            <label className="lpg-check" data-for="snippet link">
               <input type="checkbox" name="consentTicked" defaultChecked={consent} />
               <span>
                 {t("lead_pages.form.consent")}
@@ -192,6 +199,8 @@ export function LeadPageFormView({
               <span>{t("lead_pages.form.carry")}</span>
             </label>
             <span className="sas-small" data-pixel-note="" data-for="link">{t("lead_pages.form.pixel_note")}</span>
+            <span className="sas-small" data-for="own_form">{t("lead_pages.form.carry_own")}</span>
+            <span className="sas-small" data-pixel-note-own="" data-for="own_form">{t("lead_pages.form.pixel_note_own")}</span>
           </div>
 
           <div className="lpg-form__foot">
@@ -221,11 +230,28 @@ export function LeadPageFormView({
               </>
             ) : <span className="sas-small">{t("lead_pages.form.snippet_after")}</span>}
             <span className="sas-small">{t("lead_pages.snippet.look")}</span>
-            <div className="lpg-preview" data-origins="">
+          </section>
+          <section className="sas-panel lpg-card" data-for="own_form" data-own-form-card="">
+            <h2 className="lpg-sec__h">{t("lead_pages.own.title")}</h2>
+            {page ? (
+              <>
+                <span className="sas-small">{t("lead_pages.own.hint")}</span>
+                <code className="lpg-url" dir="ltr" data-own-form-action="">{ownFormAction(appBase, page.publicKey)}</code>
+                <span className="lpg-actions">
+                  <CopyButton value={ownFormAction(appBase, page.publicKey)} label={t("lead_pages.own.copy")} />
+                  <button type="submit" name="intent" value="preview" className={buttonClass("ghost", "sm")}><Icon name="eye" />{t("lead_pages.form.save_test")}</button>
+                </span>
+                <span className="sas-small">{t("lead_pages.form.own_more")}</span>
+              </>
+            ) : <span className="sas-small">{t("lead_pages.form.own_after")}</span>}
+          </section>
+          <section className="sas-panel lpg-card" data-for="snippet own_form">
+            {page ? (
+            <div className="lpg-origins-box" data-origins="">
               <input type="hidden" name="originsShown" value="1" />
-              <strong className="lpg-preview__h">{t("lead_pages.origins.title")}</strong>
+              <h2 className="lpg-sec__h">{t("lead_pages.origins.title")}</h2>
               <span className="sas-small">{t("lead_pages.origins.hint")}</span>
-              {page?.extraOrigins.length ? (
+              {page.extraOrigins.length ? (
                 <span className="lpg-pills" role="group" aria-label={t("lead_pages.origins.title")}>
                   {page.extraOrigins.map((o) => (
                     <label key={o} className="lpg-pill" dir="ltr">
@@ -247,6 +273,12 @@ export function LeadPageFormView({
                 <FieldError name="extraOrigins" />
               </label>
             </div>
+            ) : (
+            <div className="lpg-origins-box" data-origins="" data-origins-after-save="">
+              <h2 className="lpg-sec__h">{t("lead_pages.origins.title")}</h2>
+              <span className="sas-small">{t("lead_pages.origins.after_save")}</span>
+            </div>
+            )}
           </section>
           <section className="sas-panel lpg-card" data-for="link">
             <h2 className="lpg-sec__h">{t("lead_pages.link.title")}</h2>
