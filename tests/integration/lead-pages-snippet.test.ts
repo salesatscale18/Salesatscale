@@ -20,6 +20,7 @@ import { formTimingToken, previewTokenFor, submissionIdFromHandoverToken } from 
 import { seenOriginSuggestion } from "@/lib/lead-pages/view";
 import { MockSmsTransport } from "@/lib/sms/transport";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { SHOW_ABOUT_TOPIC } from "@/lib/lead-pages/form-text";
 
 const holder = vi.hoisted(() => ({ db: null as unknown }));
 vi.mock("@/lib/auth/account", () => ({ get appDb() { return holder.db; } }));
@@ -100,7 +101,7 @@ describe("lead pages (b): the snippet's endpoints", () => {
     expect(body).toMatchObject({
       v: 1, lang: "en", dir: "ltr", preview: false,
       text: { title: "Leave your details", name: "Full name", phone: "Mobile number", send: "Send", continue: "Continue to the chat" },
-      about: "About: Fridge monitoring",
+      about: SHOW_ABOUT_TOPIC ? "About: Fridge monitoring" : null,
       fields: { company: true, email: false, sites: false },
       privacyUrl: `${APP}/p/${snippet.publicKey}/privacy`,
       tracking: { tellPagePixel: true, carryAdDetails: true },

@@ -155,9 +155,9 @@ describe("snippet: texts and seller helpers", () => {
     const he = leadFormText(translator("he"));
     expect(he).toMatchObject({ title: "השאירו פרטים", send: "שליחה", continue: "המשך לצ'אט" });
     expect(Object.values(leadFormText(translator("en"))).every((v) => typeof v === "string" && v.length > 0)).toBe(true);
-    expect(SHOW_ABOUT_TOPIC).toBe(true);
-    expect(aboutLine(translator("en"), { en: "Fridge monitoring", he: "ניטור מקררים" }, "en")).toBe("About: Fridge monitoring");
-    expect(aboutLine(translator("he"), { en: "Fridge monitoring", he: "ניטור מקררים" }, "he")).toBe("בנושא: ניטור מקררים");
+    // The line waits for the owner's approval of its wording: off until then.
+    expect(aboutLine(translator("en"), { en: "Fridge monitoring", he: "ניטור מקררים" }, "en")).toBe(SHOW_ABOUT_TOPIC ? "About: Fridge monitoring" : null);
+    expect(aboutLine(translator("he"), { en: "Fridge monitoring", he: "ניטור מקררים" }, "he")).toBe(SHOW_ABOUT_TOPIC ? "בנושא: ניטור מקררים" : null);
     expect(aboutLine(translator("en"), null, "en")).toBeNull();
   });
 

@@ -12,7 +12,7 @@ import type { Locale, translator } from "@/lib/i18n";
  * NEW buyer wording, pending the owner's approval: set to false to remove it
  * everywhere (hosted form and snippet) without touching anything else.
  */
-export const SHOW_ABOUT_TOPIC = true;
+export const SHOW_ABOUT_TOPIC = false;
 
 type Tr = ReturnType<typeof translator>;
 

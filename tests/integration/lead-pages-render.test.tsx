@@ -17,6 +17,7 @@ import { submitLeadPage } from "@/lib/lead-pages/intake";
 import { createLeadPage, goLiveLeadPage } from "@/lib/lead-pages/service";
 import { formTimingToken, previewTokenFor } from "@/lib/lead-pages/tokens";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { SHOW_ABOUT_TOPIC } from "@/lib/lead-pages/form-text";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, ip: "10.1.0.1", cookie: null as string | null, referer: null as string | null }));
 vi.mock("@/lib/auth/account", () => ({ get appDb() { return holder.db; } }));
@@ -102,7 +103,8 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     save("hosted-en", html);
     expect(html).toContain('lang="en" dir="ltr"');
     // The page's opening topic, one muted line above the title (new wording behind SHOW_ABOUT_TOPIC).
-    expect(html).toMatch(/data-lp-about="">About: Fridge monitoring<\/p><h1 class="lp-title">Leave your details/);
+    if (SHOW_ABOUT_TOPIC) expect(html).toMatch(/data-lp-about="">About: Fridge monitoring<\/p><h1 class="lp-title">Leave your details/);
+    else expect(html).not.toContain("About: Fridge monitoring");
     expect(html).toContain("Leave your details");
     expect(html).toContain('class="lp-tile" aria-hidden="true">PD</span>');
     expect(html).not.toContain("lp-banner");
@@ -127,7 +129,7 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     const html = await form(he);
     expect(html).toContain('lang="he" dir="rtl"');
     expect(html).toContain("השאירו פרטים");
-    expect(html).toContain("בנושא: ניטור מקררים");
+    if (SHOW_ABOUT_TOPIC) expect(html).toContain("בנושא: ניטור מקררים");
     expect(html).toContain("שם מלא");
     expect(html).toContain("והעוזר האוטומטי");
     expect(html).toContain(`<img src="/api/lp/${he.publicKey}/banner/${SHA}" width="1600" height="500"`);
