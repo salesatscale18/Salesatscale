@@ -9,7 +9,7 @@ import { LOCALES, type Locale } from "@/lib/i18n";
 export { csvEscape } from "./csv";
 
 /** Calling codes for the markets we sell in (lib/accounts/rules.ts MARKETS). */
-const CALLING_CODE: Record<string, string> = {
+export const CALLING_CODE: Record<string, string> = {
   IL: "972", US: "1", CA: "1", GB: "44", AU: "61", DE: "49", FR: "33", NL: "31", ES: "34", IT: "39", AE: "971",
 };
 

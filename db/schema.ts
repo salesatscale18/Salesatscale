@@ -239,6 +239,8 @@ export const leads = pgTable(
      * sent anything on WhatsApp. Null for every real lead.
      */
     buyerRef: text("buyer_ref"),
+    /** The first lead page that brought this lead (set on create, filled when null). Null = not from a lead page. */
+    leadPageId: uuid("lead_page_id").references((): AnyPgColumn => leadPages.id, { onDelete: "set null" }),
     lastActivityAt: timestamp("last_activity_at", { withTimezone: true }).notNull().defaultNow(),
     createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
@@ -255,6 +257,7 @@ export const leads = pgTable(
     index("leads_account_activity_idx").on(t.accountId, t.lastActivityAt),
     index("leads_account_created_idx").on(t.accountId, t.createdAt),
     index("leads_account_market_idx").on(t.accountId, t.marketId),
+    index("leads_account_lead_page_idx").on(t.accountId, t.leadPageId),
   ],
 );
 
@@ -1842,3 +1845,134 @@ export const followUps = pgTable(
 );
 
 export type FollowUp = typeof followUps.$inferSelect;
+
+// ---------------------------------------------------------------------------
+// Lead pages (phase 1, migration 0021): the seller's lead form, on our hosted
+// page (/p/<key>) or, later, as a snippet on the seller's own page. Public
+// endpoints find the account only through `public_key` (lib/lead-pages).
+// ---------------------------------------------------------------------------
+
+/** How the form reaches the buyer: our snippet, the seller's own form, a button or link to /p/<key>, or a page we host (later). */
+export const leadPageConnection = pgEnum("lead_page_connection", ["snippet", "own_form", "link", "hosted"]);
+export const leadPageStatus = pgEnum("lead_page_status", ["draft", "live", "paused"]);
+
+/** Which optional fields the form asks for, and whether the consent box starts ticked (default from the page market). */
+export type LeadPageForm = { fields?: { company?: boolean; email?: boolean; sites?: boolean }; consentTicked?: boolean };
+/** The page's banner image (private blob), with its pixel size read from the file header. */
+export type LeadPageBanner = { blobPath: string; contentType: string; size: number; sha256: string; width: number; height: number };
+/** Ad tracking switches; both default to true in code (lib/lead-pages/rules.ts). */
+export type LeadPageTracking = { tellPagePixel?: boolean; carryAdDetails?: boolean };
+/** What the checks saw: the snippet on an allowed origin, and the last refused origin. */
+export type LeadPageChecks = { snippetSeenAt?: string; snippetOrigin?: string; refusedOrigin?: string; refusedAt?: string };
+/** The opening topic snapshot (the text, not an index into the playbook topics). */
+export type LeadPageTopic = { en: string; he?: string };
+
+export const leadPages = pgTable(
+  "lead_pages",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    /** 12 characters base62: in the snippet and in /p/<key>. Not a secret; stops enumerating drafts. */
+    publicKey: text("public_key").notNull().unique(),
+    name: text("name").notNull(),
+    /** Normalised https://host/path; null for a button or link straight to the hosted form. */
+    address: text("address"),
+    /** Extra hosts allowed to post (staging), e.g. "acme.webflow.io". */
+    extraOrigins: text("extra_origins").array().notNull().default(sql`'{}'::text[]`),
+    connection: leadPageConnection("connection").notNull(),
+    status: leadPageStatus("status").notNull().default("draft"),
+    /** Null = the market from the phone or country. */
+    marketId: uuid("market_id").references(() => markets.id, { onDelete: "set null" }),
+    /** The form's language: "en" or "he". */
+    language: text("language").notNull(),
+    form: jsonb("form").$type<LeadPageForm>().notNull().default({}),
+    openingTopic: jsonb("opening_topic").$type<LeadPageTopic>(),
+    banner: jsonb("banner").$type<LeadPageBanner>(),
+    tracking: jsonb("tracking").$type<LeadPageTracking>().notNull().default({}),
+    checks: jsonb("checks").$type<LeadPageChecks>().notNull().default({}),
+    /** Spare room for later slices (e.g. button text). */
+    options: jsonb("options").$type<Record<string, unknown>>().notNull().default({}),
+    wentLiveAt: timestamp("went_live_at", { withTimezone: true }),
+    pausedAt: timestamp("paused_at", { withTimezone: true }),
+    createdByUserId: uuid("created_by_user_id").references(() => users.id, { onDelete: "set null" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [index("lead_pages_account_status_idx").on(t.accountId, t.status)],
+);
+
+export type LeadPage = typeof leadPages.$inferSelect;
+
+/** UTM values, ad click IDs and the referrer host (each value capped at 200 characters). */
+export type LeadPageAd = { utm?: Record<string, string>; clickIds?: Record<string, string>; referrerHost?: string };
+
+/** Accepted submissions only (rejections are counted in lead_page_daily). No IP or user agent here. */
+export const leadPageSubmissions = pgTable(
+  "lead_page_submissions",
+  {
+    id: uuid("id").primaryKey(),
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    pageId: uuid("page_id")
+      .notNull()
+      .references(() => leadPages.id, { onDelete: "cascade" }),
+    leadId: uuid("lead_id")
+      .notNull()
+      .references(() => leads.id, { onDelete: "cascade" }),
+    /** "snippet" | "own_form" | "link" */
+    via: text("via").notNull(),
+    leadCreated: boolean("lead_created").notNull(),
+    consent: boolean("consent").notNull(),
+    /** A test from "Check before going live": left out of the numbers. */
+    preview: boolean("preview").notNull().default(false),
+    language: text("language").notNull(),
+    /** The buyer's answers with no lead column: the first name typed in this submission (the hand-over greets with it) and the number of sites. */
+    answers: jsonb("answers").$type<{ firstName?: string; sites?: number }>(),
+    ad: jsonb("ad").$type<LeadPageAd>(),
+    /** Normalised lowercase "source / campaign", at most 80 characters; "" = direct or unknown. */
+    sourceKey: text("source_key").notNull().default(""),
+    pixel: jsonb("pixel").$type<{ meta?: "called" | "absent"; google?: "called" | "absent" }>(),
+    conversationId: uuid("conversation_id").references(() => conversations.id, { onDelete: "set null" }),
+    handoverAt: timestamp("handover_at", { withTimezone: true }),
+    /** "voice" | "text" */
+    chatChoice: text("chat_choice"),
+    /** "sent" | "mocked" | "refused" | "failed" | "skipped" */
+    sms: text("sms"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index("lead_page_submissions_page_created_idx").on(t.accountId, t.pageId, t.createdAt),
+    index("lead_page_submissions_lead_idx").on(t.accountId, t.leadId),
+    index("lead_page_submissions_page_lead_idx").on(t.accountId, t.pageId, t.leadId),
+  ],
+);
+
+export type LeadPageSubmission = typeof leadPageSubmissions.$inferSelect;
+
+/** Per page, day and source: counters only, never a row per visit. */
+export const leadPageDaily = pgTable(
+  "lead_page_daily",
+  {
+    accountId: uuid("account_id")
+      .notNull()
+      .references(() => sellerAccounts.id, { onDelete: "cascade" }),
+    pageId: uuid("page_id")
+      .notNull()
+      .references(() => leadPages.id, { onDelete: "cascade" }),
+    day: date("day").notNull(),
+    sourceKey: text("source_key").notNull().default(""),
+    views: integer("views").notNull().default(0),
+    opens: integer("opens").notNull().default(0),
+    rejected: integer("rejected").notNull().default(0),
+  },
+  (t) => [
+    primaryKey({ name: "lead_page_daily_pk", columns: [t.pageId, t.day, t.sourceKey] }),
+    index("lead_page_daily_account_day_idx").on(t.accountId, t.day),
+  ],
+);

@@ -13,3 +13,18 @@ const LINE = {
 export function consentLine(lang: "en" | "he", seller: string): string {
   return LINE[lang].replace("{seller}", seller);
 }
+
+/**
+ * The consent line of a lead page form (lib/lead-pages; the box next to it,
+ * decision 6). Verbatim legal wording, DRAFT pending the owner's and legal's
+ * approval (lead pages plan §4): it names the automated assistant and a call
+ * in the chat. The exact rendered line is what the consent record stores.
+ */
+const PAGE_LINE = {
+  en: "By sending, you agree that {seller} and its automated assistant {agent} may contact you about your request by SMS, WhatsApp, email or a call in the chat. You can stop anytime.",
+  he: "בשליחה, את/ה מסכים/ה ש-{seller} והעוזר האוטומטי {agent} ייצרו איתך קשר בנוגע לפנייה ב-SMS, וואטסאפ, מייל או שיחה בצ'אט. אפשר להפסיק בכל עת.",
+} as const;
+
+export function leadPageConsentLine(lang: "en" | "he", seller: string, agent: string): string {
+  return PAGE_LINE[lang].replace("{seller}", () => seller).replace("{agent}", () => agent);
+}

@@ -41,6 +41,13 @@ export type ChatStrings = {
 export type ChatSms = { stopUrl: string; stopped: boolean; fromSms: boolean; resumed?: boolean };
 
 
+/**
+ * What a parent page may do with the chat (the lead page hand-over, /h/<token>, mounts the chat in the same
+ * document): start the call inside the parent's own click (so the tap unlocks audio and the microphone prompt
+ * comes from it), and focus the composer. `canCall`: the voice client exists (the chat is mounted with voice).
+ */
+export type ChatControls = { startCall(): void; focusComposer(): void; canCall: boolean };
+
 /** A message on the page: from the server, or the buyer's own still on its way (pending). */
 type Shown = BuyerMessage & { pending?: "sending" | "confirmed" | "failed" };
 
@@ -117,7 +124,7 @@ const dayKeyIn = (timeZone: string) => (d: Date) => new Intl.DateTimeFormat("en-
  * The layout never flips; banner, header, card, separators and bar take the
  * lead's direction and every bubble is dir="auto".
  */
-export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", rememberZone = false, voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null }: {
+export function ChatClient({ token, lang, seller, initials, strings, initial, timeZone = "UTC", rememberZone = false, voice = null, simulated = true, sms = null, reach: initialReach = null, talkNow = null, controls, guardBack = true }: {
   token: string; lang: string; seller: string; initials: string; strings: ChatStrings; initial: BuyerChat;
   /** A simulated buyer's chat: the "Simulated chat" banner shows (never on a real buyer's chat). */
   simulated?: boolean;
@@ -136,6 +143,10 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
   reach?: ChatReach | null;
   /** Reach RB: opened from the named-time SMS: the talk-now card, or the new-time card after the second SMS. */
   talkNow?: TalkNow | null;
+  /** Optional: given the chat's controls once mounted (the lead page hand-over's "Talk now" and "Chat in writing"). */
+  controls?: (api: ChatControls) => void;
+  /** The Back guard (board VoiceBubbleBack); off while a parent keeps the chat off screen. Default on. */
+  guardBack?: boolean;
 }) {
   // Reach RB: card state, and the buyer's own zone for every time on the page (the browser's, else the stored or market one).
   const [reach, setReach] = useState<ChatReach | null>(initialReach);
@@ -359,6 +370,12 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
       c.unavailable("error");
     })();
   };
+  // A parent's controls call the latest startCall synchronously (no await, no timer, no state round-trip before it).
+  const startCallRef = useRef(startCall);
+  startCallRef.current = startCall;
+  useEffect(() => {
+    controls?.({ startCall: () => startCallRef.current(), focusComposer: () => inputRef.current?.focus(), canCall: !!clientRef.current });
+  }, [controls]);
   // When a call ends: fetch its stored lines and the call row now, then let the bar go after a moment.
   useEffect(() => {
     if (callSnap.phase === "ended") void poll();
@@ -386,7 +403,8 @@ export function ChatClient({ token, lang, seller, initials, strings, initial, ti
     if (wasVoice.current && !voiceMode && window.matchMedia?.("(pointer: fine)").matches) inputRef.current?.focus();
     wasVoice.current = voiceMode;
   }, [voiceMode]);
-  const backGuard = useBackGuard({ ask: expired ? null : callOn ? "end_call" : "leave_chat", liveCall: callOn, onEndCall: () => clientRef.current?.end() });
+  // Not while a parent keeps the chat off screen (the lead page hand-over): its sheet would be invisible.
+  const backGuard = useBackGuard({ ask: expired ? null : callOn ? "end_call" : "leave_chat", liveCall: callOn, onEndCall: () => clientRef.current?.end(), enabled: guardBack });
   const showTalk = !!voice && voiceState.available && !inCall && !ended;
   // A gate off, and the server said why (a simulated chat, or the seller's signed-in staff): the button stays, disabled, with the reason under the composer.
   const whyOff = !!voice && !voiceState.available && !!voiceState.reason && !inCall && !ended

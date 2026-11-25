@@ -40,11 +40,18 @@ export type EnsureChatStartedResult =
 /** Fields of the lead form that say what the lead asked about (stored on the lead.created event when the form sends them). */
 const INTEREST_KEYS = ["interest", "asked_about", "topic", "product", "message"] as const;
 
-/** What the lead asked about on the form, when the intake stored it. */
-async function leadInterest(db: Db, accountId: string, leadId: string): Promise<string | null> {
+/**
+ * Events that may say what the lead asked about: the intake's lead.created, and a lead page submission
+ * (lib/lead-pages/intake.ts stores the page's opening topic as `topic` in the form's language).
+ */
+const INTEREST_EVENTS = ["lead.created", "lead_page.submitted"] as const;
+
+/** What the lead asked about on the form, when the intake or a lead page stored it: the latest of those events. */
+export async function leadInterest(db: Db, accountId: string, leadId: string): Promise<string | null> {
   const [ev] = await db.select({ data: leadEvents.data }).from(leadEvents)
-    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), eq(leadEvents.type, "lead.created")))
-    .orderBy(desc(leadEvents.createdAt)).limit(1);
+    .where(and(eq(leadEvents.accountId, accountId), eq(leadEvents.leadId, leadId), inArray(leadEvents.type, [...INTEREST_EVENTS])))
+    // Same instant (one transaction): the lead page's event wins ("lead_page." sorts after "lead.").
+    .orderBy(desc(leadEvents.createdAt), desc(leadEvents.type)).limit(1);
   for (const k of INTEREST_KEYS) {
     const v = ev?.data?.[k];
     if (typeof v === "string" && v.trim()) return v.trim().slice(0, 120);

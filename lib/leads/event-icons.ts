@@ -18,6 +18,9 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   "lead.created": "user-plus",
   "lead.updated": "file-text",
   "consent.recorded": "shield-check",
+  // Lead pages (lib/lead-pages/intake.ts): the buyer sent the page's form; the form did not give consent back.
+  "lead_page.submitted": "file-text",
+  "lead_page.consent_not_restored": "shield-check",
   "lead.opted_out": "x-circle",
   "lead.market_changed": "layers",
   "quote.created": "file-text",

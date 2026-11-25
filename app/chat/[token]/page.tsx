@@ -1,26 +1,10 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
 import { appDb } from "@/lib/auth/account";
-import { translator, type Locale } from "@/lib/i18n";
-import { currentBuyerLanguage } from "@/lib/conversations/current-language";
-import { buyerChat, chatNames, recordChatOpen, resolveChatLink } from "@/lib/simulator/service";
-import { brandVars, buyerBubbleColor } from "@/lib/simulator/rules";
-import { ChatClient, type ChatSms } from "./chat-client";
-import { ensureChatStarted } from "@/lib/chat/start";
-import { isSimulatedLead } from "@/lib/simulator/rules";
-import { smsState } from "@/lib/sms/service";
-import { stopPath, stopTokenFor } from "@/lib/sms/token";
-import { chatStrings } from "./strings";
-import { getMarket } from "@/lib/markets/service";
-import { marketTimezone } from "@/lib/markets/settings";
-import { buyerConversation, buyerVoiceGate, buyerVoiceView } from "@/lib/voice/buyer";
-import { voiceTabKey } from "@/lib/voice/tab-key";
-import { chatViewerIsStaff } from "@/lib/voice/chat-viewer";
-import { voiceMode } from "@/lib/voice/settings";
-// Reach RB: the booking card and SMS chips, and the talk-now / new-time card after a named-time SMS.
-import { chatReach } from "@/lib/chat/reach";
-import { talkNowFor } from "@/lib/follow-ups/named-time";
-import { storedBuyerZone } from "@/lib/team-calls/zone";
+import { translator } from "@/lib/i18n";
+import { resolveChatLink } from "@/lib/simulator/service";
+import { ChatClient } from "./chat-client";
+import { chatFrame, loadBuyerChat } from "./load";
 // The call bar is the design system's component (components/sas/voice): its styles and tokens.
 import "@/components/sas/sas.css";
 import "@/components/sas/voice/voice-bubble.css";
@@ -36,7 +20,8 @@ export const metadata: Metadata = { title: "Chat", robots: { index: false, follo
  * a link idle for 14 days shows an "expired" page (lib/simulator/rules
  * chatLinkExpiresAt). Opened from an SMS (/c/<code> adds ?via=sms), a real
  * lead's chat shows "Stop text messages" at the top; the chat menu stops them
- * or turns them back on (board ReachChat).
+ * or turns them back on (board ReachChat). The data comes from ./load.ts,
+ * shared with the lead page hand-over (/h/<token>).
  */
 export default async function BuyerChatPage({ params, searchParams }: { params: Promise<{ token: string }>; searchParams?: Promise<Record<string, string | string[] | undefined>> }) {
   const { token } = await params;
@@ -44,14 +29,9 @@ export default async function BuyerChatPage({ params, searchParams }: { params: 
   const link = await resolveChatLink(appDb, token);
   if (!link) notFound();
   const { ctx } = link;
-  // The language the buyer last wrote in (the conversation's current language), else the lead's: the lead's is only the start.
-  const lang: Locale = await currentBuyerLanguage(appDb, ctx.account.id, ctx.lead);
-  const tr = translator(lang);
-  // The agent's and the seller's names in the lead's language; the Hebrew texts about the agent follow its gender (decision 2).
-  const names = await chatNames(appDb, ctx.account, lang);
-  const initials = names.seller.split(/\s+/).filter(Boolean).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
-  const rootStyle = { ...brandVars(ctx.brandColor), ["--bubble" as string]: buyerBubbleColor(ctx.brandColor) };
   if (link.state === "expired") {
+    const { lang, names, initials, rootStyle } = await chatFrame(ctx);
+    const tr = translator(lang);
     // No messages, no agent name: only who the link belongs to and what to do next.
     const dir = lang === "he" ? "rtl" : "ltr";
     return (
@@ -71,52 +51,11 @@ export default async function BuyerChatPage({ params, searchParams }: { params: 
       </div>
     );
   }
-  // Every buyer chat starts with the agent's intro (lib/chat/start.ts): never an empty chat.
-  await ensureChatStarted(appDb, { accountId: ctx.account.id, leadId: ctx.lead.id });
-  // RB2: the buyer opened the chat ("{buyer} opened the chat" in the seller's thread), from the SMS (/c/ redirects here with
-  // ?via=sms and records it first) or straight from the chat link. Once per 10 minutes (recordChatOpen). Never a simulated
-  // buyer, and never a viewer signed in as the seller's staff or a platform admin (a preview from the lead card).
-  // Who is looking is read once per page load (the voice button below asks the same).
-  let staffCheck: Promise<boolean> | null = null;
-  const viewerIsStaff = () => (staffCheck ??= chatViewerIsStaff(ctx.account.id));
-  if (!isSimulatedLead(ctx.lead) && !(await viewerIsStaff())) {
-    await recordChatOpen(appDb, ctx.account.id, ctx.lead.id, new Date(), sp.via === "sms" ? "sms" : "link");
-  }
-  const chat = await buyerChat(appDb, ctx);
-  // "Talk to us" (live voice): every gate on the server; the page only shows the button when they all hold.
-  const voiceOn = voiceMode() !== "off";
-  // The voice bubble's link to an order form tab of this conversation: a name only the server can make.
-  const conv = voiceOn ? await buyerConversation(appDb, ctx) : null;
-  const tabKey = conv ? voiceTabKey(conv.id) : null;
-  if (voiceOn) {
-    const gate = await buyerVoiceGate(appDb, ctx);
-    // The reason it is off: a simulated chat, or a viewer signed in as the seller's staff or a platform admin.
-    chat.voice = await buyerVoiceView(gate, ctx.lead, viewerIsStaff);
-  }
-  // RB3: every time on the page in one zone, the buyer's: the browser's once the page runs (ChatClient), before that
-  // (the server render) the one stored for this buyer, else the lead's market zone. Read only: no market is created here.
-  const marketZone = marketTimezone(ctx.account, ctx.lead.marketId ? await getMarket(appDb, ctx.account.id, ctx.lead.marketId) : null);
-  const timeZone = (isSimulatedLead(ctx.lead) ? null : await storedBuyerZone(appDb, ctx.account.id, ctx.lead.id)) ?? marketZone;
-  const strings = chatStrings(tr, names, lang);
-  // Text messages are for real leads only: a simulated buyer has no phone.
-  const simulated = isSimulatedLead(ctx.lead);
-  const sms: ChatSms | null = simulated ? null : {
-    stopUrl: stopPath(stopTokenFor(ctx.lead.id)),
-    stopped: (await smsState(appDb, ctx.account.id, ctx.lead.id)).stopped,
-    fromSms: sp.via === "sms",
-    resumed: sp.sms === "on",
-  };
-  const reach = await chatReach(appDb, ctx);
-  const talkNow = sms?.fromSms ? await talkNowFor(appDb, ctx) : null;
+  const chat = await loadBuyerChat(token, ctx, sp);
   return (
     // The page frame never flips; the chat parts take the lead's direction, and in Hebrew the whole chat mirrors (board SimMobileHe).
-    <div className="c-root" lang={lang} dir="ltr" style={rootStyle}>
-      <ChatClient
-        token={token} lang={lang} seller={names.seller} initials={initials} strings={strings}
-        initial={chat} timeZone={timeZone} rememberZone={!simulated && !(await viewerIsStaff())} simulated={simulated} sms={sms} reach={reach} talkNow={talkNow}
-        // The call is English: the agent's English name, as it says it on the call.
-        voice={voiceOn ? { agentName: (await chatNames(appDb, ctx.account, "en")).agent, gender: names.gender, tabKey } : null}
-      />
+    <div className="c-root" lang={chat.lang} dir="ltr" style={chat.rootStyle}>
+      <ChatClient {...chat.props} />
     </div>
   );
 }

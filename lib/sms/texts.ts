@@ -29,6 +29,8 @@ const BODY: Record<SmsLang, Record<SmsKind, string>> = {
     chat_link: "Thanks for talking with us. Continue anytime: {chat}",
     // Board UnpaidReminders (owner decision 23 Nov): the fixed line that goes with each payment reminder.
     pay_reminder: "Your order from {seller} is waiting for payment: {chat}",
+    // Lead pages (draft wording, pending the owner's approval): the chat link right after the buyer sent the form.
+    page_link: "{seller}: your chat is here: {chat}",
   },
   he: {
     opener: "פרסומת: {seller} - {agent} עם עדכון: {chat}\nלהסרה השב/י הסר",
@@ -40,6 +42,7 @@ const BODY: Record<SmsLang, Record<SmsKind, string>> = {
     team_call: "שיחה {time} שעונך: {chat}",
     chat_link: "תודה על השיחה. אפשר להמשיך כאן: {chat}",
     pay_reminder: "ההזמנה מ-{seller} ממתינה לתשלום: {chat}",
+    page_link: "{seller}: השיחה שלך כאן: {chat}",
   },
 };
 

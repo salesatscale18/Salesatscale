@@ -24,7 +24,8 @@ const nextConfig: NextConfig = {
     return [
       { source: "/:path*", headers: securityHeaders },
       // Buyer links carry a personal token: never send it on in a Referer, never index.
-      ...["/f/:path*", "/chat/:path*"].map((source) => ({
+      // The lead page hand-over (/h/<token>) too: its token opens the buyer's new chat for 30 minutes.
+      ...["/f/:path*", "/chat/:path*", "/h/:path*"].map((source) => ({
         source,
         headers: [
           { key: "Referrer-Policy", value: "no-referrer" },
@@ -32,6 +33,16 @@ const nextConfig: NextConfig = {
           { key: "Cache-Control", value: "private, no-store" },
         ],
       })),
+      // The hosted lead form: never indexed, never cached (each render carries a fresh form-timing token).
+      {
+        source: "/p/:path*",
+        headers: [
+          { key: "X-Robots-Tag", value: "noindex, nofollow" },
+          { key: "Cache-Control", value: "private, no-store" },
+        ],
+      },
+      // The lead form snippet (slice b, public/lp/v1.js): cached at the edge, backward compatible forever.
+      { source: "/lp/:path*", headers: [{ key: "Cache-Control", value: "public, max-age=300, s-maxage=3600, stale-while-revalidate=86400" }] },
     ];
   },
 };

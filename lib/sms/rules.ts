@@ -127,8 +127,10 @@ export function smsRoute(config: SmsConfig, twilioConfigured: boolean, to: strin
  * Hand-back and "Send chat link" both send `chat_link`. `pay_reminder` goes with a "Signed, not paid yet" reminder
  * (lib/orders/unpaid-run.ts): automatic, so only inside contact hours; a service message about a signed order,
  * not a commercial one (not behind SMS_AGENT_NUDGES).
+ * `page_link` is the chat link right after the buyer sent a lead page form (lib/lead-pages, sent only from the
+ * hand-over render): the buyer just asked, so any hour, never held back by the spacing, and not commercial.
  */
-export const SMS_KINDS = ["opener", "follow_up", "named_time", "named_time_retry", "quote_ready", "order_form", "team_call", "chat_link", "pay_reminder"] as const;
+export const SMS_KINDS = ["opener", "follow_up", "named_time", "named_time_retry", "quote_ready", "order_form", "team_call", "chat_link", "pay_reminder", "page_link"] as const;
 export type SmsKind = (typeof SMS_KINDS)[number];
 export type SmsTiming = "automatic" | "buyer_named" | "person";
 
@@ -142,6 +144,7 @@ export const SMS_KIND_TIMING: Record<SmsKind, SmsTiming> = {
   team_call: "buyer_named",
   chat_link: "person",
   pay_reminder: "automatic",
+  page_link: "buyer_named",
 };
 
 /** Agent-started, commercial SMS (see agentSmsEnabled): every other kind is a service message the buyer asked for. */
@@ -154,7 +157,7 @@ export const SMS_PER_LEAD_DAILY = 3;
 /** Minimum time between two SMS to one lead, except the kinds in SMS_SPACING_EXEMPT. */
 export const SMS_SPACING_MS = 30 * 60_000;
 /** A person's "Send chat link" and the buyer's own time are never held back by the spacing. */
-export const SMS_SPACING_EXEMPT: ReadonlySet<SmsKind> = new Set(["chat_link", "named_time", "named_time_retry"]);
+export const SMS_SPACING_EXEMPT: ReadonlySet<SmsKind> = new Set(["chat_link", "named_time", "named_time_retry", "page_link"]);
 /** "It's the time you asked for" is dropped by Twilio when it would arrive more than 15 minutes late. */
 export const SMS_VALIDITY_SECONDS: Partial<Record<SmsKind, number>> = { named_time: 15 * 60, named_time_retry: 15 * 60 };
 
