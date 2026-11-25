@@ -65,9 +65,9 @@ describe("lead pages view helpers", () => {
     expect(topicChoice(null, topics)).toBe("");
   });
 
-  it("the snippet and Button or link can be chosen; the other ways say Coming next or Later", () => {
+  it("the snippet, the own form and Button or link can be chosen; the hosted page says Later", () => {
     expect(CONNECTION_CARDS.map((c) => [c.id, c.tag])).toEqual([
-      ["snippet", null], ["own_form", "lead_pages.card.coming_next"], ["link", null], ["hosted", "lead_pages.card.later"],
+      ["snippet", null], ["own_form", null], ["link", null], ["hosted", "lead_pages.card.later"],
     ]);
   });
 

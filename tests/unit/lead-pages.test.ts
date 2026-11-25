@@ -235,7 +235,7 @@ describe("page_link SMS", () => {
 });
 
 describe("lead page settings", () => {
-  it("parses the add/edit form; the snippet and Button or link can be saved, the own form not yet", () => {
+  it("parses the add/edit form; the snippet and Button or link can be saved, the own form too; hosted not yet", () => {
     const ok = parseLeadPageInput({
       name: " Spring  offer ", connection: "link", language: "he", address: "", fields: { company: "on", email: undefined, sites: "1" },
       openingTopic: { en: "Fridge monitoring", he: "ניטור מקררים" }, extraOrigins: "acme.webflow.io, https://Acme.webflow.io/ staging.acme.com", consentTicked: "",
@@ -248,12 +248,15 @@ describe("lead page settings", () => {
         extraOrigins: ["acme.webflow.io", "staging.acme.com"],
       },
     });
-    const bad = parseLeadPageInput({ name: "", connection: "own_form", language: "fr", address: "nope nope", extraOrigins: ["bad host!"] }, { languages: ["en"] });
+    const bad = parseLeadPageInput({ name: "", connection: "hosted", language: "fr", address: "nope nope", extraOrigins: ["bad host!"] }, { languages: ["en"] });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(["address", "connection", "extraOrigins", "language", "name"]);
     // Slice b: "Our form on your page" can be saved, and needs the page's address.
     expect(parseLeadPageInput({ name: "x", connection: "snippet", language: "en" }, { languages: ["en"] })).toMatchObject({ ok: false, errors: { address: expect.any(String) } });
     expect(parseLeadPageInput({ name: "x", connection: "snippet", language: "en", address: "acme.com/offer" }, { languages: ["en"] })).toMatchObject({ ok: true, value: { connection: "snippet", address: "https://acme.com/offer" } });
+    // Slice c: "Your own form" can be saved, and needs the page's address too.
+    expect(parseLeadPageInput({ name: "x", connection: "own_form", language: "en" }, { languages: ["en"] })).toMatchObject({ ok: false, errors: { address: expect.any(String) } });
+    expect(parseLeadPageInput({ name: "x", connection: "own_form", language: "en", address: "acme.com/contact" }, { languages: ["en"] })).toMatchObject({ ok: true, value: { connection: "own_form", address: "https://acme.com/contact" } });
     expect(goLiveBlockers({ hasPrivacyNotice: false, accountStatus: "setting_up" })).toEqual(["privacy_notice", "account_not_live"]);
     expect(goLiveBlockers({ hasPrivacyNotice: true, accountStatus: "live" })).toEqual([]);
     expect(initialsOf("Polar Demo")).toBe("PD");

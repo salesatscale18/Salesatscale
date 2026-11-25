@@ -302,7 +302,7 @@ export async function issuePreviewLink(db: Db, actor: Actor, accountId: string, 
 // Check before going live (plan §6)
 // ---------------------------------------------------------------------------
 
-export type ReadinessKey = "privacy_notice" | "account_live" | "form_opens" | "snippet_seen" | "test_lead";
+export type ReadinessKey = "privacy_notice" | "account_live" | "form_opens" | "snippet_seen" | "own_form_lead" | "test_lead";
 export type ReadinessCheck = { key: ReadinessKey; done: boolean; blocking: boolean };
 
 /**
@@ -312,16 +312,21 @@ export type ReadinessCheck = { key: ReadinessKey; done: boolean; blocking: boole
  *   or a preview visit (kept on the page's checks, never in the numbers).
  * - Our form on your page: "The snippet was seen on your page": a config fetch from an
  *   allowed origin other than ours (checks.snippetSeenAt).
- * Slice c adds the own-form check.
+ * - Your own form: "A lead arrived from your form": a submission sent by the seller's own
+ *   form (via 'own_form'), a test one included.
  */
 export async function leadPageReadiness(db: Db, account: Pick<SellerAccount, "status">, page: LeadPage): Promise<ReadinessCheck[]> {
-  const [notice, [views], [test]] = await Promise.all([
+  const [notice, [views], [test], [own]] = await Promise.all([
     privacyNotice(db, page),
     db.select({ n: sql<number>`coalesce(sum(${leadPageDaily.views}), 0)::int` }).from(leadPageDaily)
       .where(and(eq(leadPageDaily.accountId, page.accountId), eq(leadPageDaily.pageId, page.id), gte(leadPageDaily.day, dayOf(page.createdAt)))),
     db.select({ id: leadPageSubmissions.id }).from(leadPageSubmissions)
       .where(and(eq(leadPageSubmissions.accountId, page.accountId), eq(leadPageSubmissions.pageId, page.id), eq(leadPageSubmissions.preview, true), isNotNull(leadPageSubmissions.chatChoice)))
       .limit(1),
+    page.connection === "own_form"
+      ? db.select({ id: leadPageSubmissions.id }).from(leadPageSubmissions)
+        .where(and(eq(leadPageSubmissions.accountId, page.accountId), eq(leadPageSubmissions.pageId, page.id), eq(leadPageSubmissions.via, "own_form"))).limit(1)
+      : Promise.resolve([]),
   ]);
   const checks = (page.checks ?? {}) as LeadPageChecks & { formOpenedAt?: string };
   return [
@@ -329,7 +334,9 @@ export async function leadPageReadiness(db: Db, account: Pick<SellerAccount, "st
     { key: "account_live", done: account.status === "live", blocking: true },
     page.connection === "snippet"
       ? { key: "snippet_seen", done: !!checks.snippetSeenAt, blocking: false }
-      : { key: "form_opens", done: (views?.n ?? 0) > 0 || !!checks.formOpenedAt, blocking: false },
+      : page.connection === "own_form"
+        ? { key: "own_form_lead", done: !!own, blocking: false }
+        : { key: "form_opens", done: (views?.n ?? 0) > 0 || !!checks.formOpenedAt, blocking: false },
     { key: "test_lead", done: !!test, blocking: false },
   ];
 }

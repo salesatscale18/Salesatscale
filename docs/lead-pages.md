@@ -1,8 +1,8 @@
-# Lead pages: putting our form on your page
+# Lead pages: putting our form on your page, or using your own
 
 Lead pages bring buyers from an ad or a landing page straight into a conversation.
-This note covers **Our form on your page** (the snippet). "Button or link" needs no
-install: put the page's link (`/p/<key>`) on a button or an ad.
+This note covers **Our form on your page** (the snippet) and **Your own form**.
+"Button or link" needs no install: put the page's link (`/p/<key>`) on a button or an ad.
 
 ## The snippet
 
@@ -21,7 +21,12 @@ Copy it from Lead pages › your page › **Your snippet**. It has two lines:
   CSS cannot change the form, and the form's CSS cannot change your page (Shadow DOM).
 - Page edits (fields, consent box, topic, brand colour) need no reinstall: the snippet
   reads them when the page loads (cached for at most a minute).
-- The script sets no cookies, uses no browser storage and never loads ad scripts.
+- The script sets no cookies and never loads ad scripts. The only thing it keeps is the
+  visit's ad details (UTM values, click IDs, the referring site), in `sessionStorage`, and
+  only when your cookie banner says analytics is granted, so a buyer who lands on one page
+  with `?utm_campaign=…` and leaves details on another page of the same visit still carries
+  the campaign. Unknown or denied: only the current address's details are sent, nothing is
+  kept (denied also clears what was kept).
 
 ### Which addresses may show the form
 
@@ -54,6 +59,90 @@ allowed address.
   The buyer's details are always sent.
 
 After sending, the buyer goes to our hand-over page in the same tab, then to the conversation.
+
+## Your own form
+
+Keep the form you already have and point it at us. The buyer still takes one step: they
+send your form and land on our hand-over, then the conversation.
+
+### Set up
+
+1. Lead pages › **Add page** › **Your own form**. Enter the address of the page your form is on.
+2. Save. The page view shows **Your form's address**:
+   `https://APP_HOST/api/lp/<key>/submit`.
+3. Set your form's `action` to that address and its `method` to `post`. The browser sends
+   it as a normal form (`application/x-www-form-urlencoded`); no script is needed.
+
+### Field names
+
+| Field | Also accepted | |
+|---|---|---|
+| `name` | `full_name` | required |
+| `phone` | `tel`, `mobile` | required |
+| `company` | `business` | optional |
+| `email` | | optional |
+| `sites` | | optional, a whole number 1 to 10000 |
+| `consent` | | `true`, `on`, `yes` or `1` when the box is ticked |
+
+Other fields are ignored. Ad details arrive when your form sends them as hidden fields:
+`utm_source`, `utm_medium`, `utm_campaign`, `utm_term`, `utm_content` and the click IDs
+`gclid`, `gbraid`, `wbraid`, `fbclid`, `msclkid`, `ttclid`, `li_fat_id` (with
+**Carry ad details** on).
+
+A minimal example (the page view has one ready to copy, with your names in the consent line):
+
+```html
+<form method="post" action="https://APP_HOST/api/lp/YOUR_PAGE_KEY/submit">
+  <label>Full name <input name="name" autocomplete="name" required></label>
+  <label>Mobile number <input name="phone" type="tel" autocomplete="tel" required></label>
+  <label><input type="checkbox" name="consent" value="yes"> Your consent text</label>
+  <input name="sas_url" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">
+  <button type="submit">Send</button>
+</form>
+```
+
+### Consent
+
+You are responsible for the consent text on your own form: we cannot see it. A lead gets
+consent only when your form sends `consent` as `true`, `on`, `yes` or `1`. We record that the
+buyer ticked the box on your form, the page address (without its query) and their IP; the
+wording kept is "Seller's own form on <host/path>". The page view shows our recommended line
+to copy.
+
+Without consent the lead is still saved, but the agent does not contact them (no chat, no
+SMS); they see "<your company> received your details and will get back to you." As with our
+own form, sending the form never gives consent back to an existing lead that has none.
+
+### What happens after sending
+
+- Accepted: `303` to our hand-over page (`/h/…`), the same as with our form.
+- Refused (a missing name or phone, too many attempts, a paused page): `303` back to the page
+  the form was on, with `?sas_error=<code>` added: `name`, `phone`, `busy`, `closed` or
+  `generic`. Show your own message for it. The redirect never carries the buyer's details,
+  drops the page's own query, and goes only to the page the form was sent from when that page
+  is on an allowed address.
+- From an address that is not allowed, or with no `Origin` and no `Referer` header: no
+  redirect, a short plain-text answer. The page view then says **"Seen on <host>. Add it?"**.
+
+### Spam and limits
+
+- Only allowed addresses can send (the page's address, its `www.` twin and the **other
+  addresses** you add). We read the browser's `Origin` header, else the `Referer`'s host. A
+  page with `Referrer-Policy: no-referrer` may send neither; then the form is refused.
+- Rate limits per IP address, per page and per phone number, as for our own form.
+- Optional honeypot: a field named `sas_url`, hidden from people (not `type="hidden"`, which
+  some bots skip). A form sent with it filled in looks successful but creates no lead.
+- There is no timing check on your own form (it cannot carry our token).
+- Visits and form opens cannot be counted on your page (our script is not there): the page
+  view shows a dash for them. Leads, chats, quotes and orders are counted as usual.
+
+### Test before going live
+
+On the page view, **Get a test code** and add it to your form as a hidden field
+(`<input type="hidden" name="preview" value="…">`). Send your form once from your page: the
+lead arrives marked **Test** and is left out of the numbers. A draft page accepts only these
+test sends. The code works for 24 hours; remove the field before going live.
+The check **"A lead arrived from your form"** ticks with the first lead your form sends.
 
 ## Page builders
 
@@ -102,5 +191,7 @@ in a new tab.
 - Endpoints (all CORS for the page's allowed origins only, no credentials):
   `GET /api/lp/<key>/config`, `POST /api/lp/<key>/submit` (text/plain JSON),
   `POST /api/lp/<key>/e` (view/open counts).
+- `POST /api/lp/<key>/submit` also takes `application/x-www-form-urlencoded` (the seller's
+  own form, and our hosted form without JavaScript) and answers with `303` redirects.
 - Sending leads from your own server instead belongs on the intake API with a key
   (`docs/lead-intake.md`): the lead page endpoints refuse requests with no browser origin.

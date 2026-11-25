@@ -119,8 +119,9 @@ describe("public/lp/v1.js", () => {
     expect(as("es2019")).toBe(as("esnext"));
     // The check itself notices newer syntax.
     expect(transformSync("var q = a?.b ?? c;", { target: "es2019" }).code).not.toBe(transformSync("var q = a?.b ?? c;", { target: "esnext" }).code);
-    // No storage, no cookies, never another script.
-    expect(code).not.toMatch(/localStorage|sessionStorage|document\.cookie|createElement\("script"\)|indexedDB/);
+    // No cookies, never another script; storage only in the one consent-gated place (the kept ad details, slice c).
+    expect(code).not.toMatch(/localStorage|document\.cookie|createElement\("script"\)|indexedDB/);
+    expect(code.match(/\w+\.sessionStorage/g)).toEqual(["w.sessionStorage"]);
     expect(code).toContain('credentials: "omit"');
   });
 

@@ -175,7 +175,7 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(html).toMatch(/data-cell="orders">1</);
     // A button or link has no visits: a dash in the row and on the card.
     expect(html).toMatch(/data-cell="visits"><span class="lpg-dash"/);
-    expect(s).toMatch(/Visits — Not counted for a button or link/);
+    expect(s).toMatch(/Visits — Not counted for a button, a link or your own form/);
     expect(s).toMatch(/Leads 2 \d+ opened the form/);
     expect(s).toMatch(/Orders 1 50% of leads/);
     expect(s).not.toMatch(/Visitors/);
@@ -194,16 +194,21 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     const html = await render(NewPage, { account: a.slug });
     save("add", html);
     const s = text(html);
-    expect((html.match(/<input type="radio" disabled="" name="connection" value="(snippet|own_form|hosted)"\/>/g) ?? []).length).toBe(2);
+    expect((html.match(/<input type="radio" disabled="" name="connection" value="(snippet|own_form|hosted)"\/>/g) ?? []).length).toBe(1);
     expect(html).toContain('<input type="radio" name="connection" checked="" value="snippet"/>');
+    expect(html).toContain('<input type="radio" name="connection" value="own_form"/>');
     expect(html).toContain('<input type="radio" name="connection" value="link"/>');
-    expect((s.match(/Coming next/g) ?? []).length).toBe(1);
+    expect(s).not.toContain("Coming next");
     // Slice b: the snippet's parts (shown by CSS for the checked card).
     expect(s).toContain("Tell my page's ad pixel when a lead is sent");
     expect(html).toMatch(/name="tellPagePixel" checked=""/);
     expect(s).toContain("Address of your page");
     expect(s).toContain("You get the snippet when you save.");
     expect(s).toContain("Other addresses");
+    // Slice c: no address input before the page is saved, one muted line instead.
+    expect(s).toContain("Save the page to add other addresses.");
+    expect(html).not.toContain('name="newOrigin"');
+    expect(html).toContain("data-origins-after-save");
     expect(s).toContain("Later");
     expect(s).toContain("Your ad pixel is not told about leads from this link.");
     expect(s).toContain("Carry ad details through to the lead");
@@ -220,8 +225,8 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     as(a);
     const bad = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "", language: "en", connection: "link", intent: "draft" })));
     expect(bad.state).toMatchObject({ errors: { name: expect.any(String) } });
-    // The own form is not offered yet: refused on the server even when posted.
-    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "own_form", address: "acme.com" })))).state).toMatchObject({ errors: { connection: expect.any(String) } });
+    // The hosted page is not offered yet: refused on the server even when posted.
+    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "hosted", address: "acme.com" })))).state).toMatchObject({ errors: { connection: expect.any(String) } });
 
     const ok = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Winter offer", language: "en", connection: "link", marketId: "", openingTopic: "0", field_sites: "on", carryAdDetails: "on", intent: "draft" })));
     expect(ok.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/[0-9a-f-]{36}\\?saved=draft$`));
@@ -463,6 +468,8 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(text(view)).toContain("No leads in this period yet.");
     expect(view).toContain('data-seen-origin="polar-demo.webflow.io"');
     expect(text(view)).toContain("Seen on polar-demo.webflow.io. Add it?");
+    // Slice c: beside a suggestion, no "No other addresses." line.
+    expect(text(view)).not.toContain("No other addresses.");
     expect(view).toContain('data-check="snippet_seen"');
     expect(view).not.toContain('data-check="form_opens"');
     // "Add it?" adds the address (audited); Remove takes it away.
@@ -486,5 +493,105 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(text(view)).toContain("Seen on polar-demo.example");
     // The demo page (a button or link with data) keeps its bars.
     expect(await render(PageView, { account: a.slug, pageId: demoPage.id }, {})).not.toContain("data-funnel-empty");
+    // Without a suggestion and without addresses: the "No other addresses." line.
+    view = await render(PageView, { account: a.slug, pageId: id }, {});
+    expect(view).toContain("data-origins-none");
+  });
+
+  it("slice c: where they came from has Orders; the demo page's signed order counts on its source", async () => {
+    as(a);
+    const html = await render(PageView, { account: a.slug, pageId: demoPage.id });
+    expect(html).toMatch(/<th scope="col" class="lpg-num">Orders<\/th>/);
+    const orders = [...html.matchAll(/data-cell="orders">(\d+)</g)].map((m) => Number(m[1]));
+    expect(orders.reduce((x, y) => x + y, 0)).toBe(1);
+    expect(html).toMatch(/<th scope="col" class="lpg-num">Opened<\/th>/);
+  });
+
+  it("slice c: your own form: the add form's parts, Save and test, the page view's address, field names, consent note, example, test code, check and dashes", async () => {
+    as(a);
+    const add = await render(NewPage, { account: a.slug });
+    const s = text(add);
+    expect(add).toContain('data-own-form-card=""');
+    expect(s).toContain("Address of the page with your form");
+    expect(s).toContain("You get your form's address when you save.");
+    expect(s).toContain("Your form decides what the buyer fills in.");
+    expect(s).toContain("you are responsible for it");
+    expect(s).toContain("We don't tell your ad pixel about leads from your own form.");
+
+    // The own form needs its page's address.
+    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Own", language: "en", connection: "own_form", address: "" })))).state).toMatchObject({ errors: { address: expect.any(String) } });
+    const saved = await run(actions.saveLeadPageAction(null, form({
+      slug: a.slug, name: "Contact form", language: "en", connection: "own_form", address: "polar-demo.example/contact", marketId: "", carryAdDetails: "on", intent: "draft",
+    })));
+    const id = saved.url!.split("/").pop()!.split("?")[0];
+    const page = (await getLeadPage(db, a.id, id))!;
+    expect(page).toMatchObject({ connection: "own_form", address: "https://polar-demo.example/contact", status: "draft" });
+    const action = `http://localhost:3000/api/lp/${page.publicKey}/submit`;
+
+    const edit = await render(EditPage, { account: a.slug, pageId: id });
+    save("own-edit", edit);
+    expect(edit).toContain('<input type="radio" name="connection" checked="" value="own_form"/>');
+    expect(edit).toContain(`data-own-form-action="">${action}<`);
+    expect(text(edit)).toContain("Save and test");
+    expect(edit).toContain('name="newOrigin"');
+    // Save and test: saved, then the page view with a 24-hour test code.
+    const prev = await run(actions.saveLeadPageAction(null, form({
+      slug: a.slug, pageId: id, name: "Contact form", language: "en", connection: "own_form", address: "polar-demo.example/contact", marketId: "", originsShown: "1", intent: "preview",
+    })));
+    expect(prev.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/${id}\\?pl=[0-9a-z]+\\.[A-Za-z0-9_-]{22}#link$`));
+    const pl = decodeURIComponent(prev.url!.split("pl=")[1].split("#")[0]);
+
+    // Some leads from the form: the funnel shows dashes for visits and opens; the check ticks.
+    const demoSubs = await db.select().from(leadPageSubmissions).where(eq(leadPageSubmissions.pageId, demoPage.id));
+    await db.insert(leadPageSubmissions).values(demoSubs.map((x, i) => ({
+      id: crypto.randomUUID(), accountId: a.id, pageId: id, leadId: x.leadId, via: "own_form", leadCreated: false, consent: true, language: "en",
+      answers: { firstName: "Demo" }, sourceKey: i ? "google / contact" : "", createdAt: new Date(),
+    })));
+    await db.update(leadPages).set({ checks: { refusedOrigin: "https://polar-demo.webflow.io", refusedAt: new Date().toISOString() } }).where(eq(leadPages.id, id));
+    const view = await render(PageView, { account: a.slug, pageId: id }, { pl });
+    save("own-view", view);
+    const v = text(view);
+    expect(view).toContain('data-own-form-card=""');
+    expect(view).not.toContain("data-snippet-card");
+    expect(view).not.toContain("data-hosted-link");
+    expect(view).toContain(`data-own-form-action="">${action}<`);
+    expect(v).toContain("Copy address");
+    for (const f of ["name", "phone", "company", "email", "sites", "consent"]) expect(view).toContain(`data-field="${f}"`);
+    expect(v).toContain("or full_name");
+    expect(v).toContain("or tel, mobile");
+    expect(v).toContain("or business");
+    expect(v).toContain("Consent: true, on, yes or 1 when ticked");
+    // The seller is responsible for the consent text; our recommended line to copy (with the names filled in).
+    expect(v).toContain("You are responsible for the consent text on your own form.");
+    expect(view).toMatch(/data-recommended-line="">By sending, you agree that [^<]+ and its automated assistant [^<]+ may contact you/);
+    expect(v).toContain("Copy line");
+    // The ready example posts to the address, with the test code.
+    expect(view).toContain(`&lt;form method=&quot;post&quot; action=&quot;${action}&quot;&gt;`);
+    expect(view).toContain(`name=&quot;preview&quot; value=&quot;${pl}&quot;`);
+    expect(view).toContain("data-preview-field");
+    expect(v).toContain("Copy example");
+    expect(v).toContain("?sas_error=");
+    // Checks: the own-form check, done.
+    expect(view).toMatch(/data-check="own_form_lead" data-done=""/);
+    expect(v).toContain("A lead arrived from your form");
+    expect(view).not.toContain('data-check="form_opens"');
+    // Funnel: visits and opens are dashes; the sources table has no visits or opened column, and has Orders.
+    expect(view).toMatch(/data-step="visits"><span class="lpg-funnel__label">Visits<\/span>.*?>—</);
+    expect(view).toMatch(/data-step="opens"><span class="lpg-funnel__label">Opened the form<\/span>.*?>—</);
+    expect(v).toContain("Visits and opens are not counted: the form is your own.");
+    expect(view).toContain('data-source-row="google / contact"');
+    expect(view).not.toMatch(/<th scope="col" class="lpg-num">(Visits|Opened)<\/th>/);
+    expect(view).toMatch(/<th scope="col" class="lpg-num">Orders<\/th>/);
+    // Other addresses with the suggestion, and no "No other addresses." beside it.
+    expect(v).toContain("Seen on polar-demo.webflow.io. Add it?");
+    expect(view).not.toContain("data-origins-none");
+    expect(v).toContain("Your own form's fields");
+    // Without a test code: the button to get one.
+    expect(text(await render(PageView, { account: a.slug, pageId: id }))).toContain("Get a test code");
+    // Another account cannot see it.
+    as(b);
+    await expect(render(PageView, { account: b.slug, pageId: id })).rejects.toThrow("NEXT_NOT_FOUND");
+    as(a);
+    await db.delete(leadPages).where(eq(leadPages.id, id));
   });
 });

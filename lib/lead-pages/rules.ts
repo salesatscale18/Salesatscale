@@ -18,8 +18,8 @@ export const LEAD_PAGE_CONNECTIONS = ["snippet", "own_form", "link", "hosted"] a
 export type LeadPageConnection = (typeof LEAD_PAGE_CONNECTIONS)[number];
 export const LEAD_PAGE_STATUSES = ["draft", "live", "paused"] as const;
 export type LeadPageStatus = (typeof LEAD_PAGE_STATUSES)[number];
-/** Phase 1 saves "Button or link" (slice a) and "Our form on your page" (slice b) pages; the own form comes in slice c. */
-export const AVAILABLE_CONNECTIONS: readonly LeadPageConnection[] = ["snippet", "link"];
+/** Phase 1 saves "Button or link" (slice a), "Our form on your page" (slice b) and "Your own form" (slice c) pages; "Page hosted by us" comes later. */
+export const AVAILABLE_CONNECTIONS: readonly LeadPageConnection[] = ["snippet", "own_form", "link"];
 
 /** How a submission reached us (lead_page_submissions.via). */
 export type LeadPageVia = "snippet" | "own_form" | "link";
@@ -299,6 +299,57 @@ export function withoutQuery(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------------------------------------------------------
+// The seller's own form (slice c)
+// ---------------------------------------------------------------------------
+
+/**
+ * The field names the seller's own form may use (urlencoded), with their
+ * aliases: the same as the intake API. Only name and phone are required; the
+ * optional ones are read whenever the form sends them.
+ */
+export const OWN_FORM_FIELDS = [
+  { name: "name", aliases: ["full_name"], required: true },
+  { name: "phone", aliases: ["tel", "mobile"], required: true },
+  { name: "company", aliases: ["business"], required: false },
+  { name: "email", aliases: [], required: false },
+  { name: "sites", aliases: [], required: false },
+  { name: "consent", aliases: [], required: false },
+] as const;
+
+/** Every optional field is read from the seller's own form (its form decides what the buyer fills in). */
+export const OWN_FORM_ALL_FIELDS: FormFields = { company: true, email: true, sites: true };
+
+/**
+ * The consent wording kept for a lead from the seller's own form. We cannot see
+ * the seller's text, so the record says where the buyer ticked it; the seller
+ * is responsible for the consent text on their form.
+ */
+export const ownFormConsentWording = (where: string) => `Seller's own form on ${where.replace(/^https?:\/\//i, "")}`.slice(0, 500);
+
+/** Why the seller's own form was sent back (`?sas_error=`): never a personal detail. */
+export type OwnFormError = "name" | "phone" | "busy" | "closed" | "generic";
+export const OWN_FORM_ERRORS: readonly OwnFormError[] = ["name", "phone", "busy", "closed", "generic"];
+
+/**
+ * Where a refused own-form post goes back to: the Referer page (origin and path,
+ * its query dropped) with `?sas_error=<code>`, only when the Referer's origin is
+ * the allowed origin this request was checked against. Anything else is null
+ * (no redirect at all), so the endpoint can never send a browser to an address
+ * the seller did not allow (no open redirect).
+ */
+export function ownFormErrorUrl(referer: string | null | undefined, allowedOrigin: string | null, code: OwnFormError): string | null {
+  if (!referer || !allowedOrigin) return null;
+  let u: URL;
+  try {
+    u = new URL(referer);
+  } catch {
+    return null;
+  }
+  if ((u.protocol !== "https:" && u.protocol !== "http:") || u.username || u.password || u.origin !== allowedOrigin) return null;
+  return `${u.origin}${u.pathname}?sas_error=${code}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -4,8 +4,13 @@
  *
  * - JSON (the enhanced hosted form, the snippet in slice b): 200 {handover} or {thanks},
  *   422 {error, fields}, 403, 404, 413, 429.
- * - application/x-www-form-urlencoded (the hosted form without JavaScript): 303 to the
+ * - application/x-www-form-urlencoded from our hosted form without JavaScript: 303 to the
  *   hand-over, to /p/<key>?sent=1, or back to /p/<key>?e=<code> (never a personal detail).
+ * - application/x-www-form-urlencoded from the seller's own form (slice c, any allowed origin
+ *   other than ours): 303 to the hand-over or to /p/<key>?sent=1; when refused, 303 back to the
+ *   Referer page (origin and path only) with ?sas_error=<code>, and only when the Referer's origin
+ *   is the allowed origin the request was checked against. Otherwise (a refused origin, no
+ *   Referer) a short plain-text answer and no redirect: never an open redirect.
  * The sas_lp cookie (the lead this browser created) is set only on our own domain.
  * CORS (slice b, the snippet on the seller's page): the page's allowed origins only, echoed with
  * `Vary: Origin` and never credentials; OPTIONS answers the preflight. The origin itself is checked
@@ -14,10 +19,14 @@
  * page's own Meta pixel as the "Lead" event's eventID.
  */
 import { appDb } from "@/lib/auth/account";
+import { translator } from "@/lib/i18n";
 import { submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
-import { SUBMIT_BODY_MAX } from "@/lib/lead-pages/rules";
+import { checkOrigin, originOf, requestOrigin } from "@/lib/lead-pages/origin";
+import { ownFormErrorUrl, SUBMIT_BODY_MAX, type OwnFormError } from "@/lib/lead-pages/rules";
+import { pageByKey } from "@/lib/lead-pages/service";
 import { handoverPath, leadCookieHeader, PUBLIC_KEY_RE } from "@/lib/lead-pages/tokens";
 import { parseJsonObject } from "@/lib/leads/rules";
+import { publicUrl } from "@/lib/orders/token";
 import { corsPreflight, pageCors } from "@/lib/lead-pages/snippet-config";
 import { clientIp, declaredTooLarge } from "@/lib/security/rate-limit";
 
@@ -36,10 +45,26 @@ function readBody(text: string, contentType: string): Record<string, unknown> | 
 }
 
 /** The form's error code for a result that is not a hand-over (a no-JS post goes back to the form with it). */
-function errorCode(r: SubmitResult): "name" | "phone" | "busy" | "generic" {
+function errorCode(r: SubmitResult): OwnFormError {
   if (r.kind === "invalid") return r.errors[0] ?? "generic";
   if (r.kind === "busy") return "busy";
+  if (r.kind === "refused" && r.reason === "closed") return "closed";
   return "generic";
+}
+
+/**
+ * A refused post from the seller's own form: back to the allowed Referer page with
+ * ?sas_error=<code>, else a short plain answer in the form's language (no redirect).
+ */
+async function ownFormRefusal(key: string, headers: Headers, r: SubmitResult, status: number): Promise<Response> {
+  const code = errorCode(r);
+  const found = await pageByKey(appDb, key);
+  const origin = found ? checkOrigin(found.page, headers, originOf(publicUrl("/"))) : null;
+  const target = origin?.ok ? ownFormErrorUrl(headers.get("referer"), origin.origin, code) : null;
+  if (target) return new Response(null, { status: 303, headers: { ...NO_STORE, Location: target } });
+  const tr = translator(found?.page.language === "he" ? "he" : "en");
+  const text = tr(code === "busy" ? "buyer.lp.form.err_busy" : code === "closed" ? "buyer.lp.form.closed" : "buyer.lp.form.err_generic");
+  return new Response(text, { status, headers: { ...NO_STORE, "Content-Type": "text/plain; charset=utf-8" } });
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ key: string }> }) {
@@ -61,12 +86,14 @@ export async function POST(req: Request, { params }: { params: Promise<{ key: st
   const thanks = `/p/${key}?sent=1`;
 
   if (!asJson) {
-    const location = r.kind === "handover" ? handoverPath(r.token)
-      : r.kind === "thanks" ? thanks
-      : r.kind === "not_found" ? null
-      : `/p/${key}?e=${errorCode(r)}${preview}`;
-    if (!location) return new Response("Not found", { status: 404, headers: NO_STORE });
-    return new Response(null, { status: 303, headers: { ...NO_STORE, ...cookie, Location: location } });
+    if (r.kind === "handover") return new Response(null, { status: 303, headers: { ...NO_STORE, ...cookie, Location: handoverPath(r.token) } });
+    if (r.kind === "thanks") return new Response(null, { status: 303, headers: { ...NO_STORE, Location: thanks } });
+    if (r.kind === "not_found") return new Response("Not found", { status: 404, headers: NO_STORE });
+    // Our hosted form (no JavaScript) goes back to itself; the seller's own form to its own page.
+    if (requestOrigin(req.headers) !== originOf(publicUrl("/"))) {
+      return ownFormRefusal(key, req.headers, r, r.kind === "busy" ? 429 : r.kind === "refused" ? 403 : 400);
+    }
+    return new Response(null, { status: 303, headers: { ...NO_STORE, Location: `/p/${key}?e=${errorCode(r) === "closed" ? "generic" : errorCode(r)}${preview}` } });
   }
   switch (r.kind) {
     case "handover": return Response.json({ handover: handoverPath(r.token), eventId: r.submissionId }, { status: 200, headers: { ...NO_STORE, ...cors, ...cookie } });

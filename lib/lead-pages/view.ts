@@ -18,16 +18,18 @@ export const CONNECTION_LABEL: Record<LeadPageConnection, MessageKey> = {
   hosted: "lead_pages.connection.hosted",
 };
 
-/** The connection cards of the add form, in the board's order. "Our form on your page" and "Button or link" can be chosen; a card with a tag cannot. */
+/** The connection cards of the add form, in the board's order. "Our form on your page", "Your own form" and "Button or link" can be chosen; a card with a tag cannot. */
 export const CONNECTION_CARDS: { id: LeadPageConnection; icon: IconName; title: MessageKey; line: MessageKey; tag: MessageKey | null }[] = [
   { id: "snippet", icon: "panel-top", title: "lead_pages.card.snippet.title", line: "lead_pages.card.snippet.line", tag: null },
-  { id: "own_form", icon: "file-text", title: "lead_pages.card.own_form.title", line: "lead_pages.card.own_form.line", tag: "lead_pages.card.coming_next" },
+  { id: "own_form", icon: "file-text", title: "lead_pages.card.own_form.title", line: "lead_pages.card.own_form.line", tag: null },
   { id: "link", icon: "link-2", title: "lead_pages.card.link.title", line: "lead_pages.card.link.line", tag: null },
   { id: "hosted", icon: "globe", title: "lead_pages.card.hosted.title", line: "lead_pages.card.hosted.line", tag: "lead_pages.card.later" },
 ];
 
 /** Whether our script runs where the visit happens, so visits can be counted (not for a button or link, nor the seller's own form). */
 export const countsVisits = (connection: LeadPageConnection) => connection === "snippet" || connection === "hosted";
+/** Whether opening the form can be counted: not on the seller's own form (our script is not there). */
+export const countsOpens = (connection: LeadPageConnection) => connection !== "own_form";
 
 /** "polardemo.co.il/restaurants": the address without its scheme, or null. */
 export const shortAddress = (address: string | null | undefined) => (address ? address.replace(/^https?:\/\//i, "").replace(/\/$/, "") : null);
@@ -82,16 +84,17 @@ const FUNNEL_LABEL: Record<FunnelStep["key"], MessageKey> = {
 
 /**
  * The page's funnel rows. Visits are a dash (null) when our script does not run
- * where the visit happens (a button or link): the steps then start at "Opened
- * the form", and its percent is left out.
+ * where the visit happens (a button or link, the seller's own form), and so is
+ * "Opened the form" on the seller's own form: the steps then start at the first
+ * counted one, and its percent is left out.
  */
 export function funnelSteps(f: Funnel, connection: LeadPageConnection): FunnelStep[] {
   const keys: FunnelStep["key"][] = ["visits", "opens", "leftDetails", "startedTalking", "gotQuote", "ordered"];
-  const visits = countsVisits(connection);
+  const start = countsVisits(connection) ? 0 : countsOpens(connection) ? 1 : 2;
   const values = keys.map((k) => f[k]);
-  const pcts = visits ? stepPercents(values) : [null, ...stepPercents(values.slice(1))];
+  const pcts = [...Array<null>(start).fill(null), ...stepPercents(values.slice(start))];
   // Nothing in the step above: no percent at all (not a dash).
-  return keys.map((k, i) => ({ key: k, label: FUNNEL_LABEL[k], value: k === "visits" && !visits ? null : values[i], pct: i > 0 && values[i - 1] === 0 ? null : pcts[i] }));
+  return keys.map((k, i) => ({ key: k, label: FUNNEL_LABEL[k], value: i < start ? null : values[i], pct: i > 0 && values[i - 1] === 0 ? null : pcts[i] }));
 }
 
 /** Nothing at all in the period (no visit, open or lead): the page view shows one line instead of empty bars. */
@@ -101,6 +104,32 @@ export const funnelEmpty = (steps: readonly FunnelStep[]) => steps.every((s) => 
 export function snippetCode(appBase: string, publicKey: string): string {
   return `<div data-sas-lead-form="${publicKey}"></div>\n<script async src="${appBase.replace(/\/+$/, "")}/lp/v1.js"></script>`;
 }
+
+/** The address the seller's own form sends to (method post). */
+export const ownFormAction = (appBase: string, publicKey: string) => `${appBase.replace(/\/+$/, "")}/api/lp/${publicKey}/submit`;
+
+const escAttr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/**
+ * A ready HTML example of the seller's own form: name, phone, the consent box with
+ * the given line, the hidden honeypot field and the send button, posting to our address.
+ * `labels`: the field labels in the form's language (our own form's). `preview`: a test code, added as a hidden field.
+ */
+export function ownFormExample(action: string, consentLine: string, labels: { name: string; phone: string; send: string }, preview?: string | null): string {
+  return [
+    `<form method="post" action="${escAttr(action)}">`,
+    `  <label>${escAttr(labels.name)} <input name="name" autocomplete="name" required></label>`,
+    `  <label>${escAttr(labels.phone)} <input name="phone" type="tel" autocomplete="tel" required></label>`,
+    `  <label><input type="checkbox" name="consent" value="yes"> ${escAttr(consentLine)}</label>`,
+    `  <input name="sas_url" tabindex="-1" autocomplete="off" aria-hidden="true" style="position:absolute;left:-9999px">`,
+    ...(preview ? [`  <input type="hidden" name="preview" value="${escAttr(preview)}">`] : []),
+    `  <button type="submit">${escAttr(labels.send)}</button>`,
+    `</form>`,
+  ].join("\n");
+}
+
+/** The test code as the hidden field the seller adds to their form. */
+export const ownFormPreviewField = (token: string) => `<input type="hidden" name="preview" value="${escAttr(token)}">`;
 
 /** The snippet's preview link: the seller's page with the preview token in its fragment (never sent to any server). */
 export function snippetPreviewUrl(address: string, token: string): string {
@@ -137,6 +166,7 @@ export const READINESS_LABEL: Record<ReadinessKey, MessageKey> = {
   account_live: "lead_pages.check.account_live",
   form_opens: "lead_pages.check.form_opens",
   snippet_seen: "lead_pages.check.snippet_seen",
+  own_form_lead: "lead_pages.check.own_form_lead",
   test_lead: "lead_pages.check.test_lead",
 };
 
