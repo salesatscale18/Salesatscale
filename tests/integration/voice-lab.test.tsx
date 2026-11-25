@@ -167,7 +167,8 @@ describe("saveVoiceSettingsAction", () => {
     as(admin);
     expect(await saveVoiceSettingsAction({}, form({ voice: "Nope", pace: "slower", maxCallSec: "300" }))).toMatchObject({ errors: { voice: expect.any(String) } });
     const err = await saveVoiceSettingsAction({}, form({ voice: "Kore", pace: "slower", fillers: "on", maxCallSec: "300", style: "quick" })).catch((e: { url?: string }) => e);
-    expect((err as { url?: string }).url).toMatch(/\/setup\/test-lab\?voice_saved=\d+$/);
+    // Saving comes back to the Voice call tab, not the Chat tab.
+    expect((err as { url?: string }).url).toMatch(/\/setup\/test-lab\?mode=voice&voice_saved=\d+$/);
     const [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
     // Gemini (the default model) has no conversation style: it is not taken from the form.
     expect(draft.voiceSettings).toEqual({ voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300 });
@@ -248,8 +249,12 @@ describe("the test lab page", () => {
     expect(calls).toContain('data-history-row="call"');
     expect(calls).not.toContain('data-history-row="chat"');
     expect(calls).toMatch(/aria-current="true" data-history-kind="call"/);
-    const panel = await render({ panel: "voice" });
+    // Voice settings open over the Voice call tab, and closing them returns to it.
+    expect(html).toMatch(/href="[^"]*\?mode=voice&amp;panel=voice" data-voice-settings-open=""/);
+    const panel = await render({ mode: "voice", panel: "voice" });
     save("page-settings-panel", panel);
+    expect(panel).toContain('data-lab-mode="voice"');
+    expect(panel).not.toMatch(/href="\/app\/[^"]+\/setup\/test-lab"/);
     expect(panel).toContain("Saved in draft v");
     expect(panel).toContain("Save to draft");
     expect(panel).toContain("Reset to defaults");

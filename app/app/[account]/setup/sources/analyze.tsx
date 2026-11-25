@@ -15,7 +15,7 @@ import { formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { t, type MessageKey } from "@/lib/i18n";
 import { analysisSummary, runData, runPillState, type AnalysisPlan } from "@/lib/pipeline/service";
 import { analyzeAction } from "./pipeline-actions";
-import { RefreshWhileProcessing } from "./forms";
+import { RefreshWhileProcessing, StartAnalysisButton } from "./forms";
 
 const n = (x: number) => x.toLocaleString("en");
 
@@ -121,7 +121,7 @@ function ConfirmForm({ s, cancelHref, reuseAll }: { s: AnalyzeState & { plan: An
       <span style={{ flex: "1 1 260px" }}>
         {reuseAll ? t("pipeline.confirm.reuse") : t("pipeline.confirm.spend", { cost: costText(est.costMicros, s.currency), calls: est.stages.reduce((x, st) => x + st.calls, 0) })}
       </span>
-      <button type="submit" className={buttonClass("primary", "sm")}>{t("pipeline.confirm.start")}</button>
+      <StartAnalysisButton label={t("pipeline.confirm.start")} />
       <a className={buttonClass("ghost", "sm")} href={cancelHref}>{t("pipeline.confirm.cancel")}</a>
     </form>
   );
@@ -131,7 +131,8 @@ function ConfirmForm({ s, cancelHref, reuseAll }: { s: AnalyzeState & { plan: An
 function AnalyzeNotes({ s, active, error }: { s: AnalyzeState; active: boolean; error?: MessageKey }) {
   return (
     <>
-      {error ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(error)}</span></div> : null}
+      {/* A second start while one runs is not an error to the seller: the running note below says what is going on. */}
+      {error && !(s.error === "busy" && active) ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t(error)}</span></div> : null}
       {s.started && !active && !error ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("pipeline.done.reused")}</span></div> : null}
       {!s.configured ? <span className="sas-hint">{t("pipeline.error.no_key")}</span> : null}
       {s.configured && s.capped ? <span className="sas-hint">{t("pipeline.error.capped")}</span> : null}
