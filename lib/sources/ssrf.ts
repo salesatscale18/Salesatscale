@@ -112,7 +112,11 @@ export async function assertPublicHost(url: URL, lookup: LookupFn = defaultLooku
   if (addresses.length === 0 || addresses.some(isBlockedIp)) throw new UnsafeUrlError("This address is not on the public internet.");
 }
 
-export type SafeResponse = { url: string; status: number; contentType: string; body: string; truncated: boolean };
+export type SafeResponse = {
+  url: string; status: number; contentType: string; body: string; truncated: boolean;
+  /** The raw bytes read (for documents: PDF, Word). */
+  bytes: Uint8Array;
+};
 
 export type SafeFetchOptions = {
   fetchImpl?: FetchFn;
@@ -120,13 +124,22 @@ export type SafeFetchOptions = {
   maxBytes?: number;
   timeoutMs?: number;
   maxRedirects?: number;
+  /** Accept header; defaults to web pages. */
+  accept?: string;
 };
 
-export const USER_AGENT = "SalesAtScaleBot/1.0 (+reads pages the seller asked for)";
+/**
+ * Browser-compatible (many site firewalls refuse unknown agents) and still names
+ * the bot, so robots.txt rules for SalesAtScaleBot apply and site owners can see us.
+ */
+export const USER_AGENT = "Mozilla/5.0 (compatible; SalesAtScaleBot/1.0; +reads pages the seller asked for)";
 
-/** Reads a body up to `maxBytes`; decodes as UTF-8. */
-async function readCapped(res: Response, maxBytes: number): Promise<{ body: string; truncated: boolean }> {
-  if (!res.body) return { body: await res.text().then((t) => t.slice(0, maxBytes)), truncated: false };
+/** Reads a body up to `maxBytes`; decodes as UTF-8 and keeps the bytes. */
+async function readCapped(res: Response, maxBytes: number): Promise<{ body: string; truncated: boolean; bytes: Uint8Array }> {
+  if (!res.body) {
+    const t = (await res.text()).slice(0, maxBytes);
+    return { body: t, truncated: false, bytes: new TextEncoder().encode(t) };
+  }
   const reader = res.body.getReader();
   const chunks: Uint8Array[] = [];
   let size = 0;
@@ -147,7 +160,7 @@ async function readCapped(res: Response, maxBytes: number): Promise<{ body: stri
   const all = new Uint8Array(size);
   let at = 0;
   for (const c of chunks) { all.set(c, at); at += c.byteLength; }
-  return { body: new TextDecoder("utf-8", { fatal: false }).decode(all), truncated };
+  return { body: new TextDecoder("utf-8", { fatal: false }).decode(all), truncated, bytes: all };
 }
 
 /**
@@ -170,7 +183,7 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
         method: "GET",
         redirect: "manual",
         signal: controller.signal,
-        headers: { "user-agent": USER_AGENT, accept: "text/html,text/plain;q=0.9,*/*;q=0.5" },
+        headers: { "user-agent": USER_AGENT, accept: opts.accept ?? "text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5", "accept-language": "en,he;q=0.9,*;q=0.5" },
       });
       if (res.status >= 300 && res.status < 400) {
         const location = res.headers.get("location");
@@ -180,8 +193,8 @@ export async function safeFetch(raw: string, opts: SafeFetchOptions = {}): Promi
         url = parsePublicUrl(new URL(location, url).toString());
         continue;
       }
-      const { body, truncated } = await readCapped(res, maxBytes);
-      return { url: url.toString(), status: res.status, contentType: res.headers.get("content-type") ?? "", body, truncated };
+      const { body, truncated, bytes } = await readCapped(res, maxBytes);
+      return { url: url.toString(), status: res.status, contentType: res.headers.get("content-type") ?? "", body, truncated, bytes };
     } catch (e) {
       if (e instanceof UnsafeUrlError) throw e;
       if ((e as Error).name === "AbortError") throw new Error("The page took too long to answer.");

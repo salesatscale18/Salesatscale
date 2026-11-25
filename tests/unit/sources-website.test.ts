@@ -1,11 +1,12 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { assertPublicHost, isBlockedIp, parsePublicUrl, safeFetch, UnsafeUrlError, type FetchFn, type LookupFn } from "@/lib/sources/ssrf";
-import { crawlWebsite, normalizePaths, parseRobots, robotsAllows, underAllowed } from "@/lib/sources/website";
+import { crawlWebsite, normalizePaths, parseRobots, robotsAllows, siteKey, underAllowed } from "@/lib/sources/website";
 
 const publicLookup: LookupFn = async () => ["93.184.216.34"];
 
 /** A fake site: path → response. Records every URL requested. */
-function site(pages: Record<string, { status?: number; body?: string; type?: string; location?: string }>) {
+function site(pages: Record<string, { status?: number; body?: string | Uint8Array; type?: string; location?: string }>) {
   const calls: string[] = [];
   const fetchImpl: FetchFn = async (url) => {
     calls.push(url);
@@ -14,7 +15,7 @@ function site(pages: Record<string, { status?: number; body?: string; type?: str
     if (!p) return new Response("not found", { status: 404, headers: { "content-type": "text/html" } });
     const headers: Record<string, string> = { "content-type": p.type ?? "text/html; charset=utf-8" };
     if (p.location) headers.location = p.location;
-    return new Response(p.body ?? "", { status: p.status ?? 200, headers });
+    return new Response((p.body ?? "") as BodyInit, { status: p.status ?? 200, headers });
   };
   return { fetchImpl, calls };
 }
@@ -104,26 +105,82 @@ describe("website crawl (mocked fetch)", () => {
     ]);
     expect(r.stats?.pagesRead).toBe(3);
     expect(r.problems).toEqual([]);
-    expect(calls.some((c) => c.includes("other.example") || c.includes("/blog") || c.includes("secret") || c.endsWith(".pdf"))).toBe(false);
+    expect(calls.some((c) => c.includes("other.example") || c.includes("/blog") || c.includes("secret"))).toBe(false);
+    // A linked document under an allowed path is tried (here it is missing, so it is skipped quietly).
+    expect(calls).toContain("https://polar.example/products/a.pdf");
     expect(r.lang).toBe("en");
   });
 
-  it("stops at the page limit and records failing pages as problems", async () => {
+  it("stops at the page limit; a broken link the seller did not list is skipped quietly", async () => {
     const links = Array.from({ length: 40 }, (_, i) => `/p${i}`);
     const pages: Record<string, { body: string }> = { "/": { body: page("Home", "Hi", links) } };
     for (let i = 0; i < 40; i++) if (i !== 3) pages[`/p${i}`] = { body: page(`P${i}`, `Page ${i}`) };
     const { fetchImpl, calls } = site(pages);
     const r = await crawlWebsite({ url: "https://polar.example", allowedPaths: [], fetchImpl, lookup: publicLookup, limits: { maxPages: 30 } });
     expect(calls.filter((c) => !c.endsWith("/robots.txt"))).toHaveLength(30);
-    expect(r.problems).toEqual([expect.objectContaining({ where: "/p3", message: "The page answered with error 404." })]);
+    expect(r.problems).toEqual([]);
+    expect(r.sections.length).toBe(29);
   });
 
-  it("stops when the total size cap is reached", async () => {
+  it("stops when the source's text cap is reached, without calling it a failure", async () => {
     const big = "y".repeat(600);
     const { fetchImpl } = site({ "/": { body: page("Home", big, ["/a", "/b", "/c"]) }, "/a": { body: page("A", big) }, "/b": { body: page("B", big) }, "/c": { body: page("C", big) } });
-    const r = await crawlWebsite({ url: "https://polar.example", allowedPaths: [], fetchImpl, lookup: publicLookup, limits: { maxTotalBytes: 1500 } });
-    expect(r.problems.some((p) => p.message.includes("2 MB"))).toBe(true);
+    const r = await crawlWebsite({ url: "https://polar.example", allowedPaths: [], fetchImpl, lookup: publicLookup, limits: { maxTextChars: 1500, concurrency: 1 } });
+    expect(r.problems).toEqual([]);
     expect(r.sections.length).toBeLessThan(4);
+    expect(r.sections.reduce((n, x) => n + x.text.length, 0)).toBeLessThanOrEqual(1500);
+  });
+
+  it("reads a large page's text: the markup (scripts, styles) does not count against it", async () => {
+    const script = `<script>${"var x=1;".repeat(250_000)}</script>`; // about 2 MB of script
+    const { fetchImpl } = site({ "/": { body: `<html><head>${script}</head><body>${script}<main><p>We install sensors in 3 days.</p></main></body></html>` } });
+    const r = await crawlWebsite({ url: "https://polar.example/", allowedPaths: [], fetchImpl, lookup: publicLookup });
+    expect(r.problems).toEqual([]);
+    expect(r.sections.map((x) => x.text)).toEqual(["We install sensors in 3 days."]);
+  });
+
+  it("treats www and the bare domain as one site (a start page that redirects to www is read)", async () => {
+    expect(siteKey("WWW.Polar.example")).toBe("polar.example");
+    const { fetchImpl } = site({
+      "polar.example/": { status: 301, location: "https://www.polar.example/" },
+      "www.polar.example/": { body: page("Home", "Welcome", ["https://polar.example/faq", "/products"]) },
+      "www.polar.example/products": { body: page("Products", "Sensors") },
+      "polar.example/faq": { body: page("FAQ", "Answers") },
+    });
+    const r = await crawlWebsite({ url: "https://polar.example/", allowedPaths: [], fetchImpl, lookup: publicLookup });
+    expect(r.problems).toEqual([]);
+    expect(r.sections.map((x) => x.locator).sort()).toEqual(["/", "/faq", "/products"]);
+  });
+
+  it("reports a section the seller listed when it fails, and a page with no text", async () => {
+    const { fetchImpl } = site({ "/": { body: page("Home", "Hi") }, "/app": { body: "<html><body><div id=root></div><script>x()</script></body></html>" } });
+    const r = await crawlWebsite({ url: "https://polar.example/", allowedPaths: ["/", "/missing", "/app"], fetchImpl, lookup: publicLookup });
+    expect(r.problems).toEqual([
+      expect.objectContaining({ where: "/missing", message: "The page answered with error 404." }),
+      expect.objectContaining({ where: "/app", message: expect.stringContaining("shows no text") }),
+    ]);
+    expect(r.sections.map((x) => x.locator)).toEqual(["/"]);
+  });
+
+  it("uses the page description when a page is built in the browser", async () => {
+    const { fetchImpl } = site({ "/": { body: '<html><head><meta name="description" content="Smart sensors for restaurants"></head><body><div id=root></div></body></html>' } });
+    const r = await crawlWebsite({ url: "https://polar.example/", allowedPaths: [], fetchImpl, lookup: publicLookup });
+    expect(r.sections.map((x) => x.text)).toEqual(["Smart sensors for restaurants"]);
+  });
+
+  it("reads the text of linked PDF and Word documents, one section each", async () => {
+    const pdf = new Uint8Array(readFileSync("tests/fixtures/sources/two-pages-one-empty.pdf"));
+    const docx = new Uint8Array(readFileSync("tests/fixtures/sources/guide.docx"));
+    const { fetchImpl } = site({
+      "/": { body: page("Home", "Hi", ["/files/price%20list.pdf", "/files/guide.docx", "/files/missing.pdf"]) },
+      "/files/price%20list.pdf": { body: pdf, type: "application/pdf" },
+      "/files/guide.docx": { body: docx, type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document" },
+    });
+    const r = await crawlWebsite({ url: "https://polar.example/", allowedPaths: [], fetchImpl, lookup: publicLookup });
+    expect(r.problems).toEqual([]);
+    const docs = r.sections.filter((x) => x.locator.startsWith("/files/"));
+    expect(docs.map((x) => [x.locator, x.heading])).toEqual([["/files/price%20list.pdf", "price list.pdf"], ["/files/guide.docx", "guide.docx"]]);
+    for (const d of docs) expect(d.text.length).toBeGreaterThan(5);
   });
 
   it("refuses a start address on a private network", async () => {
@@ -132,10 +189,10 @@ describe("website crawl (mocked fetch)", () => {
     expect(calls).toEqual([]);
   });
 
-  it("does not follow a redirect off the site", async () => {
+  it("does not read another site the start page redirects to, and says where it goes", async () => {
     const { fetchImpl } = site({ "/": { status: 302, location: "https://elsewhere.example/" }, "elsewhere.example/": { body: page("Else", "Other site") } });
     const r = await crawlWebsite({ url: "https://polar.example/", allowedPaths: [], fetchImpl, lookup: publicLookup });
     expect(r.sections).toEqual([]);
-    expect(r.problems[0].message).toMatch(/no readable text/);
+    expect(r.problems).toEqual([expect.objectContaining({ message: "This address opens elsewhere.example.", fix: "Add https://elsewhere.example as the website instead." })]);
   });
 });
