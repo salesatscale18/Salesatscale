@@ -35,7 +35,7 @@ import { rtElevenProfile, rtElevenSpeakerFor } from "@/lib/voice-rt-eleven";
 import { speechFor, speechIgnoredLine } from "@/lib/voice-rt-eleven/rule";
 import { elevenAppliedOf } from "@/lib/voice-rt-eleven/speaker";
 import { storeElevenApplied } from "@/lib/voice-rt-eleven/applied-store";
-import { DEFAULT_ELEVEN_CHOICE, type ElevenChoice } from "@/lib/voice-rt-eleven/catalog";
+import { DEFAULT_ELEVEN_CHOICE, ELEVEN_PACE_SPEED_FOR_BUYER_CALLS, elevenSpeedFor, type ElevenChoice } from "@/lib/voice-rt-eleven/catalog";
 
 /**
  * What the relay needs from an engine: today's VoiceEngine, the Classic (20 Nov) one a test-lab call picked, or the
@@ -360,6 +360,9 @@ export function handleVoiceSocket(ws: VoiceSocket, opts: VoiceSocketOptions): Pr
       model: resolved.elevenModel ?? DEFAULT_ELEVEN_CHOICE.model, voice: resolved.elevenVoice ?? DEFAULT_ELEVEN_CHOICE.voice,
       stability: resolved.elevenStability ?? DEFAULT_ELEVEN_CHOICE.stability,
     };
+    // The pace as a speaking rate for a plain text-to-speech model (test calls; ELEVEN_PACE_SPEED_FOR_BUYER_CALLS).
+    const speed = session.isTest || ELEVEN_PACE_SPEED_FOR_BUYER_CALLS ? elevenSpeedFor(choice.model, resolved.pace) : undefined;
+    if (speed !== undefined) choice.speed = speed;
     const speech = speechFor({ wanted, modelId: session.model, engine: stored, isTest: session.isTest });
     if (speech.ignored) log.info(voiceLine(session.id, speechIgnoredLine(speech.ignored)));
     const storedSpeech = (session.settings as { speech?: unknown } | null)?.speech;

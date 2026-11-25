@@ -125,11 +125,66 @@ function familySdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): Sd
   const family = schemaFamilyOf(modelId);
   const keep = new Set<string>(SETUP_RETRY_FIELDS[family]);
   const safe = Object.fromEntries(Object.entries(full).filter(([k]) => keep.has(k))) as SdkSessionConfig;
-  // Gemini's proven values: no transcription hints, plain server VAD. OpenAI: only the fields kept above.
-  return family === "gemini" ? { ...safe, inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" } } : safe;
+  // Gemini's proven values: no transcription hints, plain server VAD, and providerOptions with the Google tool option
+  // only (never the turn-taking block: a refusal must not cost the call). OpenAI: only the fields kept above.
+  if (family !== "gemini") return safe;
+  const google = (full.providerOptions as { google?: unknown } | undefined)?.google;
+  return { ...safe, inputAudioTranscription: {}, outputAudioTranscription: {}, turnDetection: { type: "server-vad" }, ...(google ? { providerOptions: { google } } : {}) } as SdkSessionConfig;
+}
+
+/** Google's raw setup key the activity detection goes in (copied into `bidiGenerateContentSetup` by the SDK). */
+export const GEMINI_TURN_OPTION = "realtimeInputConfig";
+
+/**
+ * "Turn ending: Smart" on OpenAI. The normalized turn detection takes `semantic-vad` but has no `eagerness`, and the
+ * OpenAI mapping (@ai-sdk/openai 4.0.121 buildOpenAISessionConfig) builds `session.audio` from the normalized fields,
+ * then `Object.assign(session, providerOptions)` (shallow). So the eagerness can only ride in a WHOLE `audio` block in
+ * providerOptions, which replaces the built one: it is built here from the same normalized values, exactly as that
+ * mapping builds it (input format, transcription with its default model, output format and voice), plus
+ * `turn_detection: { type: "semantic_vad", eagerness }`. Test calls only; the safe retry never carries providerOptions.
+ */
+export const OPENAI_DEFAULT_TRANSCRIPTION_MODEL = "gpt-realtime-whisper";
+
+export function openAiSmartAudio(c: SdkSessionConfig, eagerness: "low" | "medium" | "high"): Record<string, unknown> {
+  const fmt = (f: { type: string; rate?: number } | undefined) => (f ? { type: f.type, ...(f.rate != null ? { rate: f.rate } : {}) } : undefined);
+  const input: Record<string, unknown> = {
+    ...(c.inputAudioFormat ? { format: fmt(c.inputAudioFormat as { type: string; rate?: number }) } : {}),
+    turn_detection: { type: "semantic_vad", eagerness },
+    ...(c.inputAudioTranscription ? { transcription: { model: c.inputAudioTranscription.model ?? OPENAI_DEFAULT_TRANSCRIPTION_MODEL } } : {}),
+  };
+  const output: Record<string, unknown> = {
+    ...(c.outputAudioFormat ? { format: fmt(c.outputAudioFormat as { type: string; rate?: number }) } : {}),
+    ...(c.voice ? { voice: c.voice } : {}),
+  };
+  return { input, ...(Object.keys(output).length ? { output } : {}) };
 }
 
 function fullSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
+  const base = baseSdkSessionConfig(cfg, modelId);
+  const gemini = schemaFamilyOf(modelId) === "gemini";
+  // The new controls (test calls only; RealtimeSessionConfig says which): nothing changes without them.
+  if (gemini) {
+    if (!cfg.geminiActivity) return base;
+    const po = (base.providerOptions ?? {}) as Record<string, unknown>;
+    return { ...base, providerOptions: { ...po, [GEMINI_TURN_OPTION]: { automaticActivityDetection: cfg.geminiActivity } } };
+  }
+  if (!cfg.semanticVad && !cfg.reasoningEffort) return base;
+  const withVad: SdkSessionConfig = cfg.semanticVad ? { ...base, turnDetection: { type: "semantic-vad" } } : base;
+  const po = (withVad.providerOptions ?? {}) as Record<string, unknown>;
+  return {
+    ...withVad,
+    providerOptions: {
+      ...po,
+      ...(cfg.reasoningEffort ? { [REASONING_OPTION]: { effort: cfg.reasoningEffort } } : {}),
+      ...(cfg.semanticVad ? { audio: openAiSmartAudio(withVad, cfg.semanticVad.eagerness) } : {}),
+    },
+  };
+}
+
+/** How the thinking effort reaches OpenAI: `reasoning: { effort }` at the top of providerOptions (merged into the session). */
+export const REASONING_OPTION = "reasoning";
+
+function baseSdkSessionConfig(cfg: RealtimeSessionConfig, modelId: string): SdkSessionConfig {
   const gemini = schemaFamilyOf(modelId) === "gemini";
   const tt = cfg.turnTaking;
   // Text output (the realtime + ElevenLabs engines, OpenAI only): the model answers in text, so no voice, no output
@@ -386,6 +441,8 @@ export class ServerEventMapper {
         if (rawType === "toolCallCancellation") return [{ type: "tool-cancelled", callIds: cancelledCallIds(e.raw) }];
         // Gemini's serverContent.interrupted, if the Gateway passes it as a custom event.
         if (/^interrupted$/i.test(rawType)) return this.interrupt();
+        // Gemini test calls that sent the turn-taking block (`ackSession`): the setup was accepted (log only).
+        if (rawType === "setupComplete" && this.o.ackSession) return [{ type: "session-ack", name: "setupComplete", detail: "accepted" }];
         // sessionResumptionUpdate and others: not used (one fresh reconnect instead of resumption).
         return unknownEvent(`custom:${rawType}`, this.o.verbose);
       }

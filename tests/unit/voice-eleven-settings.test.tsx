@@ -224,17 +224,20 @@ describe("the panel (three sections; design review, 24 Nov 2026)", () => {
   );
   const sections = (h: string) => [...h.matchAll(/<h3 class="sas-vs-section__title" id="vs-sec-[a-z]+">([^<]+)<\/h3>/g)].map((m) => m[1]);
 
-  it("Gemini: Voice model (no Voice from), Voice (its picker + fillers), Conversation (pace, longest call)", () => {
+  it("Gemini: Voice model (no Voice from), Voice (its picker, pace, fillers in More options), Conversation (style, longest call, More options)", () => {
     const h = render({ model: null });
     expect(sections(h)).toEqual(["Voice model", "Voice", "Conversation"]);
     expect(h).not.toContain('name="speech" value="elevenlabs"');
     expect(h).toContain('<input type="hidden" name="speech" value="model"/>');
     expect(h).not.toContain("elevenModel");
-    expect(h).not.toContain('name="style"');
+    // One panel for every model (25 Nov): Gemini has the conversation style now.
+    expect(h).toContain('name="style"');
     const at = (s: string) => h.indexOf(s);
     expect(at('data-vs-section="voice"')).toBeLessThan(at('name="voice"'));
+    expect(at('name="voice"')).toBeLessThan(at('name="pace"'));
+    expect(at('name="pace"')).toBeLessThan(at('name="fillers"'));
     expect(at('name="fillers"')).toBeLessThan(at('data-vs-section="conversation"'));
-    expect(at('data-vs-section="conversation"')).toBeLessThan(at('name="pace"'));
+    expect(at('data-vs-section="conversation"')).toBeLessThan(at('name="style"'));
   });
 
   it("GPT + the model's own voice: Voice from is the last row of Voice model; its voice picker; no ElevenLabs fields", () => {
@@ -309,7 +312,7 @@ describe("the panel (three sections; design review, 24 Nov 2026)", () => {
     const h = render({ model: id as never, speech: "elevenlabs" }, { models: [...voiceModelChoices(), fake] });
     expect(h).toContain('<option value="elevenlabs/eleven-realtime-mini" selected="">ElevenLabs Realtime mini (testing) · no price</option>');
     expect(h).toContain("Used in test calls only for now. Buyer calls use the platform&#x27;s default voice model.");
-    expect(h).toContain('<div class="sas-vs-line" data-voice-model-default=""><span class="sas-vs-line__value">Voice: the model&#x27;s default</span></div>');
+    expect(h).toContain('<div class="sas-vs-line" data-voice-model-default="" data-vs-row="voice"><span class="sas-vs-line__value">Voice: the model&#x27;s default</span></div>');
     expect(h).not.toContain('id="vs-speech"');
     expect(h).not.toContain("Buyers hear");
     expect(h).not.toContain('name="voice"');

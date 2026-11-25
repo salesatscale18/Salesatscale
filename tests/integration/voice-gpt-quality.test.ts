@@ -239,7 +239,8 @@ describe("the session on GPT test calls", () => {
     expect(cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);
     expect(cfg.parallelToolCalls).toBe(true);
     expect(cfg.logSessionAck).toBe(true);
-    expect(full.logs.some((l) => / model connected in \d+ms .* parallelTools=on$/.test(l))).toBe(true);
+    // GPT-Realtime connect lines end with the turn detection, eagerness and reasoning sent (defaults: server VAD, none).
+    expect(full.logs.some((l) => / model connected in \d+ms .* parallelTools=on turn=server_vad eagerness=- reasoning=-$/.test(l))).toBe(true);
     await full.end();
     const mini = await call({ engine: "rt_eleven_mini" });
     expect(mini.conn().cfg.instructions.startsWith(`${GPT_TOOL_RULES}\n\n`)).toBe(true);

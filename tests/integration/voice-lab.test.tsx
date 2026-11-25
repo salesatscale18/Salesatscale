@@ -170,8 +170,23 @@ describe("saveVoiceSettingsAction", () => {
     // Saving comes back to the Voice call tab, not the Chat tab.
     expect((err as { url?: string }).url).toMatch(/\/setup\/test-lab\?mode=voice&voice_saved=\d+$/);
     const [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
-    // Gemini (the default model) has no conversation style: it is not taken from the form.
-    expect(draft.voiceSettings).toEqual({ voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300 });
+    // Gemini (the default model) has a conversation style now (Google's own turn-taking, test calls only for now).
+    expect(draft.voiceSettings).toEqual({ voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300, style: "quick" });
+  });
+
+  it("the new controls: turn ending and thinking effort for GPT-Realtime 2.1; the opener switch (off stored, on not stored)", async () => {
+    vi.stubEnv("VOICE_REALTIME", "scripted");
+    as(admin);
+    const save2 = (o: Record<string, string>) => saveVoiceSettingsAction({}, form(o)).catch((e: { url?: string }) => e);
+    await save2({ model: "openai/gpt-realtime-2.1", maxCallSec: "300", turnEnd: "smart", thinking: "low", openerProtectedShown: "1" });
+    let [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
+    expect(draft.voiceSettings).toMatchObject({ model: "openai/gpt-realtime-2.1", turnEnd: "smart", thinking: "low", openerProtected: false });
+    // Back on (the switch checked), defaults: nothing new stored. Gemini: turn ending and thinking are not kept.
+    await save2({ model: "google/gemini-3.8-live", maxCallSec: "300", turnEnd: "smart", thinking: "low", openerProtectedShown: "1", openerProtected: "on" });
+    [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
+    expect(draft.voiceSettings).not.toHaveProperty("turnEnd");
+    expect(draft.voiceSettings).not.toHaveProperty("thinking");
+    expect(draft.voiceSettings).not.toHaveProperty("openerProtected");
   });
 
   it("the voice model: an admin switches the draft to GPT-Realtime mini (the Gemini voice goes, turn-taking is taken), a seller cannot", async () => {
@@ -275,11 +290,15 @@ describe("the test lab page", () => {
     expect(panel).toContain("Saved in draft v");
     expect(panel).toContain("Save to draft");
     expect(panel).toContain("Reset to defaults");
-    expect(panel).not.toContain("Conversation style");
+    // One panel for every model: Gemini has a conversation style now; one "More options" fold per section.
+    expect(panel).toContain("Conversation style");
+    expect(panel.match(/<details class="sas-vs-more"/g)).toHaveLength(2);
+    expect(panel).not.toContain("Advanced");
     // Longest call: only what this deployment allows; the stored 5 min shows as the cap.
     expect(panel).toContain('<option value="270" selected="">4 min 30 s</option>');
     expect(panel).toContain('<option value="240">4 min</option>');
-    expect(panel).not.toContain('value="300"');
+    // (value="300" is also the 0.3 s pause option now: the longest-call option is checked by its label.)
+    expect(panel).not.toContain('value="300">5 min');
     expect(panel).toContain("You hear the voice on your next test call.");
   });
 

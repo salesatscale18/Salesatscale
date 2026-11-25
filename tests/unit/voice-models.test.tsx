@@ -42,8 +42,8 @@ describe("one list of voice models", () => {
     expect(schemaFamilyOf(MINI)).toBe("openai");
   });
 
-  it("capabilities per model: Gemini voices and no turn-taking; GPT models: OpenAI voices, style, pause, interruptions", () => {
-    expect(voiceCapabilities(GEMINI)).toMatchObject({ style: false, pauseMs: false, interruptSensitivity: false });
+  it("capabilities per model: Gemini voices and its own turn-taking (test calls); GPT models: OpenAI voices, style, pause, interruptions", () => {
+    expect(voiceCapabilities(GEMINI)).toMatchObject({ style: true, pauseMs: true, interruptSensitivity: true, turnEnd: false });
     for (const m of [GPT, MINI]) {
       expect(voiceCapabilities(m)).toMatchObject({ style: true, pauseMs: true, interruptSensitivity: true });
       expect(voiceCapabilities(m).voices).toContain("alloy");
@@ -58,8 +58,10 @@ describe("validation", () => {
     expect(validateVoiceSettings({ model: "openai/gpt-4o" }, GEMINI)).toEqual({ ok: false, errors: { model: "Pick one of the models offered." } });
     expect(validateVoiceSettings({ model: GPT, voice: "coral", style: "patient", pauseMs: "900", interrupt: "low" }, GEMINI))
       .toEqual({ ok: true, value: { model: GPT, voice: "coral", style: "patient", pauseMs: 900, interrupt: "low" } });
-    // Gemini has no turn-taking values: they are not kept.
-    expect(validateVoiceSettings({ model: GEMINI, pauseMs: "900", interrupt: "low" }, GPT)).toEqual({ ok: true, value: { model: GEMINI } });
+    // Gemini takes the pause and interruption level now (Google's own turn-taking); turn ending and thinking are not kept.
+    expect(validateVoiceSettings({ model: GEMINI, pauseMs: "900", interrupt: "low", turnEnd: "smart", thinking: "high" }, GPT)).toEqual({ ok: true, value: { model: GEMINI, pauseMs: 900, interrupt: "low" } });
+    // ElevenLabs Realtime has none of them.
+    expect(validateVoiceSettings({ model: "elevenlabs/eleven-realtime-v1-mini", pauseMs: "900", interrupt: "low" }, GPT)).toEqual({ ok: true, value: { model: "elevenlabs/eleven-realtime-v1-mini" } });
     expect(validateVoiceSettings({ pauseMs: "50" }, GPT)).toMatchObject({ ok: false, errors: { pauseMs: expect.any(String) } });
     expect(validateVoiceSettings({ interrupt: "loud" }, GPT)).toMatchObject({ ok: false, errors: { interrupt: expect.any(String) } });
   });
@@ -155,7 +157,7 @@ describe("usage and cost per model", () => {
     expect(modelCostHint(GEMINI)).toBe("About $0.013 a minute of call (estimate).");
     expect(modelCostHint(GPT)).toBe("About 7.1× the cost per minute of Gemini (estimate).");
     expect(modelCostHint(MINI)).toBe("About 2.2× the cost per minute of Gemini (estimate).");
-    expect(voiceModelChoices().map((c) => c.caps.style)).toEqual([false, true, true, false, false]);
+    expect(voiceModelChoices().map((c) => c.caps.style)).toEqual([true, true, true, false, false]);
   });
 });
 
@@ -190,14 +192,16 @@ describe("the settings panel per model", () => {
       initial={{ ...DEFAULT_VOICE_SETTINGS, model: model as never }} version={3} closeHref="#" deploymentLimitSec={null} />,
   );
 
-  it("Gemini: the model first, its voices, no style or turn-taking; GPT: style, pause and interruptions as real controls", () => {
+  it("Gemini: the model first, its voices, style, pause and interruptions (no turn ending or thinking); GPT: the same as real controls", () => {
     const g = render(null);
     expect(g.indexOf('name="model"')).toBeLessThan(g.indexOf('name="voice"'));
     expect(g).toContain(">Gemini 3.8 Live · lowest cost</option>");
     expect(g).toContain(">GPT-Realtime mini · ~2× cost</option>");
     expect(g).not.toContain("data-voice-changed");
-    expect(g).not.toContain('name="style"');
-    expect(g).not.toContain('name="pauseMs"');
+    expect(g).toContain('name="style"');
+    expect(g).toContain('name="pauseMs"');
+    expect(g).not.toContain('name="turnEnd"');
+    expect(g).not.toContain('name="thinking"');
     expect(g).not.toContain("data-voice-model-unproven");
     expect(g).toContain("a minute of call (estimate)");
     const o = render(GPT);

@@ -513,8 +513,8 @@ describe("settings and modes", () => {
     expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "240" } })).toBe(240);
     expect(maxCallSeconds({ env: { VOICE_MAX_CALL_SECONDS: "junk" }, deadlineSec: 200 })).toBe(200);
   });
-  it("capabilities per model; Gemini has no turn-taking tuning", () => {
-    expect(voiceCapabilities("google/gemini-3.8-live")).toMatchObject({ style: false, pauseMs: false, interruptSensitivity: false, pace: true });
+  it("capabilities per model; Gemini's turn-taking goes through its own block (no normalized tuning)", () => {
+    expect(voiceCapabilities("google/gemini-3.8-live")).toMatchObject({ style: true, pauseMs: true, interruptSensitivity: true, pace: true, turnEnd: false, thinking: false });
     expect(voiceCapabilities("google/gemini-3.8-live").voices.length).toBeGreaterThan(0);
     expect(voiceCapabilities("openai/gpt-realtime-2")).toMatchObject({ style: true, pauseMs: true });
     expect(turnTakingFor("patient", "google/gemini-3.8-live")).toBeNull();
@@ -527,7 +527,7 @@ describe("settings and modes", () => {
     const bad = validateVoiceSettings({ voice: "Robot", pace: "warp", maxCallSec: 5, fillers: "yes" });
     expect(bad.ok).toBe(false);
     if (!bad.ok) expect(Object.keys(bad.errors).sort()).toEqual(["fillers", "maxCallSec", "pace", "voice"]);
-    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480, model: null, pauseMs: null, interrupt: null, speech: "model", elevenModel: "elevenlabs/eleven-v4-turbo", elevenVoice: "21m00Tcm4TlvDq8ikWAM", elevenStability: 1 });
+    expect(resolveVoiceSettings(null)).toEqual({ voice: null, pace: "normal", style: "balanced", fillers: true, maxCallSec: 480, model: null, pauseMs: null, interrupt: null, speech: "model", elevenModel: "elevenlabs/eleven-v4-turbo", elevenVoice: "21m00Tcm4TlvDq8ikWAM", elevenStability: 1, turnEnd: "pause", thinking: "default", openerProtected: true });
     expect(resolveVoiceSettings({ pace: "warp" as never, maxCallSec: 10 })).toMatchObject({ pace: "normal", maxCallSec: 60 });
   });
 });

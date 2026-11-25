@@ -21,7 +21,7 @@ import {
 } from "./catalog";
 
 /** One attempt of the realtime path's chain: model, mode, voice id, stability (sent in dialogue mode only). */
-export type ElevenLink = SpeakAttempt & { voice: string; stability: number; chosen: boolean };
+export type ElevenLink = SpeakAttempt & { voice: string; stability: number; chosen: boolean; speed?: number };
 
 const sameLink = (a: ElevenLink, b: ElevenLink) => a.model === b.model && a.dialogue === b.dialogue && a.voice === b.voice && (!a.dialogue || a.stability === b.stability);
 
@@ -32,7 +32,11 @@ const sameLink = (a: ElevenLink, b: ElevenLink) => a.model === b.model && a.dial
  */
 export function elevenAttempts(choice: ElevenChoice): ElevenLink[] {
   const info = elevenModelInfo(choice.model);
-  const first: ElevenLink = { model: choice.model, dialogue: info?.dialogue ?? false, voice: choice.voice, stability: choice.stability, chosen: true };
+  const first: ElevenLink = {
+    model: choice.model, dialogue: info?.dialogue ?? false, voice: choice.voice, stability: choice.stability, chosen: true,
+    // The pace's speaking rate: the chosen plain text-to-speech model only (never a dialogue model, never a fallback).
+    ...(choice.speed !== undefined && !(info?.dialogue ?? false) ? { speed: choice.speed } : {}),
+  };
   const rest: ElevenLink[] = PIPELINE_SPEAK_ATTEMPTS.map((a) => ({
     ...a, englishOnly: a.englishOnly || elevenModelSpeaks(a.model, "he") === false, voice: PIPELINE_VOICE, stability: PIPELINE_VOICE_STABILITY, chosen: false,
   }));
@@ -90,7 +94,7 @@ export class ElevenSpeaker implements Speaker {
     if (!this.announced) {
       this.announced = true;
       const m = elevenModelInfo(this.choice.model);
-      this.log("info", `rt speech choice model=${this.choice.model} ${speakModeName({ dialogue: !!m?.dialogue })} voice=${elevenVoiceName(this.choice.voice)} (${this.choice.voice}) stability=${m?.dialogue ? this.choice.stability : "not sent"}`);
+      this.log("info", `rt speech choice model=${this.choice.model} ${speakModeName({ dialogue: !!m?.dialogue })} voice=${elevenVoiceName(this.choice.voice)} (${this.choice.voice}) stability=${m?.dialogue ? this.choice.stability : "not sent"}${this.choice.speed !== undefined && !m?.dialogue ? ` speed=${this.choice.speed}` : ""}`);
     }
     const chain = this.chainFor(opts.language);
     this.last = chain;

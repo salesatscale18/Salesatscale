@@ -282,6 +282,15 @@ export function speakRequestOptions(voice: string, dialogue: boolean, stability:
 }
 
 /**
+ * The speaking rate of a text-to-speech attempt: the AI SDK's `speed` call option (ai 7.0.177 streamSpeech; the
+ * Gateway passes it on; @ai-sdk/elevenlabs 3.0.88 getStreamInitMessage sends it as `voice_settings.speed`). Nothing in
+ * dialogue mode (Text-to-Dialogue ignores it) or without a rate (normal pace: nothing new is sent).
+ */
+export function speakSpeedOption(dialogue: boolean, speed: number | undefined): { speed?: number } {
+  return !dialogue && typeof speed === "number" ? { speed } : {};
+}
+
+/**
  * Streaming speech, one Gateway stream per text (the realtime path: a whole reply): raw PCM 24 kHz is asked for; PCM at another rate is
  * resampled; any other format fails with a clear error (the engine logs it). `cancel` aborts every stream in progress.
  */
@@ -295,13 +304,19 @@ export class GatewaySpeaker implements Speaker {
   readonly dialogue: boolean;
   /** The stability sent in dialogue mode (the version's "Steadiness" on the realtime path; else PIPELINE_VOICE_STABILITY). */
   readonly stability: number;
+  /** The speaking rate sent to a text-to-speech model (the version's pace; lib/voice-rt-eleven/catalog.ts elevenSpeedFor); never in dialogue mode. */
+  readonly speed: number | undefined;
 
-  constructor(readonly modelId: string, env: Record<string, string | undefined> = process.env, voice: string = PIPELINE_VOICE, opts: { dialogue?: boolean; stability?: number } = {}) {
+  constructor(
+    readonly modelId: string, env: Record<string, string | undefined> = process.env, voice: string = PIPELINE_VOICE,
+    opts: { dialogue?: boolean; stability?: number; speed?: number } = {},
+  ) {
     assertLiveAllowed(env);
     this.apiKey = env.AI_GATEWAY_API_KEY!.trim();
     this.voice = voice;
     this.dialogue = opts.dialogue === true;
     this.stability = opts.stability ?? PIPELINE_VOICE_STABILITY;
+    this.speed = this.dialogue ? undefined : opts.speed;
   }
 
   async *speak(text: string, opts: { language: string }): AsyncIterable<Uint8Array> {
@@ -319,6 +334,7 @@ export class GatewaySpeaker implements Speaker {
         outputFormat: { type: "audio/pcm", rate: SPEAK_OUTPUT_RATE },
         language: opts.language,
         ...speakRequestOptions(this.voice, this.dialogue, this.stability),
+        ...speakSpeedOption(this.dialogue, this.speed),
         abortSignal: abort.signal,
         onError: ({ error }) => void (speechError = error),
       });

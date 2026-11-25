@@ -15,7 +15,7 @@ import { isUuid } from "@/lib/security/ids";
 import { spendCapped, platformBudget } from "@/lib/ai/usage";
 import { usdRate } from "@/lib/ai/models";
 import { createVoiceSession, endUserTestVoiceSessions, runningTestVoiceSession, saveDraftVoiceSettings, startVoiceTestConversation } from "@/lib/voice/service";
-import { isOpenAiVoiceModel, maxCallSeconds, resolveVoiceSettings, sentCallVoice, storedSpeech, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
+import { isOpenAiVoiceModel, maxCallSeconds, resolveVoiceSettings, sentCallVoice, storedSpeech, versionModelId, type CallVoiceInfo, voiceCapabilities, voiceFormExtras, voiceMode, voiceModelLabel } from "@/lib/voice/settings";
 import { voiceLabAccess } from "@/lib/voice/lab";
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { isGatewayPipelineEngine, isPipelineEngine, isRetiredEngine, labEngineChoice, type VoiceEngineName } from "@/lib/voice-classic/engine-choice";
@@ -141,6 +141,8 @@ export async function saveVoiceSettingsAction(_prev: VoiceSettingsFormState, for
     interrupt: caps.interruptSensitivity ? str("interrupt") : draft.voiceSettings?.interrupt,
     fillers: caps.fillers ? form.get("fillers") === "on" : current.fillers,
     maxCallSec: str("maxCallSec"),
+    // Turn ending, thinking effort, protect the opening line (lib/voice/settings.ts voiceFormExtras).
+    ...voiceFormExtras(form),
   };
   // "Voice from": platform admins only, as the model picker (checked above; saveDraftVoiceSettings ignores it otherwise).
   // Not in the form (a Gemini model): the model's own voice.

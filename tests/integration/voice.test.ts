@@ -30,6 +30,7 @@ import {
   closeStaleVoiceSessions, conversationVoiceMode, createVoiceSession, redeemVoiceTicket, saveDraftVoiceSettings, startVoiceTestConversation, voiceSessionSummary,
 } from "@/lib/voice/service";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { withOpenerUnprotected } from "../helpers/voice-opener";
 import { seedCatalog, seedPricing } from "../helpers/pricing";
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
@@ -677,7 +678,8 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     expect(s.durationSec).toBeGreaterThan(0);
   });
 
-  it("barge-in: the browser is told to flush, the agent message keeps only what was spoken", async () => {
+  // The opening line unprotected (the version's switch off; tests/integration/voice-opener-protect.test.ts has it on).
+  it("barge-in: the browser is told to flush, the agent message keeps only what was spoken", () => withOpenerUnprotected(db, acc, async () => {
     const c = await newCall("ready_buyer");
     await c.run(2_000); // a few words of the opener
     await c.speak(600);
@@ -693,7 +695,7 @@ describe("voice calls (scripted realtime model, fake clock)", () => {
     // The interruption became the buyer's turn (the next scripted line).
     expect(rows[1]).toMatchObject({ actor: "buyer" });
     expect(rows[1].body).toMatch(/^Hi, I run a business/);
-  });
+  }));
 
   describe("one stored message per agent line", () => {
     const LINE = "One two three four five six seven eight nine ten eleven twelve.";

@@ -19,6 +19,7 @@ import { FINAL_WRITE_TIMEOUT_MS } from "@/lib/voice/engine";
 import type { VoiceLog } from "@/lib/voice/log";
 import { handleVoiceSocket, IDLE_TIMEOUT_MS, MAX_BUFFERED_AUDIO_BYTES, type VoiceSocket } from "@/lib/voice/socket";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { withOpenerUnprotected } from "../helpers/voice-opener";
 
 const SCRIPTED = { VOICE_REALTIME: "scripted" };
 const QUIET = { standbyAfterQuietMs: 3_600_000 };
@@ -173,7 +174,8 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     expect(await row(s.sessionId)).toMatchObject({ status: "ended", errorCode: "model_unavailable" });
   });
 
-  it("caps audio frames: too big dropped, odd byte trimmed, faster than twice real time dropped", async () => {
+  // Audio reaches the model at once: the opening line unprotected (tests/integration/voice-opener-protect.test.ts).
+  it("caps audio frames: too big dropped, odd byte trimmed, faster than twice real time dropped", () => withOpenerUnprotected(db, acc, async () => {
     const s = await newSession();
     const c = open();
     c.ws.text({ t: "auth", sessionId: s.sessionId, ticket: s.ticket });
@@ -193,7 +195,7 @@ describe("voice relay socket (fake socket, scripted model)", () => {
     c.ws.emit("close");
     await c.settle();
     await c.done;
-  });
+  }));
 
   it("drops agent audio (never JSON) when the socket backs up", async () => {
     const s = await newSession();

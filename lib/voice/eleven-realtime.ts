@@ -141,7 +141,11 @@ export function sessionAckSummary(raw: unknown): string {
     `fields=${Object.keys(s).filter((k) => !SECRETISH.test(k)).join(",") || "-"}`,
   ];
   // Always kept at the end, whatever is clipped before it: what runs for parallel tool calls and reasoning effort.
-  const tail = `parallel=${echoed(pick(s, ["parallel_tool_calls"], ["parallelToolCalls"]))} reasoning=${echoed(pick(s, ["reasoning", "effort"], ["reasoning_effort"], ["reasoningEffort"]))}`;
+  // The turn detection that runs (server_vad / semantic_vad) and its eagerness (Turn ending: Smart), then the rest.
+  const td = pick(s, ["audio", "input", "turn_detection"], ["turn_detection"], ["turnDetection"]);
+  const tdo = td && typeof td === "object" ? (td as Record<string, unknown>) : null;
+  const tail = `turn=${tdo ? echoed(tdo.type) : td === null ? "none" : "-"} eagerness=${tdo ? echoed(tdo.eagerness) : "-"} `
+    + `parallel=${echoed(pick(s, ["parallel_tool_calls"], ["parallelToolCalls"]))} reasoning=${echoed(pick(s, ["reasoning", "effort"], ["reasoning_effort"], ["reasoningEffort"]))}`;
   return `${clipText(parts.join(" "), 300 - tail.length - 1)} ${tail}`;
 }
 

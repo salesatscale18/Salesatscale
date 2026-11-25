@@ -34,7 +34,10 @@ import type { ClientMessage, ServerMessage, VoiceErrorCode, VoiceState } from ".
 import { systemClock, type Clock, type RealtimeConnection, type RealtimeEvent, type RealtimeModel, type RealtimeSessionConfig, type RealtimeToolDef, type TimerHandle } from "./realtime";
 import { isSpokenOptOut, maskCardNumbers, maskPartialDigits } from "./safety";
 import { languageNameEn, loadVoiceInstructions, RECAP_LINES, type TranscriptLine, type VoiceCallContext } from "./instructions";
-import { callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, resolveVoiceSettings, turnTakingFor, versionModelId } from "./settings";
+import {
+  callTurnExtras, callVoice, elevenRealtimeVoice, isElevenRealtimeModel, isOpenAiVoiceModel, isProvenVoiceModel, maxCallSeconds, MODEL_DEFAULT_VOICE, OPENER_PROTECT_CAP_MS,
+  openerProtectionFor, resolveVoiceSettings, turnTakingFor, versionModelId, voiceFamilyOf,
+} from "./settings";
 import { realtimeTools, schemaFamilyOf, toolLabel, VOICE_TOOL_NAMES, type SchemaFamily } from "./tool-schema";
 import { CALL_RULES } from "./call-rules";
 import { orderFormAgreed, smallerQuoteAgreed, smallerQuoteParts } from "./form-agreement";
@@ -463,10 +466,29 @@ export const FREE_WORD: Readonly<Record<string, string>> = { en: "free", he: "ח
 export const QUOTE_WALKTHROUGH = "Walk the buyer through it in three or four short spoken sentences: what they need and what each part costs, from lines_for_call (for example \"For your two locations you need twelve seats at 59 shekels each, and setup at 200 per location\"), then the total today and the monthly amount, once each, then that the quote is in the chat now. Then ask if it looks right.";
 
 /** What a connection was given, for the log: the config kind (full, or the safe retry), instruction length and tool count. */
-export function configSummary(cfg: RealtimeSessionConfig): string {
+export function configSummary(cfg: RealtimeSessionConfig, family?: "gpt" | "gemini" | null): string {
   if (cfg.withoutTools) return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=0 (without tools)`;
   // parallel tool calls asked for (GPT-Realtime 2.1 test calls); the safe retry never sends it.
-  return `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}${cfg.parallelToolCalls && !cfg.safe ? " parallelTools=on" : ""}`;
+  const base = `config=${cfg.safe ? "safe" : "full"} instructions=${cfg.instructions.length} tools=${cfg.tools.length}${cfg.parallelToolCalls && !cfg.safe ? " parallelTools=on" : ""}`;
+  // GPT-Realtime: the turn detection and reasoning effort sent (the safe retry sends neither: the provider's defaults).
+  if (family === "gpt") return `${base} ${gptTurnSummary(cfg)}`;
+  return base;
+}
+
+/** "turn=server_vad eagerness=- reasoning=-": what a GPT-Realtime connection sends for turn-taking and thinking. */
+export function gptTurnSummary(cfg: RealtimeSessionConfig): string {
+  if (cfg.safe) return "turn=provider-default eagerness=- reasoning=-";
+  return `turn=${cfg.semanticVad ? "semantic_vad" : "server_vad"} eagerness=${cfg.semanticVad?.eagerness ?? "-"} reasoning=${cfg.reasoningEffort ?? "-"}`;
+}
+
+/**
+ * The Gemini line on every connect: the turn-taking block sent (or "-" for each part when none), and whether this is the
+ * first setup or the retry (which never sends it).
+ */
+export function geminiTurnLine(cfg: RealtimeSessionConfig): string {
+  const g = cfg.safe ? undefined : cfg.geminiActivity;
+  const word = (v: string | undefined) => (v ? v.replace(/^(START|END)_SENSITIVITY_/, "") : "-");
+  return `gemini turn-taking sent: start=${word(g?.startOfSpeechSensitivity)} end=${word(g?.endOfSpeechSensitivity)} prefix=${g?.prefixPaddingMs ?? "-"} silence=${g?.silenceDurationMs ?? "-"} setup=${cfg.safe ? "retry (proven fields only)" : "first"}`;
 }
 
 /** The log line when ElevenLabs Realtime's last retry leaves the tools out. */
@@ -676,9 +698,16 @@ export class VoiceEngine {
   private reconnecting = false;
   private lastStamp = 0;
   private errorCode: VoiceErrorCode | null = null;
-  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat" | "ready", TimerHandle | null> = {
-    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null, ready: null,
+  private timers: Record<"warn" | "limit" | "quiet" | "idle" | "falseWake" | "grace" | "stats" | "reconnect" | "heartbeat" | "ready" | "opener", TimerHandle | null> = {
+    warn: null, limit: null, quiet: null, idle: null, falseWake: null, grace: null, stats: null, reconnect: null, heartbeat: null, ready: null, opener: null,
   };
+  /**
+   * "Protect the opening line" (test calls only for now: lib/voice/settings.ts openerProtectionFor): from the call's
+   * start until the opener's audio has played out in the browser (estimated: its audio length from when each piece went
+   * out), at most OPENER_PROTECT_CAP_MS, the buyer's microphone audio is not sent to the model (nothing is sent; the
+   * recording still gets it) and nothing counts as a barge-in. `playEnd`: when the agent audio sent so far ends playing.
+   */
+  private openerGuard: { since: number; playEnd: number | null } | null = null;
 
   // Standby (lib/voice/call-rules.ts): the model is disconnected while the buyer is quiet; our detector listens.
   /** On standby since this clock time (null: not on standby). */
@@ -842,8 +871,9 @@ export class VoiceEngine {
   }
 
   private forwardClientAudio(bytes: Uint8Array): void {
-    // Before the opening line is asked for, the buyer's audio does not reach the model (one opening only).
-    if (this.pendingOpener) return;
+    // Before the opening line is asked for, the buyer's audio does not reach the model (one opening only); while the
+    // opening line is protected, neither (openerGuard).
+    if (this.pendingOpener || this.openerGuard) return;
     if (this.standbySince !== null) return this.listenOnStandby(bytes);
     if (this.waking) return this.holdWakeAudio(bytes);
     if (!this.conn || this.reconnecting) return;
@@ -1182,7 +1212,8 @@ export class VoiceEngine {
       this.log.warn(voiceLine(this.sessionId, `model connect failed after ${Math.round(this.clock.now() - t0)}ms: ${this.lastError}`));
       return this.fail("error", "model_unavailable");
     }
-    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId}${this.model.mode === "live" && !isProvenVoiceModel(this.model.modelId) ? ", not tried live before" : ""}) ${configSummary(cfg)}`));
+    this.log.info(voiceLine(this.sessionId, `model connected in ${Math.round(this.clock.now() - t0)}ms (${this.model.modelId}${this.model.mode === "live" && !isProvenVoiceModel(this.model.modelId) ? ", not tried live before" : ""}) ${configSummary(cfg, this.turnLogFamily())}`));
+    if (this.turnLogFamily() === "gemini") this.log.info(voiceLine(this.sessionId, geminiTurnLine(cfg)));
     if (this.ended || gen !== this.gen) {
       conn.close();
       return;
@@ -1197,6 +1228,7 @@ export class VoiceEngine {
       : ctx.openerPrompt;
     this.modelUp(conn);
     this.callStart = this.clock.now();
+    if (openerProtectionFor(resolveVoiceSettings(this.loaded!.version.voiceSettings), this.loaded!.session.isTest)) this.protectOpener();
     // The agent speaks first: the chat's opener (or the pick-up line of a call that continues a chat), once per
     // call, as the model's very first input: no buyer audio reaches the model before it (the row write below used
     // to come first, and mic audio sent meanwhile got its own answer before the opener: two answers at the start).
@@ -1278,6 +1310,40 @@ export class VoiceEngine {
     const money = (minor: number | null, period: string | null) =>
       minor === null ? null : minor === 0 ? FREE_WORD[this.spokenLanguage] ?? FREE_WORD.en : formatMoney(minor, v.currency, period === "month" || period === "year" ? { period } : {});
     return rows.map((l) => ({ item: l.name, qty: l.qty, unit: l.unit, unit_price: money(l.unitPriceMinor, l.period), line_total: money(l.lineTotalMinor, l.period) }));
+  }
+
+  /** "Protect the opening line" starts (the call went live): see openerGuard. */
+  private protectOpener() {
+    this.openerGuard = { since: this.clock.now(), playEnd: null };
+    this.log.info(voiceLine(this.sessionId, "opener protected: on"));
+    this.timer("opener", OPENER_PROTECT_CAP_MS, () => this.releaseOpener());
+  }
+
+  /** Agent audio went to the browser while the opener is protected: when it ends playing (queued after what is there). */
+  private noteOpenerAudio(bytes: number) {
+    const g = this.openerGuard;
+    if (!g) return;
+    const now = this.clock.now();
+    g.playEnd = Math.max(g.playEnd ?? now, now) + pcmDurationMs(bytes);
+  }
+
+  /** The opening line was said (its turn is done and our speaker, if any, is idle): released when its audio has played. */
+  private openerSaid() {
+    const g = this.openerGuard;
+    if (!g) return;
+    const now = this.clock.now();
+    const wait = g.playEnd === null ? 0 : Math.round(g.playEnd - now);
+    if (wait <= 0) return this.releaseOpener();
+    // Never past the cap (counted from the start).
+    this.timer("opener", Math.max(0, Math.min(wait, g.since + OPENER_PROTECT_CAP_MS - now)), () => this.releaseOpener());
+  }
+
+  private releaseOpener() {
+    const g = this.openerGuard;
+    if (!g) return;
+    this.openerGuard = null;
+    this.clearTimer("opener");
+    this.log.info(voiceLine(this.sessionId, `opener protected: off after ${Math.max(0, Math.round(this.clock.now() - g.since))}ms`));
   }
 
   /** Asks the model for the opening (or pick-up) line, once: when the browser can play it, or at the timeout. */
@@ -1435,8 +1501,23 @@ export class VoiceEngine {
       // safe retry never sends it (SETUP_RETRY_FIELDS). A GPT test call logs the provider's session-updated.
       ...(parallelToolCallsFor(this.model.modelId, this.loaded!.session.isTest) ? { parallelToolCalls: true } : {}),
       ...(this.loaded!.session.isTest && isOpenAiVoiceModel(this.model.modelId) ? { logSessionAck: true } : {}),
+      // The new controls (Gemini turn-taking, smart turn ending, thinking effort): test calls only for now
+      // (lib/voice/settings.ts callTurnExtras and its *_FOR_BUYER_CALLS constants); the safe retry never sends them.
+      ...this.turnExtras(settings),
       scenario: this.loaded!.conv.scenario,
     };
+  }
+
+  /** The new turn-taking fields of this call's sessions; a Gemini block also asks for its setup's acknowledgement (log). */
+  private turnExtras(settings: ReturnType<typeof resolveVoiceSettings>): Partial<RealtimeSessionConfig> {
+    const x = callTurnExtras(settings, this.model.modelId, this.loaded!.session.isTest);
+    return { ...x, ...(x.geminiActivity ? { logSessionAck: true } : {}) };
+  }
+
+  /** Which connect lines name the turn-taking sent: GPT-Realtime and Gemini models (not the scripted model, not ElevenLabs Realtime). */
+  private turnLogFamily(): "gpt" | "gemini" | null {
+    if (isOpenAiVoiceModel(this.model.modelId)) return "gpt";
+    return voiceFamilyOf(this.model.modelId) === "gemini" ? "gemini" : null;
   }
 
   /** A transcript as stored and shown: markers taken out (Current), or as said (a profile). */
@@ -1542,6 +1623,7 @@ export class VoiceEngine {
         this.clearQuiet();
         this.setState("speaking");
         this.send(e.pcm);
+        this.noteOpenerAudio(e.pcm.byteLength);
         // The recording's right channel: as the browser plays it (queued after what it still has).
         this.recorder?.agent(e.pcm, this.offsetMs());
         return;
@@ -1586,6 +1668,11 @@ export class VoiceEngine {
         return;
       }
       case "speech-started":
+        // The opening line is protected: no buyer audio reached the model, and nothing here counts as a barge-in.
+        if (this.openerGuard) {
+          this.trace("buyer speech started (opener protected: ignored)");
+          return;
+        }
         this.trace("buyer speech started");
         this.buyerActivity();
         if (!this.buyerTurn) this.buyerTurn = { id: `b${++this.turnSeq}`, startMs: this.offsetMs() };
@@ -1792,6 +1879,7 @@ export class VoiceEngine {
     this.clearQuiet();
     this.setState("speaking");
     this.send(frame);
+    this.noteOpenerAudio(frame.byteLength);
     this.recorder?.agent(frame, this.offsetMs());
   }
 
@@ -1828,6 +1916,7 @@ export class VoiceEngine {
   private afterSpeech() {
     this.agentSpeaking = false;
     if (this.ended) return;
+    if (this.openerDone) this.openerSaid();
     if (this.pendingEnd) {
       void this.stop(this.pendingEnd);
       return;
@@ -2115,6 +2204,7 @@ export class VoiceEngine {
     const t0 = this.clock.now();
     let openerPrompt = "";
     let sent = `config=${this.safeConfig ? "safe" : "full"}`;
+    let geminiLine: string | null = null;
     let timedOut = false;
     const timeout = new Promise<null>((resolve) => this.timer("reconnect", ms, () => { timedOut = true; resolve(null); }));
     const attempt = (async () => {
@@ -2129,7 +2219,8 @@ export class VoiceEngine {
       openerPrompt = ctx.openerPrompt;
       const cfg = this.sessionConfig(ctx.instructions, ctx);
       this.stageDelivered = stageKey(ctx.instructions);
-      sent = configSummary(cfg);
+      sent = configSummary(cfg, this.turnLogFamily());
+      geminiLine = this.turnLogFamily() === "gemini" ? geminiTurnLine(cfg) : null;
       return this.model.connect(cfg, (e) => this.onModelEvent(e, gen));
     })().catch((e) => {
       this.lastError = clip(e instanceof Error ? e.message : e);
@@ -2144,6 +2235,7 @@ export class VoiceEngine {
       return null;
     }
     this.log.info(voiceLine(this.sessionId, `${what} connected in ${took}ms${this.safeConfig ? " (proven session fields only)" : ""} ${sent}`));
+    if (geminiLine) this.log.info(voiceLine(this.sessionId, geminiLine));
     return { conn, openerPrompt };
   }
 
@@ -2834,6 +2926,7 @@ export class VoiceEngine {
     }
     this.agentSpeaking = false;
     this.openerDone = true;
+    this.openerSaid();
     if (this.pendingEnd) {
       void this.stop(this.pendingEnd);
       return;

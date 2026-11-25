@@ -55,6 +55,19 @@ export type RealtimeSessionConfig = {
   parallelToolCalls?: boolean;
   /** Log what the provider echoes in session-updated (GPT test calls): "provider session-updated: …". Log only. */
   logSessionAck?: boolean;
+  /**
+   * Gemini: Google's own turn-taking block (lib/voice/settings.ts geminiActivityDetectionFor), sent as
+   * providerOptions.realtimeInputConfig.automaticActivityDetection. Test calls only (GEMINI_TURN_TAKING_FOR_BUYER_CALLS);
+   * never in the safe retry. Absent: not sent (Google's defaults, as before).
+   */
+  geminiActivity?: import("./settings").GeminiActivityDetection;
+  /**
+   * OpenAI: "Turn ending: Smart" (semantic VAD with this eagerness) instead of server VAD with the pause and threshold.
+   * Test calls only (SMART_TURN_END_FOR_BUYER_CALLS); never in the safe retry.
+   */
+  semanticVad?: { eagerness: "low" | "medium" | "high" };
+  /** OpenAI reasoning realtime models: `reasoning.effort` ("Thinking effort"). Test calls only; never in the safe retry. */
+  reasoningEffort?: "minimal" | "low" | "medium" | "high";
 };
 
 /** Normalized events the engine reads. Transcript texts are the whole turn so far, not deltas. */

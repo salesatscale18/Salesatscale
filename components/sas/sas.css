@@ -1071,12 +1071,18 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-seg__opt + .sas-seg__opt { border-inline-start: 1px solid var(--line-strong); }
 .sas-seg__opt[data-on] { background: var(--primary-soft); color: var(--primary); }
 .sas-seg__opt:focus-within { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
-.sas-vs-adv { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
-.sas-vs-adv > summary { display: flex; align-items: center; gap: var(--space-2); padding: 10px var(--space-3); background: var(--surface); font-weight: 600; cursor: pointer; list-style: none; }
-.sas-vs-adv > summary::-webkit-details-marker { display: none; }
-.sas-vs-adv:not([open]) > summary .sas-ico { transform: rotate(-90deg); }
-.sas-vs-adv__title { flex: 1; }
-.sas-vs-adv__body { display: flex; flex-direction: column; gap: 14px; padding: var(--space-3); }
+/* A section's one "More options" fold (native details/summary: focusable, announces expanded/collapsed). */
+.sas-vs-more { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.sas-vs-more > summary { display: flex; align-items: center; gap: var(--space-2); padding: 10px var(--space-3); background: var(--surface); font-weight: 600; cursor: pointer; list-style: none; }
+.sas-vs-more > summary::-webkit-details-marker { display: none; }
+.sas-vs-more > summary:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.sas-vs-more:not([open]) > summary .sas-ico { transform: rotate(-90deg); }
+[dir="rtl"] .sas-vs-more:not([open]) > summary .sas-ico { transform: rotate(90deg); }
+/* "More options · 2 changed" is one unit: the count never wraps away from the label. */
+.sas-vs-more__title { flex: 1; min-width: 0; white-space: nowrap; }
+.sas-vs-more__count { font-weight: 400; color: var(--ink-muted); }
+.sas-vs-more__body { display: flex; flex-direction: column; gap: 14px; padding: var(--space-3); }
+.sas-vs-missing, .sas-vs-testing { margin: 0; }
 .sas-vs-meter { position: relative; display: block; height: 20px; }
 .sas-vs-meter::before { content: ""; position: absolute; inset-inline: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--line); }
 .sas-vs-meter__fill { position: absolute; inset-inline-start: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--primary); }
