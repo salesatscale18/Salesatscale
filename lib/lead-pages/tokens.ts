@@ -67,8 +67,9 @@ export const handoverExpired = (createdAt: Date, now: Date) => now.getTime() - c
 const FORM = "lead-page-form:";
 /**
  * A person needs longer than this to fill in the form; bots usually do not. 1 s (owner, 25 Nov: autofill and a
- * quick tap is a real buyer): a send refused only for this gets `retryAfterMs`, and the hosted form and the
- * snippet wait it out and send once more, so a fast buyer never sees an error.
+ * quick tap is a real buyer): a send with a valid token that is only younger than this is held on the server
+ * for the rest (at most this long, after the rate limits) and then accepted, so a fast buyer never sees an
+ * error, with or without script (intake.ts).
  */
 export const FORM_MIN_AGE_MS = 1_000;
 /** A form left open longer than a day is reloaded. */

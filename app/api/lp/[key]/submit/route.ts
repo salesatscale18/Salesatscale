@@ -100,7 +100,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ key: st
     case "thanks": return Response.json({ thanks }, { status: 200, headers: { ...NO_STORE, ...cors } });
     case "invalid": return Response.json({ error: "invalid", fields: r.errors }, { status: 422, headers: { ...NO_STORE, ...cors } });
     case "busy": return Response.json({ error: "busy" }, { status: 429, headers: { ...NO_STORE, ...cors, "Retry-After": String(r.retryAfterSeconds) } });
-    // Too fast only (form timing): `retryAfterMs`, and the hosted form and the snippet send once more after it.
+    // A too-young timing token is now waited out in submitLeadPage; `retryAfterMs` stays for the client fallback.
     case "refused": return Response.json({ error: r.reason, ...(r.retryAfterMs ? { retryAfterMs: r.retryAfterMs } : {}) }, { status: 403, headers: { ...NO_STORE, ...cors } });
     case "not_found": return Response.json({ error: "not_found" }, { status: 404, headers: { ...NO_STORE, ...cors } });
   }

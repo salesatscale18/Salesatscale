@@ -5,7 +5,7 @@
  * only from requireAccount() (pages/actions) or from a verified intake key
  * (webhook). Integration tests run these against PGlite.
  */
-import { phoneSearchSql } from "./unverified-claims";
+import { accountMarketCountry, phoneSearchSql } from "./unverified-claims";
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { alias, type AnyPgColumn as AnyColumn } from "drizzle-orm/pg-core";
 import { HIDDEN_LEAD_EVENTS } from "@/lib/leads/event-icons";
@@ -277,7 +277,8 @@ function escapeLike(v: string) {
   return v.replace(/[\\%_]/g, (c) => `\\${c}`);
 }
 
-function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
+/** `phoneMarket`: the account's market country, to read a typed local number (phoneSearchSql). */
+function filterWhere(accountId: string, f: LeadFilters, now: Date, phoneMarket: string | null = null): SQL {
   const parts: SQL[] = [eq(leads.accountId, accountId), eq(leads.isTest, false)];
   if (f.statuses) parts.push(f.statuses.length ? inArray(leads.status, [...f.statuses]) : sql`false`);
   else if (f.view && f.view !== "all") parts.push(eq(leads.status, f.view as LeadStatus));
@@ -293,9 +294,9 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
   const q = f.q?.trim();
   if (q) {
     const like = `%${escapeLike(q)}%`;
-    const digits = q.replace(/\D/g, "");
     const conds = [ilike(leads.fullName, like), ilike(leads.company, like), ilike(leads.buyerRef, like)];
-    if (digits.length >= 3) conds.push(phoneSearchSql(digits));
+    const phone = phoneSearchSql(q, phoneMarket);
+    if (phone) conds.push(phone);
     parts.push(or(...conds)!);
   }
   return and(...parts)!;
@@ -303,7 +304,8 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
 
 export async function listLeads(db: Db, accountId: string, f: LeadFilters = {}, now = new Date()) {
   const owner = alias(users, "owner");
-  const where = filterWhere(accountId, f, now);
+  const phoneMarket = (f.q?.replace(/\D/g, "").length ?? 0) >= 3 ? await accountMarketCountry(db, accountId) : null;
+  const where = filterWhere(accountId, f, now, phoneMarket);
   const sort = f.sort ?? LEAD_SORT_DEFAULT;
   const by = (col: SQL | AnyColumn) => (sort.dir === "asc" ? sql`${col} asc nulls last` : sql`${col} desc nulls last`);
   const sortCol: Record<LeadSortKey, SQL | AnyColumn> = {
