@@ -4478,5 +4478,18 @@
   "lead_pages.preview.note_own": "Your own form stays as it is.",
   "lead_pages.preview.sample": "Sample buyer Dana. Nothing here is sent.",
   "lead_pages.preview.sample_name": "Dana",
-  "lead_pages.preview.sample_name_he": "דנה"
+  "lead_pages.preview.sample_name_he": "דנה",
+  "lead_pages.form.required": "(required)",
+  "lead_pages.form.not_saved_one": "Not saved: 1 field needs a fix. First: {field}.",
+  "lead_pages.form.not_saved_many": "Not saved: {n} fields need a fix. First: {field}.",
+  "lead_pages.form.not_saved_form": "Not saved. {reason}",
+  "lead_pages.form.saving": "Saving…",
+  "lead_pages.form.going_live": "Going live…",
+  "lead_pages.preview.close": "Close preview",
+  "lead_pages.created.snippet": "Here is your snippet.",
+  "lead_pages.created.own_form": "Here is your form's address.",
+  "lead_pages.created.link": "Here is your link.",
+  "lead_pages.created.link_draft": "The link works for buyers after you press Go live. Use the preview link to try it now.",
+  "lead_pages.origins.max": "You can add up to {max} other addresses. Remove one first.",
+  "lead_pages.origins.page_error": "The addresses could not be changed. Open Edit, check the page and save it, then try again."
 }

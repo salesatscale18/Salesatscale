@@ -14,6 +14,7 @@ import { CALLING_CODE, normalizePhone } from "@/lib/leads/rules";
 import { E164 } from "@/lib/sms/rules";
 import { BANNER_MAX_BYTES } from "./banner-file";
 import { normalizeAddress, normalizeOriginHost, originOf, sitePageUrl } from "./origin";
+import { PAGE_ERRORS, addressRequired as addressNeeded } from "./page-check";
 
 export const LEAD_PAGE_CONNECTIONS = ["snippet", "own_form", "link", "hosted"] as const;
 export type LeadPageConnection = (typeof LEAD_PAGE_CONNECTIONS)[number];
@@ -94,13 +95,8 @@ export type LeadPageRaw = {
 
 export type LeadPageErrors = Partial<Record<"name" | "address" | "connection" | "language" | "marketId" | "openingTopic" | "extraOrigins", string>>;
 
-/**
- * Whether a connection needs the page address. "Our form on your page": yes, it is
- * the allowed origin our form runs on. "Your own form": optional but recommended
- * (without it, and with no other addresses, its sends are refused and the first one
- * is shown as "Seen on …, add it?"). "Button or link": optional.
- */
-export const addressRequired = (connection: LeadPageConnection) => connection === "snippet";
+/** Whether a connection needs the page address (page-check.ts, shared with the browser's check). */
+export const addressRequired = (connection: LeadPageConnection) => addressNeeded(connection);
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const bool = (v: unknown) => v === true || v === "true" || v === "on" || v === "1";
@@ -109,7 +105,7 @@ const bool = (v: unknown) => v === true || v === "true" || v === "on" || v === "
 export function parseLeadPageInput(raw: LeadPageRaw, opts: { languages: readonly string[] }): { ok: true; value: LeadPageInput } | { ok: false; errors: LeadPageErrors } {
   const errors: LeadPageErrors = {};
   const name = str(raw.name).replace(/\s+/g, " ");
-  if (!name) errors.name = "Enter a name for the page.";
+  if (!name) errors.name = PAGE_ERRORS.nameEmpty;
   else if (name.length > PAGE_NAME_MAX) errors.name = `Use ${PAGE_NAME_MAX} characters or fewer.`;
 
   const connection = str(raw.connection) as LeadPageConnection;
@@ -118,8 +114,8 @@ export function parseLeadPageInput(raw: LeadPageRaw, opts: { languages: readonly
 
   const addressRaw = str(raw.address);
   const address = addressRaw ? normalizeAddress(addressRaw) : null;
-  if (addressRaw && !address) errors.address = "Enter the page address, like https://example.com/offer.";
-  else if (!address && addressRequired(connection)) errors.address = "Enter the address of the page the form is on.";
+  if (addressRaw && !address) errors.address = PAGE_ERRORS.addressInvalid;
+  else if (!address && addressRequired(connection)) errors.address = PAGE_ERRORS.addressRequired;
 
   const language = str(raw.language);
   if (language !== "en" && language !== "he") errors.language = "Choose English or Hebrew.";

@@ -54,10 +54,11 @@ test("choose image → preview; wrong type and too large refused; kept through a
   await expect(page.locator(".lpg-file")).toContainText("Replace");
   if (shots) await page.screenshot({ path: join(shots, "banner-chosen.png") });
 
-  // Save with an empty name (and "Button or link"): the error shows, the image is still chosen and was sent once.
+  // Save with an empty name (and "Button or link"): refused before sending; the error shows, the image is still chosen.
   await page.getByLabel("Button or link").check();
   await page.getByRole("button", { name: "Save draft" }).click();
   await expect(page.locator('[data-field-error="name"]')).toHaveText("Enter a name for the page.");
+  await expect(page.getByLabel("Name")).toBeFocused();
   await expect(page.locator("[data-form-errors]")).toHaveText("Check the fields marked below.");
   expect(await file.evaluate((i: HTMLInputElement) => i.files?.[0]?.name ?? null)).toBe("offer-banner.png");
   await expect(page.locator("[data-banner-preview]")).toBeVisible();
@@ -71,7 +72,6 @@ test("choose image → preview; wrong type and too large refused; kept through a
   await expect(page.locator("body")).toHaveAttribute("data-saved", "banner:offer-banner.png");
   const sent = await page.evaluate(() => (window as unknown as { __sent: unknown[] }).__sent);
   expect(sent).toEqual([
-    { name: "", connection: "link", banner: { name: "offer-banner.png", size: PNG.length } },
     { name: "Spring offer", connection: "link", banner: { name: "offer-banner.png", size: PNG.length } },
   ]);
 });
@@ -82,6 +82,7 @@ test("errors arriving with a fresh form (file gone, card back to the default): t
   const file = page.locator('input[type="file"][name="banner"]');
   await file.setInputFiles({ name: "offer-banner.png", mimeType: "image/png", buffer: PNG });
   await page.getByLabel("Button or link").check();
+  await page.getByLabel("Name").fill("Server says no");
   await page.getByRole("button", { name: "Save draft" }).click();
   // While the save runs, simulate what a full page load leaves: no file, the default card checked.
   await page.evaluate(() => {

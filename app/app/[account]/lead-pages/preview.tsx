@@ -18,6 +18,7 @@ export type LeadPagePreviewText = {
   noteSnippet: string;
   noteOwn: string;
   sample: string;
+  /** "Close preview" (the sheet on a phone). */
   close: string;
   /** "You get the link / snippet / address when you save." by connection; null once the page is saved (Edit). */
   afterSave: Record<string, string> | null;
@@ -102,12 +103,21 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
   const tabRefs = useRef<Record<PreviewTab, HTMLButtonElement | null>>({ form: null, handover: null, first: null });
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
   const scroll = useScreenScroll(tab);
 
   // The tab on show is always seen.
   const shownSig = now[tab];
   useEffect(() => { setSeen((s) => (s[tab] === shownSig ? s : { ...s, [tab]: shownSig })); }, [tab, shownSig]);
   useEffect(() => { if (open) closeRef.current?.focus(); }, [open]);
+  // While the sheet is open the page under it does not scroll (it covers the whole screen, Save buttons included).
+  useEffect(() => {
+    if (!open) return;
+    const root = document.documentElement;
+    const before = root.style.overflow;
+    root.style.overflow = "hidden";
+    return () => { root.style.overflow = before; };
+  }, [open]);
 
   const choose = (t: PreviewTab) => setTab(t);
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -132,11 +142,24 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
         className="sas-panel lpv-sheet" id={`${id}-sheet`} data-preview-sheet=""
         // Opened from the button (narrow screens only): a sheet over the page.
         role={open ? "dialog" : undefined} aria-modal={open || undefined} aria-label={open ? text.title : undefined}
-        onKeyDown={(e) => { if (e.key === "Escape" && open) { e.stopPropagation(); close(); } }}
+        ref={sheetRef}
+        onKeyDown={(e) => {
+          if (!open) return;
+          if (e.key === "Escape") { e.stopPropagation(); close(); return; }
+          // Focus stays in the sheet while it is open (Close, the tabs).
+          if (e.key !== "Tab" || !sheetRef.current) return;
+          const items = Array.from(sheetRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'))
+            .filter((el) => el.tabIndex >= 0 && !el.closest("[inert]") && el.getClientRects().length > 0);
+          if (!items.length) return;
+          const first = items[0];
+          const last = items[items.length - 1];
+          if (e.shiftKey && (document.activeElement === first || !sheetRef.current.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }}
       >
         <div className="lpv-head">
           <h2 className="lpg-sec__h">{text.title}</h2>
-          <button ref={closeRef} type="button" className="sas-btn sas-btn--ghost sas-btn--sm lpv-close" onClick={close} data-preview-close="">{text.close}</button>
+          <button ref={closeRef} type="button" className="sas-btn sas-btn--secondary sas-btn--sm lpv-close" onClick={close} data-preview-close="">{text.close}</button>
         </div>
         <div className="lpv-tabs" role="tablist" aria-label={text.title}>
           {TABS.map((t) => {

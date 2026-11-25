@@ -12,7 +12,7 @@ import { listMarkets } from "@/lib/markets/service";
 import { leadPageConsentLine } from "@/lib/leads/consent-line";
 import { chatNames } from "@/lib/simulator/service";
 import { OWN_FORM_ERROR_TEXT } from "@/lib/lead-pages/refusal";
-import { OWN_FORM_ERRORS, OWN_FORM_FIELDS, trackingOf } from "@/lib/lead-pages/rules";
+import { EXTRA_ORIGINS_MAX, OWN_FORM_ERRORS, OWN_FORM_FIELDS, trackingOf } from "@/lib/lead-pages/rules";
 import { getLeadPage, latestLeadsOfPage, leadPageReadiness, type ReadinessKey } from "@/lib/lead-pages/service";
 import { bySource, pageFunnel, parseStatsPeriod, rangeOfDays, STATS_PERIODS } from "@/lib/lead-pages/stats";
 import { previewTokenValid } from "@/lib/lead-pages/tokens";
@@ -22,6 +22,7 @@ import {
 } from "@/lib/lead-pages/view";
 import { STEP_LABEL } from "../../leads/[leadId]/stage";
 import { addOriginAction, previewLinkAction, removeOriginAction, setLeadPageStatusAction } from "../actions";
+import { ForgetParams, PendingButton } from "../pending-button";
 import "../lead-pages.css";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -31,6 +32,11 @@ const SAVED: Record<string, MessageKey> = {
   origin_added: "lead_pages.saved.origin_added", origin_removed: "lead_pages.saved.origin_removed",
 };
 const BLOCKER: Record<string, ReadinessKey> = { privacy_notice: "privacy_notice", account_not_live: "account_live" };
+/** Saved notices shown next to "Other addresses" (the redirect lands there, #link), not at the top. */
+const ORIGIN_SAVED = new Set(["origin_added", "origin_removed"]);
+const ORIGIN_ERROR: Record<string, MessageKey> = { "1": "lead_pages.origins.invalid", max: "lead_pages.origins.max", page: "lead_pages.origins.page_error" };
+const CREATED: Record<string, MessageKey> = { snippet: "lead_pages.created.snippet", own_form: "lead_pages.created.own_form", link: "lead_pages.created.link", hosted: "lead_pages.created.link" };
+const ONE_TIME = ["created"] as const;
 
 /**
  * One lead page (board: LeadPageDetail): from visit to order for the period,
@@ -83,9 +89,18 @@ export default async function LeadPageView({ params, searchParams }: { params: P
       <input type="hidden" name="slug" value={account.slug} />
       <input type="hidden" name="pageId" value={page.id} />
       {host === null ? <input className="sas-input" name="host" placeholder="staging.example.com" inputMode="url" autoComplete="off" dir="ltr" aria-label={t("lead_pages.origins.new")} required /> : <input type="hidden" name="host" value={host} />}
-      <button type="submit" className={buttonClass(variant, "sm")} aria-label={aria}>{label}</button>
+      <PendingButton className={buttonClass(variant, "sm")} ariaLabel={aria}>{label}</PendingButton>
     </form>
   );
+  const originError = ORIGIN_ERROR[firstParam(sp, "origin_error") ?? ""] ?? (firstParam(sp, "origin_error") ? ORIGIN_ERROR["1"] : null);
+  const originSaved = ORIGIN_SAVED.has(firstParam(sp, "saved") ?? "");
+  // The first save of a new page: its block marked once, its Copy first, and a line that says what to do next.
+  const created = firstParam(sp, "created") === "1";
+  const createdLine = created
+    ? `${t(SAVED[firstParam(sp, "saved") ?? ""] ?? "lead_pages.saved.draft")} ${t(page.connection === "link" && page.status !== "live" ? "lead_pages.created.link_draft" : CREATED[page.connection])}`
+    : null;
+  const createdNotice = createdLine ? <div className="sas-alert sas-alert--success" role="status" data-created-notice=""><Icon name="check-circle" /><span>{createdLine}</span></div> : null;
+  const copyVariant = created ? "primary" : "secondary";
   // Other addresses (the snippet and the own form): no "No other addresses." while a "Seen on …" suggestion shows.
   const origins = (
     <div className="lpg-preview" data-origins="">
@@ -110,17 +125,19 @@ export default async function LeadPageView({ params, searchParams }: { params: P
         </ul>
       ) : seen ? null : <span className="sas-small" data-origins-none="">{t("lead_pages.origins.none")}</span>}
       {originForm(addOriginAction, null, t("lead_pages.origins.add"))}
+      {originError ? <span className="lpg-inline-err" role="alert" data-origin-error={firstParam(sp, "origin_error")}>{t(originError, { max: EXTRA_ORIGINS_MAX })}</span> : null}
+      {originSaved ? <span className="sas-small" role="status" data-origin-saved="">{t(SAVED[firstParam(sp, "saved")!])}</span> : null}
     </div>
   );
   const blocked = (firstParam(sp, "blocked") ?? "").split(",").map((b) => BLOCKER[b]).filter(Boolean);
-  const saved = SAVED[firstParam(sp, "saved") ?? ""];
+  const saved = created || originSaved ? undefined : SAVED[firstParam(sp, "saved") ?? ""];
   const visits = countsVisits(page.connection);
   const statusForm = (op: "live" | "pause" | "resume", label: MessageKey, variant: "primary" | "secondary", icon: "rocket" | "pause" | "play") => (
     <form action={setLeadPageStatusAction} data-status-op={op}>
       <input type="hidden" name="slug" value={account.slug} />
       <input type="hidden" name="pageId" value={page.id} />
       <input type="hidden" name="op" value={op} />
-      <button type="submit" className={buttonClass(variant, "sm")}><Icon name={icon} />{t(label)}</button>
+      <PendingButton className={buttonClass(variant, "sm")} icon={<Icon name={icon} />}>{t(label)}</PendingButton>
     </form>
   );
 
@@ -148,10 +165,14 @@ export default async function LeadPageView({ params, searchParams }: { params: P
       {blocked.length ? (
         <div className="sas-alert sas-alert--danger" role="alert" data-blocked={blocked.join(",")}>
           <Icon name="alert-triangle" />
-          <span>{t("lead_pages.blocked", { reasons: blocked.map((b) => t(READINESS_LABEL[b])).join("; ") })}</span>
+          <span>
+            {t("lead_pages.blocked", { reasons: blocked.map((b) => t(READINESS_LABEL[b])).join("; ") })}
+            {blocked.includes("privacy_notice") ? <> <a href={`/app/${account.slug}/setup/order-form`}>{t("lead_pages.check.fix_privacy")}</a></> : null}
+            {blocked.includes("account_live") ? <> <a href={`/app/${account.slug}/setup/go-live`}>{t("lead_pages.check.fix_account")}</a></> : null}
+          </span>
         </div>
       ) : null}
-      {firstParam(sp, "origin_error") ? <div className="sas-alert sas-alert--danger" role="alert" data-origin-error=""><Icon name="alert-triangle" /><span>{t("lead_pages.origins.invalid")}</span></div> : null}
+      {created ? <ForgetParams keys={ONE_TIME} /> : null}
       {page.status === "paused" ? <div className="sas-alert lpg-alert--warning" role="status"><Icon name="clock" /><span>{t("lead_pages.paused_note")}</span></div> : null}
 
       <div className="lpg-cols">
@@ -161,7 +182,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
               <h2 id="funnel-h" className="lpg-sec__h">{t("lead_pages.funnel.title")}</h2>
               <nav className="lpg-periods" aria-label={t("lead_pages.filter.period")}>
                 {STATS_PERIODS.map((d) => (
-                  <a key={d} className="sas-fchip" href={hrefWith(here, sp, { days: d === 30 ? null : String(d) }, ["saved", "blocked", "pl"])} aria-current={d === days ? "true" : undefined}>
+                  <a key={d} className="sas-fchip" href={hrefWith(here, sp, { days: d === 30 ? null : String(d) }, ["saved", "blocked", "pl", "created", "origin_error"])} aria-current={d === days ? "true" : undefined}>
                     {t("lead_pages.filter.days", { days: d })}
                   </a>
                 ))}
@@ -215,11 +236,12 @@ export default async function LeadPageView({ params, searchParams }: { params: P
 
         <div className="lpg-col lpg-col--side">
           {snippet ? (
-          <section className="sas-panel lpg-card" id="link" aria-labelledby="snippet-h" data-snippet-card="">
+          <section className="sas-panel lpg-card" id="link" aria-labelledby="snippet-h" data-snippet-card="" data-created={created ? "" : undefined}>
             <h2 id="snippet-h" className="lpg-sec__h">{t("lead_pages.snippet.title")}</h2>
+            {createdNotice}
             <span className="sas-small">{t("lead_pages.snippet.hint")}</span>
             <code className="lpg-url lpg-code" dir="ltr" data-snippet-code="">{code}</code>
-            <span className="lpg-actions"><CopyButton value={code} label={t("lead_pages.snippet.copy")} /></span>
+            <span className="lpg-actions"><CopyButton value={code} label={t("lead_pages.snippet.copy")} variant={copyVariant} /></span>
             <span className="sas-small">{t("lead_pages.snippet.look")}</span>
             <div className="lpg-preview">
               <strong className="lpg-preview__h">{t("lead_pages.snippet.preview")}</strong>
@@ -236,18 +258,19 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                 <form action={previewLinkAction}>
                   <input type="hidden" name="slug" value={account.slug} />
                   <input type="hidden" name="pageId" value={page.id} />
-                  <button type="submit" className={buttonClass("secondary", "sm")}><Icon name="eye" />{t("lead_pages.link.preview_make")}</button>
+                  <PendingButton className={buttonClass("secondary", "sm")} icon={<Icon name="eye" />}>{t("lead_pages.link.preview_make")}</PendingButton>
                 </form>
               )}
             </div>
             {origins}
           </section>
           ) : own ? (
-          <section className="sas-panel lpg-card" id="link" aria-labelledby="own-h" data-own-form-card="">
+          <section className="sas-panel lpg-card" id="link" aria-labelledby="own-h" data-own-form-card="" data-created={created ? "" : undefined}>
             <h2 id="own-h" className="lpg-sec__h">{t("lead_pages.own.title")}</h2>
+            {createdNotice}
             <span className="sas-small">{t("lead_pages.own.hint")}</span>
             <code className="lpg-url" dir="ltr" data-own-form-action="">{action}</code>
-            <span className="lpg-actions"><CopyButton value={action} label={t("lead_pages.own.copy")} /></span>
+            <span className="lpg-actions"><CopyButton value={action} label={t("lead_pages.own.copy")} variant={copyVariant} /></span>
             <div className="lpg-preview" data-own-fields="">
               <strong className="lpg-preview__h">{t("lead_pages.own.fields")}</strong>
               <span className="sas-small">{t("lead_pages.own.fields_hint")}</span>
@@ -288,7 +311,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                 <form action={previewLinkAction}>
                   <input type="hidden" name="slug" value={account.slug} />
                   <input type="hidden" name="pageId" value={page.id} />
-                  <button type="submit" className={buttonClass("secondary", "sm")}><Icon name="eye" />{t("lead_pages.own.test_make")}</button>
+                  <PendingButton className={buttonClass("secondary", "sm")} icon={<Icon name="eye" />}>{t("lead_pages.own.test_make")}</PendingButton>
                 </form>
               )}
             </div>
@@ -322,12 +345,13 @@ export default async function LeadPageView({ params, searchParams }: { params: P
             {origins}
           </section>
           ) : (
-          <section className="sas-panel lpg-card" id="link" aria-labelledby="link-h" data-link="">
+          <section className="sas-panel lpg-card" id="link" aria-labelledby="link-h" data-link="" data-created={created ? "" : undefined}>
             <h2 id="link-h" className="lpg-sec__h">{t("lead_pages.link.title")}</h2>
+            {createdNotice}
             <span className="sas-small">{page.status === "live" ? t("lead_pages.link.hint") : t("lead_pages.link.not_live")}</span>
             <code className="lpg-url" dir="ltr" data-hosted-link="">{link}</code>
             <span className="lpg-actions">
-              <CopyButton value={link} label={t("lead_pages.detail.copy_link")} />
+              <CopyButton value={link} label={t("lead_pages.detail.copy_link")} variant={copyVariant} />
               {page.status === "live" ? <a className={buttonClass("ghost", "sm")} href={link} target="_blank" rel="noopener noreferrer"><Icon name="arrow-up-right" />{t("lead_pages.link.open")}</a> : null}
             </span>
             <div className="lpg-preview">
@@ -345,7 +369,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                 <form action={previewLinkAction}>
                   <input type="hidden" name="slug" value={account.slug} />
                   <input type="hidden" name="pageId" value={page.id} />
-                  <button type="submit" className={buttonClass("secondary", "sm")}><Icon name="eye" />{t("lead_pages.link.preview_make")}</button>
+                  <PendingButton className={buttonClass("secondary", "sm")} icon={<Icon name="eye" />}>{t("lead_pages.link.preview_make")}</PendingButton>
                 </form>
               )}
             </div>

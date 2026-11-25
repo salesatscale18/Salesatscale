@@ -1,7 +1,8 @@
 /**
  * A browser harness for the add/edit form's banner field (tests/e2e/lead-page-banner.spec.ts):
  * the real form shell (useActionState, as on the page) and the real BannerField, with a
- * stand-in for the server action that refuses an empty name the way the real one does and
+ * stand-in for the server action that refuses an empty name the way the real one does (the form
+ * itself refuses it first, before sending) and a name only the server refuses ("Server says no"), and
  * records what it received (window.__sent). Bundled with esbuild by the spec.
  */
 import { createRoot } from "react-dom/client";
@@ -19,7 +20,8 @@ async function action(_prev: LeadPageFormState, form: FormData): Promise<LeadPag
   const banner = file && typeof file !== "string" && file.size > 0 ? { name: file.name, size: file.size } : null;
   const name = String(form.get("name") ?? "").trim();
   w.__sent.push({ name, connection: String(form.get("connection") ?? ""), banner });
-  if (!name) return { errors: { name: "Enter a name for the page." }, connection: String(form.get("connection") ?? ""), bannerSent: !!banner };
+  // An empty name is refused in the browser before sending (form-shell.tsx); "Server says no" stands for a refusal only the server makes.
+  if (!name || name === "Server says no") return { errors: { name: name ? "Use another name." : "Enter a name for the page." }, connection: String(form.get("connection") ?? ""), bannerSent: !!banner };
   document.body.setAttribute("data-saved", banner ? `banner:${banner.name}` : "no-banner");
   return null;
 }

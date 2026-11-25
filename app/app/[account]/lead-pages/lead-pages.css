@@ -188,7 +188,22 @@
 }
 .lpg-quote { margin: 0; padding: 8px 10px; border-inline-start: 3px solid var(--line-strong); background: var(--surface-sunken); border-radius: var(--radius-md); font-size: 13px; line-height: 18px; }
 .lpg-funnel-empty { margin: 0; padding: 16px 0; color: var(--ink-muted); }
-.lpg-form__foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; border-top: 1px solid var(--line); }
+/* The Save buttons, and after a refused save the line next to them (form-shell.tsx, SaveFoot). */
+.lpg-form__foot { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-top: 1px solid var(--line); }
+.lpg-form__buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.lpg-notsaved { display: inline-flex; align-items: flex-start; gap: 6px; align-self: flex-start; max-width: 100%; padding: 0; border: 0; background: none;
+  color: var(--danger); font: inherit; font-size: 13px; line-height: 18px; font-weight: 600; text-align: start; cursor: pointer; }
+.lpg-notsaved:hover span, .lpg-notsaved:focus-visible span { text-decoration: underline; }
+.lpg-notsaved .sas-icon { flex: none; margin-block-start: 1px; }
+.lpg-req { font-weight: 400; color: var(--ink-muted); }
+.lpg-spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-inline-end-color: transparent; animation: lpg-spin .8s linear infinite; flex: none; }
+@keyframes lpg-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .lpg-spin { animation: none; border-inline-end-color: currentColor; opacity: .6; } }
+/* A page just added: its link / snippet / form address block is marked once (?created=1). */
+.lpg-card[data-created] { animation: lpg-created 2.4s ease-out 1; }
+@keyframes lpg-created { 0%, 50% { box-shadow: 0 0 0 3px var(--primary); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .lpg-card[data-created] { animation: none; box-shadow: 0 0 0 2px var(--primary); } }
+.lpg-inline-err { color: var(--danger); font-size: 12px; line-height: 16px; }
 
 /* Leads: the lead page filter chip (`?page=`). */
 .lpg-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--space-3) var(--space-4); }
@@ -251,4 +266,8 @@
   .lpv-sheet { display: none; }
   .lpv[data-open] .lpv-sheet { display: flex; position: fixed; inset: 0; z-index: 50; overflow-y: auto; border: 0; border-radius: 0; margin: 0; }
   .lpv-close { display: inline-flex; }
+  /* The sheet: "Close preview" stays at the top while it scrolls; the floating button never sits on the Save buttons. */
+  .lpv[data-open] .lpv-sheet { overscroll-behavior: contain; }
+  .lpv[data-open] .lpv-head { position: sticky; inset-block-start: -16px; z-index: 2; margin: -16px -16px 0; padding: 12px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--line); }
+  .lpg-form__foot { padding-inline-end: 136px; }
 }
