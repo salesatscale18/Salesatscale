@@ -138,14 +138,21 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     await db.update(leadPages).set({ banner: null }).where(eq(leadPages.id, he.id));
   });
 
-  it("the form's other states: an error after a no-JS post, the plain thanks, a paused page, a draft (404 unless preview), the privacy page", async () => {
+  it("the form's other states: an error after a no-JS post, the plain thanks, a paused page, a draft (closed unless preview), the privacy page", async () => {
     expect(await form(en, { e: "phone" })).toContain("Enter a valid mobile number.");
     expect(await form(en, { e: "busy" })).toContain("Too many attempts.");
     expect(await form(en, { sent: "1" })).toContain("Thanks. Polar Demo received your details and will get back to you.");
     await db.update(leadPages).set({ status: "paused" }).where(eq(leadPages.id, en.id));
     expect(await form(en)).toContain("This form is not taking requests right now.");
     await db.update(leadPages).set({ status: "draft" }).where(eq(leadPages.id, en.id));
-    await expect(form(en)).rejects.toThrow("NEXT_NOT_FOUND");
+    // A real page that is not live: the hosted frame with the closed line (never a bare 404), even with ?sent=1.
+    const closed = await form(en);
+    expect(closed).toContain('data-lp-closed=""');
+    expect(closed).toContain("This form is not taking requests right now.");
+    expect(closed).not.toContain('name="phone"');
+    expect(await form(en, { sent: "1" })).toContain("This form is not taking requests right now.");
+    // A key that does not exist is still a 404.
+    await expect(FormPage({ params: Promise.resolve({ key: "AAAAAAAAAAAA" }), searchParams: Promise.resolve({}) })).rejects.toThrow("NEXT_NOT_FOUND");
     const token = previewTokenFor(en.id, new Date());
     const preview = await form(en, { preview: token });
     expect(preview).toContain('name="preview"');
@@ -216,21 +223,23 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(html).toMatch(/מחברים אותך ל-⁨[A-Za-z][^⁩]*⁩/);
   });
 
-  it("the returning buyer: Welcome back (SMS sent), else the plain received screen; never the lead's chat or stored name", async () => {
+  it("the returning number from another browser: the same screens as a new buyer, its own fresh chat; never the existing lead's chat or name", async () => {
     const phone = nextPhone();
-    await submit(en, { name: "Dana Levi", phone });
+    const first = await submit(en, { name: "Dana Levi", phone });
+    await hand(first.token);
     const again = await submit(en, { name: "Someone Else", phone });
-    await db.update(leadPageSubmissions).set({ sms: "sent" }).where(eq(leadPageSubmissions.id, again.submissionId));
+    expect(again.newLeadId).not.toBeNull();
+    expect(again.newLeadId).not.toBe(first.newLeadId);
     const back = await hand(again.token);
-    expect(back).toContain('data-handover="welcome_back"');
-    expect(back).toContain("Welcome back, Someone. We sent the link to your conversation to your phone.");
+    expect(back).toContain('data-handover="chat"');
+    expect(back).toContain("Thanks, Someone");
+    expect(back).toContain("Continue to the chat");
+    // The normal new-lead opener in a fresh chat.
+    expect(back).toContain("You asked about Fridge monitoring.");
     expect(back).not.toContain("Dana");
-    expect(back).not.toContain("lp-offstage");
-    const mocked = await submit(en, { name: "Third Person", phone });
-    const plain = await hand(mocked.token);
-    expect(plain).toContain('data-handover="received"');
-    expect(plain).toContain("Thanks, Third. Polar Demo received your details and will get back to you.");
-    expect(plain).not.toContain("Continue to the chat");
+    expect(back).not.toContain("Welcome back");
+    expect(back).not.toContain("received your details");
+    expect(back).not.toContain("We also sent this link to your phone.");
   });
 
   it("no consent: received, no buttons, no chat; an expired link says so; a forged one is a 404", async () => {

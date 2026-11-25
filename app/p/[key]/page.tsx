@@ -34,8 +34,9 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 /**
  * The hosted lead form (/p/<key>, "Button or link"; also every page type's
- * preview). Public and login-free. A draft is a 404 unless the seller's
- * preview token is in the link; a paused page says it is closed. The form
+ * preview). Public and login-free. A key that does not exist is a 404; a page
+ * that is not live (draft, paused) says it is closed unless the seller's preview
+ * token is in the link. The form
  * posts to /api/lp/<key>/submit; without JavaScript it still works.
  * Query parameters: ?e=<name|phone|generic|busy> (an error after a no-JS post,
  * never a personal detail), ?sent=1 (the plain "Thanks" page), utm_* and ad
@@ -52,7 +53,6 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   // An archived page (stored as paused) shows the closed text, a preview link too.
   const archived = isArchived(page);
   const preview = !archived && previewTokenValid(previewToken, page.id, now);
-  if (page.status === "draft" && !preview) notFound();
   const lang: Locale = page.language === "he" ? "he" : "en";
   const tr = translator(lang);
   const dir = lang === "he" ? "rtl" : "ltr";
@@ -63,10 +63,11 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
       {body}
     </HostedFormFrame>
   );
+  // A real page that is not live (draft, paused) without the seller's preview token: the closed screen (never a bare 404).
+  if ((archived || page.status !== "live") && !preview) return shell(<p className="lp-hand__sub" role="status" data-lp-closed="">{tr("buyer.lp.form.closed")}</p>);
   if (one(sp.sent) === "1") {
     return shell(<p className="lp-hand__sub" role="status" data-lp-thanks="">{handoverReceivedLine(names, null, lang)}</p>);
   }
-  if ((archived || page.status === "paused") && !preview) return shell(<p className="lp-hand__sub" role="status" data-lp-closed="">{tr("buyer.lp.form.closed")}</p>);
 
   const hidden: Record<string, string> = { ft: formTimingToken(page.id, now.getTime()) };
   if (preview) hidden.preview = previewToken;

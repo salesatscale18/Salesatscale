@@ -9,7 +9,7 @@ export function handoverConnectingLine(names: Pick<BuyerNames, "agent" | "seller
 }
 
 /**
- * "Thanks, {name}. {seller} received your details…" (no consent, or a returning buyer), with the names isolated
+ * "Thanks, {name}. {seller} received your details…" (no consent, or the chat gates), with the names isolated
  * as on the connecting line, so a Latin trade name or digits in a Hebrew line keep their place. `name`: the
  * buyer's first name, null for the plain line.
  */

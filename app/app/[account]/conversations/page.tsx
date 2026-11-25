@@ -1,4 +1,6 @@
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
+import { isUnverifiedLead } from "@/lib/leads/unverified";
+import { unverifiedClaims, type UnverifiedClaim } from "@/lib/leads/unverified-claims";
 import { leadPageSourceOf } from "@/lib/lead-pages/service";
 import { Icon } from "@/components/sas/icon";
 import { Banner } from "@/components/sas/record";
@@ -93,6 +95,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
       previewFacts(appDb, account.id, list.rows, now),
     ])
     : [new Map<string, { short: string | null; whole: string | null }>(), new Map<string, PreviewFacts>()];
+  const claims = list ? await unverifiedClaims(appDb, account.id, list.rows.filter((r) => isUnverifiedLead(r.lead)).map((r) => r.lead.id)) : new Map<string, UnverifiedClaim>();
 
   // The selected thread's data, in a second parallel batch.
   const thread = selected
@@ -223,7 +226,11 @@ export default async function ConversationsPage({ params, searchParams }: { para
                       // Needs you: the SHORT label only; the whole reason is the tooltip and stays in the open chat.
                       const why = r.group === "needs_you" ? whys.get(r.lead.id) : undefined;
                       const needs = r.group === "needs_you" ? needsYouLine(!!r.takenOverByUserId, why?.short) : null;
-                      const p = needs ? null : listPreview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
+                      // An unverified returning lead: "not verified · same number as {name}" (the two leads are easy to tell apart).
+                      const claim = needs || !isUnverifiedLead(r.lead) ? null : claims.get(r.lead.id);
+                      const unverifiedLine = needs || !isUnverifiedLead(r.lead) ? null
+                        : claim?.sameAs ? t("lead.unverified.row", { name: claim.sameAs.fullName }) : t("lead.unverified.row_plain");
+                      const p = needs || unverifiedLine ? null : listPreview(r, me.id, r.lastMessageId ? facts.get(r.lastMessageId) : undefined);
                       return (
                         <li key={r.conversationId}>
                           <a
@@ -236,7 +243,11 @@ export default async function ConversationsPage({ params, searchParams }: { para
                             {/* Left to right whatever the script: name, separator, business, each isolated in its own direction. */}
                             <span className="sas-inbox__name" dir="ltr" data-line="1"><bdi dir="auto" className="sas-inbox__person">{r.lead.fullName}</bdi>{r.lead.company ? <><span className="sas-inbox__sep"> · </span><bdi dir="auto" className="sas-inbox__company">{r.lead.company}</bdi></> : null}</span>
                             <span className="sas-when" title={formatDateTimeIn(r.lastAt, zone)}>{relativeTime(r.lastAt, now, zone)}</span>
-                            {needs ? (
+                            {unverifiedLine ? (
+                              <span className="sas-inbox__preview" dir="ltr" data-line="2" data-unverified="" title={unverifiedLine}>
+                                <bdi dir="auto">{unverifiedLine}</bdi>
+                              </span>
+                            ) : needs ? (
                               <span className="sas-inbox__preview sas-inbox__preview--needs" dir="ltr" data-line="2" data-handoff-why="" title={why?.whole && why.whole !== why.short ? `${needs} · ${why.whole}` : needs}>
                                 {needs}
                               </span>

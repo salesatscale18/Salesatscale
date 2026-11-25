@@ -41,7 +41,7 @@ export type SnippetConfig =
     consent: { line: string; parts: string[]; ticked: boolean };
     privacyUrl: string | null;
     brand: Record<string, string>;
-    /** A fresh form-timing token (a submit is refused when it is younger than 2.5 s or older than a day). */
+    /** A fresh form-timing token (a submit is refused when it is younger than 1 s, and sent again after the wait, or older than a day). */
     ft: string;
     tracking: { tellPagePixel: boolean; carryAdDetails: boolean };
   };

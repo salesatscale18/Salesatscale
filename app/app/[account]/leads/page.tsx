@@ -1,3 +1,5 @@
+import { isUnverifiedLead } from "@/lib/leads/unverified";
+import { unverifiedClaims, type UnverifiedClaim } from "@/lib/leads/unverified-claims";
 import { buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
 import { TextWithId } from "@/components/sas/id-text";
@@ -156,6 +158,8 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   let facts = new Map<string, LeadListFacts>();
   let estimates = new Map<string, DealEstimate>();
   let factsRead = false;
+  /** Unverified returning leads on this page: the claimed number's lead (the row's second line). */
+  let claims = new Map<string, UnverifiedClaim>();
   /** Facts for the rows, then deal size estimates for those without a quote (display only). */
   const readFacts = async (rows: { lead: { id: string; marketId: string | null } }[]) => {
     facts = await leadListFacts(appDb, account.id, rows.map((r) => r.lead.id), now);
@@ -194,6 +198,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
         data = { rows: rows.slice(0, limit), total: stageFilter ? rows.length : data.total };
       }
       if (!factsRead) await readFacts(data.rows);
+      claims = await unverifiedClaims(appDb, account.id, data.rows.filter((r) => isUnverifiedLead(r.lead)).map((r) => r.lead.id));
     }
   } catch (e) {
     console.error("[leads] list failed", e);
@@ -437,6 +442,11 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                         const who = whoOnIt(lead, ownerName);
                         const stage = stages.get(lead.id);
                         const href = rowHref(`/app/${account.slug}`, lead.id, personStep ? null : shown);
+                        const claim = isUnverifiedLead(lead) ? claims.get(lead.id) : undefined;
+                        // An unverified returning lead: "not verified · same number as {name}", so the two leads are easy to tell apart.
+                        const unverifiedLine = isUnverifiedLead(lead)
+                          ? <span data-unverified="">{claim?.sameAs ? t("lead.unverified.row", { name: claim.sameAs.fullName }) : t("lead.unverified.row_plain")}</span>
+                          : null;
                         return (
                           <tr key={lead.id} className="sas-lrow" data-needs={any ? "" : undefined} data-group={shown?.group}>
                             <td className="sas-lrow__lead">
@@ -447,11 +457,13 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
                                   <span className="sas-lang" aria-label={t(`lang.${lead.language as Locale}`)}>{lead.language.toUpperCase()}</span>
                                   {lead.buyerRef ? <SimulatedChip /> : null}
                                 </span>
-                                {lead.buyerRef || lead.company ? (
+                                {lead.buyerRef || lead.company || unverifiedLine ? (
                                   <span className="sas-small sas-lrow__sub">
                                     {lead.buyerRef ? <span className="sas-id">{lead.buyerRef}</span> : null}
                                     {lead.buyerRef && lead.company ? " · " : null}
                                     {lead.company ? <bdi>{lead.company}</bdi> : null}
+                                    {lead.company && unverifiedLine ? " · " : null}
+                                    {unverifiedLine}
                                   </span>
                                 ) : null}
                                 {/* On a narrower table the Market column folds into a muted line here (sas.css container query). */}

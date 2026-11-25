@@ -75,13 +75,15 @@ export type OpenerRefusal =
   | "not_configured" | "test_lead" | "opted_out" | "no_consent" | "account_not_live" | "account_paused"
   | "outside_contact_hours" | "no_connection" | "no_template" | "no_agent" | "already_started" | "spend_cap"
   /** A simulated buyer (buyer simulator): a buyer ID, no phone. Never contacted on WhatsApp. */
-  | "simulated_lead";
+  | "simulated_lead"
+  /** An unverified returning lead (lead pages): the typed number is only a claim. Never contacted on WhatsApp. */
+  | "no_phone";
 
 export type OpenerFacts = {
   /** WHATSAPP_ENABLED is off: no WhatsApp opener at all. Absent = on (the simulator's own gates). */
   whatsappOff?: boolean;
   twilioConfigured: boolean;
-  lead: { isTest: boolean; status: string; simulated?: boolean };
+  lead: { isTest: boolean; status: string; simulated?: boolean; noPhone?: boolean };
   hasConsent: boolean;
   account: { status: string; contactHours: ContactHours | null; timezone: string };
   hasConnection: boolean;
@@ -101,6 +103,7 @@ export type OpenerFacts = {
 export function openerRefusal(f: OpenerFacts): OpenerRefusal | null {
   if (f.lead.isTest) return "test_lead";
   if (f.lead.simulated) return "simulated_lead";
+  if (f.lead.noPhone) return "no_phone";
   if (f.whatsappOff) return "whatsapp_off";
   if (f.lead.status === "opted_out") return "opted_out";
   if (!f.hasConsent) return "no_consent";

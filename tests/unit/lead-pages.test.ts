@@ -14,7 +14,7 @@ import {
   BANNER_MAX_BYTES, goLiveBlockers,
 } from "@/lib/lead-pages/rules";
 import {
-  checkFormTiming, cookieHoldsLead, FORM_MIN_AGE_MS, formTimingToken, generatePublicKey, handoverExpired, handoverTokenFor, HANDOVER_TTL_MS,
+  checkFormTiming, cookieHoldsLead, FORM_MIN_AGE_MS, formTimingToken, formTimingWaitMs, generatePublicKey, handoverExpired, handoverTokenFor, HANDOVER_TTL_MS,
   leadCookieFrom, leadCookieHeader, leadCookieValue, previewTokenFor, previewTokenValid, PUBLIC_KEY_RE, submissionIdFromHandoverToken,
 } from "@/lib/lead-pages/tokens";
 import { chatTokenFor, linkIdFromChatToken } from "@/lib/simulator/token";
@@ -47,8 +47,13 @@ describe("lead page tokens", () => {
 
   it("form timing: too fast, fine, too old, forged, for another page", () => {
     const t = formTimingToken(ID, NOW.getTime());
-    expect(checkFormTiming(t, ID, new Date(NOW.getTime() + 1000))).toBe("too_fast");
+    // 1 s (owner, 25 Nov): a too-fast send says how long to wait; the form's script sends once more after it.
+    expect(FORM_MIN_AGE_MS).toBe(1000);
+    expect(checkFormTiming(t, ID, new Date(NOW.getTime() + 400))).toBe("too_fast");
+    expect(formTimingWaitMs(t, ID, new Date(NOW.getTime() + 400))).toBe(600);
     expect(checkFormTiming(t, ID, new Date(NOW.getTime() + FORM_MIN_AGE_MS))).toBe("ok");
+    expect(formTimingWaitMs(t, ID, new Date(NOW.getTime() + FORM_MIN_AGE_MS))).toBe(0);
+    expect(formTimingWaitMs("x.y", ID, NOW)).toBe(0);
     expect(checkFormTiming(t, ID, new Date(NOW.getTime() + 25 * 3600_000))).toBe("too_old");
     expect(checkFormTiming(t, OTHER, new Date(NOW.getTime() + 5000))).toBe("invalid");
     expect(checkFormTiming(t.replace(/^[0-9a-z]+/, (m) => (parseInt(m, 36) - 10_000).toString(36)), ID, new Date(NOW.getTime() + 5000))).toBe("invalid");
@@ -210,16 +215,15 @@ describe("lead page submissions", () => {
 });
 
 describe("hand-over variant (returning-buyer rule)", () => {
-  const base = { consent: true, optedOut: false, inBrowser: true, chatReady: true, sms: null } as const;
-  it("opens the chat only in the browser that created the lead (or holds its cookie)", () => {
+  const base = { consent: true, optedOut: false, inBrowser: true, chatReady: true } as const;
+  it("opens the chat only in the browser that created the lead (or holds its cookie); never depends on SMS", () => {
     expect(handoverVariant(base)).toBe("chat");
     expect(handoverVariant({ ...base, chatReady: false })).toBe("received");
-    // Someone typed an existing lead's phone: never that lead's chat here; the SMS carries the link.
-    expect(handoverVariant({ ...base, inBrowser: false, sms: "sent" })).toBe("welcome_back");
-    expect(handoverVariant({ ...base, inBrowser: false, sms: "mocked" })).toBe("received");
-    expect(handoverVariant({ ...base, inBrowser: false, sms: null })).toBe("received");
+    // A hand-over link in a browser it was not made for: never that lead's chat (a known number from another
+    // browser gets its own unverified lead, so its submission created a lead: inBrowser).
+    expect(handoverVariant({ ...base, inBrowser: false })).toBe("received");
     expect(handoverVariant({ ...base, consent: false })).toBe("received");
-    expect(handoverVariant({ ...base, optedOut: true, sms: "sent" })).toBe("received");
+    expect(handoverVariant({ ...base, optedOut: true })).toBe("received");
   });
 });
 

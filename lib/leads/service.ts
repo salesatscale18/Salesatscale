@@ -5,6 +5,7 @@
  * only from requireAccount() (pages/actions) or from a verified intake key
  * (webhook). Integration tests run these against PGlite.
  */
+import { phoneSearchSql } from "./unverified-claims";
 import { and, asc, count, desc, eq, gte, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { alias, type AnyPgColumn as AnyColumn } from "drizzle-orm/pg-core";
 import { HIDDEN_LEAD_EVENTS } from "@/lib/leads/event-icons";
@@ -294,7 +295,7 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
     const like = `%${escapeLike(q)}%`;
     const digits = q.replace(/\D/g, "");
     const conds = [ilike(leads.fullName, like), ilike(leads.company, like), ilike(leads.buyerRef, like)];
-    if (digits.length >= 3) conds.push(ilike(leads.phone, `%${digits}%`));
+    if (digits.length >= 3) conds.push(phoneSearchSql(digits));
     parts.push(or(...conds)!);
   }
   return and(...parts)!;

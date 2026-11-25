@@ -487,7 +487,6 @@
   "buyer.lp.handover.continue_chat": "המשך לצ'אט",
   "buyer.lp.handover.sms_sent": "שלחנו את הקישור גם לטלפון שלך.",
   "buyer.lp.handover.by_line": "השיחה מופעלת על ידי Sales at Scale",
-  "buyer.lp.handover.welcome_back": "שמחים שחזרת, {name}. שלחנו לטלפון שלך קישור לשיחה.",
   "buyer.lp.handover.received": "תודה, {name}. הפרטים שלך התקבלו ב-{seller} ונחזור אליך בהקדם.",
   "buyer.lp.handover.received_plain": "תודה. הפרטים שלך התקבלו ב-{seller} ונחזור אליך בהקדם.",
   "buyer.lp.handover.expired": "תוקף הדף פג. אפשר להשתמש בקישור שנשלח לטלפון או למלא שוב את הטופס.",

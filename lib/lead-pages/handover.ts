@@ -7,11 +7,14 @@
  * - Returning-buyer rule (privacy): the in-browser chat only when this
  *   submission created the lead, or the browser holds the lead's sas_lp
  *   cookie. Anyone can type anyone's phone: an existing lead's chat is never
- *   opened in that browser; the SMS carries the link instead (decision 5).
+ *   opened in that browser. A known number from another browser gets its own
+ *   unverified returning lead (lib/lead-pages/intake.ts), so this submission
+ *   created a lead and the chat opens. Nothing on the buyer path depends on SMS.
  * - The page_link SMS goes only from here, once per submission, and only when
  *   the lead was created or already had consent (nudgeBuyer checks consent,
  *   opt-out, stop and 3 per lead per day), the phone is in one of the
  *   account's selling markets, and the caps hold (3 per IP and 100 per page a day).
+ *   Never for an unverified returning lead (no phone of its own: nothing tried).
  */
 import { and, eq, isNull } from "drizzle-orm";
 import type { Db } from "@/db/types";
@@ -21,6 +24,7 @@ import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { activeChatToken, ensureChatLink, recordChatOpen, resolveChatLink, type ChatContext } from "@/lib/simulator/service";
 import { chatPath } from "@/lib/simulator/token";
 import { safeBrand } from "@/lib/simulator/rules";
+import { hasDialablePhone } from "@/lib/leads/unverified";
 import { nudgeBuyer, type NudgeDeps } from "@/lib/sms/service";
 import {
   handoverVariant, phoneInSellingMarkets, sellingPrefixes, SMS_PER_IP_DAILY, SMS_PER_PAGE_DAILY,
@@ -95,8 +99,8 @@ export async function loadHandover(db: Db, input: HandoverInput): Promise<Handov
       }
     }
   }
-  const sms = sub.consent && !optedOut ? await pageLinkSms(db, row, input.ip, now, input.sms) : sub.sms as LeadPageSms | null;
-  const variant = handoverVariant({ consent: sub.consent, optedOut, inBrowser, chatReady: !!chat, sms });
+  const sms = sub.consent && !optedOut && hasDialablePhone(lead) ? await pageLinkSms(db, row, input.ip, now, input.sms) : sub.sms as LeadPageSms | null;
+  const variant = handoverVariant({ consent: sub.consent, optedOut, inBrowser, chatReady: !!chat });
   return {
     kind: "ready", variant, page, account, brandColor, sms, submissionId: sub.id,
     firstName: sub.answers?.firstName ?? "",

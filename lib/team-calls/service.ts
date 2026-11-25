@@ -44,6 +44,7 @@ import { isWebChat } from "@/lib/simulator/rules";
 import { offerOrderFormInChat, sendChatLink, type MaybeNudge } from "@/lib/sms/outbound";
 import { nudgeBuyer, type NudgeDeps } from "@/lib/sms/service";
 import { maskSmsPhone } from "@/lib/sms/thread";
+import { hasDialablePhone } from "@/lib/leads/unverified";
 import { isSimulatedLead } from "@/lib/simulator/rules";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
 import { BOOKING_DAYS, BOOKING_MIN_AHEAD_MS, bookingSlots, isFreeSlot, validTimezone, type BookingSlot } from "./slots";
@@ -176,7 +177,7 @@ export async function bookingView(db: Db, ctx: BuyerCtx, now = new Date()): Prom
     leadCallback(db, ctx.account.id, ctx.lead.id, now),
   ]);
   const booked = callUpcoming(current, now) && current.booked ? current : null;
-  const callPhone = (c: CallbackRequest | null) => c?.phone ?? (isSimulatedLead(ctx.lead) ? null : ctx.lead.phone);
+  const callPhone = (c: CallbackRequest | null) => c?.phone ?? (hasDialablePhone(ctx.lead) ? ctx.lead.phone : null);
   const phone = callPhone(booked);
   return {
     offerMessageId: offer.messageId, lengthMin: TEAM_CALL_MINUTES, phone: phone ? maskSmsPhone(phone) : null, timezone: contact.timezone,
@@ -259,7 +260,7 @@ export async function bookCall(
   // The SMS in the conversation's current language (the buyer's latest message), as the chat line above.
   const lang = langOf(conv?.language ?? lead.language);
   // Never to a simulated buyer, a test lead or a fictional demo number (nothing is tried or recorded).
-  const sms = isSimulatedLead(lead) || lead.isTest || isFictionalDemoLead(lead) ? null : await nudgeBuyer(db, { userId: null, actingAs: false }, {
+  const sms = !hasDialablePhone(lead) || lead.isTest || isFictionalDemoLead(lead) ? null : await nudgeBuyer(db, { userId: null, actingAs: false }, {
     accountId: account.id, leadId: lead.id, kind: "team_call", messageId, time: smsCallTime(at, buyerTimezone ?? tz, lang), now,
   }, deps);
   return { ok: true, at: at.toISOString(), changed: !!own, sms };
@@ -374,7 +375,7 @@ export async function logTeamCall(
         callbackId: c.id, outcome, startedAt: startedAt.toISOString(), lengthMin, note, byUserId: a.user.id, at: c.at.toISOString(), timezone: c.timezone,
         conversationId: conv?.id ?? null, next, ...(earlier ? { edit: true } : {}),
         // The thread's "{who} called +972 50-•••-4567": masked, as everywhere outside the Deal tab card.
-        ...(isSimulatedLead(lead) ? {} : { phoneMasked: maskSmsPhone(c.phone ?? lead.phone) }),
+        ...(isSimulatedLead(lead) || !(c.phone || hasDialablePhone(lead)) ? {} : { phoneMasked: maskSmsPhone(c.phone ?? lead.phone) }),
       },
     }),
     writeAudit(db, actor, { accountId, action: "team_call.logged", targetType: "lead", targetId: leadId, details: { callbackId: c.id, outcome, next } }),
@@ -382,7 +383,7 @@ export async function logTeamCall(
 
   if (outcome === "no_answer") {
     // One SMS per call: the chat link with "pick a new time" (the second named-time text).
-    const sms = earlier?.outcome === "no_answer" || lead.isTest || isSimulatedLead(lead)
+    const sms = earlier?.outcome === "no_answer" || lead.isTest || !hasDialablePhone(lead)
       ? null
       : await nudgeBuyer(db, actor, { accountId, leadId, kind: "named_time_retry", now }, deps);
     return { ok: true, leadId, outcome, next, sms };

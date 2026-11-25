@@ -21,6 +21,8 @@ export const LEAD_EVENT_ICON: Readonly<Record<string, IconName>> = {
   // Lead pages (lib/lead-pages/intake.ts): the buyer sent the page's form; the form did not give consent back.
   "lead_page.submitted": "file-text",
   "lead_page.consent_not_restored": "shield-check",
+  "lead_page.unverified_claim": "file-text",
+  "lead_page.number_reused": "file-text",
   "lead.opted_out": "x-circle",
   "lead.market_changed": "layers",
   "quote.created": "file-text",
@@ -134,6 +136,11 @@ export function leadEventTitle(
     const stored = (data as { by?: unknown } | null | undefined)?.by;
     const by = actorName?.trim() ? actorName : stored;
     return typeof by === "string" && by.trim() ? tr("lead.event.quote.price_changed_by", { name: by }) : tr(key);
+  }
+  if (type === "lead_page.unverified_claim" || type === "lead_page.number_reused") {
+    // "Came back from {page} · phone not verified" / "Someone left this number on {page} in another browser · not verified".
+    const page = (data as { page?: unknown } | null | undefined)?.page;
+    return tr(key, { page: typeof page === "string" && page.trim() ? page : "a lead page" });
   }
   if (type === "order.pay_reminder") {
     // "First payment reminder sent" / "Second payment reminder sent".

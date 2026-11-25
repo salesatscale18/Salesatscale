@@ -65,8 +65,12 @@ export const handoverExpired = (createdAt: Date, now: Date) => now.getTime() - c
 // ---------------------------------------------------------------------------
 
 const FORM = "lead-page-form:";
-/** A person needs longer than this to fill in the form; bots usually do not. */
-export const FORM_MIN_AGE_MS = 2_500;
+/**
+ * A person needs longer than this to fill in the form; bots usually do not. 1 s (owner, 25 Nov: autofill and a
+ * quick tap is a real buyer): a send refused only for this gets `retryAfterMs`, and the hosted form and the
+ * snippet wait it out and send once more, so a fast buyer never sees an error.
+ */
+export const FORM_MIN_AGE_MS = 1_000;
 /** A form left open longer than a day is reloaded. */
 export const FORM_MAX_AGE_MS = 24 * 3600_000;
 
@@ -86,6 +90,13 @@ export function checkFormTiming(token: unknown, pageId: string, now: Date): Form
   if (age < FORM_MIN_AGE_MS) return "too_fast";
   if (age > FORM_MAX_AGE_MS) return "too_old";
   return "ok";
+}
+
+/** For a valid token refused as too fast: how long until it is old enough (ms, at least 1), else 0. */
+export function formTimingWaitMs(token: unknown, pageId: string, now: Date): number {
+  if (checkFormTiming(token, pageId, now) !== "too_fast") return 0;
+  const age = now.getTime() - parseInt(String(token).split(".")[0], 36);
+  return Math.max(1, FORM_MIN_AGE_MS - age);
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +131,9 @@ export const leadCookieValue = (leadId: string) => signId(COOKIE, leadId);
 export function cookieHoldsLead(cookie: string | null | undefined, leadId: string): boolean {
   return !!cookie && idFromSigned(COOKIE, cookie) === leadId;
 }
+
+/** The lead id a valid cookie names, or null (forged or empty). */
+export const leadIdFromCookie = (cookie: string | null | undefined): string | null => (cookie ? idFromSigned(COOKIE, cookie) : null);
 
 /** The Set-Cookie header for the lead this browser just created: HttpOnly, Secure, SameSite=Lax, 30 days, our domain only. */
 export function leadCookieHeader(leadId: string): string {

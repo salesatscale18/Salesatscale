@@ -10,6 +10,7 @@
 import { isWithinContactHours } from "@/lib/accounts/contact-hours";
 import { isFictionalDemoLead } from "@/lib/demo/phones";
 import { isSimulatedLead } from "@/lib/simulator/rules";
+import { isUnverifiedLead } from "@/lib/leads/unverified";
 import type { ContactHours } from "@/db/schema";
 
 type Env = Record<string, string | undefined>;
@@ -166,7 +167,7 @@ export const SMS_VALIDITY_SECONDS: Partial<Record<SmsKind, number>> = { named_ti
 // ---------------------------------------------------------------------------
 
 export type SmsRefusal =
-  | "test_lead" | "simulated_lead" | "demo_number" | "opted_out" | "sms_stopped" | "invalid_phone" | "no_consent"
+  | "test_lead" | "simulated_lead" | "no_phone" | "demo_number" | "opted_out" | "sms_stopped" | "invalid_phone" | "no_consent"
   | "outside_contact_hours" | "lead_daily_cap" | "too_soon";
 
 export type SmsFacts = {
@@ -186,6 +187,8 @@ export type SmsFacts = {
 export function smsRefusal(f: SmsFacts): SmsRefusal | null {
   if (f.lead.isTest) return "test_lead";
   if (isSimulatedLead(f.lead)) return "simulated_lead";
+  // An unverified returning lead (lead pages): the typed number is only a claim, never texted.
+  if (isUnverifiedLead(f.lead)) return "no_phone";
   if (isFictionalDemoLead(f.lead)) return "demo_number";
   if (f.lead.status === "opted_out") return "opted_out";
   if (f.stopped) return "sms_stopped";

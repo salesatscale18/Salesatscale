@@ -67,6 +67,8 @@ describe("SMS refusals", () => {
     expect(smsRefusal(facts({}, { isTest: true }))).toBe("test_lead");
     expect(smsRefusal(facts({}, { buyerRef: "SIM-0001", phone: "sim:SIM-0001" }))).toBe("simulated_lead");
     expect(smsRefusal(facts({}, { phone: "sim:SIM-0002" }))).toBe("simulated_lead");
+    // An unverified returning lead (lead pages): the typed number is only a claim, never texted.
+    expect(smsRefusal(facts({}, { phone: "lp:0123456789abcdef0123456789abcdef" }))).toBe("no_phone");
     expect(smsRefusal(facts({}, { phone: demoPhone(1), sourceRef: `${DEMO_SOURCE_REF_PREFIX}rotem` }))).toBe("demo_number");
     // The same number in a real account (no demo source ID) is a real buyer.
     expect(smsRefusal(facts({}, { phone: demoPhone(1), sourceRef: "crm-1" }))).toBeNull();

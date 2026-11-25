@@ -359,20 +359,20 @@ export function ownFormErrorUrl(page: { address: string | null }, referer: strin
 export type LeadPageSms = "sent" | "mocked" | "refused" | "failed" | "skipped";
 
 /**
- * Which hand-over the buyer sees (plan §4 with decision 5):
- * - "chat": the in-browser chat, only when this submission created the lead or
- *   this browser holds the lead's sas_lp cookie, and the chat could start.
- * - "welcome_back": the phone was already a lead (no same-browser cookie) and
- *   the SMS with the chat link was really sent.
- * - "received": everything else ("{seller} received your details"): no
- *   consent, opted out, the chat could not start, or no SMS went out. Never a dead end.
+ * Which hand-over the buyer sees (plan §4; owner rule 25 Nov: leaving details always
+ * leads to an open conversation, never through SMS):
+ * - "chat": the in-browser chat, when this submission created the lead (a known number
+ *   from another browser creates its own unverified returning lead) or this browser holds
+ *   the lead's sas_lp cookie, and the chat could start.
+ * - "received" ("{seller} received your details"): only the deliberate ends: no consent
+ *   or opted out, or the chat gates (account paused or not live, no published agent,
+ *   spend cap); and a hand-over link opened in a browser it was not made for.
  */
-export type HandoverVariant = "chat" | "welcome_back" | "received";
+export type HandoverVariant = "chat" | "received";
 
-export function handoverVariant(f: { consent: boolean; optedOut: boolean; inBrowser: boolean; chatReady: boolean; sms: LeadPageSms | null }): HandoverVariant {
+export function handoverVariant(f: { consent: boolean; optedOut: boolean; inBrowser: boolean; chatReady: boolean }): HandoverVariant {
   if (f.optedOut || !f.consent) return "received";
-  if (f.inBrowser) return f.chatReady ? "chat" : "received";
-  return f.sms === "sent" ? "welcome_back" : "received";
+  return f.inBrowser && f.chatReady ? "chat" : "received";
 }
 
 /** At most this many page_link SMS per IP address per day, and per page per day (decision 7). */

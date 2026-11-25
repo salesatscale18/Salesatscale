@@ -16,7 +16,7 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, publishDraftVersion } from "@/lib/agent/service";
 import { leadInterest } from "@/lib/chat/start";
-import { submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
+import { REPEAT_MS, submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
 import { loadHandover, recordHandoverChoice } from "@/lib/lead-pages/handover";
 import {
   addLeadPageOrigin, bumpDaily, createLeadPage, getLeadPage, goLiveLeadPage, issuePreviewLink, latestSubmissions, leadPageReadiness, listLeadPages,
@@ -185,31 +185,28 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect((await db.select().from(leadEvents).where(eq(leadEvents.leadId, lead.id))).some((e) => e.type === "chat.opened" || e.type.includes("opened"))).toBe(true);
   });
 
-  it("returning buyer: a stranger typing a known phone never gets that lead's chat; the same browser does", async () => {
+  it("returning buyer: a stranger typing a known phone gets a separate lead and its own chat; the same browser gets the lead's chat", async () => {
     const phone = nextPhone();
     const first = handover(await submit(page, { name: "Dana Levi", phone }));
     const leadId = first.newLeadId!;
-    // Another browser, same phone: the existing lead, no chat here, and its name is never shown (the typed one is).
+    await loadHandover(db, { token: first.token, cookie: null, ip: "10.9.0.1" });
+    // Another browser, same phone: a new unverified lead (never the existing one), its own chat, no SMS tried.
+    const sentBefore = LIVE_SMS.transport.sent.length;
     const second = handover(await submit(page, { name: "Someone Else", phone }));
-    expect(second.newLeadId).toBeNull();
-    expect(second.submissionId).not.toBe(first.submissionId);
-    expect(await subOf(second.submissionId)).toMatchObject({ leadId, leadCreated: false, consent: true });
-    const mocked = await loadHandover(db, { token: second.token, cookie: null, ip: "10.9.0.2" });
-    // Mock SMS (not really sent): the plain "received" screen.
-    expect(mocked).toMatchObject({ kind: "ready", variant: "received", firstName: "Someone", chat: null });
-    expect(await recordHandoverChoice(db, { token: second.token, choice: "text", cookie: null, staffViewer: async () => false })).toEqual({ ok: false, reason: "not_allowed" });
+    expect(second.newLeadId).not.toBeNull();
+    expect(second.newLeadId).not.toBe(leadId);
+    expect(await subOf(second.submissionId)).toMatchObject({ leadId: second.newLeadId, leadCreated: true, consent: true, answers: { firstName: "Someone", claimedPhone: phone } });
+    const h = await loadHandover(db, { token: second.token, cookie: null, ip: "10.9.0.2", sms: LIVE_SMS });
+    expect(h).toMatchObject({ kind: "ready", variant: "chat", firstName: "Someone", sms: null });
+    expect(LIVE_SMS.transport.sent.length).toBe(sentBefore);
+    if (h.kind !== "ready" || !h.chat) throw new Error();
+    expect(h.chat.ctx.lead.id).toBe(second.newLeadId);
 
-    // A real SMS (fake transport): "Welcome back", still no chat in this browser.
-    const third = handover(await submit(page, { name: "Someone Else", phone }));
-    const sent = await loadHandover(db, { token: third.token, cookie: null, ip: "10.9.0.3", sms: LIVE_SMS });
-    expect(sent).toMatchObject({ kind: "ready", variant: "welcome_back", sms: "sent", chat: null });
-    expect(LIVE_SMS.transport.sent.at(-1)?.body).toMatch(/^Polar Demo: your chat is here: localhost:3000\/c\/[A-Za-z0-9_-]{10}$/);
-
-    // The same browser (sas_lp cookie for this lead): its chat, and a double click returns the same hand-over.
+    // The same browser (sas_lp cookie for the existing lead): its chat, and a double click returns the same hand-over.
     const cookie = `sas_lp=${leadCookieValue(leadId)}`;
-    const again = handover(await submit(page, { name: "Dana Levi", phone }, { cookie }));
-    expect(again).toMatchObject({ repeat: true, submissionId: third.submissionId });
-    expect(await loadHandover(db, { token: third.token, cookie: leadCookieValue(leadId), ip: "10.9.0.4" })).toMatchObject({ variant: "chat" });
+    const own = handover(await submit(page, { name: "Dana Levi", phone }, { cookie }));
+    expect(own).toMatchObject({ repeat: true, submissionId: first.submissionId });
+    expect(await loadHandover(db, { token: own.token, cookie: leadCookieValue(leadId), ip: "10.9.0.4" })).toMatchObject({ variant: "chat" });
   });
 
   it("consent: unticked saves no consent and no chat; the form never gives consent back; an existing consent gets the new record", async () => {
@@ -220,16 +217,18 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect(await loadHandover(db, { token: unticked.token, cookie: null, ip: "10.9.1.1" })).toMatchObject({ variant: "received", sms: null });
     expect(await db.select().from(conversations).where(eq(conversations.leadId, sub.leadId))).toHaveLength(0);
 
-    // The same phone again, box ticked: consent is not restored from the public form.
-    const ticked = handover(await submit(page, { name: "No Consent", phone: (await db.select().from(leads).where(eq(leads.id, sub.leadId)))[0].phone }));
+    // The same phone again from the same browser (after the 10-minute repeat window), box ticked: consent is not restored from the public form.
+    await db.update(leadPageSubmissions).set({ createdAt: new Date(Date.now() - REPEAT_MS - 60_000) }).where(eq(leadPageSubmissions.id, unticked.submissionId));
+    const ticked = handover(await submit(page, { name: "No Consent", phone: (await db.select().from(leads).where(eq(leads.id, sub.leadId)))[0].phone }, { cookie: `sas_lp=${leadCookieValue(sub.leadId)}` }));
     expect(await subOf(ticked.submissionId)).toMatchObject({ leadCreated: false, consent: false });
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, sub.leadId))).toHaveLength(0);
     expect((await db.select().from(leadEvents).where(eq(leadEvents.leadId, sub.leadId))).map((e) => e.type)).toContain("lead_page.consent_not_restored");
 
     // A lead that has consent gets the new record (the exact line, this page).
     const phone = nextPhone();
-    handover(await submit(page, { name: "Has Consent", phone }));
-    const re = handover(await submit(page, { name: "Has Consent", phone }));
+    const hc = handover(await submit(page, { name: "Has Consent", phone }));
+    await db.update(leadPageSubmissions).set({ createdAt: new Date(Date.now() - REPEAT_MS - 60_000) }).where(eq(leadPageSubmissions.id, hc.submissionId));
+    const re = handover(await submit(page, { name: "Has Consent", phone }, { cookie: `sas_lp=${leadCookieValue(hc.newLeadId!)}` }));
     const s2 = await subOf(re.submissionId);
     expect(s2).toMatchObject({ leadCreated: false, consent: true });
     expect(await db.select().from(consentRecords).where(eq(consentRecords.leadId, s2.leadId))).toHaveLength(2);
@@ -238,7 +237,8 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
   it("opted out: kept as it is, neutral hand-over; a paused account takes no lead", async () => {
     const phone = nextPhone();
     const [lead] = await db.insert(leads).values({ accountId: acc, fullName: "Gone", phone, language: "en", origin: "manual", status: "opted_out" }).returning();
-    const r = handover(await submit(page, { name: "Gone Again", phone }));
+    // The same browser (its cookie): today's neutral hand-over. Another browser gets its own lead (lead-pages-returning.test.ts).
+    const r = handover(await submit(page, { name: "Gone Again", phone }, { cookie: `sas_lp=${leadCookieValue(lead.id)}` }));
     expect(await subOf(r.submissionId)).toMatchObject({ leadId: lead.id, leadCreated: false, consent: false });
     expect((await db.select().from(leads).where(eq(leads.id, lead.id)))[0]).toMatchObject({ fullName: "Gone", status: "opted_out" });
     expect(await loadHandover(db, { token: r.token, cookie: leadCookieValue(lead.id), ip: "10.9.2.1", sms: LIVE_SMS })).toMatchObject({ variant: "received", chat: null });
@@ -258,7 +258,8 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect((await getLeadPage(db, acc, page.id))!.checks).toMatchObject({ refusedOrigin: "https://evil.example" });
     expect(await submit(page, { name: "Bot", phone: nextPhone() }, { origin: null })).toEqual({ kind: "refused", reason: "origin" });
     expect(await submit(page, { name: "Bot", phone: nextPhone(), sas_url: "http://x" })).toEqual({ kind: "thanks" });
-    expect(await submit(page, { name: "Bot", phone: nextPhone() }, { ftAgeMs: 500 })).toEqual({ kind: "refused", reason: "timing" });
+    // Too fast (under 1 s): refused with the wait, so the form's script sends once more after it.
+    expect(await submit(page, { name: "Bot", phone: nextPhone() }, { ftAgeMs: 400 })).toEqual({ kind: "refused", reason: "timing", retryAfterMs: expect.any(Number) });
     expect(await submit(page, { name: "Bot", phone: nextPhone(), ft: "" })).toEqual({ kind: "refused", reason: "timing" });
     expect(await submit(page, { name: "B", phone: "12" })).toEqual({ kind: "invalid", errors: ["name", "phone"] });
     expect(await rejected()).toBe(r0 + 5);

@@ -59,8 +59,16 @@ export function LeadForm({ action, beacon, strings, fields, consentTicked, conse
     }
     setSending(true);
     try {
-      const res = await fetch(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "same-origin" });
-      const body = (await res.json().catch(() => ({}))) as { handover?: string; thanks?: string; fields?: FieldError[] };
+      const post = async () => {
+        const r = await fetch(action, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data), credentials: "same-origin" });
+        return { res: r, body: (await r.json().catch(() => ({}))) as { handover?: string; thanks?: string; fields?: FieldError[]; error?: string; retryAfterMs?: number } };
+      };
+      let { res, body } = await post();
+      // Sent within a second of the form loading (autofill and a quick tap): wait out the rest and send once more, no error shown.
+      if (res.status === 403 && body.error === "timing" && (body.retryAfterMs ?? 0) > 0) {
+        await new Promise((r) => setTimeout(r, Math.min(body.retryAfterMs ?? 0, 5000) + 150));
+        ({ res, body } = await post());
+      }
       const next = body.handover ?? body.thanks;
       if (res.ok && next) {
         window.location.assign(next);
