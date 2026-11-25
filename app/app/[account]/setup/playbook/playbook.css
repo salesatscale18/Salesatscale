@@ -232,6 +232,8 @@
   .pb-unpaid__row { grid-template-columns: 36px minmax(0, 1fr) auto; }
   .pb-unpaid__when { grid-column: 2 / 3; grid-row: 2; align-items: flex-start; }
   .pb-unpaid__row > .sas-switch { grid-column: 3; grid-row: 1; }
+}
+
 /* Offers the agent may make (board OfferTool, 23 Nov): ordered rows, a pinned approval row last. */
 .pb-offers { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-raised); }
 .pb-offer {

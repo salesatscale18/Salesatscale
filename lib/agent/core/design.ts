@@ -84,7 +84,7 @@ Limits
 The last rungs, the same for every ladder
 - Agent follow-up. Offer to come back at a specific time and say what will be decided then. Call schedule_follow_up.
 - Special approval, where the play allows it: send a real request to the team and say so.
-- Call with a person. Framed as a help, with a link where the buyer picks the time. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with ${callRole}: here is a link to pick a time that suits you."
+- Call with a person. Framed as a help, with a link where the buyer picks the time. Example: "This is an important decision, and I want you to have the full picture. I can set a short call with ${callRole}: pick a time that suits you below."
 - Hand-over only when the buyer is upset, complains, raises a legal or existing-customer issue, or insists: offer it and ask first, and hand over when the buyer agrees or insists. A buyer annoyed by a mistake of yours is not a hand-over case.
 
 How to take these steps with your tools
