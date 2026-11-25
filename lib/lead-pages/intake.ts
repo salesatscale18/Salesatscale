@@ -26,7 +26,7 @@ import { upsertLead } from "@/lib/leads/service";
 import { publicUrl } from "@/lib/orders/token";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { chatNames } from "@/lib/simulator/service";
-import { checkOrigin, originOf } from "./origin";
+import { checkOrigin, originOf, sitePageUrl } from "./origin";
 import {
   consentSourceLeadPage, firstNameOf, formFieldsOf, OWN_FORM_ALL_FIELDS, ownFormConsentWording, readSubmission, sanitizeAd, sourceKeyOf, trackingOf, validateSubmission, withoutQuery,
   type LeadPageVia, type SubmissionError,
@@ -139,7 +139,9 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   const names = await chatNames(db, account, lang);
   // The snippet names its page (origin and path); trusted only when it is on the origin we checked.
   const snippetPage = f.pageUrl && originOf(f.pageUrl) === origin.origin ? withoutQuery(f.pageUrl) : null;
-  const where = via === "link" ? publicUrl(`/p/${page.publicKey}`, env) : (snippetPage ?? withoutQuery(input.headers.get("referer") ?? "") ?? origin.origin);
+  // Otherwise the Referer's page; a cross-site form post sends only the origin, so then the page's
+  // address when the origin is its host (or www twin), else the origin alone (sitePageUrl).
+  const where = via === "link" ? publicUrl(`/p/${page.publicKey}`, env) : (snippetPage ?? sitePageUrl(page, input.headers.get("referer"), origin.origin) ?? origin.origin);
   const consentSource = consentSourceLeadPage(page.name, where);
   // The seller's own form: we cannot see its consent text, so the record says where the buyer ticked it
   // (the seller is responsible for that text). Ours: the exact line the buyer saw.

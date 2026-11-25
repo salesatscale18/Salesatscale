@@ -12,7 +12,7 @@ import type { LeadPageAd, LeadPageBanner, LeadPageForm, LeadPageTopic, LeadPageT
 import { DEMO_PHONE_RANGE } from "@/lib/demo/phones";
 import { CALLING_CODE, normalizePhone } from "@/lib/leads/rules";
 import { E164 } from "@/lib/sms/rules";
-import { normalizeAddress, normalizeOriginHost } from "./origin";
+import { normalizeAddress, normalizeOriginHost, originOf, sitePageUrl } from "./origin";
 
 export const LEAD_PAGE_CONNECTIONS = ["snippet", "own_form", "link", "hosted"] as const;
 export type LeadPageConnection = (typeof LEAD_PAGE_CONNECTIONS)[number];
@@ -334,22 +334,17 @@ export type OwnFormError = "name" | "phone" | "busy" | "closed" | "generic";
 export const OWN_FORM_ERRORS: readonly OwnFormError[] = ["name", "phone", "busy", "closed", "generic"];
 
 /**
- * Where a refused own-form post goes back to: the Referer page (origin and path,
- * its query dropped) with `?sas_error=<code>`, only when the Referer's origin is
- * the allowed origin this request was checked against. Anything else is null
- * (no redirect at all), so the endpoint can never send a browser to an address
- * the seller did not allow (no open redirect).
+ * Where a refused own-form post goes back to, with `?sas_error=<code>`: the page it came from
+ * (`sitePageUrl`: the Referer's path, or the page's address when the browser sent only the
+ * origin; the query dropped), and only on the allowed origin this request was checked against.
+ * A Referer on any other origin, with credentials or not a web URL is null (no redirect at all),
+ * so the endpoint can never send a browser to an address the seller did not allow (no open redirect).
  */
-export function ownFormErrorUrl(referer: string | null | undefined, allowedOrigin: string | null, code: OwnFormError): string | null {
-  if (!referer || !allowedOrigin) return null;
-  let u: URL;
-  try {
-    u = new URL(referer);
-  } catch {
-    return null;
-  }
-  if ((u.protocol !== "https:" && u.protocol !== "http:") || u.username || u.password || u.origin !== allowedOrigin) return null;
-  return `${u.origin}${u.pathname}?sas_error=${code}`;
+export function ownFormErrorUrl(page: { address: string | null }, referer: string | null | undefined, allowedOrigin: string | null, code: OwnFormError): string | null {
+  if (!allowedOrigin || originOf(allowedOrigin) !== allowedOrigin) return null;
+  const target = sitePageUrl(page, referer, allowedOrigin);
+  if (!target || originOf(target) !== allowedOrigin) return null;
+  return `${target === allowedOrigin ? `${target}/` : target}?sas_error=${code}`;
 }
 
 // ---------------------------------------------------------------------------

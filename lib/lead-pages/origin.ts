@@ -97,6 +97,43 @@ export function checkOrigin(page: { address: string | null; extraOrigins: readon
   return allowedOrigins(page, appOrigin).has(origin) ? { ok: true, origin } : { ok: false, origin };
 }
 
+/**
+ * The page on the seller's site a post came from (origin and path, never the query), for the
+ * consent record and the own form's error redirect. `checkedOrigin` is the allowed origin the
+ * request was checked against.
+ * - A Referer with a path on that origin: its origin and path.
+ * - Only the origin (a cross-site form post sends the Referer as the origin alone, the default
+ *   strict-origin-when-cross-origin), or no Referer: when the origin is the page address's host
+ *   (or its www twin), that origin with the address's path; for an "Other addresses" host, the
+ *   origin alone.
+ * - Null when a Referer is present but is not a plain http(s) URL on that origin (a mismatch:
+ *   the caller must not redirect there).
+ */
+export function sitePageUrl(page: { address: string | null }, referer: string | null | undefined, checkedOrigin: string): string | null {
+  let pathFromReferer = "";
+  if (referer) {
+    let r: URL;
+    try {
+      r = new URL(referer);
+    } catch {
+      return null;
+    }
+    if ((r.protocol !== "https:" && r.protocol !== "http:") || r.username || r.password || r.origin !== checkedOrigin) return null;
+    pathFromReferer = r.pathname === "/" ? "" : r.pathname;
+  }
+  if (pathFromReferer) return `${checkedOrigin}${pathFromReferer}`;
+  if (page.address) {
+    try {
+      const a = new URL(page.address);
+      const c = new URL(checkedOrigin);
+      if (a.protocol === c.protocol && (c.host === a.host || c.host === wwwTwin(a.host))) return `${c.origin}${a.pathname === "/" ? "" : a.pathname}`;
+    } catch {
+      // A stored address is always normalised; the origin alone otherwise.
+    }
+  }
+  return checkedOrigin;
+}
+
 /** A refused origin is written to the page's checks at most this often (the seller sees "seen on …, add it?"). */
 export const REFUSED_ORIGIN_THROTTLE_MS = 10 * 60_000;
 
