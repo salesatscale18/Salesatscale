@@ -8,9 +8,10 @@
  *   hand-over, to /p/<key>?sent=1, or back to /p/<key>?e=<code> (never a personal detail).
  * - application/x-www-form-urlencoded from the seller's own form (slice c, any allowed origin
  *   other than ours): 303 to the hand-over or to /p/<key>?sent=1; when refused, 303 back to the
- *   Referer page (origin and path only) with ?sas_error=<code>, and only when the Referer's origin
- *   is the allowed origin the request was checked against. Otherwise (a refused origin, no
- *   Referer) a short plain-text answer and no redirect: never an open redirect.
+ *   form's page with ?sas_error=<code>: the Referer's path, or the page's address when the browser
+ *   sent only the origin (a cross-site post's default Referer), on the allowed origin the request
+ *   was checked against only. Otherwise (a refused origin, a Referer on another origin) a short
+ *   plain-text answer and no redirect: never an open redirect.
  * The sas_lp cookie (the lead this browser created) is set only on our own domain.
  * CORS (slice b, the snippet on the seller's page): the page's allowed origins only, echoed with
  * `Vary: Origin` and never credentials; OPTIONS answers the preflight. The origin itself is checked
@@ -53,14 +54,14 @@ function errorCode(r: SubmitResult): OwnFormError {
 }
 
 /**
- * A refused post from the seller's own form: back to the allowed Referer page with
+ * A refused post from the seller's own form: back to the form's page (allowed origin only) with
  * ?sas_error=<code>, else a short plain answer in the form's language (no redirect).
  */
 async function ownFormRefusal(key: string, headers: Headers, r: SubmitResult, status: number): Promise<Response> {
   const code = errorCode(r);
   const found = await pageByKey(appDb, key);
   const origin = found ? checkOrigin(found.page, headers, originOf(publicUrl("/"))) : null;
-  const target = origin?.ok ? ownFormErrorUrl(headers.get("referer"), origin.origin, code) : null;
+  const target = found && origin?.ok ? ownFormErrorUrl(found.page, headers.get("referer"), origin.origin, code) : null;
   if (target) return new Response(null, { status: 303, headers: { ...NO_STORE, Location: target } });
   const tr = translator(found?.page.language === "he" ? "he" : "en");
   const text = tr(code === "busy" ? "buyer.lp.form.err_busy" : code === "closed" ? "buyer.lp.form.closed" : "buyer.lp.form.err_generic");

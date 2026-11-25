@@ -19,7 +19,8 @@ import { ensureDraftVersion, publishDraftVersion } from "@/lib/agent/service";
 import { loadHandover } from "@/lib/lead-pages/handover";
 import { createLeadPage, getLeadPage, goLiveLeadPage, leadPageReadiness, pauseLeadPage } from "@/lib/lead-pages/service";
 import { bySource, rangeOfDays, SOURCE_TOP } from "@/lib/lead-pages/stats";
-import { previewTokenFor } from "@/lib/lead-pages/tokens";
+import { submitLeadPage } from "@/lib/lead-pages/intake";
+import { formTimingToken, previewTokenFor } from "@/lib/lead-pages/tokens";
 import { MockSmsTransport } from "@/lib/sms/transport";
 import { createTestDb, type TestDb } from "../helpers/db";
 
@@ -199,6 +200,66 @@ describe("lead pages (c): the seller's own form", () => {
     expect(test.status).toBe(303);
     expect((await subsOf((await leadOf("+972547200017")).id))[0]).toMatchObject({ via: "own_form", preview: true });
     expect((await leadPageReadiness(db, await account(), await fresh(draft))).find((c) => c.key === "own_form_lead")?.done).toBe(true);
+  });
+
+  it("a cross-site post sends only the origin as Referer: the consent record and the error redirect use the page's address (www twin too); an extra address keeps its origin", async () => {
+    const recOf = async (phone: string) => (await db.select().from(consentRecords).where(eq(consentRecords.leadId, (await leadOf(phone)).id)))[0];
+    // Origin-only Referer (the browser default strict-origin-when-cross-origin).
+    expect((await send(own.publicKey, { name: "Noa Levi", phone: "+972547200040", consent: "yes" }, { referer: `${SITE}/` })).status).toBe(303);
+    expect(await recOf("+972547200040")).toMatchObject({
+      pageUrl: `${SITE}/contact`, wording: "Seller's own form on acme.com/contact", source: 'Lead page "Contact form" (acme.com/contact)',
+    });
+    // No Referer at all (Origin only): the same.
+    expect((await send(own.publicKey, { name: "Noa Levi", phone: "+972547200041", consent: "yes" }, { referer: null })).status).toBe(303);
+    expect((await recOf("+972547200041")).pageUrl).toBe(`${SITE}/contact`);
+    // A full Referer (the seller's page sends one) wins, query dropped.
+    expect((await send(own.publicKey, { name: "Noa Levi", phone: "+972547200042", consent: "yes" }, { referer: `${SITE}/offer?utm_source=fb` })).status).toBe(303);
+    expect(await recOf("+972547200042")).toMatchObject({ pageUrl: `${SITE}/offer`, wording: "Seller's own form on acme.com/offer", source: 'Lead page "Contact form" (acme.com/offer)' });
+    // The www twin: its own origin with the address's path.
+    expect((await send(own.publicKey, { name: "Noa Levi", phone: "+972547200043", consent: "yes" }, { origin: "https://www.acme.com", referer: "https://www.acme.com/" })).status).toBe(303);
+    expect(await recOf("+972547200043")).toMatchObject({ pageUrl: "https://www.acme.com/contact", wording: "Seller's own form on www.acme.com/contact" });
+    // An "Other addresses" host: the origin only.
+    expect((await send(own.publicKey, { name: "Noa Levi", phone: "+972547200044", consent: "yes" }, { origin: "https://staging.acme.com", referer: "https://staging.acme.com/" })).status).toBe(303);
+    expect(await recOf("+972547200044")).toMatchObject({
+      pageUrl: "https://staging.acme.com/", wording: "Seller's own form on staging.acme.com", source: 'Lead page "Contact form" (staging.acme.com)',
+    });
+
+    // Refused sends go back to the form's page, not the site root.
+    const bad = (h: Parameters<typeof send>[2]) => send(own.publicKey, { name: "Dana Cohen", phone: "12" }, h);
+    expect((await bad({ referer: `${SITE}/` })).headers.get("location")).toBe(`${SITE}/contact?sas_error=phone`);
+    expect((await bad({ referer: null })).headers.get("location")).toBe(`${SITE}/contact?sas_error=phone`);
+    expect((await bad({ origin: "https://www.acme.com", referer: "https://www.acme.com/" })).headers.get("location")).toBe("https://www.acme.com/contact?sas_error=phone");
+    expect((await bad({ origin: "https://staging.acme.com", referer: "https://staging.acme.com/" })).headers.get("location")).toBe("https://staging.acme.com/?sas_error=phone");
+    expect((await bad({ referer: `${SITE}/offer?name=Dana` })).headers.get("location")).toBe(`${SITE}/offer?sas_error=phone`);
+    // Still never anywhere else.
+    expect((await bad({ origin: "https://evil.example", referer: "https://evil.example/" })).headers.get("location")).toBeNull();
+    expect((await bad({ referer: "https://evil.example/" })).headers.get("location")).toBeNull();
+  });
+
+  it("what each connection type stores as consent: ours (link, snippet) the exact line shown; the own form where the buyer ticked it", async () => {
+    const env = { APP_URL: APP };
+    const recOf = async (phone: string) => (await db.select().from(consentRecords).where(eq(consentRecords.leadId, (await leadOf(phone)).id)))[0];
+    const direct = (p: LeadPage, phone: string, headers: Record<string, string>, extra: Record<string, unknown> = {}) => submitLeadPage(db, {
+      key: p.publicKey, headers: new Headers(headers), ip: ip(), env,
+      body: { ft: formTimingToken(p.id, Date.now() - 5000), name: "Tal Amir", phone, consent: "on", ...extra },
+    });
+    const link = await make(acc, { name: "Link page", connection: "link", language: "en" });
+    const snippet = await make(acc, { name: "Snippet page", connection: "snippet", language: "en", address: `${SITE}/pricing` });
+    expect((await direct(link, "+972547200050", { origin: APP })).kind).toBe("handover");
+    const l = await recOf("+972547200050");
+    expect(l.wording).toContain("Polar Demo and its automated assistant");
+    expect(l).toMatchObject({ source: `Lead page "Link page" (localhost:3000/p/${link.publicKey})`, pageUrl: `${APP}/p/${link.publicKey}` });
+    // The snippet names its page; without that and with an origin-only Referer, the page's address.
+    expect((await direct(snippet, "+972547200051", { origin: SITE, referer: `${SITE}/` }, { page_url: `${SITE}/pricing/team?utm_source=x` })).kind).toBe("handover");
+    const s = await recOf("+972547200051");
+    expect(s).toMatchObject({ wording: l.wording, source: 'Lead page "Snippet page" (acme.com/pricing/team)', pageUrl: `${SITE}/pricing/team` });
+    expect((await direct(snippet, "+972547200052", { origin: SITE, referer: `${SITE}/` })).kind).toBe("handover");
+    expect(await recOf("+972547200052")).toMatchObject({ wording: l.wording, source: 'Lead page "Snippet page" (acme.com/pricing)', pageUrl: `${SITE}/pricing` });
+    // The own form (through the route, origin-only Referer).
+    expect((await send(own.publicKey, { name: "Tal Amir", phone: "+972547200053", consent: "yes" }, { referer: `${SITE}/` })).status).toBe(303);
+    expect(await recOf("+972547200053")).toMatchObject({
+      wording: "Seller's own form on acme.com/contact", source: 'Lead page "Contact form" (acme.com/contact)', pageUrl: `${SITE}/contact`,
+    });
   });
 
   it("rate limits: the sixth send from one IP in 10 minutes goes back with sas_error=busy", async () => {

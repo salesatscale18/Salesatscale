@@ -4421,7 +4421,7 @@
   "lead_pages.setup.pixel_off": "Not told",
   "lead_pages.funnel.empty": "No leads in this period yet.",
   "lead_pages.origins.invalid": "That address could not be added. Enter a web address, like staging.example.com.",
-  "lead_pages.check.own_form_lead": "A lead arrived from your form",
+  "lead_pages.check.own_form_lead": "A lead arrived from your form (a test lead counts)",
   "lead_pages.funnel.visits_own": "Visits and opens are not counted: the form is your own.",
   "lead_pages.sources.col.orders": "Orders",
   "lead_pages.form.address_own": "Address of the page with your form",

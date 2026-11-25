@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { OWN_FORM_ERRORS, OWN_FORM_FIELDS, ownFormConsentWording, ownFormErrorUrl, readSubmission, validateSubmission, OWN_FORM_ALL_FIELDS } from "@/lib/lead-pages/rules";
+import { sitePageUrl } from "@/lib/lead-pages/origin";
 import { AD_STORE_KEY, keepAd, parseKeptAd, type ConsentSignal } from "@/lib/lead-pages/snippet-core";
 import type { Funnel } from "@/lib/lead-pages/stats";
 import { countsOpens, countsVisits, funnelSteps, ownFormAction, ownFormExample, ownFormPreviewField } from "@/lib/lead-pages/view";
@@ -30,13 +31,39 @@ const plain = (v: unknown) => JSON.parse(JSON.stringify(v ?? null));
 describe("the seller's own form", () => {
   it("goes back only to the Referer page on the allowed origin, with ?sas_error= and without the page's query", () => {
     const A = "https://acme.com";
-    expect(ownFormErrorUrl("https://acme.com/contact?name=Dana&utm_source=x#top", A, "phone")).toBe("https://acme.com/contact?sas_error=phone");
-    expect(ownFormErrorUrl("https://acme.com", A, "busy")).toBe("https://acme.com/?sas_error=busy");
-    for (const ref of ["https://evil.example/contact", "https://acme.com.evil.example/x", "http://acme.com/contact", "https://acme.com:8443/x", "javascript:alert(1)", "data:text/html,x", "//evil.example", "https://u:p@acme.com/x", "not a url", "", null]) {
-      expect(ownFormErrorUrl(ref, A, "generic")).toBeNull();
+    const noAddress = { address: null };
+    expect(ownFormErrorUrl(noAddress, "https://acme.com/contact?name=Dana&utm_source=x#top", A, "phone")).toBe("https://acme.com/contact?sas_error=phone");
+    expect(ownFormErrorUrl(noAddress, "https://acme.com", A, "busy")).toBe("https://acme.com/?sas_error=busy");
+    for (const ref of ["https://evil.example/contact", "https://acme.com.evil.example/x", "http://acme.com/contact", "https://acme.com:8443/x", "javascript:alert(1)", "data:text/html,x", "//evil.example", "https://u:p@acme.com/x", "not a url"]) {
+      expect(ownFormErrorUrl(noAddress, ref, A, "generic")).toBeNull();
+      expect(ownFormErrorUrl({ address: "https://acme.com/contact" }, ref, A, "generic")).toBeNull();
     }
-    expect(ownFormErrorUrl("https://acme.com/contact", null, "generic")).toBeNull();
+    expect(ownFormErrorUrl(noAddress, "https://acme.com/contact", null, "generic")).toBeNull();
+    expect(ownFormErrorUrl(noAddress, "https://evil.example/x", "https://evil.example/x", "generic")).toBeNull();
     expect(OWN_FORM_ERRORS).toEqual(["name", "phone", "busy", "closed", "generic"]);
+  });
+
+  it("an origin-only Referer (a cross-site form post) goes back to the page's address on its host or www twin; an extra address keeps its origin", () => {
+    const page = { address: "https://acme.com/contact" };
+    // Origin-only Referer, or none (Origin header only): the address's path.
+    for (const ref of ["https://acme.com/", "https://acme.com", "", null]) {
+      expect(sitePageUrl(page, ref, "https://acme.com")).toBe("https://acme.com/contact");
+      expect(ownFormErrorUrl(page, ref, "https://acme.com", "phone")).toBe("https://acme.com/contact?sas_error=phone");
+    }
+    // The www twin: its own origin with the address's path.
+    expect(sitePageUrl(page, "https://www.acme.com/", "https://www.acme.com")).toBe("https://www.acme.com/contact");
+    expect(ownFormErrorUrl(page, "https://www.acme.com/", "https://www.acme.com", "name")).toBe("https://www.acme.com/contact?sas_error=name");
+    // A full Referer wins (query dropped).
+    expect(sitePageUrl(page, "https://acme.com/offer?utm_source=fb", "https://acme.com")).toBe("https://acme.com/offer");
+    // An "Other addresses" host: its origin only.
+    expect(sitePageUrl(page, "https://staging.acme.com/", "https://staging.acme.com")).toBe("https://staging.acme.com");
+    expect(ownFormErrorUrl(page, "https://staging.acme.com/", "https://staging.acme.com", "busy")).toBe("https://staging.acme.com/?sas_error=busy");
+    expect(sitePageUrl(page, "https://staging.acme.com/try?x=1", "https://staging.acme.com")).toBe("https://staging.acme.com/try");
+    // A Referer on another origin than the checked one: null (never a redirect there).
+    expect(sitePageUrl(page, "https://www.acme.com/contact", "https://acme.com")).toBeNull();
+    // An address at the site root.
+    expect(sitePageUrl({ address: "https://acme.com" }, "https://acme.com/", "https://acme.com")).toBe("https://acme.com");
+    expect(ownFormErrorUrl({ address: "https://acme.com" }, "https://acme.com/", "https://acme.com", "phone")).toBe("https://acme.com/?sas_error=phone");
   });
 
   it("keeps where the buyer ticked the box as the consent wording (we cannot see the seller's text)", () => {
