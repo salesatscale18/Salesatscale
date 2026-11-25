@@ -49,7 +49,7 @@ describe("lead pages view helpers", () => {
     const topics = [{ en: "Fridge monitoring", he: "ניטור מקררים" }, { en: "Cold rooms" }];
     const raw = rawFromForm(fd({ name: "Summer", connection: "link", language: "he", marketId: "", openingTopic: "0", field_company: "on", consentTicked: "on", carryAdDetails: "on" }), topics, page());
     expect(raw).toMatchObject({
-      name: "Summer", connection: "link", language: "he", fields: { company: true, email: false, sites: false }, consentTicked: true,
+      name: "Summer", connection: "link", language: "he", fields: { company: true, email: false }, consentTicked: true,
       openingTopic: topics[0], tracking: { tellPagePixel: false, carryAdDetails: true }, extraOrigins: ["staging.acme.com"],
     });
     const parsed = parseLeadPageInput(raw, { languages: ["en", "he"] });
@@ -74,7 +74,9 @@ describe("lead pages view helpers", () => {
   it("formats lines and numbers", () => {
     expect(marketLine({ marketId: "m1", language: "he" }, [{ id: "m1", name: "Israel" }])).toBe("Israel · HE");
     expect(marketLine({ marketId: null, language: "en" }, [])).toBe("Any market · EN");
-    expect(fieldsLine({ fields: { company: true, sites: true } })).toBe("Name, Phone, Company, Number of sites");
+    // A stored `sites` (pages saved before the field was removed) is ignored.
+    expect(fieldsLine({ fields: { company: true, sites: true } })).toBe("Name, Phone, Company");
+    expect(fieldsLine({ fields: { company: true, email: true } })).toBe("Name, Phone, Company, Email");
     expect(shortAddress("https://polardemo.co.il/restaurants/")).toBe("polardemo.co.il/restaurants");
     expect(shortAddress(null)).toBeNull();
     expect(sourceLabel("")).toBe("Direct or unknown");

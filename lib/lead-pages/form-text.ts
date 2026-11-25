@@ -17,7 +17,7 @@ export const SHOW_ABOUT_TOPIC = false;
 type Tr = ReturnType<typeof translator>;
 
 export type LeadFormText = {
-  title: string; name: string; phone: string; company: string; email: string; sites: string; send: string; sending: string;
+  title: string; name: string; phone: string; company: string; email: string; send: string; sending: string;
   errName: string; errPhone: string; errGeneric: string; errBusy: string; privacy: string; closed: string; continue: string;
 };
 
@@ -25,7 +25,7 @@ export type LeadFormText = {
 export function leadFormText(tr: Tr): LeadFormText {
   return {
     title: tr("buyer.lp.form.title"), name: tr("buyer.lp.form.name"), phone: tr("buyer.lp.form.phone"), company: tr("buyer.lp.form.company"),
-    email: tr("buyer.lp.form.email"), sites: tr("buyer.lp.form.sites"), send: tr("buyer.lp.form.send"), sending: tr("buyer.lp.form.sending"),
+    email: tr("buyer.lp.form.email"), send: tr("buyer.lp.form.send"), sending: tr("buyer.lp.form.sending"),
     errName: tr("buyer.lp.form.err_name"), errPhone: tr("buyer.lp.form.err_phone"), errGeneric: tr("buyer.lp.form.err_generic"),
     errBusy: tr("buyer.lp.form.err_busy"), privacy: tr("buyer.lp.form.privacy"), closed: tr("buyer.lp.form.closed"),
     // The snippet's fallback link when it cannot move the top page (a sandboxed builder frame): the hand-over leads to the chat.

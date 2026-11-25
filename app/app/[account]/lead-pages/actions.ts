@@ -16,7 +16,13 @@ import { fileStore } from "@/lib/sources/blob";
 // services, which look every page up inside the account. Every change is
 // audited by the service (lib/lead-pages/service.ts).
 
-export type LeadPageFormState = { errors: Record<string, string> } | null;
+/**
+ * What a refused save sends back: the field errors, the connection that was chosen and whether
+ * a banner file came with it (nothing is uploaded until the rest is valid). With JS the form stays
+ * mounted and keeps everything; after a fresh page (sent before the script ran) the form re-checks
+ * the connection and asks for the image again.
+ */
+export type LeadPageFormState = { errors: Record<string, string>; connection?: string; bannerSent?: boolean } | null;
 
 const str = (f: FormData, k: string) => {
   const v = f.get(k);
@@ -54,7 +60,14 @@ export async function saveLeadPageAction(_prev: LeadPageFormState, form: FormDat
   const topics = readOpener((await currentPlaybook(appDb, account.id))?.opener).topics;
   const raw = rawFromForm(form, topics, existing);
   const r = existing ? await updateLeadPage(appDb, actor, account, existing.id, raw) : await createLeadPage(appDb, actor, account, raw);
-  if (!r.ok) return { errors: Object.fromEntries(Object.entries(r.errors).filter((e): e is [string, string] => typeof e[1] === "string")) };
+  if (!r.ok) {
+    const file = form.get("banner");
+    return {
+      errors: Object.fromEntries(Object.entries(r.errors).filter((e): e is [string, string] => typeof e[1] === "string")),
+      connection: str(form, "connection") || undefined,
+      bannerSent: !!file && typeof file !== "string" && file.size > 0,
+    };
+  }
   const page = r.page;
   const at = `${base(account.slug)}/${page.id}`;
   revalidatePath(base(account.slug));

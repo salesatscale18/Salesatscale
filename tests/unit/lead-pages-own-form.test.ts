@@ -76,17 +76,20 @@ describe("the seller's own form", () => {
 
   it("reads the intake API's field aliases; consent only for true/on/yes/1; every optional field it sends", () => {
     const f = readSubmission({ full_name: "Avi Levi", tel: "0547200002", business: "Diner", email: "a@b.co", sites: "3", consent: "YES" });
-    expect(f).toMatchObject({ name: "Avi Levi", phone: "0547200002", company: "Diner", email: "a@b.co", sites: "3", consent: true, honeypot: false });
+    expect(f).toMatchObject({ name: "Avi Levi", phone: "0547200002", company: "Diner", email: "a@b.co", consent: true, honeypot: false });
+    // "Number of sites" is no longer a field: a posted `sites` is not read.
+    expect(f).not.toHaveProperty("sites");
+    expect(OWN_FORM_FIELDS.map((x) => x.name)).toEqual(["name", "phone", "company", "email", "consent"]);
     expect(readSubmission({ name: "A", mobile: "1" }).phone).toBe("1");
     for (const v of ["true", "on", "1", "yes", "On"]) expect(readSubmission({ consent: v }).consent).toBe(true);
     for (const v of ["", "no", "false", "0", "off", "y"]) expect(readSubmission({ consent: v }).consent).toBe(false);
     expect(readSubmission({ sas_url: "http://spam" }).honeypot).toBe(true);
     const v = validateSubmission(f, "IL", OWN_FORM_ALL_FIELDS);
-    expect(v).toMatchObject({ ok: true, value: { company: "Diner", email: "a@b.co", sites: 3 } });
+    expect(v).toEqual({ ok: true, value: { fullName: "Avi Levi", phone: "+972547200002", company: "Diner", email: "a@b.co" } });
     // The documented names are the ones read.
     for (const field of OWN_FORM_FIELDS) {
       for (const name of [field.name, ...field.aliases]) {
-        const got = readSubmission({ [name]: field.name === "consent" ? "on" : field.name === "sites" ? "2" : "Value One" });
+        const got = readSubmission({ [name]: field.name === "consent" ? "on" : "Value One" });
         const key = field.name === "name" ? "name" : field.name;
         expect(got[key as keyof typeof got]).toBeTruthy();
       }

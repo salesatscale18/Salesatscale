@@ -186,14 +186,14 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
     q.insert(leadPageSubmissions).values({
       id: submissionId, accountId: account.id, pageId: page.id, leadId, via, leadCreated: created, consent, preview, language: lang,
       // The first name this buyer typed: the hand-over greets with it, never with the stored lead's name.
-      answers: { firstName: firstNameOf(v.fullName), ...(v.sites ? { sites: v.sites } : {}) },
+      answers: { firstName: firstNameOf(v.fullName) },
       ad, sourceKey, createdAt: now,
     }),
     q.update(leads).set({ leadPageId: page.id }).where(and(eq(leads.id, leadId), eq(leads.accountId, account.id), isNull(leads.leadPageId))),
     q.insert(leadEvents).values({
       accountId: account.id, leadId, type: LEAD_PAGE_EVENTS.submitted, actor: "buyer",
       // No createdAt: the database's clock, after upsertLead's lead.created, so lib/chat/start.ts leadInterest reads this topic.
-      data: { pageId: page.id, submissionId, page: page.name, topic, created, consent, ...(preview ? { preview: true } : {}), ...(v.sites ? { sites: v.sites } : {}), ...(sourceKey ? { source: sourceKey } : {}) },
+      data: { pageId: page.id, submissionId, page: page.name, topic, created, consent, ...(preview ? { preview: true } : {}), ...(sourceKey ? { source: sourceKey } : {}) },
     }),
     ...(consentNotRestored ? [q.insert(leadEvents).values({
       accountId: account.id, leadId, type: LEAD_PAGE_EVENTS.consentNotRestored, actor: "system", data: { pageId: page.id, submissionId },

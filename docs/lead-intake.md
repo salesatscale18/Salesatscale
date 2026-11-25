@@ -61,12 +61,12 @@ With optional fields:
   "full_name": "Rina Cohen",
   "phone": "+972545551842",
   "language": "he",
-  "business": "Rina's Kitchen",
+  "business": "Rina's Studio",
   "source_id": "form-88213",
   "consent": {
     "given": true,
     "source": "yoursite.example/contact",
-    "text": "I agree to be contacted on WhatsApp about temperature monitoring",
+    "text": "I agree to be contacted on WhatsApp about your offer",
     "at": "2026-11-09T09:12:00Z"
   }
 }

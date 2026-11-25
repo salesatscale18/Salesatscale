@@ -129,7 +129,7 @@ export default async function LeadCardPage({
   // O35: why the lead needs a person, shown in the stage banner while a person handles it: the one line
   // (as in Needs you and the Conversations row) and the whole stored reason, shown only when the line is cut.
   const handoffWhyLine = stage?.human ? (await handoffReasonsByLead(appDb, account.id, [leadId])).get(leadId) ?? null : null;
-  // A lead that came through a lead page: "Lead page · {name}", linking to the page, with the latest submission's source and sites.
+  // A lead that came through a lead page: "Lead page · {name}", linking to the page, with the latest submission's source.
   const pageSource = await leadPageSourceOf(appDb, account.id, lead);
   const source = pageSource ? t("lead.card.lead_page", { name: pageSource.name }) : lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
   // Quote dates in the quote's market time zone, as the buyer's card shows them.
@@ -275,7 +275,6 @@ export default async function LeadCardPage({
                   <span data-lead-page-source={pageSource.pageId}>
                     {before}<a href={`/app/${account.slug}/lead-pages/${pageSource.pageId}`}>{isolate(source)}</a>{after}
                     {pageSource.sourceKey ? <> · <bdi>{pageSourceLabel(pageSource.sourceKey)}</bdi></> : null}
-                    {pageSource.sites ? <> · {pageSource.sites === 1 ? t("lead.card.lead_page_site_one") : t("lead.card.lead_page_sites", { count: pageSource.sites })}</> : null}
                   </span>
                 );
               })()}

@@ -101,7 +101,7 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
 
   it("creates a draft page (audited) and lists it for its own account only", async () => {
     const r = await createLeadPage(db, actor(), await account(), {
-      name: "Spring offer", connection: "link", language: "en", fields: { company: "on", sites: "on" },
+      name: "Spring offer", connection: "link", language: "en", fields: { company: "on" },
       openingTopic: { en: "Fridge monitoring", he: "ניטור מקררים" },
     });
     if (!r.ok) throw new Error(JSON.stringify(r.errors));
@@ -109,9 +109,10 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect(page).toMatchObject({ status: "draft", connection: "link", address: null, language: "en" });
     expect(page.publicKey).toMatch(/^[0-9A-Za-z]{12}$/);
     expect((await audits("lead_page.created")).map((a) => a.targetId)).toContain(page.id);
-    // The hosted page comes later; the own form (slice c) needs its page's address.
+    // The hosted page comes later. The address: required for the snippet only (optional for the own form and a button or link).
     expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "hosted", language: "en", address: "acme.com" })).toMatchObject({ ok: false, errors: { connection: expect.any(String) } });
-    expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "own_form", language: "en" })).toMatchObject({ ok: false, errors: { address: expect.any(String) } });
+    expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "snippet", language: "en" })).toMatchObject({ ok: false, errors: { address: "Enter the address of the page the form is on." } });
+    expect(await createLeadPage(db, actor(), await account(other), { name: "x", connection: "own_form", language: "en" })).toMatchObject({ ok: true, page: { connection: "own_form", address: null } });
     // A market of another account is refused.
     const [otherMarket] = await db.insert(markets).values({ id: crypto.randomUUID(), accountId: other, name: "UK", countries: ["GB"] }).returning();
     expect(await createLeadPage(db, actor(), await account(), { name: "x", connection: "link", language: "en", marketId: otherMarket.id })).toMatchObject({ ok: false, errors: { marketId: expect.any(String) } });
@@ -151,7 +152,8 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect(r.newLeadId).not.toBeNull();
     const sub = await subOf(r.submissionId);
     expect(sub).toMatchObject({ accountId: acc, pageId: page.id, via: "link", leadCreated: true, consent: true, preview: false, language: "en", sourceKey: "facebook / spring" });
-    expect(sub.answers).toEqual({ firstName: "Rina", sites: 4 });
+    // A posted `sites` (an older form) is ignored: no longer a field.
+    expect(sub.answers).toEqual({ firstName: "Rina" });
     const [lead] = await db.select().from(leads).where(eq(leads.id, sub.leadId));
     expect(lead).toMatchObject({ accountId: acc, phone, fullName: "Rina Mizrahi", company: "Cafe Rina", origin: "webhook", sourceLabel: "Spring offer", leadPageId: page.id, language: "en" });
     const [consent] = await db.select().from(consentRecords).where(eq(consentRecords.leadId, lead.id));
@@ -347,7 +349,7 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
   });
 
   it("edits audit the changed fields; origins are their own entry", async () => {
-    const r = await updateLeadPage(db, actor(), await account(), page.id, { name: "Spring offer 2", connection: "link", language: "en", fields: { company: "on", sites: "on" }, openingTopic: page.openingTopic });
+    const r = await updateLeadPage(db, actor(), await account(), page.id, { name: "Spring offer 2", connection: "link", language: "en", fields: { company: "on" }, openingTopic: page.openingTopic });
     expect(r).toMatchObject({ ok: true, page: { name: "Spring offer 2" } });
     expect((await audits("lead_page.updated")).at(-1)?.details).toEqual({ fields: ["name"] });
     expect(await addLeadPageOrigin(db, actor(), await account(), page.id, "staging.acme.com")).toMatchObject({ ok: true, page: { extraOrigins: ["staging.acme.com"] } });

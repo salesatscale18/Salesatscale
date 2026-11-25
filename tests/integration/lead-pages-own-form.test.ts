@@ -17,7 +17,8 @@ import { parseCreateAccount } from "@/lib/accounts/rules";
 import { createAccount } from "@/lib/accounts/service";
 import { ensureDraftVersion, publishDraftVersion } from "@/lib/agent/service";
 import { loadHandover } from "@/lib/lead-pages/handover";
-import { createLeadPage, getLeadPage, goLiveLeadPage, leadPageReadiness, pauseLeadPage } from "@/lib/lead-pages/service";
+import { addLeadPageOrigin, createLeadPage, getLeadPage, goLiveLeadPage, leadPageReadiness, pauseLeadPage } from "@/lib/lead-pages/service";
+import { seenOriginSuggestion } from "@/lib/lead-pages/view";
 import { bySource, rangeOfDays, SOURCE_TOP } from "@/lib/lead-pages/stats";
 import { submitLeadPage } from "@/lib/lead-pages/intake";
 import { OWN_FORM_ERRORS } from "@/lib/lead-pages/rules";
@@ -121,11 +122,12 @@ describe("lead pages (c): the seller's own form", () => {
     expect((await leadPageReadiness(db, await account(), await fresh(own))).find((c) => c.key === "own_form_lead")?.done).toBe(true);
   });
 
-  it("field aliases like the intake API: full_name, tel, mobile, business, email, sites, consent=on", async () => {
+  it("field aliases like the intake API: full_name, tel, mobile, business, email, consent=on (a posted `sites` is ignored)", async () => {
     expect((await send(own.publicKey, { full_name: "Avi Levi", tel: "0547200002", business: "Avi's Diner", email: "Avi@Diner.example", sites: "3", consent: "on" })).status).toBe(303);
     const a = await leadOf("+972547200002");
     expect(a).toMatchObject({ fullName: "Avi Levi", company: "Avi's Diner", email: "avi@diner.example" });
-    expect((await subsOf(a.id))[0]).toMatchObject({ consent: true, answers: { firstName: "Avi", sites: 3 } });
+    expect((await subsOf(a.id))[0]).toMatchObject({ consent: true, answers: { firstName: "Avi" } });
+    expect((await subsOf(a.id))[0].answers).not.toHaveProperty("sites");
     expect((await send(own.publicKey, { name: "Dana Cohen", mobile: "+972547200003", consent: "1" })).status).toBe(303);
     expect((await subsOf((await leadOf("+972547200003")).id))[0].consent).toBe(true);
   });
@@ -164,6 +166,25 @@ describe("lead pages (c): the seller's own form", () => {
     // The Referer host alone is used when there is no Origin (an allowed extra address works).
     expect((await send(own.publicKey, { name: "Gal Shani", phone: "+972547200011" }, { origin: null, referer: "https://staging.acme.com/try" })).status).toBe(303);
     expect((await subsOf((await leadOf("+972547200011")).id))[0].via).toBe("own_form");
+  });
+
+  it("no page address (optional for the own form): the first send is refused and shown as 'Seen on …, add it?'; once added, sends are accepted", async () => {
+    const bare = await make(acc, { name: "No address form", connection: "own_form", language: "en" });
+    expect(bare).toMatchObject({ address: null, extraOrigins: [] });
+    const before = (await db.select().from(leadPageSubmissions)).length;
+    const r = await send(bare.publicKey, { name: "Noa Peretz", phone: "+972547200029", consent: "yes" }, { origin: "https://shop.example", referer: "https://shop.example/contact" });
+    expect(r.status).toBe(403);
+    expect(r.headers.get("location")).toBeNull();
+    expect((await db.select().from(leadPageSubmissions)).length).toBe(before);
+    expect(await leadOf("+972547200029")).toBeUndefined();
+    const seen = await fresh(bare);
+    expect(seen.checks).toMatchObject({ refusedOrigin: "https://shop.example" });
+    expect(seenOriginSuggestion(seen)).toBe("shop.example");
+    // "Add it?": the host becomes an allowed address, and the next send is accepted.
+    expect(await addLeadPageOrigin(db, actor(), await account(), bare.id, "shop.example")).toMatchObject({ ok: true, page: { extraOrigins: ["shop.example"], address: null } });
+    expect((await send(bare.publicKey, { name: "Noa Peretz", phone: "+972547200029", consent: "yes" }, { origin: "https://shop.example", referer: "https://shop.example/contact" })).status).toBe(303);
+    expect((await subsOf((await leadOf("+972547200029")).id))[0]).toMatchObject({ via: "own_form", consent: true });
+    expect(seenOriginSuggestion(await fresh(bare))).toBeNull();
   });
 
   it("no Origin and no Referer (curl, a server): refused, no redirect, nothing written", async () => {

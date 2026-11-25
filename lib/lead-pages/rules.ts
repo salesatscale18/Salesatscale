@@ -12,6 +12,7 @@ import type { LeadPageAd, LeadPageBanner, LeadPageForm, LeadPageTopic, LeadPageT
 import { DEMO_PHONE_RANGE } from "@/lib/demo/phones";
 import { CALLING_CODE, normalizePhone } from "@/lib/leads/rules";
 import { E164 } from "@/lib/sms/rules";
+import { BANNER_MAX_BYTES } from "./banner-file";
 import { normalizeAddress, normalizeOriginHost, originOf, sitePageUrl } from "./origin";
 
 export const LEAD_PAGE_CONNECTIONS = ["snippet", "own_form", "link", "hosted"] as const;
@@ -31,7 +32,6 @@ export const NAME_MIN = 2;
 export const NAME_MAX = 120;
 export const COMPANY_MAX = 120;
 export const EMAIL_MAX = 200;
-export const SITES_MAX = 10_000;
 /** A submission body is at most this many bytes. */
 export const SUBMIT_BODY_MAX = 8 * 1024;
 export const AD_VALUE_MAX = 200;
@@ -61,9 +61,13 @@ export function consentTickedOf(form: LeadPageForm | null | undefined, countries
   return typeof form?.consentTicked === "boolean" ? form.consentTicked : defaultConsentTicked(countries);
 }
 
-export type FormFields = { company: boolean; email: boolean; sites: boolean };
+/**
+ * The optional fields a page may ask for: Company and Email only. A stored
+ * `form.fields.sites` (pages saved before the field was removed) is ignored.
+ */
+export type FormFields = { company: boolean; email: boolean };
 export const formFieldsOf = (form: LeadPageForm | null | undefined): FormFields => ({
-  company: !!form?.fields?.company, email: !!form?.fields?.email, sites: !!form?.fields?.sites,
+  company: !!form?.fields?.company, email: !!form?.fields?.email,
 });
 
 export type LeadPageInput = {
@@ -80,7 +84,7 @@ export type LeadPageInput = {
 
 export type LeadPageRaw = {
   name?: unknown; address?: unknown; connection?: unknown; language?: unknown; marketId?: unknown;
-  fields?: { company?: unknown; email?: unknown; sites?: unknown } | null;
+  fields?: { company?: unknown; email?: unknown } | null;
   /** true / false, or null/undefined for the market's default. */
   consentTicked?: unknown;
   openingTopic?: { en?: unknown; he?: unknown } | null;
@@ -89,6 +93,14 @@ export type LeadPageRaw = {
 };
 
 export type LeadPageErrors = Partial<Record<"name" | "address" | "connection" | "language" | "marketId" | "openingTopic" | "extraOrigins", string>>;
+
+/**
+ * Whether a connection needs the page address. "Our form on your page": yes, it is
+ * the allowed origin our form runs on. "Your own form": optional but recommended
+ * (without it, and with no other addresses, its sends are refused and the first one
+ * is shown as "Seen on …, add it?"). "Button or link": optional.
+ */
+export const addressRequired = (connection: LeadPageConnection) => connection === "snippet";
 
 const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
 const bool = (v: unknown) => v === true || v === "true" || v === "on" || v === "1";
@@ -107,7 +119,7 @@ export function parseLeadPageInput(raw: LeadPageRaw, opts: { languages: readonly
   const addressRaw = str(raw.address);
   const address = addressRaw ? normalizeAddress(addressRaw) : null;
   if (addressRaw && !address) errors.address = "Enter the page address, like https://example.com/offer.";
-  else if (!address && (connection === "snippet" || connection === "own_form")) errors.address = "Enter the address of the page the form is on.";
+  else if (!address && addressRequired(connection)) errors.address = "Enter the address of the page the form is on.";
 
   const language = str(raw.language);
   if (language !== "en" && language !== "he") errors.language = "Choose English or Hebrew.";
@@ -141,7 +153,7 @@ export function parseLeadPageInput(raw: LeadPageRaw, opts: { languages: readonly
     value: {
       name, address, connection, language: language as "en" | "he", marketId,
       form: {
-        fields: { company: bool(raw.fields?.company), email: bool(raw.fields?.email), sites: bool(raw.fields?.sites) },
+        fields: { company: bool(raw.fields?.company), email: bool(raw.fields?.email) },
         ...(consentTicked === undefined ? {} : { consentTicked }),
       },
       openingTopic,
@@ -173,7 +185,7 @@ export const CLICK_ID_KEYS = ["gclid", "gbraid", "wbraid", "fbclid", "msclkid", 
 
 /** One submission as posted (JSON or a urlencoded form), before validation. */
 export type SubmissionFields = {
-  name: string; phone: string; company: string; email: string; sites: string;
+  name: string; phone: string; company: string; email: string;
   /** The consent box was ticked. */
   consent: boolean;
   /** The honeypot was filled in (a bot). */
@@ -205,7 +217,6 @@ export function readSubmission(body: Record<string, unknown>): SubmissionFields 
     phone: pick("phone", "tel", "mobile"),
     company: pick("company", "business"),
     email: pick("email"),
-    sites: pick("sites"),
     consent: /^(1|true|yes|on)$/i.test(pick("consent").trim()),
     honeypot: !!pick(HONEYPOT_FIELD).trim(),
     ft: pick("ft").trim(),
@@ -216,7 +227,7 @@ export function readSubmission(body: Record<string, unknown>): SubmissionFields 
 }
 
 export type SubmissionError = "name" | "phone";
-export type ValidSubmission = { fullName: string; phone: string; company: string | null; email: string | null; sites: number | null };
+export type ValidSubmission = { fullName: string; phone: string; company: string | null; email: string | null };
 
 const URLISH = /(https?:\/\/|www\.|\.[a-z]{2,}\/)/i;
 // Control and invisible formatting characters (bidi overrides, zero-width) never belong in a name.
@@ -226,8 +237,8 @@ const clean = (s: string) => s.replace(CONTROL, " ").replace(/\s+/g, " ").trim()
 
 /**
  * Validates the buyer's fields. Name and phone are required; the optional
- * fields never block a buyer: a too-long company is cut, an invalid email or
- * number of sites is left out. `country`: the page market's (or the account's)
+ * fields never block a buyer: a too-long company is cut, an invalid email is
+ * left out (a posted `sites`, from an older form, is ignored). `country`: the page market's (or the account's)
  * country for national phone numbers. The demo seed's fictional range is refused.
  */
 export function validateSubmission(f: SubmissionFields, country: string, fields: FormFields): { ok: true; value: ValidSubmission } | { ok: false; errors: SubmissionError[] } {
@@ -240,9 +251,7 @@ export function validateSubmission(f: SubmissionFields, country: string, fields:
   const company = fields.company ? clean(f.company).slice(0, COMPANY_MAX) || null : null;
   const emailRaw = fields.email ? f.email.trim().toLowerCase() : "";
   const email = emailRaw && emailRaw.length <= EMAIL_MAX && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(emailRaw) ? emailRaw : null;
-  const sitesN = fields.sites && /^\d{1,5}$/.test(f.sites.trim()) ? Number(f.sites.trim()) : NaN;
-  const sites = Number.isInteger(sitesN) && sitesN >= 1 && sitesN <= SITES_MAX ? sitesN : null;
-  return { ok: true, value: { fullName, phone: phone!, company, email, sites } };
+  return { ok: true, value: { fullName, phone: phone!, company, email } };
 }
 
 /** The first name for "Thanks, {name}": the first word of what this buyer typed, at most 40 characters. */
@@ -315,12 +324,11 @@ export const OWN_FORM_FIELDS = [
   { name: "phone", aliases: ["tel", "mobile"], required: true },
   { name: "company", aliases: ["business"], required: false },
   { name: "email", aliases: [], required: false },
-  { name: "sites", aliases: [], required: false },
   { name: "consent", aliases: [], required: false },
 ] as const;
 
 /** Every optional field is read from the seller's own form (its form decides what the buyer fills in). */
-export const OWN_FORM_ALL_FIELDS: FormFields = { company: true, email: true, sites: true };
+export const OWN_FORM_ALL_FIELDS: FormFields = { company: true, email: true };
 
 /**
  * The consent wording kept for a lead from the seller's own form. We cannot see
@@ -395,7 +403,7 @@ export const phoneInSellingMarkets = (phone: string, prefixes: readonly string[]
 
 /**
  * A name that follows a one-letter Hebrew prefix in a buyer line ("מחברים אותך ל{agent}").
- * A name with no Hebrew letters gets a hyphen after the prefix ("ל-Polar Demo assistant"),
+ * A name with no Hebrew letters gets a hyphen after the prefix ("ל-Acme assistant"),
  * as Hebrew writes a prefix on a foreign word; joined without it the prefix letter
  * touches the Latin name and reads as part of it. `shown`: the name as it goes in the
  * line (isolated); `name`: the plain name. Other languages: unchanged.
@@ -411,7 +419,7 @@ export const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).ma
 // Banner
 // ---------------------------------------------------------------------------
 
-export const BANNER_MAX_BYTES = 2 * 1024 * 1024;
+export { BANNER_MAX_BYTES } from "./banner-file";
 export const BANNER_MAX_SIDE = 10_000;
 export type BannerType = "image/jpeg" | "image/png" | "image/webp";
 export const BANNER_EXT: Record<BannerType, string> = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp" };

@@ -91,6 +91,8 @@ export default async function LeadPageView({ params, searchParams }: { params: P
     <div className="lpg-preview" data-origins="">
       <strong className="lpg-preview__h">{t("lead_pages.origins.title")}</strong>
       <span className="sas-small">{t("lead_pages.origins.hint")}</span>
+      {/* Your own form without a page address: nothing is allowed until an address is added (or a "Seen on …" one). */}
+      {own && !page.address ? <span className="sas-small" data-own-no-address="">{t("lead_pages.own.no_address")}</span> : null}
       {seen ? (
         <div className="lpg-seen" data-seen-origin={seen}>
           <span><bdi dir="ltr">{t("lead_pages.origins.seen", { host: seen })}</bdi></span>

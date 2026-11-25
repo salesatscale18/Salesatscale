@@ -102,7 +102,7 @@ describe("lead pages (b): the snippet's endpoints", () => {
       v: 1, lang: "en", dir: "ltr", preview: false,
       text: { title: "Leave your details", name: "Full name", phone: "Mobile number", send: "Send", continue: "Continue to the chat" },
       about: SHOW_ABOUT_TOPIC ? "About: Fridge monitoring" : null,
-      fields: { company: true, email: false, sites: false },
+      fields: { company: true, email: false },
       privacyUrl: `${APP}/p/${snippet.publicKey}/privacy`,
       tracking: { tellPagePixel: true, carryAdDetails: true },
       brand: { "--brand": expect.stringMatching(/^#/) },

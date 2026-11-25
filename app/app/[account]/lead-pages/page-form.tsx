@@ -6,12 +6,12 @@ import { t } from "@/lib/i18n";
 import { bannerUrlPath, trackingOf } from "@/lib/lead-pages/rules";
 import { CONNECTION_CARDS, ownFormAction, seenOriginSuggestion, snippetCode, topicChoice } from "@/lib/lead-pages/view";
 import { saveLeadPageAction } from "./actions";
+import { BannerField } from "./banner-field";
 import { FieldError, LeadPageFormShell } from "./form-shell";
 
 const FIELDS = [
   { key: "company", label: "lead_pages.form.field.company" },
   { key: "email", label: "lead_pages.form.field.email" },
-  { key: "sites", label: "lead_pages.form.field.sites" },
 ] as const;
 
 /**
@@ -90,7 +90,9 @@ export function LeadPageFormView({
                 <span className="sas-small">{t("lead_pages.form.name_hint")}</span>
                 <FieldError name="name" />
               </label>
-              <label className="lpg-field">
+              {/* The address: required for "Our form on your page" (it is the allowed origin), recommended for
+                  "Your own form", optional for "Button or link" (then shown last in this block). */}
+              <label className="lpg-field lpg-field--address" data-address-field="">
                 <span className="lpg-field__label" data-for="link">{t("lead_pages.form.address")}</span>
                 <span className="lpg-field__label" data-for="snippet">{t("lead_pages.form.address_snippet")}</span>
                 <span className="lpg-field__label" data-for="own_form">{t("lead_pages.form.address_own")}</span>
@@ -144,29 +146,18 @@ export function LeadPageFormView({
 
           <div className="lpg-sec">
             <h2 className="lpg-sec__h">{t("lead_pages.form.handover")}</h2>
-            <div className="lpg-banner">
-              <div className="lpg-banner__thumb" data-banner={banner ? "image" : "none"}>
-                {banner && page ? (
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img src={bannerUrlPath(page.publicKey, banner)} alt="" width={banner.width} height={banner.height} />
-                ) : <span className="lpg-banner__initials" aria-hidden="true"><Icon name="panel-top" /></span>}
-              </div>
-              <div className="lpg-banner__text">
-                <strong>{t("lead_pages.form.banner")}</strong>
-                <span className="sas-small">{t("lead_pages.form.banner_hint")}</span>
-                {bannerUploads ? (
-                  <span className="lpg-banner__actions">
-                    <label className={`${buttonClass("secondary", "sm")} lpg-file`}>
-                      <Icon name="upload" />
-                      {banner ? t("lead_pages.form.banner_replace") : t("lead_pages.form.banner_choose")}
-                      <input type="file" name="banner" accept="image/jpeg,image/png,image/webp" />
-                    </label>
-                    {banner ? <button type="submit" name="intent" value="remove_banner" className={buttonClass("ghost", "sm")} formNoValidate>{t("lead_pages.form.banner_remove")}</button> : null}
-                  </span>
-                ) : <span className="sas-small" data-banner-off="">{t("lead_pages.form.banner_off")}</span>}
-                {!banner ? <span className="sas-small">{t("lead_pages.form.banner_none")}</span> : null}
-              </div>
-            </div>
+            <BannerField
+              saved={banner && page ? { src: bannerUrlPath(page.publicKey, banner), width: banner.width, height: banner.height } : null}
+              uploads={bannerUploads}
+              removeButton={<button type="submit" name="intent" value="remove_banner" className={buttonClass("ghost", "sm")} formNoValidate>{t("lead_pages.form.banner_remove")}</button>}
+              icons={{ placeholder: <Icon name="panel-top" />, upload: <Icon name="upload" /> }}
+              text={{
+                title: t("lead_pages.form.banner"), hint: t("lead_pages.form.banner_hint"), none: t("lead_pages.form.banner_none"),
+                choose: t("lead_pages.form.banner_choose"), replace: t("lead_pages.form.banner_replace"), remove: t("lead_pages.form.banner_remove"),
+                off: t("lead_pages.form.banner_off"), selected: t("lead_pages.form.banner_selected"), wrongType: t("lead_pages.form.banner_wrong_type"),
+                tooBig: t("lead_pages.form.banner_too_big"), again: t("lead_pages.form.banner_again"), clear: t("lead_pages.form.banner_clear"),
+              }}
+            />
           </div>
 
           <div className="lpg-sec">
