@@ -46,7 +46,8 @@ export async function saveItemAction(_prev: ItemFormState, form: FormData): Prom
   const suggestionId = String(form.get("suggestionId") ?? "");
   if (suggestionId && isUuid(suggestionId)) await acceptCatalogSuggestionFromItem(appDb, actorOf(a), a.account.id, suggestionId, r.item.sku);
   revalidatePath(path(a.account.slug));
-  redirect(`${path(a.account.slug)}?item=${r.item.id}&saved=1`);
+  // Saved: the panel closes and the list says so, with the row marked (?saved=<item id>).
+  redirect(`${path(a.account.slug)}?saved=${r.item.id}`);
 }
 
 export async function removeItemAction(form: FormData) {

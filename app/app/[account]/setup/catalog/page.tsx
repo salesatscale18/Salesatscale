@@ -206,6 +206,8 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
   const selectedId = firstParam(sp, "item") ?? "";
   const selected = state.items.find((i) => i.id === selectedId);
   const sheetOpen = !!selected || selectedId === "new";
+  // Just saved (the panel closed): the list names the item and marks its row.
+  const savedItem = state.items.find((i) => i.id === firstParam(sp, "saved"));
   const tabParam = firstParam(sp, "tab");
   const tab: ItemTab = (ITEM_TABS as readonly string[]).includes(tabParam ?? "") ? (tabParam as ItemTab) : "details";
   const panel = firstParam(sp, "panel");
@@ -261,7 +263,9 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.published", { version: firstParam(sp, "published") ?? "" })}</span></div> : null}
       {firstParam(sp, "publish") === "no_active_items" ? <div className="sas-alert sas-alert--danger" role="alert"><Icon name="alert-triangle" /><span>{t("catalog.publish_empty")}</span></div> : null}
-      {sp.saved && !sheetOpen ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.edit.saved")}</span></div> : null}
+      {savedItem ? (
+        <div className="sas-alert sas-alert--success" role="status" data-item-saved={savedItem.id}><Icon name="check-circle" /><span>{t("catalog.edit.saved_named", { name: savedItem.name })}</span></div>
+      ) : sp.saved && !sheetOpen ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("catalog.edit.saved")}</span></div> : null}
 
       {state.items.length === 0 ? (
         <section className="sas-panel sas-empty">
@@ -346,7 +350,7 @@ export default async function CatalogPage({ params, searchParams }: { params: Pr
               {rows.flatMap((r) => {
                 const i = r.item;
                 const row = (
-                  <tr key={i.id} data-current={i.id === selectedId ? "" : undefined}>
+                  <tr key={i.id} data-current={i.id === selectedId || i.id === savedItem?.id ? "" : undefined}>
                     <td>
                       <a className="sas-row-link" href={open(i.id)} aria-current={i.id === selectedId ? "true" : undefined}><strong>{i.name}</strong></a>
                       {/* Kind and unit fold into a second line, so the table fits at 1440 without scrolling sideways. */}

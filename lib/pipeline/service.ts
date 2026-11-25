@@ -20,7 +20,7 @@
  * ScriptedPipelineLlm; nothing here calls the real API by itself.
  */
 import { randomUUID } from "node:crypto";
-import { and, asc, desc, eq, inArray, isNotNull, like, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, isNotNull, like, lt, sql } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
 import {
@@ -400,6 +400,14 @@ export async function activeRun(db: Db, accountId: string, now = new Date()) {
   return r ?? null;
 }
 
+/** The running analysis, if any, without failing stale runs (read only: for the on-screen notice). */
+export async function runningRun(db: Db, accountId: string, now = new Date()) {
+  const [r] = await db.select().from(pipelineRuns)
+    .where(and(eq(pipelineRuns.accountId, accountId), inArray(pipelineRuns.status, ["queued", "running"]), gte(pipelineRuns.createdAt, new Date(now.getTime() - STALE_RUN_MS))))
+    .orderBy(asc(pipelineRuns.createdAt)).limit(1);
+  return r ?? null;
+}
+
 export async function listRuns(db: Db, accountId: string, limit = 6) {
   return db.select().from(pipelineRuns).where(eq(pipelineRuns.accountId, accountId)).orderBy(desc(pipelineRuns.createdAt), desc(pipelineRuns.id)).limit(limit);
 }
@@ -425,7 +433,20 @@ export async function startAnalysis(db: Db, accountId: string, plan: AnalysisPla
     // The stage 2 hash is known only after stage 1; set when the stage runs.
     ...(playbookRunId ? [{ id: playbookRunId, accountId, kind: "playbook" as const, status: "queued" as const, model: plan.model, sourceIds, inputHash: plan.facts.reuse ? plan.playbook.hash : null }] : []),
   ];
-  if (rows.length) await db.insert(pipelineRuns).values(rows);
+  if (rows.length) {
+    await db.insert(pipelineRuns).values(rows);
+    // Two clicks at once can both pass the check above. Each start looks again: the earliest
+    // active run wins, a later one removes its own rows and is refused, so one analysis runs.
+    const mine = new Set<string>(rows.map((r) => r.id));
+    const active = await db.select({ id: pipelineRuns.id, createdAt: pipelineRuns.createdAt }).from(pipelineRuns)
+      .where(and(eq(pipelineRuns.accountId, accountId), inArray(pipelineRuns.status, ["queued", "running"])))
+      .orderBy(asc(pipelineRuns.createdAt), asc(pipelineRuns.id));
+    const first = active[0];
+    if (first && !mine.has(first.id)) {
+      await db.delete(pipelineRuns).where(and(eq(pipelineRuns.accountId, accountId), inArray(pipelineRuns.id, [...mine])));
+      throw new PipelineRefused("busy", "An analysis is already running.");
+    }
+  }
   return { factsRunId, playbookRunId };
 }
 

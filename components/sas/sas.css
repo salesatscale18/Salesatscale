@@ -2117,3 +2117,21 @@ label.st-voice__row { cursor: pointer; }
 /* Setup › Company: each market's lead time under the default. */
 .co-market-lead { display: flex; justify-content: space-between; gap: var(--space-3); padding-block: 6px; border-block-start: 1px solid var(--line); }
 .co-market-lead:first-child { border-block-start: 0; }
+
+/* On-screen notice (source analysis): bottom corner of every account page. */
+.sas-toast { position: fixed; inset-block-end: 20px; inset-inline-end: 20px; z-index: 60; display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100vw - 32px)); padding: 12px 14px; border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--ink); border: 1px solid var(--line); border-inline-start: 4px solid var(--agent); box-shadow: var(--shadow-pop); font-size: 14px; line-height: 20px; }
+.sas-toast--done { border-inline-start-color: var(--success); }
+.sas-toast--done > .sas-ico { color: var(--success); }
+.sas-toast--failed { border-inline-start-color: var(--danger); }
+.sas-toast--failed > .sas-ico { color: var(--danger); }
+.sas-toast > .sas-ico { flex: none; width: 20px; height: 20px; }
+.sas-toast__text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sas-toast__text span { color: var(--ink-muted); font-size: 13px; line-height: 18px; }
+.sas-app a.sas-toast__link { flex: none; font-weight: 600; color: var(--primary); text-decoration: none; }
+.sas-app a.sas-toast__link:hover { text-decoration: underline; }
+.sas-toast__close { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-md); background: none; color: var(--ink-muted); cursor: pointer; }
+.sas-toast__close:hover { background: var(--surface-sunken); }
+.sas-toast__spin { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--agent-soft); border-block-start-color: var(--agent); animation: sas-spin 0.9s linear infinite; }
+@keyframes sas-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sas-toast__spin { animation-duration: 3s; } }
+@media (max-width: 767px) { .sas-toast { inset-inline: 16px; inset-block-end: 16px; max-width: none; } }
