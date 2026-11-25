@@ -190,6 +190,23 @@ describe("saveVoiceSettingsAction", () => {
 });
 
 describe("the test lab page", () => {
+  it("shows Voice settings without a draft too: greyed out, with how to change them", async () => {
+    const { VoiceLabChoices } = await import("@/app/app/[account]/setup/test-lab/voice-lab");
+    const props = {
+      slug: "x", lab: "/app/x/setup/test-lab", usageHref: "/app/x/settings", settingsLine: "Voice: Kore",
+      scenarios: [], languages: [{ value: "en", label: "English" }], defaultLanguage: "en",
+      versions: [{ value: "v", label: "v1 · Live" }], defaultVersionId: "v", callMax: { v: 270 }, limitLines: { v: "Calls: up to 4 min 30 s" }, callOnly: true,
+    };
+    const off = renderToStaticMarkup(<VoiceLabChoices {...props} settingsHref={null} />);
+    expect(off).toContain("data-voice-settings-off");
+    expect(off).toMatch(/<button type="button" class="[^"]*" disabled="" aria-describedby="lab-vs-off">[\s\S]*Voice settings<\/button>/);
+    expect(off).toContain("Open a draft (Edit playbook) to change these.");
+    expect(off).not.toContain("data-voice-settings-open");
+    const on = renderToStaticMarkup(<VoiceLabChoices {...props} settingsHref="/app/x/setup/test-lab?mode=voice&panel=voice" />);
+    expect(on).toContain("data-voice-settings-open");
+    expect(on).not.toContain("data-voice-settings-off");
+  });
+
   it("shows no voice UI to a seller, nor to an admin while voice is off", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     as(seller);

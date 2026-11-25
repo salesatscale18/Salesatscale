@@ -3101,6 +3101,7 @@
   "voice.stats.note_scripted": "A scripted test call plays a fixed script without the AI: it costs nothing and does not count as a scenario result.",
   "voice.settings.title": "Voice settings",
   "voice.settings.open": "Voice settings",
+  "voice.settings.needs_draft": "Open a draft (Edit playbook) to change these.",
   "voice.settings.meta": "Agent draft v{version} · English",
   "voice.settings.voice": "Voice",
   "voice.settings.default": "{label} (default)",

@@ -2135,3 +2135,5 @@ label.st-voice__row { cursor: pointer; }
 @keyframes sas-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .sas-toast__spin { animation-duration: 3s; } }
 @media (max-width: 767px) { .sas-toast { inset-inline: 16px; inset-block-end: 16px; max-width: none; } }
+/* Test lab › Voice call: Voice settings without a draft (greyed out, with the reason). */
+.lab-call__settings-off { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
