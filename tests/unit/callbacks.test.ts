@@ -150,7 +150,8 @@ describe("Who takes calls (setting) in the prompt", () => {
     expect(def).not.toContain("a link to choose another");
     // Reach boards: the call is a booking link in the chat, where the buyer picks the time.
     expect(def).toContain("- Call with a person. Framed as a help, with a link where the buyer picks the time.");
-    expect(def).toContain("I can set a short call with a member of our team: here is a link to pick a time that suits you.");
+    // Approved 25 Nov: the booking card sits right under the reply.
+    expect(def).toContain("I can set a short call with a member of our team: pick a time that suits you below.");
     expect(def).toContain("call request_callback with a brief (what the buyer wants to cover and what the person should have ready). It puts a booking link in the chat");
     expect(def).not.toContain("Does tomorrow at 10:00 work");
     expect(def).toContain("The chat stays with you: keep answering until the call, and never use hand_off_to_human for a call. When the buyer named a time for the call, pass it as time: if it is free the call is booked, so confirm the time instead; if not, offer the nearest free times the result gives. Call the person \"a member of our team\".");
@@ -160,7 +161,7 @@ describe("Who takes calls (setting) in the prompt", () => {
     expect(objectionMethod(2, "our sales manager")).toContain('Call the person "our sales manager".');
     const custom: Playbook = { ...pb, callRole: "our sales manager" };
     const p = stableSystemPrompt(custom, seller);
-    expect(p).toContain("I can set a short call with our sales manager: here is a link");
+    expect(p).toContain("I can set a short call with our sales manager: pick a time that suits you below.");
     expect(p).toContain('Call the person "our sales manager".');
     // The play's <role> uses the setting ("A question with no approved answer", step 4).
     expect(playsText(custom)).toContain("I'll set a short call with our sales manager, who will have the exact answer. Here is a link to pick a time.");

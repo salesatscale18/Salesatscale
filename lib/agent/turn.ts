@@ -8,7 +8,7 @@ import { and, desc, eq, exists } from "drizzle-orm";
 import type Anthropic from "@anthropic-ai/sdk";
 import type { Db } from "@/db/types";
 import { atomic } from "@/db/atomic";
-import { agentVersions, conversations, leads, markets, messages, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
+import { agentVersions, conversations, leads, markets, messages, PLAY_KEYS, sellerAccounts, toolCalls, users, voiceSessions } from "@/db/schema";
 import { optOutLead } from "@/lib/leads/service";
 import { AiBudgetError, budgetGuarded } from "@/lib/ai/usage";
 import { isRetryableModelError, withHistoryCacheBreakpoint, type Block, type LlmClient, type LlmRequest, type LlmResponse } from "./llm";
@@ -17,6 +17,7 @@ import { CARD_REPLY, HANDOFF_REPLY, isOptOut, maskCardNumbers, OPT_OUT_REPLY } f
 import { readDealState } from "./service";
 import { resultForModel, runTool, TOOL_DEFS, type ToolContext, type ToolResult, type TurnMemo } from "./tools";
 import { allowedFigures, figureNote, unverifiedFigures, withoutSentences } from "./figure-check";
+import { playFacts } from "./core/plays";
 import { linksOnOwnLine } from "./links";
 import { loadStageFacts } from "./core/stage-facts";
 import { publishedCatalog } from "@/lib/catalog/service";
@@ -219,7 +220,12 @@ export async function runBuyerTurn(
   // Reply figure check (owner, 23 Nov): one regeneration per turn; a second failure removes the sentences or hands off.
   let figuresRetried = false;
   // What a reply may state besides this turn's tool results: the buyer's own numbers and the quotes the app already showed.
-  const chatFigures = recent.filter(({ m }) => m.actor === "buyer" || (m.actor === "agent" && m.agentVersionId === null)).map(({ m }) => m.body);
+  // Approved 25 Nov: also the seller's approved play facts the agent is given (facts lookup_knowledge returns this turn
+  // are tool results, so they count already).
+  const chatFigures = [
+    ...recent.filter(({ m }) => m.actor === "buyer" || (m.actor === "agent" && m.agentVersionId === null)).map(({ m }) => m.body),
+    ...PLAY_KEYS.flatMap((k) => playFacts(version.playbook.plays?.[k]).map((f) => f.text)),
+  ];
   // The tools' strict mode of this turn's first call, sent again on every later round: the
   // model's thinking blocks are bound to the exact tool list they were made with.
   let strictTools: boolean | undefined;
