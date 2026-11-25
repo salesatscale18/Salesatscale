@@ -2068,3 +2068,29 @@ label.st-voice__row { cursor: pointer; }
 .lab-wa__summary { cursor: pointer; list-style-position: inside; }
 .lab-wa__summary .sas-heading { display: inline; }
 @media (prefers-reduced-motion: reduce) { .sas-app a.lab-modes__tab { transition: none; } }
+/* Lab header mark: a bright tile with the flask. */
+.lab-mark { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, var(--primary-accent), #67e8f9); color: #ffffff; box-shadow: 0 4px 12px var(--primary-glow); flex: none; }
+.lab-mark .sas-ico { width: 20px; height: 20px; }
+/* Empty state with a drawing (art.tsx). */
+.lab-empty { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--space-3); padding: 40px var(--space-4); text-align: center; color: var(--ink-muted); border: 1.5px dashed var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); }
+.lab-empty strong { color: var(--ink); font-weight: 600; }
+.lab-art { width: 160px; height: 120px; display: block; }
+.lab-history .lab-empty { border: 0; border-radius: 0; }
+/* The open chat: a tall, scrolling conversation area (the composer stays under it). */
+.lab-chat .sas-chat { min-height: 420px; height: calc(100vh - 360px); max-height: 900px; overflow-y: auto; overscroll-behavior: contain; scroll-padding-block-end: var(--space-4); }
+@media (max-width: 767px) { .lab-chat .sas-chat { min-height: 360px; height: 65vh; } }
+/* History: one row per test chat or call, with a kind tile. */
+.lab-kind { display: inline-grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; flex: none; }
+.lab-kind .sas-ico { width: 18px; height: 18px; }
+.lab-kind--chat { background: var(--primary-soft); color: var(--primary); }
+.lab-kind--call { background: var(--agent-soft); color: var(--agent); }
+.lab-kind--whatsapp { background: var(--success-soft); color: var(--success); }
+.lab-history__when { white-space: nowrap; }
+.sas-app a.lab-history__row:hover { background: var(--primary-soft); }
+.lab-filter { display: inline-flex; gap: 4px; }
+.sas-app a.lab-filter__chip { display: inline-flex; align-items: center; height: 28px; padding-inline: 12px; border-radius: var(--radius-pill); border: 1px solid var(--line); color: var(--ink-muted); font-size: 13px; font-weight: 600; text-decoration: none; background: var(--surface-raised); }
+.sas-app a.lab-filter__chip[aria-current="true"] { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.sas-app a.lab-recent__all { display: inline-flex; align-items: center; gap: 4px; margin-block-start: 4px; font-size: 13px; font-weight: 600; color: var(--primary); text-decoration: none; }
+.sas-app a.lab-recent__all:hover { text-decoration: underline; }
+.lab-recent__all .sas-ico { width: 14px; height: 14px; }
+[dir="rtl"] .lab-recent__all .sas-ico { transform: scaleX(-1); }

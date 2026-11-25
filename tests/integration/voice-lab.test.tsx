@@ -234,6 +234,20 @@ describe("the test lab page", () => {
     expect(html).not.toContain("Test on WhatsApp");
     expect(html).toContain("Buyer language");
     expect(html).toContain("Calls: up to 4 min 30 s · Voice: Gemini 3.8 Live · Kore · firm, clear · Slower pace");
+    expect(html).toMatch(/href="[^"]*\?mode=history&amp;kind=call" data-lab-all-history=""/);
+    // History: every test chat and call in one list, with a kind filter; no starter and no side column.
+    const all = await render({ mode: "history" });
+    save("page-test-lab-history", all);
+    expect(all).toContain('data-lab-mode="history"');
+    expect(all).toContain("data-lab-history");
+    expect(all).not.toContain("data-voice-starter");
+    expect(all).not.toContain("data-new-chat");
+    expect(all).toContain('data-history-row="call"');
+    expect(all).toMatch(/data-history-kind="call">Calls</);
+    const calls = await render({ mode: "history", kind: "call" });
+    expect(calls).toContain('data-history-row="call"');
+    expect(calls).not.toContain('data-history-row="chat"');
+    expect(calls).toMatch(/aria-current="true" data-history-kind="call"/);
     const panel = await render({ panel: "voice" });
     save("page-settings-panel", panel);
     expect(panel).toContain("Saved in draft v");

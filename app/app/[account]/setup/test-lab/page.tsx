@@ -54,6 +54,7 @@ import { engineLabelKey, engineLabelVars, isPipelineEngine, sessionEngine } from
 import { deploymentCallLimitSec } from "@/lib/voice/socket-limits";
 import { saveVoiceSettingsAction } from "./voice-actions";
 import { minorPerUsd } from "./voice-server";
+import { CallArt, ChatArt, HistoryArt } from "./art";
 import { VoiceCallAgainBar, VoiceLabBackGuard, VoiceLabChoices, VoiceLabKeeper, VoiceLabLive, VoiceLabStats } from "./voice-lab";
 
 // A turn can take several model rounds.
@@ -88,7 +89,8 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const lab = `${base}/setup/test-lab`;
   const [versions, chats, conv, waNumbers] = await Promise.all([
     listVersions(appDb, account.id),
-    listTestConversations(appDb, account.id),
+    // History lists up to 100; the side list on Chat / Voice call shows the newest few.
+    listTestConversations(appDb, account.id, one(sp.mode) === "history" ? 100 : 20),
     isUuid(one(sp.c)) ? getConversation(appDb, account.id, one(sp.c)) : Promise.resolve(null),
     listConnections(appDb, account.id),
   ]);
@@ -112,9 +114,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const scenarios = SCENARIOS.filter((s) => account.languages.includes(s.language));
   // Chat or Voice call (tabs): the URL's ?mode=, else the open conversation's channel. Voice only for whoever may call.
   const modeParam = one(sp.mode);
-  const mode: "chat" | "voice" = voice && (modeParam === "voice" || (modeParam !== "chat" && onVoice)) ? "voice" : "chat";
+  const mode: "chat" | "voice" | "history" = modeParam === "history" && !conv ? "history"
+    : voice && (modeParam === "voice" || (modeParam !== "chat" && onVoice)) ? "voice" : "chat";
   // The open conversation shows on its own tab (a seller without voice still sees a saved call).
-  const showConv = !voice || (mode === "voice") === onVoice;
+  const showConv = mode !== "history" && (!voice || (mode === "voice") === onVoice);
   const [view, convLead, scenarioCheck, deal, scheduledStep] = await Promise.all([
     conv?.isTest ? conversationView(appDb, account.id, conv) : null,
     conv?.isTest ? getLead(appDb, account.id, conv.leadId) : null,
@@ -128,7 +131,13 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   // "Show agent steps" (board ConvSteps): the step list before agent replies. On by default here, remembered apart from the workspace.
   const showSteps = await agentStepsFor("lab", user.id, sp.steps);
   // Recent: calls on the Voice call tab, chats (in the app or on WhatsApp) on the Chat tab; everything for whoever has no voice.
-  const recent = voice ? chats.filter((c) => (c.channel === "voice") === (mode === "voice")) : chats;
+  const RECENT = 5;
+  const recent = (voice ? chats.filter((c) => (c.channel === "voice") === (mode === "voice")) : chats).slice(0, RECENT);
+  // History: every test chat and call, newest first; ?kind= narrows it to chats or calls.
+  const kindParam = one(sp.kind);
+  const kind: "all" | "chat" | "call" = kindParam === "chat" || kindParam === "call" ? kindParam : "all";
+  const hasCalls = chats.some((c) => c.channel === "voice");
+  const history = chats.filter((c) => kind === "all" || (kind === "call") === (c.channel === "voice"));
   const stepsBack = conv ? `${lab}?c=${conv.id}` : lab;
   // Hand-off, take-over and hand-back markers show either way.
   const { timed: timedMarkers, after: markersAfter } = splitMarkers(view?.markers);
@@ -279,6 +288,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   return (
     <main className="sas-shell__content lab-page" data-lab-mode={mode}>
       <header className="sas-page-head">
+        <span className="lab-mark" aria-hidden="true"><Icon name="flask-conical" /></span>
         <h1 className="sas-title">{t("lab.title")}</h1>
         <span className="lab-badge"><Icon name="flask-conical" />{t("lab.badge")}</span>
         <div className="sas-page-head__actions">
@@ -288,12 +298,11 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           ) : null}
         </div>
       </header>
-      {voice ? (
-        <nav className="lab-modes" aria-label={t("lab.modes")}>
-          <a className="lab-modes__tab" href={`${lab}?mode=chat`} aria-current={mode === "chat" ? "page" : undefined} data-lab-tab="chat"><Icon name="message-circle" />{t("lab.mode.chat")}</a>
-          <a className="lab-modes__tab" href={`${lab}?mode=voice`} aria-current={mode === "voice" ? "page" : undefined} data-lab-tab="voice"><Icon name="phone-call" />{t("lab.mode.voice")}</a>
-        </nav>
-      ) : null}
+      <nav className="lab-modes" aria-label={t("lab.modes")}>
+        <a className="lab-modes__tab" href={`${lab}?mode=chat`} aria-current={mode === "chat" ? "page" : undefined} data-lab-tab="chat"><Icon name="message-circle" />{t("lab.mode.chat")}</a>
+        {voice ? <a className="lab-modes__tab" href={`${lab}?mode=voice`} aria-current={mode === "voice" ? "page" : undefined} data-lab-tab="voice"><Icon name="phone-call" />{t("lab.mode.voice")}</a> : null}
+        <a className="lab-modes__tab" href={`${lab}?mode=history`} aria-current={mode === "history" ? "page" : undefined} data-lab-tab="history"><Icon name="history" />{t("lab.mode.history")}</a>
+      </nav>
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.published", { version: one(sp.published) })}</span></div> : null}
       {sp.rolledback ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.rolled_back", { version: one(sp.rolledback) })}</span></div> : null}
@@ -305,6 +314,43 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
       {error === "in_call" ? <div className="sas-alert sas-alert--warning" role="alert"><Icon name="alert-triangle" /><span>{t("lab.in_call")}</span></div> : null}
       {account.status === "paused" || error === "paused" ? <div className="sas-alert sas-alert--warning" role="status"><Icon name="pause" /><span>{t("lab.paused")}</span></div> : null}
 
+      {mode === "history" ? (
+        <section className="sas-panel lab-history" aria-labelledby="lab-hist-h" data-lab-history="">
+          <div className="sas-panel__head" style={{ flexWrap: "wrap" }}>
+            <h2 id="lab-hist-h" className="sas-heading">{t("lab.history.title")}</h2>
+            {voice || hasCalls ? (
+              <nav className="lab-filter" aria-label={t("lab.history.filter")}>
+                {(["all", "chat", "call"] as const).map((k) => (
+                  <a key={k} className="lab-filter__chip" href={`${lab}?mode=history${k === "all" ? "" : `&kind=${k}`}`} aria-current={kind === k ? "true" : undefined} data-history-kind={k}>{t(`lab.history.kind.${k}`)}</a>
+                ))}
+              </nav>
+            ) : null}
+          </div>
+          {history.length === 0 ? (
+            <div className="lab-empty"><HistoryArt /><strong>{t("lab.history.empty")}</strong></div>
+          ) : (
+            <ul className="sas-list">
+              {history.map((c) => {
+                const v = versions.find((x) => x.id === c.agentVersionId);
+                const k = c.channel === "voice" ? "call" : c.channel === "whatsapp" ? "whatsapp" : "chat";
+                return (
+                  <li key={c.id}>
+                    <a className="sas-list__row lab-history__row" href={`${lab}?c=${c.id}`} data-history-row={k}>
+                      <span className={`lab-kind lab-kind--${k}`}><Icon name={k === "call" ? "phone-call" : k === "whatsapp" ? "message-square" : "message-circle"} label={t(`lab.history.type.${k}`)} /></span>
+                      <span className="sas-list__main">
+                        <strong data-chat-name="">{scenarioById(c.scenario)?.title ?? t("lab.free_chat")}</strong>
+                        <span className="sas-small">{t(`lab.history.type.${k}`)} · {t("lab.version", { version: v?.version ?? "?" })} · {LANG_NAME[c.language] ?? c.language}</span>
+                      </span>
+                      {voiceModes.get(c.id) === "scripted" ? <span className="sas-pill" data-scripted-pill=""><Icon name="flask-conical" />{t("voice.pill.scripted")}</span> : null}
+                      <time className="sas-small lab-history__when" dateTime={c.updatedAt.toISOString()} title={`${local(c.updatedAt)} · ${zoneTitle(c.updatedAt, tz)}`}>{timeAgo(c.updatedAt, now, tz)}</time>
+                    </a>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </section>
+      ) : (
       <div className="sas-split lab-split">
         <div className="sas-split__main">
           {voice ? (
@@ -356,7 +402,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           )}
 
           {conv && convVersion && showConv ? (
-            <section className="sas-panel" aria-labelledby="lab-chat-h" style={{ overflow: onVoice ? "clip" : "hidden" }}>
+            <section className={onVoice ? "sas-panel lab-conv" : "sas-panel lab-conv lab-chat"} aria-labelledby="lab-chat-h" style={{ overflow: onVoice ? "clip" : "hidden" }}>
               <div className="sas-panel__body" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <h2 id="lab-chat-h" className="sas-heading">{t("lab.chat_with", { version: convVersion.version })}</h2>
                 <StatusPill object="agent_version" state={convVersion.status} />
@@ -419,6 +465,12 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 </>
               )}
             </section>
+          ) : null}
+          {!(conv && convVersion && showConv) ? (
+            <div className="lab-empty" data-lab-empty={mode}>
+              {mode === "voice" ? <CallArt /> : <ChatArt />}
+              <strong>{t(mode === "voice" ? "lab.empty.call" : "lab.empty.chat")}</strong>
+            </div>
           ) : null}
           {showConv ? dealCard("main") : null}
 
@@ -527,6 +579,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                   );
                 })}
               </ul>
+              {chats.length > 0 ? <a className="lab-recent__all" href={`${lab}?mode=history${voice ? `&kind=${mode === "voice" ? "call" : "chat"}` : ""}`} data-lab-all-history="">{t("lab.history.all")}<Icon name="arrow-right" /></a> : null}
             </div>
           </section>
           {mode === "chat" ? (
@@ -552,6 +605,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           ) : null}
         </aside>
       </div>
+      )}
       {voicePanel && draft ? (
         <SidePanel
           id="lab-voice-settings" title={t("voice.settings.title")} meta={t("voice.settings.meta", { version: draft.version })}
