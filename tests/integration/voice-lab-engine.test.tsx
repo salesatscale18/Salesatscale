@@ -123,7 +123,7 @@ describe("test lab: the voice engine selector", () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
-    const html = await render();
+    const html = await render({ mode: "voice" });
     save("page-engine-select", html);
     expect(html).toContain('data-voice-engine-select=""');
     expect(html).toContain("Voice engine");
@@ -135,7 +135,7 @@ describe("test lab: the voice engine selector", () => {
   it("never shows it to a seller, and the server ignores the field from one", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     as(seller);
-    const html = await render();
+    const html = await render({ mode: "voice" });
     expect(html).not.toContain("data-voice-engine-select");
     expect(html).not.toContain("Old baseline (20 Nov)");
     const before = (await db.select({ id: voiceSessions.id }).from(voiceSessions)).length;
@@ -171,7 +171,7 @@ describe("test lab: the voice engine selector", () => {
     await endMyVoiceCallAction({ slug });
     expect((await saveDraftVoiceSettings(db, account.id, { model: "google/gemini-3.8-live" })).ok).toBe(true);
     // The selector's Gemini note: per version whose model Classic does not use.
-    const tree = await pageElement();
+    const tree = await pageElement({ mode: "voice" });
     const { VoiceLabChoices } = await import("@/app/app/[account]/setup/test-lab/voice-lab");
     const [choices] = findElements(tree, VoiceLabChoices);
     expect(choices.props).toMatchObject({ engines: true, classicModelNotes: {} });

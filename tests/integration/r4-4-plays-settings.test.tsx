@@ -201,15 +201,14 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
       expect(html).toContain(">Hebrew buyer</option>");
       expect(html).not.toContain("Hebrew buyer (Hebrew)");
       expect(html).not.toContain("no model call");
-      // The chat, then its Deal state (shown when the columns stack), then the scenarios; the side copy stays for wide screens.
+      // The chat, then its Deal state (shown when the columns stack); the side copy stays for wide screens. No scenarios table.
       const chat = html.indexOf('aria-labelledby="lab-chat-h"');
       const main = html.indexOf('data-deal-card="main"');
-      const scen = html.indexOf("data-scenarios");
       const side = html.indexOf('data-deal-card="side"');
       expect(chat).toBeGreaterThan(-1);
       expect(main).toBeGreaterThan(chat);
-      expect(main).toBeLessThan(scen);
-      expect(side).toBeGreaterThan(scen);
+      expect(side).toBeGreaterThan(main);
+      expect(html).not.toContain("data-scenarios");
       expect(css).toMatch(/@container \(max-width: 903px\) \{\s*\.lab-deal--main \{ display: block; \}\s*\.lab-deal--side \{ display: none; \}/);
       // C6: a seller (the owner, not a platform admin) sees no model name or effort; a platform admin acting as does.
       holder.access = { account: acc, user: owner, actingAs: false, role: "seller_admin" };

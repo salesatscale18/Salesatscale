@@ -123,7 +123,7 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
-    const html = await render();
+    const html = await render({ mode: "voice" });
     save("guarded-page-engine-select", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
@@ -151,7 +151,7 @@ describe("test lab: the voice engine selector, Classic + guards", () => {
   it("never shows it to a seller, and the server ignores the field from one", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     as(seller);
-    const html = await render();
+    const html = await render({ mode: "voice" });
     expect(html).not.toContain("New (23 Nov)");
     expect(await startVoiceCallAction({ slug, engine: "guarded" })).toEqual({ ok: false, reason: "not_allowed" });
     expect(labEngineChoice(seller, "guarded", { VOICE_REALTIME: "scripted" })).toBe("current");
@@ -214,13 +214,13 @@ describe("test lab: the voice engine selector, Classic + guards (silent probe)",
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(seller);
-    expect(await render()).not.toContain("silent probe");
+    expect(await render({ mode: "voice" })).not.toContain("silent probe");
     expect(await startVoiceCallAction({ slug, engine: "guarded_silent" })).toEqual({ ok: false, reason: "not_allowed" });
     expect(labEngineChoice(seller, "guarded_silent", { VOICE_REALTIME: "scripted" })).toBe("current");
     expect(sessionEngine({ engine: "guarded_silent" })).toBe("guarded_silent");
     expect(sessionEngine({ engine: "guarded-silent" })).toBe("current");
     as(admin);
-    expect(await render()).not.toContain("New + silent tools");
+    expect(await render({ mode: "voice" })).not.toContain("New + silent tools");
     expect(await startVoiceCallAction({ slug, scenario: "ready_buyer", engine: "guarded_silent" })).toEqual({ ok: false, reason: "not_allowed" });
   });
 

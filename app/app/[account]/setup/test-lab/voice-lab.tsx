@@ -164,7 +164,7 @@ export type StarterOption = { value: string; label: string };
  */
 export function VoiceLabChoices({
   slug, lab, scenarios, languages, defaultLanguage, versions, defaultVersionId, callMax, limitLines, usageHref, settingsLine, settingsHref,
-  engines = false, classicModelNotes = {},
+  engines = false, classicModelNotes = {}, callOnly = false,
 }: {
   slug: string;
   lab: string;
@@ -187,6 +187,8 @@ export function VoiceLabChoices({
   engines?: boolean;
   /** Per version id: the line saying Classic does not use the version's model (Gemini only), nor its ElevenLabs voice. */
   classicModelNotes?: Record<string, string>;
+  /** The Voice call tab: the same choices with Start call only (chats start on the Chat tab). */
+  callOnly?: boolean;
 }) {
   const c = labClient();
   const s = useVoiceSnapshot(c);
@@ -209,8 +211,11 @@ export function VoiceLabChoices({
   const line = [limitLines[versionId], settingsLine].filter(Boolean).join(" · ");
   return (
     <section className="sas-panel" aria-labelledby="lab-new-h" data-voice-starter="">
-      <form action={startChatAction} className="sas-panel__body lab-choices" data-new-chat="">
-        <h2 id="lab-new-h" className="sas-heading lab-choices__h">{t("lab.voice.choices_heading")}</h2>
+      <form
+        action={callOnly ? undefined : startChatAction} className="sas-panel__body lab-choices" data-new-chat={callOnly ? undefined : ""} data-new-call={callOnly ? "" : undefined}
+        onSubmit={callOnly ? (e) => { e.preventDefault(); if (!busy) startCall(); } : undefined}
+      >
+        <h2 id="lab-new-h" className="sas-heading lab-choices__h">{t(callOnly ? "lab.voice.call_heading" : "lab.voice.choices_heading")}</h2>
         <input type="hidden" name="slug" value={slug} />
         <div className="sas-input-group">
           <label className="sas-input-label" htmlFor="lab-scenario">{t("lab.scenario")}</label>
@@ -244,9 +249,9 @@ export function VoiceLabChoices({
           </div>
         ) : null}
         <div className="lab-choices__actions">
-          <button type="submit" className={buttonClass("primary")}><Icon name="plus" />{t("lab.voice.start_chat")}</button>
+          {callOnly ? null : <button type="submit" className={buttonClass("primary")}><Icon name="plus" />{t("lab.voice.start_chat")}</button>}
           <button
-            type="button" className={buttonClass("secondary")} onClick={startCall} disabled={busy} data-voice-start=""
+            type="button" className={buttonClass(callOnly ? "primary" : "secondary")} onClick={startCall} disabled={busy} data-voice-start=""
           >
             <Icon name="phone-call" />{t("lab.voice.start_call")}
           </button>

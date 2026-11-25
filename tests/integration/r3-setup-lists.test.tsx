@@ -312,30 +312,18 @@ describe("R3-5: Knowledge, Order form setup and Test lab as list pages", () => {
   });
 
   describe("Versions and test lab", () => {
-    it("scenarios table: the automatic result on the chosen version, last chat link, Run per scenario", async () => {
-      // The demo seed already has a draft next to the live version (Compare versions), so "Results for" offers a choice.
+    it("test lab: the new chat row first, no scenarios table, recent test chats by scenario", async () => {
       const live = (await listVersions(db, account.id)).find((v) => v.status === "live")!;
       await saveDraftPlaybook(db, account.id, live.playbook, "R3-5 test");
-      const c = await startTestConversation(db, account.id, seller.id, { language: "en", scenario: "discount_push", versionId: live.id });
-      const html = await render(TestLabPage, slug, { v: live.id });
+      await startTestConversation(db, account.id, seller.id, { language: "en", scenario: "discount_push", versionId: live.id });
+      const html = await render(TestLabPage, slug, {});
       save("test-lab", html);
       expect(html).toContain("data-new-chat");
-      expect(html.indexOf("data-new-chat")).toBeLessThan(html.indexOf("data-scenarios"));
-      // The demo seed's scenario chats on live: no_approved_answer and asks_for_person pass (hebrew_buyer fails;
-      // discount_push's latest chat is the empty one started above).
-      expect(html).toMatch(/data-scenarios-passed="">2 of \d+ passed on v1</);
-      expect(html).toContain(">Result</th>");
-      const row = (id: string) => html.slice(html.indexOf(`data-scenario="${id}"`), html.indexOf("</tr>", html.indexOf(`data-scenario="${id}"`)));
-      // The chat has no messages yet, so its check is "Not yet" (not "Not run").
-      expect(row("discount_push")).toMatch(/data-scenario-result="not_yet"><svg[\s\S]*?Not yet</);
-      expect(row("discount_push")).toContain(`href="/app/${slug}/setup/test-lab?c=${c!.conversationId}&amp;v=${live.id}" data-last-chat=""`);
-      expect(row("ready_buyer")).toMatch(/data-scenario-result="not_run"[\s\S]*?Not run</);
-      expect(row("ready_buyer")).toMatch(/<input type="hidden" name="scenario" value="ready_buyer"\/>[\s\S]*name="versionId" value="[^"]+"[\s\S]*data-run="">Run</);
-      expect(html).not.toContain("judge");
-      expect(html).toContain("there is no run-all");
-      // Results for applies on change (auto-submit marker) with a no-JS fallback.
-      expect(html).toMatch(/<select class="sas-select" name="v"[^>]*data-results-for=""/);
-      expect(html).toContain("data-autosubmit");
+      // The scenarios are in the picker; the table under the chat is gone (results per version: Compare versions).
+      expect(html).toMatch(/<option value="discount_push">Discount push above the limit/);
+      expect(html).not.toContain("data-scenarios");
+      expect(html).not.toContain('data-run=""');
+      expect(html).not.toContain("data-results-for");
       // Recent test chats are named by scenario; the model stays hidden from sellers.
       expect(html).toMatch(/data-chat-name="">Discount push above the limit</);
       expect(html).toMatch(/data-chat-name="">Free chat</);

@@ -94,7 +94,7 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
 
   if (!data || data.versions.length < 2) {
     return (
-      <main className="sas-shell__content vc-page">
+      <main className="sas-shell__content vc-page lab-page">
         {head(<a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="scroll-text" />{t("lab.edit_playbook")}</a>)}
         <div className="sas-alert" role="status"><Icon name="info" /><span>{t("compare.need_two")}</span></div>
       </main>
@@ -137,7 +137,7 @@ export default async function CompareVersionsPage({ params, searchParams }: { pa
   const chatHref = (id: string, v: AgentVersion) => `${lab}?c=${id}&v=${v.id}`;
 
   return (
-    <main className="sas-shell__content vc-page" data-compare="">
+    <main className="sas-shell__content vc-page lab-page" data-compare="">
       {head(
         <>
           <a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="scroll-text" />{t("lab.edit_playbook")}</a>

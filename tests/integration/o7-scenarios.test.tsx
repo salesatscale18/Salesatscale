@@ -161,17 +161,16 @@ describe("O7: objection scenarios end to end (ScriptedLlm)", () => {
     expect(r).toMatchObject({ result: "failed", reason: expect.stringContaining("told the buyer") });
   });
 
-  it("the test lab's scenarios table lists the new scenarios with what each one checks", async () => {
+  it("the test lab's scenario picker lists the new scenarios (the table under the chat is gone)", async () => {
     const html = renderToStaticMarkup(await (TestLabPage as unknown as Page)({ params: Promise.resolve({ account: account.slug }), searchParams: Promise.resolve({}) }));
     save("test-lab", html);
-    const row = (id: string) => html.slice(html.indexOf(`data-scenario="${id}"`), html.indexOf("</tr>", html.indexOf(`data-scenario="${id}"`)));
+    const picker = html.slice(html.indexOf('id="lab-scenario"'), html.indexOf("</select>", html.indexOf('id="lab-scenario"')));
     for (const id of ["price_budget", "price_competitor", "think_partner", "asks_for_person_reflex", "unknown_good_to_know", "unknown_must_have", "buying_signal", "two_objections"]) {
       const s = SCENARIOS.find((x) => x.id === id)!;
-      expect(html, id).toContain(`data-scenario="${id}"`);
-      expect(row(id)).toContain(esc(s.title));
-      expect(row(id)).toContain(esc(s.expected));
-      expect(row(id)).toMatch(/data-run="">Run</);
+      expect(picker, id).toContain(`<option value="${id}">${esc(s.title)}`);
     }
+    expect(html).not.toContain("data-scenarios");
+    expect(html).not.toContain('data-run=""');
   });
 
   it("Needs you (Leads, L-3): order and quote IDs are one unbroken run (.sas-id), so a phone never splits \"PD-\" from its number", async () => {

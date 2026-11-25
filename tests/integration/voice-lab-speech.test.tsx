@@ -155,7 +155,7 @@ describe("the engine select: wiring only", () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
-    const html = await render();
+    const html = await render({ mode: "voice" });
     save("settings-page-engine-row", html);
     const select = /<select[^>]*data-voice-engine-select=""[^>]*>([\s\S]*?)<\/select>/.exec(html)?.[1] ?? "";
     expect([...select.matchAll(/<option value="([a-z_]+)"[^>]*>([^<]+)<\/option>/g)].map((m) => [m[1], m[2]])).toEqual([
@@ -278,7 +278,7 @@ describe("the one rule through the start action and the relay", () => {
     expect(s0.settings).toEqual({ engine: "classic" });
     expect(s0.model).toBe(GEMINI);
     // The starter says Classic uses neither the version's model nor its ElevenLabs voice.
-    const page = await (TestLabPage as unknown as Page)({ params: Promise.resolve({ account: slug }), searchParams: Promise.resolve({}) });
+    const page = await (TestLabPage as unknown as Page)({ params: Promise.resolve({ account: slug }), searchParams: Promise.resolve({ mode: "voice" }) });
     const [choices] = findElements(page, VoiceLabChoices);
     expect(Object.values((choices.props as { classicModelNotes: Record<string, string> }).classicModelNotes))
       .toContain("Old baseline (20 Nov) runs on Gemini 3.8 Live only: this version's model (GPT-Realtime mini) and its ElevenLabs voice are not used.");

@@ -1,5 +1,3 @@
-import { SetupSteps } from "@/components/sas/nav";
-import { setupProgress } from "@/lib/overview/setup";
 import { isUuid } from "@/lib/security/ids";
 import { Fragment } from "react";
 import { Button, StatusPill, buttonClass } from "@/components/sas/primitives";
@@ -19,7 +17,7 @@ import { llmConfigured } from "@/lib/agent/llm";
 import { getConversation, getDealState, listTestConversations, listVersions } from "@/lib/agent/service";
 import { conversationView } from "@/lib/agent/conversation";
 import { nextBuyerText, SCENARIOS, scenarioById } from "@/lib/agent/scenarios";
-import { conversationScenarioCheck, latestScenarioResults, scenarioTable } from "@/lib/agent/scenario-results";
+import { conversationScenarioCheck } from "@/lib/agent/scenario-results";
 import { getLead } from "@/lib/leads/service";
 import { formatDayMonthIn, formatLocalDateTime, timeAgo, zoneTitle } from "@/lib/format";
 import { readViewerZone } from "@/lib/viewer-zone-server";
@@ -28,8 +26,6 @@ import { describeCall } from "@/lib/agent/trace";
 import { toolLabel } from "../../leads/[leadId]/conversation";
 import { publishAction, rollbackAction, startChatAction } from "./actions";
 import { Composer } from "./composer";
-import { AutoSubmit } from "@/components/sas/list-kit-client";
-import { ListTable } from "@/components/sas/list-kit";
 import { ConversationControls, MarkerEntry, deliveryLabel, splitMarkers, windowTimerProps } from "../../leads/[leadId]/conversation";
 import { CallBlockEntry, isCallBlock } from "../../leads/[leadId]/call-block-entry";
 import { ObjectionList } from "../../leads/[leadId]/deal-pane";
@@ -68,14 +64,13 @@ const LANG_NAME: Record<string, string> = { en: "English", he: "Hebrew" };
 const json = (v: unknown) => JSON.stringify(v, null, 2);
 
 /**
- * Setup · Versions and test lab (P4.4; board: TestLabNew). New test chat in
- * one row on top, the open chat with its tool trace, and the scenarios table
- * for the version picked under "Results for" (applies on change): what each
- * scenario checks, whether it has a test chat on that version, the last one
- * the automatic result of the last one (Passed / Not yet / Failed / Not run)
- * and Run. Run starts one test chat (the opening is put in the composer; nothing is
- * sent until the seller clicks Send), so there is no run-all. Versions,
- * Recent test chats and Test on WhatsApp sit on the side.
+ * Setup · Versions and test lab (P4.4; board: TestLabNew). Two modes, as tabs:
+ * Chat (a test chat: scenario, language, version, Start; the open chat with
+ * its tool trace) and Voice call (platform admins while voice is on: the same
+ * choices with Start call; the open call). Each mode lists its own recent
+ * chats or calls on the side, with Versions. The lab has its own bright test
+ * palette (sas.css, `.lab-page`), apart from the workspace's colours.
+ * Scenario results per version are on Compare versions.
  */
 export default async function TestLabPage({ params, searchParams }: { params: Promise<{ account: string }>; searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const { account: slug } = await params;
@@ -115,13 +110,15 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const draft = versions.find((v) => v.status === "draft");
   const scenario = conv?.isTest ? scenarioById(conv.scenario) : null;
   const scenarios = SCENARIOS.filter((s) => account.languages.includes(s.language));
-  // Scenario results for the version picked in the panel, else the open chat's, else the draft (or newest).
-  const resultsVersion = versions.find((v) => v.id === one(sp.v)) ?? versions.find((v) => v.id === conv?.agentVersionId) ?? draft ?? versions[0];
-  const [view, convLead, scenarioCheck, results, deal, scheduledStep] = await Promise.all([
+  // Chat or Voice call (tabs): the URL's ?mode=, else the open conversation's channel. Voice only for whoever may call.
+  const modeParam = one(sp.mode);
+  const mode: "chat" | "voice" = voice && (modeParam === "voice" || (modeParam !== "chat" && onVoice)) ? "voice" : "chat";
+  // The open conversation shows on its own tab (a seller without voice still sees a saved call).
+  const showConv = !voice || (mode === "voice") === onVoice;
+  const [view, convLead, scenarioCheck, deal, scheduledStep] = await Promise.all([
     conv?.isTest ? conversationView(appDb, account.id, conv) : null,
     conv?.isTest ? getLead(appDb, account.id, conv.leadId) : null,
     conv?.isTest ? conversationScenarioCheck(appDb, account.id, conv) : null,
-    resultsVersion ? latestScenarioResults(appDb, account.id, resultsVersion.id) : [],
     conv ? getDealState(appDb, account.id, conv.leadId) : null,
     // A live call or follow-up: the next step from its stored instant in the viewer's zone (not the stored text's baked time).
     conv ? leadScheduledNextStep(appDb, account.id, conv.leadId, account.timezone, viewerZone) : null,
@@ -130,7 +127,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const thread = view?.thread ?? [];
   // "Show agent steps" (board ConvSteps): the step list before agent replies. On by default here, remembered apart from the workspace.
   const showSteps = await agentStepsFor("lab", user.id, sp.steps);
-  const stepsBack = conv ? `${lab}?c=${conv.id}${isUuid(one(sp.v)) ? `&v=${one(sp.v)}` : ""}` : lab;
+  // Recent: calls on the Voice call tab, chats (in the app or on WhatsApp) on the Chat tab; everything for whoever has no voice.
+  const recent = voice ? chats.filter((c) => (c.channel === "voice") === (mode === "voice")) : chats;
+  const stepsBack = conv ? `${lab}?c=${conv.id}` : lab;
   // Hand-off, take-over and hand-back markers show either way.
   const { timed: timedMarkers, after: markersAfter } = splitMarkers(view?.markers);
   let pendingMarkers = timedMarkers;
@@ -146,7 +145,6 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const convVersion = conv ? versions.find((v) => v.id === conv.agentVersionId) : undefined;
   const error = one(sp.error);
   const locale = conv && isLocale(conv.language) ? conv.language : "en";
-  const table = scenarioTable(scenarios, results);
   const versionLabel = (v: (typeof versions)[number]) => `${t("lab.version", { version: v.version })} · ${t(`status.agent_version.${v.status}` as MessageKey)}`;
   // The language is named only when the title does not already say it ("Hebrew buyer", not "Hebrew buyer (Hebrew)").
   const scenarioLabel = (s: (typeof scenarios)[number]) => {
@@ -279,20 +277,23 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   ) : null;
 
   return (
-    <main className="sas-shell__content">
-      <header className="sas-stack-2">
-        <div className="sas-page-head">
-          <h1 className="sas-title">{t("lab.title")}</h1>
-          <div className="sas-page-head__actions">
-            <a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="scroll-text" />{t("lab.edit_playbook")}</a>
-            {draft ? (
-              <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="primary">{t("lab.publish", { version: draft.version })}</Button></form>
-            ) : null}
-          </div>
+    <main className="sas-shell__content lab-page" data-lab-mode={mode}>
+      <header className="sas-page-head">
+        <h1 className="sas-title">{t("lab.title")}</h1>
+        <span className="lab-badge"><Icon name="flask-conical" />{t("lab.badge")}</span>
+        <div className="sas-page-head__actions">
+          <a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="scroll-text" />{t("lab.edit_playbook")}</a>
+          {draft ? (
+            <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="primary">{t("lab.publish", { version: draft.version })}</Button></form>
+          ) : null}
         </div>
-        <span className="sas-small">{t("lab.intro")}</span>
-        <SetupSteps basePath={`/app/${account.slug}`} current="" completed={await setupProgress(appDb, account)} />
       </header>
+      {voice ? (
+        <nav className="lab-modes" aria-label={t("lab.modes")}>
+          <a className="lab-modes__tab" href={`${lab}?mode=chat`} aria-current={mode === "chat" ? "page" : undefined} data-lab-tab="chat"><Icon name="message-circle" />{t("lab.mode.chat")}</a>
+          <a className="lab-modes__tab" href={`${lab}?mode=voice`} aria-current={mode === "voice" ? "page" : undefined} data-lab-tab="voice"><Icon name="phone-call" />{t("lab.mode.voice")}</a>
+        </nav>
+      ) : null}
 
       {sp.published ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.published", { version: one(sp.published) })}</span></div> : null}
       {sp.rolledback ? <div className="sas-alert sas-alert--success" role="status"><Icon name="check-circle" /><span>{t("lab.rolled_back", { version: one(sp.rolledback) })}</span></div> : null}
@@ -310,7 +311,11 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             <>
               <VoiceLabKeeper />
               <VoiceLabBackGuard />
-              <VoiceLabChoices
+            </>
+          ) : null}
+          {mode === "voice" ? (
+            <>
+              <VoiceLabChoices callOnly
                 slug={account.slug} lab={lab} usageHref={usageHref} settingsLine={settingsLine} settingsHref={settingsHref}
                 scenarios={scenarios.map((x) => ({ value: x.id, label: scenarioLabel(x), language: x.language }))}
                 languages={account.languages.map((l) => ({ value: l, label: LANG_NAME[l] ?? l }))} defaultLanguage={account.languages[0]}
@@ -350,7 +355,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             </section>
           )}
 
-          {conv && convVersion ? (
+          {conv && convVersion && showConv ? (
             <section className="sas-panel" aria-labelledby="lab-chat-h" style={{ overflow: onVoice ? "clip" : "hidden" }}>
               <div className="sas-panel__body" style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
                 <h2 id="lab-chat-h" className="sas-heading">{t("lab.chat_with", { version: convVersion.version })}</h2>
@@ -415,77 +420,12 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               )}
             </section>
           ) : null}
-          {dealCard("main")}
+          {showConv ? dealCard("main") : null}
 
-          <section className="sas-stack-4" aria-labelledby="lab-sc-h" data-scenarios="">
-            <div className="sas-listbar__head">
-              <div className="sas-stack-2" style={{ gap: 2, flex: "1 1 240px", minWidth: 0 }}>
-                <h2 id="lab-sc-h" className="sas-heading">{t("lab.scenarios")}</h2>
-                {resultsVersion ? (
-                  <span className="sas-small" style={{ fontVariantNumeric: "tabular-nums" }} data-scenarios-passed="">{t("lab.scenarios_passed", { n: table.passed, total: table.total, version: resultsVersion.version })}</span>
-                ) : null}
-              </div>
-              {resultsVersion && versions.length > 1 ? (
-                <form method="get" action={lab} className="sas-listbar__form" role="search" aria-label={t("lab.results_for")}>
-                  {conv ? <input type="hidden" name="c" value={conv.id} /> : null}
-                  <label className="sas-listbar__select" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span className="sas-small">{t("lab.results_for")}</span>
-                    <select className="sas-select" name="v" defaultValue={resultsVersion.id} data-results-for="">
-                      {versions.map((v) => <option key={v.id} value={v.id}>{versionLabel(v)}</option>)}
-                    </select>
-                  </label>
-                  <button type="submit" className={`${buttonClass("secondary", "sm")} sas-listbar__apply`}>{t("lab.scenarios_show")}</button>
-                  <AutoSubmit />
-                </form>
-              ) : resultsVersion ? (
-                <span className="sas-small">{t("lab.results_for")}: {versionLabel(resultsVersion)}</span>
-              ) : null}
-            </div>
-            <ListTable caption={t("lab.scenarios")} foot={<span className="sas-small">{t("lab.scenarios_note")}</span>}>
-              <thead>
-                <tr>
-                  <th scope="col">{t("lab.col.scenario")}</th>
-                  <th scope="col">{t("lab.col.result")}</th>
-                  <th scope="col">{t("lab.col.last_chat")}</th>
-                  <th scope="col"><span className="sas-sr">{t("lab.run")}</span></th>
-                </tr>
-              </thead>
-              <tbody>
-                {table.rows.map((r) => (
-                  <tr key={r.scenario.id} data-scenario={r.scenario.id} data-current={conv?.id && conv.id === r.conversationId ? "" : undefined}>
-                    <td style={{ minWidth: 220, whiteSpace: "normal" }}>
-                      <strong style={{ display: "block" }}>{scenarioLabel(r.scenario)}</strong>
-                      <span className="sas-small" style={{ display: "block" }}>{r.scenario.expected}</span>
-                    </td>
-                    <td data-label={t("lab.col.result")} style={{ whiteSpace: "normal" }}>
-                      <ResultChip result={r.result} />
-                      {r.reason && r.result !== "passed" ? <span className="sas-small" style={{ display: "block", marginBlockStart: 4 }} data-scenario-reason="">{r.reason}</span> : null}
-                    </td>
-                    <td data-label={t("lab.col.last_chat")} className="sas-when">
-                      {r.conversationId && r.lastAt ? (
-                        <a href={`${lab}?c=${r.conversationId}${resultsVersion ? `&v=${resultsVersion.id}` : ""}`} data-last-chat="">
-                          <time dateTime={r.lastAt.toISOString()} title={`${local(r.lastAt)} · ${zoneTitle(r.lastAt, tz)}`}>{timeAgo(r.lastAt, now, tz)}</time>
-                        </a>
-                      ) : <span className="sas-small">—</span>}
-                    </td>
-                    <td data-label="" className="sas-td-actions">
-                      <form action={startChatAction}>
-                        <input type="hidden" name="slug" value={account.slug} />
-                        <input type="hidden" name="scenario" value={r.scenario.id} />
-                        <input type="hidden" name="language" value={r.scenario.language} />
-                        {resultsVersion ? <input type="hidden" name="versionId" value={resultsVersion.id} /> : null}
-                        <button type="submit" className={buttonClass("secondary", "sm")} aria-label={t("lab.run_label", { title: r.scenario.title })} data-run="">{t("lab.run")}</button>
-                      </form>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </ListTable>
-          </section>
         </div>
 
         <aside className="sas-split__side sas-stack-4">
-          {onVoice && conv && scenario && scenarioCheck ? (
+          {onVoice && conv && showConv && scenario && scenarioCheck ? (
             <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-vsc-h" data-voice-scenario="">
               <h2 id="lab-vsc-h" className="sas-heading">{t("lab.scenario_check", { title: scenario.title })}</h2>
               {/* A scripted call is never a scenario result for the version: say so instead of a result. */}
@@ -502,7 +442,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               )}
             </section>
           ) : null}
-          {onVoice && conv ? (() => {
+          {onVoice && conv && showConv ? (() => {
             const saved = savedEnded ? (
               <VoiceCallStats
                 durationSec={savedEnded.durationSec ?? 0} maxSec={savedEnded.maxSec} costMicros={savedEnded.costMicros} scripted={savedEnded.mode === "scripted"} fx={fx}
@@ -513,7 +453,7 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
             ) : null;
             return voice ? <VoiceLabStats conversationId={conv.id}>{saved}</VoiceLabStats> : saved;
           })() : null}
-          {dealCard("side")}
+          {showConv ? dealCard("side") : null}
 
           <section className="sas-panel" aria-labelledby="lab-ver-h">
             <div className="sas-panel__body sas-stack-4">
@@ -559,10 +499,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
 
           <section className="sas-panel" aria-labelledby="lab-chats-h">
             <div className="sas-panel__body sas-stack-2">
-              <h2 id="lab-chats-h" className="sas-heading">{t("lab.chats")}</h2>
-              {chats.length === 0 ? <span className="sas-small">{t("lab.chats_empty")}</span> : null}
+              <h2 id="lab-chats-h" className="sas-heading">{t(mode === "voice" ? "lab.calls" : "lab.chats")}</h2>
+              {recent.length === 0 ? <span className="sas-small">{t(mode === "voice" ? "lab.calls_empty" : "lab.chats_empty")}</span> : null}
               <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {chats.map((c) => {
+                {recent.map((c) => {
                   const v = versions.find((x) => x.id === c.agentVersionId);
                   return (
                     <li key={c.id}>
@@ -589,8 +529,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
               </ul>
             </div>
           </section>
-          <section className="sas-panel sas-panel__body sas-stack-2" aria-labelledby="lab-wa-h">
-            <h2 id="lab-wa-h" className="sas-heading">{t("lab.wa.title")}</h2>
+          {mode === "chat" ? (
+          <details className="sas-panel lab-wa" data-lab-wa="">
+            <summary className="sas-panel__body lab-wa__summary"><span id="lab-wa-h" className="sas-heading">{t("lab.wa.title")}</span></summary>
+            <div className="sas-panel__body sas-stack-2" style={{ paddingBlockStart: 0 }}>
             {testerNumbers.length === 0 ? (
               <span className="sas-small">{t("lab.wa.none")} <a href={`${base}/settings?section=whatsapp`}>{t("lab.wa.setup")}</a></span>
             ) : (
@@ -605,7 +547,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
                 </ul>
               </>
             )}
-          </section>
+            </div>
+          </details>
+          ) : null}
         </aside>
       </div>
       {voicePanel && draft ? (

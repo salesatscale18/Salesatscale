@@ -207,18 +207,31 @@ describe("the test lab page", () => {
     expect(html).not.toContain("Voice settings");
   });
 
-  it("shows Call the agent next to New test chat for an admin with voice on, and the settings panel", async () => {
+  it("splits Chat and Voice call into two tabs for an admin with voice on, and the settings panel", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     vi.stubEnv("VOICE_WS_URL", "");
     as(admin);
-    const html = await render();
+    // Chat tab (the default): the chat starter only, no call controls.
+    const chat = await render();
+    save("page-test-lab-chat", chat);
+    expect(chat).toMatch(/data-lab-tab="chat"[^>]*>|aria-current="page" data-lab-tab="chat"/);
+    expect(chat).toContain('data-lab-mode="chat"');
+    expect(chat).toContain("New test chat");
+    expect((chat.match(/data-new-chat=""/g) ?? []).length).toBe(1);
+    expect(chat).not.toContain("data-voice-starter");
+    expect(chat).not.toContain("Start call");
+    expect(chat).toContain("Recent test chats");
+    // Voice call tab: the same choices with Start call only; the limit and the voice line under it.
+    const html = await render({ mode: "voice" });
     save("page-test-lab-starter", html);
-    // One row of choices with two actions; the limit and the voice line under it.
-    expect(html).toContain("New test chat or call");
-    expect((html.match(/data-new-chat=""/g) ?? []).length).toBe(1);
+    expect(html).toContain('data-lab-mode="voice"');
+    expect(html).toContain("New test call");
+    expect(html).not.toContain("data-new-chat");
     expect(html).toContain("data-voice-starter");
-    expect(html).toContain("Start chat");
+    expect(html).not.toContain("Start chat");
     expect(html).toContain("Start call");
+    expect(html).toContain("Recent test calls");
+    expect(html).not.toContain("Test on WhatsApp");
     expect(html).toContain("Buyer language");
     expect(html).toContain("Calls: up to 4 min 30 s · Voice: Gemini 3.8 Live · Kore · firm, clear · Slower pace");
     const panel = await render({ panel: "voice" });
