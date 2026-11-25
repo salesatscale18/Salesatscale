@@ -16,7 +16,7 @@ import type { LeadPage, LeadPageChecks, SellerAccount } from "@/db/schema";
 import { leadPages } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { translator, type Locale } from "@/lib/i18n";
-import { leadPageConsentLine } from "@/lib/leads/consent-line";
+import { leadPageConsentParts } from "@/lib/leads/consent-line";
 import { publicUrl } from "@/lib/orders/token";
 import { brandVars } from "@/lib/simulator/rules";
 import { chatNames } from "@/lib/simulator/service";
@@ -36,7 +36,8 @@ export type SnippetConfig =
   | {
     v: 1; lang: Locale; dir: "ltr" | "rtl"; closed?: undefined; preview: boolean;
     text: LeadFormText; about: string | null; fields: FormFields;
-    consent: { line: string; ticked: boolean };
+    /** `line`: the whole consent line; `parts`: the same in parts, names at odd indexes (v1.js isolates them). */
+    consent: { line: string; parts: string[]; ticked: boolean };
     privacyUrl: string | null;
     brand: Record<string, string>;
     /** A fresh form-timing token (a submit is refused when it is younger than 2.5 s or older than a day). */
@@ -107,10 +108,13 @@ export async function snippetConfig(db: Db, found: PublicPage, opts: { preview?:
     text,
     about: aboutLine(tr, page.openingTopic, lang),
     fields: formFieldsOf(page.form),
-    consent: { line: leadPageConsentLine(lang, names.seller, names.agent), ticked: consentTickedOf(page.form, await pageCountries(db, page, account)) },
+    consent: { ...consentOf(leadPageConsentParts(lang, names.seller, names.agent)), ticked: consentTickedOf(page.form, await pageCountries(db, page, account)) },
     privacyUrl: notice ? publicUrl(`/p/${page.publicKey}/privacy${preview && opts.preview ? `?preview=${encodeURIComponent(opts.preview)}` : ""}`, env) : null,
     brand,
     ft: formTimingToken(page.id, now.getTime()),
     tracking: { tellPagePixel: tracking.tellPagePixel, carryAdDetails: tracking.carryAdDetails },
   };
 }
+
+/** The consent line whole (scripts installed before `parts`) and in parts. */
+const consentOf = (parts: string[]) => ({ line: parts.join(""), parts });

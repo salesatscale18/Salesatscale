@@ -46,12 +46,22 @@ export function LeadFormHead({ about, title, preview = false }: { about: string 
   );
 }
 
+/**
+ * The consent line with the seller's and the agent's names isolated (<bdi>), so a name in Latin letters or
+ * digits in a Hebrew line ("Polar Demo 2026-11-18") keeps its place. Display only: the stored wording stays
+ * the plain sentence (leadPageConsentLine).
+ */
+export function ConsentLineText({ parts }: { parts: readonly string[] }) {
+  return <>{parts.map((p, i) => (i % 2 ? <bdi key={i}>{p}</bdi> : p))}</>;
+}
+
 /** What is inside the form: the alert, the fields, the honeypot, the hidden inputs, the consent line and Send. */
 export function LeadFormFields({ strings, fields, consentTicked, consentLine, privacyHref, hidden, errors, alert, sending }: {
   strings: LeadFormStrings;
   fields: { company: boolean; email: boolean };
   consentTicked: boolean;
-  consentLine: string;
+  /** The consent line in parts (lib/leads/consent-line.ts leadPageConsentParts): odd indexes are names. */
+  consentLine: readonly string[];
   privacyHref: string | null;
   hidden: Record<string, string>;
   errors: readonly LeadFormFieldError[];
@@ -88,7 +98,7 @@ export function LeadFormFields({ strings, fields, consentTicked, consentLine, pr
       <label className="lp-check">
         <input type="checkbox" name="consent" value="on" defaultChecked={consentTicked} data-consent="" />
         <span>
-          {consentLine}
+          <ConsentLineText parts={consentLine} />
           {privacyHref ? <> <a className="lp-link" href={privacyHref} target="_blank" rel="noopener">{strings.privacy}</a></> : null}
         </span>
       </label>

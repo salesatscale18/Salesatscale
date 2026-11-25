@@ -200,6 +200,8 @@
 
 /* The live preview (preview.tsx): a phone frame with the buyer's screens (the real pages' components and styles,
    lead-page.css and chat.css), tabs above it. The screen keeps the buyer pages' own light colours. */
+/* Wide screens: the preview stays in view under the page header while the form scrolls, never taller than the
+   window: the frame's height is capped to what is left of it after the card's own parts (--lpv-chrome). */
 .lpv { grid-column: 2; position: sticky; top: 16px; }
 .lpv-toggle { display: none; }
 .lpv-sheet { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
@@ -213,8 +215,13 @@
 .lpv-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); flex: none; }
 .lpv-panel { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .lpv-note, .lpv-after { margin: 0; }
-.lpv-phone { --lpv-h: 600px; width: 100%; max-width: 340px; margin-inline: auto; border: 8px solid #1b1f27; border-radius: 36px; background: #1b1f27;
-  box-shadow: 0 16px 40px rgba(15, 20, 32, .16); overflow: hidden; }
+.lpv-phone { --lpv-h: clamp(320px, calc(100vh - 32px - var(--lpv-chrome, 250px)), 600px); position: relative; width: 100%; max-width: 340px; margin-inline: auto;
+  border: 8px solid #1b1f27; border-radius: 36px; background: #1b1f27; box-shadow: 0 16px 40px rgba(15, 20, 32, .16); overflow: hidden; }
+@supports (height: 100dvh) { .lpv-phone { --lpv-h: clamp(320px, calc(100dvh - 32px - var(--lpv-chrome, 250px)), 600px); } }
+/* More of the buyer's screen below: a soft fade at the bottom edge (preview.tsx sets data-more while there is). */
+.lpv-phone::after { content: ""; position: absolute; inset-inline: 0; inset-block-end: 0; height: 56px; border-radius: 0 0 28px 28px; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, .95)); opacity: 0; transition: opacity .15s; }
+.lpv-phone[data-more]::after { opacity: 1; }
 .lpv-screen { height: var(--lpv-h); overflow-y: auto; overscroll-behavior: contain; background: #ffffff; border-radius: 28px; scrollbar-width: thin; }
 .lpv-inert { min-height: 100%; display: flex; flex-direction: column; }
 .lpv-inert > * { flex: 1 0 auto; }
@@ -238,6 +245,7 @@
 /* Narrow screens: the preview opens from a "Preview" button as a sheet. */
 @media (max-width: 1023px) {
   .lpv { grid-column: 1 / -1; position: static; }
+  .lpv-phone { --lpv-h: 600px; }
   .lpg-page:has(.lpv) { padding-block-end: 72px; }
   .lpv-toggle { display: inline-flex; position: fixed; inset-block-end: 16px; inset-inline-end: 16px; z-index: 40; box-shadow: var(--shadow-pop); }
   .lpv-sheet { display: none; }

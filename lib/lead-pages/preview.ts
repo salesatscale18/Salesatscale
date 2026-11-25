@@ -14,7 +14,11 @@ import { buyerNames, tg } from "@/lib/agent/core/names";
 import { currentPlaybook } from "@/lib/agent/service";
 import { platformBudget, spendCapped } from "@/lib/ai/usage";
 import { t, translator } from "@/lib/i18n";
-import { leadPageConsentLine } from "@/lib/leads/consent-line";
+import { approvedTemplate } from "@/lib/channels/connections";
+import { renderTemplate, templateVariables } from "@/lib/channels/rules";
+import { leadPageConsentParts } from "@/lib/leads/consent-line";
+import { marketOfLead } from "@/lib/markets/lead-settings";
+import { marketContactSettings } from "@/lib/markets/settings";
 import { chatNames } from "@/lib/simulator/service";
 import { brandVars, buyerBubbleColor, safeBrand } from "@/lib/simulator/rules";
 import { voiceMode } from "@/lib/voice/settings";
@@ -37,7 +41,8 @@ export type PreviewTexts = {
   seller: string;
   initials: string;
   form: LeadFormText;
-  consentLine: string;
+  /** The consent line in parts (names at odd indexes, isolated when shown). */
+  consentLine: string[];
   thanks: string;
   connecting: string;
   buttons: { talkNow: string; chatWriting: string; continueChat: string };
@@ -62,6 +67,12 @@ export type LeadPagePreviewData = {
   privacy: string[];
   /** The saved banner (edit). */
   savedBanner: { src: string; width: number; height: number } | null;
+  /**
+   * `${marketId}|${lang}` → the account's approved opening template as the chat would send it to the sample
+   * buyer, for every market choice and language that has one: the chat start sends it in place of the opener
+   * whatever the topic (previewOpenerTemplate).
+   */
+  openerTemplates: Record<string, string>;
 };
 
 /** The topic choices of the form: "" (none), each playbook topic by index, and "keep" (a page's earlier topic). */
@@ -86,6 +97,20 @@ export async function previewVoiceOffered(db: Db, account: Pick<SellerAccount, "
   if (await spendCapped(db, account.id, now)) return false;
   if (mode === "live" && (await platformBudget(db, now)).exceeded) return false;
   return true;
+}
+
+/**
+ * The approved opening template a new lead from a page in this market and language would get as the chat's
+ * first message, filled in for the sample buyer, or null (the opener then). The same decision as the chat
+ * start (lib/chat/start.ts → lib/simulator/service.ts simulatorOpenerFacts and startSimulatorConversation):
+ * an approved "opener" template in the lead's language, else in the market's languages in order, with the
+ * lead's first name and the trade name in that language. A page for any market ("") uses the account's
+ * languages (the buyer's market is only known from the phone). Read only.
+ */
+export async function previewOpenerTemplate(db: Db, account: SellerAccount, marketId: string, lang: PreviewLang): Promise<string | null> {
+  const contact = marketContactSettings(account, await marketOfLead(db, account.id, marketId || null));
+  const template = await approvedTemplate(db, account.id, "opener", lang, contact.languages);
+  return template ? renderTemplate(template.body, templateVariables({ fullName: sampleBuyerName(lang), language: lang }, account)) : null;
 }
 
 export async function leadPagePreviewData(
@@ -117,7 +142,7 @@ export async function leadPagePreviewData(
       lang, dir: lang === "he" ? "rtl" : "ltr",
       seller: names.seller, initials: initialsOf(names.seller),
       form: leadFormText(tr),
-      consentLine: leadPageConsentLine(lang, names.seller, names.agent),
+      consentLine: leadPageConsentParts(lang, names.seller, names.agent),
       thanks: tr("buyer.lp.handover.thanks", { name }),
       connecting: handoverConnectingLine(names, lang),
       buttons: { talkNow: tr("buyer.lp.handover.talk_now"), chatWriting: tr("buyer.lp.handover.chat_writing"), continueChat: tr("buyer.lp.handover.continue_chat") },
@@ -132,9 +157,12 @@ export async function leadPagePreviewData(
     };
   }
   const privacy: string[] = [];
+  const openerTemplates: Record<string, string> = {};
   for (const marketId of ["", ...markets.map((m) => m.id)]) {
     for (const lang of PREVIEW_LANGS) {
       if (await privacyNotice(db, { accountId: account.id, marketId: marketId || null, language: lang })) privacy.push(`${marketId}|${lang}`);
+      const template = await previewOpenerTemplate(db, account, marketId, lang);
+      if (template !== null) openerTemplates[`${marketId}|${lang}`] = template;
     }
   }
   return {
@@ -144,5 +172,6 @@ export async function leadPagePreviewData(
     voiceOffered: await previewVoiceOffered(db, account),
     privacy,
     savedBanner: page?.banner ? { src: bannerUrlPath(page.publicKey, page.banner), width: page.banner.width, height: page.banner.height } : null,
+    openerTemplates,
   };
 }

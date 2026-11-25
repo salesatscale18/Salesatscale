@@ -26,5 +26,14 @@ const PAGE_LINE = {
 } as const;
 
 export function leadPageConsentLine(lang: "en" | "he", seller: string, agent: string): string {
-  return PAGE_LINE[lang].replace("{seller}", () => seller).replace("{agent}", () => agent);
+  return leadPageConsentParts(lang, seller, agent).join("");
+}
+
+/**
+ * The same line in parts for display: the wording, then a name, then wording… (odd indexes are the seller's
+ * and the agent's names), so a page can isolate each name (<bdi>) and a Latin name or digits in a Hebrew line
+ * keep their place. Joined, the parts are exactly leadPageConsentLine (the stored wording: plain text, no marks).
+ */
+export function leadPageConsentParts(lang: "en" | "he", seller: string, agent: string): string[] {
+  return PAGE_LINE[lang].split(/\{(seller|agent)\}/).map((p, i) => (i % 2 ? (p === "seller" ? seller : agent) : p));
 }

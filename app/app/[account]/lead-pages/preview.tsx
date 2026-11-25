@@ -23,6 +23,17 @@ export type LeadPagePreviewText = {
   afterSave: Record<string, string> | null;
 };
 
+/**
+ * The chat's first message for this draft: the account's approved opening template for the page's market and
+ * language when there is one (the chat start sends it in place of the opener, whatever the topic), else the
+ * opener for the chosen topic.
+ */
+export function previewFirstMessage(d: LeadPageDraft, data: LeadPagePreviewData): string {
+  const lang = d.language === "he" ? "he" : "en";
+  const T = data.texts[lang];
+  return data.openerTemplates[`${d.marketId}|${lang}`] ?? T.openers[d.topic] ?? T.openers[""] ?? "";
+}
+
 /** What each tab shows (its visible inputs), so a change only marks the tabs it really changes. */
 export function previewSignatures(d: LeadPageDraft, data: LeadPagePreviewData): Record<PreviewTab, string> {
   const T = data.texts[d.language === "he" ? "he" : "en"];
@@ -30,7 +41,7 @@ export function previewSignatures(d: LeadPageDraft, data: LeadPagePreviewData): 
   return {
     form: [d.connection, T.lang, privacy, d.company, d.email, d.consent, T.about[d.topic] ?? "", d.connection === "link" ? d.banner : ""].join("|"),
     handover: [T.lang, d.banner].join("|"),
-    first: T.openers[d.topic] ?? T.openers[""] ?? "",
+    first: previewFirstMessage(d, data),
   };
 }
 
@@ -46,6 +57,28 @@ function useImageSize(url: string | null) {
     return () => { live = false; };
   }, [url]);
   return size && size.url === url ? size : null;
+}
+
+/**
+ * The buyer's screen scrolls inside the frame when it is taller (a Hebrew form with four fields): `more` while
+ * there is more below (a soft fade at the bottom edge), and back to the top when the tab changes.
+ */
+function useScreenScroll(tab: PreviewTab) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(check) : null;
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => { el.removeEventListener("scroll", check); ro?.disconnect(); };
+  }, []);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = 0; }, [tab]);
+  return { ref, more };
 }
 
 /**
@@ -69,6 +102,7 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
   const tabRefs = useRef<Record<PreviewTab, HTMLButtonElement | null>>({ form: null, handover: null, first: null });
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const scroll = useScreenScroll(tab);
 
   // The tab on show is always seen.
   const shownSig = now[tab];
@@ -119,9 +153,9 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
           })}
         </div>
         <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`} className="lpv-panel" data-preview-panel={tab} data-preview-lang={lang} data-preview-connection={draft.connection}>
-          <div className="lpv-phone">
-            {/* The buyer's screen: shown, never used (inert), and not read out twice. */}
-            <div className="lpv-screen" aria-hidden="true">
+          <div className="lpv-phone" data-more={scroll.more ? "" : undefined}>
+            {/* The buyer's screen: shown, never used (inert), and not read out twice. It scrolls when taller than the frame. */}
+            <div className="lpv-screen" aria-hidden="true" ref={scroll.ref}>
               <div className="lpv-inert" inert>
                 <Screen tab={tab} draft={draft} data={data} lang={lang} text={text} />
               </div>
@@ -180,7 +214,7 @@ function Screen({ tab, draft, data, lang, text }: { tab: PreviewTab; draft: Lead
           </div>
           <div className="c-log" dir={T.dir}>
             <div className="c-msg c-msg--in">
-              <div className="c-bubble" dir="auto" data-preview-opener="">{T.openers[draft.topic] ?? T.openers[""]}</div>
+              <div className="c-bubble" dir="auto" data-preview-opener="">{previewFirstMessage(draft, data)}</div>
             </div>
           </div>
         </div>

@@ -20,7 +20,7 @@ import {
 import { chatTokenFor, linkIdFromChatToken } from "@/lib/simulator/token";
 import { SMS_COMMERCIAL_KINDS, SMS_KIND_TIMING, SMS_SPACING_EXEMPT, smsRefusal, smsSegments } from "@/lib/sms/rules";
 import { smsText } from "@/lib/sms/texts";
-import { leadPageConsentLine } from "@/lib/leads/consent-line";
+import { leadPageConsentLine, leadPageConsentParts } from "@/lib/leads/consent-line";
 
 const ID = "0f1e2d3c-4b5a-4968-8776-655443322110";
 const OTHER = "0f1e2d3c-4b5a-4968-8776-655443322111";
@@ -191,6 +191,21 @@ describe("lead page submissions", () => {
     expect(leadPageConsentLine("he", "פולאר", "מאיה")).toContain("פולאר והעוזר האוטומטי מאיה");
     // A $ in a name is not a replacement pattern.
     expect(leadPageConsentLine("en", "A$&B", "M")).toContain("that A$&B and");
+  });
+
+  it("the consent line in parts (for display, names at odd indexes) joins back to the exact stored sentence", () => {
+    const seller = "Polar Demo 2026-11-18 19:16:31";
+    for (const lang of ["en", "he"] as const) {
+      for (const [s, a] of [[seller, "Maya"], ["פולאר", "מאיה"], ["A$&B {agent}", "<b>M</b>"]]) {
+        const parts = leadPageConsentParts(lang, s, a);
+        expect(parts.join("")).toBe(leadPageConsentLine(lang, s, a));
+        expect(parts.filter((_, i) => i % 2)).toEqual([s, a]);
+      }
+    }
+    // The stored Hebrew wording with a Latin and digits trade name: the plain sentence, no isolate or mark characters.
+    const line = leadPageConsentLine("he", seller, "Maya");
+    expect(line).toBe(`בשליחה, את/ה מסכים/ה ש-${seller} והעוזר האוטומטי Maya ייצרו איתך קשר בנוגע לפנייה ב-SMS, וואטסאפ, מייל או שיחה בצ'אט. אפשר להפסיק בכל עת.`);
+    expect(line).not.toMatch(/[‪-‮⁦-⁩‎‏؜<>]/);
   });
 });
 

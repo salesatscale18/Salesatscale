@@ -120,7 +120,7 @@ describe("lead pages: the live preview on Add a page / Edit", () => {
     expect(more).toContain("Company (optional)");
     expect(more).toContain('name="email"');
     expect(more).toMatch(/name="consent" checked=""/);
-    expect(more).toContain("By sending, you agree that Polar Demo and its automated assistant");
+    expect(more).toContain("By sending, you agree that <bdi>Polar Demo</bdi> and its automated assistant <bdi>");
     // The About line follows SHOW_ABOUT_TOPIC, as on the real form.
     expect(more.includes("data-lp-about")).toBe(SHOW_ABOUT_TOPIC);
   });
