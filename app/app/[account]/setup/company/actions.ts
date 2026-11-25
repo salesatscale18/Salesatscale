@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { actorOf, appDb, requireAccount } from "@/lib/auth/account";
 import { parseCompany, saveCompany, saveDeliveryLeadTime, type CompanyErrors } from "@/lib/accounts/company";
 import { leadTimeOrNull, parseLeadTime } from "@/lib/delivery/eta";
+import { SETUP_STEPS } from "@/components/sas/nav";
 
 const path = (slug: string) => `/app/${slug}/setup/company`;
 
@@ -12,6 +13,7 @@ const path = (slug: string) => `/app/${slug}/setup/company`;
  * Setup › Company save. The sales rep's membership is checked in saveCompany
  * (server-side). The Delivery section's lead time is saved with it (both
  * empty = not set); it is checked first so a bad range saves nothing.
+ * "Save and next" (then=next) goes on to the next setup step after a good save.
  */
 export async function saveCompanyAction(form: FormData) {
   const a = await requireAccount(String(form.get("slug") ?? ""));
@@ -31,5 +33,7 @@ export async function saveCompanyAction(form: FormData) {
     }
   }
   revalidatePath(`/app/${a.account.slug}`, "layout");
+  const next = SETUP_STEPS[SETUP_STEPS.findIndex((st) => st.id === "company") + 1];
+  if (form.get("then") === "next" && next) redirect(`/app/${a.account.slug}${next.path}`);
   redirect(`${path(a.account.slug)}?saved=1`);
 }

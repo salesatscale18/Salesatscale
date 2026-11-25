@@ -254,7 +254,6 @@
 .sas-setup-card__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .sas-setup-card .sas-progress { max-width: 420px; }
 @media (prefers-reduced-motion: reduce) { .sas-progress__fill { transition: none; } }
-[dir="rtl"] .sas-stepline__next .sas-ico, [dir="rtl"] .sas-setup-card .sas-btn .sas-ico { transform: scaleX(-1); }
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
 .sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .sas-nav__user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2093,4 +2092,28 @@ label.st-voice__row { cursor: pointer; }
 .sas-app a.lab-recent__all { display: inline-flex; align-items: center; gap: 4px; margin-block-start: 4px; font-size: 13px; font-weight: 600; color: var(--primary); text-decoration: none; }
 .sas-app a.lab-recent__all:hover { text-decoration: underline; }
 .lab-recent__all .sas-ico { width: 14px; height: 14px; }
-[dir="rtl"] .lab-recent__all .sas-ico { transform: scaleX(-1); }
+
+/* Step-by-step form (Create a seller account): numbered steps, one step on screen, Back / Next. */
+.sas-wizard__steps { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; counter-reset: none; }
+.sas-wizard__step { flex: 1 1 0; min-width: 120px; }
+.sas-wizard__jump { width: 100%; display: flex; align-items: center; gap: var(--space-2); padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink-muted); font: 600 13px/18px var(--font-sans); text-align: start; cursor: pointer; }
+.sas-wizard__jump:disabled { cursor: default; opacity: 0.75; }
+.sas-wizard__jump:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-wizard__dot { width: 24px; height: 24px; flex: none; display: inline-grid; place-items: center; border-radius: var(--radius-pill); background: var(--surface-sunken); color: var(--ink-muted); font-size: 12px; font-weight: 700; }
+.sas-wizard__dot .sas-ico { width: 14px; height: 14px; }
+.sas-wizard__step--done .sas-wizard__dot { background: var(--success-soft); color: var(--success); }
+.sas-wizard__step--done .sas-wizard__jump { color: var(--ink); }
+.sas-wizard__step[aria-current="step"] .sas-wizard__jump { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.sas-wizard__step[aria-current="step"] .sas-wizard__dot { background: var(--primary); color: var(--on-primary); }
+.sas-wizard__about { margin: 0; color: var(--ink-muted); font-size: 14px; line-height: 20px; }
+.sas-wizard__review .sas-kv { margin: 0; }
+.sas-wizard__nav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.sas-wizard__count { color: var(--ink-muted); }
+.sas-wizard [hidden] { display: none !important; }
+@media (max-width: 640px) {
+  .sas-wizard__step { flex: 0 0 auto; min-width: 0; }
+  .sas-wizard__step:not([aria-current="step"]) .sas-wizard__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+/* Setup › Company: each market's lead time under the default. */
+.co-market-lead { display: flex; justify-content: space-between; gap: var(--space-3); padding-block: 6px; border-block-start: 1px solid var(--line); }
+.co-market-lead:first-child { border-block-start: 0; }

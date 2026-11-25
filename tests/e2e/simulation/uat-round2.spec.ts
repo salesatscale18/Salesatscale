@@ -7,7 +7,7 @@
  *
  * One test per checklist step, named by its id. Each test asserts the step's
  * "Expect" text. The run creates its own seller account ("UAT2 <run id>",
- * home market Israel + Cyprus) and its own data, so run it only where test
+ * home market Israel) and its own data, so run it only where test
  * data is acceptable (today: production, decision D9).
  *
  * The steps build on each other. Tests run in order on one worker; when a
@@ -38,7 +38,7 @@ type State = {
   run: string;
   appBase: string; // /app/<slug>
   accountId: string;
-  priceList: string; // path of "Israel and Cyprus prices"
+  priceList: string; // path of "Israel prices"
   euList: string; // path of "EU prices"
   leads: Record<string, string>; // name → lead path
   quotes: Record<string, string>; // name → quote id
@@ -65,8 +65,8 @@ const S = loadState();
 const save = () => fs.writeFileSync(STATE_FILE, JSON.stringify(S, null, 2));
 const RUN = S.run;
 const SELLER = `UAT2 ${RUN}`;
-const HOME = "Israel and Cyprus";
-const HOME_LIST = "Israel and Cyprus prices";
+const HOME = "Israel";
+const HOME_LIST = "Israel prices";
 const tail = RUN.slice(-5);
 const phone = (n: number) => `0526${n}${tail}`; // Israeli mobile, unique per run
 const OWNER_EMAIL = `uat2-owner-${RUN}+clerk_test@example.com`;
@@ -149,15 +149,18 @@ test("A1 Create a seller account", async () => {
   await page.locator("#tradeName").fill(SELLER);
   await page.locator("#legalName").fill(`${SELLER} Ltd`);
   await page.locator("#companyId").fill("515550124");
+  await page.locator("[data-wizard-next]").click();
   await page.locator("#market").selectOption("IL");
-  await page.locator("#countries").fill("CY");
   await page.locator('input[name="languages"][value="en"]').check();
   await page.locator('input[name="languages"][value="he"]').check();
   await page.locator("#currency").selectOption("ILS");
+  await page.locator("[data-wizard-next]").click();
   await page.locator("#plan").selectOption("pilot");
   await page.locator("#monthlySpendCap").fill("500");
+  await page.locator("[data-wizard-next]").click();
   await page.locator("#ownerName").fill("UAT Owner");
   await page.locator("#ownerEmail").fill(OWNER_EMAIL);
+  await page.locator("[data-wizard-next]").click();
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByText("Account created")).toBeVisible();
   await expect(page.getByRole("button", { name: /Copy link/ })).toBeVisible();
@@ -191,7 +194,7 @@ test("A3 Enter the account", async () => {
   S.appBase = new URL(page.url()).pathname;
   await expect(page.getByText(`You are acting as ${SELLER}. Every change is logged.`)).toBeVisible();
   await expect(page.getByRole("link", { name: "Exit account" })).toBeVisible();
-  // A1's expectation: a home market "Israel and Cyprus" and an empty draft price list.
+  // A1's expectation: a home market "Israel" and an empty draft price list (more countries are added later in Markets).
   await page.goto(`${S.appBase}/markets`);
   await expect(page.locator("[data-market-row]").filter({ hasText: HOME })).toHaveCount(1);
   await page.goto(`${S.appBase}/setup/price-lists`);
@@ -383,7 +386,7 @@ test("B2c Copy and adjust", async ({ browser }) => {
 
 test("B2c Copy keeps the source list's VAT handling", async () => {
   // Fixed (Lane F): Copy and adjust starts from the source list's currency, VAT setting and rate,
-  // so copying "Israel and Cyprus prices" (without VAT) keeps "EU prices" without VAT.
+  // so copying "Israel prices" (without VAT) keeps "EU prices" without VAT.
   need(S.euList);
   await page.goto(S.euList);
   await expect(page.getByText(/prices without VAT/).first()).toBeVisible({ timeout: 5000 });
@@ -573,9 +576,8 @@ test("M1 Home market", async ({ browser }) => {
   await expect(d.getByRole("heading", { name: new RegExp(HOME) })).toBeVisible();
   await expect(d.locator(".sas-chip", { hasText: "Home" })).toBeVisible();
   await expect(d.locator(".sas-pill").first()).toBeVisible(); // status
-  await expect(d.locator("#where")).toContainText("Israel, Cyprus"); // app shows names, not IL / CY
+  await expect(d.locator("#where")).toContainText("Israel"); // app shows names, not IL
   await expect(d).toContainText("+972");
-  await expect(d).toContainText("+357");
   // The dropdown names the live list; no line repeats it under the dropdown.
   await expect(d.locator("#mk-pl option:checked")).toContainText(`${HOME_LIST} · ILS · live v1`);
   await expect(d).not.toContainText("Selling from");

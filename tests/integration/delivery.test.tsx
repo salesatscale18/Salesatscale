@@ -152,9 +152,18 @@ describe("delivery ETA", () => {
     expect(html).toMatch(/name="minDays"[^>]*value="5"/);
     expect(html).toMatch(/name="maxDays"[^>]*value="10"/);
     expect(html).toContain("Count business days only (skips weekends and holidays)");
-    expect(html).toContain("Leave empty if you don&#x27;t want to show delivery times.");
+    expect(html).toContain("Default delivery lead time");
+    expect(html).toContain("Used for every market that has no lead time of its own.");
     expect(html).toContain("Weekends and your holiday list are skipped.");
     expect(html).toContain("5–10 business days after signing");
+
+    // "Save and next" saves, then opens the next setup step (Sources); plain Save stays on the page.
+    const saveNext = html.match(/<button[^>]*data-save-next="sources"[^>]*>Save and next: Sources/)?.[0] ?? "";
+    expect(saveNext).toContain('type="submit"');
+    expect(saveNext).toContain('name="then"');
+    expect(saveNext).toContain('value="next"');
+    const nextRun = await run(saveCompanyAction(company({ minDays: "5", maxDays: "10", businessDays: "on", then: "next" })));
+    expect((nextRun as { redirect: string }).redirect).toMatch(/\/setup\/sources$/);
 
     // Empty clears it; then set it back for the rest of the suite.
     await run(saveCompanyAction(company({ minDays: "", maxDays: "" })));
@@ -188,6 +197,13 @@ describe("delivery ETA", () => {
     // The override form shows the market's weekend.
     html = renderToStaticMarkup(await MarketsPage(props(acc.slug, { m: id, override: "leadTime" })));
     expect(html).toContain("Weekend here: Saturday, Sunday.");
+    // Setup › Company: the lead time there is the default; each market shows its own or "Uses the default".
+    const co = renderToStaticMarkup(await CompanyPage(props(acc.slug)));
+    const perMarket = co.split("data-market-leads")[1] ?? "";
+    expect(perMarket).toMatch(/data-market-lead="own"><span>UK<\/span><span class="sas-small">2–3 days/);
+    expect(perMarket).toContain('data-market-lead="default"');
+    expect(perMarket).toContain("Uses the default");
+    expect(perMarket).toMatch(/href="\/app\/[^"]+\/markets" data-markets-link=""/);
 
     await run(resetSettingAction(form({ slug: acc.slug, marketId: id, key: "leadTime" })));
     const [back] = await db.select().from(markets).where(eq(markets.id, id));
