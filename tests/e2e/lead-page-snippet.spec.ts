@@ -19,7 +19,7 @@ import { mkdirSync, readFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { translator } from "../../lib/i18n";
-import { aboutLine, leadFormText } from "../../lib/lead-pages/form-text";
+import { aboutLine, leadFormText, SHOW_ABOUT_TOPIC } from "../../lib/lead-pages/form-text";
 import { leadPageConsentLine } from "../../lib/leads/consent-line";
 
 const ROOT = join(__dirname, "..", "..");
@@ -101,7 +101,9 @@ test("takes the page's serif font; the page's hostile CSS does not reach the for
   await page.goto(`${hostUrl}/offer?utm_source=facebook&utm_campaign=spring`);
   const f = form(page);
   await expect(f.getByRole("button", { name: "Send" })).toBeVisible();
-  await expect(f.getByText("About: Fridge monitoring")).toBeVisible();
+  // The About line is new wording behind SHOW_ABOUT_TOPIC (off until the owner approves it).
+  if (SHOW_ABOUT_TOPIC) await expect(f.getByText("About: Fridge monitoring")).toBeVisible();
+  else await expect(f.getByText("About: Fridge monitoring")).toHaveCount(0);
   const style = await f.locator("input[name=name]").evaluate((el) => {
     const label = el.closest("label")!;
     const s = getComputedStyle(label), i = getComputedStyle(el);
@@ -171,7 +173,8 @@ test("Hebrew: right to left with the Hebrew texts", async ({ page }) => {
   const f = form(page);
   await expect(f.getByRole("button", { name: "שליחה" })).toBeVisible();
   expect(await f.locator("[data-sas-form]").getAttribute("dir")).toBe("rtl");
-  await expect(f.getByText("בנושא: ניטור מקררים")).toBeVisible();
+  if (SHOW_ABOUT_TOPIC) await expect(f.getByText("בנושא: ניטור מקררים")).toBeVisible();
+  else await expect(f.getByText("בנושא: ניטור מקררים")).toHaveCount(0);
 });
 
 test("screenshots for the visual check (only with LP_SHOTS_DIR)", async ({ browser }) => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent, type ReactNode } from "react";
 import { BANNER_ACCEPT, bannerFileProblem, fileSizeText } from "@/lib/lead-pages/banner-file";
+import { useLeadPageDraft } from "./draft";
 import { useLeadPageFormState } from "./form-shell";
 
 export type BannerFieldText = {
@@ -38,8 +39,11 @@ export function BannerField({ saved, uploads, removeButton, icons, text }: {
   const [problem, setProblem] = useState<string | null>(null);
   const [lost, setLost] = useState(false);
   const state = useLeadPageFormState();
+  const { setBanner } = useLeadPageDraft();
 
   useEffect(() => () => { if (chosen) URL.revokeObjectURL(chosen.url); }, [chosen]);
+  // The live preview shows the chosen image before it is uploaded.
+  useEffect(() => { setBanner(chosen?.url ?? null); }, [chosen, setBanner]);
   // A refused save that came with a file, but the input has none now: the errors came back with
   // a fresh page (the post went before the script ran), so the file is gone. Ask for it again.
   useEffect(() => {

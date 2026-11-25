@@ -87,8 +87,14 @@
 .lpg-latest__when { margin-inline-start: auto; white-space: nowrap; }
 
 /* Add / edit form. */
-.lpg-form { display: flex; flex-direction: column; gap: var(--space-4); }
+/* The add/edit form and its live preview in one grid: the form itself is laid out as its children (display: contents),
+   so the connection cards span both columns, the form's fields sit on the left and the preview (outside the form) on the right. */
+.lpg-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); gap: var(--space-4); align-items: start; }
+.lpg-form__form { display: contents; }
+.lpg-form__form > * { grid-column: 1 / -1; min-width: 0; }
+.lpg-form__form > .lpg-form__main { grid-column: 1; }
 .lpg-form[data-pending] { opacity: 0.7; }
+@media (max-width: 1023px) { .lpg-form { grid-template-columns: minmax(0, 1fr); } .lpg-form__form > .lpg-form__main { grid-column: 1 / -1; } }
 .lpg-connect { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .lpg-connect legend { padding: 0; margin-block-end: 10px; }
 .lpg-connect__cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-3); }
@@ -110,8 +116,6 @@
 .lpg-ccard[data-disabled] .lpg-ccard__icon { color: var(--ink-muted); background: var(--surface-raised); }
 /* Phone: the ways that are not offered yet take one line each. */
 @media (max-width: 560px) { .lpg-ccard[data-disabled] > .sas-small { display: none; } .lpg-ccard[data-disabled] { padding-block: 10px; } }
-.lpg-form__cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 360px); gap: var(--space-4); align-items: start; }
-@media (max-width: 1023px) { .lpg-form__cols { grid-template-columns: minmax(0, 1fr); } }
 .lpg-form__main { min-width: 0; }
 .lpg-form__side { display: flex; flex-direction: column; gap: var(--space-4); min-width: 0; }
 .lpg-sec { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-top: 1px solid var(--line); }
@@ -154,7 +158,6 @@
 .lpg-form:has(input[name="connection"][value="own_form"]:checked) [data-for]:not([data-for~="own_form"]) { display: none; }
 .lpg-form:has(input[name="connection"][value="link"]:checked) [data-for]:not([data-for~="link"]) { display: none; }
 /* "Button or link": the optional address goes last in "The page" block. */
-.lpg-form:has(input[name="connection"][value="link"]:checked) .lpg-field--address { order: 1; }
 .lpg-switchrow { display: flex; flex-direction: column; gap: 6px; }
 .lpg-code { white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere; }
 .lpg-origins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
@@ -194,3 +197,50 @@
 .lpg-chip__text { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sas-app a.lpg-chip__x { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: var(--primary); flex: none; }
 .sas-app a.lpg-chip__x:hover { background: var(--surface-raised); }
+
+/* The live preview (preview.tsx): a phone frame with the buyer's screens (the real pages' components and styles,
+   lead-page.css and chat.css), tabs above it. The screen keeps the buyer pages' own light colours. */
+.lpv { grid-column: 2; position: sticky; top: 16px; }
+.lpv-toggle { display: none; }
+.lpv-sheet { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
+.lpv-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.lpv-close { display: none; }
+.lpv-tabs { display: flex; gap: 2px; padding: 3px; border-radius: var(--radius-md); background: var(--surface-sunken); }
+.lpv-tab { flex: 1 1 0; min-width: 0; display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 30px; padding-inline: 6px;
+  border: 0; border-radius: 6px; background: transparent; color: var(--ink-muted); font: inherit; font-size: 13px; line-height: 16px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.lpv-tab:hover { color: var(--ink); }
+.lpv-tab[aria-selected="true"] { background: var(--surface-raised); color: var(--ink); box-shadow: 0 1px 2px rgba(15, 20, 32, .12); }
+.lpv-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); flex: none; }
+.lpv-panel { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lpv-note, .lpv-after { margin: 0; }
+.lpv-phone { --lpv-h: 600px; width: 100%; max-width: 340px; margin-inline: auto; border: 8px solid #1b1f27; border-radius: 36px; background: #1b1f27;
+  box-shadow: 0 16px 40px rgba(15, 20, 32, .16); overflow: hidden; }
+.lpv-screen { height: var(--lpv-h); overflow-y: auto; overscroll-behavior: contain; background: #ffffff; border-radius: 28px; scrollbar-width: thin; }
+.lpv-inert { min-height: 100%; display: flex; flex-direction: column; }
+.lpv-inert > * { flex: 1 0 auto; }
+/* The buyer pages fill a browser window; here they fill the frame. */
+.lpv-screen .lp-root, .lpv-screen .c-root { min-height: 0; padding: 0; display: flex; flex-direction: column; }
+.lpv-screen .lp-page { flex: 1 0 auto; width: 100%; max-width: none; min-height: 0; margin: 0; border: 0; border-radius: 0; box-shadow: none; overflow: visible; }
+.lpv-screen .c-frame { flex: none; width: auto; height: var(--lpv-h); max-height: none; border: 0; border-radius: 0; box-shadow: none; }
+/* The banner whole, at most 40% of the frame (the buyer page: of the screen). */
+.lpv-screen .lp-banner, .lpv-screen .lp-banner img { max-height: calc(var(--lpv-h) * 0.4); }
+.lpv-wait { flex: none; height: 120px; background: #eceef2; }
+/* "Our form on your page": the form on a neutral sample page; it takes the page's font. */
+.lpv-sample { display: flex; flex-direction: column; gap: 10px; padding: 16px 14px; background: #f1efea; color: #2b2b2b; font-family: Georgia, "Times New Roman", serif; }
+.lpv-sample__bar { height: 28px; border-radius: 6px; background: #dedad1; }
+.lpv-sample__line { height: 10px; width: 70%; border-radius: 5px; background: #dedad1; }
+.lpv-sample__line--wide { width: 92%; }
+.lpv-sample__line--short { width: 40%; }
+.lpv-sample .lpv-snippet.lp-root { flex: none; min-height: 0; display: flex; flex-direction: column; gap: 14px; padding: 16px; border-radius: 10px; background: #ffffff;
+  font-family: inherit; color: inherit; }
+.lpv-own { display: grid; place-items: center; padding: 24px; text-align: center; background: #f5f6f8; color: #566073; }
+
+/* Narrow screens: the preview opens from a "Preview" button as a sheet. */
+@media (max-width: 1023px) {
+  .lpv { grid-column: 1 / -1; position: static; }
+  .lpg-page:has(.lpv) { padding-block-end: 72px; }
+  .lpv-toggle { display: inline-flex; position: fixed; inset-block-end: 16px; inset-inline-end: 16px; z-index: 40; box-shadow: var(--shadow-pop); }
+  .lpv-sheet { display: none; }
+  .lpv[data-open] .lpv-sheet { display: flex; position: fixed; inset: 0; z-index: 50; overflow-y: auto; border: 0; border-radius: 0; margin: 0; }
+  .lpv-close { display: inline-flex; }
+}

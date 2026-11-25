@@ -207,11 +207,11 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(html).toMatch(/name="tellPagePixel" checked=""/);
     expect(s).toContain("Address of your page");
     expect(s).toContain("You get the snippet when you save.");
-    expect(s).toContain("Other addresses");
-    // Slice c: no address input before the page is saved, one muted line instead.
-    expect(s).toContain("Save the page to add other addresses.");
+    // The right column is the live preview; the snippet, the link, the other addresses and the checks are on the page's view after saving.
+    expect(html).toContain('data-preview=""');
+    expect(html).not.toContain("data-snippet-card");
+    expect(html).not.toContain("data-origins");
     expect(html).not.toContain('name="newOrigin"');
-    expect(html).toContain("data-origins-after-save");
     expect(s).toContain("Later");
     expect(s).toContain("Your ad pixel is not told about leads from this link.");
     expect(s).toContain("Carry ad details through to the lead");
@@ -236,9 +236,17 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(part("own_form", "sas-small")).toMatch(/^Optional, but recommended\. .*Without an address, the first send is refused/);
     expect(part("link", "lpg-field__label")).toBe("Address of the page with the button (optional)");
     expect(part("link", "sas-small")).toBe("Where your button or link is, like https://example.com/offer.");
-    // For a button or link the optional address goes last in "The page" block.
+    // The address is second in "The page" block, in the DOM (keyboard) order too; for a button or link it is last
+    // there (the demo page is a button or link), and no CSS reorders it.
+    const at = (h: string, needle: string) => h.indexOf(needle);
+    expect(at(html, 'name="name"')).toBeLessThan(at(html, 'name="address"'));
+    expect(at(html, 'name="address"')).toBeLessThan(at(html, 'name="marketId"'));
+    const linkEdit = await render(EditPage, { account: a.slug, pageId: demoPage.id });
+    expect(linkEdit.match(/name="address"/g)?.length).toBe(1);
+    expect(at(linkEdit, 'name="language"')).toBeLessThan(at(linkEdit, 'name="address"'));
+    expect(at(linkEdit, 'name="address"')).toBeLessThan(at(linkEdit, 'name="field_company"'));
     const css = fs.readFileSync(path.join(process.cwd(), "app/app/[account]/lead-pages/lead-pages.css"), "utf8");
-    expect(css).toContain('.lpg-form:has(input[name="connection"][value="link"]:checked) .lpg-field--address { order: 1; }');
+    expect(css).not.toMatch(/lpg-field--address\s*\{\s*order/);
     // What the buyer fills in: Name and Phone fixed, Company and Email optional; no "Number of sites".
     expect([...html.matchAll(/name="field_([a-z]+)"/g)].map((m) => m[1])).toEqual(["company", "email"]);
     expect(text(html)).not.toMatch(/Number of sites|sites/i);
@@ -474,14 +482,17 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     // The snippet needs its page's address.
     expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "snippet", address: "" })))).state).toMatchObject({ errors: { address: expect.any(String) } });
 
-    // Edit: the snippet with Copy, Save and preview, the other addresses as ticked pills.
+    // Edit: the live preview of the snippet's form; the snippet with Copy and the other addresses are on the page's view.
     const edit = await render(EditPage, { account: a.slug, pageId: id });
     save("snippet-edit", edit);
-    expect(edit).toContain(`data-sas-lead-form=&quot;${page.publicKey}&quot;`);
-    expect(edit).toContain("/lp/v1.js");
-    expect(text(edit)).toContain("Copy snippet");
-    expect(edit).toMatch(/name="extraOrigin" checked="" value="staging.polar-demo.example"/);
-    // Unticking removes the address, the switch off turns the pixel off; Save and preview gives a preview link on the page.
+    expect(edit).toContain('data-preview-connection="snippet"');
+    expect(text(edit)).toContain("On your page it takes your page's font.");
+    expect(edit).not.toContain(`data-sas-lead-form=&quot;${page.publicKey}&quot;`);
+    expect(edit).not.toContain('name="extraOrigin"');
+    // Saving from Edit keeps the other addresses (the form no longer shows them).
+    await run(actions.saveLeadPageAction(null, form({ slug: a.slug, pageId: id, name: "Spring snippet", language: "en", connection: "snippet", address: "polar-demo.example/spring", marketId: "", tellPagePixel: "on", carryAdDetails: "on", intent: "save" })));
+    expect((await getLeadPage(db, a.id, id))!.extraOrigins).toEqual(["staging.polar-demo.example"]);
+    // A post with the addresses shown (an older form): unticking removes the address, the switch off turns the pixel off; Save and preview gives a preview link on the page.
     const prev = await run(actions.saveLeadPageAction(null, form({
       slug: a.slug, pageId: id, name: "Spring snippet", language: "en", connection: "snippet", address: "polar-demo.example/spring", marketId: "", originsShown: "1", intent: "preview",
     })));
@@ -544,7 +555,8 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     as(a);
     const add = await render(NewPage, { account: a.slug });
     const s = text(add);
-    expect(add).toContain('data-own-form-card=""');
+    expect(add).not.toContain('data-own-form-card=""');
+    expect(add).toContain('data-for="own_form" data-preview-after="own_form"');
     expect(s).toContain("Address of the page with your form");
     expect(s).toContain("You get your form's address when you save.");
     expect(s).toContain("Your form decides what the buyer fills in.");
@@ -573,10 +585,11 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     const edit = await render(EditPage, { account: a.slug, pageId: id });
     save("own-edit", edit);
     expect(edit).toContain('<input type="radio" name="connection" checked="" value="own_form"/>');
-    expect(edit).toContain(`data-own-form-action="">${action}<`);
-    expect(text(edit)).toContain("Save and test");
-    expect(edit).toContain('name="newOrigin"');
-    // Save and test: saved, then the page view with a 24-hour test code.
+    // The address it sends to, Save and test and the other addresses are on the page's view, not on Edit.
+    expect(edit).not.toContain(`data-own-form-action="">${action}<`);
+    expect(edit).not.toContain('name="newOrigin"');
+    expect(edit).toContain('data-preview-connection="own_form"');
+    // Save and test (a post from an older form): saved, then the page view with a 24-hour test code.
     const prev = await run(actions.saveLeadPageAction(null, form({
       slug: a.slug, pageId: id, name: "Contact form", language: "en", connection: "own_form", address: "polar-demo.example/contact", marketId: "", originsShown: "1", intent: "preview",
     })));

@@ -1,7 +1,8 @@
 /**
  * The add/edit form's banner field in a real browser (owner test, 25 Nov: "after Choose image
  * the placeholder stays empty", and the image was gone after the form came back with errors).
- * Runs the real form shell and BannerField (bundled from tests/fixtures/lead-page-banner-harness.tsx)
+ * Runs the real form shell and BannerField (served from tests/fixtures/lead-page-banner-harness.tsx by
+ * tests/e2e/helpers/harness.ts, through vitest's Vite API: no reliance on a transitive package)
  * with a stand-in action that refuses an empty name, not the Next app (that needs a database
  * and Clerk). The server action's own checks are covered on PGlite in
  * tests/integration/lead-pages-seller.test.tsx.
@@ -12,28 +13,23 @@
  * saves with the banner. Set LP_SHOTS_DIR to also save screenshots.
  */
 import { expect, test } from "@playwright/test";
-import { build } from "esbuild";
-import { mkdirSync, readFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { startHarness, type Harness } from "./helpers/harness";
 
-const ROOT = join(__dirname, "..", "..");
-let html = "";
+let harness: Harness;
 
 test.beforeAll(async () => {
-  const out = await build({
-    entryPoints: [join(ROOT, "tests/fixtures/lead-page-banner-harness.tsx")],
-    bundle: true, write: false, format: "iife", jsx: "automatic", platform: "browser",
-    define: { "process.env.NODE_ENV": '"production"' }, logLevel: "error",
-  });
-  const css = readFileSync(join(ROOT, "components/sas/sas.css"), "utf8") + readFileSync(join(ROOT, "app/app/[account]/lead-pages/lead-pages.css"), "utf8");
-  html = `<!doctype html><html><head><meta charset="utf-8"><style>${css}</style></head><body><div class="sas-app"><div id="root"></div></div><script>${out.outputFiles[0].text}</script></body></html>`;
+  harness = await startHarness("tests/fixtures/lead-page-banner-harness.tsx", ["components/sas/sas.css", "app/app/[account]/lead-pages/lead-pages.css"]);
 });
+test.afterAll(async () => { await harness?.close(); });
 
 // A real 1×1 PNG.
 const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", "base64");
 
 test("choose image → preview; wrong type and too large refused; kept through a refused save; saved once the name is fixed", async ({ page }) => {
-  await page.setContent(html);
+  await page.goto(harness.url);
+  await page.locator('input[type="file"][name="banner"]').waitFor({ state: "attached" });
   const file = page.locator('input[type="file"][name="banner"]');
   const shots = process.env.LP_SHOTS_DIR;
   if (shots) mkdirSync(shots, { recursive: true });
@@ -81,7 +77,8 @@ test("choose image → preview; wrong type and too large refused; kept through a
 });
 
 test("errors arriving with a fresh form (file gone, card back to the default): the card is checked again and the image asked for again", async ({ page }) => {
-  await page.setContent(html);
+  await page.goto(harness.url);
+  await page.locator('input[type="file"][name="banner"]').waitFor({ state: "attached" });
   const file = page.locator('input[type="file"][name="banner"]');
   await file.setInputFiles({ name: "offer-banner.png", mimeType: "image/png", buffer: PNG });
   await page.getByLabel("Button or link").check();
@@ -100,7 +97,8 @@ test("errors arriving with a fresh form (file gone, card back to the default): t
 });
 
 test("Don't use it clears the chosen image", async ({ page }) => {
-  await page.setContent(html);
+  await page.goto(harness.url);
+  await page.locator('input[type="file"][name="banner"]').waitFor({ state: "attached" });
   const file = page.locator('input[type="file"][name="banner"]');
   await file.setInputFiles({ name: "a.webp", mimeType: "image/webp", buffer: PNG });
   await expect(page.locator("[data-banner-chosen]")).toBeVisible();
