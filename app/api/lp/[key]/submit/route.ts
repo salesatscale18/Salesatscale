@@ -10,8 +10,10 @@
  *   other than ours): 303 to the hand-over or to /p/<key>?sent=1; when refused, 303 back to the
  *   form's page with ?sas_error=<code>: the Referer's path, or the page's address when the browser
  *   sent only the origin (a cross-site post's default Referer), on the allowed origin the request
- *   was checked against only. Otherwise (a refused origin, a Referer on another origin) a short
- *   plain-text answer and no redirect: never an open redirect.
+ *   was checked against only. Otherwise (a refused origin, no Origin and no Referer, a Referer on
+ *   another origin) a small styled page with one buyer sentence in the form's language and no
+ *   redirect: never an open redirect (lib/lead-pages/refusal.ts). A page that is not found gets
+ *   the same page (404).
  * The sas_lp cookie (the lead this browser created) is set only on our own domain.
  * CORS (slice b, the snippet on the seller's page): the page's allowed origins only, echoed with
  * `Vary: Origin` and never credentials; OPTIONS answers the preflight. The origin itself is checked
@@ -20,10 +22,10 @@
  * page's own Meta pixel as the "Lead" event's eventID.
  */
 import { appDb } from "@/lib/auth/account";
-import { translator } from "@/lib/i18n";
 import { submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
+import { ownFormErrorCode as errorCode, REFUSAL_PAGE_CSP, refusalPageHtml, refusalSentenceKey } from "@/lib/lead-pages/refusal";
 import { checkOrigin, originOf, requestOrigin } from "@/lib/lead-pages/origin";
-import { ownFormErrorUrl, SUBMIT_BODY_MAX, type OwnFormError } from "@/lib/lead-pages/rules";
+import { ownFormErrorUrl, SUBMIT_BODY_MAX } from "@/lib/lead-pages/rules";
 import { pageByKey } from "@/lib/lead-pages/service";
 import { handoverPath, leadCookieHeader, PUBLIC_KEY_RE } from "@/lib/lead-pages/tokens";
 import { parseJsonObject } from "@/lib/leads/rules";
@@ -45,17 +47,16 @@ function readBody(text: string, contentType: string): Record<string, unknown> | 
   return null;
 }
 
-/** The form's error code for a result that is not a hand-over (a no-JS post goes back to the form with it). */
-function errorCode(r: SubmitResult): OwnFormError {
-  if (r.kind === "invalid") return r.errors[0] ?? "generic";
-  if (r.kind === "busy") return "busy";
-  if (r.kind === "refused" && r.reason === "closed") return "closed";
-  return "generic";
+/** The styled refusal page (no redirect): one buyer sentence, nothing from the request. */
+function refusalPage(language: string | null | undefined, key: Parameters<typeof refusalPageHtml>[1], status: number): Response {
+  return new Response(refusalPageHtml(language === "he" ? "he" : "en", key), {
+    status, headers: { ...NO_STORE, "Content-Type": "text/html; charset=utf-8", "Content-Security-Policy": REFUSAL_PAGE_CSP, "X-Content-Type-Options": "nosniff" },
+  });
 }
 
 /**
  * A refused post from the seller's own form: back to the form's page (allowed origin only) with
- * ?sas_error=<code>, else a short plain answer in the form's language (no redirect).
+ * ?sas_error=<code>, else the styled refusal page in the form's language (no redirect).
  */
 async function ownFormRefusal(key: string, headers: Headers, r: SubmitResult, status: number): Promise<Response> {
   const code = errorCode(r);
@@ -63,9 +64,7 @@ async function ownFormRefusal(key: string, headers: Headers, r: SubmitResult, st
   const origin = found ? checkOrigin(found.page, headers, originOf(publicUrl("/"))) : null;
   const target = found && origin?.ok ? ownFormErrorUrl(found.page, headers.get("referer"), origin.origin, code) : null;
   if (target) return new Response(null, { status: 303, headers: { ...NO_STORE, Location: target } });
-  const tr = translator(found?.page.language === "he" ? "he" : "en");
-  const text = tr(code === "busy" ? "buyer.lp.form.err_busy" : code === "closed" ? "buyer.lp.form.closed" : "buyer.lp.form.err_generic");
-  return new Response(text, { status, headers: { ...NO_STORE, "Content-Type": "text/plain; charset=utf-8" } });
+  return refusalPage(found?.page.language, refusalSentenceKey(code), status);
 }
 
 export async function POST(req: Request, { params }: { params: Promise<{ key: string }> }) {
@@ -89,7 +88,7 @@ export async function POST(req: Request, { params }: { params: Promise<{ key: st
   if (!asJson) {
     if (r.kind === "handover") return new Response(null, { status: 303, headers: { ...NO_STORE, ...cookie, Location: handoverPath(r.token) } });
     if (r.kind === "thanks") return new Response(null, { status: 303, headers: { ...NO_STORE, Location: thanks } });
-    if (r.kind === "not_found") return new Response("Not found", { status: 404, headers: NO_STORE });
+    if (r.kind === "not_found") return refusalPage((await pageByKey(appDb, key))?.page.language, "buyer.lp.form.closed", 404);
     // Our hosted form (no JavaScript) goes back to itself; the seller's own form to its own page.
     if (requestOrigin(req.headers) !== originOf(publicUrl("/"))) {
       return ownFormRefusal(key, req.headers, r, r.kind === "busy" ? 429 : r.kind === "refused" ? 403 : 400);
