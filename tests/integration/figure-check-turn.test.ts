@@ -39,7 +39,8 @@ describe("reply figure check (text chat)", () => {
     await seedCatalog(db, acc, [{ sku: "SNS-200", name: "Wireless fridge sensor", unit: "device" }]);
     await seedPricing(db, acc, [{ sku: "SNS-200", oneTime: 59_000 }], { pricesIncludeTax: false, taxRateBp: 1800, userId: me.id });
     const d = await ensureDraftVersion(db, acc);
-    await saveDraftPlaybook(db, acc, { ...d.playbook, fields: [], exceptions: [{ id: "exc1", text: "Free installation from 3 sites", approvedAt: "2026-11-20T10:00:00Z", approvedBy: null }] });
+    await saveDraftPlaybook(db, acc, { ...d.playbook, fields: [], exceptions: [{ id: "exc1", text: "Free installation from 3 sites", approvedAt: "2026-11-20T10:00:00Z", approvedBy: null }],
+      plays: { price_early: { facts: [{ text: "A sensor is 590 ILS before VAT, or 550 ILS each from 10.", source: "Price list" }] } } });
   });
   afterAll(async () => t.close());
 
@@ -71,6 +72,18 @@ describe("reply figure check (text chat)", () => {
     expect(r.status).toBe("replied");
     expect(llm.requests).toHaveLength(3);
     expect(await figureRows(c.conversationId)).toEqual([]);
+  });
+
+  it("figures from the seller's approved play facts pass with no tool call; a figure from nowhere still fails", async () => {
+    const c = await conv();
+    const ok = new ScriptedLlm([say("It starts from ₪590 per sensor, or ₪550 each from 10. How many fridges do you have?")]);
+    expect(await runBuyerTurn(db, ok, { accountId: acc, conversationId: c.conversationId, text: "How much is a sensor?" })).toMatchObject({ status: "replied" });
+    expect(ok.requests).toHaveLength(1);
+    const c2 = await conv();
+    const bad = new ScriptedLlm([say("It starts from ₪575 per sensor."), say("How many fridges do you have?")]);
+    await runBuyerTurn(db, bad, { accountId: acc, conversationId: c2.conversationId, text: "How much is a sensor?" });
+    expect(bad.requests).toHaveLength(2);
+    expect(lastUserText(bad.requests[1])).toMatch(/Your reply states 575/);
   });
 
   it("failing twice: the sentences with unverified figures are removed, and the step is logged", async () => {

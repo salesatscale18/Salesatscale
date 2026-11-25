@@ -1171,7 +1171,7 @@ export async function runTool(name: string, input: unknown, ctx: ToolContext): P
       outcome: "ok",
       result: {
         ok: true, ...(r.replaced ? { replaced_earlier: true } : {}),
-        message: `Link sent in the chat. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with ${callRoleOf(ctx.playbook)} with the link. Keep answering their questions until the call.`,
+        message: `The booking card is now in the chat, right under your reply. Tell the buyer, in one short sentence in their wording, that they can pick a time for a call with ${callRoleOf(ctx.playbook)} on the card below. Keep answering their questions until the call.`,
       },
     };
   }
