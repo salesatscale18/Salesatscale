@@ -4,7 +4,7 @@
  * queries, whatever the number of conversations: the last message and the
  * buyer's last message come from correlated subqueries, not one query per row.
  */
-import { phoneSearchSql } from "@/lib/leads/unverified-claims";
+import { accountMarketCountry, phoneSearchSql } from "@/lib/leads/unverified-claims";
 import { and, desc, eq, ilike, inArray, isNull, notInArray, or, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import { conversations, leadEvents, leads, markets, messages, type DealObjection, type LeadStatus, type StoredObjection } from "@/db/schema";
@@ -73,13 +73,14 @@ function filterSql(filter: InboxFilter): SQL {
 
 const escapeLike = (v: string) => v.replace(/[\\%_]/g, (c) => `\\${c}`);
 
-function searchSql(q: string | undefined): SQL | undefined {
+/** `phoneMarket`: the account's market country, to read a typed local number (phoneSearchSql). */
+function searchSql(q: string | undefined, phoneMarket: string | null): SQL | undefined {
   const s = q?.trim();
   if (!s) return undefined;
   const like = `%${escapeLike(s)}%`;
-  const digits = s.replace(/\D/g, "");
   const conds = [ilike(leads.fullName, like), ilike(leads.company, like), ilike(leads.buyerRef, like)];
-  if (digits.length >= 3) conds.push(phoneSearchSql(digits));
+  const phone = phoneSearchSql(s, phoneMarket);
+  if (phone) conds.push(phone);
   return or(...conds);
 }
 
@@ -119,7 +120,8 @@ export async function listInbox(
 ): Promise<InboxList> {
   const filter = opts.filter ?? "all";
   const now = opts.now ?? new Date();
-  const search = searchSql(opts.q);
+  const phoneMarket = (opts.q?.replace(/\D/g, "").length ?? 0) >= 3 ? await accountMarketCountry(db, accountId) : null;
+  const search = searchSql(opts.q, phoneMarket);
   const scope = and(eq(conversations.accountId, accountId), eq(leads.accountId, accountId), search, marketWhere(leads.marketId, opts.market ?? null));
   const where = and(scope, filterSql(filter));
   const requested = Math.max(1, Math.floor(opts.page ?? 1));

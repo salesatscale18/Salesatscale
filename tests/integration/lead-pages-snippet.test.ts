@@ -201,19 +201,29 @@ describe("lead pages (b): the snippet's endpoints", () => {
     const [rec2] = await db.select().from(consentRecords).where(eq(consentRecords.leadId, s2.leadId));
     expect(rec2.pageUrl).not.toContain("evil");
 
-    // Sent within a second of the form loading (autofill and a quick tap): 403 with the wait, nothing written;
-    // the snippet and the hosted form send once more after it, and that send goes through.
+    // Sent within a second of the form loading (autofill and a quick tap): held on the server for the rest
+    // of the second, then accepted like any other send (no 403, no retry needed).
     const quickFt = formTimingToken(snippet.id, Date.now() - 300);
-    const n0 = (await db.select().from(leadPageSubmissions)).length;
     const quick = await post(submitRoute, snippet.publicKey, SITE, { name: "Fast Finger", phone: "+972547100004", consent: "on", ft: quickFt });
-    expect(quick.status).toBe(403);
-    const qb = await quick.json();
-    expect(qb).toEqual({ error: "timing", retryAfterMs: expect.any(Number) });
-    expect(qb.retryAfterMs).toBeGreaterThan(0);
-    expect(qb.retryAfterMs).toBeLessThanOrEqual(1000);
-    expect((await db.select().from(leadPageSubmissions)).length).toBe(n0);
-    await new Promise((res) => setTimeout(res, qb.retryAfterMs + 50));
-    expect((await post(submitRoute, snippet.publicKey, SITE, { name: "Fast Finger", phone: "+972547100004", consent: "on", ft: quickFt })).status).toBe(200);
+    expect(quick.status).toBe(200);
+    expect((await quick.json()).handover).toMatch(/^\/h\//);
+    // The same for a plain form post without script (a slow phone): 303 to the hand-over, never ?e=generic.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      const form = new URLSearchParams({ name: "Plain Post", phone: "+972547100006", consent: "on", ft: formTimingToken(snippet.id, Date.now() - 200) });
+      let res: Response | null = null;
+      const pending = submitRoute.POST(new Request(`${APP}/api/lp/${snippet.publicKey}/submit`, {
+        method: "POST", body: form.toString(), headers: { "content-type": "application/x-www-form-urlencoded", origin: APP, "x-forwarded-for": ip() },
+      }), ctx(snippet.publicKey)).then((r) => (res = r));
+      await vi.advanceTimersByTimeAsync(700);
+      expect(res).toBeNull();
+      await vi.advanceTimersByTimeAsync(200);
+      await pending;
+      expect(res!.status).toBe(303);
+      expect(res!.headers.get("location")).toMatch(/^\/h\//);
+    } finally {
+      vi.useRealTimers();
+    }
     // A forged or old token gets no wait (a real refusal).
     expect(await (await post(submitRoute, snippet.publicKey, SITE, { name: "Old Tab", phone: "+972547100005", consent: "on", ft: formTimingToken(snippet.id, Date.now() - 25 * 3600_000) })).json()).toEqual({ error: "timing" });
   });

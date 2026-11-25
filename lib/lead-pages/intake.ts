@@ -6,7 +6,7 @@
  * - The account comes only from the page row found by its public key, never from the request.
  * - The origin is checked first (before any write; simple requests run whatever CORS says),
  *   then the rate limits (per IP, per page, per phone and page), the honeypot and the
- *   form-timing token. Refusals are counted on lead_page_daily.rejected, never stored as rows.
+ *   form-timing token (a valid token younger than 1 s is waited out on the server, then accepted). Refusals are counted on lead_page_daily.rejected, never stored as rows.
  * - The hand-over token holds only the new submission's id.
  * - A repeat within 10 minutes returns the earlier hand-over only to the browser
  *   that holds the lead's sas_lp cookie, never to someone typing the same phone.
@@ -40,7 +40,7 @@ import {
   type LeadPageVia, type SubmissionError,
 } from "./rules";
 import { bumpDaily, pageCountry, pageByKey, recordRefusedOrigin } from "./service";
-import { checkFormTiming, cookieHoldsLead, formTimingWaitMs, handoverTokenFor, leadCookieFrom, leadIdFromCookie, previewTokenValid } from "./tokens";
+import { checkFormTiming, cookieHoldsLead, FORM_MIN_AGE_MS, formTimingWaitMs, handoverTokenFor, leadCookieFrom, leadIdFromCookie, previewTokenValid } from "./tokens";
 
 type Env = Record<string, string | undefined>;
 
@@ -76,12 +76,18 @@ export type SubmitResult =
   /** A normal-looking success with no lead (honeypot, paused account): the plain "Thanks" page. */
   | { kind: "thanks" }
   | { kind: "invalid"; errors: SubmissionError[] }
-  /** `retryAfterMs`: refused only for being too fast (form timing); the form's script waits this long and sends once more. */
+  /**
+   * `retryAfterMs`: kept for the form's script fallback (wait and send once more); no longer returned, since a send
+   * that is only too fast is held on the server until the token is old enough and then accepted.
+   */
   | { kind: "refused"; reason: "origin" | "timing" | "closed"; retryAfterMs?: number }
   | { kind: "busy"; retryAfterSeconds: number }
   | { kind: "not_found" };
 
 const SYSTEM = { userId: null, actingAs: false } as const;
+
+/** Server-side wait for a too-young form-timing token (at most FORM_MIN_AGE_MS). */
+const waitOut = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, Math.max(0, Math.min(ms, FORM_MIN_AGE_MS))));
 
 function logRefusal(pageId: string, reason: string, ip: string) {
   console.warn("[lead-pages] submission refused", { pageId, reason, ipHash: hashKey(ip).slice(0, 12) });
@@ -149,9 +155,14 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   const via: LeadPageVia = origin.origin === appOrigin ? "link" : page.connection === "own_form" ? "own_form" : page.connection === "snippet" ? "snippet" : "link";
   if (via !== "own_form") {
     const timing = checkFormTiming(f.ft, page.id, now);
-    if (timing !== "ok") {
+    if (timing === "too_fast") {
+      // A valid token that is merely young (autofill and a quick tap, or a plain post without script):
+      // wait out the rest here and accept, so a fast buyer never sees an error. Bounded by the minimum,
+      // and only after the IP and page rate limits above, so it cannot hold many connections open.
+      await waitOut(Math.min(formTimingWaitMs(f.ft, page.id, now), FORM_MIN_AGE_MS));
+    } else if (timing !== "ok") {
       await reject(`timing_${timing}`);
-      return timing === "too_fast" ? { kind: "refused", reason: "timing", retryAfterMs: formTimingWaitMs(f.ft, page.id, now) } : { kind: "refused", reason: "timing" };
+      return { kind: "refused", reason: "timing" };
     }
   }
 

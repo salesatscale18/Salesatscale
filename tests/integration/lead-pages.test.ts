@@ -258,12 +258,39 @@ describe("lead pages (a-1): service, submit, hand-over, numbers", () => {
     expect((await getLeadPage(db, acc, page.id))!.checks).toMatchObject({ refusedOrigin: "https://evil.example" });
     expect(await submit(page, { name: "Bot", phone: nextPhone() }, { origin: null })).toEqual({ kind: "refused", reason: "origin" });
     expect(await submit(page, { name: "Bot", phone: nextPhone(), sas_url: "http://x" })).toEqual({ kind: "thanks" });
-    // Too fast (under 1 s): refused with the wait, so the form's script sends once more after it.
-    expect(await submit(page, { name: "Bot", phone: nextPhone() }, { ftAgeMs: 400 })).toEqual({ kind: "refused", reason: "timing", retryAfterMs: expect.any(Number) });
+    // Missing, forged, another page's or a day-old token: refused as before (no wait).
     expect(await submit(page, { name: "Bot", phone: nextPhone(), ft: "" })).toEqual({ kind: "refused", reason: "timing" });
+    expect(await submit(page, { name: "Bot", phone: nextPhone(), ft: `${Date.now().toString(36)}.${"A".repeat(22)}` })).toEqual({ kind: "refused", reason: "timing" });
+    expect(await submit(page, { name: "Bot", phone: nextPhone(), ft: formTimingToken(otherPage.id, Date.now() - 5000) })).toEqual({ kind: "refused", reason: "timing" });
+    expect(await submit(page, { name: "Bot", phone: nextPhone() }, { ftAgeMs: 25 * 3600_000 })).toEqual({ kind: "refused", reason: "timing" });
     expect(await submit(page, { name: "B", phone: "12" })).toEqual({ kind: "invalid", errors: ["name", "phone"] });
-    expect(await rejected()).toBe(r0 + 5);
+    expect(await rejected()).toBe(r0 + 7);
     expect((await db.select().from(leads).where(eq(leads.accountId, acc))).length).toBe(leadsBefore);
+  });
+
+  it("form timing: a valid token younger than 1 s is waited out on the server, then accepted (no error for a fast buyer)", async () => {
+    const rejected = async () => (await db.select().from(leadPageDaily).where(eq(leadPageDaily.pageId, page.id))).reduce((a, r) => a + r.rejected, 0);
+    const r0 = await rejected();
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    try {
+      let done: SubmitResult | null = null;
+      const pending = submit(page, { name: "Fast Finger", phone: nextPhone() }, { ftAgeMs: 400 }).then((r) => (done = r));
+      // Still held after 500 ms of the ~600 ms that remain: nothing answered yet.
+      await vi.advanceTimersByTimeAsync(500);
+      expect(done).toBeNull();
+      await vi.advanceTimersByTimeAsync(600);
+      await pending;
+      expect(done).toMatchObject({ kind: "handover", repeat: false });
+      // A token issued "just now" waits at most the minimum (1 s), never longer.
+      let done2: SubmitResult | null = null;
+      const p2 = submit(page, { name: "Faster Finger", phone: nextPhone() }, { ftAgeMs: 0 }).then((r) => (done2 = r));
+      await vi.advanceTimersByTimeAsync(1_050);
+      await p2;
+      expect(done2).toMatchObject({ kind: "handover" });
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await rejected()).toBe(r0);
     // Unknown key: nothing.
     expect(await submitLeadPage(db, { key: "AAAAAAAAAAAA", body: {}, headers: new Headers({ origin: APP }), ip: "1.1.1.1" })).toEqual({ kind: "not_found" });
   });
