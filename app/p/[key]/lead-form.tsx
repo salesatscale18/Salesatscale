@@ -19,7 +19,8 @@ export function LeadForm({ action, beacon, strings, fields, consentTicked, conse
   strings: LeadFormStrings;
   fields: { company: boolean; email: boolean };
   consentTicked: boolean;
-  consentLine: string;
+  /** The consent line in parts (names at odd indexes, isolated when shown). */
+  consentLine: readonly string[];
   privacyHref: string | null;
   /** Hidden inputs: the timing token, the preview token, ad details. */
   hidden: Record<string, string>;

@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, type ReactNode } from "react";
+import { addressRequired } from "@/lib/lead-pages/page-check";
 
 /**
  * What the add/edit form holds right now, as the seller edits it (not saved):
@@ -70,8 +71,16 @@ export function AddressSlot({ at, children }: { at: "early" | "late"; children: 
   return (at === "late") === late ? <>{children}</> : null;
 }
 
-/** The address input; when it moves (another connection), it comes back with what was typed. */
+/**
+ * The address input; when it moves (another connection), it comes back with what was typed.
+ * Required (to assistive tech too) only for "Our form on your page"; its label says so.
+ */
 export function AddressInput() {
   const { draft } = useLeadPageDraft();
-  return <input className="sas-input" name="address" defaultValue={draft.address} placeholder="https://" inputMode="url" autoComplete="off" dir="ltr" />;
+  return (
+    <input
+      className="sas-input" name="address" defaultValue={draft.address} placeholder="https://" inputMode="url" autoComplete="off" dir="ltr"
+      aria-required={addressRequired(draft.connection) || undefined}
+    />
+  );
 }

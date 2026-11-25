@@ -9,7 +9,7 @@ import { chatPath } from "@/lib/simulator/token";
 import { clientIp } from "@/lib/security/rate-limit";
 import { loadHandover } from "@/lib/lead-pages/handover";
 import { bannerUrlPath, initialsOf } from "@/lib/lead-pages/rules";
-import { handoverConnectingLine } from "@/lib/lead-pages/handover-text";
+import { handoverConnectingLine, handoverReceivedLine } from "@/lib/lead-pages/handover-text";
 import { LEAD_COOKIE } from "@/lib/lead-pages/tokens";
 import { loadBuyerChat } from "@/app/chat/[token]/load";
 import { LeadPageHeader } from "@/app/p/[key]/header";
@@ -85,7 +85,7 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
       <>
         <HandoverRing ready label="" />
         <p className="lp-hand__msg" role="status">
-          {first ? tr("buyer.lp.handover.received", { name: first, seller: names.seller }) : tr("buyer.lp.handover.received_plain", { seller: names.seller })}
+          {handoverReceivedLine(names, first || null, lang)}
         </p>
       </>
     ));

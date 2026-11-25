@@ -8,6 +8,7 @@ import { currentPlaybook } from "@/lib/agent/service";
 import {
   addLeadPageOrigin, createLeadPage, getLeadPage, removeLeadPageOrigin, goLiveLeadPage, issuePreviewLink, pauseLeadPage, removeLeadPageBanner, resumeLeadPage, saveLeadPageBanner, updateLeadPage,
 } from "@/lib/lead-pages/service";
+import { EXTRA_ORIGINS_MAX } from "@/lib/lead-pages/rules";
 import { rawFromForm } from "@/lib/lead-pages/view";
 import { fileStore } from "@/lib/sources/blob";
 
@@ -70,6 +71,8 @@ export async function saveLeadPageAction(_prev: LeadPageFormState, form: FormDat
   }
   const page = r.page;
   const at = `${base(account.slug)}/${page.id}`;
+  // The first save of a new page lands on its link / snippet / form address, marked once (?created=1).
+  const created = existing ? "" : "&created=1";
   revalidatePath(base(account.slug));
 
   const bytes = await bannerBytes(form);
@@ -85,10 +88,10 @@ export async function saveLeadPageAction(_prev: LeadPageFormState, form: FormDat
   }
   if (intent === "live" && page.status !== "live") {
     const g = page.status === "paused" ? await resumeLeadPage(appDb, actor, account.id, page.id) : await goLiveLeadPage(appDb, actor, account.id, page.id);
-    if (!g.ok) redirect(g.reason === "blocked" ? `${at}?blocked=${g.blockers.join(",")}` : base(account.slug));
-    redirect(`${at}?saved=live`);
+    if (!g.ok) redirect(g.reason === "blocked" ? `${at}?blocked=${g.blockers.join(",")}${created}` : base(account.slug));
+    redirect(`${at}?saved=live${created}${created ? "#link" : ""}`);
   }
-  redirect(`${at}?saved=${existing ? "saved" : "draft"}`);
+  redirect(existing ? `${at}?saved=saved` : `${at}?saved=draft${created}#link`);
 }
 
 /** Go live, pause or resume from the page view. */
@@ -133,10 +136,14 @@ export async function addOriginAction(form: FormData) {
   if (!page) redirect(base(account.slug));
   const at = `${base(account.slug)}/${page.id}`;
   const host = str(form, "host");
-  if (!host) redirect(`${at}#link`);
+  // Each refusal says why, next to the Add field (the page view's "Other addresses").
+  if (!host) redirect(`${at}?origin_error=1#link`);
+  if (page.extraOrigins.length >= EXTRA_ORIGINS_MAX) redirect(`${at}?origin_error=max#link`);
   const r = await addLeadPageOrigin(appDb, actorOf(access), account, page.id, host);
   revalidatePath(base(account.slug));
-  redirect(r.ok ? `${at}?saved=origin_added#link` : `${at}?origin_error=1#link`);
+  if (r.ok) redirect(`${at}?saved=origin_added#link`);
+  // The new address itself, or the page's other settings (then saving the page through Edit shows which).
+  redirect(`${at}?origin_error=${"extraOrigins" in r.errors ? "1" : "page"}#link`);
 }
 
 /** Removes one other address (audited as lead_page.origins_changed). */
@@ -145,7 +152,8 @@ export async function removeOriginAction(form: FormData) {
   const { account } = access;
   const page = await getLeadPage(appDb, account.id, str(form, "pageId"));
   if (!page) redirect(base(account.slug));
-  await removeLeadPageOrigin(appDb, actorOf(access), account, page.id, str(form, "host"));
+  const r = await removeLeadPageOrigin(appDb, actorOf(access), account, page.id, str(form, "host"));
   revalidatePath(base(account.slug));
-  redirect(`${base(account.slug)}/${page.id}?saved=origin_removed#link`);
+  // Not "Address removed." when it was not: the reason shows next to the list.
+  redirect(`${base(account.slug)}/${page.id}?${r.ok ? "saved=origin_removed" : "origin_error=page"}#link`);
 }

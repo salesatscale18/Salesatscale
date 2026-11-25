@@ -230,7 +230,9 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(html.match(/name="address"/g)?.length).toBe(1);
     const field = html.match(/<label class="lpg-field lpg-field--address" data-address-field="">([\s\S]*?)<\/label>/)?.[1] ?? "";
     const part = (who: string, cls: string) => field.match(new RegExp(`<span class="${cls}" data-for="${who}">([^<]*)</span>`))?.[1];
-    expect(part("snippet", "lpg-field__label")).toBe("Address of your page");
+    // Marked as required in its label (only for "Our form on your page").
+    expect(field).toContain('<span class="lpg-field__label" data-for="snippet">Address of your page <span class="lpg-req">(required)</span></span>');
+    expect(field.match(/lpg-req/g)?.length).toBe(1);
     expect(part("snippet", "sas-small")).toMatch(/^Required\. Where the form will be, like https:\/\/example\.com\/offer\./);
     expect(part("own_form", "lpg-field__label")).toBe("Address of the page with your form (recommended)");
     expect(part("own_form", "sas-small")).toMatch(/^Optional, but recommended\. .*Without an address, the first send is refused/);
@@ -267,7 +269,7 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "hosted", address: "acme.com" })))).state).toMatchObject({ errors: { connection: expect.any(String) } });
 
     const ok = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Winter offer", language: "en", connection: "link", marketId: "", openingTopic: "0", field_company: "on", field_sites: "on", carryAdDetails: "on", intent: "draft" })));
-    expect(ok.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/[0-9a-f-]{36}\\?saved=draft$`));
+    expect(ok.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/[0-9a-f-]{36}\\?saved=draft&created=1#link$`));
     const id = ok.url!.split("/").pop()!.split("?")[0];
     const made = await getLeadPage(db, a.id, id);
     expect(made).toMatchObject({ name: "Winter offer", status: "draft", accountId: a.id, form: { fields: { company: true, email: false }, consentTicked: false }, tracking: { carryAdDetails: true } });

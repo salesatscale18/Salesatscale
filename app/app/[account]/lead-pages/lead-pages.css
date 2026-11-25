@@ -188,7 +188,22 @@
 }
 .lpg-quote { margin: 0; padding: 8px 10px; border-inline-start: 3px solid var(--line-strong); background: var(--surface-sunken); border-radius: var(--radius-md); font-size: 13px; line-height: 18px; }
 .lpg-funnel-empty { margin: 0; padding: 16px 0; color: var(--ink-muted); }
-.lpg-form__foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; border-top: 1px solid var(--line); }
+/* The Save buttons, and after a refused save the line next to them (form-shell.tsx, SaveFoot). */
+.lpg-form__foot { display: flex; flex-direction: column; gap: 10px; padding: 16px; border-top: 1px solid var(--line); }
+.lpg-form__buttons { display: flex; flex-wrap: wrap; gap: 8px; }
+.lpg-notsaved { display: inline-flex; align-items: flex-start; gap: 6px; align-self: flex-start; max-width: 100%; padding: 0; border: 0; background: none;
+  color: var(--danger); font: inherit; font-size: 13px; line-height: 18px; font-weight: 600; text-align: start; cursor: pointer; }
+.lpg-notsaved:hover span, .lpg-notsaved:focus-visible span { text-decoration: underline; }
+.lpg-notsaved .sas-icon { flex: none; margin-block-start: 1px; }
+.lpg-req { font-weight: 400; color: var(--ink-muted); }
+.lpg-spin { display: inline-block; width: 14px; height: 14px; border-radius: 50%; border: 2px solid currentColor; border-inline-end-color: transparent; animation: lpg-spin .8s linear infinite; flex: none; }
+@keyframes lpg-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .lpg-spin { animation: none; border-inline-end-color: currentColor; opacity: .6; } }
+/* A page just added: its link / snippet / form address block is marked once (?created=1). */
+.lpg-card[data-created] { animation: lpg-created 2.4s ease-out 1; }
+@keyframes lpg-created { 0%, 50% { box-shadow: 0 0 0 3px var(--primary); } 100% { box-shadow: 0 0 0 0 transparent; } }
+@media (prefers-reduced-motion: reduce) { .lpg-card[data-created] { animation: none; box-shadow: 0 0 0 2px var(--primary); } }
+.lpg-inline-err { color: var(--danger); font-size: 12px; line-height: 16px; }
 
 /* Leads: the lead page filter chip (`?page=`). */
 .lpg-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: var(--space-3) var(--space-4); }
@@ -200,6 +215,8 @@
 
 /* The live preview (preview.tsx): a phone frame with the buyer's screens (the real pages' components and styles,
    lead-page.css and chat.css), tabs above it. The screen keeps the buyer pages' own light colours. */
+/* Wide screens: the preview stays in view under the page header while the form scrolls, never taller than the
+   window: the frame's height is capped to what is left of it after the card's own parts (--lpv-chrome). */
 .lpv { grid-column: 2; position: sticky; top: 16px; }
 .lpv-toggle { display: none; }
 .lpv-sheet { display: flex; flex-direction: column; gap: 12px; padding: 16px; min-width: 0; }
@@ -213,8 +230,13 @@
 .lpv-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--primary); flex: none; }
 .lpv-panel { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
 .lpv-note, .lpv-after { margin: 0; }
-.lpv-phone { --lpv-h: 600px; width: 100%; max-width: 340px; margin-inline: auto; border: 8px solid #1b1f27; border-radius: 36px; background: #1b1f27;
-  box-shadow: 0 16px 40px rgba(15, 20, 32, .16); overflow: hidden; }
+.lpv-phone { --lpv-h: clamp(320px, calc(100vh - 32px - var(--lpv-chrome, 250px)), 600px); position: relative; width: 100%; max-width: 340px; margin-inline: auto;
+  border: 8px solid #1b1f27; border-radius: 36px; background: #1b1f27; box-shadow: 0 16px 40px rgba(15, 20, 32, .16); overflow: hidden; }
+@supports (height: 100dvh) { .lpv-phone { --lpv-h: clamp(320px, calc(100dvh - 32px - var(--lpv-chrome, 250px)), 600px); } }
+/* More of the buyer's screen below: a soft fade at the bottom edge (preview.tsx sets data-more while there is). */
+.lpv-phone::after { content: ""; position: absolute; inset-inline: 0; inset-block-end: 0; height: 56px; border-radius: 0 0 28px 28px; pointer-events: none;
+  background: linear-gradient(to bottom, rgba(255, 255, 255, 0), rgba(255, 255, 255, .95)); opacity: 0; transition: opacity .15s; }
+.lpv-phone[data-more]::after { opacity: 1; }
 .lpv-screen { height: var(--lpv-h); overflow-y: auto; overscroll-behavior: contain; background: #ffffff; border-radius: 28px; scrollbar-width: thin; }
 .lpv-inert { min-height: 100%; display: flex; flex-direction: column; }
 .lpv-inert > * { flex: 1 0 auto; }
@@ -238,9 +260,14 @@
 /* Narrow screens: the preview opens from a "Preview" button as a sheet. */
 @media (max-width: 1023px) {
   .lpv { grid-column: 1 / -1; position: static; }
+  .lpv-phone { --lpv-h: 600px; }
   .lpg-page:has(.lpv) { padding-block-end: 72px; }
   .lpv-toggle { display: inline-flex; position: fixed; inset-block-end: 16px; inset-inline-end: 16px; z-index: 40; box-shadow: var(--shadow-pop); }
   .lpv-sheet { display: none; }
   .lpv[data-open] .lpv-sheet { display: flex; position: fixed; inset: 0; z-index: 50; overflow-y: auto; border: 0; border-radius: 0; margin: 0; }
   .lpv-close { display: inline-flex; }
+  /* The sheet: "Close preview" stays at the top while it scrolls; the floating button never sits on the Save buttons. */
+  .lpv[data-open] .lpv-sheet { overscroll-behavior: contain; }
+  .lpv[data-open] .lpv-head { position: sticky; inset-block-start: -16px; z-index: 2; margin: -16px -16px 0; padding: 12px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--line); }
+  .lpg-form__foot { padding-inline-end: 136px; }
 }

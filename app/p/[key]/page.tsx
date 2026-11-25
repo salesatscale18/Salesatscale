@@ -5,7 +5,8 @@ import { appDb } from "@/lib/auth/account";
 import { translator, type Locale } from "@/lib/i18n";
 import { chatNames } from "@/lib/simulator/service";
 import { brandVars } from "@/lib/simulator/rules";
-import { leadPageConsentLine } from "@/lib/leads/consent-line";
+import { leadPageConsentParts } from "@/lib/leads/consent-line";
+import { handoverReceivedLine } from "@/lib/lead-pages/handover-text";
 import { publicUrl } from "@/lib/orders/token";
 import { originOf } from "@/lib/lead-pages/origin";
 import { bannerUrlPath, CLICK_ID_KEYS, consentTickedOf, formFieldsOf, initialsOf, trackingOf, UTM_KEYS } from "@/lib/lead-pages/rules";
@@ -60,7 +61,7 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
     </HostedFormFrame>
   );
   if (one(sp.sent) === "1") {
-    return shell(<p className="lp-hand__sub" role="status" data-lp-thanks="">{tr("buyer.lp.handover.received_plain", { seller: names.seller })}</p>);
+    return shell(<p className="lp-hand__sub" role="status" data-lp-thanks="">{handoverReceivedLine(names, null, lang)}</p>);
   }
   if (page.status === "paused" && !preview) return shell(<p className="lp-hand__sub" role="status" data-lp-closed="">{tr("buyer.lp.form.closed")}</p>);
 
@@ -91,7 +92,7 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
         strings={text}
         fields={formFieldsOf(page.form)}
         consentTicked={consentTickedOf(page.form, await pageCountries(appDb, page, account))}
-        consentLine={leadPageConsentLine(lang, names.seller, names.agent)}
+        consentLine={leadPageConsentParts(lang, names.seller, names.agent)}
         privacyHref={privacyHref}
         hidden={hidden}
         initialError={initialError}

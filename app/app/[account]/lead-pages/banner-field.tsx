@@ -24,7 +24,7 @@ const fill = (s: string, v: Record<string, string>) => s.replace(/\{(\w+)\}/g, (
  * save. Nothing is uploaded until the rest of the page is valid (the action
  * saves the settings first). Server-side checks stay (magic bytes, 2 MB, no SVG).
  */
-export function BannerField({ saved, uploads, removeButton, icons, text }: {
+export function BannerField({ saved, uploads, removeButton, icons, text, error = null }: {
   /** The saved banner (edit), or null. */
   saved: { src: string; width: number; height: number } | null;
   /** False on Preview (no blob writes) or with no store: the note instead of the input. */
@@ -33,6 +33,8 @@ export function BannerField({ saved, uploads, removeButton, icons, text }: {
   removeButton: ReactNode;
   icons: { placeholder: ReactNode; upload: ReactNode };
   text: BannerFieldText;
+  /** Why the last chosen image was not kept (the page was saved without it): shown here, next to the image. */
+  error?: string | null;
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [chosen, setChosen] = useState<{ name: string; size: number; url: string } | null>(null);
@@ -100,6 +102,7 @@ export function BannerField({ saved, uploads, removeButton, icons, text }: {
             {fill(text.selected, { name: chosen.name, size: fileSizeText(chosen.size) })}
           </span>
         ) : null}
+        {error && !chosen && !problem ? <span className="lpg-field__err" role="alert" data-banner-saved-error="">{error}</span> : null}
         {problem ? <span className="lpg-field__err" role="alert" data-banner-problem="">{problem}</span> : null}
         {lost && !problem ? <span className="lpg-field__err" role="alert" data-banner-again="">{text.again}</span> : null}
         {!saved && !chosen ? <span className="sas-small">{text.none}</span> : null}

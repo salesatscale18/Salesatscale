@@ -20,7 +20,7 @@ import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import { translator } from "../../lib/i18n";
 import { aboutLine, leadFormText, SHOW_ABOUT_TOPIC } from "../../lib/lead-pages/form-text";
-import { leadPageConsentLine } from "../../lib/leads/consent-line";
+import { leadPageConsentLine, leadPageConsentParts } from "../../lib/leads/consent-line";
 
 const ROOT = join(__dirname, "..", "..");
 const KEY_EN = "abcABC123456";
@@ -32,6 +32,10 @@ let app: Server, host: Server;
 let appUrl = "", hostUrl = "";
 const hits: Hit[] = [];
 
+/** The Hebrew page's seller: a trade name with Latin letters and digits; its agent's name is hostile markup (shown as text). */
+const HE_SELLER = "Polar Demo 2026-11-18 19:16:31";
+const HE_AGENT = '<img src=x onerror="window.__sasPwned=1">';
+
 const configFor = (key: string) => {
   const lang = key === KEY_HE ? "he" : "en";
   const tr = translator(lang);
@@ -40,7 +44,10 @@ const configFor = (key: string) => {
     text: leadFormText(tr),
     about: aboutLine(tr, { en: "Fridge monitoring", he: "ניטור מקררים" }, lang),
     fields: { company: true, email: false },
-    consent: { line: leadPageConsentLine(lang, lang === "he" ? "פולאר דמו" : "Polar Demo", lang === "he" ? "מאיה" : "Maya"), ticked: lang === "he" },
+    // English: the line only (a config from before `parts`); Hebrew: the line and its parts, names isolated by the script.
+    consent: lang === "he"
+      ? { line: leadPageConsentLine(lang, HE_SELLER, HE_AGENT), parts: leadPageConsentParts(lang, HE_SELLER, HE_AGENT), ticked: true }
+      : { line: leadPageConsentLine(lang, "Polar Demo", "Maya"), ticked: false },
     privacyUrl: `${appUrl}/p/${key}/privacy`,
     brand: { "--brand": "#0f6b5a", "--brand-on": "#ffffff", "--brand-text": "#0f6b5a" },
     ft: "abc.AAAAAAAAAAAAAAAAAAAAAA",
@@ -175,6 +182,19 @@ test("Hebrew: right to left with the Hebrew texts", async ({ page }) => {
   expect(await f.locator("[data-sas-form]").getAttribute("dir")).toBe("rtl");
   if (SHOW_ABOUT_TOPIC) await expect(f.getByText("בנושא: ניטור מקררים")).toBeVisible();
   else await expect(f.getByText("בנושא: ניטור מקררים")).toHaveCount(0);
+  // The consent line: the seller's and the agent's names isolated (<bdi>), as text, never as markup.
+  const line = f.locator("label.c span").first();
+  await expect(line.locator("bdi")).toHaveText([HE_SELLER, HE_AGENT]);
+  await expect(line).toContainText(leadPageConsentLine("he", HE_SELLER, HE_AGENT));
+  await expect(line.locator("img")).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { __sasPwned?: number }).__sasPwned)).toBeUndefined();
+});
+
+test("a config without consent parts (older): the line as plain text", async ({ page }) => {
+  await page.goto(`${hostUrl}/offer`);
+  const line = form(page).locator("label.c span").first();
+  await expect(line).toContainText(leadPageConsentLine("en", "Polar Demo", "Maya"));
+  await expect(line.locator("bdi")).toHaveCount(0);
 });
 
 test("screenshots for the visual check (only with LP_SHOTS_DIR)", async ({ browser }) => {

@@ -191,7 +191,9 @@
     form.appendChild(el("div", { "class": "hp", "aria-hidden": "true" }, [el("label", {}, [d.createTextNode("Website"), el("input", { name: "sas_url", tabindex: "-1", autocomplete: "off" })])]));
     var tick = el("input", { type: "checkbox", name: "consent", value: "on" });
     tick.checked = !!(cfg.consent && cfg.consent.ticked);
-    var line = el("span", { text: (cfg.consent && cfg.consent.line) || "" });
+    // The consent line with the seller's and agent's names (odd parts) isolated, as text nodes: never markup.
+    var cs = cfg.consent || {}, parts = Array.isArray(cs.parts) ? cs.parts : [cs.line || ""], line = el("span", {});
+    for (var pi = 0; pi < parts.length; pi++) line.appendChild(pi % 2 ? el("bdi", { text: String(parts[pi]) }) : d.createTextNode(String(parts[pi])));
     if (cfg.privacyUrl) { line.appendChild(d.createTextNode(" ")); line.appendChild(el("a", { href: cfg.privacyUrl, target: "_blank", rel: "noopener", text: T.privacy })); }
     form.appendChild(el("label", { "class": "c" }, [tick, line]));
     var btn = el("button", { type: "submit", "class": "b", text: T.send });

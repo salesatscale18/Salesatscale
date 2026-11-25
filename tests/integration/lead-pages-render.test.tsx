@@ -112,7 +112,7 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(html).toContain("Mobile number");
     expect(html).toContain("Company (optional)");
     expect(html).not.toContain("Email (optional)");
-    expect(html).toContain("By sending, you agree that Polar Demo and its automated assistant");
+    expect(html).toContain("By sending, you agree that <bdi>Polar Demo</bdi> and its automated assistant <bdi>");
     expect(html).toMatch(/name="consent" checked=""/);
     expect(html).toMatch(/<input tabindex="-1" autoComplete="off" name="sas_url" value=""\/>/);
     expect(html).toMatch(/name="ft" value="[0-9a-z]+\.[A-Za-z0-9_-]{22}"/);
@@ -237,7 +237,8 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     const r = await submit(he, { name: "בלי הסכמה", phone: nextPhone(), consent: "" });
     const html = await hand(r.token);
     expect(html).toContain('data-handover="received"');
-    expect(html).toContain("תודה, בלי. הפרטים שלך התקבלו ב-Polar Demo");
+    // The Latin trade name isolated in the Hebrew line (as on the connecting line).
+    expect(html).toContain("תודה, בלי. הפרטים שלך התקבלו ב-\u2068Polar Demo\u2069 ונחזור");
     expect(html).not.toContain("lp-offstage");
     await db.update(leadPageSubmissions).set({ createdAt: new Date(Date.now() - 40 * 60_000) }).where(eq(leadPageSubmissions.id, r.submissionId));
     expect(await hand(r.token)).toContain("תוקף הדף פג.");

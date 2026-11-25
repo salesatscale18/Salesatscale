@@ -8,7 +8,7 @@ import { CONNECTION_CARDS, topicChoice } from "@/lib/lead-pages/view";
 import { saveLeadPageAction } from "./actions";
 import { BannerField } from "./banner-field";
 import { AddressInput, AddressSlot, type LeadPageDraft } from "./draft";
-import { FieldError, LeadPageFormShell } from "./form-shell";
+import { FieldError, LeadPageFormShell, SaveFoot } from "./form-shell";
 import { LeadPagePreview } from "./preview";
 
 const FIELDS = [
@@ -27,7 +27,7 @@ const FIELDS = [
  * the other addresses and the checks are on the page's own view after saving.
  */
 export function LeadPageFormView({
-  slug, page, markets, languages, topics, defaultTopic, consentDefault, bannerUploads, preview,
+  slug, page, markets, languages, topics, defaultTopic, consentDefault, bannerUploads, preview, bannerError = null,
 }: {
   slug: string;
   page: LeadPage | null;
@@ -41,6 +41,8 @@ export function LeadPageFormView({
   bannerUploads: boolean;
   /** What the live preview needs, worked out on the server (lib/lead-pages/preview.ts). */
   preview: LeadPagePreviewData;
+  /** Why the last banner was not kept (edit, after a save that kept the rest), shown at the banner field too. */
+  bannerError?: string | null;
 }) {
   const fields = page?.form.fields ?? {};
   const topicValue = page ? topicChoice(page.openingTopic, topics) : topics.length ? String(defaultTopic) : "";
@@ -63,17 +65,22 @@ export function LeadPageFormView({
         tabs: { form: t("lead_pages.preview.tab_form"), handover: t("lead_pages.preview.tab_handover"), first: t("lead_pages.preview.tab_first") },
         changed: t("lead_pages.preview.changed"),
         noteSnippet: t("lead_pages.preview.note_snippet"), noteOwn: t("lead_pages.preview.note_own"), sample: t("lead_pages.preview.sample"),
-        close: t("kit.close"),
+        close: t("lead_pages.preview.close"),
         afterSave: page ? null : { snippet: t("lead_pages.form.snippet_after"), own_form: t("lead_pages.form.own_after"), link: t("lead_pages.form.link_after") },
       }}
     />
   );
   // The address: required for "Our form on your page" (it is the allowed origin), recommended for
   // "Your own form", optional for "Button or link" (then last in this block, in the keyboard order too).
+  const required = t("lead_pages.form.required");
+  const saveText = {
+    notSavedOne: t("lead_pages.form.not_saved_one"), notSavedMany: t("lead_pages.form.not_saved_many"), notSavedForm: t("lead_pages.form.not_saved_form"),
+    saving: t("lead_pages.form.saving"), goingLive: t("lead_pages.form.going_live"),
+  };
   const address = (
     <label className="lpg-field lpg-field--address" data-address-field="">
       <span className="lpg-field__label" data-for="link">{t("lead_pages.form.address")}</span>
-      <span className="lpg-field__label" data-for="snippet">{t("lead_pages.form.address_snippet")}</span>
+      <span className="lpg-field__label" data-for="snippet">{t("lead_pages.form.address_snippet")} <span className="lpg-req">{required}</span></span>
       <span className="lpg-field__label" data-for="own_form">{t("lead_pages.form.address_own")}</span>
       <AddressInput />
       <span className="sas-small" data-for="link">{t("lead_pages.form.address_hint")}</span>
@@ -83,7 +90,7 @@ export function LeadPageFormView({
     </label>
   );
   return (
-    <LeadPageFormShell action={saveLeadPageAction} errorTitle={t("lead_pages.form.errors")} className="lpg-form" side={side} initialDraft={initialDraft}>
+    <LeadPageFormShell action={saveLeadPageAction} errorTitle={t("lead_pages.form.errors")} className="lpg-form" side={side} initialDraft={initialDraft} summaryText={saveText}>
       <input type="hidden" name="slug" value={slug} />
       {page ? <input type="hidden" name="pageId" value={page.id} /> : null}
 
@@ -115,7 +122,7 @@ export function LeadPageFormView({
           <h2 className="lpg-sec__h">{t("lead_pages.form.page")}</h2>
           <div className="lpg-grid2">
             <label className="lpg-field">
-              <span className="lpg-field__label">{t("lead_pages.form.name")}</span>
+              <span className="lpg-field__label">{t("lead_pages.form.name")} <span className="lpg-req">{required}</span></span>
               <input className="sas-input" name="name" defaultValue={page?.name ?? ""} maxLength={80} required autoComplete="off" />
               <span className="sas-small">{t("lead_pages.form.name_hint")}</span>
               <FieldError name="name" />
@@ -169,6 +176,7 @@ export function LeadPageFormView({
           <BannerField
             saved={banner && page ? { src: bannerUrlPath(page.publicKey, banner), width: banner.width, height: banner.height } : null}
             uploads={bannerUploads}
+            error={bannerError}
             removeButton={<button type="submit" name="intent" value="remove_banner" className={buttonClass("ghost", "sm")} formNoValidate>{t("lead_pages.form.banner_remove")}</button>}
             icons={{ placeholder: <Icon name="panel-top" />, upload: <Icon name="upload" /> }}
             text={{
@@ -214,17 +222,16 @@ export function LeadPageFormView({
           <span className="sas-small" data-pixel-note-own="" data-for="own_form">{t("lead_pages.form.pixel_note_own")}</span>
         </div>
 
-        <div className="lpg-form__foot">
-          {page && page.status !== "draft" ? (
-            <button type="submit" name="intent" value="save" className={buttonClass("primary")}>{t("lead_pages.form.save")}</button>
-          ) : (
-            <>
-              <button type="submit" name="intent" value="draft" className={buttonClass("secondary")}>{t("lead_pages.form.save_draft")}</button>
-              <button type="submit" name="intent" value="live" className={buttonClass("primary")}><Icon name="rocket" />{t("lead_pages.form.go_live")}</button>
-            </>
-          )}
-          <a className={buttonClass("ghost")} href={page ? `/app/${slug}/lead-pages/${page.id}` : `/app/${slug}/lead-pages`}>{t("common.cancel")}</a>
-        </div>
+        <SaveFoot
+          text={saveText}
+          buttons={page && page.status !== "draft"
+            ? [{ intent: "save", label: t("lead_pages.form.save"), variant: "primary" }]
+            : [
+              { intent: "draft", label: t("lead_pages.form.save_draft"), variant: "secondary" },
+              { intent: "live", label: t("lead_pages.form.go_live"), variant: "primary", icon: <Icon name="rocket" /> },
+            ]}
+          after={<a className={buttonClass("ghost")} href={page ? `/app/${slug}/lead-pages/${page.id}` : `/app/${slug}/lead-pages`}>{t("common.cancel")}</a>}
+        />
       </section>
     </LeadPageFormShell>
   );

@@ -133,6 +133,51 @@ test("nothing in the frame can be focused or used; the address's keyboard order 
   expect(await page.evaluate(() => (document.activeElement as HTMLInputElement).name)).toBe("address");
 });
 
+test("a screen taller than the frame scrolls inside it, with a fade at the bottom only while there is more below", async ({ page }) => {
+  await open(page);
+  await page.getByLabel("Button or link").check();
+  await page.getByLabel("Language").selectOption("he");
+  await page.getByLabel("Company").check();
+  await page.getByLabel("Email").check();
+  const phone = page.locator(".lpv-phone");
+  const fade = () => phone.evaluate((el) => getComputedStyle(el, "::after").opacity);
+  await expect(phone).toHaveAttribute("data-more", "");
+  await expect.poll(fade).toBe("1");
+  const send = screen(page).getByText("שליחה", { exact: true });
+  const inFrame = async () => {
+    const [s, f] = [await send.boundingBox(), await screen(page).boundingBox()];
+    return !!s && !!f && s.y >= f.y && s.y + s.height <= f.y + f.height;
+  };
+  expect(await inFrame()).toBe(false);
+  // The wheel over the (inert) screen scrolls it, not the page.
+  const box = (await screen(page).boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  for (let i = 0; i < 10; i++) await page.mouse.wheel(0, 200);
+  await expect(phone).not.toHaveAttribute("data-more");
+  await expect.poll(fade).toBe("0");
+  expect(await inFrame()).toBe(true);
+  expect(await page.evaluate(() => window.scrollY)).toBe(0);
+  // Another tab starts at its top; the hand-over fits: no fade.
+  await tab(page, "handover").click();
+  expect(await screen(page).evaluate((el) => el.scrollTop)).toBe(0);
+  await expect(phone).not.toHaveAttribute("data-more");
+});
+
+test("wide screens: the preview stays in view while the form scrolls, never taller than the window", async ({ page }) => {
+  await open(page);
+  await page.setViewportSize({ width: 1280, height: 700 });
+  await page.locator(".lpg-form__main").evaluate((el) => { (el as HTMLElement).style.minHeight = "2400px"; });
+  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  const card = await page.locator(".lpv-sheet").boundingBox();
+  expect(card).not.toBeNull();
+  expect(card!.y).toBeGreaterThanOrEqual(0);
+  expect(card!.y + card!.height).toBeLessThanOrEqual(700);
+  // The frame is capped to the room left: smaller than its full 600px here.
+  expect((await screen(page).boundingBox())!.height).toBeLessThan(600);
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  expect(Math.round((await screen(page).boundingBox())!.height)).toBe(600);
+});
+
 test("on a phone the preview opens from a Preview button as a sheet; no sideways scrolling", async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(harness.url);

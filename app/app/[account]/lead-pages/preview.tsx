@@ -18,10 +18,22 @@ export type LeadPagePreviewText = {
   noteSnippet: string;
   noteOwn: string;
   sample: string;
+  /** "Close preview" (the sheet on a phone). */
   close: string;
   /** "You get the link / snippet / address when you save." by connection; null once the page is saved (Edit). */
   afterSave: Record<string, string> | null;
 };
+
+/**
+ * The chat's first message for this draft: the account's approved opening template for the page's market and
+ * language when there is one (the chat start sends it in place of the opener, whatever the topic), else the
+ * opener for the chosen topic.
+ */
+export function previewFirstMessage(d: LeadPageDraft, data: LeadPagePreviewData): string {
+  const lang = d.language === "he" ? "he" : "en";
+  const T = data.texts[lang];
+  return data.openerTemplates[`${d.marketId}|${lang}`] ?? T.openers[d.topic] ?? T.openers[""] ?? "";
+}
 
 /** What each tab shows (its visible inputs), so a change only marks the tabs it really changes. */
 export function previewSignatures(d: LeadPageDraft, data: LeadPagePreviewData): Record<PreviewTab, string> {
@@ -30,7 +42,7 @@ export function previewSignatures(d: LeadPageDraft, data: LeadPagePreviewData): 
   return {
     form: [d.connection, T.lang, privacy, d.company, d.email, d.consent, T.about[d.topic] ?? "", d.connection === "link" ? d.banner : ""].join("|"),
     handover: [T.lang, d.banner].join("|"),
-    first: T.openers[d.topic] ?? T.openers[""] ?? "",
+    first: previewFirstMessage(d, data),
   };
 }
 
@@ -46,6 +58,28 @@ function useImageSize(url: string | null) {
     return () => { live = false; };
   }, [url]);
   return size && size.url === url ? size : null;
+}
+
+/**
+ * The buyer's screen scrolls inside the frame when it is taller (a Hebrew form with four fields): `more` while
+ * there is more below (a soft fade at the bottom edge), and back to the top when the tab changes.
+ */
+function useScreenScroll(tab: PreviewTab) {
+  const ref = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const check = () => setMore(el.scrollHeight - el.scrollTop - el.clientHeight > 2);
+    check();
+    el.addEventListener("scroll", check, { passive: true });
+    const ro = typeof ResizeObserver === "function" ? new ResizeObserver(check) : null;
+    ro?.observe(el);
+    if (el.firstElementChild) ro?.observe(el.firstElementChild);
+    return () => { el.removeEventListener("scroll", check); ro?.disconnect(); };
+  }, []);
+  useEffect(() => { if (ref.current) ref.current.scrollTop = 0; }, [tab]);
+  return { ref, more };
 }
 
 /**
@@ -69,11 +103,21 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
   const tabRefs = useRef<Record<PreviewTab, HTMLButtonElement | null>>({ form: null, handover: null, first: null });
   const toggleRef = useRef<HTMLButtonElement>(null);
   const closeRef = useRef<HTMLButtonElement>(null);
+  const sheetRef = useRef<HTMLElement>(null);
+  const scroll = useScreenScroll(tab);
 
   // The tab on show is always seen.
   const shownSig = now[tab];
   useEffect(() => { setSeen((s) => (s[tab] === shownSig ? s : { ...s, [tab]: shownSig })); }, [tab, shownSig]);
   useEffect(() => { if (open) closeRef.current?.focus(); }, [open]);
+  // While the sheet is open the page under it does not scroll (it covers the whole screen, Save buttons included).
+  useEffect(() => {
+    if (!open) return;
+    const root = document.documentElement;
+    const before = root.style.overflow;
+    root.style.overflow = "hidden";
+    return () => { root.style.overflow = before; };
+  }, [open]);
 
   const choose = (t: PreviewTab) => setTab(t);
   const onTabKey = (e: KeyboardEvent<HTMLButtonElement>) => {
@@ -98,11 +142,24 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
         className="sas-panel lpv-sheet" id={`${id}-sheet`} data-preview-sheet=""
         // Opened from the button (narrow screens only): a sheet over the page.
         role={open ? "dialog" : undefined} aria-modal={open || undefined} aria-label={open ? text.title : undefined}
-        onKeyDown={(e) => { if (e.key === "Escape" && open) { e.stopPropagation(); close(); } }}
+        ref={sheetRef}
+        onKeyDown={(e) => {
+          if (!open) return;
+          if (e.key === "Escape") { e.stopPropagation(); close(); return; }
+          // Focus stays in the sheet while it is open (Close, the tabs).
+          if (e.key !== "Tab" || !sheetRef.current) return;
+          const items = Array.from(sheetRef.current.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'))
+            .filter((el) => el.tabIndex >= 0 && !el.closest("[inert]") && el.getClientRects().length > 0);
+          if (!items.length) return;
+          const first = items[0];
+          const last = items[items.length - 1];
+          if (e.shiftKey && (document.activeElement === first || !sheetRef.current.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+          else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        }}
       >
         <div className="lpv-head">
           <h2 className="lpg-sec__h">{text.title}</h2>
-          <button ref={closeRef} type="button" className="sas-btn sas-btn--ghost sas-btn--sm lpv-close" onClick={close} data-preview-close="">{text.close}</button>
+          <button ref={closeRef} type="button" className="sas-btn sas-btn--secondary sas-btn--sm lpv-close" onClick={close} data-preview-close="">{text.close}</button>
         </div>
         <div className="lpv-tabs" role="tablist" aria-label={text.title}>
           {TABS.map((t) => {
@@ -119,9 +176,9 @@ export function LeadPagePreview({ data, text, initialTab = "form" }: { data: Lea
           })}
         </div>
         <div role="tabpanel" id={`${id}-panel`} aria-labelledby={`${id}-tab-${tab}`} className="lpv-panel" data-preview-panel={tab} data-preview-lang={lang} data-preview-connection={draft.connection}>
-          <div className="lpv-phone">
-            {/* The buyer's screen: shown, never used (inert), and not read out twice. */}
-            <div className="lpv-screen" aria-hidden="true">
+          <div className="lpv-phone" data-more={scroll.more ? "" : undefined}>
+            {/* The buyer's screen: shown, never used (inert), and not read out twice. It scrolls when taller than the frame. */}
+            <div className="lpv-screen" aria-hidden="true" ref={scroll.ref}>
               <div className="lpv-inert" inert>
                 <Screen tab={tab} draft={draft} data={data} lang={lang} text={text} />
               </div>
@@ -180,7 +237,7 @@ function Screen({ tab, draft, data, lang, text }: { tab: PreviewTab; draft: Lead
           </div>
           <div className="c-log" dir={T.dir}>
             <div className="c-msg c-msg--in">
-              <div className="c-bubble" dir="auto" data-preview-opener="">{T.openers[draft.topic] ?? T.openers[""]}</div>
+              <div className="c-bubble" dir="auto" data-preview-opener="">{previewFirstMessage(draft, data)}</div>
             </div>
           </div>
         </div>

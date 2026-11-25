@@ -51,6 +51,7 @@ export default async function EditLeadPage({ params, searchParams }: {
       <LeadPageFormView
         slug={account.slug} page={page} markets={d.markets} languages={account.languages} topics={d.topics} defaultTopic={d.defaultTopic}
         consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} preview={preview}
+        bannerError={bannerError ? t("lead_pages.banner.not_saved", { reason: t(bannerError) }) : null}
       />
     </main>
   );

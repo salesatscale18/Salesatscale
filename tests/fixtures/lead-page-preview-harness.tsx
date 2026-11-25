@@ -19,7 +19,7 @@ const form = (lang: "en" | "he") => ({
 });
 const texts = (lang: "en" | "he"): PreviewTexts => ({
   lang, dir: lang === "he" ? "rtl" : "ltr", seller: "Polar Demo", initials: "PD", form: form(lang),
-  consentLine: lang === "he" ? "בשליחה את/ה מסכימ/ה ש-Polar Demo תיצור קשר." : "By sending, you agree that Polar Demo may contact you.",
+  consentLine: lang === "he" ? ["בשליחה את/ה מסכימ/ה ש-", "Polar Demo", " תיצור קשר."] : ["By sending, you agree that ", "Polar Demo", " may contact you."],
   thanks: lang === "he" ? "תודה, דנה" : "Thanks, Dana", connecting: lang === "he" ? "מחברים אותך למאיה" : "Connecting you with Maya",
   buttons: { talkNow: "Talk now", chatWriting: "Chat in writing", continueChat: "Continue to the chat" }, byLine: "Conversation by Sales at Scale",
   openers: { "": `${lang}: opener default`, "0": `${lang}: opener fridges`, "1": `${lang}: opener cold rooms` },
@@ -30,7 +30,7 @@ const data: LeadPagePreviewData = {
   texts: { en: texts("en"), he: texts("he") },
   formStyle: { "--brand": "#0f6b5a", "--brand-on": "#ffffff", "--brand-text": "#0f6b5a" },
   handoverStyle: { "--brand": "#0f6b5a", "--brand-on": "#ffffff", "--brand-text": "#0f6b5a", "--bubble": "#e2edeb" },
-  voiceOffered: true, privacy: ["|en"], savedBanner: null,
+  voiceOffered: true, privacy: ["|en"], savedBanner: null, openerTemplates: {},
 };
 const initial: LeadPageDraft = { connection: "snippet", language: "en", marketId: "", company: false, email: false, consent: true, topic: "0", address: "", banner: null };
 const action = async (): Promise<LeadPageFormState> => null;
