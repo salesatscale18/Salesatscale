@@ -20,6 +20,7 @@ import { leadPageConsentParts } from "@/lib/leads/consent-line";
 import { publicUrl } from "@/lib/orders/token";
 import { brandVars } from "@/lib/simulator/rules";
 import { chatNames } from "@/lib/simulator/service";
+import { isArchived } from "./archive";
 import { aboutLine, leadFormText, type LeadFormText } from "./form-text";
 import { checkOrigin, corsHeaders, originOf, REFUSED_ORIGIN_THROTTLE_MS, type OriginCheck } from "./origin";
 import { consentTickedOf, formFieldsOf, trackingOf, type FormFields } from "./rules";
@@ -92,6 +93,8 @@ export async function snippetConfig(db: Db, found: PublicPage, opts: { preview?:
   const { page, account, brandColor } = found;
   const now = opts.now ?? new Date();
   const env = opts.env ?? process.env;
+  // An archived page has no form to show (404), not even with a preview token.
+  if (isArchived(page)) return null;
   const preview = previewTokenValid(opts.preview, page.id, now);
   if (page.status === "draft" && !preview) return null;
   const lang: Locale = page.language === "he" ? "he" : "en";

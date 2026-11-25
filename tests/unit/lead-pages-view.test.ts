@@ -41,8 +41,10 @@ describe("lead pages view helpers", () => {
   });
 
   it("reads the list filters from the URL; unknown values fall back", () => {
-    expect(parseListFilters({ q: "  spring ", status: "live", market: "m2", days: "7" }, ["m1", "m2"])).toEqual({ q: "spring", status: "live", marketId: "m2", days: 7 });
-    expect(parseListFilters({ status: "deleted", market: "other", days: "365" }, ["m1"])).toEqual({ q: null, status: null, marketId: null, days: 30 });
+    expect(parseListFilters({ q: "  spring ", status: "live", market: "m2", days: "7" }, ["m1", "m2"])).toEqual({ q: "spring", status: "live", marketId: "m2", days: 7, archived: false });
+    expect(parseListFilters({ status: "deleted", market: "other", days: "365" }, ["m1"])).toEqual({ q: null, status: null, marketId: null, days: 30, archived: false });
+    expect(parseListFilters({ archived: "1" }, []).archived).toBe(true);
+    expect(parseListFilters({ archived: "yes" }, []).archived).toBe(false);
   });
 
   it("the add/edit form gives the page settings; hidden settings keep the page's values", () => {

@@ -4,7 +4,8 @@
  *
  * Seller functions take the account id from requireAccount() (never from a
  * form) and filter every query by it; every change is audited with writeAudit
- * (create, edit, origins, go live, pause, resume, banner, preview link).
+ * (create, edit, origins, go live, pause, resume, banner, preview link, delete,
+ * archive, unarchive).
  * Public functions find a page only by its public key; the account comes from
  * that row (plan §2).
  */
@@ -19,6 +20,7 @@ import { writeAudit, type Actor } from "@/lib/accounts/audit";
 import { marketLegal, type EffectiveSection } from "@/lib/markets/legal";
 import { safeBrand } from "@/lib/simulator/rules";
 import { blobEnvironment, type FileStore } from "@/lib/sources/blob";
+import { archivedOptions, isArchived, unarchivedOptions, wayOut, type SubmissionCounts } from "./archive";
 import { shouldRecordRefusedOrigin } from "./origin";
 import {
   bannerBlobPath, checkBanner, defaultConsentTicked, goLiveBlockers, parseLeadPageInput,
@@ -101,11 +103,15 @@ export async function getLeadPage(db: Db, accountId: string, pageId: string): Pr
   return p ?? null;
 }
 
-export type LeadPageListFilters = { status?: LeadPageStatus | null; q?: string | null; marketId?: string | null };
+export type LeadPageListFilters = { status?: LeadPageStatus | null; q?: string | null; marketId?: string | null; includeArchived?: boolean };
 
-/** The account's pages, newest first. */
+/** Not archived (`options.archivedAt` unset). */
+export const notArchivedSql = sql`(${leadPages.options} ->> 'archivedAt') is null`;
+
+/** The account's pages, newest first. Archived pages only with `includeArchived`. */
 export async function listLeadPages(db: Db, accountId: string, filters: LeadPageListFilters = {}): Promise<LeadPage[]> {
   const where: SQL[] = [eq(leadPages.accountId, accountId)];
+  if (!filters.includeArchived) where.push(notArchivedSql);
   if (filters.status) where.push(eq(leadPages.status, filters.status));
   if (filters.marketId) where.push(eq(leadPages.marketId, filters.marketId));
   const q = filters.q?.trim();
@@ -209,7 +215,7 @@ export function rawOf(page: LeadPage): LeadPageRaw {
   };
 }
 
-export type GoLiveResult = { ok: true; page: LeadPage } | { ok: false; reason: "not_found" } | { ok: false; reason: "blocked"; blockers: GoLiveBlocker[] };
+export type GoLiveResult = { ok: true; page: LeadPage } | { ok: false; reason: "not_found" | "archived" } | { ok: false; reason: "blocked"; blockers: GoLiveBlocker[] };
 
 /** What blocks going live now: the privacy notice in the form language for the page's market, and a live account. */
 export async function leadPageBlockers(db: Db, account: Pick<SellerAccount, "status">, page: LeadPage): Promise<GoLiveBlocker[]> {
@@ -221,6 +227,8 @@ async function setStatus(db: Db, actor: Actor, accountId: string, pageId: string
   const page = account ? await getLeadPage(db, accountId, pageId) : null;
   if (!account || !page) return { ok: false, reason: "not_found" };
   if (to === "live") {
+    // An archived page comes back through Unarchive (as paused) first: never straight to live.
+    if (isArchived(page)) return { ok: false, reason: "archived" };
     const blockers = await leadPageBlockers(db, account, page);
     if (blockers.length) return { ok: false, reason: "blocked", blockers };
   }
@@ -289,10 +297,96 @@ async function deleteBlob(store: FileStore | null, path: string) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// A way out: delete (no real submissions) or archive (has them)
+// ---------------------------------------------------------------------------
+
+/** The page's submissions: real ones, test (preview) ones, and the distinct leads behind the test ones. */
+export async function pageSubmissionCounts(db: Db, accountId: string, pageId: string): Promise<SubmissionCounts> {
+  const [row] = await db.select({
+    real: sql<number>`(count(*) filter (where ${leadPageSubmissions.preview} = false))::int`,
+    test: sql<number>`(count(*) filter (where ${leadPageSubmissions.preview} = true))::int`,
+    testLeads: sql<number>`(count(distinct ${leadPageSubmissions.leadId}) filter (where ${leadPageSubmissions.preview} = true))::int`,
+  }).from(leadPageSubmissions).where(and(eq(leadPageSubmissions.accountId, accountId), eq(leadPageSubmissions.pageId, pageId)));
+  return { real: Number(row?.real ?? 0), test: Number(row?.test ?? 0), testLeads: Number(row?.testLeads ?? 0) };
+}
+
+/** Real (non-preview) submissions per page (the list's menus offer Delete or Archive by it). */
+export async function realSubmissionCounts(db: Db, accountId: string, pageIds: readonly string[]): Promise<Map<string, number>> {
+  const out = new Map<string, number>();
+  if (!pageIds.length) return out;
+  const rows = await db.select({ pageId: leadPageSubmissions.pageId, n: sql<number>`count(*)::int` }).from(leadPageSubmissions)
+    .where(and(eq(leadPageSubmissions.accountId, accountId), inArray(leadPageSubmissions.pageId, [...pageIds]), eq(leadPageSubmissions.preview, false)))
+    .groupBy(leadPageSubmissions.pageId);
+  for (const r of rows) out.set(r.pageId, Number(r.n));
+  return out;
+}
+
+export type WayOutResult =
+  | { ok: true; page: LeadPage }
+  | { ok: false; reason: "not_found" | "has_submissions" | "no_submissions" | "not_archived" };
+
+/**
+ * Deletes a page with no real submissions. Its test (preview) submissions and its daily
+ * counters go with it (cascade); the test leads themselves stay in Leads. The "no real
+ * submission" check is part of the DELETE itself, so a lead that arrives meanwhile keeps
+ * the page. Then the banner file is removed. Audited.
+ */
+export async function deleteLeadPage(db: Db, actor: Actor, accountId: string, pageId: string, store: FileStore | null): Promise<WayOutResult> {
+  const page = await getLeadPage(db, accountId, pageId);
+  if (!page) return { ok: false, reason: "not_found" };
+  const counts = await pageSubmissionCounts(db, accountId, page.id);
+  if (wayOut(counts) !== "delete") return { ok: false, reason: "has_submissions" };
+  const [gone] = await db.delete(leadPages).where(and(
+    eq(leadPages.id, page.id), eq(leadPages.accountId, accountId),
+    sql`not exists (select 1 from ${leadPageSubmissions} where ${leadPageSubmissions.pageId} = ${page.id} and ${leadPageSubmissions.preview} = false)`,
+  )).returning();
+  if (!gone) return (await getLeadPage(db, accountId, page.id)) ? { ok: false, reason: "has_submissions" } : { ok: false, reason: "not_found" };
+  if (gone.banner?.blobPath) await deleteBlob(store, gone.banner.blobPath);
+  await writeAudit(db, actor, {
+    accountId, action: "lead_page.deleted", targetType: "lead_page", targetId: page.id,
+    details: { name: page.name, status: page.status, connection: page.connection, testSubmissions: counts.test, testLeads: counts.testLeads, banner: !!gone.banner },
+  });
+  return { ok: true, page: gone };
+}
+
+/**
+ * Archives a page with real submissions: hidden from the list by default, its numbers and
+ * its leads' source kept, closed to sends like a paused page (it is stored as paused).
+ * Audited.
+ */
+export async function archiveLeadPage(db: Db, actor: Actor, accountId: string, pageId: string, now = new Date()): Promise<WayOutResult> {
+  const page = await getLeadPage(db, accountId, pageId);
+  if (!page) return { ok: false, reason: "not_found" };
+  if (isArchived(page)) return { ok: true, page };
+  if (wayOut(await pageSubmissionCounts(db, accountId, page.id)) !== "archive") return { ok: false, reason: "no_submissions" };
+  const [saved] = await db.update(leadPages).set({
+    options: archivedOptions(page.options, now, actor.userId),
+    status: page.status === "draft" ? "draft" : "paused",
+    pausedAt: page.status === "live" ? now : page.pausedAt,
+  }).where(and(eq(leadPages.id, page.id), eq(leadPages.accountId, accountId))).returning();
+  await writeAudit(db, actor, { accountId, action: "lead_page.archived", targetType: "lead_page", targetId: page.id, details: { from: page.status } });
+  return { ok: true, page: saved };
+}
+
+/** Brings an archived page back as paused (never straight to live). Audited. */
+export async function unarchiveLeadPage(db: Db, actor: Actor, accountId: string, pageId: string, now = new Date()): Promise<WayOutResult> {
+  const page = await getLeadPage(db, accountId, pageId);
+  if (!page) return { ok: false, reason: "not_found" };
+  if (!isArchived(page)) return { ok: false, reason: "not_archived" };
+  const [saved] = await db.update(leadPages).set({
+    options: unarchivedOptions(page.options),
+    status: page.status === "draft" ? "draft" : "paused",
+    pausedAt: page.status === "live" ? now : page.pausedAt,
+  }).where(and(eq(leadPages.id, page.id), eq(leadPages.accountId, accountId))).returning();
+  await writeAudit(db, actor, { accountId, action: "lead_page.unarchived", targetType: "lead_page", targetId: page.id, details: { to: saved.status } });
+  return { ok: true, page: saved };
+}
+
 /** A 24-hour link to try a draft or paused page ("Check before going live"): its submissions are marked preview and left out of the numbers. Audited. */
 export async function issuePreviewLink(db: Db, actor: Actor, accountId: string, pageId: string, now = new Date()): Promise<{ path: string; expiresAt: Date } | null> {
   const page = await getLeadPage(db, accountId, pageId);
-  if (!page) return null;
+  if (!page || isArchived(page)) return null;
   const token = previewTokenFor(page.id, now);
   await writeAudit(db, actor, { accountId, action: "lead_page.preview_link", targetType: "lead_page", targetId: pageId });
   return { path: `/p/${page.publicKey}?preview=${token}`, expiresAt: new Date(now.getTime() + 24 * 3600_000) };

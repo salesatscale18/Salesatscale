@@ -10,6 +10,7 @@ import { handoverReceivedLine } from "@/lib/lead-pages/handover-text";
 import { publicUrl } from "@/lib/orders/token";
 import { originOf } from "@/lib/lead-pages/origin";
 import { bannerUrlPath, CLICK_ID_KEYS, consentTickedOf, formFieldsOf, initialsOf, trackingOf, UTM_KEYS } from "@/lib/lead-pages/rules";
+import { isArchived } from "@/lib/lead-pages/archive";
 import { pageByKey, pageCountries, privacyNotice } from "@/lib/lead-pages/service";
 import { formTimingToken, previewTokenValid } from "@/lib/lead-pages/tokens";
 import { aboutLine, leadFormText } from "@/lib/lead-pages/form-text";
@@ -48,7 +49,9 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   const { page, account, brandColor } = found;
   const now = new Date();
   const previewToken = one(sp.preview);
-  const preview = previewTokenValid(previewToken, page.id, now);
+  // An archived page (stored as paused) shows the closed text, a preview link too.
+  const archived = isArchived(page);
+  const preview = !archived && previewTokenValid(previewToken, page.id, now);
   if (page.status === "draft" && !preview) notFound();
   const lang: Locale = page.language === "he" ? "he" : "en";
   const tr = translator(lang);
@@ -63,7 +66,7 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   if (one(sp.sent) === "1") {
     return shell(<p className="lp-hand__sub" role="status" data-lp-thanks="">{handoverReceivedLine(names, null, lang)}</p>);
   }
-  if (page.status === "paused" && !preview) return shell(<p className="lp-hand__sub" role="status" data-lp-closed="">{tr("buyer.lp.form.closed")}</p>);
+  if ((archived || page.status === "paused") && !preview) return shell(<p className="lp-hand__sub" role="status" data-lp-closed="">{tr("buyer.lp.form.closed")}</p>);
 
   const hidden: Record<string, string> = { ft: formTimingToken(page.id, now.getTime()) };
   if (preview) hidden.preview = previewToken;

@@ -3,10 +3,13 @@ import { ListTable, ListToolbar } from "@/components/sas/list-kit";
 import { StatusPill, buttonClass } from "@/components/sas/primitives";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { t } from "@/lib/i18n";
-import { listLeadPages } from "@/lib/lead-pages/service";
+import { displayStateOf, isArchived } from "@/lib/lead-pages/archive";
+import { listLeadPages, pageSubmissionCounts, realSubmissionCounts } from "@/lib/lead-pages/service";
 import { listTotals, rangeOfDays, type Funnel } from "@/lib/lead-pages/stats";
 import { CONNECTION_LABEL, countText, countsVisits, marketLine, parseListFilters, pctText, shortAddress } from "@/lib/lead-pages/view";
+import { firstParam, hrefWith, TRANSIENT_PARAMS } from "@/lib/list-kit";
 import { listMarkets } from "@/lib/markets/service";
+import { DONE, LeadPageDeleteConfirm, LeadPageMenu, WAY_ERROR } from "./page-menu";
 import "./lead-pages.css";
 
 type Search = Record<string, string | string[] | undefined>;
@@ -26,10 +29,23 @@ export default async function LeadPagesList({ params, searchParams }: { params: 
   const f = parseListFilters(sp, markets.map((m) => m.id));
   const range = rangeOfDays(f.days);
   const [all, pages] = await Promise.all([
-    listLeadPages(appDb, account.id),
-    listLeadPages(appDb, account.id, { q: f.q, status: f.status, marketId: f.marketId }),
+    listLeadPages(appDb, account.id, { includeArchived: true }),
+    // Archived pages are hidden unless "Show archived" (?archived=1) is on.
+    listLeadPages(appDb, account.id, { q: f.q, status: f.status, marketId: f.marketId, includeArchived: f.archived }),
   ]);
-  const { perPage, totals } = await listTotals(appDb, account.id, range, { pageIds: pages.map((p) => p.id) });
+  const archivedCount = all.filter(isArchived).length;
+  // The totals add the listed pages only: archived pages count only while they are shown.
+  const [{ perPage, totals }, real] = await Promise.all([
+    listTotals(appDb, account.id, range, { pageIds: pages.map((p) => p.id) }),
+    realSubmissionCounts(appDb, account.id, pages.map((p) => p.id)),
+  ]);
+  // The delete confirm step (?confirm=<pageId>, from a row's ⋯ menu): only for a listed page Delete applies to.
+  const confirmId = firstParam(sp, "confirm");
+  const confirmPage = confirmId ? pages.find((p) => p.id === confirmId && !isArchived(p) && !real.get(p.id)) ?? null : null;
+  const confirmCounts = confirmPage ? await pageSubmissionCounts(appDb, account.id, confirmPage.id) : null;
+  const done = DONE[firstParam(sp, "done") ?? ""];
+  const wayError = WAY_ERROR[firstParam(sp, "way_error") ?? ""];
+  const where = { slug: account.slug, back: "list" as const, showArchived: f.archived };
   // Visits are counted only where our script runs (not for a button or link): the totals add those pages only.
   const visitPages = pages.filter((p) => countsVisits(p.connection));
   const visits = visitPages.reduce((n, p) => n + (perPage.get(p.id)?.visits ?? 0), 0);
@@ -40,7 +56,13 @@ export default async function LeadPagesList({ params, searchParams }: { params: 
     { id: "quotes", label: t("lead_pages.kpi.quotes"), value: countText(totals.gotQuote), line: lineOf("lead_pages.kpi.of_leads", pctText(totals.gotQuote, totals.leftDetails)) },
     { id: "orders", label: t("lead_pages.kpi.orders"), value: countText(totals.ordered), line: lineOf("lead_pages.kpi.of_leads", pctText(totals.ordered, totals.leftDetails)) },
   ];
-  const filtered = !!(f.q || f.status || f.marketId);
+  const filtered = !!(f.q || f.status || f.marketId || f.archived);
+  const notices = (
+    <>
+      {done ? <div className="sas-alert sas-alert--success" role="status" data-done={firstParam(sp, "done")}><Icon name="check-circle" /><span>{t(done)}</span></div> : null}
+      {wayError ? <div className="sas-alert sas-alert--danger" role="alert" data-way-error={firstParam(sp, "way_error")}><Icon name="alert-triangle" /><span>{t(wayError)}</span></div> : null}
+    </>
+  );
   const addHref = `${base}/new`;
   const numbers = (p: (typeof pages)[number]): Funnel | null => (p.wentLiveAt ? perPage.get(p.id) ?? ZERO : null);
 
@@ -55,6 +77,8 @@ export default async function LeadPagesList({ params, searchParams }: { params: 
           <a className={buttonClass("primary")} href={addHref}><Icon name="plus" />{t("lead_pages.add")}</a>
         </div>
       </header>
+
+      {notices}
 
       {all.length === 0 ? (
         <section className="sas-panel sas-empty" data-empty="">
@@ -79,9 +103,11 @@ export default async function LeadPagesList({ params, searchParams }: { params: 
             caption={t("lead_pages.title")}
             foot={<span>{t("lead_pages.foot")}</span>}
             toolbar={(
+              <div className="sas-listbar">
               <ListToolbar
                 path={base}
                 params={sp}
+                drop={[...TRANSIENT_PARAMS, "done", "way_error"]}
                 label={t("lead_pages.find")}
                 search={{ label: t("lead_pages.search"), placeholder: t("lead_pages.search") }}
                 selects={[
@@ -102,6 +128,20 @@ export default async function LeadPagesList({ params, searchParams }: { params: 
                   },
                 ]}
               />
+              {/* "Show archived": a toggle chip; the search form carries ?archived=1 along as a hidden field. */}
+              {archivedCount > 0 || f.archived ? (
+                <div className="sas-listbar__chips" role="group" aria-label={t("lead_pages.filter.show_archived")}>
+                  <a
+                    className="sas-fchip"
+                    href={hrefWith(base, sp, { archived: f.archived ? null : "1" }, [...TRANSIENT_PARAMS, "done", "way_error"])}
+                    aria-current={f.archived ? "true" : undefined}
+                    data-show-archived={f.archived ? "on" : "off"}
+                  >
+                    <Icon name="archive" />{t("lead_pages.filter.show_archived")}<span className="sas-fchip__count sas-num">{archivedCount}</span>
+                  </a>
+                </div>
+              ) : null}
+              </div>
             )}
           >
             <thead>
@@ -115,31 +155,44 @@ export default async function LeadPagesList({ params, searchParams }: { params: 
                 <th scope="col" className="lpg-num">{t("lead_pages.col.chats")}</th>
                 <th scope="col" className="lpg-num">{t("lead_pages.col.quotes")}</th>
                 <th scope="col" className="lpg-num">{t("lead_pages.col.orders")}</th>
+                <th scope="col"><span className="sas-sr">{t("catalog.col.actions")}</span></th>
               </tr>
             </thead>
             <tbody>
               {pages.length === 0 ? (
-                <tr><td colSpan={9} data-label=""><span className="sas-small">{t("lead_pages.no_match")} {filtered ? <a href={base}>{t("catalog.clear_filters")}</a> : null}</span></td></tr>
+                <tr><td colSpan={10} data-label=""><span className="sas-small">{t("lead_pages.no_match")} {filtered ? <a href={base}>{t("catalog.clear_filters")}</a> : null}</span></td></tr>
               ) : null}
-              {pages.map((p) => {
+              {pages.flatMap((p) => {
                 const n = numbers(p);
                 const cell = (v: number | undefined) => (n ? countText(v ?? 0) : "—");
-                return (
-                  <tr key={p.id} data-page={p.id}>
+                const row = (
+                  <tr key={p.id} data-page={p.id} data-archived={isArchived(p) ? "" : undefined}>
                     <td className="lpg-row__page">
                       <a className="sas-row-link" href={`${base}/${p.id}`}><strong><bdi>{p.name}</bdi></strong></a>
                       <span className="sas-small lpg-row__addr" dir="ltr">{shortAddress(p.address) ?? t("lead_pages.no_address")}</span>
                     </td>
                     <td data-label={t("lead_pages.col.connection")} className="sas-small">{t(CONNECTION_LABEL[p.connection])}</td>
                     <td data-label={t("lead_pages.col.market")}>{marketLine(p, markets)}</td>
-                    <td data-label={t("lead_pages.col.status")}><StatusPill object="lead_page" state={p.status} /></td>
+                    <td data-label={t("lead_pages.col.status")}><StatusPill object="lead_page" state={displayStateOf(p)} /></td>
                     <td data-label={t("lead_pages.col.visits")} className="lpg-num sas-num" data-cell="visits">{n && countsVisits(p.connection) ? countText(n.visits) : <span className="lpg-dash" title={t("lead_pages.kpi.no_visits")}>—</span>}</td>
                     <td data-label={t("lead_pages.col.leads")} className="lpg-num sas-num" data-cell="leads"><strong>{cell(n?.leftDetails)}</strong></td>
                     <td data-label={t("lead_pages.col.chats")} className="lpg-num sas-num" data-cell="chats">{cell(n?.startedTalking)}</td>
                     <td data-label={t("lead_pages.col.quotes")} className="lpg-num sas-num" data-cell="quotes">{cell(n?.gotQuote)}</td>
                     <td data-label={t("lead_pages.col.orders")} className="lpg-num sas-num" data-cell="orders">{cell(n?.ordered)}</td>
+                    <td data-label="" className="sas-td-actions">
+                      <LeadPageMenu page={p} hasRealSubmissions={(real.get(p.id) ?? 0) > 0} confirmHref={hrefWith(base, sp, { confirm: p.id }, ["done", "way_error"])} where={where} />
+                    </td>
                   </tr>
                 );
+                if (confirmPage?.id !== p.id) return [row];
+                return [
+                  row,
+                  <tr key={`${p.id}-confirm`} className="sas-confirm-row" data-confirm-for={p.id}>
+                    <td colSpan={10} data-label="">
+                      <LeadPageDeleteConfirm page={p} testLeads={confirmCounts?.testLeads ?? 0} cancelHref={hrefWith(base, sp, { confirm: null })} where={where} />
+                    </td>
+                  </tr>,
+                ];
               })}
             </tbody>
           </ListTable>
