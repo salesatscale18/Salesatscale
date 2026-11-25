@@ -13,7 +13,8 @@ import { leadPageConsentLine } from "@/lib/leads/consent-line";
 import { chatNames } from "@/lib/simulator/service";
 import { OWN_FORM_ERROR_TEXT } from "@/lib/lead-pages/refusal";
 import { EXTRA_ORIGINS_MAX, OWN_FORM_ERRORS, OWN_FORM_FIELDS, trackingOf } from "@/lib/lead-pages/rules";
-import { getLeadPage, latestLeadsOfPage, leadPageReadiness, type ReadinessKey } from "@/lib/lead-pages/service";
+import { displayStateOf, isArchived } from "@/lib/lead-pages/archive";
+import { getLeadPage, latestLeadsOfPage, leadPageReadiness, pageSubmissionCounts, type ReadinessKey } from "@/lib/lead-pages/service";
 import { bySource, pageFunnel, parseStatsPeriod, rangeOfDays, STATS_PERIODS } from "@/lib/lead-pages/stats";
 import { previewTokenValid } from "@/lib/lead-pages/tokens";
 import {
@@ -22,6 +23,7 @@ import {
 } from "@/lib/lead-pages/view";
 import { STEP_LABEL } from "../../leads/[leadId]/stage";
 import { addOriginAction, previewLinkAction, removeOriginAction, setLeadPageStatusAction } from "../actions";
+import { DONE, LeadPageDeleteConfirm, LeadPageMenu, WAY_ERROR } from "../page-menu";
 import { ForgetParams, PendingButton } from "../pending-button";
 import "../lead-pages.css";
 
@@ -37,6 +39,8 @@ const ORIGIN_SAVED = new Set(["origin_added", "origin_removed"]);
 const ORIGIN_ERROR: Record<string, MessageKey> = { "1": "lead_pages.origins.invalid", max: "lead_pages.origins.max", page: "lead_pages.origins.page_error" };
 const CREATED: Record<string, MessageKey> = { snippet: "lead_pages.created.snippet", own_form: "lead_pages.created.own_form", link: "lead_pages.created.link", hosted: "lead_pages.created.link" };
 const ONE_TIME = ["created"] as const;
+/** The ⋯ menu's notices and its confirm step: never carried into another link. */
+const NOTICE_PARAMS = ["done", "way_error", "confirm"] as const;
 
 /**
  * One lead page (board: LeadPageDetail): from visit to order for the period,
@@ -59,13 +63,21 @@ export default async function LeadPageView({ params, searchParams }: { params: P
   const now = new Date();
   const days = parseStatsPeriod(firstParam(sp, "days"));
   const range = rangeOfDays(days, now);
-  const [funnel, sources, markets, checks, latest] = await Promise.all([
+  const [funnel, sources, markets, checks, latest, counts] = await Promise.all([
     pageFunnel(appDb, account.id, page.id, range),
     bySource(appDb, account.id, page.id, range),
     listMarkets(appDb, account.id),
     leadPageReadiness(appDb, account, page),
     latestLeadsOfPage(appDb, account.id, page.id, 5),
+    pageSubmissionCounts(appDb, account.id, page.id),
   ]);
+  const archived = isArchived(page);
+  // The ⋯ menu's Delete links to ?confirm=<pageId>; shown only while Delete applies (no real submissions).
+  const confirming = firstParam(sp, "confirm") === page.id && !archived && counts.real === 0;
+  const where = { slug: account.slug, back: "page" as const };
+  const done = DONE[firstParam(sp, "done") ?? ""];
+  const wayError = WAY_ERROR[firstParam(sp, "way_error") ?? ""];
+  const listHref = archived ? `${base}?archived=1` : base;
   const stages = await leadStages(appDb, account.id, latest.rows.map((r) => r.leadId));
   const steps = funnelSteps(funnel, page.connection);
   const max = Math.max(1, ...steps.map((s) => s.value ?? 0));
@@ -145,23 +157,28 @@ export default async function LeadPageView({ params, searchParams }: { params: P
     <main className="sas-shell__content lpg-page">
       <header className="sas-page-head lpg-head">
         <div className="sas-stack-2" style={{ gap: 4, flex: "1 1 320px", minWidth: 0 }}>
-          <nav aria-label={t("lead_pages.breadcrumb")} className="sas-small"><a href={base}>{t("nav.lead_pages")}</a></nav>
+          <nav aria-label={t("lead_pages.breadcrumb")} className="sas-small"><a href={listHref}>{t("nav.lead_pages")}</a></nav>
           <div className="lpg-title">
             <h1 className="sas-title"><bdi>{page.name}</bdi></h1>
-            <StatusPill object="lead_page" state={page.status} />
+            <StatusPill object="lead_page" state={displayStateOf(page)} />
           </div>
           <span className="sas-small lpg-row__addr" dir="ltr">{shortAddress(page.address) ?? shortAddress(link)}</span>
         </div>
         <div className="sas-page-head__actions lpg-head__actions">
-          {page.status === "live" ? statusForm("pause", "lead_pages.detail.pause", "secondary", "pause") : null}
-          {page.status === "paused" ? statusForm("resume", "lead_pages.detail.resume", "primary", "play") : null}
-          {page.status === "draft" ? statusForm("live", "lead_pages.detail.go_live", "primary", "rocket") : null}
+          {/* An archived page: no Go live / Resume here; Unarchive (in ⋯) brings it back paused first. */}
+          {!archived && page.status === "live" ? statusForm("pause", "lead_pages.detail.pause", "secondary", "pause") : null}
+          {!archived && page.status === "paused" ? statusForm("resume", "lead_pages.detail.resume", "primary", "play") : null}
+          {!archived && page.status === "draft" ? statusForm("live", "lead_pages.detail.go_live", "primary", "rocket") : null}
           {snippet ? <CopyButton value={code} label={t("lead_pages.snippet.copy")} /> : own ? <CopyButton value={action} label={t("lead_pages.own.copy")} /> : <CopyButton value={link} label={t("lead_pages.detail.copy_link")} />}
           <a className={buttonClass("secondary", "sm")} href={`${here}/edit`}><Icon name="pencil" />{t("lead_pages.detail.edit")}</a>
+          <LeadPageMenu page={page} hasRealSubmissions={counts.real > 0} confirmHref={hrefWith(here, sp, { confirm: page.id }, [...NOTICE_PARAMS])} where={where} />
         </div>
       </header>
 
-      {saved ? <div className="sas-alert sas-alert--success" role="status" data-saved=""><Icon name="check-circle" /><span>{t(saved)}</span></div> : null}
+      {confirming ? <LeadPageDeleteConfirm page={page} testLeads={counts.testLeads} cancelHref={hrefWith(here, sp, { confirm: null })} where={where} /> : null}
+      {done ? <div className="sas-alert sas-alert--success" role="status" data-done={firstParam(sp, "done")}><Icon name="check-circle" /><span>{t(done)}</span></div> : null}
+      {wayError ? <div className="sas-alert sas-alert--danger" role="alert" data-way-error={firstParam(sp, "way_error")}><Icon name="alert-triangle" /><span>{t(wayError)}</span></div> : null}
+      {saved ?<div className="sas-alert sas-alert--success" role="status" data-saved=""><Icon name="check-circle" /><span>{t(saved)}</span></div> : null}
       {blocked.length ? (
         <div className="sas-alert sas-alert--danger" role="alert" data-blocked={blocked.join(",")}>
           <Icon name="alert-triangle" />
@@ -173,7 +190,8 @@ export default async function LeadPageView({ params, searchParams }: { params: P
         </div>
       ) : null}
       {created ? <ForgetParams keys={ONE_TIME} /> : null}
-      {page.status === "paused" ? <div className="sas-alert lpg-alert--warning" role="status"><Icon name="clock" /><span>{t("lead_pages.paused_note")}</span></div> : null}
+      {archived ? <div className="sas-alert" role="status" data-archived-note=""><Icon name="archive" /><span>{t("lead_pages.archived_note")}</span></div>
+        : page.status === "paused" ? <div className="sas-alert lpg-alert--warning" role="status"><Icon name="clock" /><span>{t("lead_pages.paused_note")}</span></div> : null}
 
       <div className="lpg-cols">
         <div className="lpg-col">
@@ -182,7 +200,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
               <h2 id="funnel-h" className="lpg-sec__h">{t("lead_pages.funnel.title")}</h2>
               <nav className="lpg-periods" aria-label={t("lead_pages.filter.period")}>
                 {STATS_PERIODS.map((d) => (
-                  <a key={d} className="sas-fchip" href={hrefWith(here, sp, { days: d === 30 ? null : String(d) }, ["saved", "blocked", "pl", "created", "origin_error"])} aria-current={d === days ? "true" : undefined}>
+                  <a key={d} className="sas-fchip" href={hrefWith(here, sp, { days: d === 30 ? null : String(d) }, ["saved", "blocked", "pl", "created", "origin_error", ...NOTICE_PARAMS])} aria-current={d === days ? "true" : undefined}>
                     {t("lead_pages.filter.days", { days: d })}
                   </a>
                 ))}
@@ -255,7 +273,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                   </span>
                 </>
               ) : (
-                <form action={previewLinkAction}>
+                <form action={previewLinkAction} hidden={archived} data-preview-make="">
                   <input type="hidden" name="slug" value={account.slug} />
                   <input type="hidden" name="pageId" value={page.id} />
                   <PendingButton className={buttonClass("secondary", "sm")} icon={<Icon name="eye" />}>{t("lead_pages.link.preview_make")}</PendingButton>
@@ -308,7 +326,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                   <span className="lpg-actions"><CopyButton value={ownFormPreviewField(pl)} label={t("lead_pages.own.test_copy")} /></span>
                 </>
               ) : (
-                <form action={previewLinkAction}>
+                <form action={previewLinkAction} hidden={archived} data-preview-make="">
                   <input type="hidden" name="slug" value={account.slug} />
                   <input type="hidden" name="pageId" value={page.id} />
                   <PendingButton className={buttonClass("secondary", "sm")} icon={<Icon name="eye" />}>{t("lead_pages.own.test_make")}</PendingButton>
@@ -366,7 +384,7 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                   </span>
                 </>
               ) : (
-                <form action={previewLinkAction}>
+                <form action={previewLinkAction} hidden={archived} data-preview-make="">
                   <input type="hidden" name="slug" value={account.slug} />
                   <input type="hidden" name="pageId" value={page.id} />
                   <PendingButton className={buttonClass("secondary", "sm")} icon={<Icon name="eye" />}>{t("lead_pages.link.preview_make")}</PendingButton>

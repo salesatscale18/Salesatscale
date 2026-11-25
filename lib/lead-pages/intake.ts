@@ -26,6 +26,7 @@ import { upsertLead } from "@/lib/leads/service";
 import { publicUrl } from "@/lib/orders/token";
 import { hashKey, rateLimit } from "@/lib/security/rate-limit";
 import { chatNames } from "@/lib/simulator/service";
+import { isArchived } from "./archive";
 import { checkOrigin, originOf, sitePageUrl } from "./origin";
 import {
   consentSourceLeadPage, firstNameOf, formFieldsOf, OWN_FORM_ALL_FIELDS, ownFormConsentWording, readSubmission, sanitizeAd, sourceKeyOf, trackingOf, validateSubmission, withoutQuery,
@@ -88,7 +89,9 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
     await bumpDaily(db, account.id, page.id, now, sourceKey, "rejected");
   };
 
-  // A draft or paused page takes only the seller's test submissions (the preview token).
+  // A draft or paused page takes only the seller's test submissions (the preview token);
+  // an archived page (stored as paused) takes none, a preview neither.
+  if (isArchived(page)) return { kind: "refused", reason: "closed" };
   const preview = previewTokenValid(f.preview, page.id, now);
   if (page.status !== "live" && !preview) return page.status === "draft" ? { kind: "not_found" } : { kind: "refused", reason: "closed" };
 

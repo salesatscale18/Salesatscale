@@ -24,7 +24,8 @@ const DESIGN_SYSTEM: Record<string, [string, string][]> = {
   generated_suggestion: [["Suggested", "agent"], ["Accepted", "success"], ["Rejected", "neutral"]],
   source: [["Processing", "agent"], ["Not analyzed yet", "neutral"], ["Ready for review", "neutral"], ["Approved", "success"], ["Needs input", "warning"], ["Partly failed", "danger"], ["Failed", "danger"]],
   analysis_run: [["Running", "agent"], ["Completed", "neutral"], ["Stopped at spend cap", "warning"], ["Failed", "danger"]],
-  lead_page: [["Draft", "neutral"], ["Live", "success"], ["Paused", "warning"]],
+  // "Archived" is a display state (options.archivedAt), not a status in the database.
+  lead_page: [["Draft", "neutral"], ["Live", "success"], ["Paused", "warning"], ["Archived", "neutral"]],
 };
 
 describe("status language", () => {

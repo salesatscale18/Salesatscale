@@ -56,7 +56,11 @@ export const topicLine = (topic: LeadPageTopic | null | undefined) => topic?.en 
 // List filters (URL)
 // ---------------------------------------------------------------------------
 
-export type ListFilters = { q: string | null; status: LeadPageStatus | null; marketId: string | null; days: 7 | 30 | 90 };
+export type ListFilters = {
+  q: string | null; status: LeadPageStatus | null; marketId: string | null; days: 7 | 30 | 90;
+  /** "Show archived" (`?archived=1`): archived pages are listed too, and count in the totals. */
+  archived: boolean;
+};
 
 export function parseListFilters(params: SearchParamsLike, marketIds: readonly string[]): ListFilters {
   const status = firstParam(params, "status") ?? "";
@@ -67,6 +71,7 @@ export function parseListFilters(params: SearchParamsLike, marketIds: readonly s
     status: (LEAD_PAGE_STATUSES as readonly string[]).includes(status) ? (status as LeadPageStatus) : null,
     marketId: marketIds.includes(marketId) ? marketId : null,
     days: days === "7" ? 7 : days === "90" ? 90 : 30,
+    archived: firstParam(params, "archived") === "1",
   };
 }
 

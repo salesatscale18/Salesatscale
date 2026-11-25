@@ -271,3 +271,11 @@
   .lpv[data-open] .lpv-head { position: sticky; inset-block-start: -16px; z-index: 2; margin: -16px -16px 0; padding: 12px 16px; background: var(--surface-raised); border-bottom: 1px solid var(--line); }
   .lpg-form__foot { padding-inline-end: 136px; }
 }
+
+/* A page's ⋯ menu (list rows and the page view): while a picked item is being sent, the ⋯ button shows the spinner. */
+.lpg-menu__spin { display: none; }
+.lpg-menu[data-pending] > summary { pointer-events: none; }
+.lpg-menu[data-pending] > summary > .sas-ico { display: none; }
+.lpg-menu[data-pending] > summary > .lpg-menu__spin { display: inline-block; }
+.lpg-head .sas-confirm, .lpg-page > .sas-confirm { width: 100%; box-sizing: border-box; }
+tr[data-archived] .lpg-row__page strong { color: var(--ink-muted); }

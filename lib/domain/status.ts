@@ -135,6 +135,8 @@ export const STATUS = {
     draft: { tone: "neutral", icon: "file-pen" },
     live: { tone: "success", icon: "check-circle" },
     paused: { tone: "warning", icon: "clock" },
+    /** Display only: `options.archivedAt` on a page stored as paused (lib/lead-pages/archive.ts); not a DB enum value. */
+    archived: { tone: "neutral", icon: "archive" },
   },
 } as const satisfies Record<string, Record<string, StatusDef>>;
 
