@@ -20,6 +20,7 @@ import { loadHandover } from "@/lib/lead-pages/handover";
 import { createLeadPage, getLeadPage, goLiveLeadPage, leadPageReadiness, pauseLeadPage } from "@/lib/lead-pages/service";
 import { bySource, rangeOfDays, SOURCE_TOP } from "@/lib/lead-pages/stats";
 import { submitLeadPage } from "@/lib/lead-pages/intake";
+import { OWN_FORM_ERRORS } from "@/lib/lead-pages/rules";
 import { formTimingToken, previewTokenFor } from "@/lib/lead-pages/tokens";
 import { MockSmsTransport } from "@/lib/sms/transport";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -149,8 +150,14 @@ describe("lead pages (c): the seller's own form", () => {
     const r = await send(own.publicKey, { name: "Spam Bot", phone: "+972547200010", consent: "yes" }, { origin: "https://evil.example", referer: "https://evil.example/form" });
     expect(r.status).toBe(403);
     expect(r.headers.get("location")).toBeNull();
-    expect(r.headers.get("content-type")).toContain("text/plain");
-    expect(await r.text()).toBe("Something went wrong. Please try again.");
+    // A small styled page with the generic buyer sentence: nothing from the request in it.
+    expect(r.headers.get("content-type")).toContain("text/html");
+    expect(r.headers.get("content-security-policy")).toContain("default-src 'none'");
+    const html = await r.text();
+    expect(html).toContain('<html lang="en" dir="ltr">');
+    expect(html).toContain("<p>Something went wrong. Please try again.</p>");
+    expect(html).toContain('<meta name="robots" content="noindex, nofollow">');
+    for (const reflected of ["Spam Bot", "+972547200010", "evil.example", own.publicKey, "<script", "src=", "href=", "url("]) expect(html).not.toContain(reflected);
     expect((await db.select().from(leadPageSubmissions)).length).toBe(before);
     expect(await leadOf("+972547200010")).toBeUndefined();
     expect((await fresh(own)).checks).toMatchObject({ refusedOrigin: "https://evil.example" });
@@ -168,6 +175,62 @@ describe("lead pages (c): the seller's own form", () => {
     const n = await send(own.publicKey, { name: "Null Origin", phone: "+972547200013" }, { origin: "null", referer: null });
     expect(n.status).toBe(403);
     expect(await leadOf("+972547200013")).toBeUndefined();
+    // Both are the styled page, not plain text.
+    for (const x of [r, n]) {
+      expect(x.headers.get("content-type")).toContain("text/html");
+      const html = await x.text();
+      expect(html).toContain("<p>Something went wrong. Please try again.</p>");
+      expect(html).not.toMatch(/Curl User|Null Origin|972547200012|972547200013|<script/);
+    }
+  });
+
+  it("the styled refusal page is in the form's language (Hebrew: rtl), with no reflected input; JSON callers keep JSON", async () => {
+    const he = await make(acc, { name: "Hebrew form", connection: "own_form", language: "he", address: `${SITE}/he` });
+    const payload = { name: "<b>x</b>\"'&", phone: "+972547200050", consent: "yes" };
+    const r = await send(he.publicKey, payload, { origin: "https://evil.example", referer: "https://evil.example/<x>?q=\"y\"" });
+    expect(r.status).toBe(403);
+    expect(r.headers.get("location")).toBeNull();
+    const html = await r.text();
+    expect(html).toContain('<html lang="he" dir="rtl">');
+    expect(html).toContain("<p>משהו השתבש. אפשר לנסות שוב.</p>");
+    for (const reflected of ["<b>", "&quot;y", "<x>", "evil.example", "972547200050", he.publicKey]) expect(html).not.toContain(reflected);
+    // Too many sends from an unlisted address: the busy sentence, 429, still no redirect.
+    const one = "10.9.8.8";
+    for (let i = 0; i < 5; i++) await send(he.publicKey, { name: "Repeat", phone: `+97254720006${i}` }, { ip: one, origin: "https://evil.example", referer: "https://evil.example/" });
+    const busy = await send(he.publicKey, { name: "Repeat", phone: "+972547200069" }, { ip: one, origin: "https://evil.example", referer: "https://evil.example/" });
+    expect(busy.status).toBe(429);
+    expect(busy.headers.get("location")).toBeNull();
+    expect(await busy.text()).toContain("<p>יותר מדי ניסיונות. אפשר לנסות שוב בעוד כמה דקות.</p>");
+    // A page that is not found (or a draft): the same styled page, 404.
+    const draft = await make(acc, { name: "Hebrew draft", connection: "own_form", language: "he", address: `${SITE}/he-draft` }, false);
+    const nf = await send(draft.publicKey, { name: "Early", phone: "+972547200070" }, { referer: `${SITE}/he-draft` });
+    expect(nf.status).toBe(404);
+    expect(nf.headers.get("content-type")).toContain("text/html");
+    expect(await nf.text()).toContain('<html lang="he" dir="rtl">');
+    // A JSON caller from an unlisted address keeps its JSON answer.
+    const json = await submitRoute.POST(new Request(`${APP}/api/lp/${he.publicKey}/submit`, {
+      method: "POST", body: JSON.stringify({ name: "Json", phone: "+972547200071" }),
+      headers: { "content-type": "application/json", origin: "https://evil.example", "x-forwarded-for": ip() },
+    }), ctx(he.publicKey));
+    expect(json.status).toBe(403);
+    expect(await json.json()).toEqual({ error: "origin" });
+  });
+
+  it("every code the endpoint sends back is one the setup panel lists (one list), and each is reachable", async () => {
+    const seen = new Set<string>();
+    const codeOf = (r: Response) => { const m = /[?&]sas_error=([a-z]+)$/.exec(r.headers.get("location") ?? ""); if (m) seen.add(m[1]); return m?.[1]; };
+    expect(codeOf(await send(own.publicKey, { name: "", phone: "+972547200080" }))).toBe("name");
+    expect(codeOf(await send(own.publicKey, { name: "Dana Cohen", phone: "12" }))).toBe("phone");
+    const one = "10.9.9.9";
+    for (let i = 0; i < 5; i++) await send(own.publicKey, { name: "Repeat Buyer", phone: `+97254720008${i + 1}` }, { ip: one });
+    expect(codeOf(await send(own.publicKey, { name: "Repeat Buyer", phone: "+972547200087" }, { ip: one }))).toBe("busy");
+    const paused = await make(acc, { name: "Paused codes", connection: "own_form", language: "en", address: `${SITE}/paused` });
+    await pauseLeadPage(db, actor(), acc, paused.id);
+    expect(codeOf(await send(paused.publicKey, { name: "Late", phone: "+972547200088" }, { referer: `${SITE}/paused` }))).toBe("closed");
+    // The snippet page's no-JS fallback without its timing token: generic.
+    const snip = await make(acc, { name: "Snippet codes", connection: "snippet", language: "en", address: `${SITE}/snip` });
+    expect(codeOf(await send(snip.publicKey, { name: "Bot", phone: "+972547200089" }, { referer: `${SITE}/snip` }))).toBe("generic");
+    expect([...seen].sort()).toEqual([...OWN_FORM_ERRORS].sort());
   });
 
   it("a refused send goes back to the allowed Referer page only, with ?sas_error= and no personal details (no open redirect)", async () => {

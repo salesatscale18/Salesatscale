@@ -19,6 +19,9 @@ import {
   auditLog, conversations, leadPageSubmissions, leadPages, leads, sellerAccounts, users, type LeadPage, type SellerAccount, type User,
 } from "@/db/schema";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { t as msg } from "@/lib/i18n";
+import { OWN_FORM_ERROR_TEXT } from "@/lib/lead-pages/refusal";
+import { OWN_FORM_ERRORS } from "@/lib/lead-pages/rules";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, access: null as unknown, files: new Map<string, Uint8Array>() }));
 vi.mock("@anthropic-ai/sdk", () => ({ default: vi.fn(() => { throw new Error("no model calls in this test"); }) }));
@@ -571,6 +574,15 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(view).toContain("data-preview-field");
     expect(v).toContain("Copy example");
     expect(v).toContain("?sas_error=");
+    // "If a send is refused": one row per code the endpoint can return (one list), each with the
+    // approved buyer sentence in the page's form language.
+    expect(v).toContain("If a send is refused");
+    expect(v).toContain("Show your own message for each code.");
+    expect([...view.matchAll(/data-error-code="([a-z]+)"/g)].map((m) => m[1])).toEqual([...OWN_FORM_ERRORS]);
+    for (const code of OWN_FORM_ERRORS) {
+      expect(view).toMatch(new RegExp(`data-error-code="${code}"><td><code dir="ltr">${code}</code></td><td>[^<]+</td><td lang="en" dir="ltr">${msg(OWN_FORM_ERROR_TEXT[code]).replace(/[.?]/g, "\\$&")}</td>`));
+    }
+    expect(v).toContain("A lead sent without consent is not refused: it is saved, and the buyer sees that you received their details.");
     // Checks: the own-form check, done.
     expect(view).toMatch(/data-check="own_form_lead" data-done=""/);
     expect(v).toContain("A lead arrived from your form");

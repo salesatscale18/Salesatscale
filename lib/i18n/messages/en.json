@@ -4455,6 +4455,16 @@
   "lead_pages.own.test_hint": "Add the test code to your form as a hidden field and send the form once from your page. The lead arrives marked Test and is left out of the numbers. Works for 24 hours. Remove the field before going live.",
   "lead_pages.own.test_make": "Get a test code",
   "lead_pages.own.test_copy": "Copy field",
-  "lead_pages.own.errors": "If a send is refused, your page opens again with ?sas_error= in its address: name, phone, busy, closed or generic. You can show your own message for each.",
+  "lead_pages.own.errors_title": "If a send is refused",
+  "lead_pages.own.errors": "Your page opens again with ?sas_error= in its address. Show your own message for each code.",
+  "lead_pages.own.errors_code": "Code",
+  "lead_pages.own.errors_meaning": "What it means",
+  "lead_pages.own.errors_sentence": "Suggested sentence",
+  "lead_pages.own.error.name": "The name is missing.",
+  "lead_pages.own.error.phone": "The mobile number is missing or not valid.",
+  "lead_pages.own.error.busy": "Too many sends in a short time.",
+  "lead_pages.own.error.closed": "The page is paused.",
+  "lead_pages.own.error.generic": "Anything else went wrong.",
+  "lead_pages.own.errors_consent": "A lead sent without consent is not refused: it is saved, and the buyer sees that you received their details.",
   "lead_pages.setup.form_own": "Your own form's fields"
 }

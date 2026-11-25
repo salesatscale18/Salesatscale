@@ -165,6 +165,21 @@
 .lpg-fields { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; line-height: 18px; }
 .lpg-fields li { min-width: 0; overflow-wrap: anywhere; }
 .lpg-fields code { font: 600 12px/18px var(--font-mono); padding: 1px 6px; border-radius: var(--radius-sm, 4px); background: var(--surface-sunken); }
+/* The own form's refusal codes: code · meaning · suggested buyer sentence (stacked in a narrow card). */
+.lpg-errs-box { container-type: inline-size; min-width: 0; }
+.lpg-errs { width: 100%; border-collapse: collapse; font-size: 13px; line-height: 18px; }
+.lpg-errs th { text-align: start; font-weight: 600; color: var(--ink-muted); padding: 0 8px 4px 0; padding-inline: 0 8px; border-bottom: 1px solid var(--line); }
+.lpg-errs td { vertical-align: top; padding: 6px 0; padding-inline: 0 8px; border-bottom: 1px solid var(--line); min-width: 0; overflow-wrap: anywhere; }
+.lpg-errs td:first-child { white-space: nowrap; }
+.lpg-errs code { font: 600 12px/18px var(--font-mono); padding: 1px 6px; border-radius: var(--radius-sm, 4px); background: var(--surface-sunken); }
+.lpg-errs td[lang] { color: var(--ink); }
+@container (max-width: 520px) {
+  .lpg-errs thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .lpg-errs, .lpg-errs tbody { display: block; }
+  .lpg-errs tr { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+  .lpg-errs td { padding: 0; border: 0; }
+  .lpg-errs td[lang] { grid-column: 1 / -1; padding: 4px 8px; border-inline-start: 3px solid var(--line-strong); background: var(--surface-sunken); border-radius: var(--radius-md); }
+}
 .lpg-quote { margin: 0; padding: 8px 10px; border-inline-start: 3px solid var(--line-strong); background: var(--surface-sunken); border-radius: var(--radius-md); font-size: 13px; line-height: 18px; }
 .lpg-funnel-empty { margin: 0; padding: 16px 0; color: var(--ink-muted); }
 .lpg-form__foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; border-top: 1px solid var(--line); }

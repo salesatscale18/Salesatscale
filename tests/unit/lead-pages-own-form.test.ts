@@ -11,6 +11,9 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 import { OWN_FORM_ERRORS, OWN_FORM_FIELDS, ownFormConsentWording, ownFormErrorUrl, readSubmission, validateSubmission, OWN_FORM_ALL_FIELDS } from "@/lib/lead-pages/rules";
 import { sitePageUrl } from "@/lib/lead-pages/origin";
+import type { SubmitResult } from "@/lib/lead-pages/intake";
+import { OWN_FORM_ERROR_TEXT, ownFormErrorCode, REFUSAL_PAGE_CSP, refusalPageHtml, refusalSentenceKey } from "@/lib/lead-pages/refusal";
+import { messages } from "@/lib/i18n";
 import { AD_STORE_KEY, keepAd, parseKeptAd, type ConsentSignal } from "@/lib/lead-pages/snippet-core";
 import type { Funnel } from "@/lib/lead-pages/stats";
 import { countsOpens, countsVisits, funnelSteps, ownFormAction, ownFormExample, ownFormPreviewField } from "@/lib/lead-pages/view";
@@ -154,5 +157,45 @@ describe("the snippet keeps ad details only with a granted consent signal", () =
     expect(code).toContain("color:color-mix(in srgb,currentColor 80%,transparent)");
     expect(code).toMatch(/\.c span\{opacity:\.8\}/);
     expect(code).toContain("a{color:inherit;text-decoration:underline}");
+  });
+});
+
+describe("a refused own-form post: codes, sentences and the styled page", () => {
+  const results: SubmitResult[] = [
+    { kind: "invalid", errors: ["name"] }, { kind: "invalid", errors: ["phone", "name"] }, { kind: "invalid", errors: [] },
+    { kind: "busy", retryAfterSeconds: 60 },
+    { kind: "refused", reason: "closed" }, { kind: "refused", reason: "origin" }, { kind: "refused", reason: "timing" },
+    { kind: "not_found" }, { kind: "thanks" },
+  ];
+
+  it("the codes the endpoint can return are exactly the codes the panel lists, each with an approved buyer sentence in en and he", () => {
+    const returned = new Set(results.map(ownFormErrorCode));
+    expect([...returned].sort()).toEqual([...OWN_FORM_ERRORS].sort());
+    expect(Object.keys(OWN_FORM_ERROR_TEXT).sort()).toEqual([...OWN_FORM_ERRORS].sort());
+    for (const c of OWN_FORM_ERRORS) {
+      const key = OWN_FORM_ERROR_TEXT[c];
+      expect(key.startsWith("buyer.lp.form.")).toBe(true);
+      expect(messages.en[key]).toBeTruthy();
+      expect(messages.he[key]).toBeTruthy();
+    }
+  });
+
+  it("without a redirect: busy and closed say so, anything else is the generic sentence", () => {
+    expect(OWN_FORM_ERRORS.map(refusalSentenceKey)).toEqual(["buyer.lp.form.err_generic", "buyer.lp.form.err_generic", "buyer.lp.form.err_busy", "buyer.lp.form.closed", "buyer.lp.form.err_generic"]);
+  });
+
+  it("the styled page: the sentence, lang and dir, noindex, inline CSS only, no scripts or external assets", () => {
+    const en = refusalPageHtml("en", "buyer.lp.form.err_generic");
+    expect(en).toContain('<html lang="en" dir="ltr">');
+    expect(en).toContain("<p>Something went wrong. Please try again.</p>");
+    expect(en).toContain('<meta name="robots" content="noindex, nofollow">');
+    const he = refusalPageHtml("he", "buyer.lp.form.closed");
+    expect(he).toContain('<html lang="he" dir="rtl">');
+    expect(he).toContain(`<p>${messages.he["buyer.lp.form.closed"]}</p>`);
+    for (const html of [en, he]) {
+      expect(html).not.toMatch(/<script|<link|<img|<form|<a\s|src=|href=|url\(|@import|https?:/i);
+      expect(html).toContain("<style>");
+    }
+    expect(REFUSAL_PAGE_CSP).toMatch(/default-src 'none'.*style-src 'unsafe-inline'/);
   });
 });

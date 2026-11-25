@@ -11,7 +11,8 @@ import { leadStages } from "@/lib/leads/stage";
 import { listMarkets } from "@/lib/markets/service";
 import { leadPageConsentLine } from "@/lib/leads/consent-line";
 import { chatNames } from "@/lib/simulator/service";
-import { OWN_FORM_FIELDS, trackingOf } from "@/lib/lead-pages/rules";
+import { OWN_FORM_ERROR_TEXT } from "@/lib/lead-pages/refusal";
+import { OWN_FORM_ERRORS, OWN_FORM_FIELDS, trackingOf } from "@/lib/lead-pages/rules";
 import { getLeadPage, latestLeadsOfPage, leadPageReadiness, type ReadinessKey } from "@/lib/lead-pages/service";
 import { bySource, pageFunnel, parseStatsPeriod, rangeOfDays, STATS_PERIODS } from "@/lib/lead-pages/stats";
 import { previewTokenValid } from "@/lib/lead-pages/tokens";
@@ -288,11 +289,33 @@ export default async function LeadPageView({ params, searchParams }: { params: P
                   <button type="submit" className={buttonClass("secondary", "sm")}><Icon name="eye" />{t("lead_pages.own.test_make")}</button>
                 </form>
               )}
-              <span className="sas-small" data-own-errors="">{(() => {
+            </div>
+            <div className="lpg-preview" data-own-errors="">
+              <strong className="lpg-preview__h">{t("lead_pages.own.errors_title")}</strong>
+              <span className="sas-small">{(() => {
                 // "?sas_error=" never breaks across lines.
                 const [before, after = ""] = t("lead_pages.own.errors").split("?sas_error=");
                 return <>{before}<code className="lpg-nowrap" dir="ltr">?sas_error=</code>{after}</>;
               })()}</span>
+              <div className="lpg-errs-box"><table className="lpg-errs">
+                <thead>
+                  <tr>
+                    <th scope="col">{t("lead_pages.own.errors_code")}</th>
+                    <th scope="col">{t("lead_pages.own.errors_meaning")}</th>
+                    <th scope="col">{t("lead_pages.own.errors_sentence")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {OWN_FORM_ERRORS.map((code) => (
+                    <tr key={code} data-error-code={code}>
+                      <td><code dir="ltr">{code}</code></td>
+                      <td>{t(`lead_pages.own.error.${code}`)}</td>
+                      <td lang={formLang} dir={formLang === "he" ? "rtl" : "ltr"}>{tr(OWN_FORM_ERROR_TEXT[code])}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table></div>
+              <span className="sas-small" data-own-errors-consent="">{t("lead_pages.own.errors_consent")}</span>
             </div>
             {origins}
           </section>

@@ -117,12 +117,33 @@ own form, sending the form never gives consent back to an existing lead that has
 
 - Accepted: `303` to our hand-over page (`/h/…`), the same as with our form.
 - Refused (a missing name or phone, too many attempts, a paused page): `303` back to the page
-  the form was on, with `?sas_error=<code>` added: `name`, `phone`, `busy`, `closed` or
-  `generic`. Show your own message for it. The redirect never carries the buyer's details,
-  drops the page's own query, and goes only to the page the form was sent from when that page
-  is on an allowed address.
+  the form was on, with `?sas_error=<code>` added. The redirect never carries the buyer's
+  details, drops the page's own query, and goes only to the page the form was sent from when
+  that page is on an allowed address.
 - From an address that is not allowed, or with no `Origin` and no `Referer` header: no
-  redirect, a short plain-text answer. The page view then says **"Seen on <host>. Add it?"**.
+  redirect, `403` with a small styled page showing one sentence in the form's language (the
+  generic one below; "too many attempts" and "not taking requests" for `busy` and `closed`).
+  It has no scripts, no external files and nothing from the request. The page view then says
+  **"Seen on <host>. Add it?"**. A page key that is not found (or a draft without a test code)
+  gets the same styled page with `404`. Callers sending JSON keep their JSON answers.
+
+#### If a send is refused
+
+Your page opens again with `?sas_error=` in its address. Show your own message for each code.
+The page view shows the same table, with the sentences in the page's form language. The codes
+come from one list (`OWN_FORM_ERRORS` in `lib/lead-pages/rules.ts`, sentences in
+`lib/lead-pages/refusal.ts`).
+
+| Code | What it means | Suggested sentence (English / Hebrew) |
+| --- | --- | --- |
+| `name` | The name is missing. | Enter your name. / יש להזין שם. |
+| `phone` | The mobile number is missing or not valid. | Enter a valid mobile number. / יש להזין מספר נייד תקין. |
+| `busy` | Too many sends in a short time. | Too many attempts. Please try again in a few minutes. / יותר מדי ניסיונות. אפשר לנסות שוב בעוד כמה דקות. |
+| `closed` | The page is paused. | This form is not taking requests right now. / הטופס לא מקבל פניות כרגע. |
+| `generic` | Anything else went wrong. | Something went wrong. Please try again. / משהו השתבש. אפשר לנסות שוב. |
+
+A lead sent without consent is not refused: it is saved, and the buyer sees that you received
+their details.
 
 ### Spam and limits
 
