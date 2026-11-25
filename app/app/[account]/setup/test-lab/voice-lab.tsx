@@ -275,9 +275,15 @@ export function VoiceLabChoices({
       {line ? (
         <div className="lab-call__foot">
           <span className="sas-small" data-voice-settings-line="">{line}</span>
+          {/* Always shown: without a draft it is greyed out and says how to change the settings. */}
           {settingsHref ? (
             <a className={buttonClass("secondary", "sm")} href={settingsHref} data-voice-settings-open=""><Icon name="sliders" />{t("voice.settings.open")}</a>
-          ) : null}
+          ) : (
+            <span className="lab-call__settings-off" data-voice-settings-off="">
+              <span className="sas-small" id="lab-vs-off">{t("voice.settings.needs_draft")}</span>
+              <button type="button" className={buttonClass("secondary", "sm")} disabled aria-describedby="lab-vs-off"><Icon name="sliders" />{t("voice.settings.open")}</button>
+            </span>
+          )}
         </div>
       ) : null}
     </section>

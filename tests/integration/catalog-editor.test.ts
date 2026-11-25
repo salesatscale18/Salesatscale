@@ -60,7 +60,8 @@ describe("catalog editor without prices", () => {
 
   it("saves items with kind and a pick-list unit; the old price columns get neutral values", async () => {
     const r = await save(accA, { sku: "gw-10", name: "Site gateway", kind: "product", unit: "device", description: "Wi-Fi" });
-    expect(r).toMatchObject({ redirect: expect.stringMatching(/^\/app\/alpha\/setup\/catalog\?item=[0-9a-f-]{36}&saved=1$/) });
+    // The panel closes: back to the list, which names the saved item.
+    expect(r).toMatchObject({ redirect: expect.stringMatching(/^\/app\/alpha\/setup\/catalog\?saved=[0-9a-f-]{36}$/) });
     await save(accA, { sku: "SVC-INST", name: "Installation", kind: "service", unit: "site" });
     const items = (await catalogState(db, accA.id)).items;
     expect(items.map((i) => [i.sku, i.kind, i.unit])).toEqual([["GW-10", "product", "device"], ["SVC-INST", "service", "site"]]);
@@ -150,7 +151,7 @@ describe("catalog editor without prices", () => {
     const tooLong = await save(accA, { sku: "SNS-200", name: "Wireless fridge sensor", kind: "product", unit: "device", plainName: "x".repeat(61), valueLine: "y".repeat(201) });
     expect(tooLong).toMatchObject({ status: "error", errors: { plainName: expect.any(String), valueLine: expect.any(String) } });
     const r = await save(accA, { sku: "SNS-200", name: "Wireless fridge sensor", kind: "product", unit: "device", plainName: " wireless fridge sensor ", valueLine: "An alert the moment a fridge warms up." });
-    expect(r).toMatchObject({ redirect: expect.stringContaining("saved=1") });
+    expect(r).toMatchObject({ redirect: expect.stringMatching(/\?saved=[0-9a-f-]{36}$/) });
     const item = (await catalogState(db, accA.id)).items.find((i) => i.sku === "SNS-200")!;
     expect(item).toMatchObject({ plainName: "wireless fridge sensor", valueLine: "An alert the moment a fridge warms up." });
   });

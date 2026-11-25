@@ -6,6 +6,8 @@ import { Banner } from "@/components/sas/record";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { needsYouCountForRequest } from "@/lib/overview/service";
 import { setupProgress } from "@/lib/overview/setup";
+import { runningRun } from "@/lib/pipeline/service";
+import { AnalysisNotice } from "@/components/sas/analysis-notice";
 import { spendStateForRequest, spendTexts } from "@/lib/ai/usage";
 import { Icon } from "@/components/sas/icon";
 import { initials, personName } from "@/lib/auth/display";
@@ -22,10 +24,12 @@ export default async function AccountLayout({ children, params }: { children: Re
   const access = await requireAccount(slug);
   const { account, user, actingAs } = access;
   // Setup progress shows in the side menu until the account is live.
-  const [listed, spend, progress] = await Promise.all([
+  const [listed, spend, progress, analysis] = await Promise.all([
     needsYouCountForRequest(appDb, account.id),
     spendStateForRequest(appDb, account.id),
     account.status === "live" ? null : setupProgress(appDb, account),
+    // A source analysis going on: the on-screen notice (bottom corner, every page).
+    runningRun(appDb, account.id),
   ]);
   // The spend warning is one more "Needs you" item (shown at the top of the Overview list).
   const spendAlert = spend && spend.state !== "ok" ? spend : null;
@@ -90,6 +94,7 @@ export default async function AccountLayout({ children, params }: { children: Re
           {children}
         </div>
       </div>
+      <AnalysisNotice base={`/app/${account.slug}`} running={!!analysis} />
     </SasRoot>
   );
 }

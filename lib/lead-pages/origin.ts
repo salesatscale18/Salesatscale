@@ -100,6 +100,20 @@ export function checkOrigin(page: { address: string | null; extraOrigins: readon
 /** A refused origin is written to the page's checks at most this often (the seller sees "seen on …, add it?"). */
 export const REFUSED_ORIGIN_THROTTLE_MS = 10 * 60_000;
 
+/**
+ * The CORS headers for an allowed origin (config, submit and the beacon): the origin echoed,
+ * `Vary: Origin`, never credentials. A refused origin gets none of these.
+ */
+export function corsHeaders(origin: string): Record<string, string> {
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Vary": "Origin",
+    "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Max-Age": "600",
+  };
+}
+
 export function shouldRecordRefusedOrigin(checks: { refusedOrigin?: string; refusedAt?: string }, origin: string, now: Date): boolean {
   if (checks.refusedOrigin !== origin || !checks.refusedAt) return true;
   return now.getTime() - new Date(checks.refusedAt).getTime() >= REFUSED_ORIGIN_THROTTLE_MS;

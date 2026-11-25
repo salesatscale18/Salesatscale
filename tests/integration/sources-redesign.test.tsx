@@ -209,7 +209,7 @@ describe("Sources redesign", () => {
     it("tiles, the analysis strip, the table with Type, Language, Facts, Status and Updated, and the footer", async () => {
       const html = await list();
       const tx = text(html);
-      for (const s of ["Add a source", "Website", "We read up to 30 pages", "Files", "Drop files here, or browse", "Note", "Write or paste text", "Call transcript", "Shows how you really sell"]) expect(tx).toContain(s);
+      for (const s of ["Add a source", "Website", "We read up to 40 pages and their documents", "Files", "Drop files here, or browse", "Note", "Write or paste text", "Call transcript", "Shows how you really sell"]) expect(tx).toContain(s);
       expect(html).toContain('data-drop-key="files"');
       expect(html).toContain(`href="/app/${slug}/setup/sources?panel=website"`);
       // The strip: what changed, estimated cost in the account currency (₪, like Settings › AI usage), Run history, the button.
@@ -287,7 +287,7 @@ describe("Sources redesign", () => {
       expect(text(web)).toContain("Add a website");
       for (const s of ['name="url"', 'name="paths"', 'form="src-web-form"']) expect(web).toContain(s);
       expect(text(web)).toContain("Optional");
-      expect(text(web)).toContain("We read up to 30 pages on the same site and respect its robots.txt.");
+      expect(text(web)).toContain("We read the text of up to 40 pages on the same site, plus the PDF and Word documents they link to, and respect its robots.txt.");
       const files = await list({ panel: "files" });
       expect(files).toContain('data-drop-input="files"');
       expect(files).toContain("multiple");

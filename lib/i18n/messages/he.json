@@ -505,5 +505,6 @@
   "buyer.lp.form.err_busy": "יותר מדי ניסיונות. אפשר לנסות שוב בעוד כמה דקות.",
   "buyer.lp.form.privacy": "הודעת פרטיות",
   "buyer.lp.form.closed": "הטופס לא מקבל פניות כרגע.",
-  "buyer.lp.privacy.back": "חזרה לטופס"
+  "buyer.lp.privacy.back": "חזרה לטופס",
+  "buyer.lp.form.about": "בנושא: {topic}"
 }

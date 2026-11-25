@@ -151,5 +151,5 @@ export async function saveVoiceSettingsAction(_prev: VoiceSettingsFormState, for
   const r = await saveDraftVoiceSettings(appDb, a.account.id, { ...input, speech, ...eleven }, process.env, { canPickSpeech: voiceLabAccess(a.user) === "ok" });
   if (!r.ok) return { errors: r.errors };
   revalidatePath(path(a.account.slug));
-  redirect(`${path(a.account.slug)}?voice_saved=${draft.version}`);
+  redirect(`${path(a.account.slug)}?mode=voice&voice_saved=${draft.version}`);
 }

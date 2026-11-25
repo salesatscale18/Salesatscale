@@ -167,7 +167,8 @@ describe("saveVoiceSettingsAction", () => {
     as(admin);
     expect(await saveVoiceSettingsAction({}, form({ voice: "Nope", pace: "slower", maxCallSec: "300" }))).toMatchObject({ errors: { voice: expect.any(String) } });
     const err = await saveVoiceSettingsAction({}, form({ voice: "Kore", pace: "slower", fillers: "on", maxCallSec: "300", style: "quick" })).catch((e: { url?: string }) => e);
-    expect((err as { url?: string }).url).toMatch(/\/setup\/test-lab\?voice_saved=\d+$/);
+    // Saving comes back to the Voice call tab, not the Chat tab.
+    expect((err as { url?: string }).url).toMatch(/\/setup\/test-lab\?mode=voice&voice_saved=\d+$/);
     const [draft] = await db.select().from(agentVersions).where(and(eq(agentVersions.accountId, account.id), eq(agentVersions.status, "draft")));
     // Gemini (the default model) has no conversation style: it is not taken from the form.
     expect(draft.voiceSettings).toEqual({ voice: "Kore", pace: "slower", fillers: true, maxCallSec: 300 });
@@ -189,6 +190,23 @@ describe("saveVoiceSettingsAction", () => {
 });
 
 describe("the test lab page", () => {
+  it("shows Voice settings without a draft too: greyed out, with how to change them", async () => {
+    const { VoiceLabChoices } = await import("@/app/app/[account]/setup/test-lab/voice-lab");
+    const props = {
+      slug: "x", lab: "/app/x/setup/test-lab", usageHref: "/app/x/settings", settingsLine: "Voice: Kore",
+      scenarios: [], languages: [{ value: "en", label: "English" }], defaultLanguage: "en",
+      versions: [{ value: "v", label: "v1 · Live" }], defaultVersionId: "v", callMax: { v: 270 }, limitLines: { v: "Calls: up to 4 min 30 s" }, callOnly: true,
+    };
+    const off = renderToStaticMarkup(<VoiceLabChoices {...props} settingsHref={null} />);
+    expect(off).toContain("data-voice-settings-off");
+    expect(off).toMatch(/<button type="button" class="[^"]*" disabled="" aria-describedby="lab-vs-off">[\s\S]*Voice settings<\/button>/);
+    expect(off).toContain("Open a draft (Edit playbook) to change these.");
+    expect(off).not.toContain("data-voice-settings-open");
+    const on = renderToStaticMarkup(<VoiceLabChoices {...props} settingsHref="/app/x/setup/test-lab?mode=voice&panel=voice" />);
+    expect(on).toContain("data-voice-settings-open");
+    expect(on).not.toContain("data-voice-settings-off");
+  });
+
   it("shows no voice UI to a seller, nor to an admin while voice is off", async () => {
     vi.stubEnv("VOICE_REALTIME", "scripted");
     as(seller);
@@ -248,8 +266,12 @@ describe("the test lab page", () => {
     expect(calls).toContain('data-history-row="call"');
     expect(calls).not.toContain('data-history-row="chat"');
     expect(calls).toMatch(/aria-current="true" data-history-kind="call"/);
-    const panel = await render({ panel: "voice" });
+    // Voice settings open over the Voice call tab, and closing them returns to it.
+    expect(html).toMatch(/href="[^"]*\?mode=voice&amp;panel=voice" data-voice-settings-open=""/);
+    const panel = await render({ mode: "voice", panel: "voice" });
     save("page-settings-panel", panel);
+    expect(panel).toContain('data-lab-mode="voice"');
+    expect(panel).not.toMatch(/href="\/app\/[^"]+\/setup\/test-lab"/);
     expect(panel).toContain("Saved in draft v");
     expect(panel).toContain("Save to draft");
     expect(panel).toContain("Reset to defaults");

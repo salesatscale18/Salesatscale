@@ -219,8 +219,11 @@ describe("Reach RB: buyer-named time, booking card, team call log", () => {
       expect(html).toMatch(/\w{3} \d{2}:\d{2} your time · the time you asked for/);
       expect(html).toContain("Write instead");
       expect(html).toContain("Pick another time");
-      // "SMS sent · …" in the chat, before the message it points to.
-      expect(html).toMatch(/data-sms-chip=""[\s\S]*?SMS sent · \w{3} \d{2}:\d{2}/);
+      // Mock mode: the SMS reached no phone, so the chat never says "SMS sent".
+      expect(html).not.toContain("data-sms-chip");
+      // A real SMS (outcome sent): "SMS sent · …" in the chat, before the message it points to.
+      for (const e of await smsEvents(l.lead.id)) if (e.type === "sms.mocked") await db.update(leadEvents).set({ type: "sms.sent" }).where(eq(leadEvents.id, e.id));
+      expect(await render(ChatPage, { token })).toMatch(/data-sms-chip=""[\s\S]*?SMS sent · \w{3} \d{2}:\d{2}/);
       // Not opened from an SMS: no card.
       expect(await render(ChatPage, { token })).not.toContain("data-talk-now=\"\"");
 
@@ -332,7 +335,8 @@ describe("Reach RB: buyer-named time, booking card, team call log", () => {
       expect(page).toContain("data:text/calendar");
       expect(page).toContain("Change time");
       expect(page).toContain("+972 52-•••-1234");
-      expect((await chatReach(db, ctx)).sms.length).toBeGreaterThan(0);
+      // Mock mode: the team_call SMS reached no phone, so the buyer page never says "SMS sent".
+      expect((await chatReach(db, ctx)).sms).toEqual([]);
     });
 
     it("the buyer moves and cancels the call; bad input is refused; the seller's new time sends the team_call SMS; other accounts cannot book", async () => {

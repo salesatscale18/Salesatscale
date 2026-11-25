@@ -72,12 +72,15 @@ test("1. Platform admin creates the seller account", async () => {
   await page.locator("#tradeName").fill(SELLER);
   await page.locator("#legalName").fill(`${SELLER} Ltd`);
   await page.locator("#companyId").fill("515550123");
+  await page.locator("[data-wizard-next]").click();
   await page.locator("#market").selectOption("IL");
-  await page.locator("#countries").fill("CY");
   await page.locator('input[name="languages"][value="he"]').check();
+  await page.locator("[data-wizard-next]").click();
   await page.locator("#monthlySpendCap").fill("500");
+  await page.locator("[data-wizard-next]").click();
   await page.locator("#ownerName").fill("E2E Owner");
   await page.locator("#ownerEmail").fill(EMAIL);
+  await page.locator("[data-wizard-next]").click();
   await page.getByRole("button", { name: "Create account" }).click();
   await expect(page.getByText(/invite/i).first()).toBeVisible();
   await page.goto("/sadmin/accounts");

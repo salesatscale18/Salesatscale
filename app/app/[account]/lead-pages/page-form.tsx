@@ -1,9 +1,10 @@
 import { buttonClass } from "@/components/sas/primitives";
+import { CopyButton } from "@/components/sas/copy-button";
 import { Icon } from "@/components/sas/icon";
 import type { LeadPage, LeadPageTopic, Market } from "@/db/schema";
 import { t } from "@/lib/i18n";
 import { bannerUrlPath, trackingOf } from "@/lib/lead-pages/rules";
-import { CONNECTION_CARDS, topicChoice } from "@/lib/lead-pages/view";
+import { CONNECTION_CARDS, seenOriginSuggestion, snippetCode, topicChoice } from "@/lib/lead-pages/view";
 import { saveLeadPageAction } from "./actions";
 import { FieldError, LeadPageFormShell } from "./form-shell";
 
@@ -15,12 +16,16 @@ const FIELDS = [
 
 /**
  * The add/edit form (board: LeadPageConnect, with decisions.md): how the page
- * connects (only "Button or link" in phase 1), the page, what the buyer fills
- * in, the hand-over banner, the opening topic and the ad-details switch. The
- * right column shows the page's link once it is saved.
+ * connects ("Our form on your page" or "Button or link"), the page, what the
+ * buyer fills in, the hand-over banner, the opening topic and the ad tracking
+ * switches. The parts that differ by connection are all rendered and the one
+ * that does not apply is hidden by CSS from the checked card (no script).
+ * The right column: for the snippet, the code with Copy, "Save and preview"
+ * and the other addresses (with the "Seen on …, add it?" suggestion); for a
+ * button or link, the page's link once it is saved.
  */
 export function LeadPageFormView({
-  slug, page, markets, languages, topics, defaultTopic, consentDefault, bannerUploads, hostedUrl,
+  slug, page, markets, languages, topics, defaultTopic, consentDefault, bannerUploads, hostedUrl, appBase,
 }: {
   slug: string;
   page: LeadPage | null;
@@ -33,13 +38,17 @@ export function LeadPageFormView({
   /** False on Preview (it shares the production database: no blob writes) or with no store. */
   bannerUploads: boolean;
   hostedUrl: string | null;
+  /** Our app's address, for the snippet's script tag. */
+  appBase: string;
 }) {
   const fields = page?.form.fields ?? {};
   const topicValue = page ? topicChoice(page.openingTopic, topics) : topics.length ? String(defaultTopic) : "";
   const keptTopic = page && topicValue === "keep" ? page.openingTopic?.en || page.openingTopic?.he || "" : null;
   const lang = page?.language ?? (languages.includes("en") ? "en" : languages[0] ?? "en");
   const consent = typeof page?.form.consentTicked === "boolean" ? page.form.consentTicked : consentDefault;
-  const carry = trackingOf(page?.tracking).carryAdDetails;
+  const tracking = trackingOf(page?.tracking);
+  const carry = tracking.carryAdDetails;
+  const seen = page ? seenOriginSuggestion(page) : null;
   const banner = page?.banner ?? null;
   return (
     <LeadPageFormShell action={saveLeadPageAction} errorTitle={t("lead_pages.form.errors")} className="lpg-form">
@@ -53,7 +62,7 @@ export function LeadPageFormView({
             const on = c.tag === null;
             return (
               <label key={c.id} className="lpg-ccard" data-connection={c.id} data-disabled={on ? undefined : ""}>
-                <input type="radio" name="connection" value={c.id} defaultChecked={c.id === (page?.connection ?? "link")} disabled={!on} />
+                <input type="radio" name="connection" value={c.id} defaultChecked={c.id === (page?.connection ?? "snippet")} disabled={!on} />
                 <span className="lpg-ccard__head">
                   <span className="lpg-ccard__icon"><Icon name={c.icon} /></span>
                   <strong>{t(c.title)}</strong>
@@ -79,9 +88,11 @@ export function LeadPageFormView({
                 <FieldError name="name" />
               </label>
               <label className="lpg-field">
-                <span className="lpg-field__label">{t("lead_pages.form.address")}</span>
+                <span className="lpg-field__label" data-for="link">{t("lead_pages.form.address")}</span>
+                <span className="lpg-field__label" data-for="snippet">{t("lead_pages.form.address_snippet")}</span>
                 <input className="sas-input" name="address" defaultValue={page?.address ?? ""} placeholder="https://" inputMode="url" autoComplete="off" dir="ltr" />
-                <span className="sas-small">{t("lead_pages.form.address_hint")}</span>
+                <span className="sas-small" data-for="link">{t("lead_pages.form.address_hint")}</span>
+                <span className="sas-small" data-for="snippet">{t("lead_pages.form.address_snippet_hint")}</span>
                 <FieldError name="address" />
               </label>
               <label className="lpg-field">
@@ -167,12 +178,20 @@ export function LeadPageFormView({
 
           <div className="lpg-sec">
             <h2 className="lpg-sec__h">{t("lead_pages.form.tracking")}</h2>
+            <div className="lpg-switchrow" data-for="snippet">
+              <label className="lpg-switch">
+                <input type="checkbox" role="switch" name="tellPagePixel" defaultChecked={tracking.tellPagePixel} />
+                <span className="lpg-switch__track" aria-hidden="true" />
+                <span>{t("lead_pages.form.tell_pixel")}</span>
+              </label>
+              <span className="sas-small">{t("lead_pages.form.tell_pixel_hint")}</span>
+            </div>
             <label className="lpg-switch">
               <input type="checkbox" role="switch" name="carryAdDetails" defaultChecked={carry} />
               <span className="lpg-switch__track" aria-hidden="true" />
               <span>{t("lead_pages.form.carry")}</span>
             </label>
-            <span className="sas-small" data-pixel-note="">{t("lead_pages.form.pixel_note")}</span>
+            <span className="sas-small" data-pixel-note="" data-for="link">{t("lead_pages.form.pixel_note")}</span>
           </div>
 
           <div className="lpg-form__foot">
@@ -189,7 +208,47 @@ export function LeadPageFormView({
         </section>
 
         <aside className="lpg-form__side">
-          <section className="sas-panel lpg-card">
+          <section className="sas-panel lpg-card" data-for="snippet" data-snippet-card="">
+            <h2 className="lpg-sec__h">{t("lead_pages.snippet.title")}</h2>
+            {page ? (
+              <>
+                <span className="sas-small">{t("lead_pages.snippet.hint")}</span>
+                <code className="lpg-url lpg-code" dir="ltr" data-snippet-code="">{snippetCode(appBase, page.publicKey)}</code>
+                <span className="lpg-actions">
+                  <CopyButton value={snippetCode(appBase, page.publicKey)} label={t("lead_pages.snippet.copy")} />
+                  <button type="submit" name="intent" value="preview" className={buttonClass("ghost", "sm")}><Icon name="eye" />{t("lead_pages.form.save_preview")}</button>
+                </span>
+              </>
+            ) : <span className="sas-small">{t("lead_pages.form.snippet_after")}</span>}
+            <span className="sas-small">{t("lead_pages.snippet.look")}</span>
+            <div className="lpg-preview" data-origins="">
+              <input type="hidden" name="originsShown" value="1" />
+              <strong className="lpg-preview__h">{t("lead_pages.origins.title")}</strong>
+              <span className="sas-small">{t("lead_pages.origins.hint")}</span>
+              {page?.extraOrigins.length ? (
+                <span className="lpg-pills" role="group" aria-label={t("lead_pages.origins.title")}>
+                  {page.extraOrigins.map((o) => (
+                    <label key={o} className="lpg-pill" dir="ltr">
+                      <input type="checkbox" name="extraOrigin" value={o} defaultChecked aria-label={o} />
+                      <span>{o}</span>
+                    </label>
+                  ))}
+                </span>
+              ) : null}
+              {seen ? (
+                <label className="lpg-check" data-seen-origin={seen}>
+                  <input type="checkbox" name="addSeen" value={seen} />
+                  <span>{t("lead_pages.origins.seen", { host: seen })}</span>
+                </label>
+              ) : null}
+              <label className="lpg-field">
+                <span className="lpg-field__label">{t("lead_pages.origins.new")}</span>
+                <input className="sas-input" name="newOrigin" placeholder="staging.example.com" inputMode="url" autoComplete="off" dir="ltr" />
+                <FieldError name="extraOrigins" />
+              </label>
+            </div>
+          </section>
+          <section className="sas-panel lpg-card" data-for="link">
             <h2 className="lpg-sec__h">{t("lead_pages.link.title")}</h2>
             {hostedUrl ? (
               <>

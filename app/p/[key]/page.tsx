@@ -11,6 +11,7 @@ import { originOf } from "@/lib/lead-pages/origin";
 import { bannerUrlPath, CLICK_ID_KEYS, consentTickedOf, formFieldsOf, initialsOf, trackingOf, UTM_KEYS } from "@/lib/lead-pages/rules";
 import { pageByKey, pageCountries, privacyNotice } from "@/lib/lead-pages/service";
 import { formTimingToken, previewTokenValid } from "@/lib/lead-pages/tokens";
+import { aboutLine, leadFormText } from "@/lib/lead-pages/form-text";
 import { LeadForm } from "./lead-form";
 import { LeadPageHeader } from "./header";
 import "./lead-page.css";
@@ -80,17 +81,17 @@ export default async function LeadFormPage({ params, searchParams }: Props) {
   const privacyHref = notice ? `/p/${page.publicKey}/privacy${preview ? `?preview=${encodeURIComponent(previewToken)}` : ""}` : null;
   const e = one(sp.e);
   const initialError = e === "name" || e === "phone" || e === "generic" || e === "busy" ? e : null;
+  const text = leadFormText(tr);
+  const about = aboutLine(tr, page.openingTopic, lang);
   return shell(
     <>
-      <h1 className="lp-title">{tr("buyer.lp.form.title")}</h1>
+      {about ? <p className="lp-about" data-lp-about="">{about}</p> : null}
+      <h1 className="lp-title">{text.title}</h1>
       <LeadForm
         action={`/api/lp/${page.publicKey}/submit`}
-        beacon={preview ? null : { url: `/api/lp/${page.publicKey}/e`, body: JSON.stringify({ t: "view", ...ad }) }}
-        strings={{
-          name: tr("buyer.lp.form.name"), phone: tr("buyer.lp.form.phone"), company: tr("buyer.lp.form.company"), email: tr("buyer.lp.form.email"),
-          sites: tr("buyer.lp.form.sites"), send: tr("buyer.lp.form.send"), sending: tr("buyer.lp.form.sending"), errName: tr("buyer.lp.form.err_name"),
-          errPhone: tr("buyer.lp.form.err_phone"), errGeneric: tr("buyer.lp.form.err_generic"), errBusy: tr("buyer.lp.form.err_busy"), privacy: tr("buyer.lp.form.privacy"),
-        }}
+        // A preview visit sends its token: it ticks "The form opened from the link" and is never counted.
+        beacon={{ url: `/api/lp/${page.publicKey}/e`, body: JSON.stringify({ t: "view", ...ad, ...(preview ? { preview: previewToken } : {}) }) }}
+        strings={text}
         fields={formFieldsOf(page.form)}
         consentTicked={consentTickedOf(page.form, await pageCountries(appDb, page, account))}
         consentLine={leadPageConsentLine(lang, names.seller, names.agent)}

@@ -1,5 +1,7 @@
 "use client";
 
+import { useFormStatus } from "react-dom";
+
 /**
  * The Sources forms. Each one sits in a side panel (SidePanel) whose pinned
  * footer holds the submit button: PanelSubmit submits the form by id
@@ -386,4 +388,17 @@ export function RefreshWhileProcessing({ active }: { active: boolean }) {
     return () => clearInterval(id);
   }, [active, router]);
   return null;
+}
+
+/**
+ * The analysis Start button: one click only. While the request is on its way it is
+ * disabled and says "Starting…", so a second click cannot start the run again.
+ */
+export function StartAnalysisButton({ label }: { label: string }) {
+  const { pending } = useFormStatus();
+  return (
+    <button type="submit" className="sas-btn sas-btn--primary sas-btn--sm" disabled={pending} aria-disabled={pending} data-analyze-start="">
+      {pending ? t("pipeline.confirm.starting") : label}
+    </button>
+  );
 }

@@ -46,7 +46,7 @@ export default async function EditLeadPage({ params, searchParams }: {
       ) : null}
       <LeadPageFormView
         slug={account.slug} page={page} markets={d.markets} languages={account.languages} topics={d.topics} defaultTopic={d.defaultTopic}
-        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} hostedUrl={publicUrl(`/p/${page.publicKey}`)}
+        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} hostedUrl={publicUrl(`/p/${page.publicKey}`)} appBase={publicUrl("/")}
       />
     </main>
   );

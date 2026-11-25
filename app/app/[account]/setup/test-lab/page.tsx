@@ -187,7 +187,9 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings, versionModelId(settingsVersion.voiceSettings)), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
-  const settingsHref = draft ? `${lab}?${keep}panel=voice` : null;
+  // Voice settings open over the Voice call tab and come back to it (closing or saving).
+  const voiceTab = conv ? `${lab}?c=${conv.id}&mode=voice` : `${lab}?mode=voice`;
+  const settingsHref = draft ? `${lab}?${keep}mode=voice&panel=voice` : null;
   const voicePanel = voice && draft && one(sp.panel) === "voice";
   // The saved call (a voice conversation opened later): its ended bar and "This call" card.
   const savedEnded = voiceSummary?.status === "ended" ? voiceSummary : null;
@@ -609,12 +611,12 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
       {voicePanel && draft ? (
         <SidePanel
           id="lab-voice-settings" title={t("voice.settings.title")} meta={t("voice.settings.meta", { version: draft.version })}
-          closeHref={conv ? `${lab}?c=${conv.id}` : lab}
+          closeHref={voiceTab}
         >
           <VoiceSettingsForm
             action={saveVoiceSettingsAction} slug={account.slug} models={voiceModelChoices()} platformModel={voiceModelId()} initial={resolveVoiceSettings(draft.voiceSettings, versionModelId(draft.voiceSettings))}
             elevenForBuyers={ELEVEN_FOR_BUYER_CALLS} languages={account.languages}
-            version={draft.version} closeHref={conv ? `${lab}?c=${conv.id}` : lab} deploymentLimitSec={callLimit}
+            version={draft.version} closeHref={voiceTab} deploymentLimitSec={callLimit}
           />
         </SidePanel>
       ) : null}

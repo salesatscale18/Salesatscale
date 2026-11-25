@@ -6,6 +6,8 @@
  */
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
+import fs from "node:fs";
+import path from "node:path";
 import { eq } from "drizzle-orm";
 import { leadPages, leadPageSubmissions, legalSections, sellerAccounts, users, type LeadPage, type User } from "@/db/schema";
 import { parseCreateAccount } from "@/lib/accounts/rules";
@@ -15,6 +17,7 @@ import { submitLeadPage } from "@/lib/lead-pages/intake";
 import { createLeadPage, goLiveLeadPage } from "@/lib/lead-pages/service";
 import { formTimingToken, previewTokenFor } from "@/lib/lead-pages/tokens";
 import { createTestDb, type TestDb } from "../helpers/db";
+import { SHOW_ABOUT_TOPIC } from "@/lib/lead-pages/form-text";
 
 const holder = vi.hoisted(() => ({ db: null as unknown, ip: "10.1.0.1", cookie: null as string | null, referer: null as string | null }));
 vi.mock("@/lib/auth/account", () => ({ get appDb() { return holder.db; } }));
@@ -34,6 +37,14 @@ const { default: HandoverPage } = await import("@/app/h/[token]/page");
 
 const APP = "http://localhost:3000";
 const SHA = "ab".repeat(32);
+/** With LP_RENDER_DIR set, the rendered buyer pages are also written there as HTML (visual check). */
+const save = (name: string, html: string) => {
+  const dir = process.env.LP_RENDER_DIR;
+  if (!dir) return;
+  const css = ["components/sas/sas.css", "app/chat/[token]/chat.css", "app/p/[key]/lead-page.css"].map((f) => fs.readFileSync(path.join(process.cwd(), f), "utf8")).join("\n");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, `${name}.html`), `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><style>${css}</style></head><body style="margin:0">${html}</body></html>`);
+};
 
 describe("lead pages (a-1): hosted form and hand-over render", () => {
   let t: Awaited<ReturnType<typeof createTestDb>>;
@@ -89,7 +100,11 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     holder.referer = "https://www.facebook.com/ads";
     const html = await form(en, { utm_source: "facebook", utm_campaign: "spring", fbclid: "abc" });
     holder.referer = null;
+    save("hosted-en", html);
     expect(html).toContain('lang="en" dir="ltr"');
+    // The page's opening topic, one muted line above the title (new wording behind SHOW_ABOUT_TOPIC).
+    if (SHOW_ABOUT_TOPIC) expect(html).toMatch(/data-lp-about="">About: Fridge monitoring<\/p><h1 class="lp-title">Leave your details/);
+    else expect(html).not.toContain("About: Fridge monitoring");
     expect(html).toContain("Leave your details");
     expect(html).toContain('class="lp-tile" aria-hidden="true">PD</span>');
     expect(html).not.toContain("lp-banner");
@@ -114,6 +129,7 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     const html = await form(he);
     expect(html).toContain('lang="he" dir="rtl"');
     expect(html).toContain("השאירו פרטים");
+    if (SHOW_ABOUT_TOPIC) expect(html).toContain("בנושא: ניטור מקררים");
     expect(html).toContain("שם מלא");
     expect(html).toContain("והעוזר האוטומטי");
     expect(html).toContain(`<img src="/api/lp/${he.publicKey}/banner/${SHA}" width="1600" height="500"`);
@@ -130,8 +146,25 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(await form(en)).toContain("This form is not taking requests right now.");
     await db.update(leadPages).set({ status: "draft" }).where(eq(leadPages.id, en.id));
     await expect(form(en)).rejects.toThrow("NEXT_NOT_FOUND");
-    const preview = await form(en, { preview: previewTokenFor(en.id, new Date()) });
+    const token = previewTokenFor(en.id, new Date());
+    const preview = await form(en, { preview: token });
     expect(preview).toContain('name="preview"');
+    // A preview visit sends its view with the token (the server ticks "The form opened from the link" without counting it).
+    const findBeacon = (n: unknown): { url: string; body: string } | null | undefined => {
+      if (!n || typeof n !== "object") return undefined;
+      const props = (n as { props?: Record<string, unknown> }).props;
+      if (props && "beacon" in props) return props.beacon as { url: string; body: string } | null;
+      for (const c of [props?.children].flat()) { const f = findBeacon(c); if (f !== undefined) return f; }
+      return undefined;
+    };
+    const tree = await FormPage({ params: Promise.resolve({ key: en.publicKey }), searchParams: Promise.resolve({ preview: token }) });
+    const b = findBeacon(tree);
+    expect(b?.url).toBe(`/api/lp/${en.publicKey}/e`);
+    expect(JSON.parse(b!.body)).toEqual({ t: "view", preview: token });
+    // No topic: no About line.
+    await db.update(leadPages).set({ openingTopic: null }).where(eq(leadPages.id, en.id));
+    expect(await form(en, { preview: token })).not.toContain("data-lp-about");
+    await db.update(leadPages).set({ openingTopic: { en: "Fridge monitoring", he: "ניטור מקררים" } }).where(eq(leadPages.id, en.id));
     await db.update(leadPages).set({ status: "live" }).where(eq(leadPages.id, en.id));
     const privacy = renderToStaticMarkup(await PrivacyPage({ params: Promise.resolve({ key: he.publicKey }), searchParams: Promise.resolve({}) }));
     expect(privacy).toContain("הודעת פרטיות");
@@ -141,7 +174,10 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
   it("the hand-over (en, voice off): thanks, connecting line, one button, the chat mounted under it off screen", async () => {
     const r = await submit(en, { name: "Rina Mizrahi", phone: nextPhone() });
     const html = await hand(r.token);
+    save("handover-en", html);
     expect(html).toContain('data-handover="chat"');
+    // The ring, the lines and the buttons in one block, centred above the by-line.
+    expect(html).toMatch(/<div class="lp-hand"><div class="lp-hand__mid">.*Continue to the chat.*<\/div><p class="lp-by">Conversation by Sales at Scale<\/p><\/div>/s);
     expect(html).toContain("Thanks, Rina");
     expect(html).toMatch(/Connecting you with .+, Polar Demo(&#x27;|')s automated assistant/);
     expect(html).toContain("Continue to the chat");

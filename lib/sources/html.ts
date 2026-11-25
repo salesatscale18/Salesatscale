@@ -33,13 +33,17 @@ export function htmlToText(html: string): HtmlPage {
   const title = s.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1];
   const h1 = s.match(/<h1[^>]*>([\s\S]*?)<\/h1>/i)?.[1];
   const lang = s.match(/<html[^>]*\blang=["']?([a-zA-Z-]+)/i)?.[1]?.toLowerCase() ?? null;
+  // A page built in the browser often still has a description: better than nothing.
+  const description = s.match(/<meta\b[^>]*\b(?:name|property)=["'](?:og:)?description["'][^>]*\bcontent=["']([^"']*)["']/i)?.[1]
+    ?? s.match(/<meta\b[^>]*\bcontent=["']([^"']*)["'][^>]*\b(?:name|property)=["'](?:og:)?description["']/i)?.[1];
   const links = [...s.matchAll(/<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi)].map((m) => decodeEntities(m[1] ?? m[2] ?? m[3] ?? ""));
   s = s.replace(/<head\b[\s\S]*?<\/head>/i, " ");
   for (const tag of DROP) s = s.replace(new RegExp(`<${tag}\\b[\\s\\S]*?<\\/${tag}\\s*>`, "gi"), " ");
   // Anything marked as navigation, a banner or a cookie notice.
   s = s.replace(/<(\w+)\b[^>]*\brole=["']?(navigation|banner|contentinfo)["']?[^>]*>[\s\S]*?<\/\1\s*>/gi, " ");
   s = s.replace(BLOCK, "\n").replace(INLINE, "").replace(/<[^>]+>/g, " ");
-  const text = cleanText(decodeEntities(s)).replace(/\n{2,}/g, "\n");
+  const body = cleanText(decodeEntities(s)).replace(/\n{2,}/g, "\n");
+  const text = body || (description ? cleanText(decodeEntities(description)) : "");
   const plain = (x: string | undefined) => (x ? cleanText(decodeEntities(x.replace(/<[^>]+>/g, " "))).replace(/\n/g, " ") || null : null);
   return { title: plain(title) ?? plain(h1), text, links, lang };
 }

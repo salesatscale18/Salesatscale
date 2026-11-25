@@ -136,7 +136,9 @@ export async function submitLeadPage(db: Db, input: SubmitInput): Promise<Submit
   // Consent: only the ticked box, with the exact line the buyer saw, where they saw it, and their IP.
   const lang = page.language === "he" ? "he" : "en";
   const names = await chatNames(db, account, lang);
-  const where = via === "link" ? publicUrl(`/p/${page.publicKey}`, env) : (withoutQuery(input.headers.get("referer") ?? "") ?? origin.origin);
+  // The snippet names its page (origin and path); trusted only when it is on the origin we checked.
+  const snippetPage = f.pageUrl && originOf(f.pageUrl) === origin.origin ? withoutQuery(f.pageUrl) : null;
+  const where = via === "link" ? publicUrl(`/p/${page.publicKey}`, env) : (snippetPage ?? withoutQuery(input.headers.get("referer") ?? "") ?? origin.origin);
   const consentSource = consentSourceLeadPage(page.name, where);
   const parsed = parseLead({
     fullName: v.fullName, company: v.company ?? undefined, email: v.email ?? undefined, phone: v.phone, language: lang, sourceLabel: page.name,

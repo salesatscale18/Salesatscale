@@ -254,7 +254,6 @@
 .sas-setup-card__title { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; }
 .sas-setup-card .sas-progress { max-width: 420px; }
 @media (prefers-reduced-motion: reduce) { .sas-progress__fill { transition: none; } }
-[dir="rtl"] .sas-stepline__next .sas-ico, [dir="rtl"] .sas-setup-card .sas-btn .sas-ico { transform: scaleX(-1); }
 .sas-nav__user { margin-block-start: auto; display: flex; align-items: center; gap: 10px; padding: 10px 6px 0; border-block-start: 1px solid var(--line); }
 .sas-nav__user-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
 .sas-nav__user-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -2093,4 +2092,48 @@ label.st-voice__row { cursor: pointer; }
 .sas-app a.lab-recent__all { display: inline-flex; align-items: center; gap: 4px; margin-block-start: 4px; font-size: 13px; font-weight: 600; color: var(--primary); text-decoration: none; }
 .sas-app a.lab-recent__all:hover { text-decoration: underline; }
 .lab-recent__all .sas-ico { width: 14px; height: 14px; }
-[dir="rtl"] .lab-recent__all .sas-ico { transform: scaleX(-1); }
+
+/* Step-by-step form (Create a seller account): numbered steps, one step on screen, Back / Next. */
+.sas-wizard__steps { display: flex; flex-wrap: wrap; gap: var(--space-2); margin: 0; padding: 0; list-style: none; counter-reset: none; }
+.sas-wizard__step { flex: 1 1 0; min-width: 120px; }
+.sas-wizard__jump { width: 100%; display: flex; align-items: center; gap: var(--space-2); padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface-raised); color: var(--ink-muted); font: 600 13px/18px var(--font-sans); text-align: start; cursor: pointer; }
+.sas-wizard__jump:disabled { cursor: default; opacity: 0.75; }
+.sas-wizard__jump:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.sas-wizard__dot { width: 24px; height: 24px; flex: none; display: inline-grid; place-items: center; border-radius: var(--radius-pill); background: var(--surface-sunken); color: var(--ink-muted); font-size: 12px; font-weight: 700; }
+.sas-wizard__dot .sas-ico { width: 14px; height: 14px; }
+.sas-wizard__step--done .sas-wizard__dot { background: var(--success-soft); color: var(--success); }
+.sas-wizard__step--done .sas-wizard__jump { color: var(--ink); }
+.sas-wizard__step[aria-current="step"] .sas-wizard__jump { border-color: var(--primary); background: var(--primary-soft); color: var(--primary); }
+.sas-wizard__step[aria-current="step"] .sas-wizard__dot { background: var(--primary); color: var(--on-primary); }
+.sas-wizard__about { margin: 0; color: var(--ink-muted); font-size: 14px; line-height: 20px; }
+.sas-wizard__review .sas-kv { margin: 0; }
+.sas-wizard__nav { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); }
+.sas-wizard__count { color: var(--ink-muted); }
+.sas-wizard [hidden] { display: none !important; }
+@media (max-width: 640px) {
+  .sas-wizard__step { flex: 0 0 auto; min-width: 0; }
+  .sas-wizard__step:not([aria-current="step"]) .sas-wizard__label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+}
+/* Setup › Company: each market's lead time under the default. */
+.co-market-lead { display: flex; justify-content: space-between; gap: var(--space-3); padding-block: 6px; border-block-start: 1px solid var(--line); }
+.co-market-lead:first-child { border-block-start: 0; }
+
+/* On-screen notice (source analysis): bottom corner of every account page. */
+.sas-toast { position: fixed; inset-block-end: 20px; inset-inline-end: 20px; z-index: 60; display: flex; align-items: center; gap: 12px; max-width: min(420px, calc(100vw - 32px)); padding: 12px 14px; border-radius: var(--radius-lg); background: var(--surface-raised); color: var(--ink); border: 1px solid var(--line); border-inline-start: 4px solid var(--agent); box-shadow: var(--shadow-pop); font-size: 14px; line-height: 20px; }
+.sas-toast--done { border-inline-start-color: var(--success); }
+.sas-toast--done > .sas-ico { color: var(--success); }
+.sas-toast--failed { border-inline-start-color: var(--danger); }
+.sas-toast--failed > .sas-ico { color: var(--danger); }
+.sas-toast > .sas-ico { flex: none; width: 20px; height: 20px; }
+.sas-toast__text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sas-toast__text span { color: var(--ink-muted); font-size: 13px; line-height: 18px; }
+.sas-app a.sas-toast__link { flex: none; font-weight: 600; color: var(--primary); text-decoration: none; }
+.sas-app a.sas-toast__link:hover { text-decoration: underline; }
+.sas-toast__close { flex: none; display: inline-grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: var(--radius-md); background: none; color: var(--ink-muted); cursor: pointer; }
+.sas-toast__close:hover { background: var(--surface-sunken); }
+.sas-toast__spin { flex: none; width: 20px; height: 20px; border-radius: 50%; border: 2.5px solid var(--agent-soft); border-block-start-color: var(--agent); animation: sas-spin 0.9s linear infinite; }
+@keyframes sas-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sas-toast__spin { animation-duration: 3s; } }
+@media (max-width: 767px) { .sas-toast { inset-inline: 16px; inset-block-end: 16px; max-width: none; } }
+/* Test lab › Voice call: Voice settings without a draft (greyed out, with the reason). */
+.lab-call__settings-off { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }

@@ -89,8 +89,10 @@
 @media (max-width: 560px) { .lpg-connect__cards { grid-template-columns: minmax(0, 1fr); } }
 .lpg-ccard { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--surface-raised); cursor: pointer; min-width: 0; }
 .lpg-ccard input { position: absolute; opacity: 0; pointer-events: none; }
-.lpg-ccard__head { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; }
-.lpg-ccard__head .lpg-tag { margin-inline-start: auto; }
+/* Icon · title · tag on one row; a long title wraps inside its own column, the tag never drops under it. */
+.lpg-ccard__head { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 8px; }
+.lpg-ccard__head strong { min-width: 0; overflow-wrap: anywhere; line-height: 20px; }
+.lpg-ccard__head .lpg-tag { margin-inline-start: 0; }
 .lpg-ccard:has(input:checked) { border: 2px solid var(--primary); padding: 13px 15px; background: var(--primary-soft); }
 .lpg-ccard:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
 .lpg-ccard[data-disabled] { cursor: default; background: var(--surface-sunken); color: var(--ink-muted); }
@@ -137,6 +139,18 @@
 .lpg-switch input:checked + .lpg-switch__track::after { inset-inline-start: 18px; }
 .lpg-switch input:focus-visible + .lpg-switch__track { outline: 2px solid var(--primary); outline-offset: 2px; }
 @media (prefers-reduced-motion: reduce) { .lpg-switch__track, .lpg-switch__track::after { transition: none; } }
+/* The parts that differ by connection: only the checked card's show (no script). */
+.lpg-form:has(input[name="connection"][value="snippet"]:checked) [data-for="link"] { display: none; }
+.lpg-form:not(:has(input[name="connection"][value="snippet"]:checked)) [data-for="snippet"] { display: none; }
+.lpg-switchrow { display: flex; flex-direction: column; gap: 6px; }
+.lpg-code { white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere; }
+.lpg-origins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.lpg-origins li { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; line-height: 18px; min-width: 0; }
+.lpg-origins li > span { min-width: 0; overflow-wrap: anywhere; }
+.lpg-origins form, .lpg-inline { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin: 0; }
+.lpg-inline .sas-input { flex: 1 1 160px; min-width: 0; }
+.lpg-seen { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 10px; border-radius: var(--radius-md); background: var(--warning-soft); font-size: 13px; line-height: 18px; }
+.lpg-funnel-empty { margin: 0; padding: 16px 0; color: var(--ink-muted); }
 .lpg-form__foot { display: flex; flex-wrap: wrap; gap: 8px; padding: 16px; border-top: 1px solid var(--line); }
 
 /* Leads: the lead page filter chip (`?page=`). */

@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { and, eq } from "drizzle-orm";
+import { and, eq, inArray } from "drizzle-orm";
 import { knowledgeFacts, pipelineRuns, playbookSuggestions, sellerAccounts, sourceSections, sources, users, type User } from "@/db/schema";
 import type { Actor } from "@/lib/accounts/audit";
 import { parseCreateAccount } from "@/lib/accounts/rules";
@@ -14,6 +14,7 @@ import {
   acceptAllSuggestions, analyzeSources, approveAllSuggestedFacts, customerNotes, decideSuggestion, editSuggestion, executeAnalysis,
   latestSuggestions, listRuns, locateEvidence, openContradictions, PipelineRefused, planAnalysis, resolveContradiction, runData,
   saveSuggestionsToDraft, sourceAboutMap, sourceGaps, startAnalysis, suggestionsForSource, type FactsRunResult,
+  runningRun,
 } from "@/lib/pipeline/service";
 import { addCall, addNote, listSections } from "@/lib/sources/service";
 import { createTestDb, type TestDb } from "../helpers/db";
@@ -311,6 +312,23 @@ describe("knowledge -> playbook pipeline", () => {
     await expect(startAnalysis(db, acc, plan)).rejects.toBeInstanceOf(PipelineRefused);
     await expect(startAnalysis(db, acc, plan)).rejects.toMatchObject({ reason: "capped" });
     await db.update(sellerAccounts).set({ monthlySpendCapMinor: 10_000 }).where(eq(sellerAccounts.id, acc));
+  });
+
+  it("two starts at once (a double click): one analysis runs, the other is refused as busy", async () => {
+    const plan = (await planAnalysis(db, acc))!;
+    const results = await Promise.allSettled([startAnalysis(db, acc, plan), startAnalysis(db, acc, plan)]);
+    const ok = results.filter((r) => r.status === "fulfilled");
+    const refused = results.filter((r) => r.status === "rejected");
+    expect(ok).toHaveLength(1);
+    expect(refused).toHaveLength(1);
+    expect((refused[0] as PromiseRejectedResult).reason).toMatchObject({ reason: "busy" });
+    const started = (ok[0] as PromiseFulfilledResult<{ factsRunId: string | null; playbookRunId: string | null }>).value;
+    const active = await db.select().from(pipelineRuns).where(and(eq(pipelineRuns.accountId, acc), inArray(pipelineRuns.status, ["queued", "running"])));
+    expect(active.map((r) => r.id).sort()).toEqual([started.factsRunId, started.playbookRunId].filter(Boolean).sort());
+    // The on-screen notice reads the same: one run going.
+    expect((await runningRun(db, acc))?.id).toBeDefined();
+    await db.delete(pipelineRuns).where(and(eq(pipelineRuns.accountId, acc), eq(pipelineRuns.status, "queued")));
+    expect(await runningRun(db, acc)).toBeNull();
   });
 
   it("the platform budget guard refuses before any model call; the run fails in plain words", async () => {

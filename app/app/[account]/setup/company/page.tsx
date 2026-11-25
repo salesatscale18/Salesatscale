@@ -1,6 +1,6 @@
-import { Button } from "@/components/sas/primitives";
+import { Button, buttonClass } from "@/components/sas/primitives";
 import { Icon } from "@/components/sas/icon";
-import { SetupSteps } from "@/components/sas/nav";
+import { SETUP_STEPS, SetupSteps } from "@/components/sas/nav";
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { listMembers } from "@/lib/accounts/service";
 import { TRADE_NAME_MAX, whiteContrast } from "@/lib/accounts/company";
@@ -17,7 +17,8 @@ import { isLocale, t, type Locale } from "@/lib/i18n";
 import { sampleOpenerText } from "@/lib/agent/core/opener";
 import { setupProgress } from "@/lib/overview/setup";
 import { saveCompanyAction } from "./actions";
-import { estimateDelivery, formatDeliveryShort, leadTimeOrNull, MAX_LEAD_DAYS } from "@/lib/delivery/eta";
+import { estimateDelivery, formatDeliveryShort, leadTimeOrNull, leadTimeText, MAX_LEAD_DAYS } from "@/lib/delivery/eta";
+import { listMarkets } from "@/lib/markets/service";
 import { deliveryPlanFor } from "@/lib/delivery/plan";
 import { leadAfterSigning } from "@/lib/delivery/text";
 
@@ -33,8 +34,12 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
   const { account: slug } = await params;
   const sp = await searchParams;
   const { account } = await requireAccount(slug);
-  const [members, settings, versions, progress] = await Promise.all([listMembers(appDb, account.id), getOrderFormSettings(appDb, account.id), listVersions(appDb, account.id), setupProgress(appDb, account)]);
+  const [members, settings, versions, progress, marketRows] = await Promise.all([listMembers(appDb, account.id), getOrderFormSettings(appDb, account.id), listVersions(appDb, account.id), setupProgress(appDb, account), listMarkets(appDb, account.id)]);
   const base = `/app/${account.slug}`;
+  // "Save and next": the setup step after Company.
+  const nextStep = SETUP_STEPS[SETUP_STEPS.findIndex((st) => st.id === "company") + 1];
+  // The lead time here is the default; a market can set its own (Markets page, overrides.leadTime).
+  const marketLeads = marketRows.map((m) => ({ id: m.id, name: m.name, own: leadTimeOrNull(m.overrides?.leadTime) }));
   // The agent name lives in the playbook draft (or the live version); read it, never create a draft here.
   const playbook = (versions.find((v) => v.status === "draft") ?? versions.find((v) => v.status === "live"))?.playbook ?? defaultPlaybook(account.tradeName, account.maxDiscountBp);
   const lowContrast = whiteContrast(settings.brandColor) < 4.5;
@@ -100,8 +105,8 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
             <div className="sas-panel__body sas-stack-4">
               <h2 id="dlv-h" className="sas-heading">{t("company.delivery")}</h2>
               <fieldset style={{ border: 0, padding: 0, margin: 0, display: "flex", flexWrap: "wrap", alignItems: "center", gap: "8px 10px" }} aria-describedby="dlv-hint">
-                <legend className="sas-sr">{t("company.delivery.lead_time")}</legend>
-                <span className="sas-input-label" aria-hidden="true">{t("company.delivery.lead_time")}:</span>
+                <legend className="sas-sr">{t("company.delivery.default_lead_time")}</legend>
+                <span className="sas-input-label" aria-hidden="true">{t("company.delivery.default_lead_time")}:</span>
                 {/* "from [5] to [10] days" stays on one line, also on a phone (R4 D4). */}
                 <span className="co-range" data-lead-range="">
                   <span>{t("company.delivery.from")}</span>
@@ -117,6 +122,21 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
                 <span className="sas-hint" id="dlv-bd-hint">{t("company.delivery.business_hint")}</span>
               </div>
               {example ? <span className="sas-small" data-delivery-example="">{t("company.delivery.example", { range: example })}</span> : null}
+              {/* Per market: its own lead time, or this default (set on the Markets page). */}
+              {marketLeads.length ? (
+                <div className="sas-stack-2 co-market-leads" data-market-leads="">
+                  <span className="sas-group-label">{t("company.delivery.per_market")}</span>
+                  <ul className="sas-stack-2" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                    {marketLeads.map((m) => (
+                      <li key={m.id} className="co-market-lead" data-market-lead={m.own ? "own" : "default"}>
+                        <span>{m.name}</span>
+                        <span className="sas-small">{m.own ? leadTimeText(m.own) : lead ? t("company.delivery.uses_default") : t("company.delivery.not_set")}</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <a className="sas-small" href={`${base}/markets`} data-markets-link="">{t("company.delivery.set_per_market")}</a>
+                </div>
+              ) : null}
             </div>
           </section>
 
@@ -213,7 +233,13 @@ export default async function CompanyPage({ params, searchParams }: { params: Pr
         </div>
         {/* The one Save, in a bar that stays in view at the bottom while the page scrolls (R4 D1). */}
         <div className="co-savebar" data-savebar="">
-          <Button type="submit" variant="primary">{t("company.save")}</Button>
+          <Button type="submit" variant="secondary">{t("company.save")}</Button>
+          {/* Saves, then opens the next setup step (the action redirects). */}
+          {nextStep ? (
+            <button type="submit" name="then" value="next" className={buttonClass("primary")} data-save-next={nextStep.id}>
+              {t("company.save_next", { step: t(nextStep.label) })}<Icon name="arrow-right" />
+            </button>
+          ) : null}
           <span className="sas-small">{t("company.save_hint")}</span>
         </div>
       </form>
