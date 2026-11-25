@@ -21,7 +21,7 @@ const GPT = "openai/gpt-realtime-2.1";
 const TURBO = "elevenlabs/eleven-v4-turbo";
 const FLASH = "elevenlabs/eleven-flash-v2.5";
 /** Every optional row, in the one order every model keeps. */
-const ORDER = ["elevenModel", "voice", "pace", "stability", "fillers", "style", "max", "pause", "interrupt", "turnEnd", "thinking", "opener"];
+const ORDER = ["elevenModel", "voice", "pace", "stability", "fillers", "style", "max", "turnEnd", "pause", "interrupt", "thinking", "opener"];
 
 const check = (ok: boolean, what: string) => {
   if (!ok) throw new Error(`FAIL ${what}`);
@@ -84,6 +84,7 @@ async function main() {
       await openFolds(p);
       check((await p.locator('[data-vs-more="conversation"] [data-vs-missing]').innerText()) === "Not on this model: Turn ending, Thinking effort.", "Gemini: Not on this model: Turn ending, Thinking effort.");
       check((await p.locator('[data-vs-section="conversation"] [data-vs-testing]').count()) === 1, "Gemini: one test-only note in Conversation");
+      check((await p.locator('[data-vs-more="conversation"] [data-vs-testing]').count()) === 0, "Gemini: the note names Conversation style: at the section's end");
       await fullPanel(p, "panel-gemini-open.png");
       await p.close();
     }
@@ -91,15 +92,18 @@ async function main() {
       // GPT-Realtime 2.1, own voice: closed, and open.
       const p = await formPage(b, h.url);
       await p.selectOption("#vs-model", GPT);
-      await commonChecks(p, "GPT-Realtime 2.1", ["voice", "pace", "fillers", "style", "max", "pause", "interrupt", "turnEnd", "thinking", "opener"]);
+      await commonChecks(p, "GPT-Realtime 2.1", ["voice", "pace", "fillers", "style", "max", "turnEnd", "pause", "interrupt", "thinking", "opener"]);
       check((await p.locator("#vs-speech").inputValue()) === "model", "GPT: the model's own voice");
       await fullPanel(p, "panel-gpt21-own-closed.png");
       await openFolds(p);
+      check((await p.locator('[data-vs-more="conversation"] [data-vs-testing]').count()) === 1, "GPT: the test-only note inside the fold (all its controls are there)");
       await fullPanel(p, "panel-gpt21-own-open.png");
       // A fold open and a "changed" count: two changes in Conversation, then that fold closed; Voice stays open.
       await p.locator('input[name="turnEnd"][value="smart"]').check({ force: true });
       await p.selectOption("#vs-thinking", "high");
       check((await p.locator("#vs-pause-hint").innerText()) === "Smart turn ending decides this instead.", "Smart: the pause is its own");
+      check(await p.locator("#vs-pause").isDisabled() && await p.locator("#vs-interrupt").isDisabled(), "Smart: pause and interruption read-only");
+      await fullPanel(p, "panel-gpt21-smart.png");
       await fold(p, "conversation").locator("summary").click();
       await p.waitForSelector('details[data-vs-more="conversation"] [data-vs-more-count]');
       const sum = fold(p, "conversation").locator("summary");
@@ -110,6 +114,12 @@ async function main() {
       const aside = p.locator("[data-vs-set-aside]");
       check((await aside.innerText()) === "Thinking effort doesn't apply to this model and was set aside.", `set aside: ${await aside.innerText()}`);
       check((await p.locator("#vs-thinking").count()) === 0, "mini: no Thinking effort row");
+      const next = await p.locator("#vs-model").evaluate((e) => (e.nextElementSibling as HTMLElement | null)?.getAttribute("data-vs-set-aside"));
+      check(next === "", "set aside: directly under the model select, before the description");
+      check((await aside.locator(".lucide-info").count()) === 1, "set aside: an info icon");
+      const ink = await aside.evaluate((e) => getComputedStyle(e).color);
+      const muted = await p.locator("[data-voice-model-cost]").evaluate((e) => getComputedStyle(e).color);
+      check(ink !== muted, `set aside: ink, not muted (${ink} vs ${muted})`);
       await fullPanel(p, "panel-set-aside.png");
       await p.selectOption("#vs-model", GPT);
       check((await p.locator("[data-vs-set-aside]").count()) === 0 && (await p.locator("#vs-thinking").inputValue()) === "high", "back on 2.1: the value restored, no line");
@@ -122,7 +132,7 @@ async function main() {
       await p.selectOption("#vs-speech", "elevenlabs");
       await p.selectOption("#vs-eleven-model", TURBO);
       await p.selectOption("#vs-eleven-voice", "EXAVITQu4vr4xnSDxMaL");
-      await commonChecks(p, "mini + v4 Turbo", ["elevenModel", "voice", "pace", "stability", "fillers", "style", "max", "pause", "interrupt", "turnEnd", "opener"]);
+      await commonChecks(p, "mini + v4 Turbo", ["elevenModel", "voice", "pace", "stability", "fillers", "style", "max", "turnEnd", "pause", "interrupt", "opener"]);
       check((await p.locator("[data-voice-test-voice]").innerText()) === "Sarah · v4 Turbo", "Test calls hear: Sarah · v4 Turbo");
       // The hear lines are the Voice section's last lines, after its fold.
       const after = await p.evaluate(() => {

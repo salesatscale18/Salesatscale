@@ -30,7 +30,7 @@ const folds = (h: string) => [...h.matchAll(/<details class="sas-vs-more"([^>]*)
 const between = (h: string, a: string, b: string) => h.slice(h.indexOf(a), h.indexOf(b, h.indexOf(a)));
 
 describe("rows per model (same order, missing ones not rendered)", () => {
-  const ORDER = ["elevenModel", "voice", "pace", "stability", "fillers", "style", "max", "pause", "interrupt", "turnEnd", "thinking", "opener"];
+  const ORDER = ["elevenModel", "voice", "pace", "stability", "fillers", "style", "max", "turnEnd", "pause", "interrupt", "thinking", "opener"];
   const inOrder = (r: string[]) => expect(r).toEqual(ORDER.filter((x) => r.includes(x)));
 
   it("Gemini: voice, pace | fillers; style, longest call | pause, interruption, protect the opening line", () => {
@@ -39,14 +39,19 @@ describe("rows per model (same order, missing ones not rendered)", () => {
     expect(h).toContain("Not on this model: Steadiness.");
     expect(h).toContain("Not on this model: Turn ending, Thinking effort.");
     expect(h).toContain("Used in test calls only for now: Conversation style, Pause before answering, Interruption sensitivity, Protect the opening line. Buyer calls work as before.");
+    // It names the always-visible Conversation style: at the section's end, outside the fold.
+    expect(between(h, 'data-vs-more="conversation"', "</details>")).not.toContain("data-vs-testing");
+    expect(h.indexOf("data-vs-testing")).toBeGreaterThan(h.indexOf("</details>", h.indexOf('data-vs-more="conversation"')));
   });
 
   it("GPT-Realtime 2.1, own voice: every conversation row", () => {
     const h = render({ model: GPT as never });
-    expect(rows(h)).toEqual(["voice", "pace", "fillers", "style", "max", "pause", "interrupt", "turnEnd", "thinking", "opener"]);
+    expect(rows(h)).toEqual(["voice", "pace", "fillers", "style", "max", "turnEnd", "pause", "interrupt", "thinking", "opener"]);
     expect(h).toContain("Not on this model: Steadiness.");
     expect(h).not.toContain("Not on this model: Turn");
     expect(h).toContain("Used in test calls only for now: Turn ending, Thinking effort, Protect the opening line. Buyer calls work as before.");
+    // Every control it names is in the fold: the note is the fold's last line.
+    expect(between(h, 'data-vs-more="conversation"', "</details>")).toContain("data-vs-testing");
     expect(h).toMatch(/<option value="model" selected="">The model&#x27;s own voice<\/option>/);
   });
 
@@ -54,7 +59,7 @@ describe("rows per model (same order, missing ones not rendered)", () => {
     const h = render({ model: MINI as never, speech: "elevenlabs" });
     const r = rows(h);
     // "voice" twice: the ElevenLabs voice in VOICE and the buyers' voice under "Buyers hear".
-    expect(r).toEqual(["elevenModel", "voice", "pace", "stability", "fillers", "voice", "style", "max", "pause", "interrupt", "turnEnd", "opener"]);
+    expect(r).toEqual(["elevenModel", "voice", "pace", "stability", "fillers", "voice", "style", "max", "turnEnd", "pause", "interrupt", "opener"]);
     expect(h).not.toContain("Not on this model: Steadiness");
     expect(h).toContain("Not on this model: Thinking effort.");
   });
@@ -68,7 +73,7 @@ describe("rows per model (same order, missing ones not rendered)", () => {
   it("ElevenLabs Realtime: no style, pause, interruption, turn ending or thinking; the opener switch still there", () => {
     const h = render({ model: ELEVEN_RT as never });
     expect(rows(h)).toEqual(["voice", "pace", "fillers", "max", "opener"]);
-    expect(h).toContain("Not on this model: Conversation style, Pause before answering, Interruption sensitivity, Turn ending, Thinking effort.");
+    expect(h).toContain("Not on this model: Conversation style, Turn ending, Pause before answering, Interruption sensitivity, Thinking effort.");
     expect(h).toContain("Used in test calls only for now: Protect the opening line. Buyer calls work as before.");
   });
 
@@ -120,6 +125,21 @@ describe("the folds", () => {
     expect(h).toContain("The buyer cannot interrupt the greeting and the recording notice.");
     const smart = render({ model: GPT as never, turnEnd: "smart" });
     expect(smart.match(/Smart turn ending decides this instead\./g)).toHaveLength(2);
+    // Smart: pause and interruption dimmed and read-only; their stored values still posted (hidden fields), not as empty.
+    const kept = render({ model: GPT as never, turnEnd: "smart", pauseMs: 900, interrupt: "low" });
+    expect(kept).toMatch(/<select class="sas-select" id="vs-pause" disabled=""/);
+    expect(kept).toMatch(/<select class="sas-select" id="vs-interrupt" disabled=""/);
+    expect(kept).toContain('<input type="hidden" name="pauseMs" value="900"/>');
+    expect(kept).toContain('<input type="hidden" name="interrupt" value="low"/>');
+    expect(kept.match(/name="pauseMs"/g)).toHaveLength(1);
+    expect(kept).toMatch(/data-vs-row="pause" data-vs-inert=""/);
+    // Fixed pause: the selects themselves post; nothing disabled.
+    const fixed = render({ model: GPT as never, pauseMs: 900 });
+    expect(fixed).toMatch(/id="vs-pause" name="pauseMs"/);
+    expect(fixed).not.toContain("disabled");
+    // Turn ending is the fold's first row.
+    const fold = between(smart, 'data-vs-more="conversation"', "</details>");
+    expect(fold.indexOf('data-vs-row="turnEnd"')).toBeLessThan(fold.indexOf('data-vs-row="pause"'));
     expect(smart).toMatch(/<input type="radio" class="sas-sr" name="turnEnd" checked="" value="smart"\/>Smart/);
   });
 });

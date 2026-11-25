@@ -1083,6 +1083,12 @@ th[style*="end"] > a.sas-sort { flex-direction: row; }
 .sas-vs-more__count { font-weight: 400; color: var(--ink-muted); }
 .sas-vs-more__body { display: flex; flex-direction: column; gap: 14px; padding: var(--space-3); }
 .sas-vs-missing, .sas-vs-testing { margin: 0; }
+/* The set-aside line under the model select: information, in ink (not muted), with a small info icon. */
+.sas-vs-info { display: flex; gap: 6px; align-items: flex-start; color: var(--ink); }
+.sas-vs-info .sas-ico { flex: none; width: 14px; height: 14px; margin-block-start: 2px; color: var(--primary); }
+/* Smart turn ending: pause and interruption are read-only (dimmed), their values kept. */
+.sas-vs-form [data-vs-inert] .sas-select { opacity: 0.55; cursor: not-allowed; }
+.sas-vs-form [data-vs-inert] .sas-input-label { color: var(--ink-muted); }
 .sas-vs-meter { position: relative; display: block; height: 20px; }
 .sas-vs-meter::before { content: ""; position: absolute; inset-inline: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--line); }
 .sas-vs-meter__fill { position: absolute; inset-inline-start: 0; top: 8px; height: 4px; border-radius: 2px; background: var(--primary); }

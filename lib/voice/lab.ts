@@ -103,9 +103,9 @@ export type PanelRow = "stability" | "fillers" | "style" | "pause" | "interrupt"
 /** VOICE › More options, in order. */
 export const VOICE_FOLD: readonly PanelRow[] = ["stability", "fillers"];
 /** CONVERSATION's optional rows in order (style is outside its fold, the rest inside). */
-export const CONVERSATION_ROWS: readonly PanelRow[] = ["style", "pause", "interrupt", "turnEnd", "thinking", "opener"];
+export const CONVERSATION_ROWS: readonly PanelRow[] = ["style", "turnEnd", "pause", "interrupt", "thinking", "opener"];
 /** CONVERSATION › More options, in order. */
-export const CONVERSATION_FOLD: readonly PanelRow[] = ["pause", "interrupt", "turnEnd", "thinking", "opener"];
+export const CONVERSATION_FOLD: readonly PanelRow[] = ["turnEnd", "pause", "interrupt", "thinking", "opener"];
 export const ALL_ROWS: readonly PanelRow[] = [...VOICE_FOLD, ...CONVERSATION_ROWS];
 
 /** Each row's label (the "Not on this model" and "set aside" lines name rows by it). */

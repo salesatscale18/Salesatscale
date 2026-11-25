@@ -138,7 +138,7 @@ function Section({ id, title, children }: { id: string; title: string; children:
  * Closed with changed values inside: "More options · 2 changed" (one unit that never wraps apart). Its last line: the
  * section's controls this model does not have ("Not on this model: …"), plain text, only when there are any.
  */
-function MoreOptions({ id, changed, missing, openKey, children }: { id: string; changed: number; missing: string[]; openKey: string; children: ReactNode }) {
+function MoreOptions({ id, changed, missing, openKey, note, children }: { id: string; changed: number; missing: string[]; openKey: string; note?: ReactNode; children: ReactNode }) {
   const [open, setOpen] = useState(changed > 0);
   // Another model (or "Voice from") brings back a non-default value inside: the fold opens to show it.
   const [seenKey, setSeenKey] = useState(openKey);
@@ -158,6 +158,8 @@ function MoreOptions({ id, changed, missing, openKey, children }: { id: string; 
       <div className="sas-vs-more__body">
         {children}
         {missing.length ? <p className="sas-small sas-muted sas-vs-missing" data-vs-missing="">{t("voice.settings.not_on_model", { list: missing.join(", ") })}</p> : null}
+        {/* The section's test-only note, when every control it names is in this fold. */}
+        {note}
       </div>
     </details>
   );
@@ -275,7 +277,10 @@ export function VoiceSettingsForm({
   const missingOf = (rows: readonly PanelRow[]) => rows.filter((r) => !shown.has(r)).map((r) => t(ROW_LABEL[r]));
   const setAside = switched ? setAsideRows(shown, v).map((r) => t(ROW_LABEL[r])) : [];
   // The controls of a section that run on test calls only for now (one note per section).
-  const testOnly = testOnlyRows(model.id).filter((r) => shown.has(r)).map((r) => t(ROW_LABEL[r]));
+  // In the panel's order; inside the fold when every control it names is in the fold, else at the section's end.
+  const testOnlyIds = CONVERSATION_ROWS.filter((r) => shown.has(r) && testOnlyRows(model.id).includes(r));
+  const testOnly = testOnlyIds.map((r) => t(ROW_LABEL[r]));
+  const testNoteInFold = testOnlyIds.every((r) => CONVERSATION_FOLD.includes(r));
   // The folds open by themselves when the model (or "Voice from") changes and a value inside is not its default.
   const foldKey = `${model.id}:${eleven ? "el" : "own"}`;
 
@@ -398,8 +403,9 @@ export function VoiceSettingsForm({
               {models.map((m) => <option key={m.id} value={m.id}>{`${m.label} · ${m.short}`}</option>)}
             </select>
             {setAside.length ? (
-              <span className="sas-small" role="status" data-vs-set-aside="">
-                {t(setAside.length === 1 ? "voice.settings.set_aside_one" : "voice.settings.set_aside", { list: listText(setAside) })}
+              <span className="sas-small sas-vs-info" role="status" data-vs-set-aside="">
+                <Icon name="info" />
+                <span>{t(setAside.length === 1 ? "voice.settings.set_aside_one" : "voice.settings.set_aside", { list: listText(setAside) })}</span>
               </span>
             ) : null}
             <span className="sas-small" id="vs-model-hint">
@@ -451,11 +457,21 @@ export function VoiceSettingsForm({
             </div>
           ) : null}
           {longest}
-          <MoreOptions id="conversation" changed={changedOf(CONVERSATION_FOLD)} missing={missingOf(CONVERSATION_ROWS)} openKey={foldKey}>
+          <MoreOptions id="conversation" changed={changedOf(CONVERSATION_FOLD)} missing={missingOf(CONVERSATION_ROWS)} openKey={foldKey} note={testNoteInFold ? testNote(testOnly) : null}>
+            {shown.has("turnEnd") ? (
+              <div className="sas-stack-2" data-vs-row="turnEnd">
+                <Segmented name="turnEnd" label={t("voice.settings.turn_end")} value={v.turnEnd ?? "pause"} onChange={(x) => set("turnEnd", x)} describedBy="vs-turn-end-hint"
+                  options={TURN_ENDS.map((x) => ({ value: x, label: t(`voice.settings.turn_end.${x}`) }))} />
+                <span className="sas-small" id="vs-turn-end-hint">{t("voice.settings.turn_end_hint")}</span>
+                {e.turnEnd ? <span className="sas-small sas-vs-err" role="alert">{e.turnEnd}</span> : null}
+              </div>
+            ) : null}
             {shown.has("pause") ? (
-              <div className="sas-input-group" data-vs-row="pause">
+              <div className="sas-input-group" data-vs-row="pause" data-vs-inert={smart ? "" : undefined}>
+                {/* Smart: read-only, its value still posted (kept for Fixed pause). */}
+                {smart ? <input type="hidden" name="pauseMs" value={v.pauseMs ?? ""} /> : null}
                 <label className="sas-input-label" htmlFor="vs-pause">{t("voice.settings.pause")}</label>
-                <select className="sas-select" id="vs-pause" name="pauseMs" value={v.pauseMs ?? ""} onChange={(ev) => set("pauseMs", ev.target.value ? Number(ev.target.value) : null)} aria-describedby="vs-pause-hint" aria-invalid={e.pauseMs ? true : undefined}>
+                <select className="sas-select" id="vs-pause" name={smart ? undefined : "pauseMs"} disabled={smart} value={v.pauseMs ?? ""} onChange={(ev) => set("pauseMs", ev.target.value ? Number(ev.target.value) : null)} aria-describedby="vs-pause-hint" aria-invalid={e.pauseMs ? true : undefined}>
                   {/* Gemini with nothing to send (default style, no interruption level): Google's own pause. */}
                   <option value="">{!gpt && !geminiActivityDetectionFor({ ...v, pauseMs: null }) ? t("voice.settings.model_default_option") : t("voice.settings.from_style", { value: `${(fromStyle.silenceMs / 1000).toFixed(1)} s` })}</option>
                   {pauses.map((ms) => <option key={ms} value={ms}>{(ms / 1000).toFixed(1)} s</option>)}
@@ -465,22 +481,15 @@ export function VoiceSettingsForm({
               </div>
             ) : null}
             {shown.has("interrupt") ? (
-              <div className="sas-input-group" data-vs-row="interrupt">
+              <div className="sas-input-group" data-vs-row="interrupt" data-vs-inert={smart ? "" : undefined}>
+                {smart ? <input type="hidden" name="interrupt" value={v.interrupt ?? ""} /> : null}
                 <label className="sas-input-label" htmlFor="vs-interrupt">{t("voice.settings.interrupt")}</label>
-                <select className="sas-select" id="vs-interrupt" name="interrupt" value={v.interrupt ?? ""} onChange={(ev) => set("interrupt", (ev.target.value || null) as ResolvedVoiceSettings["interrupt"])} aria-describedby="vs-interrupt-hint" aria-invalid={e.interrupt ? true : undefined}>
+                <select className="sas-select" id="vs-interrupt" name={smart ? undefined : "interrupt"} disabled={smart} value={v.interrupt ?? ""} onChange={(ev) => set("interrupt", (ev.target.value || null) as ResolvedVoiceSettings["interrupt"])} aria-describedby="vs-interrupt-hint" aria-invalid={e.interrupt ? true : undefined}>
                   <option value="">{gpt ? t("voice.settings.from_style", { value: t(`voice.settings.${styleInterrupt}`) }) : t("voice.settings.model_default_option")}</option>
                   {INTERRUPT_LEVELS.map((l) => <option key={l} value={l}>{t(`voice.settings.${l}`)}</option>)}
                 </select>
                 <span className="sas-small" id="vs-interrupt-hint">{t(smart ? "voice.settings.smart_decides" : "voice.settings.interrupt_hint")}</span>
                 {e.interrupt ? <span className="sas-small sas-vs-err" role="alert">{e.interrupt}</span> : null}
-              </div>
-            ) : null}
-            {shown.has("turnEnd") ? (
-              <div className="sas-stack-2" data-vs-row="turnEnd">
-                <Segmented name="turnEnd" label={t("voice.settings.turn_end")} value={v.turnEnd ?? "pause"} onChange={(x) => set("turnEnd", x)} describedBy="vs-turn-end-hint"
-                  options={TURN_ENDS.map((x) => ({ value: x, label: t(`voice.settings.turn_end.${x}`) }))} />
-                <span className="sas-small" id="vs-turn-end-hint">{t("voice.settings.turn_end_hint")}</span>
-                {e.turnEnd ? <span className="sas-small sas-vs-err" role="alert">{e.turnEnd}</span> : null}
               </div>
             ) : null}
             {shown.has("thinking") ? (
@@ -504,7 +513,7 @@ export function VoiceSettingsForm({
               </label>
             ) : null}
           </MoreOptions>
-          {testNote(testOnly)}
+          {testNoteInFold ? null : testNote(testOnly)}
         </Section>
       </div>
       <div className="sas-vs-foot">
