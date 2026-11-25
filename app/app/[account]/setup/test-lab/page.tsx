@@ -187,6 +187,11 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
   const settingsVersion = draft ?? liveVersion;
   const settingsLine = settingsVersion ? t("voice.settings.summary", { summary: voiceSettingsSummary(resolveVoiceSettings(settingsVersion.voiceSettings, versionModelId(settingsVersion.voiceSettings)), versionModelId(settingsVersion.voiceSettings)) }) : null;
   const keep = conv ? `c=${conv.id}&` : "";
+  // Versions (header button → panel): keeps the open chat and the tab underneath.
+  const here = `${lab}?${conv ? `c=${conv.id}&` : ""}${modeParam ? `mode=${mode}&` : ""}`;
+  const versionsHref = `${here}panel=versions`;
+  const versionsOpen = one(sp.panel) === "versions";
+  const headVersion = draft ?? liveVersion;
   // Voice settings open over the Voice call tab and come back to it (closing or saving).
   const voiceTab = conv ? `${lab}?c=${conv.id}&mode=voice` : `${lab}?mode=voice`;
   const settingsHref = draft ? `${lab}?${keep}mode=voice&panel=voice` : null;
@@ -294,6 +299,10 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         <h1 className="sas-title">{t("lab.title")}</h1>
         <span className="lab-badge"><Icon name="flask-conical" />{t("lab.badge")}</span>
         <div className="sas-page-head__actions">
+          <a className={buttonClass("secondary")} href={versionsHref} data-versions-open="">
+            <Icon name="layers" />{t("lab.versions")}
+            {headVersion ? <span className="lab-ver-chip">{t("lab.version", { version: headVersion.version })} · {t(`status.agent_version.${headVersion.status}` as MessageKey)}</span> : null}
+          </a>
           <a className={buttonClass("secondary")} href={`${base}/setup/playbook`}><Icon name="scroll-text" />{t("lab.edit_playbook")}</a>
           {draft ? (
             <form action={publishAction}><input type="hidden" name="slug" value={account.slug} /><Button type="submit" variant="primary">{t("lab.publish", { version: draft.version })}</Button></form>
@@ -509,48 +518,6 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
           })() : null}
           {showConv ? dealCard("side") : null}
 
-          <section className="sas-panel" aria-labelledby="lab-ver-h">
-            <div className="sas-panel__body sas-stack-4">
-              <h2 id="lab-ver-h" className="sas-heading">{t("lab.versions")}</h2>
-              {versions.length === 0 ? <span className="sas-small">{t("lab.no_draft")}</span> : null}
-              <ul className="sas-stack-4" style={{ listStyle: "none", margin: 0, padding: 0 }}>
-                {versions.map((v) => {
-                  // Compare (board VersionCompareEntry): the draft against live, an earlier version against live (older on the left).
-                  const compareHref = liveVersion && v.id !== liveVersion.id
-                    ? `${lab}/compare?${v.status === "draft" ? `a=${liveVersion.id}&b=${v.id}` : `a=${v.id}&b=${liveVersion.id}`}`
-                    : null;
-                  const changes = v.status === "draft" && liveVersion ? countChanges(liveVersion, v, showModel) : null;
-                  return (
-                  <li key={v.id} className="sas-stack-2" data-version-row={v.status}>
-                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                      <strong className="sas-id">{t("lab.version", { version: v.version })}</strong>
-                      {/* The live version's pill is blue here (board VersionCompareEntry): the same word and icon, the info tone. */}
-                      {v.status === "live" ? (
-                        <span className="sas-pill sas-pill--info" data-status="agent_version.live"><Icon name={statusDef("agent_version", "live").icon} />{t("status.agent_version.live")}</span>
-                      ) : <StatusPill object="agent_version" state={v.status} />}
-                    </div>
-                    <span className="sas-small">{showModel ? <span data-version-model="">{t("lab.version_model", { model: v.model, effort: v.effort })}</span> : null}{showModel && v.publishedAt ? " · " : null}{v.publishedAt ? <><time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}{changes !== null ? <span data-changes-from-live="">{showModel || v.publishedAt ? " · " : null}{changes === 0 ? t("compare.same_as_live") : changes === 1 ? t("compare.changes_from_live_one") : t("compare.changes_from_live", { n: changes })}</span> : null}</span>
-                    {compareHref || v.status === "retired" ? (
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-                        {compareHref ? (
-                          <a className={buttonClass(v.status === "draft" ? "secondary" : "ghost", "sm")} href={compareHref} aria-label={t("compare.with_live_label", { version: v.version })} data-compare-with-live="">{t("compare.with_live")}</a>
-                        ) : null}
-                        {v.status === "retired" ? (
-                          <form action={rollbackAction}>
-                            <input type="hidden" name="slug" value={account.slug} />
-                            <input type="hidden" name="versionId" value={v.id} />
-                            <Button type="submit" variant="ghost" size="sm">{t("lab.rollback")}</Button>
-                          </form>
-                        ) : null}
-                      </div>
-                    ) : null}
-                  </li>
-                  );
-                })}
-              </ul>
-            </div>
-          </section>
-
           <section className="sas-panel" aria-labelledby="lab-chats-h">
             <div className="sas-panel__body sas-stack-2">
               <h2 id="lab-chats-h" className="sas-heading">{t(mode === "voice" ? "lab.calls" : "lab.chats")}</h2>
@@ -608,6 +575,48 @@ export default async function TestLabPage({ params, searchParams }: { params: Pr
         </aside>
       </div>
       )}
+      {versionsOpen ? (
+        <SidePanel id="lab-versions" title={t("lab.versions")} closeHref={here.replace(/[?&]$/, "")}>
+          <div className="sas-stack-4" data-versions-panel="">
+              {versions.length === 0 ? <span className="sas-small">{t("lab.no_draft")}</span> : null}
+              <ul className="sas-stack-4" style={{ listStyle: "none", margin: 0, padding: 0 }}>
+                {versions.map((v) => {
+                  // Compare (board VersionCompareEntry): the draft against live, an earlier version against live (older on the left).
+                  const compareHref = liveVersion && v.id !== liveVersion.id
+                    ? `${lab}/compare?${v.status === "draft" ? `a=${liveVersion.id}&b=${v.id}` : `a=${v.id}&b=${liveVersion.id}`}`
+                    : null;
+                  const changes = v.status === "draft" && liveVersion ? countChanges(liveVersion, v, showModel) : null;
+                  return (
+                  <li key={v.id} className="sas-stack-2" data-version-row={v.status}>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                      <strong className="sas-id">{t("lab.version", { version: v.version })}</strong>
+                      {/* The live version's pill is blue here (board VersionCompareEntry): the same word and icon, the info tone. */}
+                      {v.status === "live" ? (
+                        <span className="sas-pill sas-pill--info" data-status="agent_version.live"><Icon name={statusDef("agent_version", "live").icon} />{t("status.agent_version.live")}</span>
+                      ) : <StatusPill object="agent_version" state={v.status} />}
+                    </div>
+                    <span className="sas-small">{showModel ? <span data-version-model="">{t("lab.version_model", { model: v.model, effort: v.effort })}</span> : null}{showModel && v.publishedAt ? " · " : null}{v.publishedAt ? <><time dateTime={v.publishedAt.toISOString()} title={zoneTitle(v.publishedAt, tz)}>{t("lab.published_at", { date: local(v.publishedAt) })}</time></> : null}{changes !== null ? <span data-changes-from-live="">{showModel || v.publishedAt ? " · " : null}{changes === 0 ? t("compare.same_as_live") : changes === 1 ? t("compare.changes_from_live_one") : t("compare.changes_from_live", { n: changes })}</span> : null}</span>
+                    {compareHref || v.status === "retired" ? (
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        {compareHref ? (
+                          <a className={buttonClass(v.status === "draft" ? "secondary" : "ghost", "sm")} href={compareHref} aria-label={t("compare.with_live_label", { version: v.version })} data-compare-with-live="">{t("compare.with_live")}</a>
+                        ) : null}
+                        {v.status === "retired" ? (
+                          <form action={rollbackAction}>
+                            <input type="hidden" name="slug" value={account.slug} />
+                            <input type="hidden" name="versionId" value={v.id} />
+                            <Button type="submit" variant="ghost" size="sm">{t("lab.rollback")}</Button>
+                          </form>
+                        ) : null}
+                      </div>
+                    ) : null}
+                  </li>
+                  );
+                })}
+              </ul>
+          </div>
+        </SidePanel>
+      ) : null}
       {voicePanel && draft ? (
         <SidePanel
           id="lab-voice-settings" title={t("voice.settings.title")} meta={t("voice.settings.meta", { version: draft.version })}

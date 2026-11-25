@@ -162,12 +162,12 @@ describe("Polish-7b: plain terms", () => {
   });
 
   it("Versions and test lab: the model line only for platform admins", async () => {
-    const sellerHtml = await render(TestLabPage, account.slug);
+    const sellerHtml = await render(TestLabPage, account.slug, { panel: "versions" });
     save("test-lab-seller", sellerHtml);
     expect(sellerHtml).not.toContain("data-version-model");
     expect(sellerHtml).not.toContain("effort");
     asAdmin();
-    const adminHtml = await render(TestLabPage, account.slug);
+    const adminHtml = await render(TestLabPage, account.slug, { panel: "versions" });
     asSeller();
     expect(adminHtml).toContain("data-version-model");
     expect(text(adminHtml)).toMatch(/· effort /);

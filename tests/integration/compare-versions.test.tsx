@@ -221,8 +221,13 @@ describe("Compare versions", () => {
   });
 
   it("the test lab's Versions panel: changes from live, Compare with live, a blue Live pill, one Publish", async () => {
-    const html = await render(TestLabPage as unknown as Page, account.slug);
+    // The Versions list opens from the header's Versions button (?panel=versions).
+    const page = await render(TestLabPage as unknown as Page, account.slug);
+    expect(page).not.toContain("data-versions-panel");
+    expect(page).toMatch(/href="[^"]*\?panel=versions" data-versions-open="">[\s\S]*?Versions<span class="lab-ver-chip">v\d+ · Draft<\/span>/);
+    const html = await render(TestLabPage as unknown as Page, account.slug, { panel: "versions" });
     save("testlab-versions", html);
+    expect(html).toContain("data-versions-panel");
     expect(html).toContain("6 changes from live");
     expect(html).toContain(`href="/app/${account.slug}/setup/test-lab/compare?a=${live.id}&amp;b=${draft.id}"`);
     expect(html).toMatch(/class="sas-pill sas-pill--info" data-status="agent_version.live"/);

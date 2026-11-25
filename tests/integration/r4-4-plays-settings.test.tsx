@@ -212,11 +212,11 @@ describe("R4-4: Sales plays, Company, Settings, Go live, Test lab", () => {
       expect(css).toMatch(/@container \(max-width: 903px\) \{\s*\.lab-deal--main \{ display: block; \}\s*\.lab-deal--side \{ display: none; \}/);
       // C6: a seller (the owner, not a platform admin) sees no model name or effort; a platform admin acting as does.
       holder.access = { account: acc, user: owner, actingAs: false, role: "seller_admin" };
-      const seller = renderToStaticMarkup(await (TestLabPage as Page)({ params: Promise.resolve({ account: acc.slug }), searchParams: Promise.resolve({ c: c!.conversationId }) }));
+      const seller = renderToStaticMarkup(await (TestLabPage as Page)({ params: Promise.resolve({ account: acc.slug }), searchParams: Promise.resolve({ c: c!.conversationId, panel: "versions" }) }));
       expect(seller).not.toContain("data-version-model");
       expect(seller).not.toMatch(/claude-|effort/i);
       expect(seller).toMatch(/Published \d/);
-      expect(await render(TestLabPage, {}, { c: c!.conversationId }, true)).toContain("data-version-model");
+      expect(await render(TestLabPage, {}, { c: c!.conversationId, panel: "versions" }, true)).toContain("data-version-model");
     });
   });
 

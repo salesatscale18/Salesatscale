@@ -2137,3 +2137,5 @@ label.st-voice__row { cursor: pointer; }
 @media (max-width: 767px) { .sas-toast { inset-inline: 16px; inset-block-end: 16px; max-width: none; } }
 /* Test lab › Voice call: Voice settings without a draft (greyed out, with the reason). */
 .lab-call__settings-off { display: inline-flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 6px 10px; }
+/* Test lab header: the Versions button names the version being tested. */
+.lab-ver-chip { margin-inline-start: 2px; padding: 1px 8px; border-radius: var(--radius-pill); background: var(--primary-soft); color: var(--primary); font-size: 12px; font-weight: 600; line-height: 18px; }
