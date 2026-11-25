@@ -35,7 +35,7 @@ const Bubble = () => (
  * the composer. Both then show /chat/<token> in the address bar (replaceState) and store the
  * choice. Voice not available (the voice gate): one button, "Continue to the chat".
  */
-export function HandoverChat({ token, chatPath, chat, voiceOffered, strings, top, text, after, dir }: {
+export function HandoverChat({ token, chatPath, chat, voiceOffered, strings, top, text, note, foot, dir }: {
   /** The hand-over token (the server action's credential). */
   token: string;
   chatPath: string;
@@ -46,8 +46,10 @@ export function HandoverChat({ token, chatPath, chat, voiceOffered, strings, top
   top: ReactNode;
   /** The thanks lines (server-rendered). */
   text: ReactNode;
-  /** The SMS line and the by-line. */
-  after: ReactNode;
+  /** The SMS line (only when the SMS was really sent), in the centred block. */
+  note: ReactNode;
+  /** The by-line at the bottom. */
+  foot: ReactNode;
   dir: "ltr" | "rtl";
 }) {
   const [view, setView] = useState<"handover" | "chat">("handover");
@@ -88,6 +90,7 @@ export function HandoverChat({ token, chatPath, chat, voiceOffered, strings, top
         <main className="c-frame lp-handover" dir={dir} data-handover="chat">
           {top}
           <div className="lp-hand">
+          <div className="lp-hand__mid">
           <HandoverRing ready={ready} label={strings.preparing} />
           {text}
           <div className="lp-actions">
@@ -100,7 +103,9 @@ export function HandoverChat({ token, chatPath, chat, voiceOffered, strings, top
               <button type="button" className="lp-btn lp-btn--primary" onClick={write} disabled={!ready} data-handover-continue=""><Bubble />{strings.continueChat}</button>
             )}
           </div>
-          {after}
+          {note}
+          </div>
+          {foot}
           </div>
         </main>
       ) : null}

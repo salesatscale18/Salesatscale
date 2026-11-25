@@ -7,13 +7,18 @@
  * - application/x-www-form-urlencoded (the hosted form without JavaScript): 303 to the
  *   hand-over, to /p/<key>?sent=1, or back to /p/<key>?e=<code> (never a personal detail).
  * The sas_lp cookie (the lead this browser created) is set only on our own domain.
- * Slice a-1 answers same-origin requests only: CORS for the seller's own pages comes with the snippet (slice b).
+ * CORS (slice b, the snippet on the seller's page): the page's allowed origins only, echoed with
+ * `Vary: Origin` and never credentials; OPTIONS answers the preflight. The origin itself is checked
+ * by submitLeadPage before any write (a simple request runs whatever CORS says).
+ * The JSON hand-over also carries `eventId` (the submission id): the snippet passes it to the
+ * page's own Meta pixel as the "Lead" event's eventID.
  */
 import { appDb } from "@/lib/auth/account";
 import { submitLeadPage, type SubmitResult } from "@/lib/lead-pages/intake";
 import { SUBMIT_BODY_MAX } from "@/lib/lead-pages/rules";
 import { handoverPath, leadCookieHeader, PUBLIC_KEY_RE } from "@/lib/lead-pages/tokens";
 import { parseJsonObject } from "@/lib/leads/rules";
+import { corsPreflight, pageCors } from "@/lib/lead-pages/snippet-config";
 import { clientIp, declaredTooLarge } from "@/lib/security/rate-limit";
 
 export const dynamic = "force-dynamic";
@@ -49,6 +54,8 @@ export async function POST(req: Request, { params }: { params: Promise<{ key: st
   if (!body) return Response.json({ error: "invalid_body" }, { status: 400, headers: NO_STORE });
 
   const r = await submitLeadPage(appDb, { key, body, headers: req.headers, ip: clientIp(req.headers) });
+  // CORS headers for an allowed origin only (submitLeadPage recorded a refused one).
+  const cors = asJson ? (await pageCors(appDb, key, req.headers, new Date(), process.env, false)).headers : {};
   const cookie: Record<string, string> = r.kind === "handover" && r.newLeadId ? { "Set-Cookie": leadCookieHeader(r.newLeadId) } : {};
   const preview = typeof body.preview === "string" && /^[0-9a-z]{1,10}\.[A-Za-z0-9_-]{22}$/.test(body.preview) ? `&preview=${body.preview}` : "";
   const thanks = `/p/${key}?sent=1`;
@@ -62,11 +69,16 @@ export async function POST(req: Request, { params }: { params: Promise<{ key: st
     return new Response(null, { status: 303, headers: { ...NO_STORE, ...cookie, Location: location } });
   }
   switch (r.kind) {
-    case "handover": return Response.json({ handover: handoverPath(r.token) }, { status: 200, headers: { ...NO_STORE, ...cookie } });
-    case "thanks": return Response.json({ thanks }, { status: 200, headers: NO_STORE });
-    case "invalid": return Response.json({ error: "invalid", fields: r.errors }, { status: 422, headers: NO_STORE });
-    case "busy": return Response.json({ error: "busy" }, { status: 429, headers: { ...NO_STORE, "Retry-After": String(r.retryAfterSeconds) } });
-    case "refused": return Response.json({ error: r.reason }, { status: 403, headers: NO_STORE });
-    case "not_found": return Response.json({ error: "not_found" }, { status: 404, headers: NO_STORE });
+    case "handover": return Response.json({ handover: handoverPath(r.token), eventId: r.submissionId }, { status: 200, headers: { ...NO_STORE, ...cors, ...cookie } });
+    case "thanks": return Response.json({ thanks }, { status: 200, headers: { ...NO_STORE, ...cors } });
+    case "invalid": return Response.json({ error: "invalid", fields: r.errors }, { status: 422, headers: { ...NO_STORE, ...cors } });
+    case "busy": return Response.json({ error: "busy" }, { status: 429, headers: { ...NO_STORE, ...cors, "Retry-After": String(r.retryAfterSeconds) } });
+    case "refused": return Response.json({ error: r.reason }, { status: 403, headers: { ...NO_STORE, ...cors } });
+    case "not_found": return Response.json({ error: "not_found" }, { status: 404, headers: { ...NO_STORE, ...cors } });
   }
+}
+
+/** The CORS preflight: allowed origins only. */
+export async function OPTIONS(req: Request, { params }: { params: Promise<{ key: string }> }) {
+  return corsPreflight(appDb, req, (await params).key);
 }

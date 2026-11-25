@@ -1,10 +1,11 @@
 import { appDb, requireAccount } from "@/lib/auth/account";
 import { t } from "@/lib/i18n";
+import { publicUrl } from "@/lib/orders/token";
 import { formData } from "../form-data";
 import { LeadPageFormView } from "../page-form";
 import "../lead-pages.css";
 
-/** Lead pages › Add a page (board: LeadPageConnect; phase 1: Button or link only). */
+/** Lead pages › Add a page (board: LeadPageConnect; phase 1: Our form on your page, or Button or link). */
 export default async function NewLeadPage({ params }: { params: Promise<{ account: string }> }) {
   const { account: slug } = await params;
   const { account } = await requireAccount(slug);
@@ -19,7 +20,7 @@ export default async function NewLeadPage({ params }: { params: Promise<{ accoun
       </header>
       <LeadPageFormView
         slug={account.slug} page={null} markets={d.markets} languages={account.languages} topics={d.topics} defaultTopic={d.defaultTopic}
-        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} hostedUrl={null}
+        consentDefault={d.consentDefault} bannerUploads={d.bannerUploads} hostedUrl={null} appBase={publicUrl("/")}
       />
     </main>
   );

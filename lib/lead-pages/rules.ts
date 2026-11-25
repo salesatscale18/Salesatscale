@@ -18,8 +18,8 @@ export const LEAD_PAGE_CONNECTIONS = ["snippet", "own_form", "link", "hosted"] a
 export type LeadPageConnection = (typeof LEAD_PAGE_CONNECTIONS)[number];
 export const LEAD_PAGE_STATUSES = ["draft", "live", "paused"] as const;
 export type LeadPageStatus = (typeof LEAD_PAGE_STATUSES)[number];
-/** Phase 1 (slice a) saves "Button or link" pages only; the snippet and the own form come in slices b and c. */
-export const AVAILABLE_CONNECTIONS: readonly LeadPageConnection[] = ["link"];
+/** Phase 1 saves "Button or link" (slice a) and "Our form on your page" (slice b) pages; the own form comes in slice c. */
+export const AVAILABLE_CONNECTIONS: readonly LeadPageConnection[] = ["snippet", "link"];
 
 /** How a submission reached us (lead_page_submissions.via). */
 export type LeadPageVia = "snippet" | "own_form" | "link";
@@ -102,7 +102,7 @@ export function parseLeadPageInput(raw: LeadPageRaw, opts: { languages: readonly
 
   const connection = str(raw.connection) as LeadPageConnection;
   if (!(LEAD_PAGE_CONNECTIONS as readonly string[]).includes(connection)) errors.connection = "Choose how the form reaches your buyers.";
-  else if (!AVAILABLE_CONNECTIONS.includes(connection)) errors.connection = "This way of connecting comes later. Choose Button or link.";
+  else if (!AVAILABLE_CONNECTIONS.includes(connection)) errors.connection = "This way of connecting comes later. Choose another one.";
 
   const addressRaw = str(raw.address);
   const address = addressRaw ? normalizeAddress(addressRaw) : null;
@@ -179,6 +179,8 @@ export type SubmissionFields = {
   /** The honeypot was filled in (a bot). */
   honeypot: boolean;
   ft: string; preview: string;
+  /** The snippet's page (origin and path): where the buyer saw the consent line. Used only when its origin is the checked one. */
+  pageUrl: string;
   ad: Record<string, string>;
 };
 
@@ -208,6 +210,7 @@ export function readSubmission(body: Record<string, unknown>): SubmissionFields 
     honeypot: !!pick(HONEYPOT_FIELD).trim(),
     ft: pick("ft").trim(),
     preview: pick("preview").trim(),
+    pageUrl: pick("page_url").trim().slice(0, 500),
     ad,
   };
 }

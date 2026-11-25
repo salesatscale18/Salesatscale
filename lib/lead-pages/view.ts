@@ -18,9 +18,9 @@ export const CONNECTION_LABEL: Record<LeadPageConnection, MessageKey> = {
   hosted: "lead_pages.connection.hosted",
 };
 
-/** The connection cards of the add form, in the board's order. Only "Button or link" can be chosen in phase 1. */
+/** The connection cards of the add form, in the board's order. "Our form on your page" and "Button or link" can be chosen; a card with a tag cannot. */
 export const CONNECTION_CARDS: { id: LeadPageConnection; icon: IconName; title: MessageKey; line: MessageKey; tag: MessageKey | null }[] = [
-  { id: "snippet", icon: "panel-top", title: "lead_pages.card.snippet.title", line: "lead_pages.card.snippet.line", tag: "lead_pages.card.coming_next" },
+  { id: "snippet", icon: "panel-top", title: "lead_pages.card.snippet.title", line: "lead_pages.card.snippet.line", tag: null },
   { id: "own_form", icon: "file-text", title: "lead_pages.card.own_form.title", line: "lead_pages.card.own_form.line", tag: "lead_pages.card.coming_next" },
   { id: "link", icon: "link-2", title: "lead_pages.card.link.title", line: "lead_pages.card.link.line", tag: null },
   { id: "hosted", icon: "globe", title: "lead_pages.card.hosted.title", line: "lead_pages.card.hosted.line", tag: "lead_pages.card.later" },
@@ -94,6 +94,35 @@ export function funnelSteps(f: Funnel, connection: LeadPageConnection): FunnelSt
   return keys.map((k, i) => ({ key: k, label: FUNNEL_LABEL[k], value: k === "visits" && !visits ? null : values[i], pct: i > 0 && values[i - 1] === 0 ? null : pcts[i] }));
 }
 
+/** Nothing at all in the period (no visit, open or lead): the page view shows one line instead of empty bars. */
+export const funnelEmpty = (steps: readonly FunnelStep[]) => steps.every((s) => !s.value);
+
+/** The snippet the seller pastes: the placeholder, then the script (async, from our host). */
+export function snippetCode(appBase: string, publicKey: string): string {
+  return `<div data-sas-lead-form="${publicKey}"></div>\n<script async src="${appBase.replace(/\/+$/, "")}/lp/v1.js"></script>`;
+}
+
+/** The snippet's preview link: the seller's page with the preview token in its fragment (never sent to any server). */
+export function snippetPreviewUrl(address: string, token: string): string {
+  return `${address.replace(/#.*$/, "")}#sas-preview=${token}`;
+}
+
+/** The refused origin to suggest ("Seen on {host}. Add it?"): its host, unless the page already allows it. */
+export function seenOriginSuggestion(page: Pick<LeadPage, "address" | "extraOrigins" | "checks">): string | null {
+  const o = page.checks?.refusedOrigin;
+  if (!o) return null;
+  let host: string;
+  try {
+    host = new URL(o).host;
+  } catch {
+    return null;
+  }
+  if (page.extraOrigins.includes(host)) return null;
+  const own = page.address ? (() => { try { return new URL(page.address).host; } catch { return null; } })() : null;
+  if (own && (own === host || own === `www.${host}` || host === `www.${own}`)) return null;
+  return host;
+}
+
 /** Whole percent of part in total as "12%", or null when total is 0. */
 export const pctText = (part: number, total: number) => (total > 0 ? `${Math.round((part / total) * 100)}%` : null);
 
@@ -107,6 +136,7 @@ export const READINESS_LABEL: Record<ReadinessKey, MessageKey> = {
   privacy_notice: "lead_pages.check.privacy_notice",
   account_live: "lead_pages.check.account_live",
   form_opens: "lead_pages.check.form_opens",
+  snippet_seen: "lead_pages.check.snippet_seen",
   test_lead: "lead_pages.check.test_lead",
 };
 
@@ -114,7 +144,7 @@ export const READINESS_LABEL: Record<ReadinessKey, MessageKey> = {
 // The add/edit form
 // ---------------------------------------------------------------------------
 
-type FormGet = { get(name: string): FormDataEntryValue | null; has(name: string): boolean };
+type FormGet = { get(name: string): FormDataEntryValue | null; getAll?(name: string): FormDataEntryValue[]; has(name: string): boolean };
 const str = (f: FormGet, k: string) => {
   const v = f.get(k);
   return typeof v === "string" ? v : "";
@@ -123,8 +153,9 @@ const str = (f: FormGet, k: string) => {
 /**
  * The page settings from the add/edit form. The opening topic is the index of
  * a playbook topic ("" none, "keep" the page's saved one), so the saved text is
- * the playbook's own en/he snapshot. Settings the form does not show in phase 1
- * (extra origins, the page-pixel switch) keep the page's values.
+ * the playbook's own en/he snapshot. Other addresses (slice b): the saved ones
+ * still ticked (`extraOrigin`), plus a typed one (`newOrigin`) and the
+ * "Seen on …, add it?" suggestion when ticked (`addSeen`).
  */
 export function rawFromForm(f: FormGet, topics: readonly LeadPageTopic[], existing: LeadPage | null): LeadPageRaw {
   const topicRaw = str(f, "openingTopic");
@@ -139,12 +170,20 @@ export function rawFromForm(f: FormGet, topics: readonly LeadPageTopic[], existi
     fields: { company: f.has("field_company"), email: f.has("field_email"), sites: f.has("field_sites") },
     consentTicked: f.has("consentTicked"),
     openingTopic,
-    tracking: {
-      ...(existing?.tracking?.tellPagePixel === undefined ? {} : { tellPagePixel: existing.tracking.tellPagePixel }),
-      carryAdDetails: f.has("carryAdDetails"),
-    },
-    extraOrigins: existing?.extraOrigins ?? [],
+    tracking: { tellPagePixel: f.has("tellPagePixel"), carryAdDetails: f.has("carryAdDetails") },
+    extraOrigins: originsFromForm(f, existing),
   };
+}
+
+/** The other addresses from the form: the saved ones left ticked, then the suggested and the typed one. */
+function originsFromForm(f: FormGet, existing: LeadPage | null): string[] {
+  const saved = existing?.extraOrigins ?? [];
+  // A form without the list (an older page) keeps what is saved.
+  if (!f.has("originsShown")) return [...saved];
+  const kept = (f.getAll?.("extraOrigin") ?? []).filter((v): v is string => typeof v === "string").filter((v) => saved.includes(v));
+  const out = [...kept];
+  for (const v of [str(f, "addSeen"), str(f, "newOrigin")]) if (v.trim()) out.push(v.trim());
+  return out;
 }
 
 /** The form's topic select value for a page: the index of its saved topic in the playbook, "keep" when it is no longer there, "" for none. */

@@ -190,13 +190,20 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     as(a);
   });
 
-  it("add form: only Button or link can be chosen, the pixel note, the ad-details switch and the banner help", async () => {
+  it("add form: the snippet (default) and Button or link can be chosen, the pixel switch and note, the ad-details switch and the banner help", async () => {
     const html = await render(NewPage, { account: a.slug });
     save("add", html);
     const s = text(html);
-    expect((html.match(/<input type="radio" disabled="" name="connection" value="(snippet|own_form|hosted)"\/>/g) ?? []).length).toBe(3);
-    expect(html).toContain('<input type="radio" name="connection" checked="" value="link"/>');
-    expect((s.match(/Coming next/g) ?? []).length).toBe(2);
+    expect((html.match(/<input type="radio" disabled="" name="connection" value="(snippet|own_form|hosted)"\/>/g) ?? []).length).toBe(2);
+    expect(html).toContain('<input type="radio" name="connection" checked="" value="snippet"/>');
+    expect(html).toContain('<input type="radio" name="connection" value="link"/>');
+    expect((s.match(/Coming next/g) ?? []).length).toBe(1);
+    // Slice b: the snippet's parts (shown by CSS for the checked card).
+    expect(s).toContain("Tell my page's ad pixel when a lead is sent");
+    expect(html).toMatch(/name="tellPagePixel" checked=""/);
+    expect(s).toContain("Address of your page");
+    expect(s).toContain("You get the snippet when you save.");
+    expect(s).toContain("Other addresses");
     expect(s).toContain("Later");
     expect(s).toContain("Your ad pixel is not told about leads from this link.");
     expect(s).toContain("Carry ad details through to the lead");
@@ -213,8 +220,8 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     as(a);
     const bad = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "", language: "en", connection: "link", intent: "draft" })));
     expect(bad.state).toMatchObject({ errors: { name: expect.any(String) } });
-    // The snippet is not offered yet: refused on the server even when posted.
-    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "snippet", address: "acme.com" })))).state).toMatchObject({ errors: { connection: expect.any(String) } });
+    // The own form is not offered yet: refused on the server even when posted.
+    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "own_form", address: "acme.com" })))).state).toMatchObject({ errors: { connection: expect.any(String) } });
 
     const ok = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Winter offer", language: "en", connection: "link", marketId: "", openingTopic: "0", field_sites: "on", carryAdDetails: "on", intent: "draft" })));
     expect(ok.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/[0-9a-f-]{36}\\?saved=draft$`));
@@ -415,5 +422,69 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     // A lead from no page: the old line.
     const lior = await leadByName(a.id, "Lior Demo");
     expect(await render(LeadCardPage, { account: a.slug, leadId: lior.id })).not.toContain("data-lead-page-source");
+  });
+
+  it("slice b: a snippet page is saved with its pixel switch and other addresses; Save and preview; the page view's snippet card, checks and the \"Seen on\" suggestion; an empty funnel is one line", async () => {
+    as(a);
+    const saved = await run(actions.saveLeadPageAction(null, form({
+      slug: a.slug, name: "Spring snippet", language: "en", connection: "snippet", address: "polar-demo.example/spring", marketId: "",
+      originsShown: "1", newOrigin: "staging.polar-demo.example", tellPagePixel: "on", carryAdDetails: "on", intent: "draft",
+    })));
+    const id = saved.url!.split("/").pop()!.split("?")[0];
+    let page = (await getLeadPage(db, a.id, id))!;
+    expect(page).toMatchObject({ connection: "snippet", address: "https://polar-demo.example/spring", extraOrigins: ["staging.polar-demo.example"], tracking: { tellPagePixel: true, carryAdDetails: true } });
+    // The snippet needs its page's address.
+    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "snippet", address: "" })))).state).toMatchObject({ errors: { address: expect.any(String) } });
+
+    // Edit: the snippet with Copy, Save and preview, the other addresses as ticked pills.
+    const edit = await render(EditPage, { account: a.slug, pageId: id });
+    save("snippet-edit", edit);
+    expect(edit).toContain(`data-sas-lead-form=&quot;${page.publicKey}&quot;`);
+    expect(edit).toContain("/lp/v1.js");
+    expect(text(edit)).toContain("Copy snippet");
+    expect(edit).toMatch(/name="extraOrigin" checked="" value="staging.polar-demo.example"/);
+    // Unticking removes the address, the switch off turns the pixel off; Save and preview gives a preview link on the page.
+    const prev = await run(actions.saveLeadPageAction(null, form({
+      slug: a.slug, pageId: id, name: "Spring snippet", language: "en", connection: "snippet", address: "polar-demo.example/spring", marketId: "", originsShown: "1", intent: "preview",
+    })));
+    expect(prev.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/${id}\\?pl=[0-9a-z]+\\.[A-Za-z0-9_-]{22}#link$`));
+    page = (await getLeadPage(db, a.id, id))!;
+    expect(page).toMatchObject({ extraOrigins: [], tracking: { tellPagePixel: false } });
+    const pl = decodeURIComponent(prev.url!.split("pl=")[1].split("#")[0]);
+
+    // The page view: the snippet card, the preview link to the seller's own page, no leads yet in one line.
+    await db.update(leadPages).set({ checks: { refusedOrigin: "https://polar-demo.webflow.io", refusedAt: new Date().toISOString() } }).where(eq(leadPages.id, id));
+    let view = await render(PageView, { account: a.slug, pageId: id }, { pl });
+    save("snippet-view", view);
+    expect(view).toContain("data-snippet-card");
+    expect(view).not.toContain("data-hosted-link");
+    expect(view).toContain(`https://polar-demo.example/spring#sas-preview=${pl}`);
+    expect(view).toContain("data-funnel-empty");
+    expect(text(view)).toContain("No leads in this period yet.");
+    expect(view).toContain('data-seen-origin="polar-demo.webflow.io"');
+    expect(text(view)).toContain("Seen on polar-demo.webflow.io. Add it?");
+    expect(view).toContain('data-check="snippet_seen"');
+    expect(view).not.toContain('data-check="form_opens"');
+    // "Add it?" adds the address (audited); Remove takes it away.
+    expect((await run(actions.addOriginAction(form({ slug: a.slug, pageId: id, host: "polar-demo.webflow.io" })))).url).toContain("saved=origin_added");
+    expect((await getLeadPage(db, a.id, id))!.extraOrigins).toEqual(["polar-demo.webflow.io"]);
+    expect((await run(actions.addOriginAction(form({ slug: a.slug, pageId: id, host: "not a host" })))).url).toContain("origin_error=1");
+    expect((await audits(a.id, "lead_page.origins_changed")).length).toBeGreaterThanOrEqual(2);
+    view = await render(PageView, { account: a.slug, pageId: id }, {});
+    expect(view).not.toContain("data-seen-origin");
+    expect(view).toContain('data-origin="polar-demo.webflow.io"');
+    // Another account cannot add to this page.
+    as(b);
+    expect((await run(actions.addOriginAction(form({ slug: b.slug, pageId: id, host: "evil.example" })))).url).toBe(`/app/${b.slug}/lead-pages`);
+    as(a);
+    expect((await run(actions.removeOriginAction(form({ slug: a.slug, pageId: id, host: "polar-demo.webflow.io" })))).url).toContain("saved=origin_removed");
+    expect((await getLeadPage(db, a.id, id))!.extraOrigins).toEqual([]);
+    // Seen on the page: the check ticks and names the host.
+    await db.update(leadPages).set({ checks: { snippetSeenAt: new Date().toISOString(), snippetOrigin: "https://polar-demo.example" } }).where(eq(leadPages.id, id));
+    view = await render(PageView, { account: a.slug, pageId: id }, {});
+    expect(view).toMatch(/data-check="snippet_seen" data-done=""/);
+    expect(text(view)).toContain("Seen on polar-demo.example");
+    // The demo page (a button or link with data) keeps its bars.
+    expect(await render(PageView, { account: a.slug, pageId: demoPage.id }, {})).not.toContain("data-funnel-empty");
   });
 });

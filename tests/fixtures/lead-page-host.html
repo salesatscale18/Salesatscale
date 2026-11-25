@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Polar Demo · Fridge monitoring</title>
+  <!-- A seller's page with a serif font and hostile global CSS: none of it may reach our form (tests/e2e/lead-page-snippet.spec.ts). -->
+  <style>
+    body { font-family: Georgia, "Times New Roman", serif; color: #1d2a44; margin: 0; padding: 24px 16px; background: #fbf7ef; }
+    * { letter-spacing: 3px !important; text-transform: uppercase !important; box-shadow: 0 0 0 4px magenta !important; }
+    input, button, label, form, p, span, a { all: unset; display: inline !important; color: hotpink !important; background: black !important; font-size: 9px !important; border: 3px dashed red !important; }
+    button { display: none !important; }
+    div { padding: 30px !important; }
+    h1 { font-size: 28px; }
+    .hero { max-width: 560px; margin: 0 auto; }
+  </style>
+  <script>
+    // The page's own ad tools (never loaded by our snippet): a fake Meta pixel recording its calls.
+    window.__fbqCalls = [];
+    window.fbq = function () { window.__fbqCalls.push(Array.prototype.slice.call(arguments)); };
+    window.dataLayer = window.dataLayer || [];
+    if (/[?&]deny=1/.test(location.search)) window.dataLayer.push(["consent", "default", { analytics_storage: "denied" }]);
+  </script>
+</head>
+<body>
+  <main class="hero">
+    <h1>Temperature logs that are ready when the inspector arrives</h1>
+    <p>Polar Demo watches your fridges day and night.</p>
+    <section id="form-spot">
+      <div data-sas-lead-form="{{KEY}}"></div>
+    </section>
+    <section id="late-spot"></section>
+  </main>
+  <script async src="{{APP}}/lp/v1.js"></script>
+</body>
+</html>

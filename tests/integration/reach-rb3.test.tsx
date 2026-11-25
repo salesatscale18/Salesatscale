@@ -93,7 +93,7 @@ describe("RB3: one zone on the buyer page; the booking card under its line", () 
     expect((await runTool("request_callback", { brief: "Pricing for 3 sites" }, await toolCtx(leadId, conversationId))).outcome).toBe("ok");
     const [intro] = await db.select().from(messages).where(eq(messages.conversationId, conversationId)).orderBy(asc(messages.createdAt)).limit(1);
     const smsAt = new Date(Date.now() - 60 * 60_000);
-    await db.insert(leadEvents).values({ accountId: acc, leadId, type: "sms.mocked", actor: "system", createdAt: smsAt, data: { kind: "chat_link", messageId: intro.id } });
+    await db.insert(leadEvents).values({ accountId: acc, leadId, type: "sms.sent", actor: "system", createdAt: smsAt, data: { kind: "chat_link", messageId: intro.id } });
     return smsAt;
   };
   /** Every time on the page in `tz`: bubbles, the SMS chip, the slots, and the zone line. */

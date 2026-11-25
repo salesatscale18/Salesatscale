@@ -302,12 +302,17 @@ export async function issuePreviewLink(db: Db, actor: Actor, accountId: string, 
 // Check before going live (plan §6)
 // ---------------------------------------------------------------------------
 
-export type ReadinessKey = "privacy_notice" | "account_live" | "form_opens" | "test_lead";
+export type ReadinessKey = "privacy_notice" | "account_live" | "form_opens" | "snippet_seen" | "test_lead";
 export type ReadinessCheck = { key: ReadinessKey; done: boolean; blocking: boolean };
 
 /**
  * The page's checks, in order. Only the privacy notice and the live account block
- * going live; the others are advice. Slice b/c add the snippet, own-form and pixel checks.
+ * going live; the others are advice.
+ * - Button or link: "The form opened from the link": a counted view on the hosted form,
+ *   or a preview visit (kept on the page's checks, never in the numbers).
+ * - Our form on your page: "The snippet was seen on your page": a config fetch from an
+ *   allowed origin other than ours (checks.snippetSeenAt).
+ * Slice c adds the own-form check.
  */
 export async function leadPageReadiness(db: Db, account: Pick<SellerAccount, "status">, page: LeadPage): Promise<ReadinessCheck[]> {
   const [notice, [views], [test]] = await Promise.all([
@@ -318,10 +323,13 @@ export async function leadPageReadiness(db: Db, account: Pick<SellerAccount, "st
       .where(and(eq(leadPageSubmissions.accountId, page.accountId), eq(leadPageSubmissions.pageId, page.id), eq(leadPageSubmissions.preview, true), isNotNull(leadPageSubmissions.chatChoice)))
       .limit(1),
   ]);
+  const checks = (page.checks ?? {}) as LeadPageChecks & { formOpenedAt?: string };
   return [
     { key: "privacy_notice", done: !!notice, blocking: true },
     { key: "account_live", done: account.status === "live", blocking: true },
-    { key: "form_opens", done: (views?.n ?? 0) > 0, blocking: false },
+    page.connection === "snippet"
+      ? { key: "snippet_seen", done: !!checks.snippetSeenAt, blocking: false }
+      : { key: "form_opens", done: (views?.n ?? 0) > 0 || !!checks.formOpenedAt, blocking: false },
     { key: "test_lead", done: !!test, blocking: false },
   ];
 }

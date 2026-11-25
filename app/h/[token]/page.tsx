@@ -62,7 +62,7 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
     <div className="c-root lp-root" lang={lang} dir="ltr" style={rootStyle}>
       <main className="c-frame lp-handover" dir={dir} data-handover={variant}>
         {top}
-        <div className="lp-hand">{body}{byLine}</div>
+        <div className="lp-hand"><div className="lp-hand__mid">{body}</div>{byLine}</div>
       </main>
     </div>
   );
@@ -114,7 +114,8 @@ export default async function HandoverPage({ params }: { params: Promise<{ token
             <p className="lp-hand__sub">{tg("buyer.lp.handover.connecting", names.gender, { agent: afterHebrewPrefix(isolateName(names.agent, lang), names.agent, lang), seller: isolateName(names.seller, lang) }, lang)}</p>
           </div>
         )}
-        after={<>{smsLine}{byLine}</>}
+        note={smsLine}
+        foot={byLine}
       />
     </div>
   );

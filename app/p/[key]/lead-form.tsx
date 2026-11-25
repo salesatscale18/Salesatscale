@@ -18,7 +18,7 @@ type FieldError = "name" | "phone";
  */
 export function LeadForm({ action, beacon, strings, fields, consentTicked, consentLine, privacyHref, hidden, initialError, dir }: {
   action: string;
-  /** The view beacon's URL, or null (a preview). */
+  /** The view beacon's URL and body (a preview's carries its token and is never counted), or null. */
   beacon: { url: string; body: string } | null;
   strings: LeadFormStrings;
   fields: { company: boolean; email: boolean; sites: boolean };
