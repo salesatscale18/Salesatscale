@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 
 export type LeadFormStrings = {
-  name: string; phone: string; company: string; email: string; sites: string; send: string; sending: string;
+  name: string; phone: string; company: string; email: string; send: string; sending: string;
   errName: string; errPhone: string; errGeneric: string; errBusy: string; privacy: string;
 };
 
@@ -21,7 +21,7 @@ export function LeadForm({ action, beacon, strings, fields, consentTicked, conse
   /** The view beacon's URL and body (a preview's carries its token and is never counted), or null. */
   beacon: { url: string; body: string } | null;
   strings: LeadFormStrings;
-  fields: { company: boolean; email: boolean; sites: boolean };
+  fields: { company: boolean; email: boolean };
   consentTicked: boolean;
   consentLine: string;
   privacyHref: string | null;
@@ -98,9 +98,6 @@ export function LeadForm({ action, beacon, strings, fields, consentTicked, conse
       ) : null}
       {fields.email ? (
         <label className="lp-field">{strings.email}<input className="lp-input" name="email" type="email" autoComplete="email" maxLength={200} dir="ltr" /></label>
-      ) : null}
-      {fields.sites ? (
-        <label className="lp-field">{strings.sites}<input className="lp-input" name="sites" type="number" inputMode="numeric" min={1} max={10000} step={1} dir="ltr" /></label>
       ) : null}
       {/* Bots fill this in; people never see it. */}
       <div className="lp-hp" aria-hidden="true">

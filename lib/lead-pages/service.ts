@@ -376,26 +376,24 @@ export async function latestLeadsOfPage(db: Db, accountId: string, pageId: strin
   return { rows: rows.map((r) => ({ ...r, at: new Date(r.at) })), total: Number(count?.n ?? 0) };
 }
 
-export type LeadPageSource = { pageId: string; name: string; sourceKey: string; sites: number | null };
+export type LeadPageSource = { pageId: string; name: string; sourceKey: string };
 
 /**
  * The lead page a lead came through, for the lead card's source line ("Lead page · {name}")
  * and the conversation header ("via {name}"): the page of its latest submission (else the
- * lead's first page), with that submission's source and number of sites. Null when none.
+ * lead's first page), with that submission's source. Null when none. (A stored `answers.sites`,
+ * from before that field was removed, is ignored.)
  */
 export async function leadPageSourceOf(db: Db, accountId: string, lead: { id: string; leadPageId: string | null }): Promise<LeadPageSource | null> {
-  const [sub] = await db.select({ pageId: leadPageSubmissions.pageId, name: leadPages.name, sourceKey: leadPageSubmissions.sourceKey, answers: leadPageSubmissions.answers })
+  const [sub] = await db.select({ pageId: leadPageSubmissions.pageId, name: leadPages.name, sourceKey: leadPageSubmissions.sourceKey })
     .from(leadPageSubmissions)
     .innerJoin(leadPages, and(eq(leadPages.id, leadPageSubmissions.pageId), eq(leadPages.accountId, leadPageSubmissions.accountId)))
     .where(and(eq(leadPageSubmissions.accountId, accountId), eq(leadPageSubmissions.leadId, lead.id)))
     .orderBy(desc(leadPageSubmissions.createdAt)).limit(1);
-  if (sub) {
-    const sites = (sub.answers as { sites?: unknown } | null)?.sites;
-    return { pageId: sub.pageId, name: sub.name, sourceKey: sub.sourceKey, sites: typeof sites === "number" ? sites : null };
-  }
+  if (sub) return { pageId: sub.pageId, name: sub.name, sourceKey: sub.sourceKey };
   if (!lead.leadPageId) return null;
   const page = await getLeadPage(db, accountId, lead.leadPageId);
-  return page ? { pageId: page.id, name: page.name, sourceKey: "", sites: null } : null;
+  return page ? { pageId: page.id, name: page.name, sourceKey: "" } : null;
 }
 
 /** The pages each lead came through (Leads filter and the lead card, slice a-2). */

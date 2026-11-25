@@ -136,7 +136,7 @@ describe("lead page origins", () => {
 });
 
 describe("lead page submissions", () => {
-  const all = { company: true, email: true, sites: true };
+  const all = { company: true, email: true };
 
   it("reads the usual aliases, the consent box and the honeypot", () => {
     const f = readSubmission({ full_name: "Rina Mizrahi", tel: "054-555-0142", business: "Cafe", consent: "on", sas_url: "", utm_source: "Facebook", gclid: "abc" });
@@ -149,15 +149,16 @@ describe("lead page submissions", () => {
 
   it("validates the name and phone; optional fields never block", () => {
     const ok = validateSubmission(readSubmission({ name: "  Rina   Mizrahi ", phone: "054-555-0142", company: "x".repeat(200), email: "bad", sites: "12" }), "IL", all);
-    expect(ok).toEqual({ ok: true, value: { fullName: "Rina Mizrahi", phone: "+972545550142", company: "x".repeat(120), email: null, sites: 12 } });
+    // A posted `sites` (an older form) is ignored.
+    expect(ok).toEqual({ ok: true, value: { fullName: "Rina Mizrahi", phone: "+972545550142", company: "x".repeat(120), email: null } });
     expect(validateSubmission(readSubmission({ name: "R", phone: "054-555-0142" }), "IL", all)).toEqual({ ok: false, errors: ["name"] });
     expect(validateSubmission(readSubmission({ name: "Visit https://spam.io", phone: "054-555-0142" }), "IL", all)).toEqual({ ok: false, errors: ["name"] });
     expect(validateSubmission(readSubmission({ name: "Rina", phone: "12" }), "IL", all)).toEqual({ ok: false, errors: ["phone"] });
     // The fictional demo range is never a buyer.
     expect(validateSubmission(readSubmission({ name: "Rina", phone: "+972505550142" }), "IL", all)).toEqual({ ok: false, errors: ["phone"] });
-    // Fields the page does not ask for are dropped; sites out of range is dropped.
-    const off = validateSubmission(readSubmission({ name: "Rina", phone: "+44 7700 900123", company: "Cafe", sites: "0" }), "IL", { company: false, email: false, sites: true });
-    expect(off).toMatchObject({ ok: true, value: { phone: "+447700900123", company: null, sites: null } });
+    // Fields the page does not ask for are dropped.
+    const off = validateSubmission(readSubmission({ name: "Rina", phone: "+44 7700 900123", company: "Cafe", email: "r@cafe.example" }), "IL", { company: false, email: false });
+    expect(off).toEqual({ ok: true, value: { fullName: "Rina", phone: "+447700900123", company: null, email: null } });
     expect(firstNameOf("  Rina   Mizrahi")).toBe("Rina");
   });
 
@@ -237,14 +238,14 @@ describe("page_link SMS", () => {
 describe("lead page settings", () => {
   it("parses the add/edit form; the snippet and Button or link can be saved, the own form too; hosted not yet", () => {
     const ok = parseLeadPageInput({
-      name: " Spring  offer ", connection: "link", language: "he", address: "", fields: { company: "on", email: undefined, sites: "1" },
+      name: " Spring  offer ", connection: "link", language: "he", address: "", fields: { company: "on", email: undefined },
       openingTopic: { en: "Fridge monitoring", he: "ניטור מקררים" }, extraOrigins: "acme.webflow.io, https://Acme.webflow.io/ staging.acme.com", consentTicked: "",
     }, { languages: ["en", "he"] });
     expect(ok).toEqual({
       ok: true,
       value: {
         name: "Spring offer", address: null, connection: "link", language: "he", marketId: null,
-        form: { fields: { company: true, email: false, sites: true } }, openingTopic: { en: "Fridge monitoring", he: "ניטור מקררים" }, tracking: {},
+        form: { fields: { company: true, email: false } }, openingTopic: { en: "Fridge monitoring", he: "ניטור מקררים" }, tracking: {},
         extraOrigins: ["acme.webflow.io", "staging.acme.com"],
       },
     });
@@ -254,8 +255,8 @@ describe("lead page settings", () => {
     // Slice b: "Our form on your page" can be saved, and needs the page's address.
     expect(parseLeadPageInput({ name: "x", connection: "snippet", language: "en" }, { languages: ["en"] })).toMatchObject({ ok: false, errors: { address: expect.any(String) } });
     expect(parseLeadPageInput({ name: "x", connection: "snippet", language: "en", address: "acme.com/offer" }, { languages: ["en"] })).toMatchObject({ ok: true, value: { connection: "snippet", address: "https://acme.com/offer" } });
-    // Slice c: "Your own form" can be saved, and needs the page's address too.
-    expect(parseLeadPageInput({ name: "x", connection: "own_form", language: "en" }, { languages: ["en"] })).toMatchObject({ ok: false, errors: { address: expect.any(String) } });
+    // Slice c: "Your own form" can be saved; its address is optional (recommended).
+    expect(parseLeadPageInput({ name: "x", connection: "own_form", language: "en" }, { languages: ["en"] })).toMatchObject({ ok: true, value: { connection: "own_form", address: null } });
     expect(parseLeadPageInput({ name: "x", connection: "own_form", language: "en", address: "acme.com/contact" }, { languages: ["en"] })).toMatchObject({ ok: true, value: { connection: "own_form", address: "https://acme.com/contact" } });
     expect(goLiveBlockers({ hasPrivacyNotice: false, accountStatus: "setting_up" })).toEqual(["privacy_notice", "account_not_live"]);
     expect(goLiveBlockers({ hasPrivacyNotice: true, accountStatus: "live" })).toEqual([]);

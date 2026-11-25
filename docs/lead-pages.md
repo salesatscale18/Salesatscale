@@ -3,6 +3,9 @@
 Lead pages bring buyers from an ad or a landing page straight into a conversation.
 This note covers **Our form on your page** (the snippet) and **Your own form**.
 "Button or link" needs no install: put the page's link (`/p/<key>`) on a button or an ad.
+Its page address is optional (it is shown in the list and the page view only).
+
+The form asks for the name and mobile number; the seller can add Company and Email (both optional).
 
 ## The snippet
 
@@ -67,7 +70,9 @@ send your form and land on our hand-over, then the conversation.
 
 ### Set up
 
-1. Lead pages › **Add page** › **Your own form**. Enter the address of the page your form is on.
+1. Lead pages › **Add page** › **Your own form**. Enter the address of the page your form is on
+   (optional, but recommended: without it, and with no other addresses, your form's sends are
+   refused until you allow the address; the page view then shows **"Seen on <host>. Add it?"**).
 2. Save. The page view shows **Your form's address**:
    `https://APP_HOST/api/lp/<key>/submit`.
 3. Set your form's `action` to that address and its `method` to `post`. The browser sends
@@ -81,7 +86,6 @@ send your form and land on our hand-over, then the conversation.
 | `phone` | `tel`, `mobile` | required |
 | `company` | `business` | optional |
 | `email` | | optional |
-| `sites` | | optional, a whole number 1 to 10000 |
 | `consent` | | `true`, `on`, `yes` or `1` when the box is ticked |
 
 Other fields are ignored. Ad details arrive when your form sends them as hidden fields:

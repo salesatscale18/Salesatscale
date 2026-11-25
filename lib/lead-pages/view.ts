@@ -31,7 +31,7 @@ export const countsVisits = (connection: LeadPageConnection) => connection === "
 /** Whether opening the form can be counted: not on the seller's own form (our script is not there). */
 export const countsOpens = (connection: LeadPageConnection) => connection !== "own_form";
 
-/** "polardemo.co.il/restaurants": the address without its scheme, or null. */
+/** "example.com/offer": the address without its scheme, or null. */
 export const shortAddress = (address: string | null | undefined) => (address ? address.replace(/^https?:\/\//i, "").replace(/\/$/, "") : null);
 
 /** "Israel · HE": the page market's name (or "Any market") and the form language. */
@@ -46,7 +46,6 @@ export function fieldsLine(form: LeadPage["form"]): string {
   const keys: MessageKey[] = ["lead_pages.form.field.name", "lead_pages.form.field.phone"];
   if (f.company) keys.push("lead_pages.form.field.company");
   if (f.email) keys.push("lead_pages.form.field.email");
-  if (f.sites) keys.push("lead_pages.form.field.sites");
   return keys.map((k) => t(k)).join(", ");
 }
 
@@ -197,7 +196,7 @@ export function rawFromForm(f: FormGet, topics: readonly LeadPageTopic[], existi
     connection: str(f, "connection") || "link",
     language: str(f, "language"),
     marketId: str(f, "marketId"),
-    fields: { company: f.has("field_company"), email: f.has("field_email"), sites: f.has("field_sites") },
+    fields: { company: f.has("field_company"), email: f.has("field_email") },
     consentTicked: f.has("consentTicked"),
     openingTopic,
     tracking: { tellPagePixel: f.has("tellPagePixel"), carryAdDetails: f.has("carryAdDetails") },

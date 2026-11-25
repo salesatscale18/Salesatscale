@@ -137,6 +137,7 @@
 .lpg-banner__initials { color: var(--primary); }
 .lpg-banner__text { display: flex; flex-direction: column; gap: 6px; flex: 1 1 240px; min-width: 0; }
 .lpg-banner__actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.lpg-banner__chosen { overflow-wrap: anywhere; }
 .lpg-file { position: relative; overflow: hidden; cursor: pointer; }
 .lpg-file input { position: absolute; inset: 0; opacity: 0; cursor: pointer; font-size: 0; }
 .lpg-file:has(input:focus-visible) { outline: 2px solid var(--primary); outline-offset: 2px; }
@@ -152,6 +153,8 @@
 .lpg-form:has(input[name="connection"][value="snippet"]:checked) [data-for]:not([data-for~="snippet"]) { display: none; }
 .lpg-form:has(input[name="connection"][value="own_form"]:checked) [data-for]:not([data-for~="own_form"]) { display: none; }
 .lpg-form:has(input[name="connection"][value="link"]:checked) [data-for]:not([data-for~="link"]) { display: none; }
+/* "Button or link": the optional address goes last in "The page" block. */
+.lpg-form:has(input[name="connection"][value="link"]:checked) .lpg-field--address { order: 1; }
 .lpg-switchrow { display: flex; flex-direction: column; gap: 6px; }
 .lpg-code { white-space: pre-wrap; word-break: normal; overflow-wrap: anywhere; }
 .lpg-origins { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }

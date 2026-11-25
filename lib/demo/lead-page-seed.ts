@@ -41,14 +41,14 @@ export const DEMO_LEAD_PAGE = {
   ],
 } as const;
 
-/** The two submissions: [lead, source key, number of sites]. */
-type DemoSubmission = { leadId: string; firstName: string; sourceKey: string; utm: { source: string; campaign: string }; sites: number };
+/** The two submissions: [lead, source key]. */
+type DemoSubmission = { leadId: string; firstName: string; sourceKey: string; utm: { source: string; campaign: string } };
 
 export type DemoLeadPageResult = { pageId: string; bannerSaved: boolean; submissions: number };
 
 export async function seedDemoLeadPage(
   db: Db, actor: Actor & { userId: string }, accountId: string,
-  opts: { now: Date; submissions: { leadId: string; sites: number; source: "facebook" | "google" }[]; store: FileStore | null; env?: Record<string, string | undefined> },
+  opts: { now: Date; submissions: { leadId: string; source: "facebook" | "google" }[]; store: FileStore | null; env?: Record<string, string | undefined> },
 ): Promise<DemoLeadPageResult> {
   const { now } = opts;
   const [account] = await db.select().from(sellerAccounts).where(eq(sellerAccounts.id, accountId));
@@ -60,7 +60,7 @@ export async function seedDemoLeadPage(
 
   const made = await createLeadPage(db, actor, account, {
     name: DEMO_LEAD_PAGE.name, address: DEMO_LEAD_PAGE.address, connection: "link", language: "en", marketId: home?.id ?? "",
-    fields: { company: true, sites: true }, consentTicked: true, openingTopic: topic, tracking: { carryAdDetails: true },
+    fields: { company: true }, consentTicked: true, openingTopic: topic, tracking: { carryAdDetails: true },
   });
   if (!made.ok) throw new Error(`Demo seed: lead page is invalid: ${JSON.stringify(made.errors)}`);
   const page = made.page;
@@ -92,7 +92,7 @@ export async function seedDemoLeadPage(
   for (const s of opts.submissions) {
     const [lead] = await db.select({ id: leads.id, fullName: leads.fullName }).from(leads).where(and(eq(leads.accountId, accountId), eq(leads.id, s.leadId)));
     if (!lead) throw new Error("Demo seed: lead page lead not found");
-    subs.push({ leadId: lead.id, firstName: lead.fullName.split(" ")[0] ?? "", sourceKey: `${UTM[s.source].source} / ${UTM[s.source].campaign}`, utm: UTM[s.source], sites: s.sites });
+    subs.push({ leadId: lead.id, firstName: lead.fullName.split(" ")[0] ?? "", sourceKey: `${UTM[s.source].source} / ${UTM[s.source].campaign}`, utm: UTM[s.source] });
   }
   for (const s of subs) {
     const [lead] = await db.select({ createdAt: leads.createdAt }).from(leads).where(and(eq(leads.accountId, accountId), eq(leads.id, s.leadId)));
@@ -100,12 +100,12 @@ export async function seedDemoLeadPage(
     const submissionId = crypto.randomUUID();
     await db.insert(leadPageSubmissions).values({
       id: submissionId, accountId, pageId: page.id, leadId: s.leadId, via: "link", leadCreated: true, consent: true, preview: false, language: "en",
-      answers: { firstName: s.firstName, sites: s.sites }, ad: { utm: s.utm }, sourceKey: s.sourceKey, chatChoice: "text", handoverAt: at, sms: "skipped", createdAt: at,
+      answers: { firstName: s.firstName }, ad: { utm: s.utm }, sourceKey: s.sourceKey, chatChoice: "text", handoverAt: at, sms: "skipped", createdAt: at,
     });
     await db.update(leads).set({ leadPageId: page.id }).where(and(eq(leads.accountId, accountId), eq(leads.id, s.leadId)));
     await db.insert(leadEvents).values({
       accountId, leadId: s.leadId, type: LEAD_PAGE_EVENTS.submitted, actor: "buyer", createdAt: at,
-      data: { pageId: page.id, submissionId, page: page.name, topic: topic?.en || null, created: true, consent: true, sites: s.sites, source: s.sourceKey },
+      data: { pageId: page.id, submissionId, page: page.name, topic: topic?.en || null, created: true, consent: true, source: s.sourceKey },
     });
   }
   return { pageId: page.id, bannerSaved: banner.ok, submissions: subs.length };

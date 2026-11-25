@@ -39,7 +39,7 @@ const configFor = (key: string) => {
     v: 1, lang, dir: lang === "he" ? "rtl" : "ltr", preview: false,
     text: leadFormText(tr),
     about: aboutLine(tr, { en: "Fridge monitoring", he: "ניטור מקררים" }, lang),
-    fields: { company: true, email: false, sites: false },
+    fields: { company: true, email: false },
     consent: { line: leadPageConsentLine(lang, lang === "he" ? "פולאר דמו" : "Polar Demo", lang === "he" ? "מאיה" : "Maya"), ticked: lang === "he" },
     privacyUrl: `${appUrl}/p/${key}/privacy`,
     brand: { "--brand": "#0f6b5a", "--brand-on": "#ffffff", "--brand-text": "#0f6b5a" },

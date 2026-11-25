@@ -416,7 +416,7 @@ export async function seedReviewStates(
   // counters and two submissions: the expiring-quote lead and the pay-step lead (whose order is signed).
   const leadPage = await seedDemoLeadPage(db, actor, accountId, {
     now, store: opts.files === undefined ? fileStore() : opts.files,
-    submissions: [{ leadId: leadIds.quoteExpiring, sites: 1, source: "google" }, { leadId: leadIds.payStep, sites: 1, source: "facebook" }],
+    submissions: [{ leadId: leadIds.quoteExpiring, source: "google" }, { leadId: leadIds.payStep, source: "facebook" }],
   });
 
   // 10. Test lab: one scenario chat that passes its check and one that fails it.

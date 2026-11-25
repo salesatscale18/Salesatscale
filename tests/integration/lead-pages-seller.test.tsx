@@ -224,6 +224,33 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(html).toMatch(/name="consentTicked" checked=""/);
   });
 
+  it("add form: the address helper follows the connection card (required / recommended / optional, last for a button or link); only Company and Email are optional fields; the banner field", async () => {
+    const html = await render(NewPage, { account: a.slug });
+    // One address input, with one label and one helper per connection (CSS shows the checked card's).
+    expect(html.match(/name="address"/g)?.length).toBe(1);
+    const field = html.match(/<label class="lpg-field lpg-field--address" data-address-field="">([\s\S]*?)<\/label>/)?.[1] ?? "";
+    const part = (who: string, cls: string) => field.match(new RegExp(`<span class="${cls}" data-for="${who}">([^<]*)</span>`))?.[1];
+    expect(part("snippet", "lpg-field__label")).toBe("Address of your page");
+    expect(part("snippet", "sas-small")).toMatch(/^Required\. Where the form will be, like https:\/\/example\.com\/offer\./);
+    expect(part("own_form", "lpg-field__label")).toBe("Address of the page with your form (recommended)");
+    expect(part("own_form", "sas-small")).toMatch(/^Optional, but recommended\. .*Without an address, the first send is refused/);
+    expect(part("link", "lpg-field__label")).toBe("Address of the page with the button (optional)");
+    expect(part("link", "sas-small")).toBe("Where your button or link is, like https://example.com/offer.");
+    // For a button or link the optional address goes last in "The page" block.
+    const css = fs.readFileSync(path.join(process.cwd(), "app/app/[account]/lead-pages/lead-pages.css"), "utf8");
+    expect(css).toContain('.lpg-form:has(input[name="connection"][value="link"]:checked) .lpg-field--address { order: 1; }');
+    // What the buyer fills in: Name and Phone fixed, Company and Email optional; no "Number of sites".
+    expect([...html.matchAll(/name="field_([a-z]+)"/g)].map((m) => m[1])).toEqual(["company", "email"]);
+    expect(text(html)).not.toMatch(/Number of sites|sites/i);
+    expect(text(html)).toContain("We read the name and phone, and the company and email when your form sends them.");
+    // The banner: a file input for JPG, PNG or WebP, the empty thumbnail, no chosen file yet.
+    expect(html).toContain('data-banner-field=""');
+    expect(html).toContain('<input type="file" accept="image/jpeg,image/png,image/webp" name="banner"/>');
+    expect(html).toContain('data-banner="none"');
+    expect(html).not.toContain("data-banner-chosen");
+    expect(text(html)).toContain("Choose image");
+  });
+
   it("save: creates a draft in the caller's account; field errors come back; another account's page is refused", async () => {
     as(a);
     const bad = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "", language: "en", connection: "link", intent: "draft" })));
@@ -231,11 +258,13 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     // The hosted page is not offered yet: refused on the server even when posted.
     expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "X", language: "en", connection: "hosted", address: "acme.com" })))).state).toMatchObject({ errors: { connection: expect.any(String) } });
 
-    const ok = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Winter offer", language: "en", connection: "link", marketId: "", openingTopic: "0", field_sites: "on", carryAdDetails: "on", intent: "draft" })));
+    const ok = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Winter offer", language: "en", connection: "link", marketId: "", openingTopic: "0", field_company: "on", field_sites: "on", carryAdDetails: "on", intent: "draft" })));
     expect(ok.url).toMatch(new RegExp(`^/app/${a.slug}/lead-pages/[0-9a-f-]{36}\\?saved=draft$`));
     const id = ok.url!.split("/").pop()!.split("?")[0];
     const made = await getLeadPage(db, a.id, id);
-    expect(made).toMatchObject({ name: "Winter offer", status: "draft", accountId: a.id, form: { fields: { sites: true }, consentTicked: false }, tracking: { carryAdDetails: true } });
+    expect(made).toMatchObject({ name: "Winter offer", status: "draft", accountId: a.id, form: { fields: { company: true, email: false }, consentTicked: false }, tracking: { carryAdDetails: true } });
+    // A stale form still posting the removed "Number of sites" box: ignored.
+    expect(made!.form.fields).not.toHaveProperty("sites");
     expect(made!.openingTopic?.en).toBeTruthy();
     expect((await audits(a.id, "lead_page.created")).map((x) => x.targetId)).toContain(id);
 
@@ -413,16 +442,17 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(text(foreign)).toContain("Lior Demo");
   });
 
-  it("the lead card says Lead page · {name} (a link to the page) with source and sites; the conversation header says via {name}", async () => {
+  it("the lead card says Lead page · {name} (a link to the page) with its source; the conversation header says via {name}", async () => {
     as(a);
     const avi = await leadByName(a.id, "Avi Demo");
-    expect(await leadPageSourceOf(db, a.id, avi)).toMatchObject({ pageId: demoPage.id, name: DEMO_LEAD_PAGE.name, sourceKey: "facebook / restaurants-nov", sites: 1 });
+    expect(await leadPageSourceOf(db, a.id, avi)).toMatchObject({ pageId: demoPage.id, name: DEMO_LEAD_PAGE.name, sourceKey: "facebook / restaurants-nov" });
     expect(await leadPageSourceOf(db, b.id, avi)).toBeNull();
     const card = await render(LeadCardPage, { account: a.slug, leadId: avi.id });
     save("lead-card", card);
     expect(card).toContain(`data-lead-page-source="${demoPage.id}"`);
     expect(card).toMatch(new RegExp(`<a href="/app/${a.slug}/lead-pages/${demoPage.id}">[^<]*Lead page · ${DEMO_LEAD_PAGE.name}`));
-    expect(text(card)).toMatch(/facebook \/ restaurants-nov · 1 site\b/);
+    expect(text(card)).toContain("facebook / restaurants-nov");
+    expect(text(card)).not.toMatch(/\d sites?\b/);
     const [conv] = await db.select().from(conversations).where(and(eq(conversations.accountId, a.id), eq(conversations.leadId, avi.id)));
     const inbox = await render(ConversationsPage, { account: a.slug }, { c: conv.id });
     expect(inbox).toContain(`data-via-page="${demoPage.id}"`);
@@ -521,8 +551,17 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(s).toContain("you are responsible for it");
     expect(s).toContain("We don't tell your ad pixel about leads from your own form.");
 
-    // The own form needs its page's address.
-    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Own", language: "en", connection: "own_form", address: "" })))).state).toMatchObject({ errors: { address: expect.any(String) } });
+    // The own form's address is optional (recommended): saved without one, its page view says what to do.
+    const bare = await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Own", language: "en", connection: "own_form", address: "", intent: "draft" })));
+    expect(bare.state).toBeUndefined();
+    const bareId = bare.url!.split("/").pop()!.split("?")[0];
+    expect(await getLeadPage(db, a.id, bareId)).toMatchObject({ connection: "own_form", address: null });
+    const bareView = await render(PageView, { account: a.slug, pageId: bareId });
+    expect(bareView).toContain('data-own-no-address=""');
+    expect(text(bareView)).toContain("Add your page's address so sends from it are accepted.");
+    // The snippet still needs it: it is the address our form runs on.
+    expect((await run(actions.saveLeadPageAction(null, form({ slug: a.slug, name: "Snip", language: "en", connection: "snippet", address: "" })))).state)
+      .toMatchObject({ errors: { address: "Enter the address of the page the form is on." }, connection: "snippet", bannerSent: false });
     const saved = await run(actions.saveLeadPageAction(null, form({
       slug: a.slug, name: "Contact form", language: "en", connection: "own_form", address: "polar-demo.example/contact", marketId: "", carryAdDetails: "on", intent: "draft",
     })));
@@ -559,7 +598,9 @@ describe("lead pages (a-2): seller pages, actions, filter and numbers", () => {
     expect(view).not.toContain("data-hosted-link");
     expect(view).toContain(`data-own-form-action="">${action}<`);
     expect(v).toContain("Copy address");
-    for (const f of ["name", "phone", "company", "email", "sites", "consent"]) expect(view).toContain(`data-field="${f}"`);
+    for (const f of ["name", "phone", "company", "email", "consent"]) expect(view).toContain(`data-field="${f}"`);
+    expect(view).not.toContain('data-field="sites"');
+    expect(view).not.toContain("data-own-no-address");
     expect(v).toContain("or full_name");
     expect(v).toContain("or tel, mobile");
     expect(v).toContain("or business");

@@ -187,7 +187,6 @@
     var f = cfg.fields || {};
     if (f.company) field("company", T.company, { autocomplete: "organization", maxlength: 120, dir: "auto" });
     if (f.email) field("email", T.email, { type: "email", autocomplete: "email", maxlength: 200, dir: "ltr" });
-    if (f.sites) field("sites", T.sites, { type: "number", inputmode: "numeric", min: 1, max: 10000, step: 1, dir: "ltr" });
     // Bots fill this in; people never see it.
     form.appendChild(el("div", { "class": "hp", "aria-hidden": "true" }, [el("label", {}, [d.createTextNode("Website"), el("input", { name: "sas_url", tabindex: "-1", autocomplete: "off" })])]));
     var tick = el("input", { type: "checkbox", name: "consent", value: "on" });
