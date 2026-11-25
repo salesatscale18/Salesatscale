@@ -15,6 +15,7 @@ export const SELLER_NAV: NavGroup[] = [
     items: [
       { id: "overview", label: "nav.overview", icon: "layout-grid", path: "" },
       { id: "leads", label: "nav.leads", icon: "user-plus", path: "/leads" },
+      { id: "lead-pages", label: "nav.lead_pages", icon: "panel-top", path: "/lead-pages" },
       { id: "inbox", label: "nav.inbox", icon: "message-circle", path: "/conversations" },
       { id: "orders", label: "nav.orders", icon: "file-text", path: "/orders" },
       { id: "meetings", label: "nav.meetings", icon: "calendar", path: "/meetings", hidden: true },

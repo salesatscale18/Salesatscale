@@ -32,6 +32,8 @@ import { dealEstimates, type DealEstimate } from "@/lib/leads/deal-estimate";
 import { readViewerZone } from "@/lib/viewer-zone-server";
 import { viewerDiffers } from "@/lib/viewer-zone";
 import { zonePlainName } from "@/lib/format";
+import { getLeadPage } from "@/lib/lead-pages/service";
+import "../lead-pages/lead-pages.css";
 
 type Search = Record<string, string | string[] | undefined>;
 const one = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v) ?? "";
@@ -103,6 +105,8 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   const needRaw = one(sp.need);
   const need: NeedsGroup | undefined = isNeeds && isNeedsGroup(needRaw) ? needRaw : undefined;
 
+  // Lead pages: `?page=<pageId>` (the page's "All leads from this page"), only a page of this account.
+  const leadPage = one(sp.page) ? await getLeadPage(appDb, account.id, one(sp.page)) : null;
   const lang = one(sp.language);
   const days = Number(one(sp.days));
   const sortDefault = isNeeds ? NEEDS_SORT_DEFAULT : LEAD_SORT_DEFAULT;
@@ -122,10 +126,11 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     market,
     statuses: tab === "needs_you" || tab === "all" ? undefined : TAB_STATUSES[tab],
     leadIds: isNeeds ? [...shownNeeds.keys()] : undefined,
+    leadPageId: leadPage?.id,
   };
   const stageRaw = one(sp.stage);
   const stageFilter = (STAGE_STEPS as readonly string[]).includes(stageRaw) ? (stageRaw as StageStep) : undefined;
-  const filtered = !!(filters.q || filters.sourceLabel || filters.language || filters.sinceDays || stageFilter || need);
+  const filtered = !!(filters.q || filters.sourceLabel || filters.language || filters.sinceDays || stageFilter || need || leadPage);
   const moreActive = [filters.sourceLabel, filters.language, filters.sinceDays].filter(Boolean).length;
   const phoneActive = moreActive + (stageFilter ? 1 : 0) + (need ? 1 : 0);
   const showAdd = one(sp.add) === "1";
@@ -136,6 +141,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
     const cur: Record<string, string | undefined> = {
       view: tab === defaultTab ? undefined : tab, need, q: filters.q, source: filters.sourceLabel, language: filters.language,
       days: filters.sinceDays ? String(filters.sinceDays) : undefined, stage: stageFilter, ...sortParams(sort), [MARKET_PARAM]: urlMarket,
+      page: leadPage?.id,
     };
     for (const [k, v] of Object.entries({ ...cur, ...patch })) if (v) p.set(k, v);
     const s = p.toString();
@@ -201,13 +207,14 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
   const zoneNote = viewerZone && viewerDiffers(now, viewerZone, account.timezone) ? t("leads.times_yours", { zone: zonePlainName(viewerZone, now) ?? viewerZone }) : null;
   const sortOptions = isNeeds ? NEEDS_SORTS : VIEW_SORTS;
   const sortLabel = sortOptions.find((o) => o.sort.key === sort.key && o.sort.dir === sort.dir)?.label ?? SORT_COLUMN[sort.key] ?? sortOptions[0].label;
-  const clearHref = qs({ q: undefined, source: undefined, language: undefined, days: undefined, stage: undefined, need: undefined });
+  const clearHref = qs({ q: undefined, source: undefined, language: undefined, days: undefined, stage: undefined, need: undefined, page: undefined });
 
   /** Hidden fields both filter forms keep (the view, the sort, the market from the URL when no Market select carries it). */
   const keep = (withMarket: boolean) => (
     <>
       {tab !== defaultTab ? <input type="hidden" name="view" value={tab} /> : null}
       {withMarket && urlMarket ? <input type="hidden" name={MARKET_PARAM} value={urlMarket} /> : null}
+      {leadPage ? <input type="hidden" name="page" value={leadPage.id} /> : null}
       {sortParams(sort).sort ? <><input type="hidden" name="sort" value={sort.key} /><input type="hidden" name="dir" value={sort.dir} /></> : null}
     </>
   );
@@ -250,7 +257,7 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
           </div>
           {/* Phone (sas.css): Add lead first and full width, the other actions under More. */}
           <div className="sas-page-head__actions sas-leads-actions">
-            <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp, ["page", "limit", "add"])} />
+            <MarketSwitcher slug={account.slug} selection={selection} returnTo={switcherReturnTo(base, sp, ["limit", "add"])} />
             <a className={`${buttonClass("secondary")} sas-leads-actions__secondary`} href={`${base}/import`}><Icon name="upload" />{t("leads.import")}</a>
             {account.allowSimulatedBuyers ? <a className={`${buttonClass("secondary")} sas-leads-actions__secondary`} href={qs({ add: "sim" })}><Icon name="flask-conical" />{t("sim.add")}</a> : null}
             <a className={`${buttonClass("primary")} sas-leads-actions__primary`} href={qs({ add: "1" })}><Icon name="user-plus" />{t("leads.add")}</a>
@@ -373,6 +380,16 @@ export default async function LeadsPage({ params, searchParams }: { params: Prom
               </div>
             </form>
 
+            {leadPage ? (
+              // The lead page filter: a removable chip (the page's "All leads from this page" link sets it).
+              <div className="lpg-chips" data-page-filter={leadPage.id}>
+                <span className="lpg-chip">
+                  <Icon name="panel-top" />
+                  <span className="lpg-chip__text">{t("leads.filter.page_chip", { name: leadPage.name })}</span>
+                  <a className="lpg-chip__x" href={qs({ page: undefined })} aria-label={t("leads.filter.page_remove", { name: leadPage.name })} title={t("leads.filter.page_remove", { name: leadPage.name })}><Icon name="x" /></a>
+                </span>
+              </div>
+            ) : null}
             {data.total === 0 ? (
               <div className="sas-empty sas-lpanel__empty">
                 <span className="sas-empty__icon"><Icon name={isNeeds && !filtered ? "check-circle" : "search"} /></span>

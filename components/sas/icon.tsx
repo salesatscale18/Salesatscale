@@ -6,7 +6,7 @@ import {
   Pencil, Activity, AlarmClock, AlarmClockOff, Archive, BookOpen, Bookmark, Building2, Calendar, CalendarX, ChartLine, Check, ChevronsUpDown, CircleCheck, CircleDot,
   CircleAlert, CircleSlash, CircleX, Clock, Cog, Copy, Download, CreditCard, Eye, FileText, FilePen, FileX, Info, FlaskConical, Layers, LayoutGrid, Link2, ListChecks, ClipboardList, Lock, MessageCircle,
   MessageSquare, Package, Pause, Pen, Plus, RefreshCw, Rocket, RotateCcw, ScanSearch, Search, Send, ShieldAlert, ShieldCheck, SlidersHorizontal, Sparkles, Store, TriangleAlert,
-  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Globe, Hourglass, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Volume2, Play, AudioLines, Trash2, History, ArrowRight, Mail, type LucideIcon,
+  Minus, ScrollText, FileSignature, Tags, Trophy, Upload, User, UserPlus, Wrench, X, Menu, Ellipsis, ListFilter, ArrowUpRight, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ArrowUp, ArrowDown, Globe, Hourglass, StickyNote, PhoneCall, PhoneOff, Mic, MicOff, WifiOff, Loader, Keyboard, Volume2, Play, AudioLines, Trash2, History, ArrowRight, Mail, PanelTop, type LucideIcon,
 } from "lucide-react";
 
 const ICONS = {
@@ -116,6 +116,8 @@ const ICONS = {
   history: History,
   /** Market cards: open this market (mirrors in RTL). */
   "arrow-right": ArrowRight,
+  /** Lead pages (nav and the empty list). */
+  "panel-top": PanelTop,
 } satisfies Record<string, LucideIcon>;
 
 export type IconName = keyof typeof ICONS;

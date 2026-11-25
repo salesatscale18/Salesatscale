@@ -1,4 +1,5 @@
 import { Avatar, StatusPill, buttonClass } from "@/components/sas/primitives";
+import { leadPageSourceOf } from "@/lib/lead-pages/service";
 import { Icon } from "@/components/sas/icon";
 import { Banner } from "@/components/sas/record";
 import { MenuEnhancer } from "@/components/sas/list-kit-client";
@@ -99,7 +100,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
       const { conv, lead } = selected!;
       // WhatsApp, and simulated chats with "Simulate WhatsApp rules" on: the 24-hour window and template-only composer.
       const whatsapp = conv.channel === "whatsapp" || (conv.channel === SIMULATOR_CHANNEL && account.simulateWhatsappRules);
-      const [view, pane, chatWindow, templates, handoff, chatToken, sentForms] = await Promise.all([
+      const [view, pane, chatWindow, templates, handoff, chatToken, sentForms, viaPage] = await Promise.all([
         conversationView(appDb, account.id, conv),
         // The lead page's deal pane (lib/leads/deal-pane.ts): verified order details, grouped unknowns, the stage-aware next step.
         loadDealPane(appDb, account.id, lead, account.tradeName, viewerZone),
@@ -109,9 +110,11 @@ export default async function ConversationsPage({ params, searchParams }: { para
         isWebChat(conv.channel) && !conv.isTest ? activeChatToken(appDb, account.id, lead.id) : Promise.resolve(null),
         // Order forms a person sent: shown in the thread where they happened (round-4 review F2).
         conv.isTest ? Promise.resolve([]) : personSentForms(appDb, account.id, lead.id),
+        // The lead page the lead came through ("via {page}" on the header line).
+        conv.isTest ? Promise.resolve(null) : leadPageSourceOf(appDb, account.id, lead),
       ]);
       const notes = formNotes(sentForms, me.id, (id) => linkFor({ id }).url, now);
-      return { view, pane, chatWindow, templates, handoff, notes, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
+      return { view, pane, chatWindow, templates, handoff, notes, viaPage, chatUrl: chatToken ? publicUrl(chatPath(chatToken)) : null };
     })()
     : null;
 
@@ -282,6 +285,7 @@ export default async function ConversationsPage({ params, searchParams }: { para
                     </span>
                     <span className="sas-small">
                       {[selected.lead.buyerRef, selected.marketName || homeMarket, t(`lang.${selected.lead.language as "en" | "he"}`)].filter(Boolean).join(" · ")}
+                      {thread.viaPage ? <> · <a href={`/app/${account.slug}/lead-pages/${thread.viaPage.pageId}`} data-via-page={thread.viaPage.pageId}>{t("inbox.via_page", { name: thread.viaPage.name })}</a></> : null}
                       {selected.conv.isTest ? null : <> · <a href={`/app/${account.slug}/leads/${selected.lead.id}`}>{t("inbox.open_lead")}</a> · <a href={`/app/${account.slug}/leads/${selected.lead.id}/quote`} data-create-quote="">{t("inbox.create_quote")}</a></>}
                     </span>
                   </span>

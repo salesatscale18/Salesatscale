@@ -130,6 +130,12 @@ export const STATUS = {
     accepted: { tone: "success", icon: "check-circle" },
     rejected: { tone: "neutral", icon: "x-circle" },
   },
+  // Lead pages (lib/lead-pages): a paused page's form tells buyers it is closed.
+  lead_page: {
+    draft: { tone: "neutral", icon: "file-pen" },
+    live: { tone: "success", icon: "check-circle" },
+    paused: { tone: "warning", icon: "clock" },
+  },
 } as const satisfies Record<string, Record<string, StatusDef>>;
 
 export type StatusObject = keyof typeof STATUS;

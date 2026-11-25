@@ -344,6 +344,17 @@ export function sellingPrefixes(markets: readonly { countries: readonly string[]
 /** SMS pumping targets premium international ranges: a page_link SMS goes only to a selling market's numbers. */
 export const phoneInSellingMarkets = (phone: string, prefixes: readonly string[]) => prefixes.some((p) => phone.startsWith(p));
 
+/**
+ * A name that follows a one-letter Hebrew prefix in a buyer line ("מחברים אותך ל{agent}").
+ * A name with no Hebrew letters gets a hyphen after the prefix ("ל-Polar Demo assistant"),
+ * as Hebrew writes a prefix on a foreign word; joined without it the prefix letter
+ * touches the Latin name and reads as part of it. `shown`: the name as it goes in the
+ * line (isolated); `name`: the plain name. Other languages: unchanged.
+ */
+export function afterHebrewPrefix(shown: string, name: string, lang: string): string {
+  return lang === "he" && name && !/[֐-׿]/.test(name) ? `-${shown}` : shown;
+}
+
 /** Two letters for the initials tile (no banner, decision 2): as the chat header does. */
 export const initialsOf = (name: string) => name.split(/\s+/).filter(Boolean).map((w) => [...w][0]).join("").slice(0, 2).toUpperCase();
 

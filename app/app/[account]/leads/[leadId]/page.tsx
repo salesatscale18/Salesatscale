@@ -54,6 +54,8 @@ import { CallbackPanel } from "./callback";
 import { TeamCallPanel } from "./team-call";
 import { leadCallback, mayManageCallbacks } from "@/lib/callbacks/service";
 import { leadCallForContext } from "@/lib/team-calls/service";
+import { leadPageSourceOf } from "@/lib/lead-pages/service";
+import { sourceLabel as pageSourceLabel } from "@/lib/lead-pages/view";
 
 const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number; currency: string }) =>
   `${formatMoney(v.oneTimeTotalMinor, v.currency)}${v.recurringTotalMinor ? ` + ${formatMoney(v.recurringTotalMinor, v.currency, { period: "month" })}` : ""}`;
@@ -62,6 +64,9 @@ const quoteTotals = (v: { oneTimeTotalMinor: number; recurringTotalMinor: number
 async function timelineCookieValue(): Promise<string | undefined> {
   try { return (await cookies()).get(TIMELINE_COOKIE)?.value; } catch { return undefined; }
 }
+
+/** Where the source goes in the "added" line (split out so a lead page's name can be a link). */
+const SOURCE_SLOT = "\u0000";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -124,7 +129,9 @@ export default async function LeadCardPage({
   // O35: why the lead needs a person, shown in the stage banner while a person handles it: the one line
   // (as in Needs you and the Conversations row) and the whole stored reason, shown only when the line is cut.
   const handoffWhyLine = stage?.human ? (await handoffReasonsByLead(appDb, account.id, [leadId])).get(leadId) ?? null : null;
-  const source = lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
+  // A lead that came through a lead page: "Lead page · {name}", linking to the page, with the latest submission's source and sites.
+  const pageSource = await leadPageSourceOf(appDb, account.id, lead);
+  const source = pageSource ? t("lead.card.lead_page", { name: pageSource.name }) : lead.sourceLabel ?? t(`lead.origin.${lead.origin}`);
   // Quote dates in the quote's market time zone, as the buyer's card shows them.
   const [tzOf, docs] = await Promise.all([
     quoteTimezones(appDb, account.id, leadQuotes.map((q) => q.quote)),
@@ -258,9 +265,20 @@ export default async function LeadCardPage({
                 ? <span data-testid="buyer-ref">{t("sim.header", { id: "" })}<span className="sas-id" dir="ltr">{lead.buyerRef ?? lead.phone.replace(/^sim:/, "")}</span> · {t(`lang.${lead.language as "en" | "he"}`)} ·{" "}</span>
                 : <>{t(`lang.${lead.language as "en" | "he"}`)} · <span className="sas-num" dir="ltr">{maskPhone(lead.phone)}</span> ·{" "}</>}
               {leadMarket ? <span data-testid="lead-market">{t("lead.card.market_line", { market: leadMarket.name })} · </span> : null}
-              {creator
-                ? t("lead.card.added", { source: isolate(source), who: whoIn(creator), when: formatDateTimeIn(lead.createdAt, tz) })
-                : t("lead.card.added_system", { source: isolate(source), when: formatDateTimeIn(lead.createdAt, tz) })}
+              {(() => {
+                const added = creator
+                  ? t("lead.card.added", { source: SOURCE_SLOT, who: whoIn(creator), when: formatDateTimeIn(lead.createdAt, tz) })
+                  : t("lead.card.added_system", { source: SOURCE_SLOT, when: formatDateTimeIn(lead.createdAt, tz) });
+                const [before, after = ""] = added.split(SOURCE_SLOT);
+                if (!pageSource) return `${before}${isolate(source)}${after}`;
+                return (
+                  <span data-lead-page-source={pageSource.pageId}>
+                    {before}<a href={`/app/${account.slug}/lead-pages/${pageSource.pageId}`}>{isolate(source)}</a>{after}
+                    {pageSource.sourceKey ? <> · <bdi>{pageSourceLabel(pageSource.sourceKey)}</bdi></> : null}
+                    {pageSource.sites ? <> · {pageSource.sites === 1 ? t("lead.card.lead_page_site_one") : t("lead.card.lead_page_sites", { count: pageSource.sites })}</> : null}
+                  </span>
+                );
+              })()}
             </span>
             {/* The market can be changed here (the side panel that repeated it is gone). */}
             {marketList.length > 1 ? (

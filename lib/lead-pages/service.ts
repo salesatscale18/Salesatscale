@@ -12,7 +12,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { and, asc, desc, eq, gte, ilike, inArray, isNotNull, sql, type SQL } from "drizzle-orm";
 import type { Db } from "@/db/types";
 import {
-  leadPageDaily, leadPages, leadPageSubmissions, markets, orderFormSettings, sellerAccounts,
+  leadPageDaily, leadPages, leadPageSubmissions, leads, markets, orderFormSettings, sellerAccounts,
   type LeadPage, type LeadPageBanner, type LeadPageChecks, type SellerAccount,
 } from "@/db/schema";
 import { writeAudit, type Actor } from "@/lib/accounts/audit";
@@ -336,6 +336,51 @@ export async function latestSubmissions(db: Db, accountId: string, pageId: strin
   return db.select().from(leadPageSubmissions)
     .where(and(eq(leadPageSubmissions.accountId, accountId), eq(leadPageSubmissions.pageId, pageId)))
     .orderBy(desc(leadPageSubmissions.createdAt)).limit(Math.min(Math.max(limit, 1), 100));
+}
+
+/**
+ * The page's latest leads (the page view's "Latest leads"): one row per lead, its latest
+ * submission on this page, newest first. Test (preview) submissions are marked. Names only,
+ * never an email. Also the number of distinct leads from the page.
+ */
+export async function latestLeadsOfPage(db: Db, accountId: string, pageId: string, limit = 5) {
+  const where = and(eq(leadPageSubmissions.accountId, accountId), eq(leadPageSubmissions.pageId, pageId));
+  const join = and(eq(leads.id, leadPageSubmissions.leadId), eq(leads.accountId, leadPageSubmissions.accountId));
+  const at = sql<Date>`max(${leadPageSubmissions.createdAt})`;
+  const [rows, [count]] = await Promise.all([
+    db.select({
+      leadId: leadPageSubmissions.leadId, at, preview: sql<boolean>`bool_and(${leadPageSubmissions.preview})`,
+      fullName: leads.fullName, buyerRef: leads.buyerRef,
+    }).from(leadPageSubmissions).innerJoin(leads, join).where(where)
+      .groupBy(leadPageSubmissions.leadId, leads.fullName, leads.buyerRef)
+      .orderBy(desc(at)).limit(Math.min(Math.max(limit, 1), 50)),
+    // As the Leads list counts them (`?page=`): test leads left out.
+    db.select({ n: sql<number>`count(distinct ${leadPageSubmissions.leadId})::int` }).from(leadPageSubmissions).innerJoin(leads, join)
+      .where(and(where, eq(leads.isTest, false))),
+  ]);
+  return { rows: rows.map((r) => ({ ...r, at: new Date(r.at) })), total: Number(count?.n ?? 0) };
+}
+
+export type LeadPageSource = { pageId: string; name: string; sourceKey: string; sites: number | null };
+
+/**
+ * The lead page a lead came through, for the lead card's source line ("Lead page · {name}")
+ * and the conversation header ("via {name}"): the page of its latest submission (else the
+ * lead's first page), with that submission's source and number of sites. Null when none.
+ */
+export async function leadPageSourceOf(db: Db, accountId: string, lead: { id: string; leadPageId: string | null }): Promise<LeadPageSource | null> {
+  const [sub] = await db.select({ pageId: leadPageSubmissions.pageId, name: leadPages.name, sourceKey: leadPageSubmissions.sourceKey, answers: leadPageSubmissions.answers })
+    .from(leadPageSubmissions)
+    .innerJoin(leadPages, and(eq(leadPages.id, leadPageSubmissions.pageId), eq(leadPages.accountId, leadPageSubmissions.accountId)))
+    .where(and(eq(leadPageSubmissions.accountId, accountId), eq(leadPageSubmissions.leadId, lead.id)))
+    .orderBy(desc(leadPageSubmissions.createdAt)).limit(1);
+  if (sub) {
+    const sites = (sub.answers as { sites?: unknown } | null)?.sites;
+    return { pageId: sub.pageId, name: sub.name, sourceKey: sub.sourceKey, sites: typeof sites === "number" ? sites : null };
+  }
+  if (!lead.leadPageId) return null;
+  const page = await getLeadPage(db, accountId, lead.leadPageId);
+  return page ? { pageId: page.id, name: page.name, sourceKey: "", sites: null } : null;
 }
 
 /** The pages each lead came through (Leads filter and the lead card, slice a-2). */

@@ -80,6 +80,8 @@ import { addFile, addNote, addWebsite, listSections, saveParse } from "@/lib/sou
 import { DEMO_SOURCE_REF_PREFIX, demoPhone } from "./phones";
 import { seedVoiceCall } from "./voice-call-seed";
 import { demoSmsText, seedDemoSms } from "./sms-seed";
+import { seedDemoLeadPage } from "./lead-page-seed";
+import { fileStore, type FileStore } from "@/lib/sources/blob";
 
 // ---------------------------------------------------------------------------
 // Content (fictional)
@@ -276,6 +278,10 @@ export type ReviewStates = {
   passedConversationId: string;
   failedConversationId: string;
   analysisRuns: number;
+  /** The live "Button or link" lead page (lib/demo/lead-page-seed.ts). */
+  leadPageId: string;
+  /** False where the banner could not be stored (tests, Preview, no blob store): the page shows the initials tile. */
+  leadPageBanner: boolean;
 };
 
 const min = (now: Date, m: number) => new Date(now.getTime() - m * 60_000);
@@ -288,7 +294,7 @@ export const LEAD_ADDED_MIN = 200;
  * is open when the review starts.
  */
 export async function seedReviewStates(
-  db: Db, userId: string, accountId: string, opts: { liveVersionId: string; now: Date },
+  db: Db, userId: string, accountId: string, opts: { liveVersionId: string; now: Date; files?: FileStore | null },
 ): Promise<ReviewStates> {
   const actor: Actor & { userId: string } = { userId, actingAs: true };
   const { now, liveVersionId } = opts;
@@ -406,6 +412,13 @@ export async function seedReviewStates(
   const expiringQuoteId = await expiringQuote(db, userId, accountId, leadIds.quoteExpiring, liveVersionId, now);
   const declinedQuoteId = await declinedQuote(db, userId, accountId, leadIds.quoteDeclined, liveVersionId, now);
 
+  // 9b. A live "Button or link" lead page with the hand-over banner (through the normal banner save), visit
+  // counters and two submissions: the expiring-quote lead and the pay-step lead (whose order is signed).
+  const leadPage = await seedDemoLeadPage(db, actor, accountId, {
+    now, store: opts.files === undefined ? fileStore() : opts.files,
+    submissions: [{ leadId: leadIds.quoteExpiring, sites: 1, source: "google" }, { leadId: leadIds.payStep, sites: 1, source: "facebook" }],
+  });
+
   // 10. Test lab: one scenario chat that passes its check and one that fails it.
   const passedConversationId = await scenarioChat(db, accountId, userId, liveVersionId, now, {
     scenario: "no_approved_answer", language: "en",
@@ -448,6 +461,7 @@ export async function seedReviewStates(
     orderId, payStepOrderId, humanConversationId, needsYouConversationId, upsetConversationId, spendCapConversationId, handedBackConversationId, stepsConversationId,
     callRequestedConversationId, callDoneConversationId, callConfirmedConversationId, buyerNamedCallConversationId, bookingOpenConversationId, talkNowConversationId, expiringQuoteId, declinedQuoteId,
     passedConversationId, failedConversationId, analysisRuns, compareDraftVersionId: compare.draftVersionId,
+    leadPageId: leadPage.pageId, leadPageBanner: leadPage.bannerSaved,
   };
 }
 

@@ -258,6 +258,8 @@ export type LeadFilters = {
   sort?: TableSort<LeadSortKey>;
   /** The market switcher's choice (lib/markets/selection.ts); null or missing = all markets. Leads without a market are the home market's. */
   market?: LeadMarketFilter | null;
+  /** Only leads that sent this lead page's form (`?page=<pageId>`); the page must be this account's (the query checks it). */
+  leadPageId?: string;
 };
 
 /** The selected market as the lead filters need it. */
@@ -282,6 +284,9 @@ function filterWhere(accountId: string, f: LeadFilters, now: Date): SQL {
   if (f.language) parts.push(eq(leads.language, f.language));
   if (f.sourceLabel) parts.push(eq(leads.sourceLabel, f.sourceLabel));
   if (f.sinceDays) parts.push(gte(leads.lastActivityAt, new Date(now.getTime() - f.sinceDays * 86_400_000)));
+  if (f.leadPageId) {
+    parts.push(!/^[0-9a-f-]{36}$/i.test(f.leadPageId) ? sql`false` : sql`exists (select 1 from lead_page_submissions s where s.account_id = ${leads.accountId} and s.lead_id = ${leads.id} and s.page_id = ${f.leadPageId}::uuid)`);
+  }
   const inMarket = marketWhere(leads.marketId, f.market ?? null);
   if (inMarket) parts.push(inMarket);
   const q = f.q?.trim();

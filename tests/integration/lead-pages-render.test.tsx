@@ -176,6 +176,8 @@ describe("lead pages (a-1): hosted form and hand-over render", () => {
     expect(html).toContain(`<img src="/api/lp/${he.publicKey}/banner/${SHA}" width="1200" height="400"`);
     expect(html).not.toContain("lp-tile");
     expect(html).toContain("השיחה מופעלת על ידי Sales at Scale");
+    // The prefix letter before a Latin agent name gets a hyphen (it rendered as part of the name), the name stays isolated.
+    expect(html).toMatch(/מחברים אותך ל-⁨[A-Za-z][^⁩]*⁩/);
   });
 
   it("the returning buyer: Welcome back (SMS sent), else the plain received screen; never the lead's chat or stored name", async () => {
