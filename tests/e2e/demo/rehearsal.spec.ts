@@ -508,12 +508,19 @@ step("D2 Playbook draft: accept, approve limits, save", async () => {
 
 step("D3 Playbook: agent name and discount limit", async () => {
   // Playbook parts: read first, one row changed at a time (each row saves on its own).
-  await page.goto(`${S.appBase}/setup/playbook/limits`);
-  note("playbook.discountBefore", (await page.locator("[data-max-discount]").getAttribute("data-max-discount")) ?? "");
-  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Change", exact: true }).click();
-  await page.locator("#pb-maxDiscount").fill("5");
-  await page.locator('[data-row="maxDiscount"]').getByRole("button", { name: "Save", exact: true }).click();
-  await expect(page.locator('[data-max-discount="5"]')).toBeVisible();
+  await page.goto(`${S.appBase}/setup/playbook/offers`);
+  note("playbook.discountBefore", (await page.locator('[data-row="offer.general"] [data-offer-numbers]').innerText()) ?? "");
+  // Offers (its own part): the General discount is the discount without approval; its row saves on its own.
+  const general = page.locator('[data-row="offer.general"]');
+  await general.getByRole("button", { name: "Change: General discount" }).click();
+  await page.locator('[id="pb-offer.general.pct"]').fill("5");
+  await general.getByRole("button", { name: "Save", exact: true }).click();
+  await expect(general.locator("form.pb-row__form")).toHaveCount(0);
+  if (!(await general.getByRole("switch").isChecked())) {
+    await general.getByRole("switch").click();
+    await expect(page.locator('[data-row="offer.general"][data-on="1"]')).toBeVisible();
+  }
+  await expect(general.locator("[data-offer-numbers]")).toHaveText("5% off at most");
   await page.goto(`${S.appBase}/setup/playbook/agent`);
   await page.locator('[data-row="name"]').getByRole("button", { name: "Change", exact: true }).click();
   await page.locator("#pb-agentName").fill("Maya");

@@ -11,7 +11,7 @@ import type { PlaybookData } from "./data";
 import "./playbook.css";
 
 export const PART_ICON: Record<PlaybookPart, IconName> = {
-  agent: "user", opening: "message-circle", asks: "list-checks", plays: "book-open", objections: "shield-check",
+  agent: "user", opening: "message-circle", asks: "list-checks", plays: "book-open", objections: "shield-check", offers: "tags",
   close: "file-signature", limits: "lock", never: "circle-slash", after: "alarm-clock",
 };
 
